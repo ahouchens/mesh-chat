@@ -8,6 +8,7 @@ import sys
 import time
 import uuid
 import zlib
+from pathlib import Path
 
 import LXMF
 import pytest
@@ -190,6 +191,11 @@ def test_reaction_catalog_has_pinned_unicode_provenance_and_cold_import() -> Non
     assert REACTION_EMOJI_CATALOG_SHA256 == (
         "d4f4b496cf4a6f621575353540a4f778f3461535aeebb62de408369bd40608f9"
     )
+    environment = os.environ.copy()
+    service_source = str(Path(__file__).resolve().parents[1] / "src")
+    environment["PYTHONPATH"] = os.pathsep.join(
+        value for value in (service_source, environment.get("PYTHONPATH")) if value
+    )
     completed = subprocess.run(
         [
             sys.executable,
@@ -200,6 +206,7 @@ def test_reaction_catalog_has_pinned_unicode_provenance_and_cold_import() -> Non
         check=False,
         capture_output=True,
         text=True,
+        env=environment,
     )
     assert completed.returncode == 0, completed.stderr
 
