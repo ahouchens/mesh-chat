@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>NSCameraUsageDescription</key>
+    <string>Scan a Mesh Chat invitation QR code when you choose Scan with camera.</string>
+    <key>NSLocalNetworkUsageDescription</key>
+    <string>Find and exchange encrypted messages with nearby Mesh Chat devices.</string>
+    <key>ITSAppUsesNonExemptEncryption</key>
+    <true/>
+</dict>
+</plist>

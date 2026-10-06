@@ -1,0 +1,227 @@
+name: Release build
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version to build (for example, 1.2.3 or v1.2.3)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.event_name == 'workflow_dispatch' && inputs.version || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    name: Verify ${{ github.event_name == 'workflow_dispatch' && inputs.version || github.ref_name }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Resolve release version
+        id: version
+        shell: bash
+        env:
+          REQUESTED_VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.version || github.ref_name }}
+        run: |
+          version="${REQUESTED_VERSION#v}"
+          if [[ ! "$version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            echo "Invalid semantic version: $REQUESTED_VERSION" >&2
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Set up pnpm and Node.js
+        uses: pnpm/setup@v3
+        with:
+          version: 11.19.0
+          runtime: node@24
+          cache: true
+          install: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: |
+            service/requirements.lock
+            service/requirements-dev.lock
+
+      - name: Install JavaScript dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Python dependencies
+        run: python -m pip install --disable-pip-version-check -r service/requirements-dev.lock
+
+      - name: Validate and run the test suite once
+        env:
+          RELEASE_VERSION: ${{ steps.version.outputs.version }}
+        run: python scripts/release.py verify --expected-version "$RELEASE_VERSION"
+
+      - name: Upload verification report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mesh-chat-${{ steps.version.outputs.version || 'invalid-version' }}-verification
+          path: dist/reports/**
+          if-no-files-found: ignore
+          retention-days: 30
+
+  desktop:
+    name: Build Windows desktop
+    needs: verify
+    runs-on: windows-latest
+    timeout-minutes: 90
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up pnpm and Node.js
+        uses: pnpm/setup@v3
+        with:
+          version: 11.19.0
+          runtime: node@24
+          cache: true
+          install: false
+
+      - name: Set up Python
+        id: python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: |
+            service/requirements.lock
+            service/requirements-dev.lock
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Restore Rust build cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+          shared-key: release-windows-desktop
+          cache-on-failure: true
+
+      - name: Restore verified PyInstaller stage
+        uses: actions/cache@v5
+        with:
+          path: |
+            service/build
+            service/dist
+            src-tauri/binaries
+          key: pyinstaller-${{ runner.os }}-${{ steps.python.outputs.python-version }}-${{ hashFiles('service/src/**/*.py', 'service/entrypoint.py', 'service/mesh-chat-service.spec', 'service/requirements*.lock', 'service/pyproject.toml', 'scripts/build_sidecar.py') }}
+
+      - name: Install JavaScript dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Python dependencies
+        run: python -m pip install --disable-pip-version-check -r service/requirements-dev.lock
+
+      - name: Build and verify desktop artifacts
+        run: python scripts/release.py build --platform desktop --skip-tests --expected-version "${{ needs.verify.outputs.version }}"
+
+      - name: Upload desktop artifacts and report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mesh-chat-${{ needs.verify.outputs.version }}-windows-desktop
+          path: |
+            dist/desktop/**
+            dist/reports/**
+          if-no-files-found: warn
+          retention-days: 30
+
+  android:
+    name: Build Android arm64
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up pnpm and Node.js
+        uses: pnpm/setup@v3
+        with:
+          version: 11.19.0
+          runtime: node@24
+          cache: true
+          install: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: |
+            service/requirements.lock
+            service/requirements-dev.lock
+
+      - name: Set up Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Set up Gradle cache
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Install Android SDK and NDK packages
+        shell: bash
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "platforms;android-36" "build-tools;36.0.0" "ndk;28.2.13676358"
+          echo "ANDROID_NDK_HOME=$ANDROID_SDK_ROOT/ndk/28.2.13676358" >> "$GITHUB_ENV"
+          echo "NDK_HOME=$ANDROID_SDK_ROOT/ndk/28.2.13676358" >> "$GITHUB_ENV"
+
+      - name: Set up Rust for Android
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+
+      - name: Restore Rust build cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+          shared-key: release-android-arm64
+          cache-on-failure: true
+
+      - name: Install JavaScript dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Python dependencies
+        run: python -m pip install --disable-pip-version-check -r service/requirements-dev.lock
+
+      - name: Build and verify Android artifacts
+        run: python scripts/release.py build --platform android --skip-tests --expected-version "${{ needs.verify.outputs.version }}"
+
+      - name: Upload Android artifacts and report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mesh-chat-${{ needs.verify.outputs.version }}-android-arm64
+          path: |
+            dist/mobile/**
+            dist/reports/**
+          if-no-files-found: warn
+          retention-days: 30

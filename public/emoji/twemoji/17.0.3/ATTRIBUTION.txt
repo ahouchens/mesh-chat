@@ -1,0 +1,7 @@
+Twemoji artwork
+Version: 17.0.3
+Commit: b6b55fef1e8636b540a6d016a4729ca8cdf2e60b
+Source: https://github.com/jdecked/twemoji/releases/tag/v17.0.3
+Copyright Twitter, Inc. and other contributors.
+Graphics license: Creative Commons Attribution 4.0 International (CC BY 4.0).
+Mesh Chat resizes, palette-optimizes, and combines the original 72px PNG files into local sprite sheets.

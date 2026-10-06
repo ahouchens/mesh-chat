@@ -1,0 +1,9 @@
+# Runtime dependency lock. Regenerate with scripts/lock-python.ps1 and review
+# upstream release signatures before changing networking packages.
+cffi==2.1.1
+cryptography==50.0.2
+lxmf==1.2.0
+pycparser==3.0
+pyserial==3.5
+rns==1.5.5
+

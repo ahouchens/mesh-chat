@@ -1,0 +1,176 @@
+{
+  "schema": 1,
+  "unicode": {
+    "version": "18.0",
+    "source_sha256": "8f3735cda1f92a779d78af67cf86066bb1f07143dc22f2ac29394d9bc57ab21a",
+    "catalog_size": 3963
+  },
+  "artwork": {
+    "name": "Twemoji",
+    "version": "17.0.3",
+    "commit": "b6b55fef1e8636b540a6d016a4729ca8cdf2e60b",
+    "source": "https://github.com/jdecked/twemoji/releases/tag/v17.0.3",
+    "license": "CC-BY-4.0",
+    "covered_sequences": 3944,
+    "curated_sequences": 253,
+    "cell_size": 48
+  },
+  "curated": {
+    "file": "curated.png",
+    "columns": 16,
+    "rows": 16,
+    "count": 253
+  },
+  "general": {
+    "file_pattern": "general-{index}.png",
+    "columns": 32,
+    "rows": 16,
+    "capacity": 512,
+    "count": 3691,
+    "sheet_count": 8
+  },
+  "gaps": [
+    {
+      "emoji": "🫫",
+      "name": "cracking face",
+      "codepoints": "1FAEB"
+    },
+    {
+      "emoji": "🫹",
+      "name": "leftwards thumb sign",
+      "codepoints": "1FAF9"
+    },
+    {
+      "emoji": "🫹🏻",
+      "name": "leftwards thumb sign: light skin tone",
+      "codepoints": "1FAF9 1F3FB"
+    },
+    {
+      "emoji": "🫹🏼",
+      "name": "leftwards thumb sign: medium-light skin tone",
+      "codepoints": "1FAF9 1F3FC"
+    },
+    {
+      "emoji": "🫹🏽",
+      "name": "leftwards thumb sign: medium skin tone",
+      "codepoints": "1FAF9 1F3FD"
+    },
+    {
+      "emoji": "🫹🏾",
+      "name": "leftwards thumb sign: medium-dark skin tone",
+      "codepoints": "1FAF9 1F3FE"
+    },
+    {
+      "emoji": "🫹🏿",
+      "name": "leftwards thumb sign: dark skin tone",
+      "codepoints": "1FAF9 1F3FF"
+    },
+    {
+      "emoji": "🫺",
+      "name": "rightwards thumb sign",
+      "codepoints": "1FAFA"
+    },
+    {
+      "emoji": "🫺🏻",
+      "name": "rightwards thumb sign: light skin tone",
+      "codepoints": "1FAFA 1F3FB"
+    },
+    {
+      "emoji": "🫺🏼",
+      "name": "rightwards thumb sign: medium-light skin tone",
+      "codepoints": "1FAFA 1F3FC"
+    },
+    {
+      "emoji": "🫺🏽",
+      "name": "rightwards thumb sign: medium skin tone",
+      "codepoints": "1FAFA 1F3FD"
+    },
+    {
+      "emoji": "🫺🏾",
+      "name": "rightwards thumb sign: medium-dark skin tone",
+      "codepoints": "1FAFA 1F3FE"
+    },
+    {
+      "emoji": "🫺🏿",
+      "name": "rightwards thumb sign: dark skin tone",
+      "codepoints": "1FAFA 1F3FF"
+    },
+    {
+      "emoji": "🫌",
+      "name": "monarch butterfly",
+      "codepoints": "1FACC"
+    },
+    {
+      "emoji": "🫝",
+      "name": "pickle",
+      "codepoints": "1FADD"
+    },
+    {
+      "emoji": "🛙",
+      "name": "lighthouse",
+      "codepoints": "1F6D9"
+    },
+    {
+      "emoji": "🪋",
+      "name": "meteor",
+      "codepoints": "1FA8B"
+    },
+    {
+      "emoji": "🪌",
+      "name": "eraser",
+      "codepoints": "1FA8C"
+    },
+    {
+      "emoji": "🪍",
+      "name": "net with handle",
+      "codepoints": "1FA8D"
+    }
+  ],
+  "files": [
+    {
+      "name": "curated.png",
+      "bytes": 145807,
+      "sha256": "73112c07bcd6d8a3e247ce965e5b87cf3122d2d302d232668eed8d7823d286a4"
+    },
+    {
+      "name": "general-0.png",
+      "bytes": 254909,
+      "sha256": "f245ccf35853aec087c44b351dfd72d86091034a4f4be23d898fb3881ce59d0f"
+    },
+    {
+      "name": "general-1.png",
+      "bytes": 260885,
+      "sha256": "39196c335f51acc69ac25082187bffcd6e9c7fdf5559dbafb50a24c0d8481e80"
+    },
+    {
+      "name": "general-2.png",
+      "bytes": 238591,
+      "sha256": "4dd07a825848421aa593b38a72d1b83cee7d779c455b9ce44ea14ab5be987d5f"
+    },
+    {
+      "name": "general-3.png",
+      "bytes": 255413,
+      "sha256": "6d10289cb8352d0b41a619d6c187bbb134b358286cdcb15e54b62145801f889f"
+    },
+    {
+      "name": "general-4.png",
+      "bytes": 244612,
+      "sha256": "d25913ea620592f44fd2baa02f5cd91eed050e9eee5909d870ecfb887b1eb0cd"
+    },
+    {
+      "name": "general-5.png",
+      "bytes": 297763,
+      "sha256": "a257675d8ec42da4cc6de93c28c0890bd4dc8f88d2f1ca2e8575fde6914b98f1"
+    },
+    {
+      "name": "general-6.png",
+      "bytes": 184840,
+      "sha256": "fdf9b3d3baaa22f13b782bc8c5ed5bab0abf1cc28cdd2d74ed0399b7b7c7541f"
+    },
+    {
+      "name": "general-7.png",
+      "bytes": 40788,
+      "sha256": "4e954a8d77bbc4bd33fa2aab9e8d5e26c27744f01cf559430a31c7655404e968"
+    }
+  ]
+}

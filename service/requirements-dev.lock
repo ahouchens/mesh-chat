@@ -1,0 +1,16 @@
+-r requirements.lock
+altgraph==0.17.5
+coverage==7.16.2
+iniconfig==2.3.0
+macholib==1.16.4; sys_platform == "darwin"
+packaging==26.3
+pefile==2023.2.7; sys_platform == "win32"
+pluggy==1.6.0
+Pygments==2.21.0
+pytest==8.4.2
+pytest-cov==7.0.0
+pyinstaller==6.16.0
+pyinstaller-hooks-contrib==2026.8
+pywin32-ctypes==0.2.3; sys_platform == "win32"
+setuptools==80.9.0
+wheel==0.45.1

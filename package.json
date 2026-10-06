@@ -1,0 +1,48 @@
+{
+  "name": "mesh-chat",
+  "version": "0.2.12",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && node scripts/run-frontend-build.mjs",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "verify": "node scripts/run-python.mjs scripts/release.py verify",
+    "release:check": "node scripts/run-python.mjs scripts/release.py check",
+    "release:version": "node scripts/run-python.mjs scripts/release.py version",
+    "release": "node scripts/run-python.mjs scripts/release.py build",
+    "tauri": "tauri",
+    "desktop:dev": "tauri dev",
+    "desktop:build": "tauri build",
+    "mobile:android": "node scripts/run-python.mjs scripts/build_android.py",
+    "mobile:ios:prepare": "node scripts/run-python.mjs scripts/prepare_ios_runtime.py",
+    "mobile:ios": "node scripts/run-python.mjs scripts/build_ios.py"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2.8.0",
+    "@tauri-apps/plugin-barcode-scanner": "2.5.1",
+    "@tauri-apps/plugin-deep-link": "^2.4.0",
+    "@zxing/browser": "^0.1.5",
+    "lucide-react": "^0.468.0",
+    "qrcode.react": "^4.2.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.8.4",
+    "@testing-library/jest-dom": "6.9.1",
+    "@testing-library/react": "^16.1.0",
+    "@types/react": "^18.3.18",
+    "@types/react-dom": "^18.3.5",
+    "@vitejs/plugin-react": "^4.3.4",
+    "jsdom": "^25.0.1",
+    "typescript": "~5.7.2",
+    "vite": "^6.0.7",
+    "vitest": "^2.1.8"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "packageManager": "pnpm@11.19.0"
+}

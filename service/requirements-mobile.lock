@@ -1,0 +1,5 @@
+# Pure-Python mobile runtime. RNS automatically selects its bundled internal
+# cryptography provider when PyCA cryptography is absent.
+lxmf==1.2.0
+pyserial==3.5
+rns==1.5.5

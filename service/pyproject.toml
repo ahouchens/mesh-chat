@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools==80.9.0", "wheel==0.45.1"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mesh-chat-service"
+version = "0.2.12"
+description = "Private Reticulum/LXMF messaging service for Mesh Chat"
+requires-python = ">=3.11,<3.15"
+dependencies = [
+  "cryptography==50.0.2",
+  "lxmf==1.2.0",
+  "rns==1.5.5",
+]
+
+[project.scripts]
+mesh-chat-service = "mesh_chat.__main__:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+addopts = "-ra --strict-markers"
+testpaths = ["tests"]
+markers = [
+  "integration: launches real Reticulum/LXMF peer processes",
+  "protected_storage: requires an OS-backed encrypted workspace",
+]

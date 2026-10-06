@@ -1,0 +1,12 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "identifier": "com.meshchat.mobile",
+  "bundle": {
+    "externalBin": [],
+    "targets": "all",
+    "iOS": {
+      "template": "ios-project.yml",
+      "minimumSystemVersion": "15.0"
+    }
+  }
+}
