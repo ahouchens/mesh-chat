@@ -6,9 +6,13 @@ import type { Snapshot } from "./types";
 
 export interface ServiceEvent {
   type: "event";
-  event: "state_changed" | "message_status";
+  event: "state_changed" | "message_status" | "workspace_changed";
   message_id?: string;
   state?: string;
+  workspace_id?: string;
+  conversation_id?: string | null;
+  resource_kind?: string;
+  generation?: number;
 }
 
 let platformPromise: Promise<"desktop" | "android" | "ios"> | null = null;

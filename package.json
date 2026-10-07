@@ -1,6 +1,6 @@
 {
   "name": "mesh-chat",
-  "version": "0.2.12",
+  "version": "0.2.16",
   "private": true,
   "type": "module",
   "scripts": {

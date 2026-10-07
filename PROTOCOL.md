@@ -216,7 +216,7 @@ the strict custom metadata map contains only:
 | Key | Value |
 | --- | --- |
 | `1` | schema version `1` |
-| `2` | `workspace_join`, `workspace_manifest_root`, `workspace_channel_record`, `workspace_event`, or `workspace_leave_request` |
+| `2` | `workspace_join`, `workspace_manifest_root`, `workspace_channel_record`, `workspace_event`, `workspace_leave_request`, `workspace_display_name_request`, or `workspace_display_name_decision` |
 | `3` | random 16-byte logical delivery UUID |
 | `4` | 16-byte workspace UUID |
 | `5` | authenticated application expiry timestamp |
@@ -224,6 +224,9 @@ the strict custom metadata map contains only:
 
 Unknown keys or kinds, nonempty Content, malformed identifiers, invalid expiry,
 control documents over 16 KiB, and event documents over 20 KiB fail closed.
+The authenticated wire expiry must be between receipt time and exactly seven
+days after receipt; there is no grace interval outside that live-delivery
+window.
 Dispatch selects this profile before the Personal parser. An unknown native
 source may submit only a fully verified `workspace_join`; every other workspace
 kind requires a source device already authorized by the workspace manifest.
@@ -245,10 +248,14 @@ document types are:
 | `workspace_channel_record` | The manager binds a versioned channel, predecessor, manifest, visibility, policy context, and archived state. |
 | `workspace_event` | An author binds a message to its workspace/conversation, author stream predecessor, exact manifest and channel controls, and immutable payload. |
 | `workspace_leave_request` | A non-owner binds a leave request to the exact current manifest. |
+| `workspace_display_name_request` | An active device signs a replacement card that preserves its member, device, identity, and destination while requesting a new display name. |
+| `workspace_display_name_decision` | The authority signs an approval or decline bound to the exact request and its base manifest. Approval is completed by the next manifest; decline is returned directly to the requester. |
 
 Invitation entry points are `meshchat://workspace/<base64url>` and
 `MESHWORKSPACE1:<base64url>`. Invitations are single-use and expire within 30
-days. Increment 1 supports two active members, one device per member, and only
+days. The offered checkpoint must retain the exact genesis owner member and
+authority device card; a self-consistent manifest signed by another identity is
+not a valid checkpoint. Increment 2 supports eight people, one device per member, and only
 the public `#general` channel. It rejects attachments and does not exchange old
 history. The authority is not a message relay: each event is copied directly
 to every other authorized device through its individual ratchet-enforced LXMF
@@ -258,7 +265,16 @@ Manifest epochs and channel versions are hash-linked. Events carry both exact
 control digests plus a positive per-device sequence and previous-event digest.
 Missing controls or stream predecessors leave an event inert; invalid
 authority, rollback, reused sequence, or equivocation cannot authorize visible
-state. Control copies are scheduled ahead of dependent events.
+state. A valid increment-two manifest epoch admits one member, deactivates one
+non-owner member, applies one self-signed display-name request, updates
+workspace name/description, or closes without another change; combined or no-op
+epochs are rejected. Concurrent invitations are independent capabilities.
+When an accepted invitation references an older checkpoint, every intervening
+manifest is delivered before or alongside the admission epoch and receivers
+apply the chain in order. The mandatory `#general` record is version one, public,
+active, predecessor-free, bound to the epoch-one manifest, and managed by the
+genesis owner authority. Control copies are scheduled ahead of dependent
+events.
 
 ## Delivery evidence
 
@@ -272,6 +288,7 @@ state. Control copies are scheduled ahead of dependent events.
 | `delivered` | intended contact sent a valid encrypted receipt after committing the logical message |
 | `expired` | seven-day application window ended |
 | `failed` | non-transient validation, storage, or identity error |
+| `cancelled` | the recipient left or was removed before that pending workspace leg completed |
 
 Receipts are ordinary signed, end-to-end encrypted LXMF messages. They reference the original logical UUID, are persisted with the inbound message, are retried, are never themselves acknowledged, and are accepted only from the pending message's expected contact.
 
@@ -285,6 +302,7 @@ Receipts are ordinary signed, end-to-end encrypted LXMF messages. They reference
 - Group title and member display name: 1–64 normalized characters each.
 - Signed connection hints per group member card: at most two validated TCP hints.
 - Private group or announcement channel: at most eight people including the owner.
+- Desktop workspace `#general`: at most eight people including the owner in Increment 2.
 - Pending reactions: at most 256 total and 32 per authenticated actor.
 - IPC frame: 4 MiB; renderer-originated payload: 32 KiB.
 - LXMF direct and propagated modes: enabled.

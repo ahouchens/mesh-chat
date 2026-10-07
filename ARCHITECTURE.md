@@ -45,7 +45,7 @@ ordering, removal, and owner-loss consequences.
 
 ## Desktop workspaces
 
-The first workspace increment is an isolated desktop feature profile. It adds
+The second workspace increment is an isolated desktop feature profile. It adds
 canonical workspace authority, device, invitation, channel and event documents
 under the `mesh-chat-workspace` custom type without changing Personal or private
 group bytes. The React shell can switch between Personal and workspace views,
@@ -68,12 +68,35 @@ path: a verified join whose embedded identity and native source agree. Controls
 are queued ahead of dependent events, so no event becomes visible merely
 because it arrived before its authority data.
 
+Checkpoints are pinned to the genesis owner member, authority device, public
+identity, and destination. The initial manifest also pins the genesis name and
+description. Each later manifest performs exactly one enabled transition:
+admit one member, deactivate one non-owner member, replace one member's
+self-signed display-name device card, update workspace metadata, or close.
+A same-epoch document is considered a fork only
+after its signature and predecessor link validate against the pinned chain.
+`#general` is likewise pinned to the epoch-one manifest and genesis authority.
+Outside the narrow join path, the native sender must be an active workspace
+device even when forwarding another member's signed control or event.
+
+Up to eight people share `#general`. Independent invitations may reference
+the same older checkpoint; approval appends to the authority's current epoch,
+delivers the missing ordered manifest chain to the new device, and sends only
+the successor epoch to current members. Public message state materializes
+per-device legs and derives per-person pending, reached, partial, failed,
+expired, and cancelled aggregates without exposing destinations or public
+identity material. Member-authored events do not depend on the authority being
+online; metadata, membership, and name decisions do.
+
 Workspace startup reads summaries, channels, invitations, join requests,
 unread positions, and encrypted drafts, but no message bodies or delivery-leg
 collections. Message lists use bounded linked pages with MAC-bound cursors.
 Mutations use durable operation IDs, and sends commit the event, audience,
 delivery legs, page/index changes, due-work and result in one vault transaction
-before the background scheduler touches LXMF. See
+before the background scheduler touches LXMF. Workspace changes carry scoped
+workspace/conversation/resource invalidations; the renderer coalesces them and
+refreshes the bounded workspace summary rather than the full application
+snapshot. See
 [ADR 0005](docs/adr/0005-workspace-authority-and-bootstrap.md),
 [ADR 0006](docs/adr/0006-workspace-events-and-history-safety.md), and
 [ADR 0007](docs/adr/0007-sealed-workspace-paging-and-outbox.md).

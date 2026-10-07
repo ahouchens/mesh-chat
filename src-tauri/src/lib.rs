@@ -388,6 +388,7 @@ fn allowed_renderer_command(command: &str) -> bool {
     matches!(
         command,
         "snapshot"
+            | "workspace_snapshot"
             | "create_profile"
             | "create_invitation"
             | "preview_invitation"
@@ -421,6 +422,10 @@ fn allowed_renderer_command(command: &str) -> bool {
             | "submit_workspace_join"
             | "approve_workspace_join"
             | "decline_workspace_join"
+            | "update_workspace_metadata"
+            | "remove_workspace_member"
+            | "request_workspace_display_name"
+            | "decide_workspace_display_name"
             | "send_workspace_message"
             | "list_workspace_messages"
             | "mark_workspace_read"
@@ -435,13 +440,18 @@ fn allowed_renderer_command(command: &str) -> bool {
 fn workspace_renderer_command(command: &str) -> bool {
     matches!(
         command,
-        "create_workspace"
+        "workspace_snapshot"
+            | "create_workspace"
             | "create_workspace_invitation"
             | "preview_workspace_invitation"
             | "revoke_workspace_invitation"
             | "submit_workspace_join"
             | "approve_workspace_join"
             | "decline_workspace_join"
+            | "update_workspace_metadata"
+            | "remove_workspace_member"
+            | "request_workspace_display_name"
+            | "decide_workspace_display_name"
             | "send_workspace_message"
             | "list_workspace_messages"
             | "mark_workspace_read"
@@ -830,6 +840,7 @@ mod tests {
     #[test]
     fn renderer_workspace_commands_are_desktop_scoped() {
         let commands = [
+            "workspace_snapshot",
             "create_workspace",
             "create_workspace_invitation",
             "preview_workspace_invitation",
@@ -837,6 +848,10 @@ mod tests {
             "submit_workspace_join",
             "approve_workspace_join",
             "decline_workspace_join",
+            "update_workspace_metadata",
+            "remove_workspace_member",
+            "request_workspace_display_name",
+            "decide_workspace_display_name",
             "send_workspace_message",
             "list_workspace_messages",
             "mark_workspace_read",

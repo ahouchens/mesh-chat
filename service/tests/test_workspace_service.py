@@ -5,6 +5,7 @@ import os
 import time
 import uuid
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import LXMF
@@ -16,7 +17,14 @@ from mesh_chat.invitations import readable_fingerprint
 from mesh_chat.models import DeliveryState
 from mesh_chat.service import MeshChatService
 from mesh_chat.vault import VaultStore
-from mesh_chat.workspace_wire import parse_workspace_payload
+from mesh_chat.workspace_protocol import (
+    WorkspaceManifestMemberInput,
+    create_workspace_channel_record,
+    create_workspace_device_card,
+    create_workspace_manifest,
+    verify_workspace_genesis,
+)
+from mesh_chat.workspace_wire import WorkspaceWirePayload, parse_workspace_payload
 
 
 class RecordingWorkspaceNetwork:
@@ -72,13 +80,36 @@ def _profile(identity: RNS.Identity, display_name: str) -> dict[str, Any]:
 
 
 def _service(
-    root: Path, identity: RNS.Identity, display_name: str
+    root: Path,
+    identity: RNS.Identity,
+    display_name: str,
+    *,
+    vault_key: bytes | None = None,
 ) -> tuple[MeshChatService, RecordingWorkspaceNetwork]:
-    store = VaultStore(root, os.urandom(32), allow_unprotected_for_tests=True)
+    store = VaultStore(
+        root, vault_key or os.urandom(32), allow_unprotected_for_tests=True
+    )
+    # Keep this unit harness on its recording network even when reopening a
+    # persisted profile. The production constructor sees both records and
+    # starts Reticulum, so temporarily remove only these two local-profile
+    # records while constructing the service and restore them immediately.
+    if store.get("identity", "local") is not None:
+        store.delete("identity", "local")
+    if store.get("profile", "local") is not None:
+        store.delete("profile", "local")
     service = MeshChatService(store, root, lambda _event: None)
+    store.put(
+        "identity",
+        "local",
+        {
+            "private_key": base64.urlsafe_b64encode(
+                identity.get_private_key()
+            ).decode("ascii")
+        },
+    )
+    store.put("profile", "local", _profile(identity, display_name))
     service._shutdown.set()
     service._identity = identity
-    store.put("profile", "local", _profile(identity, display_name))
     network = RecordingWorkspaceNetwork()
     service.network = network  # type: ignore[assignment]
     return service, network
@@ -190,9 +221,11 @@ def test_two_member_workspace_create_join_chat_and_page(
     )
     assert joiner.workspace_snapshot()["workspaces"][0]["general_channel_id"] is None
     assert len(joiner.store.list("workspace_pending_control")) == 1
+    assert joiner.workspace_snapshot()["workspaces"][0]["sync_issue"] == "missing_manifest"
     joiner.store.put("workspace_manifest", offered_manifest_id, offered_manifest)
     joiner._drain_workspace_pending_controls(workspace["id"])
     assert joiner.store.list("workspace_pending_control") == []
+    assert "sync_issue" not in joiner.workspace_snapshot()["workspaces"][0]
     assert joiner.workspace_snapshot()["workspaces"][0]["general_channel_id"] == (
         workspace["general_channel_id"]
     )
@@ -207,6 +240,32 @@ def test_two_member_workspace_create_join_chat_and_page(
     assert len(joined["members"]) == 2
     channel_id = joined["general_channel_id"]
     assert isinstance(channel_id, str)
+
+    # A current member can sign its own channel record, but it cannot replace
+    # the genesis-owner-managed #general control.
+    joined_manifest = joiner._workspace_current_manifest(
+        joiner._require_workspace(workspace["id"])
+    )
+    forged_channel = create_workspace_channel_record(
+        joiner_identity,
+        workspace_id=workspace["id"],
+        channel_id=workspace["general_channel_id"],
+        manifest_digest=joined_manifest.digest,
+        name="general",
+        topic="forged topic",
+        manager_member_id=joined["local_member_id"],
+        manager_device_id=joined["local_device_id"],
+    )
+    assert not owner._receive_workspace_channel(
+        WorkspaceWirePayload(
+            kind="workspace_channel_record",
+            logical_id=_op(400),
+            workspace_id=workspace["id"],
+            expires_at=int(time.time()) + 60,
+            document=forged_channel,
+        )
+    )
+    assert owner._require_workspace(workspace["id"])["state"] == "active"
 
     event = owner.send_workspace_message(
         workspace["id"],
@@ -249,15 +308,401 @@ def test_two_member_workspace_create_join_chat_and_page(
     assert owner_page["messages"][0]["delivery_summary"] == {
         "people_total": 1,
         "people_reached": 1,
+        "people_partial": 0,
+        "people_pending": 0,
+        "people_failed": 0,
         "devices_total": 1,
         "devices_reached": 1,
         "devices_pending": 0,
         "devices_failed": 0,
+        "devices_expired": 0,
+        "devices_cancelled": 0,
     }
     monkeypatch.setattr(owner.store, "list", original_list)
 
     owner.close()
     joiner.close()
+
+
+def test_unauthorized_manifest_cannot_fork_and_nonmember_sources_are_ignored(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    owner_identity = RNS.Identity()
+    attacker = RNS.Identity()
+    service, _network = _service(tmp_path / "manifest-guard", owner_identity, "Alex")
+    workspace = service.create_workspace(_op(500), "Guarded", "")
+    stored = service._require_workspace(workspace["id"])
+    genesis = verify_workspace_genesis(stored["genesis"])
+    attacker_member_id = _op(501)
+    attacker_device_id = _op(502)
+    attacker_card = create_workspace_device_card(
+        attacker,
+        workspace_id=workspace["id"],
+        member_id=attacker_member_id,
+        device_id=attacker_device_id,
+        display_name="Mallory",
+    )
+    forged = create_workspace_manifest(
+        attacker,
+        workspace_id=workspace["id"],
+        epoch=1,
+        previous_manifest_hash=genesis.digest,
+        name="Guarded",
+        description="",
+        authority_device_id=attacker_device_id,
+        members=[
+            WorkspaceManifestMemberInput(
+                attacker_member_id,
+                "Mallory",
+                "owner",
+                [attacker_card],
+            )
+        ],
+    )
+    wire = WorkspaceWirePayload(
+        kind="workspace_manifest_root",
+        logical_id=_op(503),
+        workspace_id=workspace["id"],
+        expires_at=int(time.time()) + 60,
+        document=forged,
+    )
+    assert not service._receive_workspace_manifest(wire)
+    assert service._require_workspace(workspace["id"])["state"] == "active"
+
+    received: list[WorkspaceWirePayload] = []
+    monkeypatch.setattr(service, "_receive_workspace_manifest", received.append)
+    service._receive_workspace_payload(
+        SimpleNamespace(
+            source_hash=RNS.Destination.hash(attacker, "lxmf", "delivery")
+        ),
+        wire,
+    )
+    assert received == []
+    service.close()
+
+
+def test_workspace_decline_is_scoped_and_terminal_close_invalidates_requests(
+    tmp_path: Path,
+) -> None:
+    identity = RNS.Identity()
+    service, _network = _service(tmp_path / "scoped-admin", identity, "Alex")
+    first = service.create_workspace(_op(600), "First", "")
+    second = service.create_workspace(_op(601), "Second", "")
+    request_id = service.store.opaque_id("workspace-join", "fixture")
+    service.store.put(
+        "workspace_join_request",
+        request_id,
+        {
+            "id": request_id,
+            "workspace_id": first["id"],
+            "state": "pending",
+        },
+    )
+    with pytest.raises(ValidationError, match="no longer pending"):
+        service.decline_workspace_join(second["id"], request_id, _op(602))
+    assert service.store.get("workspace_join_request", request_id)["state"] == "pending"
+
+    invitation = service.create_workspace_invitation_command(first["id"], _op(603))
+    second_invitation = service.create_workspace_invitation_command(
+        first["id"], _op(605)
+    )
+    assert second_invitation["id"] != invitation["id"]
+    assert len(service.workspace_snapshot()["workspace_invitations"]) == 2
+    expiring = service.store.get("workspace_invitation", invitation["id"])
+    expiring["expires_at"] = time.time() - 1
+    service.store.put("workspace_invitation", invitation["id"], expiring)
+    service._expire_workspace_invitations()
+    assert service.store.get("workspace_invitation", invitation["id"])["state"] == "expired"
+    assert [
+        item["id"]
+        for item in service.workspace_snapshot()["workspace_invitations"]
+    ] == [second_invitation["id"]]
+    service.revoke_workspace_invitation(
+        first["id"], second_invitation["id"], _op(606)
+    )
+    third_invitation = service.create_workspace_invitation_command(
+        first["id"], _op(607)
+    )
+    service.close_workspace(first["id"], _op(604))
+    assert service.store.get("workspace_join_request", request_id)["state"] == "closed"
+    assert service.store.get("workspace_invitation", invitation["id"])["state"] == "expired"
+    assert service.store.get("workspace_invitation", second_invitation["id"])["state"] == "revoked"
+    assert service.store.get("workspace_invitation", third_invitation["id"])["state"] == "closed"
+    assert service.workspace_snapshot()["workspace_join_requests"] == []
+    service.close()
+
+
+def test_eight_person_workspace_catches_up_concurrent_invites_and_admin_changes(
+    tmp_path: Path,
+) -> None:
+    owner_identity = RNS.Identity()
+    owner_root = tmp_path / "owner-eight"
+    owner_vault_key = os.urandom(32)
+    owner, owner_network = _service(
+        owner_root, owner_identity, "Owner", vault_key=owner_vault_key
+    )
+    owner_profile = owner._require_profile()
+    workspace = owner.create_workspace(_op(700), "Field team", "Initial")
+    invitations = [
+        owner.create_workspace_invitation_command(
+            workspace["id"], _op(701 + index)
+        )
+        for index in range(7)
+    ]
+    assert len(owner.workspace_snapshot()["workspace_invitations"]) == 7
+
+    peers: list[tuple[MeshChatService, RecordingWorkspaceNetwork, dict[str, Any]]] = []
+    peer_identities: list[RNS.Identity] = []
+    peer_vault_keys: list[bytes] = []
+    by_destination: dict[str, tuple[MeshChatService, dict[str, Any]]] = {}
+    for index, invitation in enumerate(invitations):
+        identity = RNS.Identity()
+        peer_vault_key = os.urandom(32)
+        peer_identities.append(identity)
+        peer_vault_keys.append(peer_vault_key)
+        peer, peer_network = _service(
+            tmp_path / f"peer-{index}",
+            identity,
+            f"Member {index + 1}",
+            vault_key=peer_vault_key,
+        )
+        profile = peer._require_profile()
+        peers.append((peer, peer_network, profile))
+        by_destination[profile["destination_hash"]] = (peer, profile)
+        peer.submit_workspace_join(invitation["text"], _op(720 + index * 3))
+        join_payload = _flush(peer, peer_network)
+        assert len(join_payload) == 1
+        _deliver(
+            owner,
+            join_payload[0],
+            source_profile=profile,
+            recipient_profile=owner_profile,
+        )
+        pending = owner.workspace_snapshot()["workspace_join_requests"]
+        request = next(
+            item
+            for item in pending
+            if item["invitation_id"] == invitation["id"]
+        )
+        owner.approve_workspace_join(
+            workspace["id"], request["id"], _op(721 + index * 3)
+        )
+        controls = _flush(owner, owner_network)
+        assert len(controls) == 2 * (index + 1)
+        for sent in controls:
+            recipient, recipient_profile = by_destination[
+                sent["recipient_destination"].hex()
+            ]
+            _deliver(
+                recipient,
+                sent,
+                source_profile=owner_profile,
+                recipient_profile=recipient_profile,
+            )
+        assert len(peer.workspace_snapshot()["workspaces"][0]["members"]) == (
+            index + 2
+        )
+
+    assert len(owner.workspace_snapshot()["workspaces"][0]["members"]) == 8
+    assert owner.workspace_snapshot()["workspace_invitations"] == []
+    assert all(
+        len(peer.workspace_snapshot()["workspaces"][0]["members"]) == 8
+        for peer, _network, _profile in peers
+    )
+
+    owner.update_workspace_metadata(
+        workspace["id"], "Field coordination", "Current conditions", _op(760)
+    )
+    metadata_controls = _flush(owner, owner_network)
+    assert len(metadata_controls) == 7
+    for sent in metadata_controls:
+        recipient, recipient_profile = by_destination[
+            sent["recipient_destination"].hex()
+        ]
+        _deliver(
+            recipient,
+            sent,
+            source_profile=owner_profile,
+            recipient_profile=recipient_profile,
+        )
+    assert all(
+        peer.workspace_snapshot()["workspaces"][0]["name"]
+        == "Field coordination"
+        for peer, _network, _profile in peers
+    )
+
+    requester, requester_network, requester_profile = peers[0]
+    requester.request_workspace_display_name(
+        workspace["id"], "River lead", _op(761)
+    )
+    request_payload = _flush(requester, requester_network)
+    assert len(request_payload) == 1
+    _deliver(
+        owner,
+        request_payload[0],
+        source_profile=requester_profile,
+        recipient_profile=owner_profile,
+    )
+    name_request = owner.workspace_snapshot()[
+        "workspace_display_name_requests"
+    ][0]
+    owner.decide_workspace_display_name(
+        workspace["id"], name_request["id"], True, _op(762)
+    )
+    name_controls = _flush(owner, owner_network)
+    assert len(name_controls) == 7
+    for sent in name_controls:
+        recipient, recipient_profile = by_destination[
+            sent["recipient_destination"].hex()
+        ]
+        _deliver(
+            recipient,
+            sent,
+            source_profile=owner_profile,
+            recipient_profile=recipient_profile,
+        )
+    assert requester.workspace_snapshot()["workspace_display_name_requests"] == []
+    assert any(
+        member["display_name"] == "River lead"
+        for member in owner.workspace_snapshot()["workspaces"][0]["members"]
+    )
+
+    requester.request_workspace_display_name(
+        workspace["id"], "River watch", _op(768)
+    )
+    declined_request_payload = _flush(requester, requester_network)
+    assert len(declined_request_payload) == 1
+    _deliver(
+        owner,
+        declined_request_payload[0],
+        source_profile=requester_profile,
+        recipient_profile=owner_profile,
+    )
+    declined_request = owner.workspace_snapshot()[
+        "workspace_display_name_requests"
+    ][0]
+    owner.decide_workspace_display_name(
+        workspace["id"], declined_request["id"], False, _op(769)
+    )
+    decline_payload = _flush(owner, owner_network)
+    assert len(decline_payload) == 1
+    _deliver(
+        requester,
+        decline_payload[0],
+        source_profile=owner_profile,
+        recipient_profile=requester_profile,
+    )
+    assert requester.workspace_snapshot()["workspace_display_name_requests"] == []
+
+    target = peers[-1][0].workspace_snapshot()["workspaces"][0]["local_member_id"]
+    cancellable = owner.send_workspace_message(
+        workspace["id"],
+        workspace["general_channel_id"],
+        "Membership is changing.",
+        _op(763),
+        _op(764),
+    )
+    owner.remove_workspace_member(workspace["id"], target, _op(765))
+    materialized = owner.list_workspace_messages(
+        workspace["id"], workspace["general_channel_id"]
+    )["messages"][-1]
+    assert materialized["id"] == cancellable["id"]
+    assert materialized["delivery_summary"]["devices_cancelled"] == 1
+    assert any(
+        delivery["member_id"] == target
+        and delivery["state"] == DeliveryState.CANCELLED.value
+        for delivery in materialized["deliveries"]
+    )
+
+    removal_payloads = _flush(owner, owner_network)
+    for sent in removal_payloads:
+        recipient, recipient_profile = by_destination[
+            sent["recipient_destination"].hex()
+        ]
+        _deliver(
+            recipient,
+            sent,
+            source_profile=owner_profile,
+            recipient_profile=recipient_profile,
+        )
+    assert peers[-1][0].workspace_snapshot()["workspaces"][0]["state"] == "removed"
+
+    # The authority process is actually offline while the member commits this
+    # event. Restart the sender before handing off any delivery legs to prove
+    # that both the event and its frozen recipient set survive restart.
+    owner.close()
+    member_message = requester.send_workspace_message(
+        workspace["id"],
+        workspace["general_channel_id"],
+        "Owner can catch up later.",
+        _op(766),
+        _op(767),
+    )
+    requester.close()
+    requester, requester_network = _service(
+        tmp_path / "peer-0",
+        peer_identities[0],
+        "Member 1",
+        vault_key=peer_vault_keys[0],
+    )
+    peers[0] = (requester, requester_network, requester_profile)
+    assert any(
+        message["id"] == member_message["id"]
+        for message in requester.list_workspace_messages(
+            workspace["id"], workspace["general_channel_id"]
+        )["messages"]
+    )
+    member_payloads = _flush(requester, requester_network)
+    delivered_without_owner = 0
+    owner_payload: dict[str, Any] | None = None
+    for sent in member_payloads:
+        if sent["recipient_destination"].hex() == owner_profile["destination_hash"]:
+            owner_payload = sent
+            continue
+        recipient, recipient_profile = by_destination[
+            sent["recipient_destination"].hex()
+        ]
+        _deliver(
+            recipient,
+            sent,
+            source_profile=requester_profile,
+            recipient_profile=recipient_profile,
+        )
+        delivered_without_owner += 1
+    assert delivered_without_owner == 5
+    assert owner_payload is not None
+    assert all(
+        any(
+            message["id"] == member_message["id"]
+            for message in peer.list_workspace_messages(
+                workspace["id"], workspace["general_channel_id"]
+            )["messages"]
+        )
+        for peer, _network, _profile in peers[1:-1]
+    )
+
+    # Reconnect a restarted authority endpoint and deliver the exact canonical
+    # event it missed during the partition. The owner catches up without being
+    # required for the member-to-member exchange.
+    owner, owner_network = _service(
+        owner_root, owner_identity, "Owner", vault_key=owner_vault_key
+    )
+    _deliver(
+        owner,
+        owner_payload,
+        source_profile=requester_profile,
+        recipient_profile=owner_profile,
+    )
+    assert any(
+        message["id"] == member_message["id"]
+        for message in owner.list_workspace_messages(
+            workspace["id"], workspace["general_channel_id"]
+        )["messages"]
+    )
+
+    owner.close()
+    for peer, _network, _profile in peers:
+        peer.close()
 
 
 def test_workspace_messages_are_paged_with_mac_bound_stale_cursors(tmp_path: Path) -> None:

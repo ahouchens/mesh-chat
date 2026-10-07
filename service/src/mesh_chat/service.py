@@ -106,6 +106,7 @@ def _payload(
 class MeshChatService(ReactionServiceMixin, GroupServiceMixin, WorkspaceServiceMixin):
     COMMANDS = {
         "snapshot",
+        "workspace_snapshot",
         "create_profile",
         "create_invitation",
         "preview_invitation",
@@ -144,6 +145,10 @@ class MeshChatService(ReactionServiceMixin, GroupServiceMixin, WorkspaceServiceM
         "submit_workspace_join",
         "approve_workspace_join",
         "decline_workspace_join",
+        "update_workspace_metadata",
+        "remove_workspace_member",
+        "request_workspace_display_name",
+        "decide_workspace_display_name",
         "send_workspace_message",
         "list_workspace_messages",
         "mark_workspace_read",
@@ -160,6 +165,7 @@ class MeshChatService(ReactionServiceMixin, GroupServiceMixin, WorkspaceServiceM
     # useful bound.
     UNCACHED_COMMANDS = {
         "snapshot",
+        "workspace_snapshot",
         "search",
         "connection_help",
         "preview_workspace_invitation",
@@ -1537,6 +1543,9 @@ class MeshChatService(ReactionServiceMixin, GroupServiceMixin, WorkspaceServiceM
         if command == "snapshot":
             _payload(value, allowed=set())
             return self.snapshot()
+        if command == "workspace_snapshot":
+            _payload(value, allowed=set())
+            return self.workspace_snapshot()
         if command == "create_profile":
             body = _payload(value, allowed={"display_name"}, required={"display_name"})
             return self.create_profile(body["display_name"])
@@ -1725,6 +1734,65 @@ class MeshChatService(ReactionServiceMixin, GroupServiceMixin, WorkspaceServiceM
                 else self.decline_workspace_join(
                     body["workspace_id"], body["request_id"], body["operation_id"]
                 )
+            )
+        if command == "update_workspace_metadata":
+            body = _payload(
+                value,
+                allowed={"operation_id", "workspace_id", "name", "description"},
+                required={
+                    "operation_id",
+                    "workspace_id",
+                    "name",
+                    "description",
+                },
+            )
+            return self.update_workspace_metadata(
+                body["workspace_id"],
+                body["name"],
+                body["description"],
+                body["operation_id"],
+            )
+        if command == "remove_workspace_member":
+            body = _payload(
+                value,
+                allowed={"operation_id", "workspace_id", "member_id"},
+                required={"operation_id", "workspace_id", "member_id"},
+            )
+            return self.remove_workspace_member(
+                body["workspace_id"], body["member_id"], body["operation_id"]
+            )
+        if command == "request_workspace_display_name":
+            body = _payload(
+                value,
+                allowed={"operation_id", "workspace_id", "display_name"},
+                required={"operation_id", "workspace_id", "display_name"},
+            )
+            return self.request_workspace_display_name(
+                body["workspace_id"],
+                body["display_name"],
+                body["operation_id"],
+            )
+        if command == "decide_workspace_display_name":
+            body = _payload(
+                value,
+                allowed={
+                    "operation_id",
+                    "workspace_id",
+                    "request_id",
+                    "approve",
+                },
+                required={
+                    "operation_id",
+                    "workspace_id",
+                    "request_id",
+                    "approve",
+                },
+            )
+            return self.decide_workspace_display_name(
+                body["workspace_id"],
+                body["request_id"],
+                body["approve"],
+                body["operation_id"],
             )
         if command == "send_workspace_message":
             body = _payload(

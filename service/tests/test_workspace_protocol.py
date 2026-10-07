@@ -17,7 +17,11 @@ from mesh_chat.errors import IdentityMismatch, InvitationExpired, ValidationErro
 from mesh_chat.models import MessageKind, WorkspaceRole
 from mesh_chat.network import ReticulumNetwork, validate_unknown_source_signature
 from mesh_chat.workspace_protocol import (
+    MAX_WORKSPACE_DOCUMENT_BYTES,
     WorkspaceManifestMemberInput,
+    create_workspace_device_card,
+    create_workspace_display_name_request,
+    create_workspace_display_name_decision,
     create_workspace_channel_record,
     create_workspace_event,
     create_workspace_genesis,
@@ -27,6 +31,8 @@ from mesh_chat.workspace_protocol import (
     derive_workspace_id,
     verify_workspace_channel_record,
     verify_workspace_event,
+    verify_workspace_display_name_request,
+    verify_workspace_display_name_decision,
     verify_workspace_genesis,
     verify_workspace_invitation,
     verify_workspace_join,
@@ -134,9 +140,52 @@ def test_workspace_bootstrap_join_channel_and_event_round_trip() -> None:
         ],
         now=NOW + 2,
     )
+    combined_close = create_workspace_manifest(
+        owner,
+        workspace_id=genesis.workspace_id,
+        epoch=2,
+        previous_manifest_hash=initial.digest,
+        name=initial.name,
+        description=initial.description,
+        authority_device_id=initial.authority_device_id,
+        members=[
+            WorkspaceManifestMemberInput(
+                member.member_id,
+                member.display_name,
+                member.role,
+                [device.serialized for device in member.devices],
+            )
+            for member in initial.members
+        ]
+        + [
+            WorkspaceManifestMemberInput(
+                join.member_id,
+                join.device.display_name,
+                WorkspaceRole.MEMBER,
+                [join.device.serialized],
+            )
+        ],
+        status="closed",
+        now=NOW + 2,
+    )
+    with pytest.raises(ValidationError, match="closure cannot change membership"):
+        verify_workspace_manifest_transition(combined_close, initial, now=NOW + 2)
     manifest = verify_workspace_manifest_transition(
         manifest_raw, initial, now=NOW + 2
     )
+    # Protocol v1 already allowed a later owner-authorized checkpoint in a
+    # fresh invitation. Pin it to genesis without narrowing that valid wire
+    # behavior to epoch one.
+    later_invitation = create_workspace_invitation(
+        owner,
+        genesis=genesis.serialized,
+        manifest=manifest.serialized,
+        nonce=b"l" * 32,
+        now=NOW + 2,
+    )
+    assert verify_workspace_invitation(
+        later_invitation, now=NOW + 2
+    ).offered_manifest.epoch == 2
     channel_raw = create_workspace_channel_record(
         owner,
         workspace_id=genesis.workspace_id,
@@ -192,6 +241,193 @@ def test_workspace_documents_fail_closed_on_tampering_expiry_and_wrong_signer() 
     with pytest.raises(IdentityMismatch):
         verify_workspace_invitation(
             json.dumps(tampered, separators=(",", ":"), sort_keys=True), now=NOW
+        )
+
+
+def test_eight_member_manifest_metadata_and_display_name_transitions_fit_wire() -> None:
+    owner, _created, genesis, manifest = _workspace()
+    admitted: list[tuple[RNS.Identity, str, str]] = []
+    for index in range(7):
+        identity = RNS.Identity()
+        member_id = _id()
+        device_id = _id()
+        card = create_workspace_device_card(
+            identity,
+            workspace_id=genesis.workspace_id,
+            member_id=member_id,
+            device_id=device_id,
+            display_name=f"Member {index + 1}",
+            now=NOW + index + 1,
+        )
+        raw = create_workspace_manifest(
+            owner,
+            workspace_id=genesis.workspace_id,
+            epoch=manifest.epoch + 1,
+            previous_manifest_hash=manifest.digest,
+            name=manifest.name,
+            description=manifest.description,
+            authority_device_id=manifest.authority_device_id,
+            members=[
+                WorkspaceManifestMemberInput(
+                    member.member_id,
+                    member.display_name,
+                    member.role,
+                    [device.serialized for device in member.devices],
+                    member.status,
+                )
+                for member in manifest.members
+            ]
+            + [
+                WorkspaceManifestMemberInput(
+                    member_id,
+                    f"Member {index + 1}",
+                    WorkspaceRole.MEMBER,
+                    [card],
+                )
+            ],
+            now=NOW + index + 1,
+        )
+        manifest = verify_workspace_manifest_transition(
+            raw, manifest, now=NOW + index + 1
+        )
+        admitted.append((identity, member_id, device_id))
+    assert len(manifest.members) == 8
+    assert len(manifest.serialized.encode("utf-8")) <= MAX_WORKSPACE_DOCUMENT_BYTES
+    assert build_workspace_fields(
+        kind="workspace_manifest_root",
+        logical_id=_id(),
+        workspace_id=genesis.workspace_id,
+        expires_at=int(time.time()) + 60,
+        document=manifest.serialized,
+    )
+
+    metadata_raw = create_workspace_manifest(
+        owner,
+        workspace_id=genesis.workspace_id,
+        epoch=manifest.epoch + 1,
+        previous_manifest_hash=manifest.digest,
+        name="Eight-person field coordination",
+        description="Metadata changes are authority-signed and catch up by epoch.",
+        authority_device_id=manifest.authority_device_id,
+        members=[
+            WorkspaceManifestMemberInput(
+                member.member_id,
+                member.display_name,
+                member.role,
+                [device.serialized for device in member.devices],
+                member.status,
+            )
+            for member in manifest.members
+        ],
+        now=NOW + 8,
+    )
+    metadata = verify_workspace_manifest_transition(
+        metadata_raw, manifest, now=NOW + 8
+    )
+    assert metadata.name == "Eight-person field coordination"
+
+    identity, member_id, device_id = admitted[0]
+    request_raw = create_workspace_display_name_request(
+        identity,
+        manifest=metadata,
+        member_id=member_id,
+        device_id=device_id,
+        display_name="River lead",
+        now=NOW + 9,
+    )
+    request = verify_workspace_display_name_request(
+        request_raw, manifest=metadata, now=NOW + 9
+    )
+    decision_raw = create_workspace_display_name_decision(
+        owner,
+        manifest=metadata,
+        request=request,
+        approved=False,
+        now=NOW + 9,
+    )
+    assert not verify_workspace_display_name_decision(
+        decision_raw, manifest=metadata, request=request, now=NOW + 9
+    ).approved
+    renamed_raw = create_workspace_manifest(
+        owner,
+        workspace_id=genesis.workspace_id,
+        epoch=metadata.epoch + 1,
+        previous_manifest_hash=metadata.digest,
+        name=metadata.name,
+        description=metadata.description,
+        authority_device_id=metadata.authority_device_id,
+        members=[
+            WorkspaceManifestMemberInput(
+                member.member_id,
+                request.display_name
+                if member.member_id == request.member_id
+                else member.display_name,
+                member.role,
+                [request.replacement_device.serialized]
+                if member.member_id == request.member_id
+                else [device.serialized for device in member.devices],
+                member.status,
+            )
+            for member in metadata.members
+        ],
+        now=NOW + 10,
+    )
+    renamed = verify_workspace_manifest_transition(
+        renamed_raw, metadata, now=NOW + 10
+    )
+    assert next(
+        member for member in renamed.members if member.member_id == member_id
+    ).display_name == "River lead"
+
+    tampered = json.loads(request_raw)
+    tampered["display_name"] = "Mallory"
+    with pytest.raises(ValidationError):
+        verify_workspace_display_name_request(
+            json.dumps(tampered, separators=(",", ":"), sort_keys=True),
+            manifest=metadata,
+            now=NOW + 9,
+        )
+
+
+def test_workspace_genesis_pins_the_initial_manifest_authority() -> None:
+    _owner, _created, genesis, manifest = _workspace()
+    attacker = RNS.Identity()
+    attacker_member_id = _id()
+    attacker_device_id = _id()
+    attacker_card = create_workspace_device_card(
+        attacker,
+        workspace_id=genesis.workspace_id,
+        member_id=attacker_member_id,
+        device_id=attacker_device_id,
+        display_name="Mallory",
+        now=NOW,
+    )
+    forged = create_workspace_manifest(
+        attacker,
+        workspace_id=genesis.workspace_id,
+        epoch=1,
+        previous_manifest_hash=genesis.digest,
+        name=genesis.name,
+        description=genesis.description,
+        authority_device_id=attacker_device_id,
+        members=[
+            WorkspaceManifestMemberInput(
+                attacker_member_id,
+                "Mallory",
+                WorkspaceRole.OWNER,
+                [attacker_card],
+            )
+        ],
+        now=NOW,
+    )
+    with pytest.raises(IdentityMismatch):
+        verify_workspace_manifest_transition(forged, genesis, now=NOW)
+    with pytest.raises(IdentityMismatch):
+        create_workspace_invitation(
+            attacker,
+            genesis=genesis.serialized,
+            manifest=forged,
+            now=NOW,
         )
 
     with pytest.raises(IdentityMismatch):

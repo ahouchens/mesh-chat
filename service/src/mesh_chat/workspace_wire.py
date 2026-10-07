@@ -32,6 +32,9 @@ WORKSPACE_WIRE_KINDS = frozenset(
         "workspace_channel_record",
         "workspace_event",
         "workspace_leave_request",
+        "workspace_display_name_request",
+        "workspace_display_name_decision",
+        "workspace_display_name_request",
     }
 )
 WORKSPACE_CONTROL_KINDS = WORKSPACE_WIRE_KINDS - {"workspace_event"}
@@ -130,8 +133,8 @@ def parse_workspace_payload(
     if (
         isinstance(expires_at, bool)
         or not isinstance(expires_at, int)
-        or expires_at < current - 24 * 60 * 60
-        or expires_at > current + DELIVERY_WINDOW_SECONDS + 24 * 60 * 60
+        or expires_at < current
+        or expires_at > current + DELIVERY_WINDOW_SECONDS
     ):
         raise ValidationError("Workspace payload expiry is invalid")
     document = metadata[W_DOCUMENT]
@@ -155,4 +158,3 @@ def parse_workspace_payload(
         expires_at=expires_at,
         document=document,
     )
-

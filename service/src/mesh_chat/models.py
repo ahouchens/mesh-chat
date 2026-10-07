@@ -14,6 +14,7 @@ class DeliveryState(StrEnum):
     DELIVERED = "delivered"
     EXPIRED = "expired"
     FAILED = "failed"
+    CANCELLED = "cancelled"
 
 
 class TrustState(StrEnum):

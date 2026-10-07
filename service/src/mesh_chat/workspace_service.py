@@ -24,6 +24,8 @@ from .workspace_protocol import (
     WorkspaceManifestMemberInput,
     active_members,
     create_workspace_channel_record,
+    create_workspace_display_name_request,
+    create_workspace_display_name_decision,
     create_workspace_event,
     create_workspace_genesis,
     create_workspace_invitation,
@@ -33,6 +35,8 @@ from .workspace_protocol import (
     find_device,
     find_member,
     verify_workspace_channel_record,
+    verify_workspace_display_name_request,
+    verify_workspace_display_name_decision,
     verify_workspace_event,
     verify_workspace_genesis,
     verify_workspace_invitation,
@@ -69,6 +73,7 @@ FINAL_DELIVERY_STATES = {
     DeliveryState.DELIVERED.value,
     DeliveryState.EXPIRED.value,
     DeliveryState.FAILED.value,
+    DeliveryState.CANCELLED.value,
 }
 
 
@@ -98,12 +103,30 @@ def _short_id(value: str) -> str:
 
 
 class WorkspaceServiceMixin:
-    """Increment-one workspace service: two members and one public channel."""
+    """Workspace service for the bounded eight-person public-channel increment."""
 
     store: Any
     network: Any
     settings: Any
     _identity: RNS.Identity | None
+
+    def _workspace_changed(
+        self,
+        workspace_id: str,
+        *,
+        conversation_id: str | None = None,
+        resource_kind: str = "workspace",
+    ) -> None:
+        self.emit(
+            {
+                "type": "event",
+                "event": "workspace_changed",
+                "workspace_id": workspace_id,
+                "conversation_id": conversation_id,
+                "resource_kind": resource_kind,
+                "generation": time.monotonic_ns(),
+            }
+        )
 
     def _workspace_operation(
         self, command: str, operation_id: Any, payload: dict[str, Any]
@@ -261,6 +284,90 @@ class WorkspaceServiceMixin:
             raise ValidationError("Workspace manifest is unavailable")
         return manifest
 
+    def _workspace_manifest_at_epoch(
+        self, workspace_id: str, epoch: int
+    ) -> VerifiedWorkspaceManifest | None:
+        epoch_record = self.store.get(
+            "workspace_manifest_epoch",
+            self._workspace_manifest_epoch_id(workspace_id, epoch),
+        )
+        if epoch_record is None or not isinstance(epoch_record.get("digest"), str):
+            return None
+        return self._workspace_manifest_by_digest(epoch_record["digest"])
+
+    def _workspace_genesis(self, workspace: dict[str, Any]) -> Any:
+        raw = workspace.get("genesis")
+        if not isinstance(raw, str):
+            raise ValidationError("Workspace genesis is unavailable")
+        genesis = verify_workspace_genesis(
+            raw, expected_workspace_id=workspace.get("id")
+        )
+        if genesis.digest != workspace.get("genesis_digest"):
+            raise ValidationError("Stored workspace genesis digest changed")
+        return genesis
+
+    def _workspace_source_is_active(
+        self, workspace_id: str, source_hash: Any
+    ) -> bool:
+        if not isinstance(source_hash, bytes):
+            return False
+        workspace = self.store.get(
+            "workspace", self._workspace_record_id(workspace_id)
+        )
+        if workspace is None:
+            return False
+        # This sealed summary is derived only from a validated manifest and is
+        # intentionally retained while a referenced historical manifest is
+        # temporarily missing. Using it here lets an admitted peer deliver the
+        # missing control without opening the path to an unrelated contact.
+        return any(
+            member.get("status") == "active"
+            and member.get("device", {}).get("destination_hash")
+            == source_hash.hex()
+            for member in workspace.get("members", [])
+        )
+
+    def _set_workspace_sync_issue(
+        self, workspace_id: str, reason: str, *, incomplete: bool = False
+    ) -> None:
+        workspace = self.store.get(
+            "workspace", self._workspace_record_id(workspace_id)
+        )
+        if workspace is None or workspace.get("state") not in {
+            "active",
+            "incomplete_sync",
+            "joining",
+        }:
+            return
+        workspace["sync_issue"] = reason
+        if incomplete and workspace.get("state") == "active":
+            workspace["state"] = "incomplete_sync"
+        workspace["updated_at"] = time.time()
+        self.store.put("workspace", self._workspace_record_id(workspace_id), workspace)
+        self._workspace_changed(workspace_id, resource_kind="sync_state")
+
+    def _clear_workspace_sync_issue_if_resolved(self, workspace_id: str) -> None:
+        workspace = self.store.get(
+            "workspace", self._workspace_record_id(workspace_id)
+        )
+        if (
+            workspace is None
+            or workspace.get("state") == "incomplete_sync"
+            or "sync_issue" not in workspace
+        ):
+            return
+        has_pending = any(
+            item.get("workspace_id") == workspace_id
+            for kind in ("workspace_pending_control", "workspace_pending_event")
+            for item in self.store.list(kind)
+        )
+        if has_pending:
+            return
+        workspace.pop("sync_issue", None)
+        workspace["updated_at"] = time.time()
+        self.store.put("workspace", self._workspace_record_id(workspace_id), workspace)
+        self._workspace_changed(workspace_id, resource_kind="sync_state")
+
     def _workspace_channel_by_digest(
         self, digest: str
     ) -> VerifiedWorkspaceChannel | None:
@@ -299,6 +406,7 @@ class WorkspaceServiceMixin:
     def _apply_manifest_to_workspace(
         self, workspace: dict[str, Any], manifest: VerifiedWorkspaceManifest
     ) -> dict[str, Any]:
+        previous_state = workspace.get("state")
         local_member = find_member(manifest, workspace["local_member_id"])
         workspace["name"] = manifest.name
         workspace["description"] = manifest.description
@@ -322,10 +430,111 @@ class WorkspaceServiceMixin:
             workspace["state"] = "removed"
         elif local_member.status == "left":
             workspace["state"] = "left"
+        elif previous_state == "incomplete_sync":
+            workspace["state"] = "incomplete_sync"
+            workspace["local_role"] = local_member.role.value
         else:
             workspace["state"] = "active"
             workspace["local_role"] = local_member.role.value
         return workspace
+
+    @staticmethod
+    def _workspace_manifest_member_inputs(
+        manifest: VerifiedWorkspaceManifest,
+        *,
+        replacement_member_id: str | None = None,
+        replacement_display_name: str | None = None,
+        replacement_device: str | None = None,
+        replacement_status: str | None = None,
+    ) -> list[WorkspaceManifestMemberInput]:
+        inputs: list[WorkspaceManifestMemberInput] = []
+        for member in manifest.members:
+            replacing = member.member_id == replacement_member_id
+            inputs.append(
+                WorkspaceManifestMemberInput(
+                    member.member_id,
+                    (
+                        replacement_display_name
+                        if replacing and replacement_display_name is not None
+                        else member.display_name
+                    ),
+                    member.role,
+                    (
+                        [replacement_device]
+                        if replacing and replacement_device is not None
+                        else [device.serialized for device in member.devices]
+                    ),
+                    (
+                        replacement_status
+                        if replacing and replacement_status is not None
+                        else member.status
+                    ),
+                )
+            )
+        return inputs
+
+    @staticmethod
+    def _workspace_manifest_recipients(
+        manifest: VerifiedWorkspaceManifest,
+        *,
+        excluding_member_id: str,
+        include_member_ids: set[str] | None = None,
+    ) -> list[tuple[str, Any]]:
+        recipients: list[tuple[str, Any]] = []
+        included = include_member_ids or set()
+        for member in manifest.members:
+            if member.member_id == excluding_member_id:
+                continue
+            if member.status != "active" and member.member_id not in included:
+                continue
+            recipients.extend((member.member_id, device) for device in member.devices)
+        return recipients
+
+    def _workspace_manifest_deliveries(
+        self,
+        workspace_id: str,
+        manifests: Iterable[VerifiedWorkspaceManifest],
+        recipients: Iterable[tuple[str, Any]],
+    ) -> list[dict[str, Any]]:
+        checked_manifests = list(manifests)
+        checked_recipients = list(recipients)
+        return [
+            self._workspace_delivery_record(
+                workspace_id=workspace_id,
+                recipient_member_id=member_id,
+                recipient_device=device,
+                kind="workspace_manifest_root",
+                document=manifest.serialized,
+                priority=0,
+            )
+            for member_id, device in checked_recipients
+            for manifest in checked_manifests
+        ]
+
+    def _workspace_manifest_chain_after(
+        self,
+        workspace_id: str,
+        epoch: int,
+        final_manifest: VerifiedWorkspaceManifest,
+    ) -> list[VerifiedWorkspaceManifest]:
+        manifests: list[VerifiedWorkspaceManifest] = []
+        for next_epoch in range(epoch + 1, final_manifest.epoch):
+            manifest = self._workspace_manifest_at_epoch(workspace_id, next_epoch)
+            if manifest is None:
+                raise ValidationError("Workspace manifest catch-up chain is unavailable")
+            manifests.append(manifest)
+        manifests.append(final_manifest)
+        return manifests
+
+    def _apply_manifest_public_identities(
+        self, workspace: dict[str, Any], manifest: VerifiedWorkspaceManifest
+    ) -> None:
+        for member in workspace["members"]:
+            verified = find_member(manifest, member["id"])
+            if verified is not None:
+                member["device"]["public_identity"] = _b64(
+                    verified.devices[0].public_identity
+                )
 
     @staticmethod
     def _manifest_record(manifest: VerifiedWorkspaceManifest) -> dict[str, Any]:
@@ -428,31 +637,83 @@ class WorkspaceServiceMixin:
         people: dict[str, list[str]] = defaultdict(list)
         for item in devices.values():
             people[item["member_id"]].append(item["state"])
+        reached_states = {
+            DeliveryState.RECEIVED_BY_ENDPOINT.value,
+            DeliveryState.DELIVERED.value,
+        }
+        terminal_failure_states = {
+            DeliveryState.FAILED.value,
+            DeliveryState.EXPIRED.value,
+            DeliveryState.CANCELLED.value,
+        }
         reached_people = sum(
-            any(state in {DeliveryState.RECEIVED_BY_ENDPOINT.value, DeliveryState.DELIVERED.value} for state in states)
+            any(state in reached_states for state in states)
+            for states in people.values()
+        )
+        partial_people = sum(
+            any(state in reached_states for state in states)
+            and not all(state in reached_states for state in states)
+            for states in people.values()
+        )
+        failed_people = sum(
+            not any(state in reached_states for state in states)
+            and all(state in terminal_failure_states for state in states)
             for states in people.values()
         )
         reached_devices = sum(
             item["state"]
-            in {DeliveryState.RECEIVED_BY_ENDPOINT.value, DeliveryState.DELIVERED.value}
+            in reached_states
             for item in devices.values()
         )
         failed_devices = sum(
-            item["state"] in {DeliveryState.FAILED.value, DeliveryState.EXPIRED.value}
+            item["state"] == DeliveryState.FAILED.value
+            for item in devices.values()
+        )
+        expired_devices = sum(
+            item["state"] == DeliveryState.EXPIRED.value
+            for item in devices.values()
+        )
+        cancelled_devices = sum(
+            item["state"] == DeliveryState.CANCELLED.value
             for item in devices.values()
         )
         return {
             "people_total": len(people),
             "people_reached": reached_people,
+            "people_partial": partial_people,
+            "people_pending": max(0, len(people) - reached_people - failed_people),
+            "people_failed": failed_people,
             "devices_total": len(devices),
             "devices_reached": reached_devices,
-            "devices_pending": max(0, len(devices) - reached_devices - failed_devices),
+            "devices_pending": max(
+                0,
+                len(devices)
+                - reached_devices
+                - failed_devices
+                - expired_devices
+                - cancelled_devices,
+            ),
             "devices_failed": failed_devices,
+            "devices_expired": expired_devices,
+            "devices_cancelled": cancelled_devices,
         }
 
     def _public_workspace_message(self, message: dict[str, Any]) -> dict[str, Any]:
         public = dict(message)
-        public.pop("delivery_devices", None)
+        delivery_devices = public.pop("delivery_devices", None)
+        if isinstance(delivery_devices, dict):
+            public["deliveries"] = [
+                {
+                    "member_id": item["member_id"],
+                    "member_display_name": item.get(
+                        "member_display_name", "Member"
+                    ),
+                    "device_id": device_id,
+                    "device_short_id": _short_id(device_id),
+                    "state": item["state"],
+                }
+                for device_id, item in sorted(delivery_devices.items())
+            ]
         if message.get("direction") == "outbound" and "delivery_summary" not in public:
             public["delivery_summary"] = self._workspace_delivery_summary(message["id"])
         return public
@@ -631,7 +892,7 @@ class WorkspaceServiceMixin:
                 ),
             ],
         )
-        self._changed()
+        self._workspace_changed(workspace["id"])
         return committed
 
     def create_workspace_invitation_command(
@@ -649,8 +910,22 @@ class WorkspaceServiceMixin:
         workspace = self._require_workspace(workspace_id)
         if workspace.get("state") != "active" or workspace.get("local_role") != "owner":
             raise ContactNotApproved("Only the active workspace owner can invite members")
-        if len(active_members(self._workspace_current_manifest(workspace))) >= MAX_ACTIVE_MEMBERS:
-            raise ValidationError("Increment one supports two active workspace members")
+        if len(self._workspace_current_manifest(workspace).members) >= MAX_ACTIVE_MEMBERS:
+            raise ValidationError("A workspace supports at most eight people")
+        now = time.time()
+        expired_records: list[tuple[str, str, dict[str, Any]]] = []
+        for record_id, existing in self.store.items("workspace_invitation"):
+            if (
+                existing.get("workspace_id") != workspace_id
+                or existing.get("state") != "active"
+            ):
+                continue
+            if float(existing.get("expires_at", 0)) <= now:
+                existing = dict(existing)
+                existing["state"] = "expired"
+                existing["updated_at"] = now
+                expired_records.append(("workspace_invitation", record_id, existing))
+                continue
         if (
             isinstance(lifetime_days, bool)
             or not isinstance(lifetime_days, int)
@@ -695,9 +970,9 @@ class WorkspaceServiceMixin:
             operation_id,
             digest,
             outcome,
-            [("workspace_invitation", invitation_id, record)],
+            [*expired_records, ("workspace_invitation", invitation_id, record)],
         )
-        self._changed()
+        self._workspace_changed(workspace["id"], resource_kind="invitation")
         return committed
 
     def preview_workspace_invitation(self, raw: Any) -> dict[str, Any]:
@@ -733,7 +1008,7 @@ class WorkspaceServiceMixin:
             outcome,
             [("workspace_invitation", invitation_id, invitation)],
         )
-        self._changed()
+        self._workspace_changed(workspace_id, resource_kind="invitation")
         return committed
 
     def _workspace_delivery_record(
@@ -753,6 +1028,7 @@ class WorkspaceServiceMixin:
             "workspace_id": workspace_id,
             "recipient_member_id": recipient_member_id,
             "recipient_device_id": recipient_device.device_id,
+            "recipient_display_name": recipient_device.display_name,
             "recipient_destination": recipient_device.destination_hash.hex(),
             "recipient_public_identity": _b64(recipient_device.public_identity),
             "recipient_hints": [dict(item) for item in recipient_device.hints[:2]],
@@ -766,6 +1042,62 @@ class WorkspaceServiceMixin:
             "created_at": now,
             "expires_at": now + DELIVERY_WINDOW_SECONDS,
         }
+
+    def _cancel_workspace_member_deliveries(
+        self, workspace_id: str, member_id: str
+    ) -> tuple[
+        list[tuple[str, str, dict[str, Any]]], set[str]
+    ]:
+        now = time.time()
+        records: list[tuple[str, str, dict[str, Any]]] = []
+        cancelled_ids: list[str] = []
+        outbound_ids: set[str] = set()
+        changed_messages: dict[str, dict[str, Any]] = {}
+        for delivery_id, stored in self.store.items("workspace_delivery"):
+            if (
+                stored.get("workspace_id") != workspace_id
+                or stored.get("recipient_member_id") != member_id
+                or stored.get("state") in FINAL_DELIVERY_STATES
+            ):
+                continue
+            delivery = dict(stored)
+            delivery["state"] = DeliveryState.CANCELLED.value
+            delivery["cancelled_at"] = now
+            records.append(("workspace_delivery", delivery_id, delivery))
+            cancelled_ids.append(delivery_id)
+            outbound_ids.add(delivery_id)
+            event_id = delivery.get("event_id")
+            if not isinstance(event_id, str):
+                continue
+            message_id = self._workspace_message_record_id(event_id)
+            message = changed_messages.get(message_id)
+            if message is None:
+                stored_message = self.store.get("workspace_message_state", message_id)
+                if stored_message is None:
+                    continue
+                message = dict(stored_message)
+            devices = dict(message.get("delivery_devices", {}))
+            existing = dict(devices.get(delivery["recipient_device_id"], {}))
+            existing.update(
+                {
+                    "member_id": member_id,
+                    "member_display_name": delivery.get(
+                        "recipient_display_name", "Member"
+                    ),
+                    "state": DeliveryState.CANCELLED.value,
+                }
+            )
+            devices[delivery["recipient_device_id"]] = existing
+            message["delivery_devices"] = devices
+            message["delivery_summary"] = (
+                self._workspace_delivery_summary_from_devices(devices)
+            )
+            changed_messages[message_id] = message
+        records.extend(
+            ("workspace_message_state", message_id, message)
+            for message_id, message in changed_messages.items()
+        )
+        return records, outbound_ids
 
     def submit_workspace_join(
         self, invitation: Any, operation_id: Any
@@ -883,12 +1215,18 @@ class WorkspaceServiceMixin:
         network = getattr(self, "network", None)
         if network is not None:
             network.remember_contact(owner[1].public_identity, owner[1].destination_hash)
-        self._changed()
+        self._workspace_changed(workspace["id"])
         return committed
 
-    def _receive_workspace_join(self, wire: WorkspaceWirePayload) -> None:
+    def _receive_workspace_join(
+        self, wire: WorkspaceWirePayload, source_hash: Any = None
+    ) -> None:
         join = verify_workspace_join(wire.document)
-        if join.workspace_id != wire.workspace_id:
+        if (
+            join.workspace_id != wire.workspace_id
+            or not isinstance(source_hash, bytes)
+            or join.device.destination_hash != source_hash
+        ):
             return
         workspace = self.store.get(
             "workspace", self._workspace_record_id(join.workspace_id)
@@ -942,7 +1280,7 @@ class WorkspaceServiceMixin:
         network = getattr(self, "network", None)
         if network is not None:
             network.remember_contact(join.device.public_identity, join.device.destination_hash)
-        self._changed()
+        self._workspace_changed(join.workspace_id, resource_kind="join_request")
 
     def approve_workspace_join(
         self,
@@ -976,24 +1314,16 @@ class WorkspaceServiceMixin:
         join = verify_workspace_join(
             request["document"], invitation=invitation["document"]
         )
+        checked_invitation = verify_workspace_invitation(invitation["document"])
         current = self._workspace_current_manifest(workspace)
         if len(active_members(current)) >= MAX_ACTIVE_MEMBERS:
-            raise ValidationError("Increment one supports two active workspace members")
+            raise ValidationError("A workspace supports at most eight active people")
         if find_member(current, join.member_id) is not None:
             raise ValidationError("Workspace member ID is already present")
         identity = self._identity
         if identity is None:
             raise ValidationError("Local identity is unavailable")
-        member_inputs = [
-            WorkspaceManifestMemberInput(
-                member.member_id,
-                member.display_name,
-                member.role,
-                [device.serialized for device in member.devices],
-                member.status,
-            )
-            for member in current.members
-        ]
+        member_inputs = self._workspace_manifest_member_inputs(current)
         member_inputs.append(
             WorkspaceManifestMemberInput(
                 join.member_id,
@@ -1017,13 +1347,11 @@ class WorkspaceServiceMixin:
             invitation_requests=current.invitation_requests,
         )
         next_manifest = verify_workspace_manifest_transition(next_raw, current)
+        existing_recipients = self._workspace_manifest_recipients(
+            current, excluding_member_id=workspace["local_member_id"]
+        )
         self._apply_manifest_to_workspace(workspace, next_manifest)
-        for member in workspace["members"]:
-            verified = find_member(next_manifest, member["id"])
-            if verified is not None:
-                member["device"]["public_identity"] = _b64(
-                    verified.devices[0].public_identity
-                )
+        self._apply_manifest_public_identities(workspace, next_manifest)
         request["state"] = "approved"
         request["updated_at"] = time.time()
         invitation["state"] = "consumed"
@@ -1038,13 +1366,21 @@ class WorkspaceServiceMixin:
         )
         if control is None:
             raise ValidationError("General channel control is unavailable")
-        manifest_delivery = self._workspace_delivery_record(
-            workspace_id=workspace_id,
-            recipient_member_id=join.member_id,
-            recipient_device=join.device,
-            kind="workspace_manifest_root",
-            document=next_manifest.serialized,
-            priority=0,
+        manifest_deliveries = self._workspace_manifest_deliveries(
+            workspace_id,
+            [next_manifest],
+            existing_recipients,
+        )
+        manifest_deliveries.extend(
+            self._workspace_manifest_deliveries(
+                workspace_id,
+                self._workspace_manifest_chain_after(
+                    workspace_id,
+                    checked_invitation.offered_manifest.epoch,
+                    next_manifest,
+                ),
+                [(join.member_id, join.device)],
+            )
         )
         channel_delivery = self._workspace_delivery_record(
             workspace_id=workspace_id,
@@ -1069,14 +1405,17 @@ class WorkspaceServiceMixin:
             self._manifest_epoch_record(next_manifest),
             ("workspace_join_request", request_id, request),
             ("workspace_invitation", request["invitation_id"], invitation),
-            ("workspace_delivery", manifest_delivery["id"], manifest_delivery),
+            *[
+                ("workspace_delivery", delivery["id"], delivery)
+                for delivery in manifest_deliveries
+            ],
             ("workspace_delivery", channel_delivery["id"], channel_delivery),
-            *self._due_records(add=[manifest_delivery, channel_delivery]),
+            *self._due_records(add=[*manifest_deliveries, channel_delivery]),
         ]
         committed = self.store.commit_operation(
             operation_id, digest, outcome, records
         )
-        self._changed()
+        self._workspace_changed(workspace_id)
         return committed
 
     def decline_workspace_join(
@@ -1092,12 +1431,16 @@ class WorkspaceServiceMixin:
         if replay is not None:
             return replay
         workspace = self._require_workspace(workspace_id)
-        if workspace.get("local_role") != "owner":
-            raise ContactNotApproved("Only the workspace owner can decline joins")
+        if workspace.get("local_role") != "owner" or workspace.get("state") != "active":
+            raise ContactNotApproved("Only the active workspace owner can decline joins")
         if not isinstance(request_id, str):
             raise ValidationError("Workspace join request ID is invalid")
         request = self.store.get("workspace_join_request", request_id)
-        if request is None or request.get("state") != "pending":
+        if (
+            request is None
+            or request.get("workspace_id") != workspace_id
+            or request.get("state") != "pending"
+        ):
             raise ValidationError("Workspace join request is no longer pending")
         request["state"] = "declined"
         request["updated_at"] = time.time()
@@ -1108,7 +1451,7 @@ class WorkspaceServiceMixin:
             outcome,
             [("workspace_join_request", request_id, request)],
         )
-        self._changed()
+        self._workspace_changed(workspace_id, resource_kind="join_request")
         return committed
 
     def _append_workspace_event_records(
@@ -1330,6 +1673,7 @@ class WorkspaceServiceMixin:
         message["delivery_devices"] = {
             item["recipient_device_id"]: {
                 "member_id": item["recipient_member_id"],
+                "member_display_name": item["recipient_display_name"],
                 "state": item["state"],
             }
             for item in deliveries
@@ -1349,7 +1693,9 @@ class WorkspaceServiceMixin:
         committed = self.store.commit_operation(
             operation_id, digest, outcome, records
         )
-        self._changed()
+        self._workspace_changed(
+            workspace_id, conversation_id=channel_id, resource_kind="message"
+        )
         return committed
 
     def _store_pending_workspace_event(
@@ -1387,15 +1733,9 @@ class WorkspaceServiceMixin:
             or sender_count >= MAX_PENDING_EVENTS_PER_SENDER
             or pending_profile_bytes + encoded_bytes > MAX_PENDING_EVENT_BYTES
         ):
-            workspace = self.store.get(
-                "workspace", self._workspace_record_id(wire.workspace_id)
+            self._set_workspace_sync_issue(
+                wire.workspace_id, "queue_pressure", incomplete=True
             )
-            if workspace is not None and workspace.get("state") == "active":
-                workspace["state"] = "incomplete_sync"
-                self.store.put(
-                    "workspace", self._workspace_record_id(wire.workspace_id), workspace
-                )
-                self._changed()
             return
         self.store.put(
             "workspace_pending_event",
@@ -1412,7 +1752,7 @@ class WorkspaceServiceMixin:
                 "created_at": time.time(),
             },
         )
-        self._changed()
+        self._set_workspace_sync_issue(wire.workspace_id, reason)
 
     def _accept_workspace_event(self, wire: WorkspaceWirePayload) -> bool:
         try:
@@ -1447,7 +1787,7 @@ class WorkspaceServiceMixin:
                 self.store.put(
                     "workspace", self._workspace_record_id(workspace["id"]), workspace
                 )
-                self._changed()
+                self._workspace_changed(event.workspace_id, resource_kind="security")
                 return False
             current = self._workspace_current_manifest(workspace)
             current_device = find_device(current, event.author_device_id)
@@ -1468,7 +1808,7 @@ class WorkspaceServiceMixin:
                 self.store.put(
                     "workspace", self._workspace_record_id(workspace["id"]), workspace
                 )
-                self._changed()
+                self._workspace_changed(event.workspace_id, resource_kind="security")
                 return False
             stream_head = self.store.get(
                 "workspace_stream_coverage",
@@ -1507,9 +1847,13 @@ class WorkspaceServiceMixin:
                 )
             )
             self.store.put_many(records)
-            self._changed()
+            self._workspace_changed(
+                event.workspace_id,
+                conversation_id=event.conversation_id,
+                resource_kind="message",
+            )
             return True
-        except (ValidationError, json.JSONDecodeError):
+        except (MeshChatError, json.JSONDecodeError):
             return False
 
     def _store_pending_workspace_control(
@@ -1533,15 +1877,9 @@ class WorkspaceServiceMixin:
             wire.kind == "workspace_manifest_root"
             and future_manifests >= MAX_FUTURE_MANIFESTS
         ):
-            workspace = self.store.get(
-                "workspace", self._workspace_record_id(wire.workspace_id)
+            self._set_workspace_sync_issue(
+                wire.workspace_id, "queue_pressure", incomplete=True
             )
-            if workspace is not None and workspace.get("state") == "active":
-                workspace["state"] = "incomplete_sync"
-                self.store.put(
-                    "workspace", self._workspace_record_id(wire.workspace_id), workspace
-                )
-                self._changed()
             return
         self.store.put(
             "workspace_pending_control",
@@ -1557,6 +1895,7 @@ class WorkspaceServiceMixin:
                 "created_at": time.time(),
             },
         )
+        self._set_workspace_sync_issue(wire.workspace_id, reason)
 
     def _receive_workspace_manifest(
         self, wire: WorkspaceWirePayload, *, drain_pending: bool = True
@@ -1575,15 +1914,31 @@ class WorkspaceServiceMixin:
                 self._workspace_manifest_epoch_id(wire.workspace_id, incoming.epoch),
             )
             if existing_same_epoch is not None:
+                predecessor = (
+                    self._workspace_genesis(workspace)
+                    if incoming.epoch == 1
+                    else self._workspace_manifest_at_epoch(
+                        wire.workspace_id, incoming.epoch - 1
+                    )
+                )
+                if predecessor is None:
+                    return False
+                # A manifest is conflicting only after its signer and hash link
+                # validate against the already pinned predecessor. A merely
+                # self-consistent outsider manifest must not be able to force a
+                # workspace-wide denial of service.
+                checked_same_epoch = verify_workspace_manifest_transition(
+                    wire.document, predecessor
+                )
                 if existing_same_epoch.get("digest") != incoming.digest:
                     workspace["state"] = "forked"
                     workspace["security_error"] = "manifest_fork"
                     self.store.put(
                         "workspace", self._workspace_record_id(wire.workspace_id), workspace
                     )
-                    self._changed()
+                    self._workspace_changed(wire.workspace_id, resource_kind="security")
                     return False
-                return True
+                return checked_same_epoch.digest == incoming.digest
             current = self._workspace_current_manifest(workspace)
             if incoming.epoch > current.epoch + 1:
                 self._store_pending_workspace_control(wire, "missing_manifest_predecessor")
@@ -1592,11 +1947,30 @@ class WorkspaceServiceMixin:
                 return False
             checked = verify_workspace_manifest_transition(wire.document, current)
             self._apply_manifest_to_workspace(workspace, checked)
-            for member in workspace["members"]:
-                verified = find_member(checked, member["id"])
-                if verified is not None:
-                    member["device"]["public_identity"] = _b64(
-                        verified.devices[0].public_identity
+            self._apply_manifest_public_identities(workspace, checked)
+            resolved_name_requests: list[
+                tuple[str, str, dict[str, Any]]
+            ] = []
+            for request_id, request in self.store.items(
+                "workspace_display_name_request"
+            ):
+                if (
+                    request.get("workspace_id") != workspace["id"]
+                    or request.get("state") != "pending"
+                ):
+                    continue
+                member = find_member(checked, request.get("member_id"))
+                if member is not None and member.display_name == request.get(
+                    "display_name"
+                ):
+                    request["state"] = "approved"
+                    request["updated_at"] = time.time()
+                    resolved_name_requests.append(
+                        (
+                            "workspace_display_name_request",
+                            request_id,
+                            request,
+                        )
                     )
             self.store.put_many(
                 [
@@ -1607,15 +1981,16 @@ class WorkspaceServiceMixin:
                         self._manifest_record(checked),
                     ),
                     self._manifest_epoch_record(checked),
+                    *resolved_name_requests,
                 ]
             )
             self._remember_workspace_devices(workspace)
             if drain_pending:
                 self._drain_workspace_pending_controls(workspace["id"])
             self._drain_workspace_pending_events(workspace["id"])
-            self._changed()
+            self._workspace_changed(workspace["id"])
             return True
-        except ValidationError:
+        except MeshChatError:
             return False
 
     def _receive_workspace_channel(self, wire: WorkspaceWirePayload) -> bool:
@@ -1633,6 +2008,19 @@ class WorkspaceServiceMixin:
             workspace = self._require_workspace(wire.workspace_id)
             if workspace.get("state") in {"closed", "forked", "removed", "left"}:
                 return False
+            genesis = self._workspace_genesis(workspace)
+            initial_manifest = self._workspace_manifest_at_epoch(wire.workspace_id, 1)
+            if (
+                initial_manifest is None
+                or channel.manifest_digest != initial_manifest.digest
+                or channel.version != 1
+                or channel.previous_hash is not None
+                or channel.visibility != "public"
+                or channel.archived
+                or channel.manager_member_id != genesis.owner_member_id
+                or channel.manager_device_id != genesis.authority_device_id
+            ):
+                return False
             existing_channel = self.store.get(
                 "workspace_channel", self._workspace_channel_record_id(channel.channel_id)
             )
@@ -1644,7 +2032,7 @@ class WorkspaceServiceMixin:
                 self.store.put(
                     "workspace", self._workspace_record_id(workspace["id"]), workspace
                 )
-                self._changed()
+                self._workspace_changed(workspace["id"], resource_kind="security")
                 return False
             if workspace.get("general_channel_id") not in {None, channel.channel_id}:
                 workspace["state"] = "forked"
@@ -1652,7 +2040,7 @@ class WorkspaceServiceMixin:
                 self.store.put(
                     "workspace", self._workspace_record_id(workspace["id"]), workspace
                 )
-                self._changed()
+                self._workspace_changed(workspace["id"], resource_kind="security")
                 return False
             workspace["general_channel_id"] = channel.channel_id
             workspace["updated_at"] = time.time()
@@ -1707,9 +2095,13 @@ class WorkspaceServiceMixin:
                 ]
             )
             self._drain_workspace_pending_events(workspace["id"])
-            self._changed()
+            self._workspace_changed(
+                workspace["id"],
+                conversation_id=channel.channel_id,
+                resource_kind="channel",
+            )
             return True
-        except (ValidationError, json.JSONDecodeError):
+        except (MeshChatError, json.JSONDecodeError):
             return False
 
     def _drain_workspace_pending_controls(self, workspace_id: str) -> None:
@@ -1758,6 +2150,7 @@ class WorkspaceServiceMixin:
                     made_progress = True
             if not made_progress:
                 break
+        self._clear_workspace_sync_issue_if_resolved(workspace_id)
 
     def _drain_workspace_pending_events(self, workspace_id: str) -> None:
         for pending in self.store.list("workspace_pending_event")[:MAX_PENDING_EVENTS]:
@@ -1775,6 +2168,7 @@ class WorkspaceServiceMixin:
             )
             if self._accept_workspace_event(wire):
                 self.store.delete("workspace_pending_event", pending["id"])
+        self._clear_workspace_sync_issue_if_resolved(workspace_id)
 
     def list_workspace_messages(
         self,
@@ -1784,7 +2178,15 @@ class WorkspaceServiceMixin:
         limit: Any = MESSAGE_PAGE_DEFAULT,
     ) -> dict[str, Any]:
         workspace = self._require_workspace(workspace_id)
-        if workspace.get("state") not in {"active", "closed", "left", "removed"}:
+        if workspace.get("state") not in {
+            "active",
+            "leaving",
+            "closed",
+            "left",
+            "removed",
+            "forked",
+            "incomplete_sync",
+        }:
             raise ContactNotApproved("Workspace history is unavailable in this state")
         self._require_workspace_channel(workspace_id, channel_id)
         if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= MESSAGE_PAGE_MAX:
@@ -1935,7 +2337,9 @@ class WorkspaceServiceMixin:
                 ),
             ],
         )
-        self._changed()
+        self._workspace_changed(
+            workspace_id, conversation_id=channel_id, resource_kind="read_state"
+        )
         return committed
 
     def hide_workspace_message(
@@ -1969,7 +2373,11 @@ class WorkspaceServiceMixin:
                 )
             ],
         )
-        self._changed()
+        self._workspace_changed(
+            workspace_id,
+            conversation_id=message.get("conversation_id"),
+            resource_kind="message_visibility",
+        )
         return committed
 
     def save_workspace_draft(
@@ -2003,9 +2411,512 @@ class WorkspaceServiceMixin:
         }
         records = [] if text == "" else [("workspace_draft", record_id, outcome)]
         deletions = [("workspace_draft", record_id)] if text == "" else []
-        return self.store.commit_operation(
+        committed = self.store.commit_operation(
             operation_id, digest, outcome, records, deletions
         )
+        self._workspace_changed(
+            workspace_id, conversation_id=channel_id, resource_kind="draft"
+        )
+        return committed
+
+    def update_workspace_metadata(
+        self,
+        workspace_id: Any,
+        name: Any,
+        description: Any,
+        operation_id: Any,
+    ) -> dict[str, Any]:
+        payload = {
+            "workspace_id": workspace_id,
+            "name": name,
+            "description": description,
+        }
+        operation_id, digest, replay = self._workspace_operation(
+            "update_workspace_metadata", operation_id, payload
+        )
+        if replay is not None:
+            return replay
+        workspace = self._require_workspace(workspace_id)
+        if (
+            workspace.get("state") != "active"
+            or workspace.get("local_role") != WorkspaceRole.OWNER.value
+        ):
+            raise ContactNotApproved(
+                "Workspace metadata changes wait for the active owner"
+            )
+        identity = self._identity
+        if identity is None:
+            raise ValidationError("Local identity is unavailable")
+        current = self._workspace_current_manifest(workspace)
+        raw = create_workspace_manifest(
+            identity,
+            workspace_id=workspace_id,
+            epoch=current.epoch + 1,
+            previous_manifest_hash=current.digest,
+            name=name,
+            description=description,
+            authority_device_id=current.authority_device_id,
+            members=self._workspace_manifest_member_inputs(current),
+            retention_days=current.retention_days,
+            channel_creation=current.channel_creation,
+            posting=current.posting,
+            invitation_requests=current.invitation_requests,
+        )
+        next_manifest = verify_workspace_manifest_transition(raw, current)
+        recipients = self._workspace_manifest_recipients(
+            current, excluding_member_id=workspace["local_member_id"]
+        )
+        deliveries = self._workspace_manifest_deliveries(
+            workspace_id, [next_manifest], recipients
+        )
+        self._apply_manifest_to_workspace(workspace, next_manifest)
+        self._apply_manifest_public_identities(workspace, next_manifest)
+        outcome = self._public_workspace(workspace)
+        committed = self.store.commit_operation(
+            operation_id,
+            digest,
+            outcome,
+            [
+                ("workspace", self._workspace_record_id(workspace_id), workspace),
+                (
+                    "workspace_manifest",
+                    self._workspace_manifest_record_id(next_manifest.digest),
+                    self._manifest_record(next_manifest),
+                ),
+                self._manifest_epoch_record(next_manifest),
+                *[
+                    ("workspace_delivery", delivery["id"], delivery)
+                    for delivery in deliveries
+                ],
+                *self._due_records(add=deliveries),
+            ],
+        )
+        self._workspace_changed(workspace_id, resource_kind="metadata")
+        return committed
+
+    def remove_workspace_member(
+        self, workspace_id: Any, member_id: Any, operation_id: Any
+    ) -> dict[str, Any]:
+        payload = {"workspace_id": workspace_id, "member_id": member_id}
+        operation_id, digest, replay = self._workspace_operation(
+            "remove_workspace_member", operation_id, payload
+        )
+        if replay is not None:
+            return replay
+        workspace = self._require_workspace(workspace_id)
+        if (
+            workspace.get("state") != "active"
+            or workspace.get("local_role") != WorkspaceRole.OWNER.value
+        ):
+            raise ContactNotApproved("Member removal waits for the active owner")
+        if not isinstance(member_id, str):
+            raise ValidationError("Workspace member ID is invalid")
+        identity = self._identity
+        if identity is None:
+            raise ValidationError("Local identity is unavailable")
+        current = self._workspace_current_manifest(workspace)
+        member = find_member(current, member_id)
+        if (
+            member is None
+            or member.role == WorkspaceRole.OWNER
+            or member.status != "active"
+        ):
+            raise ValidationError("Workspace member cannot be removed")
+        raw = create_workspace_manifest(
+            identity,
+            workspace_id=workspace_id,
+            epoch=current.epoch + 1,
+            previous_manifest_hash=current.digest,
+            name=current.name,
+            description=current.description,
+            authority_device_id=current.authority_device_id,
+            members=self._workspace_manifest_member_inputs(
+                current,
+                replacement_member_id=member_id,
+                replacement_status="removed",
+            ),
+            retention_days=current.retention_days,
+            channel_creation=current.channel_creation,
+            posting=current.posting,
+            invitation_requests=current.invitation_requests,
+        )
+        next_manifest = verify_workspace_manifest_transition(raw, current)
+        recipients = self._workspace_manifest_recipients(
+            current,
+            excluding_member_id=workspace["local_member_id"],
+            include_member_ids={member_id},
+        )
+        deliveries = self._workspace_manifest_deliveries(
+            workspace_id, [next_manifest], recipients
+        )
+        cancelled_records, cancelled_ids = self._cancel_workspace_member_deliveries(
+            workspace_id, member_id
+        )
+        self._apply_manifest_to_workspace(workspace, next_manifest)
+        self._apply_manifest_public_identities(workspace, next_manifest)
+        outcome = self._public_workspace(workspace)
+        committed = self.store.commit_operation(
+            operation_id,
+            digest,
+            outcome,
+            [
+                ("workspace", self._workspace_record_id(workspace_id), workspace),
+                (
+                    "workspace_manifest",
+                    self._workspace_manifest_record_id(next_manifest.digest),
+                    self._manifest_record(next_manifest),
+                ),
+                self._manifest_epoch_record(next_manifest),
+                *cancelled_records,
+                *[
+                    ("workspace_delivery", delivery["id"], delivery)
+                    for delivery in deliveries
+                ],
+                *self._due_records(add=deliveries, remove=cancelled_ids),
+            ],
+        )
+        network = getattr(self, "network", None)
+        if network is not None and cancelled_ids:
+            network.cancel_outbound(cancelled_ids)
+        self._workspace_changed(workspace_id, resource_kind="membership")
+        return committed
+
+    def request_workspace_display_name(
+        self, workspace_id: Any, display_name: Any, operation_id: Any
+    ) -> dict[str, Any]:
+        payload = {"workspace_id": workspace_id, "display_name": display_name}
+        operation_id, digest, replay = self._workspace_operation(
+            "request_workspace_display_name", operation_id, payload
+        )
+        if replay is not None:
+            return replay
+        workspace = self._require_workspace(workspace_id)
+        if workspace.get("state") != "active":
+            raise ContactNotApproved("Workspace is not active")
+        identity = self._identity
+        if identity is None:
+            raise ValidationError("Local identity is unavailable")
+        manifest = self._workspace_current_manifest(workspace)
+        raw = create_workspace_display_name_request(
+            identity,
+            manifest=manifest,
+            member_id=workspace["local_member_id"],
+            device_id=workspace["local_device_id"],
+            display_name=display_name,
+            hints=self._workspace_hints(),
+        )
+        request = verify_workspace_display_name_request(raw, manifest=manifest)
+        request_id = self.store.opaque_id(
+            "workspace-display-name-request", request.digest
+        )
+        record = {
+            "id": request_id,
+            "workspace_id": workspace_id,
+            "manifest_digest": request.manifest_digest,
+            "request_digest": request.digest,
+            "member_id": request.member_id,
+            "device_id": request.device_id,
+            "display_name": request.display_name,
+            "document": request.serialized,
+            "state": "pending",
+            "created_at": float(request.created_at),
+        }
+        deliveries: list[dict[str, Any]] = []
+        if workspace.get("local_role") != WorkspaceRole.OWNER.value:
+            authority = find_device(manifest, manifest.authority_device_id)
+            if authority is None:
+                raise ValidationError("Workspace authority is unavailable")
+            deliveries.append(
+                self._workspace_delivery_record(
+                    workspace_id=workspace_id,
+                    recipient_member_id=authority[0].member_id,
+                    recipient_device=authority[1],
+                    kind="workspace_display_name_request",
+                    document=request.serialized,
+                    priority=0,
+                )
+            )
+        outcome = {
+            key: value for key, value in record.items() if key != "document"
+        }
+        committed = self.store.commit_operation(
+            operation_id,
+            digest,
+            outcome,
+            [
+                ("workspace_display_name_request", request_id, record),
+                *[
+                    ("workspace_delivery", delivery["id"], delivery)
+                    for delivery in deliveries
+                ],
+                *self._due_records(add=deliveries),
+            ],
+        )
+        self._workspace_changed(workspace_id, resource_kind="display_name_request")
+        return committed
+
+    def _receive_workspace_display_name_request(
+        self, wire: WorkspaceWirePayload
+    ) -> None:
+        workspace = self.store.get(
+            "workspace", self._workspace_record_id(wire.workspace_id)
+        )
+        if (
+            workspace is None
+            or workspace.get("state") != "active"
+            or workspace.get("local_role") != WorkspaceRole.OWNER.value
+        ):
+            return
+        try:
+            raw_value = json.loads(wire.document)
+            if not isinstance(raw_value, dict) or not isinstance(
+                raw_value.get("manifest_digest"), str
+            ):
+                return
+            manifest = self._workspace_manifest_by_digest(
+                raw_value["manifest_digest"]
+            )
+            if manifest is None:
+                return
+            request = verify_workspace_display_name_request(
+                wire.document, manifest=manifest
+            )
+            request_id = self.store.opaque_id(
+                "workspace-display-name-request", request.digest
+            )
+            if self.store.get("workspace_display_name_request", request_id):
+                return
+            self.store.put(
+                "workspace_display_name_request",
+                request_id,
+                {
+                    "id": request_id,
+                    "workspace_id": request.workspace_id,
+                    "manifest_digest": request.manifest_digest,
+                    "request_digest": request.digest,
+                    "member_id": request.member_id,
+                    "device_id": request.device_id,
+                    "display_name": request.display_name,
+                    "document": request.serialized,
+                    "state": "pending",
+                    "created_at": float(request.created_at),
+                },
+            )
+            self._workspace_changed(
+                request.workspace_id, resource_kind="display_name_request"
+            )
+        except (MeshChatError, json.JSONDecodeError):
+            return
+
+    def _receive_workspace_display_name_decision(
+        self, wire: WorkspaceWirePayload
+    ) -> None:
+        workspace = self.store.get(
+            "workspace", self._workspace_record_id(wire.workspace_id)
+        )
+        if workspace is None or workspace.get("state") not in {
+            "active",
+            "incomplete_sync",
+        }:
+            return
+        try:
+            value = json.loads(wire.document)
+            if not isinstance(value, dict) or not isinstance(
+                value.get("request_digest"), str
+            ):
+                return
+            matched = next(
+                (
+                    (record_id, record)
+                    for record_id, record in self.store.items(
+                        "workspace_display_name_request"
+                    )
+                    if record.get("workspace_id") == wire.workspace_id
+                    and record.get("request_digest") == value["request_digest"]
+                    and record.get("state") == "pending"
+                ),
+                None,
+            )
+            if matched is None:
+                return
+            request_id, record = matched
+            base = self._workspace_manifest_by_digest(record["manifest_digest"])
+            if base is None:
+                return
+            request = verify_workspace_display_name_request(
+                record["document"], manifest=base
+            )
+            decision = verify_workspace_display_name_decision(
+                wire.document, manifest=base, request=request
+            )
+            if decision.member_id != workspace["local_member_id"]:
+                return
+            record["state"] = "approved" if decision.approved else "declined"
+            record["updated_at"] = time.time()
+            self.store.put(
+                "workspace_display_name_request", request_id, record
+            )
+            self._workspace_changed(
+                workspace["id"], resource_kind="display_name_request"
+            )
+        except (MeshChatError, json.JSONDecodeError):
+            return
+
+    def decide_workspace_display_name(
+        self,
+        workspace_id: Any,
+        request_id: Any,
+        approve: bool,
+        operation_id: Any,
+    ) -> dict[str, Any]:
+        payload = {
+            "workspace_id": workspace_id,
+            "request_id": request_id,
+            "approve": approve,
+        }
+        operation_id, digest, replay = self._workspace_operation(
+            "decide_workspace_display_name", operation_id, payload
+        )
+        if replay is not None:
+            return replay
+        workspace = self._require_workspace(workspace_id)
+        if (
+            workspace.get("state") != "active"
+            or workspace.get("local_role") != WorkspaceRole.OWNER.value
+        ):
+            raise ContactNotApproved(
+                "Display-name decisions wait for the active owner"
+            )
+        if not isinstance(request_id, str) or not isinstance(approve, bool):
+            raise ValidationError("Workspace display-name decision is invalid")
+        record = self.store.get("workspace_display_name_request", request_id)
+        if (
+            record is None
+            or record.get("workspace_id") != workspace_id
+            or record.get("state") != "pending"
+        ):
+            raise ValidationError("Workspace display-name request is no longer pending")
+        identity = self._identity
+        if identity is None:
+            raise ValidationError("Local identity is unavailable")
+        base = self._workspace_manifest_by_digest(record["manifest_digest"])
+        if base is None:
+            raise ValidationError("Display-name request base manifest is unavailable")
+        request = verify_workspace_display_name_request(
+            record["document"], manifest=base
+        )
+        if not approve:
+            current = self._workspace_current_manifest(workspace)
+            member = find_member(current, request.member_id)
+            if member is None or member.status != "active":
+                raise ValidationError("Workspace display-name request is stale")
+            decision_raw = create_workspace_display_name_decision(
+                identity,
+                manifest=base,
+                request=request,
+                approved=False,
+            )
+            deliveries = (
+                []
+                if member.member_id == workspace["local_member_id"]
+                else [
+                    self._workspace_delivery_record(
+                        workspace_id=workspace_id,
+                        recipient_member_id=member.member_id,
+                        recipient_device=member.devices[0],
+                        kind="workspace_display_name_decision",
+                        document=decision_raw,
+                        priority=0,
+                    )
+                ]
+            )
+            record["state"] = "declined"
+            record["updated_at"] = time.time()
+            outcome = {"id": request_id, "state": "declined"}
+            committed = self.store.commit_operation(
+                operation_id,
+                digest,
+                outcome,
+                [
+                    ("workspace_display_name_request", request_id, record),
+                    *[
+                        ("workspace_delivery", delivery["id"], delivery)
+                        for delivery in deliveries
+                    ],
+                    *self._due_records(add=deliveries),
+                ],
+            )
+            self._workspace_changed(
+                workspace_id, resource_kind="display_name_request"
+            )
+            return committed
+        current = self._workspace_current_manifest(workspace)
+        member = find_member(current, request.member_id)
+        if (
+            member is None
+            or member.status != "active"
+            or member.devices[0].device_id != request.device_id
+            or member.devices[0].public_identity
+            != request.replacement_device.public_identity
+        ):
+            raise ValidationError("Workspace display-name request is stale")
+        raw = create_workspace_manifest(
+            identity,
+            workspace_id=workspace_id,
+            epoch=current.epoch + 1,
+            previous_manifest_hash=current.digest,
+            name=current.name,
+            description=current.description,
+            authority_device_id=current.authority_device_id,
+            members=self._workspace_manifest_member_inputs(
+                current,
+                replacement_member_id=request.member_id,
+                replacement_display_name=request.display_name,
+                replacement_device=request.replacement_device.serialized,
+            ),
+            retention_days=current.retention_days,
+            channel_creation=current.channel_creation,
+            posting=current.posting,
+            invitation_requests=current.invitation_requests,
+        )
+        next_manifest = verify_workspace_manifest_transition(raw, current)
+        recipients = self._workspace_manifest_recipients(
+            current, excluding_member_id=workspace["local_member_id"]
+        )
+        deliveries = self._workspace_manifest_deliveries(
+            workspace_id, [next_manifest], recipients
+        )
+        self._apply_manifest_to_workspace(workspace, next_manifest)
+        self._apply_manifest_public_identities(workspace, next_manifest)
+        record["state"] = "approved"
+        record["updated_at"] = time.time()
+        outcome = {
+            "id": request_id,
+            "state": "approved",
+            "workspace": self._public_workspace(workspace),
+        }
+        committed = self.store.commit_operation(
+            operation_id,
+            digest,
+            outcome,
+            [
+                ("workspace", self._workspace_record_id(workspace_id), workspace),
+                (
+                    "workspace_manifest",
+                    self._workspace_manifest_record_id(next_manifest.digest),
+                    self._manifest_record(next_manifest),
+                ),
+                self._manifest_epoch_record(next_manifest),
+                ("workspace_display_name_request", request_id, record),
+                *[
+                    ("workspace_delivery", delivery["id"], delivery)
+                    for delivery in deliveries
+                ],
+                *self._due_records(add=deliveries),
+            ],
+        )
+        self._workspace_changed(workspace_id, resource_kind="membership")
+        return committed
 
     def leave_workspace(self, workspace_id: Any, operation_id: Any) -> dict[str, Any]:
         payload = {"workspace_id": workspace_id}
@@ -2053,7 +2964,7 @@ class WorkspaceServiceMixin:
                 *self._due_records(add=[delivery]),
             ],
         )
-        self._changed()
+        self._workspace_changed(workspace_id)
         return committed
 
     def _receive_workspace_leave_request(self, wire: WorkspaceWirePayload) -> None:
@@ -2068,23 +2979,14 @@ class WorkspaceServiceMixin:
             identity = self._identity
             if identity is None:
                 return
-            inputs: list[WorkspaceManifestMemberInput] = []
-            leaving_device = None
-            for member in current.members:
-                status = "left" if member.member_id == request.member_id else member.status
-                if member.member_id == request.member_id:
-                    leaving_device = member.devices[0]
-                inputs.append(
-                    WorkspaceManifestMemberInput(
-                        member.member_id,
-                        member.display_name,
-                        member.role,
-                        [item.serialized for item in member.devices],
-                        status,
-                    )
-                )
-            if leaving_device is None:
+            leaving_member = find_member(current, request.member_id)
+            if leaving_member is None:
                 return
+            inputs = self._workspace_manifest_member_inputs(
+                current,
+                replacement_member_id=request.member_id,
+                replacement_status="left",
+            )
             raw = create_workspace_manifest(
                 identity,
                 workspace_id=workspace["id"],
@@ -2101,19 +3003,19 @@ class WorkspaceServiceMixin:
             )
             next_manifest = verify_workspace_manifest_transition(raw, current)
             self._apply_manifest_to_workspace(workspace, next_manifest)
-            for member in workspace["members"]:
-                verified = find_member(next_manifest, member["id"])
-                if verified is not None:
-                    member["device"]["public_identity"] = _b64(
-                        verified.devices[0].public_identity
-                    )
-            delivery = self._workspace_delivery_record(
-                workspace_id=workspace["id"],
-                recipient_member_id=request.member_id,
-                recipient_device=leaving_device,
-                kind="workspace_manifest_root",
-                document=next_manifest.serialized,
-                priority=0,
+            self._apply_manifest_public_identities(workspace, next_manifest)
+            recipients = self._workspace_manifest_recipients(
+                current,
+                excluding_member_id=workspace["local_member_id"],
+                include_member_ids={request.member_id},
+            )
+            deliveries = self._workspace_manifest_deliveries(
+                workspace["id"], [next_manifest], recipients
+            )
+            cancelled_records, cancelled_ids = (
+                self._cancel_workspace_member_deliveries(
+                    workspace["id"], request.member_id
+                )
             )
             self.store.put_many(
                 [
@@ -2124,12 +3026,21 @@ class WorkspaceServiceMixin:
                         self._manifest_record(next_manifest),
                     ),
                     self._manifest_epoch_record(next_manifest),
-                    ("workspace_delivery", delivery["id"], delivery),
-                    *self._due_records(add=[delivery]),
+                    *cancelled_records,
+                    *[
+                        ("workspace_delivery", delivery["id"], delivery)
+                        for delivery in deliveries
+                    ],
+                    *self._due_records(
+                        add=deliveries, remove=cancelled_ids
+                    ),
                 ]
             )
-            self._changed()
-        except ValidationError:
+            network = getattr(self, "network", None)
+            if network is not None and cancelled_ids:
+                network.cancel_outbound(cancelled_ids)
+            self._workspace_changed(workspace["id"])
+        except MeshChatError:
             return
 
     def close_workspace(self, workspace_id: Any, operation_id: Any) -> dict[str, Any]:
@@ -2191,6 +3102,27 @@ class WorkspaceServiceMixin:
             for device in member.devices
             if member.member_id != workspace["local_member_id"] and member.status == "active"
         ]
+        invalidated_records: list[tuple[str, str, dict[str, Any]]] = []
+        for record_id, invitation in self.store.items("workspace_invitation"):
+            if (
+                invitation.get("workspace_id") == workspace_id
+                and invitation.get("state") == "active"
+            ):
+                invitation["state"] = "closed"
+                invitation["updated_at"] = time.time()
+                invalidated_records.append(
+                    ("workspace_invitation", record_id, invitation)
+                )
+        for record_id, request in self.store.items("workspace_join_request"):
+            if (
+                request.get("workspace_id") == workspace_id
+                and request.get("state") == "pending"
+            ):
+                request["state"] = "closed"
+                request["updated_at"] = time.time()
+                invalidated_records.append(
+                    ("workspace_join_request", record_id, request)
+                )
         outcome = self._public_workspace(workspace)
         records = [
             ("workspace", self._workspace_record_id(workspace_id), workspace),
@@ -2200,13 +3132,14 @@ class WorkspaceServiceMixin:
                 self._manifest_record(closed),
             ),
             self._manifest_epoch_record(closed),
+            *invalidated_records,
             *[("workspace_delivery", item["id"], item) for item in deliveries],
             *self._due_records(add=deliveries),
         ]
         committed = self.store.commit_operation(
             operation_id, digest, outcome, records
         )
-        self._changed()
+        self._workspace_changed(workspace_id)
         return committed
 
     def remove_workspace_data(
@@ -2229,6 +3162,7 @@ class WorkspaceServiceMixin:
             "workspace_manifest_epoch",
             "workspace_invitation",
             "workspace_join_request",
+            "workspace_display_name_request",
             "workspace_channel",
             "workspace_channel_control",
             "workspace_event",
@@ -2288,7 +3222,7 @@ class WorkspaceServiceMixin:
         network = getattr(self, "network", None)
         if network is not None and delivery_ids:
             network.cancel_outbound(set(delivery_ids))
-        self._changed()
+        self._workspace_changed(workspace_id, resource_kind="local_removal")
         return committed
 
     def _attempt_workspace_delivery(self, delivery_id: str) -> None:
@@ -2299,13 +3233,52 @@ class WorkspaceServiceMixin:
         if float(delivery.get("expires_at", 0)) <= now:
             delivery["state"] = DeliveryState.EXPIRED.value
             delivery["expired_at"] = now
-            self.store.put_many(
-                [
-                    ("workspace_delivery", delivery_id, delivery),
-                    *self._due_records(remove=[delivery_id]),
-                ]
+            records = [
+                ("workspace_delivery", delivery_id, delivery),
+                *self._due_records(remove=[delivery_id]),
+            ]
+            message = (
+                self.store.get(
+                    "workspace_message_state",
+                    self._workspace_message_record_id(delivery["event_id"]),
+                )
+                if isinstance(delivery.get("event_id"), str)
+                else None
             )
-            self._changed()
+            if message is not None:
+                devices = dict(message.get("delivery_devices", {}))
+                existing = dict(
+                    devices.get(delivery["recipient_device_id"], {})
+                )
+                existing.update(
+                    {
+                        "member_id": delivery["recipient_member_id"],
+                        "member_display_name": delivery.get(
+                            "recipient_display_name", "Member"
+                        ),
+                        "state": DeliveryState.EXPIRED.value,
+                    }
+                )
+                devices[delivery["recipient_device_id"]] = existing
+                message["delivery_devices"] = devices
+                message["delivery_summary"] = (
+                    self._workspace_delivery_summary_from_devices(devices)
+                )
+                records.append(
+                    (
+                        "workspace_message_state",
+                        self._workspace_message_record_id(delivery["event_id"]),
+                        message,
+                    )
+                )
+            self.store.put_many(records)
+            self._workspace_changed(
+                delivery["workspace_id"],
+                conversation_id=(
+                    message.get("conversation_id") if message is not None else None
+                ),
+                resource_kind="delivery",
+            )
             return
         if float(delivery.get("next_attempt_at", 0)) > now:
             return
@@ -2405,7 +3378,30 @@ class WorkspaceServiceMixin:
                 ]
             )
 
+    def _expire_workspace_invitations(self) -> None:
+        now = time.time()
+        records: list[tuple[str, str, dict[str, Any]]] = []
+        changed_workspaces: set[str] = set()
+        for record_id, stored in self.store.items("workspace_invitation"):
+            if (
+                stored.get("state") != "active"
+                or float(stored.get("expires_at", 0)) > now
+            ):
+                continue
+            invitation = dict(stored)
+            invitation["state"] = "expired"
+            invitation["updated_at"] = now
+            records.append(("workspace_invitation", record_id, invitation))
+            if isinstance(invitation.get("workspace_id"), str):
+                changed_workspaces.add(invitation["workspace_id"])
+        if not records:
+            return
+        self.store.put_many(records)
+        for workspace_id in changed_workspaces:
+            self._workspace_changed(workspace_id, resource_kind="invitation")
+
     def _retry_workspace_outbox(self) -> None:
+        self._expire_workspace_invitations()
         now = time.time()
         candidates: list[tuple[float, int, str]] = []
         for shard in range(DUE_SHARDS):
@@ -2448,6 +3444,16 @@ class WorkspaceServiceMixin:
                 ("workspace_delivery", logical_id, delivery),
                 *self._due_records(remove=[logical_id]),
             ]
+        elif state in {
+            DeliveryState.EXPIRED,
+            DeliveryState.FAILED,
+            DeliveryState.CANCELLED,
+        }:
+            delivery["state"] = state.value
+            records = [
+                ("workspace_delivery", logical_id, delivery),
+                *self._due_records(remove=[logical_id]),
+            ]
         else:
             delivery["state"] = state.value
             if native_id:
@@ -2459,16 +3465,27 @@ class WorkspaceServiceMixin:
         if native_id:
             delivery["native_message_id"] = native_id
             records[0] = ("workspace_delivery", logical_id, delivery)
+        conversation_id = None
         event_id = delivery.get("event_id")
         if isinstance(event_id, str):
             message_record_id = self._workspace_message_record_id(event_id)
             message = self.store.get("workspace_message_state", message_record_id)
             if message is not None:
+                conversation_id = message.get("conversation_id")
                 devices = dict(message.get("delivery_devices", {}))
-                devices[delivery["recipient_device_id"]] = {
-                    "member_id": delivery["recipient_member_id"],
-                    "state": delivery["state"],
-                }
+                existing = dict(
+                    devices.get(delivery["recipient_device_id"], {})
+                )
+                existing.update(
+                    {
+                        "member_id": delivery["recipient_member_id"],
+                        "member_display_name": delivery.get(
+                            "recipient_display_name", "Member"
+                        ),
+                        "state": delivery["state"],
+                    }
+                )
+                devices[delivery["recipient_device_id"]] = existing
                 message["delivery_devices"] = devices
                 message["delivery_summary"] = (
                     self._workspace_delivery_summary_from_devices(devices)
@@ -2477,15 +3494,24 @@ class WorkspaceServiceMixin:
                     ("workspace_message_state", message_record_id, message)
                 )
         self.store.put_many(records)
-        self._changed()
+        self._workspace_changed(
+            delivery["workspace_id"],
+            conversation_id=conversation_id,
+            resource_kind="delivery",
+        )
         return True
 
     def _receive_workspace_payload(
         self, native: Any, wire: WorkspaceWirePayload
     ) -> None:
         if wire.kind == "workspace_join":
-            self._receive_workspace_join(wire)
-        elif wire.kind == "workspace_manifest_root":
+            self._receive_workspace_join(wire, getattr(native, "source_hash", None))
+            return
+        if not self._workspace_source_is_active(
+            wire.workspace_id, getattr(native, "source_hash", None)
+        ):
+            return
+        if wire.kind == "workspace_manifest_root":
             self._receive_workspace_manifest(wire)
         elif wire.kind == "workspace_channel_record":
             self._receive_workspace_channel(wire)
@@ -2493,16 +3519,19 @@ class WorkspaceServiceMixin:
             self._accept_workspace_event(wire)
         elif wire.kind == "workspace_leave_request":
             self._receive_workspace_leave_request(wire)
+        elif wire.kind == "workspace_display_name_request":
+            self._receive_workspace_display_name_request(wire)
+        elif wire.kind == "workspace_display_name_decision":
+            self._receive_workspace_display_name_decision(wire)
 
     def workspace_snapshot(self) -> dict[str, Any]:
         now = time.time()
         invitations: list[dict[str, Any]] = []
         for item in self.store.list("workspace_invitation"):
-            if item.get("state") == "active" and float(item.get("expires_at", 0)) <= now:
-                item["state"] = "expired"
-                item["updated_at"] = now
-                self.store.put("workspace_invitation", item["id"], item)
-            if item.get("state") == "active":
+            if (
+                item.get("state") == "active"
+                and float(item.get("expires_at", 0)) > now
+            ):
                 invitations.append(
                     {
                         key: value
@@ -2527,10 +3556,25 @@ class WorkspaceServiceMixin:
             for item in self.store.list("workspace_join_request")
             if item.get("state") == "pending"
         ]
+        name_requests = [
+            {
+                key: value
+                for key, value in item.items()
+                if key != "document"
+            }
+            for item in self.store.list("workspace_display_name_request")
+            if item.get("state") == "pending"
+        ]
+        invitations.sort(key=lambda item: (item["created_at"], item["id"]))
+        requests.sort(key=lambda item: (item.get("created_at", 0), item["id"]))
+        name_requests.sort(
+            key=lambda item: (item.get("created_at", 0), item["id"])
+        )
         return {
             "workspaces": workspaces,
             "workspace_channels": channels,
             "workspace_join_requests": requests,
+            "workspace_display_name_requests": name_requests,
             "workspace_invitations": invitations,
             "workspace_drafts": self.store.list("workspace_draft"),
         }

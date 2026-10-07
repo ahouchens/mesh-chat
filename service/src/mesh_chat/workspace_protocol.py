@@ -36,7 +36,7 @@ MAX_CHANNEL_TOPIC_LENGTH = 250
 # allowance for IDs and the author signature.
 MAX_MESSAGE_TEXT_BYTES = 16 * 1024
 MAX_MEMBER_HINTS = 2
-MAX_ACTIVE_MEMBERS = 2
+MAX_ACTIVE_MEMBERS = 8
 MAX_INVITATION_LIFETIME_SECONDS = 30 * 24 * 60 * 60
 DEFAULT_INVITATION_LIFETIME_SECONDS = 7 * 24 * 60 * 60
 MAX_EPOCH = (1 << 63) - 1
@@ -209,6 +209,32 @@ class VerifiedWorkspaceLeaveRequest:
     manifest_digest: str
     member_id: str
     device_id: str
+    created_at: int
+    digest: str
+    serialized: str
+
+
+@dataclass(frozen=True, slots=True)
+class VerifiedWorkspaceDisplayNameRequest:
+    workspace_id: str
+    manifest_digest: str
+    member_id: str
+    device_id: str
+    display_name: str
+    replacement_device: VerifiedWorkspaceDeviceCard
+    created_at: int
+    digest: str
+    serialized: str
+
+
+@dataclass(frozen=True, slots=True)
+class VerifiedWorkspaceDisplayNameDecision:
+    workspace_id: str
+    manifest_digest: str
+    request_digest: str
+    member_id: str
+    device_id: str
+    approved: bool
     created_at: int
     digest: str
     serialized: str
@@ -710,7 +736,7 @@ def create_workspace_manifest(
             if item.status != "active":
                 raise ValidationError("Workspace owner must remain active")
         if not isinstance(item.device_cards, Sequence) or len(item.device_cards) != 1:
-            raise ValidationError("Increment one requires one device per member")
+            raise ValidationError("Workspace members require exactly one device in this increment")
         cards: list[dict[str, Any]] = []
         for raw_card in item.device_cards:
             card = verify_workspace_device_card(
@@ -864,7 +890,7 @@ def verify_workspace_manifest(
                 raise ValidationError("Workspace owner must remain active")
         raw_devices = item["devices"]
         if not isinstance(raw_devices, list) or len(raw_devices) != 1:
-            raise ValidationError("Increment one requires one device per member")
+            raise ValidationError("Workspace members require exactly one device in this increment")
         devices: list[VerifiedWorkspaceDeviceCard] = []
         display_name = _normalize_text(
             item["display_name"], "Member display name", MAX_MEMBER_NAME_LENGTH
@@ -930,6 +956,34 @@ def verify_workspace_manifest(
     )
 
 
+def _verify_workspace_manifest_checkpoint(
+    raw: str,
+    genesis: VerifiedWorkspaceGenesis,
+    *,
+    now: int | None = None,
+) -> VerifiedWorkspaceManifest:
+    """Verify a checkpoint against its immutable genesis authority."""
+    manifest = verify_workspace_manifest(
+        raw,
+        expected_workspace_id=genesis.workspace_id,
+        expected_authority_destination=genesis.owner_device.destination_hash,
+        now=now,
+    )
+    owner = find_member(manifest, genesis.owner_member_id)
+    authority = find_device(manifest, genesis.authority_device_id)
+    if (
+        manifest.authority_device_id != genesis.authority_device_id
+        or owner is None
+        or owner.role != WorkspaceRole.OWNER
+        or authority is None
+        or authority[0].member_id != genesis.owner_member_id
+        or authority[1].serialized != genesis.owner_device.serialized
+        or manifest.created_at < genesis.created_at
+    ):
+        raise ValidationError("Workspace manifest checkpoint does not match genesis")
+    return manifest
+
+
 def verify_workspace_manifest_transition(
     raw: str,
     previous: VerifiedWorkspaceGenesis | VerifiedWorkspaceManifest,
@@ -937,19 +991,22 @@ def verify_workspace_manifest_transition(
     now: int | None = None,
 ) -> VerifiedWorkspaceManifest:
     if isinstance(previous, VerifiedWorkspaceGenesis):
-        return verify_workspace_manifest(
-            raw,
-            expected_workspace_id=previous.workspace_id,
-            expected_epoch=1,
-            expected_previous_hash=previous.digest,
-            expected_authority_destination=previous.owner_device.destination_hash,
-            now=now,
-        )
+        manifest = _verify_workspace_manifest_checkpoint(raw, previous, now=now)
+        if (
+            manifest.epoch != 1
+            or manifest.previous_manifest_hash != previous.digest
+            or manifest.status != "active"
+            or len(manifest.members) != 1
+            or manifest.name != previous.name
+            or manifest.description != previous.description
+        ):
+            raise ValidationError("Initial workspace manifest does not match genesis")
+        return manifest
     if not isinstance(previous, VerifiedWorkspaceManifest):
         raise ValidationError("Previous workspace state is invalid")
     if previous.status == "closed":
         raise ValidationError("Closed workspaces cannot accept another manifest")
-    return verify_workspace_manifest(
+    manifest = verify_workspace_manifest(
         raw,
         expected_workspace_id=previous.workspace_id,
         expected_epoch=previous.epoch + 1,
@@ -957,6 +1014,91 @@ def verify_workspace_manifest_transition(
         expected_authority_destination=previous.authority_destination,
         now=now,
     )
+    # Authority rotation, linked-device admission, policy changes and retention
+    # changes have their own later increments. Increment two additionally
+    # permits one workspace metadata update or one member's signed display-name
+    # card replacement per epoch.
+    if (
+        manifest.authority_device_id != previous.authority_device_id
+        or manifest.retention_days != previous.retention_days
+        or manifest.channel_creation != previous.channel_creation
+        or manifest.posting != previous.posting
+        or manifest.invitation_requests != previous.invitation_requests
+        or manifest.created_at < previous.created_at
+    ):
+        raise ValidationError("Workspace manifest transition is not enabled")
+    previous_members = {member.member_id: member for member in previous.members}
+    next_members = {member.member_id: member for member in manifest.members}
+    if not previous_members.keys() <= next_members.keys():
+        raise ValidationError("Workspace manifest cannot remove member history")
+    display_name_changes: list[str] = []
+    for member_id, old_member in previous_members.items():
+        new_member = next_members[member_id]
+        old_devices = tuple(device.serialized for device in old_member.devices)
+        new_devices = tuple(device.serialized for device in new_member.devices)
+        allowed_statuses = (
+            {"active", "left", "removed"}
+            if old_member.status == "active" and old_member.role != WorkspaceRole.OWNER
+            else {old_member.status}
+        )
+        if new_member.role != old_member.role or new_member.status not in allowed_statuses:
+            raise ValidationError("Workspace member transition is not enabled")
+        if new_member.display_name == old_member.display_name:
+            if new_devices != old_devices:
+                raise ValidationError("Workspace device transition is not enabled")
+            continue
+        if new_member.status != old_member.status or len(old_member.devices) != 1 or len(new_member.devices) != 1:
+            raise ValidationError("Workspace display-name transition is invalid")
+        old_device = old_member.devices[0]
+        new_device = new_member.devices[0]
+        if (
+            new_device.workspace_id != old_device.workspace_id
+            or new_device.member_id != old_device.member_id
+            or new_device.device_id != old_device.device_id
+            or new_device.public_identity != old_device.public_identity
+            or new_device.destination_hash != old_device.destination_hash
+            or new_device.created_at < old_device.created_at
+            or new_device.display_name != new_member.display_name
+        ):
+            raise ValidationError("Workspace display-name device card is invalid")
+        display_name_changes.append(member_id)
+    added = [
+        member for member in manifest.members if member.member_id not in previous_members
+    ]
+    status_changes = [
+        member_id
+        for member_id, old_member in previous_members.items()
+        if next_members[member_id].status != old_member.status
+    ]
+    if len(added) > 1 or any(
+        member.role != WorkspaceRole.MEMBER or member.status != "active"
+        for member in added
+    ):
+        raise ValidationError("Workspace member admission is invalid")
+    if len(status_changes) > 1:
+        raise ValidationError("Workspace member transition is invalid")
+    if len(display_name_changes) > 1:
+        raise ValidationError("Workspace display-name transition is invalid")
+    metadata_changed = (
+        manifest.name != previous.name or manifest.description != previous.description
+    )
+    if manifest.status == "closed":
+        if added or status_changes or display_name_changes or metadata_changed:
+            raise ValidationError(
+                "Workspace closure cannot change membership or metadata"
+            )
+    elif sum(
+        (
+            bool(added),
+            bool(status_changes),
+            bool(display_name_changes),
+            metadata_changed,
+        )
+    ) != 1:
+        # Publish exactly one semantic change per epoch so concurrent owner
+        # operations have a deterministic predecessor and replay boundary.
+        raise ValidationError("Workspace manifest transition is not enabled")
+    return manifest
 
 
 def create_workspace_invitation(
@@ -976,9 +1118,9 @@ def create_workspace_invitation(
     ):
         raise ValidationError("Workspace invitation lifetime is invalid")
     checked_genesis = verify_workspace_genesis(genesis, now=current)
-    checked_manifest = verify_workspace_manifest(manifest, now=current)
-    if checked_manifest.workspace_id != checked_genesis.workspace_id:
-        raise ValidationError("Workspace invitation controls do not match")
+    checked_manifest = _verify_workspace_manifest_checkpoint(
+        manifest, checked_genesis, now=current
+    )
     if checked_manifest.status != "active":
         raise ValidationError("Closed workspaces cannot create invitations")
     if _destination_for(authority_identity) != checked_manifest.authority_destination:
@@ -1036,7 +1178,9 @@ def verify_workspace_invitation(
         raise ValidationError("Workspace invitation controls are invalid")
     current = int(time.time()) if now is None else int(now)
     genesis = verify_workspace_genesis(_canonical(value["genesis"]), now=current)
-    manifest = verify_workspace_manifest(_canonical(value["offered_manifest"]), now=current)
+    manifest = _verify_workspace_manifest_checkpoint(
+        _canonical(value["offered_manifest"]), genesis, now=current
+    )
     workspace_id = _validate_uuid(value["workspace_id"], "Workspace ID")
     if workspace_id != genesis.workspace_id or workspace_id != manifest.workspace_id:
         raise ValidationError("Workspace invitation controls do not match")
@@ -1564,6 +1708,208 @@ def verify_workspace_leave_request(
         manifest_digest=manifest.digest,
         member_id=member_id,
         device_id=device_id,
+        created_at=_validate_timestamp(value["created_at"], now=current),
+        digest=_digest(value),
+        serialized=_canonical(value),
+    )
+
+
+def create_workspace_display_name_request(
+    identity: RNS.Identity,
+    *,
+    manifest: VerifiedWorkspaceManifest,
+    member_id: str,
+    device_id: str,
+    display_name: str,
+    hints: list[dict[str, Any]] | None = None,
+    now: int | None = None,
+) -> str:
+    found = find_device(manifest, device_id)
+    if found is None or found[0].member_id != member_id or found[0].status != "active":
+        raise ValidationError("Workspace member cannot change its display name")
+    if _destination_for(identity) != found[1].destination_hash:
+        raise IdentityMismatch("Workspace display-name signer is invalid")
+    created_at = int(time.time()) if now is None else int(now)
+    replacement = create_workspace_device_card(
+        identity,
+        workspace_id=manifest.workspace_id,
+        member_id=member_id,
+        device_id=device_id,
+        display_name=display_name,
+        hints=found[1].hints if hints is None else hints,
+        now=created_at,
+    )
+    unsigned = {
+        "v": WORKSPACE_PROTOCOL_VERSION,
+        "type": "workspace_display_name_request",
+        "workspace_id": manifest.workspace_id,
+        "manifest_digest": manifest.digest,
+        "member_id": _validate_uuid(member_id, "Member ID"),
+        "device_id": _validate_uuid(device_id, "Device ID"),
+        "display_name": _normalize_text(
+            display_name, "Member display name", MAX_MEMBER_NAME_LENGTH
+        ),
+        "replacement_device": json.loads(replacement),
+        "created_at": created_at,
+    }
+    return _sign(identity, unsigned)
+
+
+def verify_workspace_display_name_request(
+    raw: str,
+    *,
+    manifest: VerifiedWorkspaceManifest,
+    now: int | None = None,
+) -> VerifiedWorkspaceDisplayNameRequest:
+    value = _load_document(raw, "workspace_display_name_request")
+    _require_fields(
+        value,
+        {
+            "v",
+            "type",
+            "workspace_id",
+            "manifest_digest",
+            "member_id",
+            "device_id",
+            "display_name",
+            "replacement_device",
+            "created_at",
+            "signature",
+        },
+    )
+    if value["v"] != WORKSPACE_PROTOCOL_VERSION:
+        raise ValidationError("Workspace document version is unsupported")
+    if value["workspace_id"] != manifest.workspace_id or value["manifest_digest"] != manifest.digest:
+        raise ValidationError("Workspace display-name request has an unknown base manifest")
+    member_id = _validate_uuid(value["member_id"], "Member ID")
+    device_id = _validate_uuid(value["device_id"], "Device ID")
+    found = find_device(manifest, device_id)
+    if found is None or found[0].member_id != member_id or found[0].status != "active":
+        raise IdentityMismatch("Workspace display-name signer is not active")
+    replacement_value = value["replacement_device"]
+    if not isinstance(replacement_value, dict):
+        raise ValidationError("Workspace replacement device card is invalid")
+    replacement = verify_workspace_device_card(
+        _canonical(replacement_value),
+        expected_workspace_id=manifest.workspace_id,
+        expected_member_id=member_id,
+        now=now,
+    )
+    display_name = _normalize_text(
+        value["display_name"], "Member display name", MAX_MEMBER_NAME_LENGTH
+    )
+    if (
+        replacement.device_id != device_id
+        or replacement.display_name != display_name
+        or replacement.public_identity != found[1].public_identity
+        or replacement.destination_hash != found[1].destination_hash
+        or replacement.created_at < found[1].created_at
+    ):
+        raise ValidationError("Workspace replacement device card changed identity")
+    _verify_signature(
+        _identity_from_public_key(found[1].public_identity),
+        value,
+        "Workspace display-name request",
+    )
+    current = int(time.time()) if now is None else int(now)
+    return VerifiedWorkspaceDisplayNameRequest(
+        workspace_id=manifest.workspace_id,
+        manifest_digest=manifest.digest,
+        member_id=member_id,
+        device_id=device_id,
+        display_name=display_name,
+        replacement_device=replacement,
+        created_at=_validate_timestamp(value["created_at"], now=current),
+        digest=_digest(value),
+        serialized=_canonical(value),
+    )
+
+
+def create_workspace_display_name_decision(
+    authority_identity: RNS.Identity,
+    *,
+    manifest: VerifiedWorkspaceManifest,
+    request: VerifiedWorkspaceDisplayNameRequest,
+    approved: bool,
+    now: int | None = None,
+) -> str:
+    if (
+        request.workspace_id != manifest.workspace_id
+        or request.manifest_digest != manifest.digest
+    ):
+        raise ValidationError("Workspace display-name request base is invalid")
+    if _destination_for(authority_identity) != manifest.authority_destination:
+        raise IdentityMismatch("Display-name decision signer is not the authority")
+    if not isinstance(approved, bool):
+        raise ValidationError("Workspace display-name decision is invalid")
+    return _sign(
+        authority_identity,
+        {
+            "v": WORKSPACE_PROTOCOL_VERSION,
+            "type": "workspace_display_name_decision",
+            "workspace_id": manifest.workspace_id,
+            "manifest_digest": manifest.digest,
+            "request_digest": request.digest,
+            "member_id": request.member_id,
+            "device_id": request.device_id,
+            "approved": approved,
+            "created_at": int(time.time()) if now is None else int(now),
+        },
+    )
+
+
+def verify_workspace_display_name_decision(
+    raw: str,
+    *,
+    manifest: VerifiedWorkspaceManifest,
+    request: VerifiedWorkspaceDisplayNameRequest,
+    now: int | None = None,
+) -> VerifiedWorkspaceDisplayNameDecision:
+    value = _load_document(raw, "workspace_display_name_decision")
+    _require_fields(
+        value,
+        {
+            "v",
+            "type",
+            "workspace_id",
+            "manifest_digest",
+            "request_digest",
+            "member_id",
+            "device_id",
+            "approved",
+            "created_at",
+            "signature",
+        },
+    )
+    if value["v"] != WORKSPACE_PROTOCOL_VERSION:
+        raise ValidationError("Workspace document version is unsupported")
+    if (
+        value["workspace_id"] != manifest.workspace_id
+        or value["manifest_digest"] != manifest.digest
+        or request.workspace_id != manifest.workspace_id
+        or request.manifest_digest != manifest.digest
+        or value["request_digest"] != request.digest
+        or value["member_id"] != request.member_id
+        or value["device_id"] != request.device_id
+        or not isinstance(value["approved"], bool)
+    ):
+        raise ValidationError("Workspace display-name decision is invalid")
+    authority = find_device(manifest, manifest.authority_device_id)
+    if authority is None:
+        raise ValidationError("Workspace authority is unavailable")
+    _verify_signature(
+        _identity_from_public_key(authority[1].public_identity),
+        value,
+        "Workspace display-name decision",
+    )
+    current = int(time.time()) if now is None else int(now)
+    return VerifiedWorkspaceDisplayNameDecision(
+        workspace_id=manifest.workspace_id,
+        manifest_digest=manifest.digest,
+        request_digest=request.digest,
+        member_id=request.member_id,
+        device_id=request.device_id,
+        approved=value["approved"],
         created_at=_validate_timestamp(value["created_at"], now=current),
         digest=_digest(value),
         serialized=_canonical(value),

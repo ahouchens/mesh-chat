@@ -1364,21 +1364,56 @@ Artifact hashes for this run:
   remote; that remains an external activation prerequisite rather than an LLM
   build step.
 
-## Workspace increment 1 verification — 2026-10-06
+## Workspace increment 2 verification — 2026-10-07
 
-- The complete Python suite passed with **285 tests passed and 6 intentional
-  environment/device skips**. Eight focused workspace tests cover deterministic
+- The complete Python suite passed with **290 tests passed and 6 intentional
+  environment/device skips**. Thirteen focused workspace tests cover deterministic
   canonical fixtures, tamper and noncanonical rejection, profile isolation,
   verified unknown-source join admission, two-service join and chat, reversed
   control arrival, bounded paging, stale cursors, receipt aggregation without
-  delivery scans, operation replay, and destructive local-data redaction.
-- The six frontend source suites passed with **68 tests**, including the
+  delivery scans, operation replay, genesis/checkpoint authority pinning,
+  active-source admission, fork resistance, scoped join decisions, actionable
+  sync state, close invalidation, and destructive local-data redaction. The
+  increment-two topology test admits seven people from concurrent invitations
+  referencing the same checkpoint, proves ordered catch-up to all eight
+  replicas, propagates metadata and approved display-name changes, returns a
+  signed name-request decline, removes one member, materializes a cancelled
+  delivery leg, and delivers a member-authored event to the remaining peers
+  while the owner process is offline. The sender then restarts with its
+  committed event and frozen delivery legs intact, and the restarted owner
+  receives the withheld canonical event after reconnect.
+- The six frontend source suites passed with **76 tests**, including the
   disclosure-first workspace create flow, bounded message loading, attachment
-  rejection, and stable event and operation IDs. TypeScript project compilation
-  and the Vite production build also passed.
+  button/drop/paste rejection, paused-state action gating, close confirmation,
+  scoped invalidation, and stable retry event and operation IDs. The workspace
+  refresh regression test verifies that desktop polling and draft invalidations
+  do not reload the open `#general` page, while message invalidations update it
+  in the background without clearing visible messages. TypeScript project
+  compilation and the Vite production build also passed. Increment-two UI
+  coverage verifies independent invitation revocation/creation, owner removal
+  and display-name decisions, member name requests, opt-in propagation-node
+  consent, per-person/per-device delivery disclosure, and replacement of a
+  removed member when eight historical member records remain.
 - The Rust library suite passed with **6 tests**, including every workspace
   renderer command, mobile workspace rejection classification, and workspace
   deep-link admission. `cargo fmt --check` passed.
+- The maintained release driver built and immutably published desktop 0.2.16.
+  WiX `light.exe` completed CAB creation, MSI database generation, and ICE
+  validation when the build had Windows Installer access; no ICE suppression or
+  alternate packaging path was used. The earlier `LGHT0217` failure was isolated
+  to ICE validation being unable to access Windows Installer from a restricted
+  process; CAB creation and MSI database generation had already succeeded. It
+  was an execution-environment failure, not a malformed MSI source. The final
+  run published a 22,478,848-byte MSI with SHA-256
+  `21D590178B248A8C6D0366B527BC5403D50C315B17619714B6580E4EE329BA98`
+  and a 21,739,441-byte NSIS installer with SHA-256
+  `E3199396A213E46F054563A2724C6226B99D6D5EAE7E2C5DA76B5854C845052D`.
+- The immutable portable `mesh-chat.exe` was launched with its sibling sidecar;
+  process inspection confirmed product version 0.2.16 and both processes came
+  from the 0.2.16 release directory. Windows automation found the running Mesh
+  Chat window, but the capture helper failed its initial attempt and one fresh
+  window retry with `0x80004002`, so this run does not claim an interactive
+  native-window walkthrough. Renderer and eight-service workspace flows passed.
 - Physical two-install delivery, restart at injected commit boundaries,
   partition recovery, package extraction, and protected-profile plaintext scans
   remain release gates; automated tests do not claim those device results.
@@ -1414,6 +1449,6 @@ Artifact hashes for this run:
 | Common flow without technical setup | UI implemented; fresh/returning human run pending |
 | Connection help | State/action mapping implemented; recovery scenarios pending |
 | Accessible joining | Labels, focus, keyboard, contrast and live regions implemented; assistive-tech audit pending |
-| Workspace increment 1 | Canonical document/signature/tamper/profile-isolation tests, two-service create/invite/join/approve/control/message flow, bounded paging and stale-cursor rejection, durable operation replay, attachment rejection, disclosure-first creation UI, desktop command allowlist and mobile rejection are automated. Physical two-install restart/kill-point and network-partition runs remain release gates |
+| Workspace increment 2 | Canonical document/signature/tamper/profile-isolation tests, eight-service concurrent invite/catch-up/metadata/name/removal/owner-offline-message flow, bounded paging and stale-cursor rejection, honest aggregate delivery states, durable operation replay, attachment rejection, disclosure-first creation and propagation consent UI, desktop command allowlist and mobile rejection are automated. Physical eight-install restart/kill-point and network-partition runs remain release gates |
 
 Do not mark a release complete from unit tests alone. Store packet captures, topology configs, full-tree scans, package hashes, platform versions, human timing sheets, and failure notes with the release evidence.

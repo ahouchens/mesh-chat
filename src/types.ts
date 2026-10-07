@@ -206,6 +206,7 @@ export interface Workspace {
   authorization_generation: number;
   retention_generation: number;
   security_error?: string;
+  sync_issue?: "missing_controls" | "missing_predecessor" | "missing_manifest" | "missing_manifest_predecessor" | "queue_pressure" | string;
   created_at: number;
   updated_at: number;
 }
@@ -230,10 +231,32 @@ export interface WorkspaceChannel {
 export interface WorkspaceDeliverySummary {
   people_total: number;
   people_reached: number;
+  people_partial?: number;
+  people_pending?: number;
+  people_failed?: number;
   devices_total: number;
   devices_reached: number;
   devices_pending: number;
   devices_failed: number;
+  devices_expired?: number;
+  devices_cancelled?: number;
+}
+
+export interface WorkspaceDelivery {
+  member_id: string;
+  member_display_name: string;
+  device_id: string;
+  device_short_id: string;
+  state:
+    | "waiting_for_keys"
+    | "queued"
+    | "sending"
+    | "stored_for_delivery"
+    | "received_by_endpoint"
+    | "delivered"
+    | "expired"
+    | "failed"
+    | "cancelled";
 }
 
 export interface WorkspaceMessage {
@@ -248,6 +271,7 @@ export interface WorkspaceMessage {
   event_digest: string;
   created_at: number;
   delivery_summary?: WorkspaceDeliverySummary;
+  deliveries?: WorkspaceDelivery[];
 }
 
 export interface WorkspaceMessagePage {
@@ -297,6 +321,30 @@ export interface WorkspaceInvitationFormats {
   expires_at: number;
 }
 
+export interface WorkspaceDisplayNameRequest {
+  id: string;
+  workspace_id: string;
+  manifest_digest: string;
+  member_id: string;
+  device_id: string;
+  display_name: string;
+  state: "pending";
+  created_at: number;
+}
+
+export interface WorkspaceSnapshot {
+  workspaces: Workspace[];
+  workspace_channels: WorkspaceChannel[];
+  workspace_join_requests: WorkspaceJoinRequest[];
+  workspace_display_name_requests: WorkspaceDisplayNameRequest[];
+  workspace_invitations: WorkspaceInvitation[];
+  workspace_drafts: Array<{
+    workspace_id: string;
+    conversation_id: string;
+    text: string;
+  }>;
+}
+
 export interface NetworkSettings {
   nearby_discovery: boolean;
   lan_fallback: boolean;
@@ -337,6 +385,7 @@ export interface Snapshot {
   workspaces?: Workspace[];
   workspace_channels?: WorkspaceChannel[];
   workspace_join_requests?: WorkspaceJoinRequest[];
+  workspace_display_name_requests?: WorkspaceDisplayNameRequest[];
   workspace_invitations?: WorkspaceInvitation[];
   workspace_drafts?: Array<{ workspace_id: string; conversation_id: string; text: string }>;
   settings: NetworkSettings;
