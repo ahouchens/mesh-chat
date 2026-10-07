@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   BookUser,
+  Building2,
   ArrowLeft,
   Ban,
   Check,
@@ -8,6 +9,7 @@ import {
   CircleHelp,
   Copy,
   FileUp,
+  Hash,
   LogOut,
   LockKeyhole,
   Megaphone,
@@ -63,6 +65,12 @@ import type {
   MessageReaction,
   NetworkSettings,
   Snapshot,
+  Workspace,
+  WorkspaceChannel,
+  WorkspaceInvitationFormats,
+  WorkspaceInvitationPreview,
+  WorkspaceMessage,
+  WorkspaceMessagePage,
 } from "./types";
 import "./styles.css";
 
@@ -549,7 +557,7 @@ function Onboarding({
   );
 }
 
-function ImportButtons({ onValue }: { onValue: (value: string) => void }) {
+function ImportButtons({ onValue, showTextFile = true }: { onValue: (value: string) => void; showTextFile?: boolean }) {
   const [scanError, setScanError] = useState("");
   const [scanning, setScanning] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -623,7 +631,7 @@ function ImportButtons({ onValue }: { onValue: (value: string) => void }) {
   }, [scanning, onValue]);
   return (
     <div className="import-row">
-      <label className="file-action"><FileUp size={17} /> Open invite file<input type="file" accept=".meshchat,.json,text/plain,application/json" onChange={(event) => event.target.files?.[0] && readFile(event.target.files[0])} /></label>
+      {showTextFile && <label className="file-action"><FileUp size={17} /> Open invite file<input type="file" accept=".meshchat,.json,text/plain,application/json" onChange={(event) => event.target.files?.[0] && readFile(event.target.files[0])} /></label>}
       <label className="file-action"><QrCode size={17} /> Read QR image<input type="file" accept="image/*" onChange={(event) => event.target.files?.[0] && void scanImage(event.target.files[0])} /></label>
       <button className="file-action file-action--button" type="button" onClick={() => void scanCamera()}><QrCode size={17} /> {scanning ? "Stop camera" : "Scan with camera"}</button>
       {scanning && <div className="camera-box"><video ref={videoRef} muted playsInline aria-label="Camera preview for QR scanning" /><span>Point the camera at a Mesh Chat QR code.</span></div>}
@@ -1671,11 +1679,138 @@ function GroupConversation({
   );
 }
 
+function newOperationId(): string {
+  if (typeof globalThis.crypto?.randomUUID === "function") {
+    return globalThis.crypto.randomUUID();
+  }
+  const bytes = new Uint8Array(16);
+  globalThis.crypto.getRandomValues(bytes);
+  bytes[6] = (bytes[6] & 0x0f) | 0x40;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const hex = Array.from(bytes, (value) => value.toString(16).padStart(2, "0")).join("");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
+function workspaceStateLabel(workspace: Workspace): string {
+  switch (workspace.state) {
+    case "joining": return "Waiting for owner approval";
+    case "leaving": return "Leave request pending";
+    case "left": return "Left workspace";
+    case "removed": return "Membership removed";
+    case "closed": return "Closed · read-only";
+    case "forked": return "Paused for a security conflict";
+    case "incomplete_sync": return "Incomplete sync";
+    default: return "Active";
+  }
+}
+
+function WorkspaceSwitcher({ workspaces, activeId, onSelect, onCreate, onJoin }: { workspaces: Workspace[]; activeId: "personal" | string; onSelect: (id: "personal" | string) => void; onCreate: () => void; onJoin: () => void }) {
+  return (
+    <div className="workspace-switcher" aria-label="Spaces">
+      <button className={`workspace-switcher__item ${activeId === "personal" ? "workspace-switcher__item--active" : ""}`} onClick={() => onSelect("personal")} aria-label="Personal space" title="Personal"><MessageCircleMore size={17} /></button>
+      {workspaces.map((workspace) => <button key={workspace.id} className={`workspace-switcher__item ${activeId === workspace.id ? "workspace-switcher__item--active" : ""}`} onClick={() => onSelect(workspace.id)} aria-label={`Workspace ${workspace.name}`} title={`${workspace.name} · ${workspaceStateLabel(workspace)}`}><span>{initials(workspace.name)}</span>{workspace.state !== "active" && <i aria-hidden="true" />}</button>)}
+      <button className="workspace-switcher__item workspace-switcher__item--add" onClick={onCreate} aria-label="Create workspace" title="Create workspace"><Plus size={16} /></button>
+      <button className="workspace-switcher__item workspace-switcher__item--join" onClick={onJoin} aria-label="Join workspace" title="Join workspace"><LogOut size={15} /></button>
+    </div>
+  );
+}
+
+function CreateWorkspaceDialog({ onClose, onCreated }: { onClose: () => void; onCreated: (workspace: Workspace) => Promise<void> }) {
+  const [name, setName] = useState("");
+  const [description, setDescription] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const create = async () => {
+    if (!name.trim() || busy) return;
+    setBusy(true); setError("");
+    try {
+      const workspace = await serviceCommand<Workspace>("create_workspace", { operation_id: newOperationId(), name: name.trim(), description: description.trim() });
+      await onCreated(workspace);
+    } catch (reason) { setError(errorMessage(reason)); }
+    finally { setBusy(false); }
+  };
+  return <Dialog title="Create a workspace" onClose={onClose}><div className="form-stack workspace-create"><p className="dialog-lead">A private collaboration space for a trusted team.</p><label>Name<input autoFocus value={name} maxLength={64} onChange={(event) => setName(event.target.value)} aria-label="Workspace name" /></label><label>Description <small>Optional</small><textarea value={description} maxLength={250} onChange={(event) => setDescription(event.target.value)} aria-label="Workspace description" /></label><div className="workspace-facts"><p><ShieldCheck size={17} /><span><strong>This device becomes the owner authority.</strong> Losing it freezes administration until authority continuity ships.</span></p><p><Users size={17} /><span>Every public message is encrypted separately for each member device.</span></p><p><WifiOff size={17} /><span>Delivery and history depend on reachable peers; there is no hosted workspace server.</span></p></div>{error && <p className="form-error" role="alert">{error}</p>}<div className="dialog-actions"><Button variant="ghost" onClick={onClose}>Cancel</Button><Button disabled={busy || !name.trim()} onClick={() => void create()}>{busy ? "Creating…" : "Create workspace"}</Button></div></div></Dialog>;
+}
+
+function JoinWorkspaceDialog({ initialValue = "", onClose, onJoined }: { initialValue?: string; onClose: () => void; onJoined: (workspace: Workspace) => Promise<void> }) {
+  const [value, setValue] = useState(initialValue);
+  const [preview, setPreview] = useState<WorkspaceInvitationPreview | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const review = async () => {
+    if (!value.trim() || busy) return;
+    setBusy(true); setError("");
+    try { setPreview(await serviceCommand("preview_workspace_invitation", { invitation: value.trim() })); }
+    catch (reason) { setPreview(null); setError(errorMessage(reason)); }
+    finally { setBusy(false); }
+  };
+  const join = async () => {
+    if (!preview || busy) return;
+    setBusy(true); setError("");
+    try {
+      const workspace = await serviceCommand<Workspace>("submit_workspace_join", { operation_id: newOperationId(), invitation: value.trim() });
+      await onJoined(workspace);
+    } catch (reason) { setError(errorMessage(reason)); }
+    finally { setBusy(false); }
+  };
+  return <Dialog title="Join a workspace" onClose={onClose}><div className="form-stack">{preview ? <><div className="workspace-preview"><span className="workspace-preview__avatar">{initials(preview.name)}</span><div><h3>{preview.name}</h3><p>{preview.description || "No description"}</p></div></div><dl className="security-list"><div><dt>Owner fingerprint</dt><dd>{preview.owner_fingerprint}</dd></div><div><dt>Current members</dt><dd>{preview.member_count}</dd></div><div><dt>History preference</dt><dd>{preview.retention_days === null ? "Indefinite" : `${preview.retention_days} days`}</dd></div></dl><p className="muted">Joining does not approve a global contact. The owner must verify this device and approve your request.</p></> : <><p>Paste or scan the signed one-use invitation from the workspace owner.</p><textarea autoFocus value={value} onChange={(event) => { setValue(event.target.value); setError(""); }} aria-label="Workspace invitation" rows={7} /><ImportButtons onValue={setValue} showTextFile={false} /></>}{error && <p className="form-error" role="alert">{error}</p>}<div className="dialog-actions"><Button variant="ghost" onClick={preview ? () => setPreview(null) : onClose}>{preview ? "Back" : "Cancel"}</Button><Button disabled={busy || (!preview && !value.trim())} onClick={() => void (preview ? join() : review())}>{busy ? "Checking…" : preview ? "Send join request" : "Review invitation"}</Button></div></div></Dialog>;
+}
+
+function WorkspaceInviteDialog({ workspace, onClose }: { workspace: Workspace; onClose: () => void }) {
+  const [invitation, setInvitation] = useState<WorkspaceInvitationFormats | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const [error, setError] = useState("");
+  const create = async () => {
+    if (busy) return;
+    setBusy(true); setError("");
+    try { setInvitation(await serviceCommand("create_workspace_invitation", { operation_id: newOperationId(), workspace_id: workspace.id, lifetime_days: 7 })); }
+    catch (reason) { setError(errorMessage(reason)); }
+    finally { setBusy(false); }
+  };
+  const revoke = async () => {
+    if (!invitation || busy) return;
+    setBusy(true); setError("");
+    try {
+      await serviceCommand("revoke_workspace_invitation", { operation_id: newOperationId(), workspace_id: workspace.id, invitation_id: invitation.id });
+      setInvitation(null); setCopied(false);
+    } catch (reason) { setError(errorMessage(reason)); }
+    finally { setBusy(false); }
+  };
+  return <Dialog title={`Invite to ${workspace.name}`} onClose={onClose}><div className="form-stack">{invitation ? <><p>This bearer invitation works once and expires {formatExpiry(invitation.expires_at)}.</p>{invitation.link.length <= 4096 && <div className="qr-card"><QRCodeSVG value={invitation.link} size={188} level="M" /></div>}<textarea readOnly value={invitation.text} aria-label="Workspace invitation text" rows={5} /><div className="dialog-actions"><Button variant="danger" disabled={busy} onClick={() => void revoke()}>Revoke invitation</Button><Button variant="secondary" onClick={async () => { await navigator.clipboard.writeText(invitation.text); setCopied(true); }}>{copied ? <Check size={17} /> : <Copy size={17} />}{copied ? "Copied" : "Copy invitation"}</Button></div></> : <><p>Create one signed invitation for one person. The owner still reviews the device fingerprint before membership begins.</p><Button disabled={busy} onClick={() => void create()}>{busy ? "Creating…" : "Create one-use invitation"}</Button></>}{error && <p className="form-error" role="alert">{error}</p>}</div></Dialog>;
+}
+
+function WorkspacePeopleDialog({ workspace, onClose }: { workspace: Workspace; onClose: () => void }) {
+  return <Dialog title={`People in ${workspace.name}`} onClose={onClose}><div className="workspace-people">{workspace.members.map((member) => <div className="workspace-person" key={member.id}><Avatar name={member.display_name} small /><span><strong>{member.display_name}{member.id === workspace.local_member_id ? " (you)" : ""}</strong><small>{member.role} · {member.status} · {member.short_id}</small></span><ShieldCheck size={16} aria-label="Signed member" /></div>)}</div></Dialog>;
+}
+
+function WorkspaceSettingsDialog({ workspace, busy, error, onClose, onCloseWorkspace, onLeave, onRemove }: { workspace: Workspace; busy: boolean; error: string; onClose: () => void; onCloseWorkspace: () => void; onLeave: () => void; onRemove: (confirmation: string) => void }) {
+  const [confirmingRemove, setConfirmingRemove] = useState(false);
+  const [confirmation, setConfirmation] = useState("");
+  const terminal = ["left", "removed", "closed"].includes(workspace.state);
+  return <Dialog title="Workspace settings" onClose={onClose}><div className="form-stack workspace-settings"><div><h3>{workspace.name}</h3><p>{workspace.description || "No description"}</p><span className={`workspace-state workspace-state--${workspace.state}`}>{workspaceStateLabel(workspace)}</span></div><dl className="security-list"><div><dt>Workspace ID</dt><dd>{workspace.id}</dd></div><div><dt>Manifest epoch</dt><dd>{workspace.epoch}</dd></div><div><dt>Retention preference</dt><dd>{workspace.retention_days === null ? "Indefinite" : `${workspace.retention_days} days`}</dd></div></dl><p className="muted">This cooperative preference does not guarantee remote deletion. A member device may retain plaintext it already received.</p>{workspace.state === "forked" && <p className="form-error" role="alert">Workspace activity is paused. Mesh Chat will not choose between conflicting signed histories.</p>}{error && <p className="form-error" role="alert">{error}</p>}{!terminal && workspace.local_role === "owner" && <div className="danger-zone"><h3>Close workspace</h3><p>This signs a terminal manifest. No later joins or messages are accepted.</p><Button variant="danger" disabled={busy} onClick={onCloseWorkspace}>Close workspace</Button></div>}{!terminal && workspace.local_role !== "owner" && <div className="danger-zone"><h3>Leave workspace</h3><p>Your signed request waits for the owner to publish the membership change.</p><Button variant="danger" disabled={busy} onClick={onLeave}>Leave workspace</Button></div>}{terminal && <div className="danger-zone"><h3>Remove local workspace data</h3><p>This permanently erases this device’s encrypted workspace records. Re-entry needs a new invitation.</p>{confirmingRemove ? <><label>Type the workspace ID to confirm<input value={confirmation} onChange={(event) => setConfirmation(event.target.value)} aria-label="Workspace removal confirmation" /></label><Button variant="danger" disabled={busy || confirmation !== workspace.id} onClick={() => onRemove(confirmation)}>Remove local data</Button></> : <Button variant="danger" onClick={() => setConfirmingRemove(true)}>Remove local data…</Button>}</div>}</div></Dialog>;
+}
+
+function workspaceDeliveryLabel(message: WorkspaceMessage): string {
+  const summary = message.delivery_summary;
+  if (!summary) return "Received";
+  if (summary.devices_total === 0) return "Saved locally · invite a teammate to share it";
+  if (summary.devices_reached > 0) return `Reached ${summary.people_reached} of ${summary.people_total} ${pluralize(summary.people_total, "person", "people")} · ${summary.devices_reached} of ${summary.devices_total} ${pluralize(summary.devices_total, "device")}`;
+  if (summary.devices_failed > 0 && summary.devices_pending === 0) return "Could not reach the other device";
+  return `Sending to ${summary.devices_total} ${pluralize(summary.devices_total, "device")}…`;
+}
+
+function WorkspaceConversation({ workspace, channel, page, draft, loading, sending, error, onDraft, onSend, onLoadOlder, onHide, onPeople, onSettings, onInvite }: { workspace: Workspace; channel: WorkspaceChannel; page: WorkspaceMessagePage | null; draft: string; loading: boolean; sending: boolean; error: string; onDraft: (value: string) => void; onSend: () => void; onLoadOlder: () => void; onHide: (eventId: string) => void; onPeople: () => void; onSettings: () => void; onInvite: () => void }) {
+  const readOnly = workspace.state !== "active";
+  const [attachmentWarning, setAttachmentWarning] = useState("");
+  return <section className="conversation workspace-conversation" aria-label={`Workspace channel ${channel.name}`} onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); if (event.dataTransfer.files.length) setAttachmentWarning("Attachments are not supported yet. No file was sent."); }}><header className="conversation__header"><div className="conversation__identity"><span className="workspace-channel-icon"><Hash size={19} /></span><span><h1>{channel.name}</h1><small>{workspace.name} · {workspaceStateLabel(workspace)}</small></span></div><div className="workspace-header-actions">{workspace.local_role === "owner" && workspace.state === "active" && workspace.members.filter((member) => member.status === "active").length < 2 && <button className="icon-button" onClick={onInvite} aria-label={`Invite people to ${workspace.name}`} title="Invite people"><UserRoundPlus size={18} /></button>}<button className="icon-button" onClick={onPeople} aria-label={`People in ${workspace.name}`} title="People"><Users size={18} /></button><button className="icon-button" onClick={onSettings} aria-label={`${workspace.name} settings`} title="Workspace settings"><Settings size={18} /></button></div></header><div className="message-scroll workspace-message-scroll">{page?.next_cursor && <button className="load-older" disabled={loading} onClick={onLoadOlder}>{loading ? "Loading…" : "Load older messages"}</button>}{loading && !page && <div className="workspace-loading"><span className="spinner" /> Loading messages…</div>}{!loading && page?.messages.length === 0 && <div className="workspace-channel-empty"><Hash size={26} /><h2>Welcome to #general</h2><p>Everyone in this workspace receives this channel. History depends on copies retained by reachable members.</p></div>}{page?.messages.map((message) => <article className={`workspace-message ${message.direction === "outbound" ? "workspace-message--self" : ""}`} key={message.id}><Avatar name={message.author_display_name} small /><div><header><strong>{message.author_display_name}</strong><time dateTime={machineTime(message.created_at)}>{formatTime(message.created_at)}</time><button className="message-hide" onClick={() => onHide(message.id)} aria-label={`Hide message from ${message.author_display_name}`} title="Hide locally"><X size={13} /></button></header><p>{message.text}</p>{message.direction === "outbound" && <small>{workspaceDeliveryLabel(message)}</small>}</div></article>)}</div>{(error || attachmentWarning) && <p className="form-error workspace-composer-error" role="alert">{error || attachmentWarning}</p>}{readOnly ? <div className="composer-disabled"><LockKeyhole size={16} />{workspaceStateLabel(workspace)}. Messages are read-only.</div> : <div className="composer workspace-composer"><button type="button" className="icon-button" onClick={() => setAttachmentWarning("Attachments are not supported yet. No file was sent.")} aria-label="Add attachment"><Plus size={20} /></button><textarea value={draft} onChange={(event) => { setAttachmentWarning(""); onDraft(event.target.value); }} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); onSend(); } }} placeholder={`Message #${channel.name}`} aria-label={`Message ${channel.name}`} maxLength={16 * 1024} /><Button disabled={sending || !draft.trim()} onClick={onSend} aria-label="Send workspace message"><Send size={18} /></Button></div>}</section>;
+}
+
 type ConversationSelection = { kind: "contact" | "group"; id: string } | null;
 type ReactionTarget = { kind: "direct" | "group"; messageId: string; layer: "quick" | "catalog" } | null;
 
 type DraftWrite = {
-  command: "save_draft" | "save_group_draft";
+  command: "save_draft" | "save_group_draft" | "save_workspace_draft";
   payload: Record<string, unknown>;
 };
 
@@ -1692,6 +1827,9 @@ function Messenger({ snapshot, refresh, onLock, initialInvitation, onInvitationH
   const groups = snapshot.groups ?? [];
   const groupMessages = snapshot.group_messages ?? [];
   const groupInvitations = snapshot.group_invitations ?? [];
+  const workspaces = snapshot.workspaces ?? [];
+  const workspaceChannels = snapshot.workspace_channels ?? [];
+  const workspaceJoinRequests = snapshot.workspace_join_requests ?? [];
   const hiddenConversationKeys = new Set((snapshot.hidden_conversations ?? []).map((item) => `${item.kind}:${item.id}`));
   const [selection, setSelection] = useState<ConversationSelection>(() => {
     const initiallyHidden = new Set((snapshot.hidden_conversations ?? []).map((item) => `${item.kind}:${item.id}`));
@@ -1707,6 +1845,21 @@ function Messenger({ snapshot, refresh, onLock, initialInvitation, onInvitationH
   const [groupDrafts, setGroupDrafts] = useState<Record<string, string>>(() => Object.fromEntries((snapshot.group_drafts ?? []).map((draft) => [draft.group_id, draft.text])));
   const [newChat, setNewChat] = useState(false);
   const [newGroup, setNewGroup] = useState(false);
+  const [workspacesEnabled, setWorkspacesEnabled] = useState(false);
+  const [activeSpaceId, setActiveSpaceId] = useState<"personal" | string>("personal");
+  const [createWorkspaceOpen, setCreateWorkspaceOpen] = useState(false);
+  const [joinWorkspaceOpen, setJoinWorkspaceOpen] = useState(false);
+  const [inviteWorkspaceOpen, setInviteWorkspaceOpen] = useState(false);
+  const [workspacePeopleOpen, setWorkspacePeopleOpen] = useState(false);
+  const [workspaceSettingsOpen, setWorkspaceSettingsOpen] = useState(false);
+  const [workspacePage, setWorkspacePage] = useState<WorkspaceMessagePage | null>(null);
+  const [workspacePageLoading, setWorkspacePageLoading] = useState(false);
+  const [workspaceDrafts, setWorkspaceDrafts] = useState<Record<string, string>>(() => Object.fromEntries((snapshot.workspace_drafts ?? []).map((draft) => [draft.conversation_id, draft.text])));
+  const [workspaceSending, setWorkspaceSending] = useState(false);
+  const [workspaceError, setWorkspaceError] = useState("");
+  const [workspaceActionBusy, setWorkspaceActionBusy] = useState(false);
+  const [workspaceActionError, setWorkspaceActionError] = useState("");
+  const workspacePageInFlight = useRef(false);
   const [contactsOpen, setContactsOpen] = useState(false);
   const [settings, setSettings] = useState(false);
   const [help, setHelp] = useState<{ code: string; action: string | null } | null>(null);
@@ -1739,7 +1892,16 @@ function Messenger({ snapshot, refresh, onLock, initialInvitation, onInvitationH
   const [reactionTarget, setReactionTarget] = useState<ReactionTarget>(null);
   const [reactionBusy, setReactionBusy] = useState<{ kind: "direct" | "group"; messageId: string; emoji: string } | null>(null);
   const [reactionError, setReactionError] = useState("");
-  useEffect(() => { if (initialInvitation) setNewChat(true); }, [initialInvitation]);
+  useEffect(() => { void runtimePlatform().then((platform) => setWorkspacesEnabled(platform === "desktop")); }, []);
+  useEffect(() => {
+    if (!initialInvitation) return;
+    const workspaceInvitation = initialInvitation.startsWith("meshchat://workspace/") || initialInvitation.trim().startsWith("MESHWORKSPACE1:") || initialInvitation.includes('"type":"workspace_invite"');
+    if (workspaceInvitation) {
+      if (workspacesEnabled) setJoinWorkspaceOpen(true);
+      return;
+    }
+    setNewChat(true);
+  }, [initialInvitation, workspacesEnabled]);
 
   useEffect(() => () => {
     for (const slot of draftWriteSlots.current.values()) {
@@ -1777,6 +1939,10 @@ function Messenger({ snapshot, refresh, onLock, initialInvitation, onInvitationH
   const networkAvailable = Boolean(snapshot.network?.interface_available) && !snapshot.service_error;
   const selectedContact = selection?.kind === "contact" ? snapshot.contacts.find((contact) => contact.id === selection.id) ?? null : null;
   const selectedGroup = selection?.kind === "group" ? groups.find((group) => group.id === selection.id) ?? null : null;
+  const selectedWorkspace = activeSpaceId === "personal" ? null : workspaces.find((workspace) => workspace.id === activeSpaceId) ?? null;
+  const selectedWorkspaceChannel = selectedWorkspace?.general_channel_id
+    ? workspaceChannels.find((channel) => channel.workspace_id === selectedWorkspace.id && channel.id === selectedWorkspace.general_channel_id) ?? null
+    : null;
   const deleteTargetName = deleteTarget?.kind === "contact"
     ? snapshot.contacts.find((contact) => contact.id === deleteTarget.id)?.display_name ?? "this contact"
     : deleteTarget?.kind === "group"
@@ -1784,6 +1950,37 @@ function Messenger({ snapshot, refresh, onLock, initialInvitation, onInvitationH
       : "this conversation";
   const messages = selectedContact ? directMessages.filter((message) => message.contact_id === selectedContact.id) : [];
   const selectedGroupMessages = selectedGroup ? groupMessages.filter((message) => message.group_id === selectedGroup.id) : [];
+
+  useEffect(() => {
+    if (activeSpaceId !== "personal" && !workspaces.some((workspace) => workspace.id === activeSpaceId)) setActiveSpaceId("personal");
+  }, [activeSpaceId, workspaces]);
+
+  const loadWorkspaceMessages = useCallback(async (append = false) => {
+    if (!selectedWorkspace || !selectedWorkspaceChannel || workspacePageInFlight.current) return;
+    workspacePageInFlight.current = true;
+    setWorkspacePageLoading(true);
+    if (!append) setWorkspacePage(null);
+    try {
+      const page = await serviceCommand<WorkspaceMessagePage>("list_workspace_messages", {
+        workspace_id: selectedWorkspace.id,
+        channel_id: selectedWorkspaceChannel.id,
+        cursor: append ? workspacePage?.next_cursor ?? null : null,
+        limit: 50,
+      });
+      setWorkspacePage((current) => append && current ? { ...page, messages: [...page.messages, ...current.messages] } : page);
+      if (!append && selectedWorkspaceChannel.unread_count > 0) {
+        await serviceCommand("mark_workspace_read", { operation_id: newOperationId(), workspace_id: selectedWorkspace.id, channel_id: selectedWorkspaceChannel.id, high_water: page.high_water });
+      }
+    } catch (reason) { setWorkspaceError(errorMessage(reason)); }
+    finally { workspacePageInFlight.current = false; setWorkspacePageLoading(false); }
+  }, [selectedWorkspace?.id, selectedWorkspaceChannel?.id, selectedWorkspaceChannel?.unread_count, workspacePage?.next_cursor]);
+
+  useEffect(() => {
+    if (selectedWorkspace && selectedWorkspaceChannel) void loadWorkspaceMessages(false);
+    else setWorkspacePage(null);
+    // Snapshot changes are intentional: scoped service invalidations refresh the
+    // summaries, then this bounded page request picks up new channel events.
+  }, [selectedWorkspace?.id, selectedWorkspaceChannel?.id, snapshot]);
 
   const conversationItems = [
     ...contacts.map((contact) => {
@@ -1963,6 +2160,13 @@ function Messenger({ snapshot, refresh, onLock, initialInvitation, onInvitationH
       payload: { group_id: groupId, text },
     });
   };
+  const saveWorkspaceDraft = (workspaceId: string, channelId: string, text: string) => {
+    setWorkspaceDrafts((current) => ({ ...current, [channelId]: text }));
+    scheduleDraftWrite(`workspace:${channelId}`, {
+      command: "save_workspace_draft",
+      payload: { operation_id: newOperationId(), workspace_id: workspaceId, channel_id: channelId, text },
+    });
+  };
   const send = async () => {
     if (!selectedContact || directSendInFlight.current) return;
     const text = drafts[selectedContact.id] ?? "";
@@ -2125,6 +2329,55 @@ function Messenger({ snapshot, refresh, onLock, initialInvitation, onInvitationH
     }
   };
 
+  const respondToWorkspaceJoin = async (requestId: string, accept: boolean) => {
+    if (!selectedWorkspace || workspaceActionBusy) return;
+    setWorkspaceActionBusy(true); setWorkspaceActionError("");
+    try {
+      await serviceCommand(accept ? "approve_workspace_join" : "decline_workspace_join", { operation_id: newOperationId(), workspace_id: selectedWorkspace.id, request_id: requestId });
+      await refresh(true);
+    } catch (reason) { setWorkspaceActionError(errorMessage(reason)); }
+    finally { setWorkspaceActionBusy(false); }
+  };
+  const sendWorkspaceMessage = async () => {
+    if (!selectedWorkspace || !selectedWorkspaceChannel || workspaceSending) return;
+    const text = workspaceDrafts[selectedWorkspaceChannel.id] ?? "";
+    if (!text.trim()) return;
+    const draftKey = `workspace:${selectedWorkspaceChannel.id}`;
+    setWorkspaceSending(true); setWorkspaceError("");
+    await cancelPendingDraftWrite(draftKey);
+    try {
+      await serviceCommand<WorkspaceMessage>("send_workspace_message", { operation_id: newOperationId(), event_id: newOperationId(), workspace_id: selectedWorkspace.id, channel_id: selectedWorkspaceChannel.id, text });
+      setWorkspaceDrafts((current) => ({ ...current, [selectedWorkspaceChannel.id]: "" }));
+      try {
+        await writeDraftNow(draftKey, { command: "save_workspace_draft", payload: { operation_id: newOperationId(), workspace_id: selectedWorkspace.id, channel_id: selectedWorkspaceChannel.id, text: "" } });
+      } catch {
+        setWorkspaceError("Your message was saved, but its saved draft could not be cleared. It may reappear after reopening Mesh Chat.");
+      }
+      await loadWorkspaceMessages(false);
+      await refresh(true);
+    } catch (reason) { setWorkspaceError(`${errorMessage(reason)} Your text is still in the composer.`); }
+    finally { setWorkspaceSending(false); }
+  };
+  const hideWorkspaceMessage = async (eventId: string) => {
+    if (!selectedWorkspace) return;
+    setWorkspaceError("");
+    try {
+      await serviceCommand("hide_workspace_message", { operation_id: newOperationId(), workspace_id: selectedWorkspace.id, event_id: eventId });
+      await loadWorkspaceMessages(false);
+    } catch (reason) { setWorkspaceError(errorMessage(reason)); }
+  };
+  const runWorkspaceLifecycle = async (command: "leave_workspace" | "close_workspace" | "remove_workspace_data", confirmation?: string) => {
+    if (!selectedWorkspace || workspaceActionBusy) return;
+    setWorkspaceActionBusy(true); setWorkspaceActionError("");
+    try {
+      await serviceCommand(command, { operation_id: newOperationId(), workspace_id: selectedWorkspace.id, ...(confirmation ? { confirmation } : {}) });
+      const removed = command === "remove_workspace_data";
+      if (removed) { setActiveSpaceId("personal"); setWorkspaceSettingsOpen(false); }
+      await refresh(true);
+    } catch (reason) { setWorkspaceActionError(errorMessage(reason)); }
+    finally { setWorkspaceActionBusy(false); }
+  };
+
   const handleMobileBack = useCallback(() => {
     // Foreground requests cover dialogs which were already open, so they must
     // be dismissed before the underlying layer or conversation.
@@ -2221,9 +2474,11 @@ function Messenger({ snapshot, refresh, onLock, initialInvitation, onInvitationH
   }, [hasMobileBackTarget]);
 
   return (
-    <main className={`app-shell ${selectedContact || selectedGroup ? "app-shell--thread" : "app-shell--list"}`}>
+    <main className={`app-shell ${selectedWorkspace || selectedContact || selectedGroup ? "app-shell--thread" : "app-shell--list"}`}>
       <aside className="sidebar">
         <header className="sidebar__top"><Brand /><div><button className="icon-button" onClick={() => setContactsOpen(true)} aria-label="Contacts" title="Contacts"><BookUser size={19} /></button><button className="icon-button" onClick={() => void onLock()} aria-label="Lock Mesh Chat"><LockKeyhole size={18} /></button><button className="icon-button" onClick={() => setSettings(true)} aria-label="Settings"><Settings size={19} /></button><button className="icon-button mobile-only" aria-label="Menu"><Menu size={20} /></button></div></header>
+        {workspacesEnabled && <WorkspaceSwitcher workspaces={workspaces} activeId={activeSpaceId} onSelect={(id) => { setActiveSpaceId(id); setWorkspaceError(""); setWorkspaceActionError(""); }} onCreate={() => setCreateWorkspaceOpen(true)} onJoin={() => setJoinWorkspaceOpen(true)} />}
+        {activeSpaceId === "personal" ? <>
         <div className="search-box"><Search size={17} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search conversations" aria-label="Search conversations" /></div>
         {conversationActionError && <p className="form-error sidebar-action-error" role="alert">{conversationActionError}</p>}
         <nav className="contact-list" aria-label="Conversations">
@@ -2246,6 +2501,19 @@ function Messenger({ snapshot, refresh, onLock, initialInvitation, onInvitationH
           <button className="new-chat-button" aria-label="New chat" onClick={() => setNewChat(true)}><Plus size={20} /><span>New chat</span></button>
           <button className="new-group-button" aria-label="New group" onClick={() => setNewGroup(true)}><Users size={19} /><span>New group</span></button>
         </div>
+        </> : selectedWorkspace ? <>
+          <div className="workspace-sidebar-heading"><div className="workspace-sidebar-heading__avatar">{initials(selectedWorkspace.name)}</div><div><strong>{selectedWorkspace.name}</strong><small>{workspaceStateLabel(selectedWorkspace)}</small></div></div>
+          {workspaceActionError && <p className="form-error sidebar-action-error" role="alert">{workspaceActionError}</p>}
+          <nav className="contact-list workspace-nav" aria-label={`${selectedWorkspace.name} conversations`}>
+            {workspaceJoinRequests.filter((request) => request.workspace_id === selectedWorkspace.id).map((request) => <section className="request-card workspace-join-request" key={request.id}><div><Avatar name={request.display_name} small /><span><strong>{request.display_name}</strong><small>Requests to join · {request.member_id.replaceAll("-", "").slice(0, 6)}</small></span></div><p className="request-fingerprint">{request.fingerprint}</p><div><Button disabled={workspaceActionBusy} onClick={() => void respondToWorkspaceJoin(request.id, true)}>Approve</Button><Button variant="ghost" disabled={workspaceActionBusy} onClick={() => void respondToWorkspaceJoin(request.id, false)}>Decline</Button></div></section>)}
+            <p className="workspace-nav__label">Channels</p>
+            {selectedWorkspaceChannel ? <button className="contact-row contact-row--selected workspace-channel-row"><span className="workspace-channel-icon"><Hash size={18} /></span><span className="contact-row__content"><span><strong>general</strong>{selectedWorkspaceChannel.unread_count > 0 && <b className="unread-badge">{selectedWorkspaceChannel.unread_count}</b>}</span><span className="contact-row__preview">Everyone in the workspace</span></span></button> : <div className="workspace-channel-pending"><RefreshCw size={16} /><span>{selectedWorkspace.state === "joining" ? "Waiting for #general access" : "General channel control is syncing"}</span></div>}
+            <p className="workspace-nav__label">Workspace</p>
+            <button className="workspace-nav-action" onClick={() => setWorkspacePeopleOpen(true)}><Users size={17} />People <span>{selectedWorkspace.members.filter((member) => member.status === "active").length}</span></button>
+            {selectedWorkspace.local_role === "owner" && selectedWorkspace.state === "active" && selectedWorkspace.members.filter((member) => member.status === "active").length < 2 && <button className="workspace-nav-action" onClick={() => setInviteWorkspaceOpen(true)}><UserRoundPlus size={17} />Invite people</button>}
+            <button className="workspace-nav-action" onClick={() => setWorkspaceSettingsOpen(true)}><Settings size={17} />Workspace settings</button>
+          </nav>
+        </> : null}
         <footer className="sidebar__footer"><span className={`network-dot ${networkAvailable ? "network-dot--on" : ""}`} />{networkAvailable ? "Networking active" : "Networking unavailable"}</footer>
       </aside>
       <div className="main-pane">
@@ -2255,7 +2523,26 @@ function Messenger({ snapshot, refresh, onLock, initialInvitation, onInvitationH
             <span><strong>Networking is unavailable.</strong> Put both devices on the same local network and reopen Mesh Chat. Your profile and queued messages are safe.</span>
           </div>
         )}
-        {selectedContact ? (
+        {selectedWorkspace ? (selectedWorkspaceChannel ? (
+          <WorkspaceConversation
+            workspace={selectedWorkspace}
+            channel={selectedWorkspaceChannel}
+            page={workspacePage}
+            draft={workspaceDrafts[selectedWorkspaceChannel.id] ?? ""}
+            loading={workspacePageLoading}
+            sending={workspaceSending}
+            error={workspaceError}
+            onDraft={(value) => { setWorkspaceError(""); saveWorkspaceDraft(selectedWorkspace.id, selectedWorkspaceChannel.id, value); }}
+            onSend={() => void sendWorkspaceMessage()}
+            onLoadOlder={() => void loadWorkspaceMessages(true)}
+            onHide={(eventId) => void hideWorkspaceMessage(eventId)}
+            onPeople={() => setWorkspacePeopleOpen(true)}
+            onSettings={() => setWorkspaceSettingsOpen(true)}
+            onInvite={() => setInviteWorkspaceOpen(true)}
+          />
+        ) : (
+          <section className="empty-state workspace-waiting"><div className="empty-state__icon"><Building2 size={31} /></div><h1>{selectedWorkspace.name}</h1><p>{workspaceStateLabel(selectedWorkspace)}. Keep Mesh Chat open so signed membership and channel controls can arrive.</p><Button variant="secondary" onClick={() => setWorkspacePeopleOpen(true)}><Users size={18} /> People</Button></section>
+        )) : selectedContact ? (
           <Conversation
             contact={selectedContact}
             messages={messages}
@@ -2311,6 +2598,11 @@ function Messenger({ snapshot, refresh, onLock, initialInvitation, onInvitationH
           <section className="empty-state"><div className="empty-state__icon"><MessageCircleMore size={32} /></div><h1>Your private conversations</h1><p>Start a private chat or a small group. There’s no account or central chat server.</p><div className="empty-state__actions"><Button onClick={() => setNewChat(true)}><Plus size={18} /> New chat</Button><Button variant="secondary" onClick={() => setNewGroup(true)}><Users size={18} /> New group</Button></div></section>
         )}
       </div>
+      {createWorkspaceOpen && <CreateWorkspaceDialog onClose={() => setCreateWorkspaceOpen(false)} onCreated={async (workspace) => { await refresh(true); setActiveSpaceId(workspace.id); setCreateWorkspaceOpen(false); }} />}
+      {joinWorkspaceOpen && <JoinWorkspaceDialog initialValue={initialInvitation.startsWith("meshchat://workspace/") || initialInvitation.trim().startsWith("MESHWORKSPACE1:") || initialInvitation.includes("workspace_invite") ? initialInvitation : ""} onClose={() => { setJoinWorkspaceOpen(false); onInvitationHandled(); }} onJoined={async (workspace) => { await refresh(true); setActiveSpaceId(workspace.id); setJoinWorkspaceOpen(false); onInvitationHandled(); }} />}
+      {selectedWorkspace && inviteWorkspaceOpen && <WorkspaceInviteDialog workspace={selectedWorkspace} onClose={() => setInviteWorkspaceOpen(false)} />}
+      {selectedWorkspace && workspacePeopleOpen && <WorkspacePeopleDialog workspace={selectedWorkspace} onClose={() => setWorkspacePeopleOpen(false)} />}
+      {selectedWorkspace && workspaceSettingsOpen && <WorkspaceSettingsDialog workspace={selectedWorkspace} busy={workspaceActionBusy} error={workspaceActionError} onClose={() => setWorkspaceSettingsOpen(false)} onCloseWorkspace={() => void runWorkspaceLifecycle("close_workspace")} onLeave={() => void runWorkspaceLifecycle("leave_workspace")} onRemove={(confirmation) => void runWorkspaceLifecycle("remove_workspace_data", confirmation)} />}
       {newChat && <div className={hasForegroundRequest ? "dialog-suspended" : ""} aria-hidden={hasForegroundRequest ? true : undefined}><NewChatDialog initialInvitation={initialInvitation} onClose={() => { setNewChat(false); onInvitationHandled(); }} onChanged={async () => { await refresh(true); }} /></div>}
       {newGroup && <div className={hasForegroundRequest ? "dialog-suspended" : ""} aria-hidden={hasForegroundRequest ? true : undefined}><CreateGroupDialog contacts={snapshot.contacts} onClose={() => setNewGroup(false)} onCreated={async (group) => { await refresh(true); selectConversation({ kind: "group", id: group.id }); setNewGroup(false); }} /></div>}
       {contactsOpen && <div className={hasForegroundRequest ? "dialog-suspended" : ""} aria-hidden={hasForegroundRequest ? true : undefined}><ContactsDialog contacts={snapshot.contacts.filter((contact) => contact.trust !== "pending_request")} onClose={() => setContactsOpen(false)} onChanged={async () => { await refresh(true); }} onOpenConversation={async (contact) => { const hidden = hiddenConversationKeys.has(`direct:${contact.id}`); setContactsOpen(false); await restoreAndSelect({ kind: "contact", id: contact.id }, hidden); }} onDeleted={async (contactId) => { if (selection?.kind === "contact" && selection.id === contactId) setSelection(null); setDrafts((current) => { const next = { ...current }; delete next[contactId]; return next; }); setLocallySavedMessages((current) => Object.fromEntries(Object.entries(current).filter(([, message]) => message.contact_id !== contactId))); await refresh(true); }} /></div>}

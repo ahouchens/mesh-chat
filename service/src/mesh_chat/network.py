@@ -17,6 +17,8 @@ from .errors import NetworkUnavailable, RecipientKeysUnavailable, ValidationErro
 from .invitations import verify_invitation
 from .models import DeliveryState, MessageKind
 from .reticulum_config import NetworkSettings, write_config
+from .workspace_protocol import verify_workspace_join
+from .workspace_wire import is_workspace_payload, parse_workspace_payload
 
 InboundCallback = Callable[[LXMF.LXMessage], None]
 StatusCallback = Callable[[str, DeliveryState, str | None], None]
@@ -797,15 +799,34 @@ class ReticulumNetwork:
             return
         if not message.signature_validated:
             try:
-                app = parse_payload(message)
-                if app.kind != MessageKind.CONTACT_REQUEST or app.invitation is None:
-                    return
-                invitation = verify_invitation(app.invitation)
-                if invitation.destination_hash != message.source_hash:
-                    return
-                if not validate_unknown_source_signature(message, invitation.public_identity):
-                    return
-                self.remember_contact(invitation.public_identity, invitation.destination_hash)
+                if is_workspace_payload(message):
+                    wire = parse_workspace_payload(message)
+                    if wire.kind != "workspace_join":
+                        return
+                    join = verify_workspace_join(wire.document)
+                    if (
+                        join.workspace_id != wire.workspace_id
+                        or join.device.destination_hash != message.source_hash
+                    ):
+                        return
+                    if not validate_unknown_source_signature(
+                        message, join.device.public_identity
+                    ):
+                        return
+                else:
+                    app = parse_payload(message)
+                    if app.kind != MessageKind.CONTACT_REQUEST or app.invitation is None:
+                        return
+                    invitation = verify_invitation(app.invitation)
+                    if invitation.destination_hash != message.source_hash:
+                        return
+                    if not validate_unknown_source_signature(
+                        message, invitation.public_identity
+                    ):
+                        return
+                    self.remember_contact(
+                        invitation.public_identity, invitation.destination_hash
+                    )
                 message.signature_validated = True
             except Exception:
                 return

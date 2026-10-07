@@ -57,6 +57,40 @@ class GroupStatus(StrEnum):
     CLOSED = "closed"
 
 
+class WorkspaceRole(StrEnum):
+    OWNER = "owner"
+    ADMIN = "admin"
+    MEMBER = "member"
+
+
+class WorkspaceStatus(StrEnum):
+    JOINING = "joining"
+    ACTIVE = "active"
+    LEAVING = "leaving"
+    LEFT = "left"
+    REMOVED = "removed"
+    CLOSED = "closed"
+    FORKED = "forked"
+    INCOMPLETE_SYNC = "incomplete_sync"
+    LOCALLY_REMOVED = "locally_removed"
+
+
+class WorkspaceChannelCreationPolicy(StrEnum):
+    ALL_MEMBERS = "all_members"
+    OWNER_AND_ADMINS = "owner_and_admins"
+
+
+class WorkspacePostingPolicy(StrEnum):
+    ALL_MEMBERS = "all_members"
+    OWNER_AND_ADMINS = "owner_and_admins"
+
+
+class WorkspaceInvitationPolicy(StrEnum):
+    OWNER_ONLY = "owner_only"
+    OWNER_AND_ADMINS = "owner_and_admins"
+    ALL_MEMBERS_REQUEST = "all_members_request"
+
+
 @dataclass(slots=True)
 class Contact:
     id: str

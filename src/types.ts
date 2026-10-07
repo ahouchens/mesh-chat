@@ -158,6 +158,145 @@ export interface GroupInvitation {
   updated_at?: number;
 }
 
+export type WorkspaceRole = "owner" | "admin" | "member";
+export type WorkspaceState =
+  | "joining"
+  | "active"
+  | "leaving"
+  | "left"
+  | "removed"
+  | "closed"
+  | "forked"
+  | "incomplete_sync";
+
+export interface WorkspaceMember {
+  id: string;
+  display_name: string;
+  role: WorkspaceRole;
+  status: "joining" | "active" | "left" | "removed";
+  short_id: string;
+  device: {
+    id: string;
+    destination_hash: string;
+    fingerprint: string;
+  };
+}
+
+export interface Workspace {
+  id: string;
+  name: string;
+  description: string;
+  state: WorkspaceState;
+  local_role: WorkspaceRole;
+  local_member_id: string;
+  local_device_id: string;
+  owner_member_id: string;
+  authority_device_id: string;
+  epoch: number;
+  manifest_hash: string;
+  genesis_digest: string;
+  general_channel_id: string | null;
+  retention_days: 30 | 90 | 365 | null;
+  policies: {
+    channel_creation: "all_members" | "owner_and_admins";
+    posting: "all_members" | "owner_and_admins";
+    invitation_requests: "owner_only" | "owner_and_admins" | "all_members_request";
+  };
+  members: WorkspaceMember[];
+  authorization_generation: number;
+  retention_generation: number;
+  security_error?: string;
+  created_at: number;
+  updated_at: number;
+}
+
+export interface WorkspaceChannel {
+  id: string;
+  workspace_id: string;
+  name: string;
+  topic: string;
+  visibility: "public" | "private";
+  state: "active" | "archived" | "forked";
+  manager_member_id: string;
+  manager_device_id: string;
+  version: number;
+  head_hash: string;
+  manifest_digest: string;
+  unread_count: number;
+  created_at: number;
+  updated_at: number;
+}
+
+export interface WorkspaceDeliverySummary {
+  people_total: number;
+  people_reached: number;
+  devices_total: number;
+  devices_reached: number;
+  devices_pending: number;
+  devices_failed: number;
+}
+
+export interface WorkspaceMessage {
+  id: string;
+  workspace_id: string;
+  conversation_id: string;
+  direction: "inbound" | "outbound";
+  author_member_id: string;
+  author_display_name: string;
+  text: string;
+  sequence: number;
+  event_digest: string;
+  created_at: number;
+  delivery_summary?: WorkspaceDeliverySummary;
+}
+
+export interface WorkspaceMessagePage {
+  messages: WorkspaceMessage[];
+  next_cursor: string | null;
+  high_water: number;
+}
+
+export interface WorkspaceJoinRequest {
+  id: string;
+  workspace_id: string;
+  member_id: string;
+  display_name: string;
+  device_id: string;
+  destination_hash: string;
+  fingerprint: string;
+  invitation_id: string;
+  state: "pending";
+  created_at: number;
+}
+
+export interface WorkspaceInvitation {
+  id: string;
+  workspace_id: string;
+  offered_manifest_digest: string;
+  state: "active";
+  created_at: number;
+  expires_at: number;
+}
+
+export interface WorkspaceInvitationPreview {
+  workspace_id: string;
+  name: string;
+  description: string;
+  owner_fingerprint: string;
+  member_count: number;
+  retention_days: 30 | 90 | 365 | null;
+  expires_at: number;
+}
+
+export interface WorkspaceInvitationFormats {
+  id: string;
+  workspace_id: string;
+  link: string;
+  text: string;
+  value: string;
+  expires_at: number;
+}
+
 export interface NetworkSettings {
   nearby_discovery: boolean;
   lan_fallback: boolean;
@@ -194,6 +333,12 @@ export interface Snapshot {
   group_messages?: GroupMessage[];
   group_drafts?: GroupDraft[];
   group_invitations?: GroupInvitation[];
+  /** Desktop-only Increment 1 workspace summaries. Message bodies are paged separately. */
+  workspaces?: Workspace[];
+  workspace_channels?: WorkspaceChannel[];
+  workspace_join_requests?: WorkspaceJoinRequest[];
+  workspace_invitations?: WorkspaceInvitation[];
+  workspace_drafts?: Array<{ workspace_id: string; conversation_id: string; text: string }>;
   settings: NetworkSettings;
   network: {
     transport_enabled: boolean;

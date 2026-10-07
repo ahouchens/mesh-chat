@@ -1364,6 +1364,25 @@ Artifact hashes for this run:
   remote; that remains an external activation prerequisite rather than an LLM
   build step.
 
+## Workspace increment 1 verification — 2026-10-06
+
+- The complete Python suite passed with **285 tests passed and 6 intentional
+  environment/device skips**. Eight focused workspace tests cover deterministic
+  canonical fixtures, tamper and noncanonical rejection, profile isolation,
+  verified unknown-source join admission, two-service join and chat, reversed
+  control arrival, bounded paging, stale cursors, receipt aggregation without
+  delivery scans, operation replay, and destructive local-data redaction.
+- The six frontend source suites passed with **68 tests**, including the
+  disclosure-first workspace create flow, bounded message loading, attachment
+  rejection, and stable event and operation IDs. TypeScript project compilation
+  and the Vite production build also passed.
+- The Rust library suite passed with **6 tests**, including every workspace
+  renderer command, mobile workspace rejection classification, and workspace
+  deep-link admission. `cargo fmt --check` passed.
+- Physical two-install delivery, restart at injected commit boundaries,
+  partition recovery, package extraction, and protected-profile plaintext scans
+  remain release gates; automated tests do not claim those device results.
+
 ## Acceptance matrix
 
 | Gate | Current evidence |
@@ -1395,5 +1414,6 @@ Artifact hashes for this run:
 | Common flow without technical setup | UI implemented; fresh/returning human run pending |
 | Connection help | State/action mapping implemented; recovery scenarios pending |
 | Accessible joining | Labels, focus, keyboard, contrast and live regions implemented; assistive-tech audit pending |
+| Workspace increment 1 | Canonical document/signature/tamper/profile-isolation tests, two-service create/invite/join/approve/control/message flow, bounded paging and stale-cursor rejection, durable operation replay, attachment rejection, disclosure-first creation UI, desktop command allowlist and mobile rejection are automated. Physical two-install restart/kill-point and network-partition runs remain release gates |
 
 Do not mark a release complete from unit tests alone. Store packet captures, topology configs, full-tree scans, package hashes, platform versions, human timing sheets, and failure notes with the release evidence.

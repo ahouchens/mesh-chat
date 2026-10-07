@@ -10,6 +10,9 @@
 - Group membership and posting authority cannot be changed without a valid,
   hash-linked owner-signed membership epoch, and one member's receipt never
   overstates delivery to the whole group.
+- Workspace membership, policy and closure cannot change without a valid,
+  hash-linked authority manifest; events cannot escape the audience frozen by
+  their referenced manifest and channel control.
 - A reaction cannot claim another actor, cross a direct/group boundary, target
   another conversation, reveal old group content to a later member, or be
   restored by an older revision after replacement, removal, or local deletion.
@@ -26,6 +29,9 @@
 - A compromised group owner signing conflicting membership manifests for one
   epoch. Mesh Chat detects and suspends on this equivocation; it cannot prevent
   a valid owner key from signing it.
+- A compromised workspace authority or device signing conflicting controls or
+  event-stream entries. Valid equivocation is detected and suspends use; a
+  valid stolen key cannot be made honest by protocol validation.
 - Another unprivileged local process attempting profile reuse or control-channel access.
 - Accidental process or shell crashes during durable message transitions.
 
@@ -63,6 +69,22 @@
   policy, member identity cards and roles to a monotonic epoch and the previous
   manifest hash. Invalid, stale, skipped, forked, or unauthorized state fails
   closed.
+- Workspace traffic is isolated under `mesh-chat-workspace`. Its only
+  unknown-source exception is a signed join whose native source, public
+  identity, derived destination, device card, single-use invitation, expiry and
+  offered checkpoint all verify. Pending joins are capped at 32 per workspace
+  and four per source fingerprint.
+- Workspace manifests, channels and author streams are hash-linked. Every
+  event is inner-signed and binds the exact authorization controls and immutable
+  audience. Missing controls or predecessors enter a bounded encrypted inert
+  queue; rollback, skipped authority, and sequence reuse fail closed.
+- Workspace record IDs and cursors are keyed opaque values. Message pages,
+  due-work shards, unread state, drafts, delivery legs and operation results are
+  separately sealed. Startup summaries do not decrypt message bodies. A stale
+  authorization or retention generation invalidates a cursor explicitly.
+- A workspace mutation and its durable operation result commit together. A
+  message and its complete recipient set commit before asynchronous handoff;
+  native endpoint proof is not presented as human read evidence.
 - New members receive no old history by default. Removal stops future
   recipient copies after the new epoch is learned, and delivery remains a set
   of independently verified per-member outcomes.
@@ -114,6 +136,10 @@ Depending on configured interfaces, observers may learn local discovery presence
   after permanent owner-key loss, a globally ordered group timeline, public or
   large channels, discoverable groups, anonymous membership, selective history
   sharing, or safe multi-owner membership editing.
+- Workspace cooperative history, backfill, edits, remote deletion, reactions,
+  threads, search exchange, public/private channel management, direct messages,
+  linked devices, authority transfer, and mobile workspace use. Increment 1
+  intentionally exposes only a two-member desktop `#general` channel.
 - NAT hole punching, mobile push, Bluetooth, LoRa, attachments, multi-device identity cloning, and cloud backup.
 
 ## Open security blockers

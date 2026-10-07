@@ -414,12 +414,50 @@ fn allowed_renderer_command(command: &str) -> bool {
             | "remove_group_member"
             | "leave_group"
             | "close_group"
+            | "create_workspace"
+            | "create_workspace_invitation"
+            | "preview_workspace_invitation"
+            | "revoke_workspace_invitation"
+            | "submit_workspace_join"
+            | "approve_workspace_join"
+            | "decline_workspace_join"
+            | "send_workspace_message"
+            | "list_workspace_messages"
+            | "mark_workspace_read"
+            | "hide_workspace_message"
+            | "save_workspace_draft"
+            | "leave_workspace"
+            | "close_workspace"
+            | "remove_workspace_data"
+    )
+}
+
+fn workspace_renderer_command(command: &str) -> bool {
+    matches!(
+        command,
+        "create_workspace"
+            | "create_workspace_invitation"
+            | "preview_workspace_invitation"
+            | "revoke_workspace_invitation"
+            | "submit_workspace_join"
+            | "approve_workspace_join"
+            | "decline_workspace_join"
+            | "send_workspace_message"
+            | "list_workspace_messages"
+            | "mark_workspace_read"
+            | "hide_workspace_message"
+            | "save_workspace_draft"
+            | "leave_workspace"
+            | "close_workspace"
+            | "remove_workspace_data"
     )
 }
 
 #[cfg(desktop)]
 fn invitation_from_argument(argument: &str) -> Option<String> {
-    if argument.starts_with("meshchat://invite/") && argument.len() <= 24 * 1024 {
+    if (argument.starts_with("meshchat://invite/") || argument.starts_with("meshchat://workspace/"))
+        && argument.len() <= 24 * 1024
+    {
         return Some(argument.to_string());
     }
     let path = Path::new(argument);
@@ -583,6 +621,9 @@ async fn initialize_service(app: AppHandle, display_name: Option<String>) -> Pen
 async fn service_command(app: AppHandle, command: String, payload: Value) -> PendingResult {
     if !allowed_renderer_command(&command) {
         return Err("command_not_allowed".into());
+    }
+    if workspace_renderer_command(&command) {
+        return Err("workspace_desktop_only".into());
     }
     let size = serde_json::to_vec(&payload)
         .map_err(|_| "invalid_request".to_string())?
@@ -784,5 +825,37 @@ mod tests {
         assert!(allowed_renderer_command("restore_conversation"));
         assert!(allowed_renderer_command("set_message_reaction"));
         assert!(!allowed_renderer_command("delete_contact_identity"));
+    }
+
+    #[test]
+    fn renderer_workspace_commands_are_desktop_scoped() {
+        let commands = [
+            "create_workspace",
+            "create_workspace_invitation",
+            "preview_workspace_invitation",
+            "revoke_workspace_invitation",
+            "submit_workspace_join",
+            "approve_workspace_join",
+            "decline_workspace_join",
+            "send_workspace_message",
+            "list_workspace_messages",
+            "mark_workspace_read",
+            "hide_workspace_message",
+            "save_workspace_draft",
+            "leave_workspace",
+            "close_workspace",
+            "remove_workspace_data",
+        ];
+        for command in commands {
+            assert!(allowed_renderer_command(command));
+            assert!(workspace_renderer_command(command));
+        }
+        assert!(!workspace_renderer_command("send_message"));
+    }
+
+    #[test]
+    fn desktop_accepts_workspace_deep_links() {
+        let link = "meshchat://workspace/fixture-token";
+        assert_eq!(invitation_from_argument(link), Some(link.to_string()));
     }
 }

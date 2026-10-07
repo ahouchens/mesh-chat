@@ -39,6 +39,8 @@ from .network import ReticulumNetwork, select_lan_listener_port
 from .reactions import ReactionServiceMixin
 from .reticulum_config import NetworkSettings
 from .vault import VaultStore
+from .workspace_service import WorkspaceServiceMixin
+from .workspace_wire import is_workspace_payload, parse_workspace_payload
 
 EventCallback = Callable[[dict[str, Any]], None]
 CONTACT_REQUEST_WINDOW_SECONDS = 60 * 60
@@ -101,7 +103,7 @@ def _payload(
     return value
 
 
-class MeshChatService(ReactionServiceMixin, GroupServiceMixin):
+class MeshChatService(ReactionServiceMixin, GroupServiceMixin, WorkspaceServiceMixin):
     COMMANDS = {
         "snapshot",
         "create_profile",
@@ -135,13 +137,34 @@ class MeshChatService(ReactionServiceMixin, GroupServiceMixin):
         "remove_group_member",
         "leave_group",
         "close_group",
+        "create_workspace",
+        "create_workspace_invitation",
+        "preview_workspace_invitation",
+        "revoke_workspace_invitation",
+        "submit_workspace_join",
+        "approve_workspace_join",
+        "decline_workspace_join",
+        "send_workspace_message",
+        "list_workspace_messages",
+        "mark_workspace_read",
+        "hide_workspace_message",
+        "save_workspace_draft",
+        "leave_workspace",
+        "close_workspace",
+        "remove_workspace_data",
         "shutdown",
     }
     # These commands are observational and safe to repeat. Persisting their
     # often-large responses provides no idempotency benefit and historically
     # allowed snapshot polling to grow the encrypted command table without a
     # useful bound.
-    UNCACHED_COMMANDS = {"snapshot", "search", "connection_help"}
+    UNCACHED_COMMANDS = {
+        "snapshot",
+        "search",
+        "connection_help",
+        "preview_workspace_invitation",
+        "list_workspace_messages",
+    }
 
     def __init__(self, store: VaultStore, profile_dir: Path, emit: EventCallback):
         self.store = store
@@ -194,6 +217,8 @@ class MeshChatService(ReactionServiceMixin, GroupServiceMixin):
                 )
             for group in self.store.list("group"):
                 self._remember_group_members(group)
+            for workspace in self.store.list("workspace"):
+                self._remember_workspace_devices(workspace)
             # Interface availability can change after startup (for example when
             # a Wi-Fi interface appears or an approved TCP hint is attached),
             # so snapshot() derives that health live instead of latching it.
@@ -1014,7 +1039,8 @@ class MeshChatService(ReactionServiceMixin, GroupServiceMixin):
     ) -> None:
         message = self.store.get("message", logical_id)
         if message is None or message.get("direction") != "outbound":
-            self._on_group_native_status(logical_id, state, native_id)
+            if not self._on_group_native_status(logical_id, state, native_id):
+                self._on_workspace_native_status(logical_id, state, native_id)
             return
         if message["state"] == DeliveryState.DELIVERED.value:
             if (
@@ -1096,6 +1122,9 @@ class MeshChatService(ReactionServiceMixin, GroupServiceMixin):
 
     def _on_inbound_locked(self, native: LXMF.LXMessage) -> None:
         try:
+            if is_workspace_payload(native):
+                self._receive_workspace_payload(native, parse_workspace_payload(native))
+                return
             app = parse_payload(native)
             source = native.source_hash.hex()
             contact = self._contact_by_destination(source)
@@ -1365,6 +1394,11 @@ class MeshChatService(ReactionServiceMixin, GroupServiceMixin):
                         pass
                 if self._shutdown.wait(0.01):
                     return
+            with self._dispatch_lock:
+                try:
+                    self._retry_workspace_outbox()
+                except Exception:
+                    pass
 
     def _flush_contact(self, contact_id: str) -> None:
         attempted = 0
@@ -1432,6 +1466,7 @@ class MeshChatService(ReactionServiceMixin, GroupServiceMixin):
             ),
         }
         snapshot.update(self.group_snapshot(reaction_index))
+        snapshot.update(self.workspace_snapshot())
         return snapshot
 
     def connection_help(self, contact_id: str) -> dict[str, Any]:
@@ -1632,6 +1667,154 @@ class MeshChatService(ReactionServiceMixin, GroupServiceMixin):
                 self.leave_group(body["group_id"])
                 if command == "leave_group"
                 else self.close_group(body["group_id"])
+            )
+        if command == "create_workspace":
+            body = _payload(
+                value,
+                allowed={"operation_id", "name", "description"},
+                required={"operation_id", "name"},
+            )
+            return self.create_workspace(
+                body["operation_id"], body["name"], body.get("description", "")
+            )
+        if command == "create_workspace_invitation":
+            body = _payload(
+                value,
+                allowed={"operation_id", "workspace_id", "lifetime_days"},
+                required={"operation_id", "workspace_id"},
+            )
+            return self.create_workspace_invitation_command(
+                body["workspace_id"],
+                body["operation_id"],
+                body.get("lifetime_days", 7),
+            )
+        if command == "preview_workspace_invitation":
+            body = _payload(
+                value, allowed={"invitation"}, required={"invitation"}
+            )
+            return self.preview_workspace_invitation(body["invitation"])
+        if command == "revoke_workspace_invitation":
+            body = _payload(
+                value,
+                allowed={"operation_id", "workspace_id", "invitation_id"},
+                required={"operation_id", "workspace_id", "invitation_id"},
+            )
+            return self.revoke_workspace_invitation(
+                body["workspace_id"], body["invitation_id"], body["operation_id"]
+            )
+        if command == "submit_workspace_join":
+            body = _payload(
+                value,
+                allowed={"operation_id", "invitation"},
+                required={"operation_id", "invitation"},
+            )
+            return self.submit_workspace_join(
+                body["invitation"], body["operation_id"]
+            )
+        if command in {"approve_workspace_join", "decline_workspace_join"}:
+            body = _payload(
+                value,
+                allowed={"operation_id", "workspace_id", "request_id"},
+                required={"operation_id", "workspace_id", "request_id"},
+            )
+            return (
+                self.approve_workspace_join(
+                    body["workspace_id"], body["request_id"], body["operation_id"]
+                )
+                if command == "approve_workspace_join"
+                else self.decline_workspace_join(
+                    body["workspace_id"], body["request_id"], body["operation_id"]
+                )
+            )
+        if command == "send_workspace_message":
+            body = _payload(
+                value,
+                allowed={
+                    "operation_id",
+                    "workspace_id",
+                    "channel_id",
+                    "event_id",
+                    "text",
+                },
+                required={
+                    "operation_id",
+                    "workspace_id",
+                    "channel_id",
+                    "event_id",
+                    "text",
+                },
+            )
+            return self.send_workspace_message(
+                body["workspace_id"],
+                body["channel_id"],
+                body["text"],
+                body["event_id"],
+                body["operation_id"],
+            )
+        if command == "list_workspace_messages":
+            body = _payload(
+                value,
+                allowed={"workspace_id", "channel_id", "cursor", "limit"},
+                required={"workspace_id", "channel_id"},
+            )
+            return self.list_workspace_messages(
+                body["workspace_id"],
+                body["channel_id"],
+                body.get("cursor"),
+                body.get("limit", 50),
+            )
+        if command == "mark_workspace_read":
+            body = _payload(
+                value,
+                allowed={"operation_id", "workspace_id", "channel_id", "high_water"},
+                required={"operation_id", "workspace_id", "channel_id", "high_water"},
+            )
+            return self.mark_workspace_read(
+                body["workspace_id"],
+                body["channel_id"],
+                body["high_water"],
+                body["operation_id"],
+            )
+        if command == "hide_workspace_message":
+            body = _payload(
+                value,
+                allowed={"operation_id", "workspace_id", "event_id"},
+                required={"operation_id", "workspace_id", "event_id"},
+            )
+            return self.hide_workspace_message(
+                body["workspace_id"], body["event_id"], body["operation_id"]
+            )
+        if command == "save_workspace_draft":
+            body = _payload(
+                value,
+                allowed={"operation_id", "workspace_id", "channel_id", "text"},
+                required={"operation_id", "workspace_id", "channel_id", "text"},
+            )
+            return self.save_workspace_draft(
+                body["workspace_id"],
+                body["channel_id"],
+                body["text"],
+                body["operation_id"],
+            )
+        if command in {"leave_workspace", "close_workspace"}:
+            body = _payload(
+                value,
+                allowed={"operation_id", "workspace_id"},
+                required={"operation_id", "workspace_id"},
+            )
+            return (
+                self.leave_workspace(body["workspace_id"], body["operation_id"])
+                if command == "leave_workspace"
+                else self.close_workspace(body["workspace_id"], body["operation_id"])
+            )
+        if command == "remove_workspace_data":
+            body = _payload(
+                value,
+                allowed={"operation_id", "workspace_id", "confirmation"},
+                required={"operation_id", "workspace_id", "confirmation"},
+            )
+            return self.remove_workspace_data(
+                body["workspace_id"], body["confirmation"], body["operation_id"]
             )
         if command == "save_draft":
             body = _payload(

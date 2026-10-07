@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ctypes
 import array
+import base64
 import errno
 import hashlib
 import hmac
@@ -524,6 +525,168 @@ class VaultStore:
                 prepared,
             )
 
+    def opaque_id(self, namespace: str, *parts: str) -> str:
+        """Return a local keyed identifier safe to expose to SQLite indexes."""
+
+        if (
+            not isinstance(namespace, str)
+            or not namespace
+            or any(not isinstance(part, str) for part in parts)
+        ):
+            raise ValidationError("Opaque record identifier input is invalid")
+        material = "\x1f".join((namespace, *parts)).encode("utf-8")
+        return hmac.new(
+            self._key, b"mesh-chat:opaque-id:v1:" + material, hashlib.sha256
+        ).hexdigest()
+
+    def seal_cursor(self, value: dict[str, Any]) -> str:
+        body = json.dumps(
+            value, ensure_ascii=False, separators=(",", ":"), sort_keys=True
+        ).encode("utf-8")
+        if not body or len(body) > 4096:
+            raise ValidationError("Cursor payload is invalid")
+        signature = hmac.new(
+            self._key, b"mesh-chat:cursor:v1:" + body, hashlib.sha256
+        ).digest()
+        return ".".join(
+            base64.urlsafe_b64encode(part).rstrip(b"=").decode("ascii")
+            for part in (body, signature)
+        )
+
+    def open_cursor(self, token: str) -> dict[str, Any]:
+        if not isinstance(token, str) or not 1 <= len(token) <= 8192:
+            raise ValidationError("Cursor is invalid")
+        encoded_body, separator, encoded_signature = token.partition(".")
+        if not separator:
+            raise ValidationError("Cursor is invalid")
+        try:
+            body = base64.urlsafe_b64decode(
+                encoded_body + "=" * (-len(encoded_body) % 4)
+            )
+            signature = base64.urlsafe_b64decode(
+                encoded_signature + "=" * (-len(encoded_signature) % 4)
+            )
+        except Exception as exc:
+            raise ValidationError("Cursor is invalid") from exc
+        expected = hmac.new(
+            self._key, b"mesh-chat:cursor:v1:" + body, hashlib.sha256
+        ).digest()
+        if len(body) > 4096 or not hmac.compare_digest(signature, expected):
+            raise ValidationError("Cursor is invalid")
+        try:
+            value = json.loads(body.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise ValidationError("Cursor is invalid") from exc
+        if not isinstance(value, dict):
+            raise ValidationError("Cursor is invalid")
+        return value
+
+    def operation_result(
+        self, operation_id: str, input_digest: str
+    ) -> dict[str, Any] | None:
+        record_id = self.opaque_id("workspace-operation", operation_id)
+        operation = self.get("workspace_operation", record_id)
+        if operation is None:
+            return None
+        if operation.get("input_digest") != input_digest:
+            raise ValidationError("Operation ID was already used with different input")
+        outcome = operation.get("outcome")
+        if not isinstance(outcome, dict):
+            raise StorageUnavailable("Workspace operation record is invalid")
+        return outcome
+
+    def commit_operation(
+        self,
+        operation_id: str,
+        input_digest: str,
+        outcome: dict[str, Any],
+        records: Iterable[tuple[str, str, dict[str, Any]]],
+        deletions: Iterable[tuple[str, str]] = (),
+        *,
+        redact_command_cache: bool = False,
+    ) -> dict[str, Any]:
+        """Commit one workspace mutation and its replay result atomically."""
+
+        if (
+            not isinstance(operation_id, str)
+            or not 1 <= len(operation_id) <= 80
+            or not isinstance(input_digest, str)
+            or len(input_digest) != 64
+            or input_digest != input_digest.lower()
+            or not isinstance(outcome, dict)
+        ):
+            raise ValidationError("Workspace operation is invalid")
+        try:
+            if len(bytes.fromhex(input_digest)) != 32:
+                raise ValueError
+        except ValueError as exc:
+            raise ValidationError("Workspace operation digest is invalid") from exc
+        operation_record_id = self.opaque_id("workspace-operation", operation_id)
+        now = time.time()
+        operation = {
+            "id": operation_id,
+            "input_digest": input_digest,
+            "outcome": outcome,
+            "created_at": now,
+        }
+        values = [*records, ("workspace_operation", operation_record_id, operation)]
+        prepared = [
+            (kind, record_id, self._seal(kind, record_id, value), now, now)
+            for kind, record_id, value in values
+        ]
+        removed = list(deletions)
+        with self._transaction():
+            existing = self._db.execute(
+                "SELECT sealed FROM records WHERE kind=? AND record_id=?",
+                ("workspace_operation", operation_record_id),
+            ).fetchone()
+            if existing is not None:
+                stored = self._open(
+                    "workspace_operation", operation_record_id, existing[0]
+                )
+                if stored.get("input_digest") != input_digest:
+                    raise ValidationError(
+                        "Operation ID was already used with different input"
+                    )
+                stored_outcome = stored.get("outcome")
+                if not isinstance(stored_outcome, dict):
+                    raise StorageUnavailable("Workspace operation record is invalid")
+                return stored_outcome
+            if redact_command_cache:
+                command_ids = [
+                    row[0]
+                    for row in self._db.execute(
+                        "SELECT command_id FROM commands"
+                    ).fetchall()
+                ]
+                redacted = [
+                    (
+                        self._seal(
+                            "command", command_id, REDACTED_COMMAND_RESPONSE
+                        ),
+                        command_id,
+                    )
+                    for command_id in command_ids
+                ]
+                self._db.executemany(
+                    "UPDATE commands SET sealed_response=? WHERE command_id=?",
+                    redacted,
+                )
+            self._db.executemany(
+                "DELETE FROM records WHERE kind=? AND record_id=?", removed
+            )
+            self._db.executemany(
+                """
+                INSERT INTO records(kind, record_id, sealed, created_at, updated_at)
+                VALUES(?, ?, ?, ?, ?)
+                ON CONFLICT(kind, record_id) DO UPDATE SET
+                    sealed=excluded.sealed,
+                    updated_at=excluded.updated_at
+                """,
+                prepared,
+            )
+        return outcome
+
     def get(self, kind: str, record_id: str) -> dict[str, Any] | None:
         with self._lock:
             row = self._db.execute(
@@ -539,6 +702,19 @@ class VaultStore:
                 (kind,),
             ).fetchall()
         return [self._open(kind, record_id, sealed) for record_id, sealed in rows]
+
+    def items(self, kind: str) -> list[tuple[str, dict[str, Any]]]:
+        """Return record IDs and opened values for bounded maintenance work."""
+
+        with self._lock:
+            rows = self._db.execute(
+                "SELECT record_id, sealed FROM records WHERE kind=? ORDER BY record_id",
+                (kind,),
+            ).fetchall()
+        return [
+            (record_id, self._open(kind, record_id, sealed))
+            for record_id, sealed in rows
+        ]
 
     def delete(self, kind: str, record_id: str) -> None:
         with self._transaction():

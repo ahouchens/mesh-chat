@@ -1,0 +1,12 @@
+{
+  "workspace_id": "93849f4e-a435-b26b-fd01-cde6954270d1",
+  "documents": {
+    "device_card": { "bytes": 509, "sha256": "fb733a17e3b44d9242f55968049b841635c1b5b077a56306e794e2f4867ade5b" },
+    "genesis": { "bytes": 979, "sha256": "898a01290c7b828dabb46d58726e59a7acc86b10dad4997e0a57ac5b2b2322ef" },
+    "manifest": { "bytes": 1291, "sha256": "321ef2c24d6ef8c4701a1af2c33bcaabaa4d5e45e46f9d496e4f0b75eaed054b" },
+    "invitation": { "bytes": 2803, "sha256": "f4b3068511a29ec3656b4d6d495807707af77a60e9e39a685ed433698df4de42" },
+    "join": { "bytes": 3841, "sha256": "1ed3892293e99248992c2cc054eed6c5a2597b209dc19246dae661f27acc73f4" },
+    "channel": { "bytes": 575, "sha256": "2ded00dfbf76abdcc4617d6165660ad27a894732b1bffbceb5b6ee311bcab751" },
+    "event": { "bytes": 738, "sha256": "16aa7eb1c0328a414fae989875444314edca8aff31dbfc3a8e4d9dfb1ea83ffb" }
+  }
+}

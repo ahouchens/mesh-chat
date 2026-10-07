@@ -80,7 +80,9 @@ export function onServiceEvent(callback: (event: ServiceEvent) => void): Promise
 
 export function onInvitation(callback: (invitation: string) => void): Promise<UnlistenFn> {
   const accept = (urls: string[] | null) => {
-    const invitation = urls?.find((value) => value.startsWith("meshchat://invite/"));
+    const invitation = urls?.find((value) =>
+      value.startsWith("meshchat://invite/") || value.startsWith("meshchat://workspace/"),
+    );
     if (invitation) callback(invitation);
   };
   return Promise.all([

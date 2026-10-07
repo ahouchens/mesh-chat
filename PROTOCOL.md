@@ -207,6 +207,59 @@ Receipts are accepted only from the child delivery's intended member and update
 only that member. Aggregate UI states are derived from every child; one receipt
 never proves group-wide delivery.
 
+## Workspace profile v1
+
+Workspaces use a separate LXMF custom type, `b"mesh-chat-workspace"`. Existing
+`b"mesh-chat"` traffic is byte-for-byte unchanged. Workspace Content is empty;
+the strict custom metadata map contains only:
+
+| Key | Value |
+| --- | --- |
+| `1` | schema version `1` |
+| `2` | `workspace_join`, `workspace_manifest_root`, `workspace_channel_record`, `workspace_event`, or `workspace_leave_request` |
+| `3` | random 16-byte logical delivery UUID |
+| `4` | 16-byte workspace UUID |
+| `5` | authenticated application expiry timestamp |
+| `6` | the canonical signed workspace document |
+
+Unknown keys or kinds, nonempty Content, malformed identifiers, invalid expiry,
+control documents over 16 KiB, and event documents over 20 KiB fail closed.
+Dispatch selects this profile before the Personal parser. An unknown native
+source may submit only a fully verified `workspace_join`; every other workspace
+kind requires a source device already authorized by the workspace manifest.
+
+Workspace identifiers are the first 16 bytes of
+`SHA-256("mesh-chat:workspace:v1:" || creator_destination || nonce)`, formatted
+as an RFC 4122 UUID. All documents use sorted-key compact UTF-8 JSON, exact
+field sets, NFC-normalized display strings, base64url without padding, and a
+signature over the document without its `signature` member. The v1 signed
+document types are:
+
+| Type | Authority and purpose |
+| --- | --- |
+| `workspace_device_card` | A device binds workspace, member and device UUIDs, display name, complete public identity, derived destination, up to two route hints, and creation time. |
+| `workspace_genesis` | The creator binds the workspace nonce, name, description, owner and initial authority device. |
+| `workspace_manifest_root` | The authority binds an epoch, predecessor, policies, status, retention, members and devices. |
+| `workspace_invite` | The authority offers a complete genesis/manifest checkpoint, empty authority chain, nonce, expiry, and single-use limit. |
+| `workspace_join` | A joining device binds its signed card to the invitation and offered checkpoint. |
+| `workspace_channel_record` | The manager binds a versioned channel, predecessor, manifest, visibility, policy context, and archived state. |
+| `workspace_event` | An author binds a message to its workspace/conversation, author stream predecessor, exact manifest and channel controls, and immutable payload. |
+| `workspace_leave_request` | A non-owner binds a leave request to the exact current manifest. |
+
+Invitation entry points are `meshchat://workspace/<base64url>` and
+`MESHWORKSPACE1:<base64url>`. Invitations are single-use and expire within 30
+days. Increment 1 supports two active members, one device per member, and only
+the public `#general` channel. It rejects attachments and does not exchange old
+history. The authority is not a message relay: each event is copied directly
+to every other authorized device through its individual ratchet-enforced LXMF
+destination.
+
+Manifest epochs and channel versions are hash-linked. Events carry both exact
+control digests plus a positive per-device sequence and previous-event digest.
+Missing controls or stream predecessors leave an event inert; invalid
+authority, rollback, reused sequence, or equivocation cannot authorize visible
+state. Control copies are scheduled ahead of dependent events.
+
 ## Delivery evidence
 
 | App state | Required evidence |

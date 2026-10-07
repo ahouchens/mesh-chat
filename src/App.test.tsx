@@ -2,7 +2,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testi
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import packageInfo from "../package.json";
-import type { ChatMessage, Contact, Group, GroupInvitation, GroupMessage, Snapshot } from "./types";
+import type { ChatMessage, Contact, Group, GroupInvitation, GroupMessage, Snapshot, Workspace, WorkspaceChannel, WorkspaceMessagePage } from "./types";
 
 const api = vi.hoisted(() => ({
   initializeService: vi.fn(),
@@ -153,6 +153,53 @@ const groupInvitation: GroupInvitation = {
   member_count: 2,
   posting_policy: "members",
   expires_at: 2_000_000_000,
+};
+
+const workspace: Workspace = {
+  id: "11111111-1111-4111-8111-111111111111",
+  name: "Lakewatcher",
+  description: "Field coordination",
+  state: "active",
+  local_role: "owner",
+  local_member_id: "22222222-2222-4222-8222-222222222222",
+  local_device_id: "33333333-3333-4333-8333-333333333333",
+  owner_member_id: "22222222-2222-4222-8222-222222222222",
+  authority_device_id: "33333333-3333-4333-8333-333333333333",
+  epoch: 1,
+  manifest_hash: "66".repeat(32),
+  genesis_digest: "77".repeat(32),
+  general_channel_id: "44444444-4444-4444-8444-444444444444",
+  retention_days: 90,
+  policies: { channel_creation: "all_members", posting: "all_members", invitation_requests: "owner_only" },
+  members: [{
+    id: "22222222-2222-4222-8222-222222222222",
+    display_name: "Alex",
+    role: "owner",
+    status: "active",
+    short_id: "222222",
+    device: { id: "33333333-3333-4333-8333-333333333333", destination_hash: profile.destination_hash, fingerprint: profile.fingerprint },
+  }],
+  authorization_generation: 1,
+  retention_generation: 1,
+  created_at: 4,
+  updated_at: 4,
+};
+
+const workspaceChannel: WorkspaceChannel = {
+  id: workspace.general_channel_id!,
+  workspace_id: workspace.id,
+  name: "general",
+  topic: "",
+  visibility: "public",
+  state: "active",
+  manager_member_id: workspace.local_member_id,
+  manager_device_id: workspace.local_device_id,
+  version: 1,
+  head_hash: "88".repeat(32),
+  manifest_digest: workspace.manifest_hash,
+  unread_count: 0,
+  created_at: 4,
+  updated_at: 4,
 };
 
 function deferred<T>() {
@@ -1710,5 +1757,83 @@ describe("small private groups", () => {
     fireEvent.click(screen.getByRole("button", { name: "Accept invitation" }));
     await waitFor(() => expect(api.serviceCommand).toHaveBeenCalledWith("accept_group_invitation", { invitation_id: groupInvitation.id }));
     expect(await screen.findByRole("heading", { name: group.title })).toBeTruthy();
+  });
+});
+
+describe("desktop workspaces", () => {
+  it("creates a workspace only after showing the owner and peer-delivery facts", async () => {
+    let current = snapshot();
+    api.runtimePlatform.mockResolvedValue("desktop");
+    api.initializeService.mockResolvedValue(current);
+    api.onInvitation.mockResolvedValue(() => undefined);
+    api.onServiceEvent.mockResolvedValue(() => undefined);
+    api.serviceCommand.mockImplementation(async (command: string) => {
+      if (command === "create_workspace") {
+        current = { ...current, workspaces: [workspace], workspace_channels: [workspaceChannel], workspace_join_requests: [], workspace_invitations: [], workspace_drafts: [] };
+        return workspace;
+      }
+      if (command === "snapshot") return current;
+      if (command === "list_workspace_messages") return { messages: [], next_cursor: null, high_water: 0 } satisfies WorkspaceMessagePage;
+      return {};
+    });
+
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Create workspace" }));
+    expect(await screen.findByText(/This device becomes the owner authority/i)).toBeTruthy();
+    expect(screen.getByText(/encrypted separately for each member device/i)).toBeTruthy();
+    expect(screen.getByText(/there is no hosted workspace server/i)).toBeTruthy();
+    const dialog = screen.getByRole("dialog");
+    fireEvent.change(within(dialog).getByRole("textbox", { name: "Workspace name" }), { target: { value: "Lakewatcher" } });
+    fireEvent.change(within(dialog).getByRole("textbox", { name: "Workspace description" }), { target: { value: "Field coordination" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Create workspace" }));
+
+    await waitFor(() => expect(api.serviceCommand).toHaveBeenCalledWith("create_workspace", expect.objectContaining({ name: "Lakewatcher", description: "Field coordination", operation_id: expect.any(String) })));
+    expect(await screen.findByRole("heading", { name: "general" })).toBeTruthy();
+  });
+
+  it("pages general-channel messages, reports attachment rejection, and sends with durable IDs", async () => {
+    let page: WorkspaceMessagePage = {
+      messages: [{
+        id: "55555555-5555-4555-8555-555555555555",
+        workspace_id: workspace.id,
+        conversation_id: workspaceChannel.id,
+        direction: "inbound",
+        author_member_id: workspace.local_member_id,
+        author_display_name: "Taylor",
+        text: "Lake level is stable",
+        sequence: 1,
+        event_digest: "99".repeat(32),
+        created_at: 1_791_072_021,
+      }],
+      next_cursor: null,
+      high_water: 1,
+    };
+    const current: Snapshot = { ...snapshot(), workspaces: [workspace], workspace_channels: [workspaceChannel], workspace_join_requests: [], workspace_invitations: [], workspace_drafts: [] };
+    api.runtimePlatform.mockResolvedValue("desktop");
+    api.initializeService.mockResolvedValue(current);
+    api.onInvitation.mockResolvedValue(() => undefined);
+    api.onServiceEvent.mockResolvedValue(() => undefined);
+    api.serviceCommand.mockImplementation(async (command: string, payload: Record<string, unknown>) => {
+      if (command === "snapshot") return current;
+      if (command === "list_workspace_messages") return page;
+      if (command === "send_workspace_message") {
+        page = { ...page, messages: [...page.messages, { ...page.messages[0], id: String(payload.event_id), direction: "outbound", author_display_name: "Alex", text: String(payload.text), sequence: 2, delivery_summary: { people_total: 0, people_reached: 0, devices_total: 0, devices_reached: 0, devices_pending: 0, devices_failed: 0 } }] };
+        return page.messages.at(-1);
+      }
+      return {};
+    });
+
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Workspace Lakewatcher" }));
+    const conversation = await screen.findByLabelText("Workspace channel general");
+    expect(within(conversation).getByText("Lake level is stable")).toBeTruthy();
+    fireEvent.click(within(conversation).getByRole("button", { name: "Add attachment" }));
+    expect(await within(conversation).findByText(/Attachments are not supported yet/i)).toBeTruthy();
+    const composer = within(conversation).getByRole("textbox", { name: "Message general" });
+    fireEvent.change(composer, { target: { value: "Owner update" } });
+    fireEvent.click(within(conversation).getByRole("button", { name: "Send workspace message" }));
+    await waitFor(() => expect(api.serviceCommand).toHaveBeenCalledWith("send_workspace_message", expect.objectContaining({ workspace_id: workspace.id, channel_id: workspaceChannel.id, text: "Owner update", event_id: expect.any(String), operation_id: expect.any(String) })));
+    expect(await within(conversation).findByText("Owner update")).toBeTruthy();
+    expect(within(conversation).getByText(/Saved locally/i)).toBeTruthy();
   });
 });

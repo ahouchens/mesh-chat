@@ -43,6 +43,41 @@ history by default. See
 [ADR 0004](docs/adr/0004-private-groups-over-individual-lxmf.md) for the scale,
 ordering, removal, and owner-loss consequences.
 
+## Desktop workspaces
+
+The first workspace increment is an isolated desktop feature profile. It adds
+canonical workspace authority, device, invitation, channel and event documents
+under the `mesh-chat-workspace` custom type without changing Personal or private
+group bytes. The React shell can switch between Personal and workspace views,
+but all trust, manifest, paging, unread and delivery decisions remain inside
+the Python service. Rust exposes only the named workspace commands on desktop
+and returns `workspace_desktop_only` through the mobile bridge until the mobile
+increment is implemented.
+
+The service is split into three workspace boundaries:
+
+- `workspace_protocol.py` freezes and verifies canonical signed documents;
+- `workspace_wire.py` owns strict LXMF profile framing and dispatch isolation;
+- `workspace_service.py` owns authority transitions, bounded indexes, paging,
+  scheduler work, derived state, and presentation models.
+
+An authority-signed, hash-linked manifest controls membership and policy; an
+independently signed channel record controls `#general`; an author-device-signed
+event references both. The network adapter permits exactly one unknown-source
+path: a verified join whose embedded identity and native source agree. Controls
+are queued ahead of dependent events, so no event becomes visible merely
+because it arrived before its authority data.
+
+Workspace startup reads summaries, channels, invitations, join requests,
+unread positions, and encrypted drafts, but no message bodies or delivery-leg
+collections. Message lists use bounded linked pages with MAC-bound cursors.
+Mutations use durable operation IDs, and sends commit the event, audience,
+delivery legs, page/index changes, due-work and result in one vault transaction
+before the background scheduler touches LXMF. See
+[ADR 0005](docs/adr/0005-workspace-authority-and-bootstrap.md),
+[ADR 0006](docs/adr/0006-workspace-events-and-history-safety.md), and
+[ADR 0007](docs/adr/0007-sealed-workspace-paging-and-outbox.md).
+
 ## Message reactions
 
 Reactions reuse the existing native LXMF trust, encryption, and routing paths;
@@ -133,3 +168,6 @@ The service does not export private identities to ordinary files, enable crash u
 - [ADR 0002: protected library workspace](docs/adr/0002-protected-workspace.md)
 - [ADR 0003: inherited framed IPC](docs/adr/0003-framed-ipc.md)
 - [ADR 0004: private groups over individual LXMF delivery](docs/adr/0004-private-groups-over-individual-lxmf.md)
+- [ADR 0005: workspace authority and bootstrap](docs/adr/0005-workspace-authority-and-bootstrap.md)
+- [ADR 0006: canonical workspace events and history safety](docs/adr/0006-workspace-events-and-history-safety.md)
+- [ADR 0007: sealed workspace paging and asynchronous outbox](docs/adr/0007-sealed-workspace-paging-and-outbox.md)

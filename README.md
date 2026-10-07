@@ -6,6 +6,30 @@ Messages use native individual LXMF delivery destinations. Reticulum owns paths 
 
 > This repository is not independently audited and is not yet suitable for sensitive operational use. See [TESTING.md](TESTING.md) for verified and unverified release gates.
 
+## Desktop workspace increment 1
+
+This source tree now implements the first bounded desktop workspace increment from
+[WORKSPACE_SPEC.md](WORKSPACE_SPEC.md): create and switch up to 16 workspaces,
+invite and approve one additional member, and chat in a canonical `#general`
+channel. Workspace creation explains that the creating device is the authority,
+messages are separately encrypted to member devices, and there is no hosted
+workspace server. The People view shows the two-person membership; owners can
+review joins, create or revoke single-use invites, and close the workspace;
+members can leave. Local hide and exact-ID-confirmed local removal are separate
+actions.
+
+Workspace messages are signed events and are loaded in bounded pages instead
+of the startup snapshot. Sending returns after an atomic durable commit while a
+background scheduler delivers signed controls and per-device event copies.
+Delivery wording distinguishes people from devices and endpoint receipt from
+human read state. Drafts and all workspace records remain encrypted in the
+vault.
+
+This increment is deliberately desktop-only and capped at two active members
+with one device each. It has no attachments, history backfill, reactions,
+threads, search, additional channels, workspace direct messages, linked
+devices, or mobile UI yet; those remain the later increments in the spec.
+
 ## Install Mesh Chat
 
 **Current install release: Mesh Chat 0.2.12.** Install it over the existing app;
