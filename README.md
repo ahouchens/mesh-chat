@@ -741,5 +741,6 @@ storage rather than weakening the requirement.
 - `service/tools/topology_harness.py` — isolated real-stack mesh probe
 - `scripts/` — repeatable packaging and verification commands
 - [ARCHITECTURE.md](ARCHITECTURE.md), [PROTOCOL.md](PROTOCOL.md), [THREAT_MODEL.md](THREAT_MODEL.md), [TESTING.md](TESTING.md) — security and integration record
+- [WORKSPACE_SPEC.md](WORKSPACE_SPEC.md) — proposed multi-channel workspace product and implementation specification
 
 No external runtime service is needed or contacted. Installation downloads and package distribution are outside the messaging path.
