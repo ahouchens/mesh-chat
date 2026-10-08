@@ -429,6 +429,8 @@ fn allowed_renderer_command(command: &str) -> bool {
             | "decide_workspace_display_name"
             | "create_workspace_channel"
             | "update_workspace_channel"
+            | "update_workspace_private_channel_members"
+            | "leave_workspace_private_channel"
             | "set_workspace_channel_subscription"
             | "offer_workspace_channel_transfer"
             | "accept_workspace_channel_transfer"
@@ -463,6 +465,8 @@ fn workspace_renderer_command(command: &str) -> bool {
             | "decide_workspace_display_name"
             | "create_workspace_channel"
             | "update_workspace_channel"
+            | "update_workspace_private_channel_members"
+            | "leave_workspace_private_channel"
             | "set_workspace_channel_subscription"
             | "offer_workspace_channel_transfer"
             | "accept_workspace_channel_transfer"
@@ -871,6 +875,8 @@ mod tests {
             "decide_workspace_display_name",
             "create_workspace_channel",
             "update_workspace_channel",
+            "update_workspace_private_channel_members",
+            "leave_workspace_private_channel",
             "set_workspace_channel_subscription",
             "offer_workspace_channel_transfer",
             "accept_workspace_channel_transfer",

@@ -1461,6 +1461,47 @@ Artifact hashes for this run:
   packet capture, protected-profile plaintext scans, and Windows-to-Android
   workspace validation remain release gates.
 
+## Workspace increment 4 verification — 2026-10-07
+
+- The complete maintained verification passed **298 Python tests with 6
+  intentional environment/package skips**, **80 frontend tests**, all 3
+  package-artwork verifier tests, TypeScript compilation, and the Vite
+  production build. The Rust boundary passed `cargo check`, `cargo fmt
+  --check`, and all **6 release-profile tests**.
+- Private-channel protocol and service coverage now exercises canonical signed
+  rosters, exact private audiences, one-to-eight member bounds, creation,
+  manager-only roster changes, member admission without predecessor metadata or
+  message backfill, control-before-event quarantine across restart, duplicate
+  and delayed delivery, unread persistence, metadata changes with delayed
+  historical events, member-only transfer, owner recovery only from inside the
+  roster, voluntary leave, scoped pending-leg cancellation, terminal archive,
+  nonmember storage/snapshot exclusion, and a valid channel-local fork that
+  leaves the workspace active. Renderer coverage creates a private channel,
+  manages its signed roster, and gates leave, transfer, recovery, archive and
+  read-only states.
+- The opt-in isolated three-hop RNS/LXMF topology passed. Both direct-LAN
+  scenarios passed: bidirectional signed hints and the phone-shaped outbound
+  client with no reverse listener. The exact immutable 0.2.18 packaged sidecar
+  passed the phone-first/desktop-reply harness and its current-versus-0.2.9
+  compatibility flow. A restricted first attempt correctly failed closed with
+  `protected_storage_unavailable`; the required native EFS run passed all 3
+  packaged-harness tests.
+- The maintained release driver published desktop **0.2.18** with WiX ICE
+  validation and NSIS packaging enabled. The 22,528,000-byte MSI has SHA-256
+  `9E180DA9581B266C2C3F0C29474F0B1E54FDB31037B65837AEEA72DA3E3749DE`.
+  The 21,790,733-byte NSIS installer has SHA-256
+  `95ECD02F768DCECDDDAD2B8F7C84CB76D8251247790EBB14F5D836178212E113`.
+  The portable application reports file/product version 0.2.18 and hashes to
+  `B074D515455A54714BDCDA6D63B99F5A8B79E6C786A0384005221B488288B263`;
+  the sidecar hashes to
+  `C78EA75F111939C2D4483A50512C897819EEE8FF620774347FB496F4C54DE8B7`.
+  The immutable manifest hashes to
+  `1B4A9A6263973BD9E1BD0FE1A9050FD710BFB4A78875FF9B2E197B3CFE6DCA45`.
+- No installer was launched and no existing Mesh Chat process or profile was
+  altered. Production signing, in-place installation, interactive native-window
+  walkthrough, physical multi-install private-channel partition/reconnect,
+  packet capture, and protected-profile plaintext scans remain release gates.
+
 ## Acceptance matrix
 
 | Gate | Current evidence |

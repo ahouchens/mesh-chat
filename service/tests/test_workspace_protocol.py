@@ -27,6 +27,7 @@ from mesh_chat.workspace_protocol import (
     create_workspace_display_name_decision,
     create_workspace_channel_record,
     create_workspace_channel_fetch,
+    create_workspace_channel_manifest,
     create_workspace_channel_recovery,
     create_workspace_channel_summary,
     create_workspace_channel_transfer,
@@ -39,6 +40,8 @@ from mesh_chat.workspace_protocol import (
     derive_workspace_id,
     verify_workspace_channel_record,
     verify_workspace_channel_fetch,
+    verify_workspace_channel_manifest,
+    verify_workspace_channel_manifest_transition,
     verify_workspace_channel_recovery,
     verify_workspace_channel_record_transition,
     verify_workspace_channel_summary,
@@ -868,4 +871,186 @@ def test_public_channel_control_chain_transfer_recovery_and_bounded_sync() -> No
             page_index=0,
             page_count=MAX_CHANNEL_SUMMARY_PAGES + 1,
             now=NOW + 5,
+        )
+
+
+def test_private_channel_chain_binds_roster_audience_transfer_and_recovery() -> None:
+    owner, created, genesis, initial = _workspace()
+    member_identity = RNS.Identity()
+    member_id = _id()
+    member_device_id = _id()
+    member_card = create_workspace_device_card(
+        member_identity,
+        workspace_id=genesis.workspace_id,
+        member_id=member_id,
+        device_id=member_device_id,
+        display_name="Bailey",
+        now=NOW,
+    )
+    manifest_raw = create_workspace_manifest(
+        owner,
+        workspace_id=genesis.workspace_id,
+        epoch=2,
+        previous_manifest_hash=initial.digest,
+        name=initial.name,
+        description=initial.description,
+        authority_device_id=initial.authority_device_id,
+        members=[
+            WorkspaceManifestMemberInput(
+                genesis.owner_member_id,
+                genesis.owner_device.display_name,
+                WorkspaceRole.OWNER,
+                [created.device_card],
+            ),
+            WorkspaceManifestMemberInput(
+                member_id,
+                "Bailey",
+                WorkspaceRole.MEMBER,
+                [member_card],
+            ),
+        ],
+        now=NOW,
+    )
+    manifest = verify_workspace_manifest_transition(manifest_raw, initial, now=NOW)
+    channel_raw = create_workspace_channel_manifest(
+        owner,
+        workspace_id=genesis.workspace_id,
+        channel_id=_id(),
+        manifest_digest=manifest.digest,
+        name="incident-room",
+        topic="Need to know",
+        manager_member_id=genesis.owner_member_id,
+        manager_device_id=genesis.authority_device_id,
+        member_ids=[genesis.owner_member_id, member_id],
+        now=NOW,
+    )
+    channel = verify_workspace_channel_manifest(
+        channel_raw, manifest=manifest, now=NOW
+    )
+    assert channel.member_ids == tuple(sorted([genesis.owner_member_id, member_id]))
+
+    event_raw = create_workspace_event(
+        member_identity,
+        workspace_id=genesis.workspace_id,
+        conversation_id=channel.channel_id,
+        event_id=_id(),
+        author_member_id=member_id,
+        author_device_id=member_device_id,
+        sequence=1,
+        previous_event_digest=None,
+        manifest_digest=manifest.digest,
+        channel_digest=channel.digest,
+        text="scoped",
+        audience_member_ids=channel.member_ids,
+        created_at=NOW + 1,
+    )
+    assert verify_workspace_event(
+        event_raw, manifest=manifest, channel=channel, now=NOW + 1
+    ).audience_member_ids == channel.member_ids
+    wrong_audience = json.loads(event_raw)
+    wrong_audience["audience_member_ids"] = [member_id]
+    wrong_audience.pop("signature")
+    wrong_audience_raw = create_workspace_event(
+        member_identity,
+        workspace_id=genesis.workspace_id,
+        conversation_id=channel.channel_id,
+        event_id=_id(),
+        author_member_id=member_id,
+        author_device_id=member_device_id,
+        sequence=2,
+        previous_event_digest=hashlib.sha256(event_raw.encode()).hexdigest(),
+        manifest_digest=manifest.digest,
+        channel_digest=channel.digest,
+        text="wrong audience",
+        audience_member_ids=[member_id],
+        created_at=NOW + 2,
+    )
+    with pytest.raises(IdentityMismatch, match="audience"):
+        verify_workspace_event(
+            wrong_audience_raw, manifest=manifest, channel=channel, now=NOW + 2
+        )
+
+    offer_raw = create_workspace_channel_transfer_offer(
+        owner,
+        channel=channel,
+        manifest=manifest,
+        successor_member_id=member_id,
+        successor_device_id=member_device_id,
+        now=NOW + 2,
+    )
+    offer = verify_workspace_channel_transfer_offer(
+        offer_raw, channel=channel, manifest=manifest, now=NOW + 2
+    )
+    renamed_raw = create_workspace_channel_manifest(
+        owner,
+        workspace_id=channel.workspace_id,
+        channel_id=channel.channel_id,
+        manifest_digest=manifest.digest,
+        name="incident-response",
+        topic=channel.topic,
+        manager_member_id=channel.manager_member_id,
+        manager_device_id=channel.manager_device_id,
+        member_ids=channel.member_ids,
+        version=2,
+        previous_hash=channel.digest,
+        now=NOW + 3,
+    )
+    renamed = verify_workspace_channel_manifest_transition(
+        renamed_raw, channel, manifest=manifest, now=NOW + 3
+    )
+    with pytest.raises(ValidationError, match="stale"):
+        verify_workspace_channel_transfer_offer(
+            offer_raw, channel=renamed, manifest=manifest, now=NOW + 3
+        )
+    transfer_raw = create_workspace_channel_transfer(
+        member_identity, offer=offer, now=NOW + 3
+    )
+    transferred = verify_workspace_channel_transfer(
+        transfer_raw, channel=channel, manifest=manifest, now=NOW + 3
+    )
+    assert transferred.member_ids == channel.member_ids
+
+    member_only_raw = create_workspace_channel_manifest(
+        member_identity,
+        workspace_id=genesis.workspace_id,
+        channel_id=_id(),
+        manifest_digest=manifest.digest,
+        name="member-only",
+        topic="",
+        manager_member_id=member_id,
+        manager_device_id=member_device_id,
+        member_ids=[member_id],
+        now=NOW,
+    )
+    member_only = verify_workspace_channel_manifest(
+        member_only_raw, manifest=manifest, now=NOW
+    )
+    forbidden_recovery = create_workspace_channel_recovery(
+        owner,
+        channel=member_only,
+        manifest=manifest,
+        manager_member_id=genesis.owner_member_id,
+        manager_device_id=genesis.authority_device_id,
+        now=NOW + 1,
+    )
+    with pytest.raises(IdentityMismatch, match="authority"):
+        verify_workspace_channel_recovery(
+            forbidden_recovery,
+            channel=member_only,
+            manifest=manifest,
+            now=NOW + 1,
+        )
+
+    with pytest.raises(ValidationError, match="one to eight"):
+        create_workspace_channel_manifest(
+            owner,
+            workspace_id=genesis.workspace_id,
+            channel_id=_id(),
+            manifest_digest=manifest.digest,
+            name="too-many",
+            topic="",
+            manager_member_id=genesis.owner_member_id,
+            manager_device_id=genesis.authority_device_id,
+            member_ids=[genesis.owner_member_id, *[_id() for _ in range(8)]],
+            now=NOW,
         )

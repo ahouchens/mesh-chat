@@ -19,6 +19,7 @@ from mesh_chat.service import MeshChatService
 from mesh_chat.vault import VaultStore
 from mesh_chat.workspace_protocol import (
     WorkspaceManifestMemberInput,
+    create_workspace_channel_manifest,
     create_workspace_channel_record,
     create_workspace_device_card,
     create_workspace_event,
@@ -222,6 +223,22 @@ def _joined_pair(
         member_key,
         member_identity,
     )
+
+
+def _deliver_all(
+    recipient: MeshChatService,
+    packets: list[dict[str, Any]],
+    *,
+    source_profile: dict[str, Any],
+    recipient_profile: dict[str, Any],
+) -> None:
+    for packet in packets:
+        _deliver(
+            recipient,
+            packet,
+            source_profile=source_profile,
+            recipient_profile=recipient_profile,
+        )
 
 
 def test_two_member_workspace_create_join_chat_and_page(
@@ -1084,8 +1101,8 @@ def test_partitioned_channel_summary_fetch_converges_and_disambiguates_names(
         member_network,
         member_profile,
         workspace,
-        _member_key,
-        _member_identity,
+        member_key,
+        member_identity,
     ) = _joined_pair(tmp_path / "discovery", base=1_100)
     workspace_id = workspace["id"]
     first = owner.create_workspace_channel(
@@ -1426,3 +1443,331 @@ def test_archived_channels_release_active_capacity_and_directory_summary_pages(
         "state"
     ] == "converged"
     service.close()
+
+
+def test_private_channel_membership_audience_transfer_recovery_leave_and_privacy(
+    tmp_path: Path,
+) -> None:
+    (
+        owner,
+        owner_network,
+        owner_profile,
+        member,
+        member_network,
+        member_profile,
+        workspace,
+        member_key,
+        member_identity,
+    ) = _joined_pair(tmp_path, base=3000)
+    workspace_id = workspace["id"]
+    owner_workspace = owner._require_workspace(workspace_id)
+    member_workspace = member._require_workspace(workspace_id)
+    owner_id = owner_workspace["local_member_id"]
+    member_id = member_workspace["local_member_id"]
+
+    private = owner.create_workspace_channel(
+        workspace_id,
+        "incident-room",
+        "Need-to-know coordination",
+        _op(3010),
+        "private",
+        [owner_id],
+    )
+    private_id = private["id"]
+    assert private["visibility"] == "private"
+    assert private["member_ids"] == [owner_id]
+    assert _flush(owner, owner_network) == []
+    assert owner._identity is not None
+    assert all(
+        private_id not in document
+        for document in owner._workspace_channel_summary_documents(
+            owner_workspace,
+            owner._workspace_current_manifest(owner_workspace),
+            owner._identity,
+            _op(3011),
+        )
+    )
+
+    owner.send_workspace_message(
+        workspace_id, private_id, "before admission", _op(3012), _op(3013)
+    )
+    assert _flush(owner, owner_network) == []
+
+    owner.update_workspace_private_channel_members(
+        workspace_id, private_id, [owner_id, member_id], _op(3014)
+    )
+    admission_controls = _flush(owner, owner_network)
+    assert len(admission_controls) == 1
+    assert {
+        parse_workspace_payload(
+            _native(packet, source=b"\x00" * 16, destination=b"\x01" * 16)
+        ).kind
+        for packet in admission_controls
+    } == {"workspace_channel_manifest"}
+    owner.send_workspace_message(
+        workspace_id, private_id, "after admission", _op(3015), _op(3016)
+    )
+    post_admission = _flush(owner, owner_network)
+    assert len(post_admission) == 1
+    # Data can arrive before its private admission checkpoint. It remains
+    # encrypted and inert across restart until the signed control validates.
+    _deliver_all(
+        member,
+        post_admission,
+        source_profile=owner_profile,
+        recipient_profile=member_profile,
+    )
+    assert len(member.store.list("workspace_pending_event")) == 1
+    assert private_id not in str(member.workspace_snapshot())
+    member.close()
+    member, member_network = _service(
+        tmp_path / "member", member_identity, "Bailey", vault_key=member_key
+    )
+    member_profile = member._require_profile()
+    assert len(member.store.list("workspace_pending_event")) == 1
+    _deliver_all(
+        member,
+        admission_controls,
+        source_profile=owner_profile,
+        recipient_profile=member_profile,
+    )
+    member_private = next(
+        channel
+        for channel in member.workspace_snapshot()["workspace_channels"]
+        if channel["id"] == private_id
+    )
+    assert member_private["member_ids"] == sorted([owner_id, member_id])
+    assert member_private["unread_count"] == 1
+    assert member.store.list("workspace_pending_control") == []
+    assert member.store.list("workspace_pending_event") == []
+    _deliver_all(
+        member,
+        admission_controls,
+        source_profile=owner_profile,
+        recipient_profile=member_profile,
+    )
+    assert [
+        message["text"]
+        for message in member.list_workspace_messages(workspace_id, private_id)[
+            "messages"
+        ]
+    ] == ["after admission"]
+
+    owner.send_workspace_message(
+        workspace_id, private_id, "delayed across metadata", _op(3026), _op(3027)
+    )
+    owner.update_workspace_channel(
+        workspace_id,
+        private_id,
+        "incident-room",
+        "Updated need-to-know coordination",
+        False,
+        _op(3028),
+    )
+    delayed_packets = _flush(owner, owner_network)
+    delayed_controls = [
+        packet
+        for packet in delayed_packets
+        if parse_workspace_payload(
+            _native(packet, source=b"\x00" * 16, destination=b"\x01" * 16)
+        ).kind
+        == "workspace_channel_manifest"
+    ]
+    delayed_events = [
+        packet
+        for packet in delayed_packets
+        if parse_workspace_payload(
+            _native(packet, source=b"\x00" * 16, destination=b"\x01" * 16)
+        ).kind
+        == "workspace_event"
+    ]
+    assert len(delayed_controls) == len(delayed_events) == 1
+    _deliver_all(
+        member,
+        [*delayed_controls, *delayed_events],
+        source_profile=owner_profile,
+        recipient_profile=member_profile,
+    )
+    assert [
+        message["text"]
+        for message in member.list_workspace_messages(workspace_id, private_id)[
+            "messages"
+        ]
+    ] == ["after admission", "delayed across metadata"]
+
+    owner.offer_workspace_channel_transfer(
+        workspace_id, private_id, member_id, _op(3017)
+    )
+    _deliver_all(
+        member,
+        _flush(owner, owner_network),
+        source_profile=owner_profile,
+        recipient_profile=member_profile,
+    )
+    transfer = next(
+        item
+        for item in member.workspace_snapshot()["workspace_channel_transfers"]
+        if item["channel_id"] == private_id
+    )
+    member.accept_workspace_channel_transfer(
+        workspace_id, transfer["id"], _op(3018)
+    )
+    _deliver_all(
+        owner,
+        _flush(member, member_network),
+        source_profile=member_profile,
+        recipient_profile=owner_profile,
+    )
+    assert owner._require_workspace_channel(workspace_id, private_id)[
+        "manager_member_id"
+    ] == member_id
+
+    # The channel manager is not a message relay. Existing members keep
+    # chatting while that manager is offline, and a rostered owner can sign a
+    # recovery that validates when the manager reconnects.
+    member.close()
+    owner.send_workspace_message(
+        workspace_id, private_id, "manager offline", _op(3031), _op(3032)
+    )
+    manager_offline_event = _flush(owner, owner_network)
+    assert len(manager_offline_event) == 1
+    owner.recover_workspace_channel(workspace_id, private_id, _op(3019))
+    recovery_controls = _flush(owner, owner_network)
+    assert len(recovery_controls) == 1
+    member, member_network = _service(
+        tmp_path / "member", member_identity, "Bailey", vault_key=member_key
+    )
+    member_profile = member._require_profile()
+    _deliver_all(
+        member,
+        [*recovery_controls, *manager_offline_event],
+        source_profile=owner_profile,
+        recipient_profile=member_profile,
+    )
+    assert member._require_workspace_channel(workspace_id, private_id)[
+        "manager_member_id"
+    ] == owner_id
+    assert [
+        message["text"]
+        for message in member.list_workspace_messages(workspace_id, private_id)[
+            "messages"
+        ]
+    ] == ["after admission", "delayed across metadata", "manager offline"]
+
+    owner.send_workspace_message(
+        workspace_id, private_id, "cancelled on departure", _op(3029), _op(3030)
+    )
+    member.leave_workspace_private_channel(workspace_id, private_id, _op(3020))
+    leave_packets = _flush(member, member_network)
+    assert len(leave_packets) == 1
+    _deliver_all(
+        owner,
+        leave_packets,
+        source_profile=member_profile,
+        recipient_profile=owner_profile,
+    )
+    assert owner._require_workspace_channel(workspace_id, private_id)[
+        "member_ids"
+    ] == [owner_id]
+    assert member._require_workspace_channel(workspace_id, private_id)[
+        "state"
+    ] == "leaving"
+    assert _flush(owner, owner_network) == []
+    cancelled = next(
+        message
+        for message in owner.list_workspace_messages(workspace_id, private_id)[
+            "messages"
+        ]
+        if message["text"] == "cancelled on departure"
+    )
+    assert cancelled["delivery_summary"]["devices_cancelled"] == 1
+    owner.send_workspace_message(
+        workspace_id, private_id, "after departure", _op(3021), _op(3022)
+    )
+    assert _flush(owner, owner_network) == []
+    owner.update_workspace_channel(
+        workspace_id,
+        private_id,
+        "incident-room",
+        "Need-to-know coordination",
+        True,
+        _op(3023),
+    )
+    assert owner._require_workspace_channel(workspace_id, private_id)["state"] == "archived"
+
+    member_only = member.create_workspace_channel(
+        workspace_id,
+        "member-only",
+        "Owner is not a member",
+        _op(3024),
+        "private",
+        [member_id],
+    )
+    member_only_id = member_only["id"]
+    assert _flush(member, member_network) == []
+    assert owner.store.get(
+        "workspace_channel", owner._workspace_channel_record_id(member_only_id)
+    ) is None
+    assert member_only_id not in str(owner.workspace_snapshot())
+    with pytest.raises(ValidationError, match="does not exist"):
+        owner.recover_workspace_channel(workspace_id, member_only_id, _op(3025))
+
+    owner.close()
+    member.close()
+
+
+def test_private_channel_fork_is_scoped_and_does_not_freeze_workspace(
+    tmp_path: Path,
+) -> None:
+    owner_identity = RNS.Identity()
+    owner, _network = _service(tmp_path / "owner", owner_identity, "Alex")
+    workspace = owner.create_workspace(_op(3100), "Fork lab", "Private controls")
+    workspace_id = workspace["id"]
+    owner_record = owner._require_workspace(workspace_id)
+    owner_id = owner_record["local_member_id"]
+    original_record = owner.create_workspace_channel(
+        workspace_id,
+        "incident-room",
+        "Original",
+        _op(3101),
+        "private",
+        [owner_id],
+    )
+    original = owner._workspace_channel_by_digest(original_record["head_hash"])
+    assert original is not None
+    owner.update_workspace_channel(
+        workspace_id,
+        original.channel_id,
+        "incident-room",
+        "First branch",
+        False,
+        _op(3102),
+    )
+    conflicting = create_workspace_channel_manifest(
+        owner_identity,
+        workspace_id=workspace_id,
+        channel_id=original.channel_id,
+        manifest_digest=original.manifest_digest,
+        name="incident-room",
+        topic="Conflicting branch",
+        manager_member_id=original.manager_member_id,
+        manager_device_id=original.manager_device_id,
+        member_ids=original.member_ids,
+        version=original.version + 1,
+        previous_hash=original.digest,
+        now=time.time(),
+    )
+    assert not owner._receive_workspace_private_channel(
+        WorkspaceWirePayload(
+            kind="workspace_channel_manifest",
+            logical_id=_op(3103),
+            workspace_id=workspace_id,
+            expires_at=int(time.time()) + 3600,
+            document=conflicting,
+        )
+    )
+    assert owner._require_workspace_channel(workspace_id, original.channel_id)[
+        "state"
+    ] == "forked"
+    assert owner._require_workspace(workspace_id)["state"] == "active"
+    owner.close()

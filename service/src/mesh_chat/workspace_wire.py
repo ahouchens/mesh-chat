@@ -30,6 +30,8 @@ WORKSPACE_WIRE_KINDS = frozenset(
         "workspace_join",
         "workspace_manifest_root",
         "workspace_channel_record",
+        "workspace_channel_manifest",
+        "workspace_channel_leave_request",
         "workspace_channel_transfer_offer",
         "workspace_channel_transfer",
         "workspace_channel_recovery",

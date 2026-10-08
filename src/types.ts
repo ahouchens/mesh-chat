@@ -221,9 +221,10 @@ export interface WorkspaceChannel {
   short_id: string;
   topic: string;
   visibility: "public" | "private";
-  state: "active" | "archived" | "forked";
+  state: "active" | "archived" | "forked" | "leaving" | "left" | "removed";
   manager_member_id: string;
   manager_device_id: string;
+  member_ids: string[];
   version: number;
   head_hash: string;
   manifest_digest: string;

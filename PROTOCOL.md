@@ -216,7 +216,7 @@ the strict custom metadata map contains only:
 | Key | Value |
 | --- | --- |
 | `1` | schema version `1` |
-| `2` | `workspace_join`, `workspace_manifest_root`, `workspace_channel_record`, `workspace_channel_transfer_offer`, `workspace_channel_transfer`, `workspace_channel_recovery`, `workspace_channel_summary`, `workspace_channel_fetch`, `workspace_event`, `workspace_leave_request`, `workspace_display_name_request`, or `workspace_display_name_decision` |
+| `2` | `workspace_join`, `workspace_manifest_root`, `workspace_channel_record`, `workspace_channel_manifest`, `workspace_channel_leave_request`, `workspace_channel_transfer_offer`, `workspace_channel_transfer`, `workspace_channel_recovery`, `workspace_channel_summary`, `workspace_channel_fetch`, `workspace_event`, `workspace_leave_request`, `workspace_display_name_request`, or `workspace_display_name_decision` |
 | `3` | random 16-byte logical delivery UUID |
 | `4` | 16-byte workspace UUID |
 | `5` | authenticated application expiry timestamp |
@@ -246,12 +246,14 @@ document types are:
 | `workspace_invite` | The authority offers a complete genesis/manifest checkpoint, empty authority chain, nonce, expiry, and single-use limit. |
 | `workspace_join` | A joining device binds its signed card to the invitation and offered checkpoint. |
 | `workspace_channel_record` | The manager binds a versioned channel, predecessor, manifest, visibility, policy context, and archived state. |
-| `workspace_channel_transfer_offer` | The current public-channel manager names one active successor device, the exact current channel head, the current workspace manifest, and an expiry. |
+| `workspace_channel_manifest` | A private-channel manager binds the version, predecessor, exact workspace manifest, metadata, sorted member roster, and terminal archive state. |
+| `workspace_channel_leave_request` | A nonmanager private member asks the manager to remove that member at one exact private-channel head. |
+| `workspace_channel_transfer_offer` | The current channel manager names one active successor device, the exact current channel head, the current workspace manifest, and an expiry; a private successor must already be on the roster. |
 | `workspace_channel_transfer` | The named successor countersigns the complete manager offer; the resulting digest is the next channel head. |
-| `workspace_channel_recovery` | The owner authority device explicitly assigns public-channel management at the exact current head; the signed recovery is the next channel head. |
+| `workspace_channel_recovery` | The owner authority device explicitly assigns management at the exact current head; private recovery is valid only when that owner is already on the roster. |
 | `workspace_channel_summary` | An active device signs one canonical page of public channel IDs, versions, and head digests for a sync session. |
 | `workspace_channel_fetch` | An active device signs bounded channel/head requests and a maximum control count for one summary session. |
-| `workspace_event` | An author binds a message to its workspace/conversation, author stream predecessor, exact manifest and channel controls, and immutable payload. |
+| `workspace_event` | An author binds a message to its workspace/conversation, author stream predecessor, exact manifest and channel controls, immutable payload, and for private channels the complete sorted roster audience. |
 | `workspace_leave_request` | A non-owner binds a leave request to the exact current manifest. |
 | `workspace_display_name_request` | An active device signs a replacement card that preserves its member, device, identity, and destination while requesting a new display name. |
 | `workspace_display_name_decision` | The authority signs an approval or decline bound to the exact request and its base manifest. Approval is completed by the next manifest; decline is returned directly to the requester. |
@@ -260,9 +262,9 @@ Invitation entry points are `meshchat://workspace/<base64url>` and
 `MESHWORKSPACE1:<base64url>`. Invitations are single-use and expire within 30
 days. The offered checkpoint must retain the exact genesis owner member and
 authority device card; a self-consistent manifest signed by another identity is
-not a valid checkpoint. Increment 3 supports eight people, one device per
-member, and up to 32 active public channels including `#general`. It rejects
-attachments and does not exchange old message history. The authority is not a
+not a valid checkpoint. Increment 4 supports eight people, one device per
+member, and up to 32 active public or private channels including `#general`.
+It rejects attachments and does not exchange old message history. The authority is not a
 message relay: each event is copied directly to every other authorized device
 through its individual ratchet-enforced LXMF destination, regardless of that
 device's local channel subscription.
@@ -303,6 +305,21 @@ inert queue. Subscription and read positions are sealed local state;
 unsubscribed public channels still receive and retain events but do not accrue
 ordinary unread badges.
 
+Private channels use the separate `workspace_channel_manifest` family so a
+public directory record can never be reinterpreted as a private grant. Each
+head contains one to eight sorted, unique, active workspace member IDs and must
+include its manager. Only those members receive the head, offers, accepted
+transfers, recoveries, events or pending delivery legs; private heads never
+enter public summaries or fetch responses. A new member receives the current
+manager-signed head as an admission checkpoint without predecessor controls or
+events. Its first future event may therefore begin after a deliberate stream
+gap, while events whose signed audience omits that member are rejected before
+pending storage. Later heads extend normally; a safe version jump is accepted
+only as a same-manager admission checkpoint. Same-version valid conflicts mark
+that channel forked. A member removal cancels only that member's unhanded legs.
+The manager cannot leave or be removed from the roster until management is
+transferred, and archival remains terminal.
+
 ## Delivery evidence
 
 | App state | Required evidence |
@@ -329,7 +346,7 @@ Receipts are ordinary signed, end-to-end encrypted LXMF messages. They reference
 - Group title and member display name: 1–64 normalized characters each.
 - Signed connection hints per group member card: at most two validated TCP hints.
 - Private group or announcement channel: at most eight people including the owner.
-- Desktop workspace: at most eight people, 32 active public channels including `#general`, 32 entries per signed summary page, 32 pages per sync session, and 64 controls per signed fetch response. Archived public channels are retained in the bounded 1,024-entry directory.
+- Desktop workspace: at most eight people, 32 active channels including `#general`, 32 entries per signed public-summary page, 32 pages per sync session, and 64 controls per signed public fetch response. Archived public channels are retained in the bounded 1,024-entry directory; private channels are never summarized publicly.
 - Pending reactions: at most 256 total and 32 per authenticated actor.
 - IPC frame: 4 MiB; renderer-originated payload: 32 KiB.
 - LXMF direct and propagated modes: enabled.

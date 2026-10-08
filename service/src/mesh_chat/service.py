@@ -152,6 +152,8 @@ class MeshChatService(ReactionServiceMixin, GroupServiceMixin, WorkspaceServiceM
         "decide_workspace_display_name",
         "create_workspace_channel",
         "update_workspace_channel",
+        "update_workspace_private_channel_members",
+        "leave_workspace_private_channel",
         "set_workspace_channel_subscription",
         "offer_workspace_channel_transfer",
         "accept_workspace_channel_transfer",
@@ -1827,7 +1829,14 @@ class MeshChatService(ReactionServiceMixin, GroupServiceMixin, WorkspaceServiceM
         if command == "create_workspace_channel":
             body = _payload(
                 value,
-                allowed={"operation_id", "workspace_id", "name", "topic"},
+                allowed={
+                    "operation_id",
+                    "workspace_id",
+                    "name",
+                    "topic",
+                    "visibility",
+                    "member_ids",
+                },
                 required={"operation_id", "workspace_id", "name", "topic"},
             )
             return self.create_workspace_channel(
@@ -1835,6 +1844,8 @@ class MeshChatService(ReactionServiceMixin, GroupServiceMixin, WorkspaceServiceM
                 body["name"],
                 body["topic"],
                 body["operation_id"],
+                body.get("visibility", "public"),
+                body.get("member_ids"),
             )
         if command == "update_workspace_channel":
             body = _payload(
@@ -1862,6 +1873,29 @@ class MeshChatService(ReactionServiceMixin, GroupServiceMixin, WorkspaceServiceM
                 body["name"],
                 body["topic"],
                 body["archived"],
+                body["operation_id"],
+            )
+        if command == "update_workspace_private_channel_members":
+            body = _payload(
+                value,
+                allowed={"operation_id", "workspace_id", "channel_id", "member_ids"},
+                required={"operation_id", "workspace_id", "channel_id", "member_ids"},
+            )
+            return self.update_workspace_private_channel_members(
+                body["workspace_id"],
+                body["channel_id"],
+                body["member_ids"],
+                body["operation_id"],
+            )
+        if command == "leave_workspace_private_channel":
+            body = _payload(
+                value,
+                allowed={"operation_id", "workspace_id", "channel_id"},
+                required={"operation_id", "workspace_id", "channel_id"},
+            )
+            return self.leave_workspace_private_channel(
+                body["workspace_id"],
+                body["channel_id"],
                 body["operation_id"],
             )
         if command == "set_workspace_channel_subscription":

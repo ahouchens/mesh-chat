@@ -196,6 +196,7 @@ const workspaceChannel: WorkspaceChannel = {
   short_id: "444444",
   topic: "",
   visibility: "public",
+  member_ids: [],
   state: "active",
   manager_member_id: workspace.local_member_id,
   manager_device_id: workspace.local_device_id,
@@ -2244,11 +2245,67 @@ describe("desktop workspaces", () => {
     fireEvent.click(within(dialog).getByRole("button", { name: "Sync directory" }));
     await waitFor(() => expect(api.serviceCommand).toHaveBeenCalledWith("sync_workspace_channels", expect.objectContaining({ workspace_id: workspace.id, operation_id: expect.any(String) })));
     fireEvent.click(within(dialog).getByRole("button", { name: "Create channel" }));
-    dialog = await screen.findByRole("dialog", { name: "Create a public channel" });
+    dialog = await screen.findByRole("dialog", { name: "Create a channel" });
     fireEvent.change(within(dialog).getByRole("textbox", { name: "Channel name" }), { target: { value: "Field notes" } });
     fireEvent.change(within(dialog).getByRole("textbox", { name: /Topic/ }), { target: { value: "Daily observations" } });
-    fireEvent.click(within(dialog).getByRole("button", { name: "Create channel" }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Create public channel" }));
     await waitFor(() => expect(api.serviceCommand).toHaveBeenCalledWith("create_workspace_channel", expect.objectContaining({ workspace_id: workspace.id, name: "Field notes", topic: "Daily observations", operation_id: expect.any(String) })));
+  });
+
+  it("creates and manages a signed private-channel roster", async () => {
+    const member = {
+      id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      display_name: "Bailey",
+      role: "member" as const,
+      status: "active" as const,
+      short_id: "aaaaaa",
+      device: { id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", destination_hash: "99".repeat(16), fingerprint: "BBBB CCCC DDDD EEEE" },
+    };
+    const withMember: Workspace = { ...workspace, members: [...workspace.members, member] };
+    const privateChannel: WorkspaceChannel = {
+      ...workspaceChannel,
+      id: "77777777-7777-4777-8777-777777777777",
+      name: "incident-room",
+      name_key: "incident-room",
+      display_name: "incident-room",
+      short_id: "777777",
+      topic: "Need to know",
+      visibility: "private",
+      member_ids: [workspace.local_member_id, member.id].sort(),
+      is_general: false,
+      manager_member_id: workspace.local_member_id,
+      manager_device_id: workspace.local_device_id,
+    };
+    const current: Snapshot = { ...snapshot(), workspaces: [withMember], workspace_channels: [workspaceChannel, privateChannel], workspace_join_requests: [], workspace_invitations: [], workspace_drafts: [] };
+    api.runtimePlatform.mockResolvedValue("desktop");
+    api.initializeService.mockResolvedValue(current);
+    api.onInvitation.mockResolvedValue(() => undefined);
+    api.onServiceEvent.mockResolvedValue(() => undefined);
+    api.serviceCommand.mockImplementation(async (command: string) => {
+      if (command === "snapshot") return current;
+      if (command === "list_workspace_messages") return { messages: [], next_cursor: null, high_water: 0 } satisfies WorkspaceMessagePage;
+      if (command === "create_workspace_channel") return privateChannel;
+      return privateChannel;
+    });
+
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Workspace Lakewatcher" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Create channel" }));
+    let dialog = screen.getByRole("dialog", { name: "Create a channel" });
+    fireEvent.change(within(dialog).getByRole("combobox", { name: "Visibility" }), { target: { value: "private" } });
+    fireEvent.click(within(dialog).getByRole("checkbox", { name: /Bailey/ }));
+    fireEvent.change(within(dialog).getByRole("textbox", { name: "Channel name" }), { target: { value: "incident-room" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Create private channel" }));
+    await waitFor(() => expect(api.serviceCommand).toHaveBeenCalledWith("create_workspace_channel", expect.objectContaining({ workspace_id: workspace.id, visibility: "private", member_ids: expect.arrayContaining([workspace.local_member_id, member.id]), operation_id: expect.any(String) })));
+
+    const conversation = await screen.findByLabelText("Workspace channel incident-room");
+    expect(within(conversation).getByText(/signed roster receives/i)).toBeTruthy();
+    fireEvent.click(within(conversation).getByRole("button", { name: "Manage incident-room channel" }));
+    dialog = screen.getByRole("dialog", { name: "Manage #incident-room" });
+    expect(within(dialog).getByText("Private roster")).toBeTruthy();
+    fireEvent.click(within(dialog).getByRole("checkbox", { name: /Bailey/ }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Publish roster change" }));
+    await waitFor(() => expect(api.serviceCommand).toHaveBeenCalledWith("update_workspace_private_channel_members", expect.objectContaining({ workspace_id: workspace.id, channel_id: privateChannel.id, member_ids: [workspace.local_member_id], operation_id: expect.any(String) })));
   });
 
   it("hides disallowed owner-only controls, blocks posting, and permits only a named transfer acceptance", async () => {

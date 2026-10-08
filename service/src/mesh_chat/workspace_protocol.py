@@ -9,7 +9,7 @@ import time
 import unicodedata
 import uuid
 from dataclasses import dataclass
-from typing import Any, Sequence
+from typing import Any, Iterable, Sequence
 from urllib.parse import urlsplit
 
 import RNS
@@ -185,6 +185,7 @@ class VerifiedWorkspaceChannel:
     created_at: int
     digest: str
     serialized: str
+    member_ids: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -199,6 +200,19 @@ class VerifiedWorkspaceChannelTransferOffer:
     successor_device_id: str
     created_at: int
     expires_at: int
+    digest: str
+    serialized: str
+
+
+@dataclass(frozen=True, slots=True)
+class VerifiedWorkspaceChannelLeaveRequest:
+    workspace_id: str
+    channel_id: str
+    channel_head: str
+    manifest_digest: str
+    member_id: str
+    device_id: str
+    created_at: int
     digest: str
     serialized: str
 
@@ -251,6 +265,7 @@ class VerifiedWorkspaceEvent:
     created_at: int
     digest: str
     serialized: str
+    audience_member_ids: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -1594,6 +1609,200 @@ def verify_workspace_channel_record_transition(
     return channel
 
 
+def create_workspace_channel_manifest(
+    manager_identity: RNS.Identity,
+    *,
+    workspace_id: str,
+    channel_id: str,
+    manifest_digest: str,
+    name: str,
+    topic: str,
+    manager_member_id: str,
+    manager_device_id: str,
+    member_ids: Iterable[str],
+    version: int = 1,
+    previous_hash: str | None = None,
+    archived: bool = False,
+    now: int | None = None,
+) -> str:
+    """Create a private-channel control.
+
+    Private controls deliberately use a distinct document family so a public
+    directory record can never be reinterpreted as a private membership grant.
+    """
+    if isinstance(version, bool) or not isinstance(version, int) or version < 1:
+        raise ValidationError("Workspace channel version is invalid")
+    try:
+        checked_members = sorted(
+            {
+                _validate_uuid(value, "Private channel member ID")
+                for value in member_ids
+            }
+        )
+    except TypeError as exc:
+        raise ValidationError("Private channel roster is invalid") from exc
+    if not checked_members or len(checked_members) > MAX_ACTIVE_MEMBERS:
+        raise ValidationError("A private channel requires one to eight members")
+    checked_manager = _validate_uuid(manager_member_id, "Manager member ID")
+    if checked_manager not in checked_members:
+        raise ValidationError("Private channel manager must be a channel member")
+    if not isinstance(archived, bool):
+        raise ValidationError("Workspace channel state is invalid")
+    unsigned = {
+        "v": WORKSPACE_PROTOCOL_VERSION,
+        "type": "workspace_channel_manifest",
+        "workspace_id": _validate_uuid(workspace_id, "Workspace ID"),
+        "channel_id": _validate_uuid(channel_id, "Channel ID"),
+        "version": version,
+        "previous_hash": (
+            None
+            if previous_hash is None
+            else _validate_digest(previous_hash, "Channel predecessor")
+        ),
+        "manifest_digest": _validate_digest(manifest_digest, "Manifest digest"),
+        "name": _normalize_text(name, "Channel name", MAX_CHANNEL_NAME_LENGTH),
+        "topic": _normalize_text(
+            topic, "Channel topic", MAX_CHANNEL_TOPIC_LENGTH, allow_empty=True
+        ),
+        "manager_member_id": checked_manager,
+        "manager_device_id": _validate_uuid(manager_device_id, "Manager device ID"),
+        "member_ids": checked_members,
+        "archived": archived,
+        "created_at": int(time.time()) if now is None else int(now),
+    }
+    return _sign(manager_identity, unsigned)
+
+
+def verify_workspace_channel_manifest(
+    raw: str,
+    *,
+    manifest: VerifiedWorkspaceManifest,
+    expected_channel_id: str | None = None,
+    now: int | None = None,
+) -> VerifiedWorkspaceChannel:
+    value = _load_document(raw, "workspace_channel_manifest")
+    _require_fields(
+        value,
+        {
+            "v",
+            "type",
+            "workspace_id",
+            "channel_id",
+            "version",
+            "previous_hash",
+            "manifest_digest",
+            "name",
+            "topic",
+            "manager_member_id",
+            "manager_device_id",
+            "member_ids",
+            "archived",
+            "created_at",
+            "signature",
+        },
+    )
+    if value["v"] != WORKSPACE_PROTOCOL_VERSION:
+        raise ValidationError("Workspace document version is unsupported")
+    workspace_id = _validate_uuid(value["workspace_id"], "Workspace ID")
+    channel_id = _validate_uuid(value["channel_id"], "Channel ID")
+    if workspace_id != manifest.workspace_id:
+        raise ValidationError("Channel belongs to another workspace")
+    if expected_channel_id is not None and channel_id != _validate_uuid(
+        expected_channel_id, "Channel ID"
+    ):
+        raise ValidationError("Channel manifest is unexpected")
+    if value["manifest_digest"] != manifest.digest:
+        raise ValidationError("Channel manifest references another workspace manifest")
+    version = value["version"]
+    if isinstance(version, bool) or not isinstance(version, int) or version < 1:
+        raise ValidationError("Workspace channel version is invalid")
+    previous = value["previous_hash"]
+    if previous is not None:
+        previous = _validate_digest(previous, "Channel predecessor")
+    raw_members = value["member_ids"]
+    if not isinstance(raw_members, list):
+        raise ValidationError("Private channel roster is invalid")
+    member_ids = tuple(
+        _validate_uuid(member_id, "Private channel member ID")
+        for member_id in raw_members
+    )
+    if (
+        not member_ids
+        or len(member_ids) > MAX_ACTIVE_MEMBERS
+        or list(member_ids) != sorted(member_ids)
+        or len(set(member_ids)) != len(member_ids)
+    ):
+        raise ValidationError("Private channel roster is invalid")
+    for member_id in member_ids:
+        member = find_member(manifest, member_id)
+        if member is None or member.status != "active":
+            raise IdentityMismatch("Private channel member is not active")
+    manager_member_id = _validate_uuid(value["manager_member_id"], "Manager member ID")
+    manager_device_id = _validate_uuid(value["manager_device_id"], "Manager device ID")
+    manager = find_device(manifest, manager_device_id)
+    if (
+        manager_member_id not in member_ids
+        or manager is None
+        or manager[0].member_id != manager_member_id
+        or manager[0].status != "active"
+    ):
+        raise IdentityMismatch("Private channel manager is not an active channel member")
+    _verify_signature(
+        _identity_from_public_key(manager[1].public_identity),
+        value,
+        "Workspace private channel manifest",
+    )
+    if not isinstance(value["archived"], bool):
+        raise ValidationError("Workspace channel state is invalid")
+    current = int(time.time()) if now is None else int(now)
+    return VerifiedWorkspaceChannel(
+        workspace_id=workspace_id,
+        channel_id=channel_id,
+        version=version,
+        previous_hash=previous,
+        manifest_digest=manifest.digest,
+        name=_normalize_text(value["name"], "Channel name", MAX_CHANNEL_NAME_LENGTH),
+        topic=_normalize_text(
+            value["topic"], "Channel topic", MAX_CHANNEL_TOPIC_LENGTH, allow_empty=True
+        ),
+        visibility="private",
+        manager_member_id=manager_member_id,
+        manager_device_id=manager_device_id,
+        archived=value["archived"],
+        created_at=_validate_timestamp(value["created_at"], now=current),
+        digest=_digest(value),
+        serialized=_canonical(value),
+        member_ids=member_ids,
+    )
+
+
+def verify_workspace_channel_manifest_transition(
+    raw: str,
+    previous: VerifiedWorkspaceChannel,
+    *,
+    manifest: VerifiedWorkspaceManifest,
+    now: int | None = None,
+) -> VerifiedWorkspaceChannel:
+    if previous.archived:
+        raise ValidationError("Archived workspace channels are terminal")
+    channel = verify_workspace_channel_manifest(
+        raw,
+        manifest=manifest,
+        expected_channel_id=previous.channel_id,
+        now=now,
+    )
+    if (
+        previous.visibility != "private"
+        or channel.version != previous.version + 1
+        or channel.previous_hash != previous.digest
+        or channel.manager_member_id != previous.manager_member_id
+        or channel.manager_device_id != previous.manager_device_id
+        or channel.created_at < previous.created_at
+    ):
+        raise ValidationError("Private channel manifest does not extend the current head")
+    return channel
+
+
 def create_workspace_channel_transfer_offer(
     manager_identity: RNS.Identity,
     *,
@@ -1605,7 +1814,7 @@ def create_workspace_channel_transfer_offer(
     now: int | None = None,
 ) -> str:
     current = int(time.time()) if now is None else int(now)
-    if channel.archived or channel.visibility != "public":
+    if channel.archived:
         raise ValidationError("Workspace channel cannot transfer management")
     if not 1 <= lifetime_seconds <= 7 * 24 * 60 * 60:
         raise ValidationError("Workspace channel transfer lifetime is invalid")
@@ -1614,6 +1823,10 @@ def create_workspace_channel_transfer_offer(
         successor is None
         or successor[0].member_id != _validate_uuid(successor_member_id, "Successor member ID")
         or successor[0].status != "active"
+        or (
+            channel.visibility == "private"
+            and successor[0].member_id not in channel.member_ids
+        )
     ):
         raise ValidationError("Workspace channel successor is not active")
     unsigned = {
@@ -1671,7 +1884,6 @@ def verify_workspace_channel_transfer_offer(
     successor_device_id = _validate_uuid(value["successor_device_id"], "Successor device ID")
     if (
         channel.archived
-        or channel.visibility != "public"
         or workspace_id != channel.workspace_id
         or workspace_id != manifest.workspace_id
         or channel_id != channel.channel_id
@@ -1690,6 +1902,10 @@ def verify_workspace_channel_transfer_offer(
         or successor is None
         or successor[0].member_id != successor_member_id
         or successor[0].status != "active"
+        or (
+            channel.visibility == "private"
+            and successor_member_id not in channel.member_ids
+        )
     ):
         raise IdentityMismatch("Workspace channel transfer participant is not active")
     _verify_signature(
@@ -1780,6 +1996,108 @@ def verify_workspace_channel_transfer(
         created_at=accepted_at,
         digest=_digest(value),
         serialized=_canonical(value),
+        member_ids=channel.member_ids,
+    )
+
+
+def create_workspace_channel_leave_request(
+    identity: RNS.Identity,
+    *,
+    channel: VerifiedWorkspaceChannel,
+    manifest: VerifiedWorkspaceManifest,
+    member_id: str,
+    device_id: str,
+    now: int | None = None,
+) -> str:
+    if channel.visibility != "private" or channel.archived:
+        raise ValidationError("Only an active private channel can be left")
+    checked_member_id = _validate_uuid(member_id, "Member ID")
+    checked_device_id = _validate_uuid(device_id, "Device ID")
+    found = find_device(manifest, checked_device_id)
+    if (
+        checked_member_id == channel.manager_member_id
+        or checked_member_id not in channel.member_ids
+        or found is None
+        or found[0].member_id != checked_member_id
+        or found[0].status != "active"
+    ):
+        raise IdentityMismatch("Private channel member cannot leave at this head")
+    unsigned = {
+        "v": WORKSPACE_PROTOCOL_VERSION,
+        "type": "workspace_channel_leave_request",
+        "workspace_id": channel.workspace_id,
+        "channel_id": channel.channel_id,
+        "channel_head": channel.digest,
+        "manifest_digest": manifest.digest,
+        "member_id": checked_member_id,
+        "device_id": checked_device_id,
+        "created_at": int(time.time()) if now is None else int(now),
+    }
+    return _sign(identity, unsigned)
+
+
+def verify_workspace_channel_leave_request(
+    raw: str,
+    *,
+    channel: VerifiedWorkspaceChannel,
+    manifest: VerifiedWorkspaceManifest,
+    now: int | None = None,
+) -> VerifiedWorkspaceChannelLeaveRequest:
+    value = _load_document(raw, "workspace_channel_leave_request")
+    _require_fields(
+        value,
+        {
+            "v",
+            "type",
+            "workspace_id",
+            "channel_id",
+            "channel_head",
+            "manifest_digest",
+            "member_id",
+            "device_id",
+            "created_at",
+            "signature",
+        },
+    )
+    if value["v"] != WORKSPACE_PROTOCOL_VERSION:
+        raise ValidationError("Workspace document version is unsupported")
+    member_id = _validate_uuid(value["member_id"], "Member ID")
+    device_id = _validate_uuid(value["device_id"], "Device ID")
+    if (
+        channel.visibility != "private"
+        or channel.archived
+        or _validate_uuid(value["workspace_id"], "Workspace ID") != channel.workspace_id
+        or _validate_uuid(value["channel_id"], "Channel ID") != channel.channel_id
+        or _validate_digest(value["channel_head"], "Channel head") != channel.digest
+        or _validate_digest(value["manifest_digest"], "Manifest digest")
+        != manifest.digest
+        or member_id == channel.manager_member_id
+        or member_id not in channel.member_ids
+    ):
+        raise ValidationError("Private channel leave request is stale")
+    found = find_device(manifest, device_id)
+    if (
+        found is None
+        or found[0].member_id != member_id
+        or found[0].status != "active"
+    ):
+        raise IdentityMismatch("Private channel leave signer is not active")
+    _verify_signature(
+        _identity_from_public_key(found[1].public_identity),
+        value,
+        "Workspace private channel leave request",
+    )
+    current = int(time.time()) if now is None else int(now)
+    return VerifiedWorkspaceChannelLeaveRequest(
+        workspace_id=channel.workspace_id,
+        channel_id=channel.channel_id,
+        channel_head=channel.digest,
+        manifest_digest=manifest.digest,
+        member_id=member_id,
+        device_id=device_id,
+        created_at=_validate_timestamp(value["created_at"], now=current),
+        digest=_digest(value),
+        serialized=_canonical(value),
     )
 
 
@@ -1835,7 +2153,6 @@ def verify_workspace_channel_recovery(
     manager_device_id = _validate_uuid(value["manager_device_id"], "Manager device ID")
     if (
         channel.archived
-        or channel.visibility != "public"
         or _validate_uuid(value["workspace_id"], "Workspace ID") != channel.workspace_id
         or _validate_uuid(value["channel_id"], "Channel ID") != channel.channel_id
         or _validate_digest(value["channel_head"], "Channel head") != channel.digest
@@ -1850,6 +2167,14 @@ def verify_workspace_channel_recovery(
         or successor is None
         or successor[0].member_id != manager_member_id
         or successor[0].status != "active"
+        or (
+            channel.visibility == "private"
+            and authority[0].member_id not in channel.member_ids
+        )
+        or (
+            channel.visibility == "private"
+            and manager_member_id not in channel.member_ids
+        )
     ):
         raise IdentityMismatch("Workspace channel recovery authority is invalid")
     _verify_signature(
@@ -1869,13 +2194,14 @@ def verify_workspace_channel_recovery(
         manifest_digest=manifest.digest,
         name=channel.name,
         topic=channel.topic,
-        visibility="public",
+        visibility=channel.visibility,
         manager_member_id=manager_member_id,
         manager_device_id=manager_device_id,
         archived=False,
         created_at=created_at,
         digest=_digest(value),
         serialized=_canonical(value),
+        member_ids=channel.member_ids,
     )
 
 
@@ -2128,6 +2454,7 @@ def create_workspace_event(
     manifest_digest: str,
     channel_digest: str,
     text: str,
+    audience_member_ids: Iterable[str] | None = None,
     created_at: int | None = None,
 ) -> str:
     if not isinstance(text, str) or not text.strip() or len(text.encode("utf-8")) > MAX_MESSAGE_TEXT_BYTES:
@@ -2156,6 +2483,16 @@ def create_workspace_event(
         "mentions": [],
         "created_at": int(time.time()) if created_at is None else int(created_at),
     }
+    if audience_member_ids is not None:
+        audience = sorted(
+            {
+                _validate_uuid(member_id, "Workspace event audience member ID")
+                for member_id in audience_member_ids
+            }
+        )
+        if not audience or len(audience) > MAX_ACTIVE_MEMBERS:
+            raise ValidationError("Workspace event audience is invalid")
+        unsigned["audience_member_ids"] = audience
     return _sign(identity, unsigned, maximum=MAX_WORKSPACE_EVENT_BYTES)
 
 
@@ -2167,9 +2504,7 @@ def verify_workspace_event(
     now: int | None = None,
 ) -> VerifiedWorkspaceEvent:
     value = _load_document(raw, "workspace_event")
-    _require_fields(
-        value,
-        {
+    fields = {
             "v",
             "type",
             "workspace_id",
@@ -2187,8 +2522,10 @@ def verify_workspace_event(
             "mentions",
             "created_at",
             "signature",
-        },
-    )
+        }
+    if "audience_member_ids" in value:
+        fields.add("audience_member_ids")
+    _require_fields(value, fields)
     if value["v"] != WORKSPACE_PROTOCOL_VERSION or value["event_type"] != "message":
         raise ValidationError("Workspace event version or type is unsupported")
     workspace_id = _validate_uuid(value["workspace_id"], "Workspace ID")
@@ -2209,6 +2546,25 @@ def verify_workspace_event(
         or manifest.status != "active"
     ):
         raise IdentityMismatch("Workspace event author is not active")
+    raw_audience = value.get("audience_member_ids")
+    if channel.visibility == "private":
+        if not isinstance(raw_audience, list):
+            raise ValidationError("Private workspace event audience is missing")
+        audience_member_ids = tuple(
+            _validate_uuid(member_id, "Workspace event audience member ID")
+            for member_id in raw_audience
+        )
+        if (
+            list(audience_member_ids) != sorted(audience_member_ids)
+            or len(set(audience_member_ids)) != len(audience_member_ids)
+            or audience_member_ids != channel.member_ids
+            or author_member_id not in audience_member_ids
+        ):
+            raise IdentityMismatch("Private workspace event audience is invalid")
+    else:
+        if raw_audience is not None:
+            raise ValidationError("Public workspace events cannot carry a private audience")
+        audience_member_ids = ()
     if (
         manifest.posting == WorkspacePostingPolicy.OWNER_AND_ADMINS
         and found[0].role != WorkspaceRole.OWNER
@@ -2249,6 +2605,7 @@ def verify_workspace_event(
         created_at=_validate_timestamp(value["created_at"], now=current),
         digest=_digest(value),
         serialized=_canonical(value),
+        audience_member_ids=audience_member_ids,
     )
 
 

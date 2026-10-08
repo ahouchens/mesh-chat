@@ -83,6 +83,13 @@
   channel. Signed directory summaries are paged and bounded; signed fetches
   return bounded predecessor-ordered controls. Subscription never reduces the
   public-channel delivery audience or grants authority.
+- Private-channel manifests bind the complete sorted roster to every head and
+  are delivered only to that roster. Private events repeat the exact signed
+  audience, and a receiver requires the event head to remain on the current
+  channel chain with both receiver and author still entitled. Admission sends
+  only the current signed checkpoint; predecessor metadata and messages are
+  not backfilled. Removal cancels the excluded member's unhanded delivery legs.
+  A nonmember owner has no discovery or recovery override.
 - Workspace record IDs and cursors are keyed opaque values. Message pages,
   due-work shards, unread state, drafts, delivery legs and operation results are
   separately sealed. Startup summaries do not decrypt message bodies. A stale
@@ -142,10 +149,11 @@ Depending on configured interfaces, observers may learn local discovery presence
   large channels, discoverable groups, anonymous membership, selective history
   sharing, or safe multi-owner membership editing.
 - Workspace cooperative message-history backfill, edits, remote deletion,
-  reactions, threads, search exchange, private channel management, direct
+  reactions, threads, search exchange, private history catch-up, direct
   messages, linked devices, authority transfer, and mobile workspace use.
-  Increment 3 intentionally exposes public-channel history only when it already
-  exists locally; public discovery does not imply complete historical messages.
+  Increment 4 exposes only history already present locally; public discovery
+  does not imply complete historical messages, and newly admitted private
+  members receive future events only.
 - NAT hole punching, mobile push, Bluetooth, LoRa, attachments, multi-device identity cloning, and cloud backup.
 
 ## Open security blockers
