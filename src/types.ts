@@ -196,6 +196,7 @@ export interface Workspace {
   manifest_hash: string;
   genesis_digest: string;
   general_channel_id: string | null;
+  channel_discovery: "incomplete" | "converged";
   retention_days: 30 | 90 | 365 | null;
   policies: {
     channel_creation: "all_members" | "owner_and_admins";
@@ -215,6 +216,9 @@ export interface WorkspaceChannel {
   id: string;
   workspace_id: string;
   name: string;
+  name_key: string;
+  display_name: string;
+  short_id: string;
   topic: string;
   visibility: "public" | "private";
   state: "active" | "archived" | "forked";
@@ -224,8 +228,25 @@ export interface WorkspaceChannel {
   head_hash: string;
   manifest_digest: string;
   unread_count: number;
+  subscribed: boolean;
+  is_general: boolean;
+  duplicate_name: boolean;
   created_at: number;
   updated_at: number;
+}
+
+export interface WorkspaceChannelTransfer {
+  id: string;
+  workspace_id: string;
+  channel_id: string;
+  channel_head: string;
+  manifest_digest: string;
+  manager_member_id: string;
+  successor_member_id: string;
+  successor_device_id: string;
+  state: "offered";
+  created_at: number;
+  expires_at: number;
 }
 
 export interface WorkspaceDeliverySummary {
@@ -335,6 +356,7 @@ export interface WorkspaceDisplayNameRequest {
 export interface WorkspaceSnapshot {
   workspaces: Workspace[];
   workspace_channels: WorkspaceChannel[];
+  workspace_channel_transfers: WorkspaceChannelTransfer[];
   workspace_join_requests: WorkspaceJoinRequest[];
   workspace_display_name_requests: WorkspaceDisplayNameRequest[];
   workspace_invitations: WorkspaceInvitation[];
@@ -381,9 +403,10 @@ export interface Snapshot {
   group_messages?: GroupMessage[];
   group_drafts?: GroupDraft[];
   group_invitations?: GroupInvitation[];
-  /** Desktop-only Increment 1 workspace summaries. Message bodies are paged separately. */
+  /** Desktop-only Increment 3 workspace summaries. Message bodies are paged separately. */
   workspaces?: Workspace[];
   workspace_channels?: WorkspaceChannel[];
+  workspace_channel_transfers?: WorkspaceChannelTransfer[];
   workspace_join_requests?: WorkspaceJoinRequest[];
   workspace_display_name_requests?: WorkspaceDisplayNameRequest[];
   workspace_invitations?: WorkspaceInvitation[];

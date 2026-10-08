@@ -146,9 +146,17 @@ class MeshChatService(ReactionServiceMixin, GroupServiceMixin, WorkspaceServiceM
         "approve_workspace_join",
         "decline_workspace_join",
         "update_workspace_metadata",
+        "update_workspace_policies",
         "remove_workspace_member",
         "request_workspace_display_name",
         "decide_workspace_display_name",
+        "create_workspace_channel",
+        "update_workspace_channel",
+        "set_workspace_channel_subscription",
+        "offer_workspace_channel_transfer",
+        "accept_workspace_channel_transfer",
+        "recover_workspace_channel",
+        "sync_workspace_channels",
         "send_workspace_message",
         "list_workspace_messages",
         "mark_workspace_read",
@@ -1752,6 +1760,28 @@ class MeshChatService(ReactionServiceMixin, GroupServiceMixin, WorkspaceServiceM
                 body["description"],
                 body["operation_id"],
             )
+        if command == "update_workspace_policies":
+            body = _payload(
+                value,
+                allowed={
+                    "operation_id",
+                    "workspace_id",
+                    "channel_creation",
+                    "posting",
+                },
+                required={
+                    "operation_id",
+                    "workspace_id",
+                    "channel_creation",
+                    "posting",
+                },
+            )
+            return self.update_workspace_policies(
+                body["workspace_id"],
+                body["channel_creation"],
+                body["posting"],
+                body["operation_id"],
+            )
         if command == "remove_workspace_member":
             body = _payload(
                 value,
@@ -1793,6 +1823,119 @@ class MeshChatService(ReactionServiceMixin, GroupServiceMixin, WorkspaceServiceM
                 body["request_id"],
                 body["approve"],
                 body["operation_id"],
+            )
+        if command == "create_workspace_channel":
+            body = _payload(
+                value,
+                allowed={"operation_id", "workspace_id", "name", "topic"},
+                required={"operation_id", "workspace_id", "name", "topic"},
+            )
+            return self.create_workspace_channel(
+                body["workspace_id"],
+                body["name"],
+                body["topic"],
+                body["operation_id"],
+            )
+        if command == "update_workspace_channel":
+            body = _payload(
+                value,
+                allowed={
+                    "operation_id",
+                    "workspace_id",
+                    "channel_id",
+                    "name",
+                    "topic",
+                    "archived",
+                },
+                required={
+                    "operation_id",
+                    "workspace_id",
+                    "channel_id",
+                    "name",
+                    "topic",
+                    "archived",
+                },
+            )
+            return self.update_workspace_channel(
+                body["workspace_id"],
+                body["channel_id"],
+                body["name"],
+                body["topic"],
+                body["archived"],
+                body["operation_id"],
+            )
+        if command == "set_workspace_channel_subscription":
+            body = _payload(
+                value,
+                allowed={
+                    "operation_id",
+                    "workspace_id",
+                    "channel_id",
+                    "subscribed",
+                },
+                required={
+                    "operation_id",
+                    "workspace_id",
+                    "channel_id",
+                    "subscribed",
+                },
+            )
+            return self.set_workspace_channel_subscription(
+                body["workspace_id"],
+                body["channel_id"],
+                body["subscribed"],
+                body["operation_id"],
+            )
+        if command == "offer_workspace_channel_transfer":
+            body = _payload(
+                value,
+                allowed={
+                    "operation_id",
+                    "workspace_id",
+                    "channel_id",
+                    "successor_member_id",
+                },
+                required={
+                    "operation_id",
+                    "workspace_id",
+                    "channel_id",
+                    "successor_member_id",
+                },
+            )
+            return self.offer_workspace_channel_transfer(
+                body["workspace_id"],
+                body["channel_id"],
+                body["successor_member_id"],
+                body["operation_id"],
+            )
+        if command == "accept_workspace_channel_transfer":
+            body = _payload(
+                value,
+                allowed={"operation_id", "workspace_id", "transfer_id"},
+                required={"operation_id", "workspace_id", "transfer_id"},
+            )
+            return self.accept_workspace_channel_transfer(
+                body["workspace_id"],
+                body["transfer_id"],
+                body["operation_id"],
+            )
+        if command == "recover_workspace_channel":
+            body = _payload(
+                value,
+                allowed={"operation_id", "workspace_id", "channel_id"},
+                required={"operation_id", "workspace_id", "channel_id"},
+            )
+            return self.recover_workspace_channel(
+                body["workspace_id"], body["channel_id"], body["operation_id"]
+            )
+        if command == "sync_workspace_channels":
+            body = _payload(
+                value,
+                allowed={"operation_id", "workspace_id"},
+                required={"operation_id", "workspace_id"},
+            )
+            return self.sync_workspace_channels(
+                body["workspace_id"], body["operation_id"]
             )
         if command == "send_workspace_message":
             body = _payload(

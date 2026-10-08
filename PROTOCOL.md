@@ -216,7 +216,7 @@ the strict custom metadata map contains only:
 | Key | Value |
 | --- | --- |
 | `1` | schema version `1` |
-| `2` | `workspace_join`, `workspace_manifest_root`, `workspace_channel_record`, `workspace_event`, `workspace_leave_request`, `workspace_display_name_request`, or `workspace_display_name_decision` |
+| `2` | `workspace_join`, `workspace_manifest_root`, `workspace_channel_record`, `workspace_channel_transfer_offer`, `workspace_channel_transfer`, `workspace_channel_recovery`, `workspace_channel_summary`, `workspace_channel_fetch`, `workspace_event`, `workspace_leave_request`, `workspace_display_name_request`, or `workspace_display_name_decision` |
 | `3` | random 16-byte logical delivery UUID |
 | `4` | 16-byte workspace UUID |
 | `5` | authenticated application expiry timestamp |
@@ -246,6 +246,11 @@ document types are:
 | `workspace_invite` | The authority offers a complete genesis/manifest checkpoint, empty authority chain, nonce, expiry, and single-use limit. |
 | `workspace_join` | A joining device binds its signed card to the invitation and offered checkpoint. |
 | `workspace_channel_record` | The manager binds a versioned channel, predecessor, manifest, visibility, policy context, and archived state. |
+| `workspace_channel_transfer_offer` | The current public-channel manager names one active successor device, the exact current channel head, the current workspace manifest, and an expiry. |
+| `workspace_channel_transfer` | The named successor countersigns the complete manager offer; the resulting digest is the next channel head. |
+| `workspace_channel_recovery` | The owner authority device explicitly assigns public-channel management at the exact current head; the signed recovery is the next channel head. |
+| `workspace_channel_summary` | An active device signs one canonical page of public channel IDs, versions, and head digests for a sync session. |
+| `workspace_channel_fetch` | An active device signs bounded channel/head requests and a maximum control count for one summary session. |
 | `workspace_event` | An author binds a message to its workspace/conversation, author stream predecessor, exact manifest and channel controls, and immutable payload. |
 | `workspace_leave_request` | A non-owner binds a leave request to the exact current manifest. |
 | `workspace_display_name_request` | An active device signs a replacement card that preserves its member, device, identity, and destination while requesting a new display name. |
@@ -255,26 +260,48 @@ Invitation entry points are `meshchat://workspace/<base64url>` and
 `MESHWORKSPACE1:<base64url>`. Invitations are single-use and expire within 30
 days. The offered checkpoint must retain the exact genesis owner member and
 authority device card; a self-consistent manifest signed by another identity is
-not a valid checkpoint. Increment 2 supports eight people, one device per member, and only
-the public `#general` channel. It rejects attachments and does not exchange old
-history. The authority is not a message relay: each event is copied directly
-to every other authorized device through its individual ratchet-enforced LXMF
-destination.
+not a valid checkpoint. Increment 3 supports eight people, one device per
+member, and up to 32 active public channels including `#general`. It rejects
+attachments and does not exchange old message history. The authority is not a
+message relay: each event is copied directly to every other authorized device
+through its individual ratchet-enforced LXMF destination, regardless of that
+device's local channel subscription.
 
 Manifest epochs and channel versions are hash-linked. Events carry both exact
 control digests plus a positive per-device sequence and previous-event digest.
 Missing controls or stream predecessors leave an event inert; invalid
 authority, rollback, reused sequence, or equivocation cannot authorize visible
-state. A valid increment-two manifest epoch admits one member, deactivates one
+state. A valid enabled manifest epoch admits one member, deactivates one
 non-owner member, applies one self-signed display-name request, updates
-workspace name/description, or closes without another change; combined or no-op
-epochs are rejected. Concurrent invitations are independent capabilities.
+workspace name/description, changes the exact public-channel creation/posting
+policy pair, or closes without another change; combined or no-op epochs are
+rejected. `owner_and_admins` is owner-only until admin roles are implemented.
+Concurrent invitations are independent capabilities.
 When an accepted invitation references an older checkpoint, every intervening
 manifest is delivered before or alongside the admission epoch and receivers
 apply the chain in order. The mandatory `#general` record is version one, public,
 active, predecessor-free, bound to the epoch-one manifest, and managed by the
 genesis owner authority. Control copies are scheduled ahead of dependent
 events.
+
+Every other public channel begins at version one under an exact manifest whose
+creation policy authorizes its manager. Manager-signed metadata/archive records,
+successor-accepted transfers, and authority-signed recoveries form one digest
+chain. Two different valid digests at one channel version suspend that channel
+without suspending its workspace. Archival is terminal; `#general` cannot be
+renamed, unsubscribed, transferred independently, or archived. Channel-name
+comparison uses NFC validation followed by NFKC case folding, but the random
+channel UUID remains authoritative and duplicate comparison keys remain valid.
+
+Discovery summaries contain at most 32 sorted entries per signed page and at
+most 32 pages per session. A signed fetch names at most 32 channels and asks for
+at most 64 canonical control records. Controls are returned in predecessor
+order before the next summary pages. A device labels its directory incomplete
+until it has complete, equal summary pages from every admitted device it is
+tracking. Missing or reversed controls keep dependent events in the bounded
+inert queue. Subscription and read positions are sealed local state;
+unsubscribed public channels still receive and retain events but do not accrue
+ordinary unread badges.
 
 ## Delivery evidence
 
@@ -302,7 +329,7 @@ Receipts are ordinary signed, end-to-end encrypted LXMF messages. They reference
 - Group title and member display name: 1–64 normalized characters each.
 - Signed connection hints per group member card: at most two validated TCP hints.
 - Private group or announcement channel: at most eight people including the owner.
-- Desktop workspace `#general`: at most eight people including the owner in Increment 2.
+- Desktop workspace: at most eight people, 32 active public channels including `#general`, 32 entries per signed summary page, 32 pages per sync session, and 64 controls per signed fetch response. Archived public channels are retained in the bounded 1,024-entry directory.
 - Pending reactions: at most 256 total and 32 per authenticated actor.
 - IPC frame: 4 MiB; renderer-originated payload: 32 KiB.
 - LXMF direct and propagated modes: enabled.

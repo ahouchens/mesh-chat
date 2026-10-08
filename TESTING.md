@@ -1418,6 +1418,49 @@ Artifact hashes for this run:
   partition recovery, package extraction, and protected-profile plaintext scans
   remain release gates; automated tests do not claim those device results.
 
+## Workspace increment 3 verification — 2026-10-07
+
+- The maintained suite passed **295 Python tests with 6 intentional
+  environment/device skips**, **79 frontend tests**, all 3 package-artwork
+  verifier tests, TypeScript compilation, and the Vite production build. The
+  Rust release suite passed all **6 tests**, and `cargo fmt --check` passed.
+- Protocol and service coverage exercises public-channel creation, browsing,
+  subscription, rename/topic changes, two-party management transfer, authority
+  recovery, terminal archive, active-channel capacity recovery, retained-channel
+  summary paging, exact policy enforcement, unauthorized signed events, stale
+  and forked controls, stable duplicate-name disambiguation, unread persistence,
+  restart, partitions, reversed control/event arrival, quarantine draining, and
+  eventual signed-chain fetch convergence. Existing canonical fixtures and wire
+  kinds remain byte-for-byte unchanged; new kinds are additive and bounded.
+- The opt-in network topology harness passed its isolated peer run, and both
+  direct-LAN harness scenarios passed. The exact immutable 0.2.17 packaged
+  sidecar passed the process-level phone-first/desktop-reply test under Windows
+  protected storage. The full three-test packaged compatibility harness also
+  passed against its intended pre-expanded-reaction 0.2.9 baseline.
+- The first release attempt stopped before native packaging while pnpm rebuilt a
+  partially reconciled `node_modules` tree without registry access. Restoring
+  the lockfile-pinned tree resolved that environment failure. A later restricted
+  run linked the application but stopped when WiX `light.exe` could not access
+  Windows Installer for ICE validation. The same maintained pipeline then ran
+  with Windows Installer access and completed both formats with ICE checks still
+  enabled; no WiX source, validation flag, or alternate packaging path was used.
+- The maintained release driver immutably published desktop **0.2.17**. The MSI
+  is 22,511,616 bytes with SHA-256
+  `2FF6554841148AA6EF57A803F3BE0ABCC07E43CC2BA2DB9C214BCA41190EEA33`.
+  The NSIS installer is 21,775,013 bytes with SHA-256
+  `30A72CEEC05FA54C8B3F1F0910EDB9239546BD30D8296214BACE1A83CD9F40B6`.
+  The portable application reports product/file version 0.2.17, and the current
+  pointer records manifest SHA-256
+  `831CBC1AC975C042F8477B418814754B4FC101BEF1BC8554EA98CD4AC87D966D`.
+  Immutable 0.2.16 artifacts remain present and were not overwritten.
+- This run exercised the packaged service processes but did not stop the user's
+  existing 0.2.16 single-instance desktop session, install either 0.2.17
+  installer, or obtain a successful native-window capture. It therefore does
+  not claim an interactive walkthrough. Production signing, physical
+  multi-install discovery/delivery, real-device restart and partition recovery,
+  packet capture, protected-profile plaintext scans, and Windows-to-Android
+  workspace validation remain release gates.
+
 ## Acceptance matrix
 
 | Gate | Current evidence |
@@ -1449,6 +1492,6 @@ Artifact hashes for this run:
 | Common flow without technical setup | UI implemented; fresh/returning human run pending |
 | Connection help | State/action mapping implemented; recovery scenarios pending |
 | Accessible joining | Labels, focus, keyboard, contrast and live regions implemented; assistive-tech audit pending |
-| Workspace increment 2 | Canonical document/signature/tamper/profile-isolation tests, eight-service concurrent invite/catch-up/metadata/name/removal/owner-offline-message flow, bounded paging and stale-cursor rejection, honest aggregate delivery states, durable operation replay, attachment rejection, disclosure-first creation and propagation consent UI, desktop command allowlist and mobile rejection are automated. Physical eight-install restart/kill-point and network-partition runs remain release gates |
+| Workspace increment 3 | Increment 2 coverage remains green. Public-channel signed chains, paged summaries/fetches, explicit incomplete discovery, duplicate names, policy enforcement, management transfer/recovery/archive, subscriptions, unread persistence, reversed controls, channel-scoped forks, Tauri allowlisting, and manager/member UI denial paths are automated. Isolated and direct-LAN process topologies plus the immutable packaged sidecar passed; physical eight-install restart/kill-point/partition runs and a native-window walkthrough remain release gates |
 
 Do not mark a release complete from unit tests alone. Store packet captures, topology configs, full-tree scans, package hashes, platform versions, human timing sheets, and failure notes with the release evidence.

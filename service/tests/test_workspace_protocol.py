@@ -17,12 +17,20 @@ from mesh_chat.errors import IdentityMismatch, InvitationExpired, ValidationErro
 from mesh_chat.models import MessageKind, WorkspaceRole
 from mesh_chat.network import ReticulumNetwork, validate_unknown_source_signature
 from mesh_chat.workspace_protocol import (
+    MAX_CHANNEL_FETCH_CONTROLS,
+    MAX_CHANNEL_SUMMARY_ENTRIES,
+    MAX_CHANNEL_SUMMARY_PAGES,
     MAX_WORKSPACE_DOCUMENT_BYTES,
     WorkspaceManifestMemberInput,
     create_workspace_device_card,
     create_workspace_display_name_request,
     create_workspace_display_name_decision,
     create_workspace_channel_record,
+    create_workspace_channel_fetch,
+    create_workspace_channel_recovery,
+    create_workspace_channel_summary,
+    create_workspace_channel_transfer,
+    create_workspace_channel_transfer_offer,
     create_workspace_event,
     create_workspace_genesis,
     create_workspace_invitation,
@@ -30,6 +38,12 @@ from mesh_chat.workspace_protocol import (
     create_workspace_manifest,
     derive_workspace_id,
     verify_workspace_channel_record,
+    verify_workspace_channel_fetch,
+    verify_workspace_channel_recovery,
+    verify_workspace_channel_record_transition,
+    verify_workspace_channel_summary,
+    verify_workspace_channel_transfer,
+    verify_workspace_channel_transfer_offer,
     verify_workspace_event,
     verify_workspace_display_name_request,
     verify_workspace_display_name_decision,
@@ -663,3 +677,195 @@ def test_unknown_source_admission_is_limited_to_a_verified_workspace_join(
     network._on_inbound(rejected_scope)
     assert remembered == []
     assert received == []
+
+
+def test_public_channel_control_chain_transfer_recovery_and_bounded_sync() -> None:
+    owner, created, genesis, initial = _workspace()
+    successor = RNS.Identity()
+    successor_member_id = _id()
+    successor_device_id = _id()
+    successor_card = create_workspace_device_card(
+        successor,
+        workspace_id=genesis.workspace_id,
+        member_id=successor_member_id,
+        device_id=successor_device_id,
+        display_name="Bailey",
+        now=NOW,
+    )
+    manifest_raw = create_workspace_manifest(
+        owner,
+        workspace_id=genesis.workspace_id,
+        epoch=2,
+        previous_manifest_hash=initial.digest,
+        name=initial.name,
+        description=initial.description,
+        authority_device_id=initial.authority_device_id,
+        members=[
+            WorkspaceManifestMemberInput(
+                genesis.owner_member_id,
+                genesis.owner_device.display_name,
+                WorkspaceRole.OWNER,
+                [created.device_card],
+            ),
+            WorkspaceManifestMemberInput(
+                successor_member_id,
+                "Bailey",
+                WorkspaceRole.MEMBER,
+                [successor_card],
+            ),
+        ],
+        now=NOW,
+    )
+    manifest = verify_workspace_manifest_transition(manifest_raw, initial, now=NOW)
+    channel_raw = create_workspace_channel_record(
+        owner,
+        workspace_id=genesis.workspace_id,
+        channel_id=_id(),
+        manifest_digest=manifest.digest,
+        name="field-notes",
+        topic="Daily observations",
+        manager_member_id=genesis.owner_member_id,
+        manager_device_id=genesis.authority_device_id,
+        now=NOW,
+    )
+    channel = verify_workspace_channel_record(channel_raw, manifest=manifest, now=NOW)
+    rename_raw = create_workspace_channel_record(
+        owner,
+        workspace_id=genesis.workspace_id,
+        channel_id=channel.channel_id,
+        manifest_digest=manifest.digest,
+        name="Field Notes",
+        topic="Daily observations and photos",
+        manager_member_id=channel.manager_member_id,
+        manager_device_id=channel.manager_device_id,
+        version=2,
+        previous_hash=channel.digest,
+        now=NOW + 1,
+    )
+    renamed = verify_workspace_channel_record_transition(
+        rename_raw, channel, manifest=manifest, now=NOW + 1
+    )
+    offer_raw = create_workspace_channel_transfer_offer(
+        owner,
+        channel=renamed,
+        manifest=manifest,
+        successor_member_id=successor_member_id,
+        successor_device_id=successor_device_id,
+        now=NOW + 2,
+    )
+    offer = verify_workspace_channel_transfer_offer(
+        offer_raw, channel=renamed, manifest=manifest, now=NOW + 2
+    )
+    transfer_raw = create_workspace_channel_transfer(
+        successor, offer=offer, now=NOW + 3
+    )
+    transferred = verify_workspace_channel_transfer(
+        transfer_raw, channel=renamed, manifest=manifest, now=NOW + 3
+    )
+    assert transferred.manager_member_id == successor_member_id
+    recovered_raw = create_workspace_channel_recovery(
+        owner,
+        channel=transferred,
+        manifest=manifest,
+        manager_member_id=genesis.owner_member_id,
+        manager_device_id=genesis.authority_device_id,
+        now=NOW + 4,
+    )
+    recovered = verify_workspace_channel_recovery(
+        recovered_raw, channel=transferred, manifest=manifest, now=NOW + 4
+    )
+    assert recovered.manager_member_id == genesis.owner_member_id
+    archive_raw = create_workspace_channel_record(
+        owner,
+        workspace_id=genesis.workspace_id,
+        channel_id=channel.channel_id,
+        manifest_digest=manifest.digest,
+        name=recovered.name,
+        topic=recovered.topic,
+        manager_member_id=recovered.manager_member_id,
+        manager_device_id=recovered.manager_device_id,
+        version=recovered.version + 1,
+        previous_hash=recovered.digest,
+        archived=True,
+        now=NOW + 5,
+    )
+    archived = verify_workspace_channel_record_transition(
+        archive_raw, recovered, manifest=manifest, now=NOW + 5
+    )
+    assert archived.archived is True
+    with pytest.raises(ValidationError, match="terminal"):
+        verify_workspace_channel_record_transition(
+            archive_raw, archived, manifest=manifest, now=NOW + 5
+        )
+
+    session_id = _id()
+    summary_raw = create_workspace_channel_summary(
+        successor,
+        manifest=manifest,
+        member_id=successor_member_id,
+        device_id=successor_device_id,
+        session_id=session_id,
+        entries=[(archived.channel_id, archived.version, archived.digest)],
+        now=NOW + 5,
+    )
+    summary = verify_workspace_channel_summary(
+        summary_raw, manifest=manifest, now=NOW + 5
+    )
+    assert summary.entries == ((archived.channel_id, archived.version, archived.digest),)
+    assert (summary.page_index, summary.page_count) == (0, 1)
+    fetch_raw = create_workspace_channel_fetch(
+        successor,
+        manifest=manifest,
+        member_id=successor_member_id,
+        device_id=successor_device_id,
+        session_id=session_id,
+        requests=[(archived.channel_id, 2, renamed.digest)],
+        max_controls=3,
+        now=NOW + 5,
+    )
+    fetch = verify_workspace_channel_fetch(fetch_raw, manifest=manifest, now=NOW + 5)
+    assert fetch.requests == ((archived.channel_id, 2, renamed.digest),)
+    assert fetch.max_controls == 3
+
+    forged_summary = json.loads(summary_raw)
+    forged_summary["entries"][0]["version"] += 1
+    with pytest.raises(IdentityMismatch, match="signature"):
+        verify_workspace_channel_summary(
+            json.dumps(forged_summary, separators=(",", ":"), sort_keys=True),
+            manifest=manifest,
+            now=NOW + 5,
+        )
+    too_many = [(_id(), 1, archived.digest) for _ in range(MAX_CHANNEL_SUMMARY_ENTRIES + 1)]
+    with pytest.raises(ValidationError, match="too large"):
+        create_workspace_channel_summary(
+            successor,
+            manifest=manifest,
+            member_id=successor_member_id,
+            device_id=successor_device_id,
+            session_id=session_id,
+            entries=too_many,
+            now=NOW + 5,
+        )
+    with pytest.raises(ValidationError, match="limit"):
+        create_workspace_channel_fetch(
+            successor,
+            manifest=manifest,
+            member_id=successor_member_id,
+            device_id=successor_device_id,
+            session_id=session_id,
+            requests=[(archived.channel_id, 0, None)],
+            max_controls=MAX_CHANNEL_FETCH_CONTROLS + 1,
+            now=NOW + 5,
+        )
+    with pytest.raises(ValidationError, match="page"):
+        create_workspace_channel_summary(
+            successor,
+            manifest=manifest,
+            member_id=successor_member_id,
+            device_id=successor_device_id,
+            session_id=session_id,
+            entries=[],
+            page_index=0,
+            page_count=MAX_CHANNEL_SUMMARY_PAGES + 1,
+            now=NOW + 5,
+        )

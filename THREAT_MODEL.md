@@ -78,6 +78,11 @@
   event is inner-signed and binds the exact authorization controls and immutable
   audience. Missing controls or predecessors enter a bounded encrypted inert
   queue; rollback, skipped authority, and sequence reuse fail closed.
+- Public-channel manager records, accepted transfers, and owner recoveries form
+  independent signed chains. A valid same-version conflict suspends only that
+  channel. Signed directory summaries are paged and bounded; signed fetches
+  return bounded predecessor-ordered controls. Subscription never reduces the
+  public-channel delivery audience or grants authority.
 - Workspace record IDs and cursors are keyed opaque values. Message pages,
   due-work shards, unread state, drafts, delivery legs and operation results are
   separately sealed. Startup summaries do not decrypt message bodies. A stale
@@ -136,10 +141,11 @@ Depending on configured interfaces, observers may learn local discovery presence
   after permanent owner-key loss, a globally ordered group timeline, public or
   large channels, discoverable groups, anonymous membership, selective history
   sharing, or safe multi-owner membership editing.
-- Workspace cooperative history, backfill, edits, remote deletion, reactions,
-  threads, search exchange, public/private channel management, direct messages,
-  linked devices, authority transfer, and mobile workspace use. Increment 1
-  intentionally exposes only a two-member desktop `#general` channel.
+- Workspace cooperative message-history backfill, edits, remote deletion,
+  reactions, threads, search exchange, private channel management, direct
+  messages, linked devices, authority transfer, and mobile workspace use.
+  Increment 3 intentionally exposes public-channel history only when it already
+  exists locally; public discovery does not imply complete historical messages.
 - NAT hole punching, mobile push, Bluetooth, LoRa, attachments, multi-device identity cloning, and cloud backup.
 
 ## Open security blockers

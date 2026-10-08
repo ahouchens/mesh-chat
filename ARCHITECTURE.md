@@ -45,7 +45,7 @@ ordering, removal, and owner-loss consequences.
 
 ## Desktop workspaces
 
-The second workspace increment is an isolated desktop feature profile. It adds
+The third workspace increment is an isolated desktop feature profile. It adds
 canonical workspace authority, device, invitation, channel and event documents
 under the `mesh-chat-workspace` custom type without changing Personal or private
 group bytes. The React shell can switch between Personal and workspace views,
@@ -61,9 +61,11 @@ The service is split into three workspace boundaries:
 - `workspace_service.py` owns authority transitions, bounded indexes, paging,
   scheduler work, derived state, and presentation models.
 
-An authority-signed, hash-linked manifest controls membership and policy; an
-independently signed channel record controls `#general`; an author-device-signed
-event references both. The network adapter permits exactly one unknown-source
+An authority-signed, hash-linked manifest controls membership and policy;
+independent manager chains control every public channel; an author-device-signed
+event references both exact heads. A transfer requires the current manager's
+offer and the named successor's acceptance, while public recovery requires the
+owner authority signature. The network adapter permits exactly one unknown-source
 path: a verified join whose embedded identity and native source agree. Controls
 are queued ahead of dependent events, so no event becomes visible merely
 because it arrived before its authority data.
@@ -79,10 +81,13 @@ after its signature and predecessor link validate against the pinned chain.
 Outside the narrow join path, the native sender must be an active workspace
 device even when forwarding another member's signed control or event.
 
-Up to eight people share `#general`. Independent invitations may reference
+Up to eight people share as many as 32 active public channels. Independent invitations may reference
 the same older checkpoint; approval appends to the authority's current epoch,
-delivers the missing ordered manifest chain to the new device, and sends only
-the successor epoch to current members. Public message state materializes
+delivers the missing ordered manifest and public-channel chains to the new
+device, and sends only the successor epoch to current members. Public-channel
+messages always fan out to every active device. A local subscription affects
+only sidebar presentation, unread state, and later notification policy.
+Public message state materializes
 per-device legs and derives per-person pending, reached, partial, failed,
 expired, and cancelled aggregates without exposing destinations or public
 identity material. Member-authored events do not depend on the authority being
@@ -91,6 +96,12 @@ online; metadata, membership, and name decisions do.
 Workspace startup reads summaries, channels, invitations, join requests,
 unread positions, and encrypted drafts, but no message bodies or delivery-leg
 collections. Message lists use bounded linked pages with MAC-bound cursors.
+Public-channel discovery exchanges signed, paged summaries and bounded chain
+fetches. A directory remains explicitly incomplete until every tracked active
+device has supplied a complete summary equal to local retained heads. Duplicate
+normalized names remain separate channels and use their stable UUID-derived
+short IDs in presentation. Reversed events stay encrypted and inert until the
+referenced channel controls validate.
 Mutations use durable operation IDs, and sends commit the event, audience,
 delivery legs, page/index changes, due-work and result in one vault transaction
 before the background scheduler touches LXMF. Workspace changes carry scoped

@@ -12,18 +12,33 @@ import RNS
 
 from .errors import ContactNotApproved, MeshChatError, ValidationError
 from .invitations import canonical_bytes
-from .models import DeliveryState, WorkspaceRole
+from .models import (
+    DeliveryState,
+    WorkspaceChannelCreationPolicy,
+    WorkspacePostingPolicy,
+    WorkspaceRole,
+)
 from .workspace_protocol import (
     DEFAULT_INVITATION_LIFETIME_SECONDS,
     MAX_ACTIVE_MEMBERS,
     MAX_INVITATION_LIFETIME_SECONDS,
     MAX_MESSAGE_TEXT_BYTES,
+    MAX_PUBLIC_CHANNELS,
+    MAX_CHANNEL_FETCH_CONTROLS,
+    MAX_CHANNEL_SUMMARY_ENTRIES,
+    MAX_RETAINED_PUBLIC_CHANNELS,
     VerifiedWorkspaceChannel,
     VerifiedWorkspaceEvent,
     VerifiedWorkspaceManifest,
     WorkspaceManifestMemberInput,
     active_members,
+    channel_name_key,
+    create_workspace_channel_fetch,
+    create_workspace_channel_recovery,
     create_workspace_channel_record,
+    create_workspace_channel_summary,
+    create_workspace_channel_transfer,
+    create_workspace_channel_transfer_offer,
     create_workspace_display_name_request,
     create_workspace_display_name_decision,
     create_workspace_event,
@@ -35,6 +50,12 @@ from .workspace_protocol import (
     find_device,
     find_member,
     verify_workspace_channel_record,
+    verify_workspace_channel_record_transition,
+    verify_workspace_channel_fetch,
+    verify_workspace_channel_recovery,
+    verify_workspace_channel_summary,
+    verify_workspace_channel_transfer,
+    verify_workspace_channel_transfer_offer,
     verify_workspace_display_name_request,
     verify_workspace_display_name_decision,
     verify_workspace_event,
@@ -65,6 +86,7 @@ MAX_PENDING_CONTROLS = 32
 MAX_FUTURE_MANIFESTS = 8
 MAX_PENDING_JOINS = 32
 MAX_PENDING_JOINS_PER_SOURCE = 4
+MAX_PENDING_CHANNEL_TRANSFERS = 32
 WORKSPACE_RETRY_BASE_SECONDS = 5
 WORKSPACE_RETRY_MAX_SECONDS = 5 * 60
 DUE_SHARDS = 64
@@ -96,6 +118,10 @@ def _canonical_digest(command: str, value: dict[str, Any]) -> str:
     return hashlib.sha256(
         canonical_bytes({"command": command, "payload": value})
     ).hexdigest()
+
+
+def _canonical_transfer_offer(value: dict[str, Any]) -> str:
+    return canonical_bytes(value).decode("utf-8")
 
 
 def _short_id(value: str) -> str:
@@ -157,6 +183,23 @@ class WorkspaceServiceMixin:
 
     def _workspace_channel_control_id(self, digest: str) -> str:
         return self.store.opaque_id("workspace-channel-control", digest)
+
+    def _workspace_channel_version_id(
+        self, workspace_id: str, channel_id: str, version: int
+    ) -> str:
+        return self.store.opaque_id(
+            "workspace-channel-version", workspace_id, channel_id, str(version)
+        )
+
+    def _workspace_channel_transfer_id(self, digest: str) -> str:
+        return self.store.opaque_id("workspace-channel-transfer", digest)
+
+    def _workspace_channel_discovery_id(
+        self, workspace_id: str, device_id: str
+    ) -> str:
+        return self.store.opaque_id(
+            "workspace-channel-discovery", workspace_id, device_id
+        )
 
     def _workspace_invitation_record_id(self, nonce: bytes) -> str:
         return self.store.opaque_id("workspace-invitation", nonce.hex())
@@ -369,8 +412,10 @@ class WorkspaceServiceMixin:
         self._workspace_changed(workspace_id, resource_kind="sync_state")
 
     def _workspace_channel_by_digest(
-        self, digest: str
+        self, digest: str, *, _depth: int = 0
     ) -> VerifiedWorkspaceChannel | None:
+        if _depth >= MAX_CHANNEL_FETCH_CONTROLS:
+            raise ValidationError("Workspace channel control chain is too deep")
         control = self.store.get(
             "workspace_channel_control",
             self._workspace_channel_control_id(digest),
@@ -380,12 +425,208 @@ class WorkspaceServiceMixin:
         manifest = self._workspace_manifest_by_digest(control["manifest_digest"])
         if manifest is None:
             return None
-        channel = verify_workspace_channel_record(
-            control["serialized"], manifest=manifest
-        )
+        try:
+            document_type = json.loads(control["serialized"]).get("type")
+        except (TypeError, json.JSONDecodeError):
+            raise ValidationError("Stored workspace channel control is invalid")
+        if document_type == "workspace_channel_record":
+            channel = verify_workspace_channel_record(
+                control["serialized"], manifest=manifest
+            )
+        else:
+            previous_hash = control.get("previous_hash")
+            if not isinstance(previous_hash, str):
+                raise ValidationError("Stored workspace channel predecessor is invalid")
+            previous = self._workspace_channel_by_digest(
+                previous_hash, _depth=_depth + 1
+            )
+            if previous is None:
+                return None
+            if document_type == "workspace_channel_transfer":
+                channel = verify_workspace_channel_transfer(
+                    control["serialized"], channel=previous, manifest=manifest
+                )
+            elif document_type == "workspace_channel_recovery":
+                channel = verify_workspace_channel_recovery(
+                    control["serialized"], channel=previous, manifest=manifest
+                )
+            else:
+                raise ValidationError("Stored workspace channel control type is invalid")
         if channel.digest != digest:
             raise ValidationError("Stored workspace channel digest changed")
         return channel
+
+    def _workspace_channel_control_record(
+        self,
+        channel: VerifiedWorkspaceChannel,
+        *,
+        document_type: str,
+    ) -> dict[str, Any]:
+        return {
+            "workspace_id": channel.workspace_id,
+            "channel_id": channel.channel_id,
+            "manifest_digest": channel.manifest_digest,
+            "digest": channel.digest,
+            "version": channel.version,
+            "previous_hash": channel.previous_hash,
+            "document_type": document_type,
+            "serialized": channel.serialized,
+        }
+
+    def _workspace_channel_version_record(
+        self, channel: VerifiedWorkspaceChannel
+    ) -> tuple[str, str, dict[str, Any]]:
+        return (
+            "workspace_channel_version",
+            self._workspace_channel_version_id(
+                channel.workspace_id, channel.channel_id, channel.version
+            ),
+            {
+                "workspace_id": channel.workspace_id,
+                "channel_id": channel.channel_id,
+                "version": channel.version,
+                "digest": channel.digest,
+            },
+        )
+
+    def _workspace_public_channel_entries(
+        self, workspace_id: str
+    ) -> list[tuple[str, int, str]]:
+        entries = [
+            (item["id"], int(item["version"]), item["head_hash"])
+            for item in self.store.list("workspace_channel")
+            if item.get("workspace_id") == workspace_id
+            and item.get("visibility") == "public"
+            and item.get("state") != "forked"
+        ]
+        entries.sort()
+        if len(entries) > MAX_RETAINED_PUBLIC_CHANNELS:
+            raise ValidationError("Workspace public channel directory is too large")
+        return entries
+
+    def _workspace_channel_summary_documents(
+        self,
+        workspace: dict[str, Any],
+        manifest: VerifiedWorkspaceManifest,
+        identity: RNS.Identity,
+        session_id: str,
+    ) -> list[str]:
+        entries = self._workspace_public_channel_entries(workspace["id"])
+        pages = [
+            entries[index : index + MAX_CHANNEL_SUMMARY_ENTRIES]
+            for index in range(0, len(entries), MAX_CHANNEL_SUMMARY_ENTRIES)
+        ] or [[]]
+        return [
+            create_workspace_channel_summary(
+                identity,
+                manifest=manifest,
+                member_id=workspace["local_member_id"],
+                device_id=workspace["local_device_id"],
+                session_id=session_id,
+                entries=page,
+                page_index=index,
+                page_count=len(pages),
+            )
+            for index, page in enumerate(pages)
+        ]
+
+    def _workspace_channel_summary_deliveries(
+        self,
+        workspace: dict[str, Any],
+        manifest: VerifiedWorkspaceManifest,
+        identity: RNS.Identity,
+        session_id: str,
+        recipients: Iterable[tuple[str, Any]],
+    ) -> list[dict[str, Any]]:
+        documents = self._workspace_channel_summary_documents(
+            workspace, manifest, identity, session_id
+        )
+        return [
+            self._workspace_delivery_record(
+                workspace_id=workspace["id"],
+                recipient_member_id=member_id,
+                recipient_device=device,
+                kind="workspace_channel_summary",
+                document=document,
+                priority=1,
+            )
+            for member_id, device in recipients
+            for document in documents
+        ]
+
+    def _workspace_channel_control_chain(
+        self,
+        channel: dict[str, Any],
+        *,
+        known_head: str | None = None,
+        limit: int = MAX_CHANNEL_FETCH_CONTROLS,
+    ) -> list[dict[str, Any]]:
+        controls: list[dict[str, Any]] = []
+        digest: str | None = channel.get("head_hash")
+        seen: set[str] = set()
+        while isinstance(digest, str) and digest != known_head:
+            if digest in seen or len(controls) >= limit:
+                raise ValidationError("Workspace channel control chain is unavailable")
+            seen.add(digest)
+            control = self.store.get(
+                "workspace_channel_control",
+                self._workspace_channel_control_id(digest),
+            )
+            if control is None:
+                raise ValidationError("Workspace channel control chain is unavailable")
+            controls.append(control)
+            digest = control.get("previous_hash")
+        if known_head is not None and digest != known_head:
+            raise ValidationError("Known workspace channel head is not an ancestor")
+        controls.reverse()
+        return controls
+
+    def _mark_workspace_channel_discovery_incomplete(self, workspace_id: str) -> None:
+        workspace = self.store.get(
+            "workspace", self._workspace_record_id(workspace_id)
+        )
+        if workspace is None:
+            return
+        workspace["channel_discovery"] = "incomplete"
+        workspace["updated_at"] = time.time()
+        self.store.put("workspace", self._workspace_record_id(workspace_id), workspace)
+
+    def _recompute_workspace_channel_discovery(self, workspace_id: str) -> None:
+        workspace = self._require_workspace(workspace_id)
+        if workspace.get("state") not in {"active", "incomplete_sync"}:
+            return
+        manifest = self._workspace_current_manifest(workspace)
+        expected_devices = {
+            device.device_id
+            for member in active_members(manifest)
+            if member.member_id != workspace["local_member_id"]
+            for device in member.devices
+        }
+        local_entries = self._workspace_public_channel_entries(workspace_id)
+        converged = True
+        for device_id in expected_devices:
+            record = self.store.get(
+                "workspace_channel_discovery",
+                self._workspace_channel_discovery_id(workspace_id, device_id),
+            )
+            if (
+                record is None
+                or record.get("manifest_digest") != manifest.digest
+                or not record.get("complete")
+            ):
+                converged = False
+                break
+            remote_entries = [tuple(item) for item in record.get("entries", [])]
+            if remote_entries != local_entries:
+                converged = False
+                break
+        state = "converged" if converged else "incomplete"
+        if workspace.get("channel_discovery") == state:
+            return
+        workspace["channel_discovery"] = state
+        workspace["updated_at"] = time.time()
+        self.store.put("workspace", self._workspace_record_id(workspace_id), workspace)
+        self._workspace_changed(workspace_id, resource_kind="channel_discovery")
 
     @staticmethod
     def _member_summary(member: Any) -> dict[str, Any]:
@@ -420,6 +661,9 @@ class WorkspaceServiceMixin:
             "invitation_requests": manifest.invitation_requests.value,
         }
         workspace["members"] = [self._member_summary(item) for item in manifest.members]
+        workspace["channel_discovery"] = (
+            "converged" if len(active_members(manifest)) <= 1 else "incomplete"
+        )
         workspace["authorization_generation"] = int(
             workspace.get("authorization_generation", 0)
         ) + 1
@@ -565,6 +809,7 @@ class WorkspaceServiceMixin:
             "id": channel.channel_id,
             "workspace_id": channel.workspace_id,
             "name": channel.name,
+            "name_key": channel_name_key(channel.name),
             "topic": channel.topic,
             "visibility": channel.visibility,
             "state": "archived" if channel.archived else "active",
@@ -574,6 +819,7 @@ class WorkspaceServiceMixin:
             "head_hash": channel.digest,
             "manifest_digest": channel.manifest_digest,
             "unread_count": 0,
+            "short_id": _short_id(channel.channel_id),
             "created_at": float(channel.created_at),
             "updated_at": float(channel.created_at),
         }
@@ -602,11 +848,57 @@ class WorkspaceServiceMixin:
             }
             for member in workspace.get("members", [])
         ]
+        public.setdefault(
+            "channel_discovery",
+            "converged"
+            if sum(
+                member.get("status") == "active"
+                for member in workspace.get("members", [])
+            )
+            <= 1
+            else "incomplete",
+        )
         return public
 
-    @staticmethod
-    def _public_workspace_channel(channel: dict[str, Any]) -> dict[str, Any]:
-        return dict(channel)
+    def _public_workspace_channel(
+        self,
+        channel: dict[str, Any],
+        *,
+        duplicate_name: bool = False,
+    ) -> dict[str, Any]:
+        public = dict(channel)
+        workspace_id = str(channel.get("workspace_id", ""))
+        channel_id = str(channel.get("id", ""))
+        workspace = self.store.get(
+            "workspace", self._workspace_record_id(workspace_id)
+        )
+        is_general = bool(
+            workspace is not None
+            and workspace.get("general_channel_id") == channel_id
+        )
+        public.setdefault(
+            "name_key", channel_name_key(str(channel.get("name", "")))
+        )
+        public.setdefault("short_id", _short_id(channel_id))
+        subscription = self.store.get(
+            "workspace_subscription",
+            self.store.opaque_id(
+                "workspace-subscription", workspace_id, channel_id
+            ),
+        )
+        public["is_general"] = is_general
+        public["subscribed"] = is_general or bool(
+            subscription and subscription.get("subscribed")
+        )
+        public["duplicate_name"] = duplicate_name
+        public["display_name"] = (
+            f"{channel.get('name', '')} · {channel.get('short_id', _short_id(channel_id))}"
+            if duplicate_name
+            else channel.get("name", "")
+        )
+        if not public["subscribed"]:
+            public["unread_count"] = 0
+        return public
 
     def _workspace_delivery_summary(
         self,
@@ -737,6 +1029,60 @@ class WorkspaceServiceMixin:
             except Exception:
                 continue
 
+    def _workspace_channel_deliveries(
+        self,
+        manifest: VerifiedWorkspaceManifest,
+        *,
+        excluding_member_id: str,
+        kind: str,
+        document: str,
+        priority: int = 1,
+        recipients: Iterable[tuple[str, Any]] | None = None,
+    ) -> list[dict[str, Any]]:
+        targets = (
+            list(recipients)
+            if recipients is not None
+            else self._workspace_manifest_recipients(
+                manifest, excluding_member_id=excluding_member_id
+            )
+        )
+        return [
+            self._workspace_delivery_record(
+                workspace_id=manifest.workspace_id,
+                recipient_member_id=member_id,
+                recipient_device=device,
+                kind=kind,
+                document=document,
+                priority=priority,
+            )
+            for member_id, device in targets
+        ]
+
+    @staticmethod
+    def _channel_creation_allowed(
+        manifest: VerifiedWorkspaceManifest, member: Any
+    ) -> bool:
+        return (
+            member.status == "active"
+            and (
+                manifest.channel_creation
+                == WorkspaceChannelCreationPolicy.ALL_MEMBERS
+                or member.role == WorkspaceRole.OWNER
+            )
+        )
+
+    @staticmethod
+    def _posting_allowed(
+        manifest: VerifiedWorkspaceManifest, member: Any
+    ) -> bool:
+        return (
+            member.status == "active"
+            and (
+                manifest.posting == WorkspacePostingPolicy.ALL_MEMBERS
+                or member.role == WorkspaceRole.OWNER
+            )
+        )
+
     def create_workspace(
         self,
         operation_id: Any,
@@ -809,6 +1155,7 @@ class WorkspaceServiceMixin:
             "genesis_digest": genesis.digest,
             "genesis": genesis.serialized,
             "general_channel_id": channel.channel_id,
+            "channel_discovery": "converged",
             "retention_days": manifest.retention_days,
             "policies": {
                 "channel_creation": manifest.channel_creation.value,
@@ -861,14 +1208,11 @@ class WorkspaceServiceMixin:
                 (
                     "workspace_channel_control",
                     self._workspace_channel_control_id(channel.digest),
-                    {
-                        "workspace_id": workspace["id"],
-                        "channel_id": channel.channel_id,
-                        "manifest_digest": channel.manifest_digest,
-                        "digest": channel.digest,
-                        "serialized": channel.serialized,
-                    },
+                    self._workspace_channel_control_record(
+                        channel, document_type="workspace_channel_record"
+                    ),
                 ),
+                self._workspace_channel_version_record(channel),
                 ("workspace_conversation_index", index_id, index),
                 (
                     "workspace_subscription",
@@ -1153,6 +1497,7 @@ class WorkspaceServiceMixin:
             "genesis_digest": invite.genesis.digest,
             "genesis": invite.genesis.serialized,
             "general_channel_id": None,
+            "channel_discovery": "incomplete",
             "retention_days": invite.offered_manifest.retention_days,
             "policies": {
                 "channel_creation": invite.offered_manifest.channel_creation.value,
@@ -1357,15 +1702,21 @@ class WorkspaceServiceMixin:
         invitation["state"] = "consumed"
         invitation["consumed_by_member_id"] = join.member_id
         invitation["updated_at"] = time.time()
-        channel = self._require_workspace_channel(
-            workspace_id, workspace["general_channel_id"]
+        public_channels = sorted(
+            (
+                item
+                for item in self.store.list("workspace_channel")
+                if item.get("workspace_id") == workspace_id
+                and item.get("visibility") == "public"
+                and item.get("state") != "forked"
+            ),
+            key=lambda item: item["id"],
         )
-        control = self.store.get(
-            "workspace_channel_control",
-            self._workspace_channel_control_id(channel["head_hash"]),
-        )
-        if control is None:
-            raise ValidationError("General channel control is unavailable")
+        channel_controls = [
+            control
+            for public_channel in public_channels
+            for control in self._workspace_channel_control_chain(public_channel)
+        ]
         manifest_deliveries = self._workspace_manifest_deliveries(
             workspace_id,
             [next_manifest],
@@ -1382,14 +1733,17 @@ class WorkspaceServiceMixin:
                 [(join.member_id, join.device)],
             )
         )
-        channel_delivery = self._workspace_delivery_record(
-            workspace_id=workspace_id,
-            recipient_member_id=join.member_id,
-            recipient_device=join.device,
-            kind="workspace_channel_record",
-            document=control["serialized"],
-            priority=1,
-        )
+        channel_deliveries = [
+            self._workspace_delivery_record(
+                workspace_id=workspace_id,
+                recipient_member_id=join.member_id,
+                recipient_device=join.device,
+                kind=control.get("document_type", "workspace_channel_record"),
+                document=control["serialized"],
+                priority=1,
+            )
+            for control in channel_controls
+        ]
         outcome = {
             "request_id": request_id,
             "state": "approved",
@@ -1409,8 +1763,11 @@ class WorkspaceServiceMixin:
                 ("workspace_delivery", delivery["id"], delivery)
                 for delivery in manifest_deliveries
             ],
-            ("workspace_delivery", channel_delivery["id"], channel_delivery),
-            *self._due_records(add=[*manifest_deliveries, channel_delivery]),
+            *[
+                ("workspace_delivery", delivery["id"], delivery)
+                for delivery in channel_deliveries
+            ],
+            *self._due_records(add=[*manifest_deliveries, *channel_deliveries]),
         ]
         committed = self.store.commit_operation(
             operation_id, digest, outcome, records
@@ -1622,6 +1979,8 @@ class WorkspaceServiceMixin:
         local_member = find_member(manifest, workspace["local_member_id"])
         if local_member is None or local_member.status != "active":
             raise ContactNotApproved("Local member is not active")
+        if not self._posting_allowed(manifest, local_member):
+            raise ContactNotApproved("Workspace posting is restricted to the owner")
         channel = self._workspace_channel_by_digest(channel_record["head_hash"])
         if channel is None:
             raise ValidationError("Workspace channel control is unavailable")
@@ -1793,6 +2152,13 @@ class WorkspaceServiceMixin:
             current_device = find_device(current, event.author_device_id)
             if current_device is None or current_device[0].status != "active":
                 return False
+            author = find_member(manifest, event.author_member_id)
+            if (
+                author is None
+                or author.status != "active"
+                or not self._posting_allowed(manifest, author)
+            ):
+                return False
             sequence_id = self._workspace_stream_sequence_id(
                 event.workspace_id,
                 event.conversation_id,
@@ -1823,9 +2189,6 @@ class WorkspaceServiceMixin:
             if event.sequence != expected_sequence or event.previous_event_digest != expected_previous:
                 self._store_pending_workspace_event(wire, "missing_predecessor")
                 return False
-            author = find_member(manifest, event.author_member_id)
-            if author is None:
-                return False
             records, _message = self._append_workspace_event_records(
                 workspace,
                 event,
@@ -1835,9 +2198,18 @@ class WorkspaceServiceMixin:
             channel_record = self._require_workspace_channel(
                 event.workspace_id, event.conversation_id
             )
-            channel_record["unread_count"] = int(
-                channel_record.get("unread_count", 0)
-            ) + 1
+            subscription = self.store.get(
+                "workspace_subscription",
+                self.store.opaque_id(
+                    "workspace-subscription",
+                    event.workspace_id,
+                    event.conversation_id,
+                ),
+            )
+            if subscription is not None and subscription.get("subscribed"):
+                channel_record["unread_count"] = int(
+                    channel_record.get("unread_count", 0)
+                ) + 1
             channel_record["updated_at"] = time.time()
             records.append(
                 (
@@ -2003,102 +2375,711 @@ class WorkspaceServiceMixin:
                 self._store_pending_workspace_control(wire, "missing_manifest")
                 return False
             channel = verify_workspace_channel_record(wire.document, manifest=manifest)
-            if channel.workspace_id != wire.workspace_id or channel.name != "general":
+            if channel.workspace_id != wire.workspace_id:
                 return False
             workspace = self._require_workspace(wire.workspace_id)
             if workspace.get("state") in {"closed", "forked", "removed", "left"}:
                 return False
-            genesis = self._workspace_genesis(workspace)
-            initial_manifest = self._workspace_manifest_at_epoch(wire.workspace_id, 1)
-            if (
-                initial_manifest is None
-                or channel.manifest_digest != initial_manifest.digest
-                or channel.version != 1
-                or channel.previous_hash is not None
-                or channel.visibility != "public"
-                or channel.archived
-                or channel.manager_member_id != genesis.owner_member_id
-                or channel.manager_device_id != genesis.authority_device_id
-            ):
-                return False
             existing_channel = self.store.get(
                 "workspace_channel", self._workspace_channel_record_id(channel.channel_id)
             )
-            if existing_channel is not None:
+            current_manifest = self._workspace_current_manifest(workspace)
+            is_general = channel.name == "general"
+            if existing_channel is None:
+                if (
+                    channel.version != 1
+                    or channel.previous_hash is not None
+                    or channel.visibility != "public"
+                    or channel.archived
+                ):
+                    self._store_pending_workspace_control(
+                        wire, "missing_channel_predecessor"
+                    )
+                    return False
+                if is_general:
+                    genesis = self._workspace_genesis(workspace)
+                    initial_manifest = self._workspace_manifest_at_epoch(
+                        wire.workspace_id, 1
+                    )
+                    if (
+                        initial_manifest is None
+                        or channel.manifest_digest != initial_manifest.digest
+                        or channel.manager_member_id != genesis.owner_member_id
+                        or channel.manager_device_id != genesis.authority_device_id
+                    ):
+                        return False
+                    if workspace.get("general_channel_id") not in {
+                        None,
+                        channel.channel_id,
+                    }:
+                        workspace["state"] = "forked"
+                        workspace["security_error"] = "general_channel_conflict"
+                        self.store.put(
+                            "workspace",
+                            self._workspace_record_id(workspace["id"]),
+                            workspace,
+                        )
+                        self._workspace_changed(
+                            workspace["id"], resource_kind="security"
+                        )
+                        return False
+                    workspace["general_channel_id"] = channel.channel_id
+                else:
+                    if channel_name_key(channel.name) == "general":
+                        return False
+                    creator = find_member(manifest, channel.manager_member_id)
+                    current_creator = find_member(
+                        current_manifest, channel.manager_member_id
+                    )
+                    if (
+                        creator is None
+                        or not self._channel_creation_allowed(manifest, creator)
+                        or current_creator is None
+                        or current_creator.status != "active"
+                    ):
+                        return False
+                    known_channels = [
+                        item
+                        for item in self.store.list("workspace_channel")
+                        if item.get("workspace_id") == workspace["id"]
+                        and item.get("visibility") == "public"
+                    ]
+                    if sum(
+                        item.get("state") == "active" for item in known_channels
+                    ) >= MAX_PUBLIC_CHANNELS:
+                        self._set_workspace_sync_issue(
+                            workspace["id"], "channel_directory_full", incomplete=True
+                        )
+                        return False
+                    if len(known_channels) >= MAX_RETAINED_PUBLIC_CHANNELS:
+                        self._set_workspace_sync_issue(
+                            workspace["id"], "channel_directory_full", incomplete=True
+                        )
+                        return False
+                channel_record = self._channel_record(channel)
+                index_id = self._workspace_index_record_id(
+                    workspace["id"], channel.channel_id
+                )
+                index = {
+                    "workspace_id": workspace["id"],
+                    "conversation_id": channel.channel_id,
+                    "head_page": None,
+                    "count": 0,
+                    "high_water": 0,
+                    "authorization_generation": int(
+                        workspace.get("authorization_generation", 1)
+                    ),
+                    "retention_generation": int(
+                        workspace.get("retention_generation", 1)
+                    ),
+                }
+                subscribed = is_general
+                workspace["channel_discovery"] = "incomplete"
+                workspace["updated_at"] = time.time()
+                self.store.put_many(
+                    [
+                        (
+                            "workspace",
+                            self._workspace_record_id(workspace["id"]),
+                            workspace,
+                        ),
+                        (
+                            "workspace_channel",
+                            self._workspace_channel_record_id(channel.channel_id),
+                            channel_record,
+                        ),
+                        (
+                            "workspace_channel_control",
+                            self._workspace_channel_control_id(channel.digest),
+                            self._workspace_channel_control_record(
+                                channel, document_type="workspace_channel_record"
+                            ),
+                        ),
+                        self._workspace_channel_version_record(channel),
+                        ("workspace_conversation_index", index_id, index),
+                        (
+                            "workspace_subscription",
+                            self.store.opaque_id(
+                                "workspace-subscription",
+                                workspace["id"],
+                                channel.channel_id,
+                            ),
+                            {
+                                "workspace_id": workspace["id"],
+                                "conversation_id": channel.channel_id,
+                                "subscribed": subscribed,
+                            },
+                        ),
+                        (
+                            "workspace_read_state",
+                            self.store.opaque_id(
+                                "workspace-read-state",
+                                workspace["id"],
+                                channel.channel_id,
+                            ),
+                            {
+                                "workspace_id": workspace["id"],
+                                "conversation_id": channel.channel_id,
+                                "high_water": 0,
+                            },
+                        ),
+                    ]
+                )
+            else:
                 if existing_channel.get("head_hash") == channel.digest:
                     return True
-                workspace["state"] = "forked"
-                workspace["security_error"] = "channel_control_conflict"
-                self.store.put(
-                    "workspace", self._workspace_record_id(workspace["id"]), workspace
-                )
-                self._workspace_changed(workspace["id"], resource_kind="security")
-                return False
-            if workspace.get("general_channel_id") not in {None, channel.channel_id}:
-                workspace["state"] = "forked"
-                workspace["security_error"] = "general_channel_conflict"
-                self.store.put(
-                    "workspace", self._workspace_record_id(workspace["id"]), workspace
-                )
-                self._workspace_changed(workspace["id"], resource_kind="security")
-                return False
-            workspace["general_channel_id"] = channel.channel_id
-            workspace["updated_at"] = time.time()
-            channel_record = self._channel_record(channel)
-            index_id = self._workspace_index_record_id(
-                workspace["id"], channel.channel_id
-            )
-            index = self.store.get("workspace_conversation_index", index_id) or {
-                "workspace_id": workspace["id"],
-                "conversation_id": channel.channel_id,
-                "head_page": None,
-                "count": 0,
-                "high_water": 0,
-                "authorization_generation": int(
-                    workspace.get("authorization_generation", 1)
-                ),
-                "retention_generation": int(workspace.get("retention_generation", 1)),
-            }
-            self.store.put_many(
-                [
-                    ("workspace", self._workspace_record_id(workspace["id"]), workspace),
-                    (
-                        "workspace_channel",
-                        self._workspace_channel_record_id(channel.channel_id),
-                        channel_record,
-                    ),
-                    (
+                if (
+                    channel.channel_id == workspace.get("general_channel_id")
+                    and (
+                        channel.manager_member_id
+                        != existing_channel.get("manager_member_id")
+                        or channel.manager_device_id
+                        != existing_channel.get("manager_device_id")
+                    )
+                ):
+                    return False
+                current_version = int(existing_channel.get("version", 0))
+                if channel.version > current_version + 1:
+                    self._store_pending_workspace_control(
+                        wire, "missing_channel_predecessor"
+                    )
+                    return False
+                if channel.version <= current_version:
+                    known_control = self.store.get(
                         "workspace_channel_control",
                         self._workspace_channel_control_id(channel.digest),
-                        {
-                            "workspace_id": channel.workspace_id,
-                            "channel_id": channel.channel_id,
-                            "manifest_digest": channel.manifest_digest,
-                            "digest": channel.digest,
-                            "serialized": channel.serialized,
-                        },
-                    ),
-                    ("workspace_conversation_index", index_id, index),
-                    (
-                        "workspace_subscription",
-                        self.store.opaque_id(
-                            "workspace-subscription",
-                            workspace["id"],
-                            channel.channel_id,
+                    )
+                    if (
+                        known_control is not None
+                        and known_control.get("serialized") == channel.serialized
+                    ):
+                        return True
+                    version_record = self.store.get(
+                        "workspace_channel_version",
+                        self._workspace_channel_version_id(
+                            workspace["id"], channel.channel_id, channel.version
                         ),
-                        {
-                            "workspace_id": workspace["id"],
-                            "conversation_id": channel.channel_id,
-                            "subscribed": True,
-                        },
-                    ),
-                ]
-            )
+                    )
+                    if version_record is not None and version_record.get(
+                        "digest"
+                    ) == channel.digest:
+                        return True
+                    if channel.version == 1:
+                        if channel.channel_id == workspace.get(
+                            "general_channel_id"
+                        ):
+                            initial_manifest = self._workspace_manifest_at_epoch(
+                                workspace["id"], 1
+                            )
+                            if (
+                                channel.previous_hash is not None
+                                or initial_manifest is None
+                                or channel.manifest_digest
+                                != initial_manifest.digest
+                            ):
+                                return False
+                        else:
+                            creator = find_member(
+                                manifest, channel.manager_member_id
+                            )
+                            current_creator = find_member(
+                                current_manifest, channel.manager_member_id
+                            )
+                            if (
+                                channel.previous_hash is not None
+                                or channel_name_key(channel.name) == "general"
+                                or creator is None
+                                or not self._channel_creation_allowed(
+                                    manifest, creator
+                                )
+                                or current_creator is None
+                                or current_creator.status != "active"
+                            ):
+                                return False
+                    else:
+                        previous = self._workspace_channel_by_digest(
+                            channel.previous_hash or ""
+                        )
+                        if previous is None:
+                            return False
+                        verify_workspace_channel_record_transition(
+                            wire.document, previous, manifest=manifest
+                        )
+                    existing_channel["state"] = "forked"
+                    existing_channel["security_error"] = "channel_control_conflict"
+                    self.store.put(
+                        "workspace_channel",
+                        self._workspace_channel_record_id(channel.channel_id),
+                        existing_channel,
+                    )
+                    self._workspace_changed(
+                        workspace["id"],
+                        conversation_id=channel.channel_id,
+                        resource_kind="security",
+                    )
+                    return False
+                previous = self._workspace_channel_by_digest(
+                    existing_channel["head_hash"]
+                )
+                if previous is None or channel.manifest_digest != current_manifest.digest:
+                    return False
+                channel = verify_workspace_channel_record_transition(
+                    wire.document, previous, manifest=manifest
+                )
+                updated = self._channel_record(channel)
+                updated["unread_count"] = int(
+                    existing_channel.get("unread_count", 0)
+                )
+                updated["created_at"] = float(
+                    existing_channel.get("created_at", channel.created_at)
+                )
+                updated["updated_at"] = time.time()
+                workspace["channel_discovery"] = "incomplete"
+                workspace["updated_at"] = time.time()
+                self.store.put_many(
+                    [
+                        (
+                            "workspace",
+                            self._workspace_record_id(workspace["id"]),
+                            workspace,
+                        ),
+                        (
+                            "workspace_channel",
+                            self._workspace_channel_record_id(channel.channel_id),
+                            updated,
+                        ),
+                        (
+                            "workspace_channel_control",
+                            self._workspace_channel_control_id(channel.digest),
+                            self._workspace_channel_control_record(
+                                channel, document_type="workspace_channel_record"
+                            ),
+                        ),
+                        self._workspace_channel_version_record(channel),
+                    ]
+                )
             self._drain_workspace_pending_events(workspace["id"])
             self._workspace_changed(
                 workspace["id"],
                 conversation_id=channel.channel_id,
                 resource_kind="channel",
+            )
+            return True
+        except (MeshChatError, json.JSONDecodeError):
+            return False
+
+    def _receive_workspace_channel_transfer_offer(
+        self, wire: WorkspaceWirePayload
+    ) -> bool:
+        try:
+            value = json.loads(wire.document)
+            if not isinstance(value, dict):
+                return False
+            channel_id = value.get("channel_id")
+            manifest_digest = value.get("manifest_digest")
+            channel_head = value.get("channel_head")
+            if not all(
+                isinstance(item, str)
+                for item in (channel_id, manifest_digest, channel_head)
+            ):
+                return False
+            workspace = self._require_workspace(wire.workspace_id)
+            manifest = self._workspace_manifest_by_digest(manifest_digest)
+            channel = self._workspace_channel_by_digest(channel_head)
+            stored = self._require_workspace_channel(wire.workspace_id, channel_id)
+            if (
+                manifest is None
+                or channel is None
+                or manifest.digest != workspace.get("manifest_hash")
+                or stored.get("head_hash") != channel.digest
+                or stored.get("state") != "active"
+            ):
+                return False
+            offer = verify_workspace_channel_transfer_offer(
+                wire.document, channel=channel, manifest=manifest
+            )
+            record_id = self._workspace_channel_transfer_id(offer.digest)
+            if self.store.get("workspace_channel_transfer", record_id) is not None:
+                return True
+            pending = [
+                item
+                for item in self.store.list("workspace_channel_transfer")
+                if item.get("workspace_id") == wire.workspace_id
+                and item.get("state") == "offered"
+            ]
+            if len(pending) >= MAX_PENDING_CHANNEL_TRANSFERS:
+                self._set_workspace_sync_issue(
+                    wire.workspace_id, "queue_pressure", incomplete=True
+                )
+                return False
+            self.store.put(
+                "workspace_channel_transfer",
+                record_id,
+                {
+                    "id": record_id,
+                    "workspace_id": wire.workspace_id,
+                    "channel_id": offer.channel_id,
+                    "channel_head": offer.channel_head,
+                    "manifest_digest": offer.manifest_digest,
+                    "manager_member_id": offer.manager_member_id,
+                    "successor_member_id": offer.successor_member_id,
+                    "successor_device_id": offer.successor_device_id,
+                    "state": "offered",
+                    "document": offer.serialized,
+                    "created_at": float(offer.created_at),
+                    "expires_at": float(offer.expires_at),
+                },
+            )
+            self._workspace_changed(
+                wire.workspace_id, resource_kind="channel_transfer"
+            )
+            return True
+        except (MeshChatError, json.JSONDecodeError):
+            return False
+
+    def _receive_workspace_channel_head_transition(
+        self, wire: WorkspaceWirePayload
+    ) -> bool:
+        try:
+            value = json.loads(wire.document)
+            if not isinstance(value, dict):
+                return False
+            if wire.kind == "workspace_channel_transfer":
+                offer = value.get("offer")
+                if not isinstance(offer, dict):
+                    return False
+                channel_id = offer.get("channel_id")
+                manifest_digest = offer.get("manifest_digest")
+                previous_hash = offer.get("channel_head")
+            else:
+                channel_id = value.get("channel_id")
+                manifest_digest = value.get("manifest_digest")
+                previous_hash = value.get("channel_head")
+            if not all(
+                isinstance(item, str)
+                for item in (channel_id, manifest_digest, previous_hash)
+            ):
+                return False
+            workspace = self._require_workspace(wire.workspace_id)
+            manifest = self._workspace_manifest_by_digest(manifest_digest)
+            previous = self._workspace_channel_by_digest(previous_hash)
+            if manifest is None:
+                self._store_pending_workspace_control(wire, "missing_manifest")
+                return False
+            if previous is None:
+                self._store_pending_workspace_control(
+                    wire, "missing_channel_predecessor"
+                )
+                return False
+            if manifest.digest != workspace.get("manifest_hash"):
+                return False
+            incoming = (
+                verify_workspace_channel_transfer(
+                    wire.document, channel=previous, manifest=manifest
+                )
+                if wire.kind == "workspace_channel_transfer"
+                else verify_workspace_channel_recovery(
+                    wire.document, channel=previous, manifest=manifest
+                )
+            )
+            existing = self._require_workspace_channel(
+                wire.workspace_id, incoming.channel_id
+            )
+            if existing.get("state") == "archived":
+                return False
+            if int(existing.get("version", 0)) >= incoming.version:
+                version_record = self.store.get(
+                    "workspace_channel_version",
+                    self._workspace_channel_version_id(
+                        wire.workspace_id, incoming.channel_id, incoming.version
+                    ),
+                )
+                if version_record is not None and version_record.get(
+                    "digest"
+                ) == incoming.digest:
+                    return True
+                existing["state"] = "forked"
+                existing["security_error"] = "channel_control_conflict"
+                self.store.put(
+                    "workspace_channel",
+                    self._workspace_channel_record_id(incoming.channel_id),
+                    existing,
+                )
+                self._workspace_changed(
+                    wire.workspace_id,
+                    conversation_id=incoming.channel_id,
+                    resource_kind="security",
+                )
+                return False
+            if (
+                incoming.version != int(existing.get("version", 0)) + 1
+                or existing.get("head_hash") != incoming.previous_hash
+            ):
+                self._store_pending_workspace_control(
+                    wire, "missing_channel_predecessor"
+                )
+                return False
+            updated = self._channel_record(incoming)
+            updated["unread_count"] = int(existing.get("unread_count", 0))
+            updated["created_at"] = float(
+                existing.get("created_at", incoming.created_at)
+            )
+            updated["updated_at"] = time.time()
+            workspace["channel_discovery"] = "incomplete"
+            workspace["updated_at"] = time.time()
+            records: list[tuple[str, str, dict[str, Any]]] = [
+                ("workspace", self._workspace_record_id(workspace["id"]), workspace),
+                (
+                    "workspace_channel",
+                    self._workspace_channel_record_id(incoming.channel_id),
+                    updated,
+                ),
+                (
+                    "workspace_channel_control",
+                    self._workspace_channel_control_id(incoming.digest),
+                    self._workspace_channel_control_record(
+                        incoming, document_type=wire.kind
+                    ),
+                ),
+                self._workspace_channel_version_record(incoming),
+            ]
+            if wire.kind == "workspace_channel_transfer":
+                offer = verify_workspace_channel_transfer_offer(
+                    _canonical_transfer_offer(value["offer"]),
+                    channel=previous,
+                    manifest=manifest,
+                )
+                transfer_id = self._workspace_channel_transfer_id(offer.digest)
+                transfer = self.store.get("workspace_channel_transfer", transfer_id)
+                if transfer is not None:
+                    transfer["state"] = "accepted"
+                    transfer["accepted_at"] = time.time()
+                    records.append(
+                        ("workspace_channel_transfer", transfer_id, transfer)
+                    )
+            self.store.put_many(records)
+            self._drain_workspace_pending_events(wire.workspace_id)
+            self._workspace_changed(
+                wire.workspace_id,
+                conversation_id=incoming.channel_id,
+                resource_kind="channel",
+            )
+            return True
+        except (MeshChatError, json.JSONDecodeError):
+            return False
+
+    def _receive_workspace_channel_summary(
+        self, wire: WorkspaceWirePayload
+    ) -> bool:
+        try:
+            workspace = self._require_workspace(wire.workspace_id)
+            manifest = self._workspace_current_manifest(workspace)
+            summary = verify_workspace_channel_summary(
+                wire.document, manifest=manifest
+            )
+            if summary.device_id == workspace.get("local_device_id"):
+                return False
+            remote_entries = list(summary.entries)
+            local_entries = self._workspace_public_channel_entries(wire.workspace_id)
+            discovery_id = self._workspace_channel_discovery_id(
+                wire.workspace_id, summary.device_id
+            )
+            previous_discovery = self.store.get(
+                "workspace_channel_discovery", discovery_id
+            )
+            first_page_for_session = (
+                previous_discovery is None
+                or previous_discovery.get("session_id") != summary.session_id
+            )
+            if first_page_for_session:
+                pages: dict[str, list[list[Any]]] = {}
+            else:
+                if (
+                    previous_discovery.get("manifest_digest")
+                    != summary.manifest_digest
+                    or previous_discovery.get("member_id") != summary.member_id
+                    or previous_discovery.get("page_count") != summary.page_count
+                ):
+                    return False
+                pages = dict(previous_discovery.get("pages", {}))
+            page_key = str(summary.page_index)
+            encoded_page = [list(item) for item in remote_entries]
+            if page_key in pages and pages[page_key] != encoded_page:
+                self._mark_workspace_channel_discovery_incomplete(wire.workspace_id)
+                return False
+            pages[page_key] = encoded_page
+            complete = len(pages) == summary.page_count and all(
+                str(index) in pages for index in range(summary.page_count)
+            )
+            combined_entries = (
+                [
+                    item
+                    for index in range(summary.page_count)
+                    for item in pages[str(index)]
+                ]
+                if complete
+                else []
+            )
+            if complete and (
+                combined_entries != sorted(combined_entries)
+                or len({item[0] for item in combined_entries})
+                != len(combined_entries)
+            ):
+                self._mark_workspace_channel_discovery_incomplete(wire.workspace_id)
+                return False
+            self.store.put(
+                "workspace_channel_discovery",
+                discovery_id,
+                {
+                    "workspace_id": wire.workspace_id,
+                    "device_id": summary.device_id,
+                    "member_id": summary.member_id,
+                    "manifest_digest": summary.manifest_digest,
+                    "session_id": summary.session_id,
+                    "page_count": summary.page_count,
+                    "pages": pages,
+                    "complete": complete,
+                    "entries": combined_entries,
+                    "updated_at": time.time(),
+                },
+            )
+            local_by_id = {entry[0]: entry for entry in local_entries}
+            requests = [
+                (
+                    channel_id,
+                    local_by_id[channel_id][1]
+                    if channel_id in local_by_id
+                    else 0,
+                    local_by_id[channel_id][2]
+                    if channel_id in local_by_id
+                    else None,
+                )
+                for channel_id, version, head_hash in remote_entries
+                if channel_id not in local_by_id
+                or local_by_id[channel_id][1] < version
+                or local_by_id[channel_id][2] != head_hash
+            ]
+            identity = self._identity
+            signer = find_device(manifest, summary.device_id)
+            deliveries: list[dict[str, Any]] = []
+            if requests and identity is not None and signer is not None:
+                raw = create_workspace_channel_fetch(
+                    identity,
+                    manifest=manifest,
+                    member_id=workspace["local_member_id"],
+                    device_id=workspace["local_device_id"],
+                    session_id=summary.session_id,
+                    requests=requests,
+                )
+                deliveries.append(
+                    self._workspace_delivery_record(
+                        workspace_id=wire.workspace_id,
+                        recipient_member_id=summary.member_id,
+                        recipient_device=signer[1],
+                        kind="workspace_channel_fetch",
+                        document=raw,
+                        priority=1,
+                    )
+                )
+                self._mark_workspace_channel_discovery_incomplete(
+                    wire.workspace_id
+                )
+            if (
+                identity is not None
+                and signer is not None
+                and first_page_for_session
+            ):
+                deliveries.extend(
+                    self._workspace_channel_summary_deliveries(
+                        workspace,
+                        manifest,
+                        identity,
+                        summary.session_id,
+                        [(summary.member_id, signer[1])],
+                    )
+                )
+            if deliveries:
+                self.store.put_many(
+                    [
+                        *[
+                            ("workspace_delivery", delivery["id"], delivery)
+                            for delivery in deliveries
+                        ],
+                        *self._due_records(add=deliveries),
+                    ]
+                )
+            self._recompute_workspace_channel_discovery(wire.workspace_id)
+            return True
+        except (MeshChatError, json.JSONDecodeError):
+            return False
+
+    def _receive_workspace_channel_fetch(
+        self, wire: WorkspaceWirePayload
+    ) -> bool:
+        try:
+            workspace = self._require_workspace(wire.workspace_id)
+            manifest = self._workspace_current_manifest(workspace)
+            fetch = verify_workspace_channel_fetch(wire.document, manifest=manifest)
+            requester = find_device(manifest, fetch.device_id)
+            identity = self._identity
+            if requester is None or identity is None:
+                return False
+            controls: list[dict[str, Any]] = []
+            for channel_id, _known_version, known_head in fetch.requests:
+                channel = self.store.get(
+                    "workspace_channel",
+                    self._workspace_channel_record_id(channel_id),
+                )
+                if (
+                    channel is None
+                    or channel.get("workspace_id") != wire.workspace_id
+                    or channel.get("visibility") != "public"
+                    or channel.get("state") == "forked"
+                ):
+                    continue
+                try:
+                    chain = self._workspace_channel_control_chain(
+                        channel,
+                        known_head=known_head,
+                        limit=fetch.max_controls - len(controls),
+                    )
+                except ValidationError:
+                    chain = self._workspace_channel_control_chain(
+                        channel, limit=fetch.max_controls - len(controls)
+                    )
+                controls.extend(chain)
+                if len(controls) >= fetch.max_controls:
+                    break
+            deliveries = [
+                self._workspace_delivery_record(
+                    workspace_id=wire.workspace_id,
+                    recipient_member_id=fetch.member_id,
+                    recipient_device=requester[1],
+                    kind=control.get(
+                        "document_type", "workspace_channel_record"
+                    ),
+                    document=control["serialized"],
+                    priority=0,
+                )
+                for control in controls
+            ]
+            deliveries.extend(
+                self._workspace_channel_summary_deliveries(
+                    workspace,
+                    manifest,
+                    identity,
+                    fetch.session_id,
+                    [(fetch.member_id, requester[1])],
+                )
+            )
+            self.store.put_many(
+                [
+                    *[
+                        ("workspace_delivery", delivery["id"], delivery)
+                        for delivery in deliveries
+                    ],
+                    *self._due_records(add=deliveries),
+                ]
             )
             return True
         except (MeshChatError, json.JSONDecodeError):
@@ -2118,7 +3099,13 @@ class WorkspaceServiceMixin:
                 except (TypeError, ValueError, json.JSONDecodeError):
                     epoch = 0
                 return (0, epoch, float(item.get("created_at", 0)))
-            return (1, 0, float(item.get("created_at", 0)))
+            if item.get("kind") == "workspace_channel_record":
+                try:
+                    version = int(json.loads(item["document"]).get("version", 0))
+                except (TypeError, ValueError, json.JSONDecodeError):
+                    version = 0
+                return (1, version, float(item.get("created_at", 0)))
+            return (2, 0, float(item.get("created_at", 0)))
 
         pending_controls.sort(key=order)
         while pending_controls:
@@ -2142,6 +3129,11 @@ class WorkspaceServiceMixin:
                     )
                 elif wire.kind == "workspace_channel_record":
                     applied = self._receive_workspace_channel(wire)
+                elif wire.kind in {
+                    "workspace_channel_transfer",
+                    "workspace_channel_recovery",
+                }:
+                    applied = self._receive_workspace_channel_head_transition(wire)
                 else:
                     applied = False
                 if applied:
@@ -2417,6 +3409,720 @@ class WorkspaceServiceMixin:
         self._workspace_changed(
             workspace_id, conversation_id=channel_id, resource_kind="draft"
         )
+        return committed
+
+    def create_workspace_channel(
+        self,
+        workspace_id: Any,
+        name: Any,
+        topic: Any,
+        operation_id: Any,
+    ) -> dict[str, Any]:
+        payload = {"workspace_id": workspace_id, "name": name, "topic": topic}
+        operation_id, digest, replay = self._workspace_operation(
+            "create_workspace_channel", operation_id, payload
+        )
+        if replay is not None:
+            return replay
+        workspace = self._require_workspace(workspace_id)
+        if workspace.get("state") != "active":
+            raise ContactNotApproved("Workspace is not active")
+        manifest = self._workspace_current_manifest(workspace)
+        local_member = find_member(manifest, workspace["local_member_id"])
+        if local_member is None or not self._channel_creation_allowed(
+            manifest, local_member
+        ):
+            raise ContactNotApproved(
+                "Workspace channel creation is restricted to the owner"
+            )
+        channels = [
+            item
+            for item in self.store.list("workspace_channel")
+            if item.get("workspace_id") == workspace_id
+            and item.get("visibility") == "public"
+        ]
+        if sum(item.get("state") == "active" for item in channels) >= MAX_PUBLIC_CHANNELS:
+            raise ValidationError("A workspace supports at most 32 public channels")
+        if len(channels) >= MAX_RETAINED_PUBLIC_CHANNELS:
+            raise ValidationError("The retained public channel directory is full")
+        if isinstance(name, str) and channel_name_key(name) == "general":
+            raise ValidationError("The general channel name is reserved")
+        identity = self._identity
+        if identity is None:
+            raise ValidationError("Local identity is unavailable")
+        channel_raw = create_workspace_channel_record(
+            identity,
+            workspace_id=workspace_id,
+            channel_id=_new_id(),
+            manifest_digest=manifest.digest,
+            name=name,
+            topic=topic,
+            manager_member_id=workspace["local_member_id"],
+            manager_device_id=workspace["local_device_id"],
+        )
+        channel = verify_workspace_channel_record(channel_raw, manifest=manifest)
+        channel_record = self._channel_record(channel)
+        deliveries = self._workspace_channel_deliveries(
+            manifest,
+            excluding_member_id=workspace["local_member_id"],
+            kind="workspace_channel_record",
+            document=channel.serialized,
+        )
+        workspace["channel_discovery"] = (
+            "converged" if not deliveries else "incomplete"
+        )
+        workspace["updated_at"] = time.time()
+        index = {
+            "workspace_id": workspace_id,
+            "conversation_id": channel.channel_id,
+            "head_page": None,
+            "count": 0,
+            "high_water": 0,
+            "authorization_generation": int(
+                workspace.get("authorization_generation", 1)
+            ),
+            "retention_generation": int(workspace.get("retention_generation", 1)),
+        }
+        subscription_id = self.store.opaque_id(
+            "workspace-subscription", workspace_id, channel.channel_id
+        )
+        public = dict(channel_record)
+        public.update(
+            {
+                "is_general": False,
+                "subscribed": True,
+                "duplicate_name": False,
+                "display_name": channel.name,
+            }
+        )
+        committed = self.store.commit_operation(
+            operation_id,
+            digest,
+            public,
+            [
+                ("workspace", self._workspace_record_id(workspace_id), workspace),
+                (
+                    "workspace_channel",
+                    self._workspace_channel_record_id(channel.channel_id),
+                    channel_record,
+                ),
+                (
+                    "workspace_channel_control",
+                    self._workspace_channel_control_id(channel.digest),
+                    self._workspace_channel_control_record(
+                        channel, document_type="workspace_channel_record"
+                    ),
+                ),
+                self._workspace_channel_version_record(channel),
+                (
+                    "workspace_conversation_index",
+                    self._workspace_index_record_id(
+                        workspace_id, channel.channel_id
+                    ),
+                    index,
+                ),
+                (
+                    "workspace_subscription",
+                    subscription_id,
+                    {
+                        "workspace_id": workspace_id,
+                        "conversation_id": channel.channel_id,
+                        "subscribed": True,
+                    },
+                ),
+                (
+                    "workspace_read_state",
+                    self.store.opaque_id(
+                        "workspace-read-state", workspace_id, channel.channel_id
+                    ),
+                    {
+                        "workspace_id": workspace_id,
+                        "conversation_id": channel.channel_id,
+                        "high_water": 0,
+                    },
+                ),
+                *[
+                    ("workspace_delivery", delivery["id"], delivery)
+                    for delivery in deliveries
+                ],
+                *self._due_records(add=deliveries),
+            ],
+        )
+        self._workspace_changed(
+            workspace_id,
+            conversation_id=channel.channel_id,
+            resource_kind="channel",
+        )
+        return committed
+
+    def update_workspace_channel(
+        self,
+        workspace_id: Any,
+        channel_id: Any,
+        name: Any,
+        topic: Any,
+        archived: Any,
+        operation_id: Any,
+    ) -> dict[str, Any]:
+        payload = {
+            "workspace_id": workspace_id,
+            "channel_id": channel_id,
+            "name": name,
+            "topic": topic,
+            "archived": archived,
+        }
+        operation_id, digest, replay = self._workspace_operation(
+            "update_workspace_channel", operation_id, payload
+        )
+        if replay is not None:
+            return replay
+        workspace = self._require_workspace(workspace_id)
+        if workspace.get("state") != "active":
+            raise ContactNotApproved("Workspace is not active")
+        stored_channel = self._require_workspace_channel(workspace_id, channel_id)
+        if stored_channel.get("state") != "active":
+            raise ContactNotApproved("Workspace channel is not active")
+        if (
+            stored_channel.get("manager_member_id") != workspace["local_member_id"]
+            or stored_channel.get("manager_device_id") != workspace["local_device_id"]
+        ):
+            raise ContactNotApproved("Only the current channel manager can update it")
+        if not isinstance(archived, bool):
+            raise ValidationError("Workspace channel archive state is invalid")
+        previous = self._workspace_channel_by_digest(stored_channel["head_hash"])
+        if previous is None:
+            raise ValidationError("Workspace channel control is unavailable")
+        manifest = self._workspace_current_manifest(workspace)
+        identity = self._identity
+        if identity is None:
+            raise ValidationError("Local identity is unavailable")
+        raw = create_workspace_channel_record(
+            identity,
+            workspace_id=workspace_id,
+            channel_id=channel_id,
+            manifest_digest=manifest.digest,
+            name=name,
+            topic=topic,
+            manager_member_id=previous.manager_member_id,
+            manager_device_id=previous.manager_device_id,
+            version=previous.version + 1,
+            previous_hash=previous.digest,
+            archived=archived,
+        )
+        channel = verify_workspace_channel_record_transition(
+            raw, previous, manifest=manifest
+        )
+        updated = self._channel_record(channel)
+        updated["unread_count"] = int(stored_channel.get("unread_count", 0))
+        updated["created_at"] = float(stored_channel.get("created_at", channel.created_at))
+        updated["updated_at"] = time.time()
+        deliveries = self._workspace_channel_deliveries(
+            manifest,
+            excluding_member_id=workspace["local_member_id"],
+            kind="workspace_channel_record",
+            document=channel.serialized,
+        )
+        workspace["channel_discovery"] = (
+            "converged" if not deliveries else "incomplete"
+        )
+        workspace["updated_at"] = time.time()
+        public = self._public_workspace_channel(updated)
+        committed = self.store.commit_operation(
+            operation_id,
+            digest,
+            public,
+            [
+                ("workspace", self._workspace_record_id(workspace_id), workspace),
+                (
+                    "workspace_channel",
+                    self._workspace_channel_record_id(channel_id),
+                    updated,
+                ),
+                (
+                    "workspace_channel_control",
+                    self._workspace_channel_control_id(channel.digest),
+                    self._workspace_channel_control_record(
+                        channel, document_type="workspace_channel_record"
+                    ),
+                ),
+                self._workspace_channel_version_record(channel),
+                *[
+                    ("workspace_delivery", delivery["id"], delivery)
+                    for delivery in deliveries
+                ],
+                *self._due_records(add=deliveries),
+            ],
+        )
+        self._workspace_changed(
+            workspace_id, conversation_id=channel_id, resource_kind="channel"
+        )
+        return committed
+
+    def set_workspace_channel_subscription(
+        self,
+        workspace_id: Any,
+        channel_id: Any,
+        subscribed: Any,
+        operation_id: Any,
+    ) -> dict[str, Any]:
+        payload = {
+            "workspace_id": workspace_id,
+            "channel_id": channel_id,
+            "subscribed": subscribed,
+        }
+        operation_id, digest, replay = self._workspace_operation(
+            "set_workspace_channel_subscription", operation_id, payload
+        )
+        if replay is not None:
+            return replay
+        workspace = self._require_workspace(workspace_id)
+        channel = self._require_workspace_channel(workspace_id, channel_id)
+        if not isinstance(subscribed, bool):
+            raise ValidationError("Workspace channel subscription is invalid")
+        if channel_id == workspace.get("general_channel_id") and not subscribed:
+            raise ContactNotApproved("The general channel is always subscribed")
+        if workspace.get("state") not in {"active", "incomplete_sync"}:
+            raise ContactNotApproved("Workspace subscriptions cannot change now")
+        index = self.store.get(
+            "workspace_conversation_index",
+            self._workspace_index_record_id(workspace_id, channel_id),
+        )
+        high_water = int(index.get("high_water", 0)) if index else 0
+        channel["unread_count"] = 0
+        result = {
+            "workspace_id": workspace_id,
+            "channel_id": channel_id,
+            "subscribed": subscribed,
+            "high_water": high_water,
+        }
+        committed = self.store.commit_operation(
+            operation_id,
+            digest,
+            result,
+            [
+                (
+                    "workspace_channel",
+                    self._workspace_channel_record_id(channel_id),
+                    channel,
+                ),
+                (
+                    "workspace_subscription",
+                    self.store.opaque_id(
+                        "workspace-subscription", workspace_id, channel_id
+                    ),
+                    {
+                        "workspace_id": workspace_id,
+                        "conversation_id": channel_id,
+                        "subscribed": subscribed,
+                    },
+                ),
+                (
+                    "workspace_read_state",
+                    self.store.opaque_id(
+                        "workspace-read-state", workspace_id, channel_id
+                    ),
+                    {
+                        "workspace_id": workspace_id,
+                        "conversation_id": channel_id,
+                        "high_water": high_water,
+                    },
+                ),
+            ],
+        )
+        self._workspace_changed(
+            workspace_id, conversation_id=channel_id, resource_kind="subscription"
+        )
+        return committed
+
+    def offer_workspace_channel_transfer(
+        self,
+        workspace_id: Any,
+        channel_id: Any,
+        successor_member_id: Any,
+        operation_id: Any,
+    ) -> dict[str, Any]:
+        payload = {
+            "workspace_id": workspace_id,
+            "channel_id": channel_id,
+            "successor_member_id": successor_member_id,
+        }
+        operation_id, digest, replay = self._workspace_operation(
+            "offer_workspace_channel_transfer", operation_id, payload
+        )
+        if replay is not None:
+            return replay
+        workspace = self._require_workspace(workspace_id)
+        channel_record = self._require_workspace_channel(workspace_id, channel_id)
+        if channel_id == workspace.get("general_channel_id"):
+            raise ContactNotApproved(
+                "General channel management follows workspace ownership"
+            )
+        if (
+            workspace.get("state") != "active"
+            or channel_record.get("state") != "active"
+            or channel_record.get("manager_member_id")
+            != workspace.get("local_member_id")
+            or channel_record.get("manager_device_id")
+            != workspace.get("local_device_id")
+        ):
+            raise ContactNotApproved("Only the active channel manager can transfer it")
+        manifest = self._workspace_current_manifest(workspace)
+        successor = find_member(manifest, successor_member_id)
+        if successor is None or successor.status != "active":
+            raise ValidationError("Workspace channel successor is not active")
+        channel = self._workspace_channel_by_digest(channel_record["head_hash"])
+        identity = self._identity
+        if channel is None or identity is None:
+            raise ValidationError("Workspace channel control is unavailable")
+        raw = create_workspace_channel_transfer_offer(
+            identity,
+            channel=channel,
+            manifest=manifest,
+            successor_member_id=successor.member_id,
+            successor_device_id=successor.devices[0].device_id,
+        )
+        offer = verify_workspace_channel_transfer_offer(
+            raw, channel=channel, manifest=manifest
+        )
+        record_id = self._workspace_channel_transfer_id(offer.digest)
+        record = {
+            "id": record_id,
+            "workspace_id": workspace_id,
+            "channel_id": channel_id,
+            "channel_head": offer.channel_head,
+            "manifest_digest": offer.manifest_digest,
+            "manager_member_id": offer.manager_member_id,
+            "successor_member_id": offer.successor_member_id,
+            "successor_device_id": offer.successor_device_id,
+            "state": "offered",
+            "document": offer.serialized,
+            "created_at": float(offer.created_at),
+            "expires_at": float(offer.expires_at),
+        }
+        deliveries = self._workspace_channel_deliveries(
+            manifest,
+            excluding_member_id=workspace["local_member_id"],
+            kind="workspace_channel_transfer_offer",
+            document=offer.serialized,
+        )
+        outcome = {key: value for key, value in record.items() if key != "document"}
+        committed = self.store.commit_operation(
+            operation_id,
+            digest,
+            outcome,
+            [
+                ("workspace_channel_transfer", record_id, record),
+                *[
+                    ("workspace_delivery", delivery["id"], delivery)
+                    for delivery in deliveries
+                ],
+                *self._due_records(add=deliveries),
+            ],
+        )
+        self._workspace_changed(workspace_id, resource_kind="channel_transfer")
+        return committed
+
+    def accept_workspace_channel_transfer(
+        self, workspace_id: Any, transfer_id: Any, operation_id: Any
+    ) -> dict[str, Any]:
+        payload = {"workspace_id": workspace_id, "transfer_id": transfer_id}
+        operation_id, digest, replay = self._workspace_operation(
+            "accept_workspace_channel_transfer", operation_id, payload
+        )
+        if replay is not None:
+            return replay
+        workspace = self._require_workspace(workspace_id)
+        if not isinstance(transfer_id, str):
+            raise ValidationError("Workspace channel transfer ID is invalid")
+        transfer = self.store.get("workspace_channel_transfer", transfer_id)
+        if (
+            transfer is None
+            or transfer.get("workspace_id") != workspace_id
+            or transfer.get("state") != "offered"
+        ):
+            raise ValidationError("Workspace channel transfer is unavailable")
+        if (
+            transfer.get("successor_member_id") != workspace.get("local_member_id")
+            or transfer.get("successor_device_id") != workspace.get("local_device_id")
+        ):
+            raise ContactNotApproved("Only the named successor can accept this transfer")
+        channel_record = self._require_workspace_channel(
+            workspace_id, transfer["channel_id"]
+        )
+        channel = self._workspace_channel_by_digest(channel_record["head_hash"])
+        manifest = self._workspace_current_manifest(workspace)
+        identity = self._identity
+        if channel is None or identity is None:
+            raise ValidationError("Workspace channel control is unavailable")
+        offer = verify_workspace_channel_transfer_offer(
+            transfer["document"], channel=channel, manifest=manifest
+        )
+        raw = create_workspace_channel_transfer(identity, offer=offer)
+        next_channel = verify_workspace_channel_transfer(
+            raw, channel=channel, manifest=manifest
+        )
+        updated = self._channel_record(next_channel)
+        updated["unread_count"] = int(channel_record.get("unread_count", 0))
+        updated["created_at"] = float(channel_record.get("created_at", channel.created_at))
+        updated["updated_at"] = time.time()
+        transfer["state"] = "accepted"
+        transfer["accepted_at"] = time.time()
+        deliveries = self._workspace_channel_deliveries(
+            manifest,
+            excluding_member_id=workspace["local_member_id"],
+            kind="workspace_channel_transfer",
+            document=next_channel.serialized,
+        )
+        workspace["channel_discovery"] = (
+            "converged" if not deliveries else "incomplete"
+        )
+        outcome = self._public_workspace_channel(updated)
+        committed = self.store.commit_operation(
+            operation_id,
+            digest,
+            outcome,
+            [
+                ("workspace", self._workspace_record_id(workspace_id), workspace),
+                (
+                    "workspace_channel",
+                    self._workspace_channel_record_id(next_channel.channel_id),
+                    updated,
+                ),
+                (
+                    "workspace_channel_control",
+                    self._workspace_channel_control_id(next_channel.digest),
+                    self._workspace_channel_control_record(
+                        next_channel, document_type="workspace_channel_transfer"
+                    ),
+                ),
+                self._workspace_channel_version_record(next_channel),
+                ("workspace_channel_transfer", transfer_id, transfer),
+                *[
+                    ("workspace_delivery", delivery["id"], delivery)
+                    for delivery in deliveries
+                ],
+                *self._due_records(add=deliveries),
+            ],
+        )
+        self._workspace_changed(
+            workspace_id,
+            conversation_id=next_channel.channel_id,
+            resource_kind="channel",
+        )
+        return committed
+
+    def recover_workspace_channel(
+        self, workspace_id: Any, channel_id: Any, operation_id: Any
+    ) -> dict[str, Any]:
+        payload = {"workspace_id": workspace_id, "channel_id": channel_id}
+        operation_id, digest, replay = self._workspace_operation(
+            "recover_workspace_channel", operation_id, payload
+        )
+        if replay is not None:
+            return replay
+        workspace = self._require_workspace(workspace_id)
+        if workspace.get("state") != "active" or workspace.get("local_role") != "owner":
+            raise ContactNotApproved("Only the active workspace owner can recover a public channel")
+        channel_record = self._require_workspace_channel(workspace_id, channel_id)
+        if channel_record.get("state") != "active":
+            raise ContactNotApproved("Forked or archived channels cannot be recovered")
+        channel = self._workspace_channel_by_digest(channel_record["head_hash"])
+        manifest = self._workspace_current_manifest(workspace)
+        identity = self._identity
+        if channel is None or identity is None:
+            raise ValidationError("Workspace channel control is unavailable")
+        if (
+            channel.manager_member_id == workspace["local_member_id"]
+            and channel.manager_device_id == workspace["local_device_id"]
+        ):
+            raise ValidationError("Workspace channel is already managed by the owner")
+        raw = create_workspace_channel_recovery(
+            identity,
+            channel=channel,
+            manifest=manifest,
+            manager_member_id=workspace["local_member_id"],
+            manager_device_id=workspace["local_device_id"],
+        )
+        next_channel = verify_workspace_channel_recovery(
+            raw, channel=channel, manifest=manifest
+        )
+        updated = self._channel_record(next_channel)
+        updated["unread_count"] = int(channel_record.get("unread_count", 0))
+        updated["created_at"] = float(channel_record.get("created_at", channel.created_at))
+        updated["updated_at"] = time.time()
+        deliveries = self._workspace_channel_deliveries(
+            manifest,
+            excluding_member_id=workspace["local_member_id"],
+            kind="workspace_channel_recovery",
+            document=next_channel.serialized,
+        )
+        workspace["channel_discovery"] = (
+            "converged" if not deliveries else "incomplete"
+        )
+        outcome = self._public_workspace_channel(updated)
+        committed = self.store.commit_operation(
+            operation_id,
+            digest,
+            outcome,
+            [
+                ("workspace", self._workspace_record_id(workspace_id), workspace),
+                (
+                    "workspace_channel",
+                    self._workspace_channel_record_id(channel_id),
+                    updated,
+                ),
+                (
+                    "workspace_channel_control",
+                    self._workspace_channel_control_id(next_channel.digest),
+                    self._workspace_channel_control_record(
+                        next_channel, document_type="workspace_channel_recovery"
+                    ),
+                ),
+                self._workspace_channel_version_record(next_channel),
+                *[
+                    ("workspace_delivery", delivery["id"], delivery)
+                    for delivery in deliveries
+                ],
+                *self._due_records(add=deliveries),
+            ],
+        )
+        self._workspace_changed(
+            workspace_id, conversation_id=channel_id, resource_kind="channel"
+        )
+        return committed
+
+    def sync_workspace_channels(
+        self, workspace_id: Any, operation_id: Any
+    ) -> dict[str, Any]:
+        payload = {"workspace_id": workspace_id}
+        operation_id, digest, replay = self._workspace_operation(
+            "sync_workspace_channels", operation_id, payload
+        )
+        if replay is not None:
+            return replay
+        workspace = self._require_workspace(workspace_id)
+        if workspace.get("state") not in {"active", "incomplete_sync"}:
+            raise ContactNotApproved("Workspace channel discovery cannot run now")
+        manifest = self._workspace_current_manifest(workspace)
+        identity = self._identity
+        if identity is None:
+            raise ValidationError("Local identity is unavailable")
+        recipients = self._workspace_manifest_recipients(
+            manifest,
+            excluding_member_id=workspace["local_member_id"],
+        )
+        deliveries = self._workspace_channel_summary_deliveries(
+            workspace,
+            manifest,
+            identity,
+            operation_id,
+            recipients,
+        )
+        workspace["channel_discovery"] = (
+            "converged" if not deliveries else "incomplete"
+        )
+        workspace["updated_at"] = time.time()
+        outcome = {
+            "workspace_id": workspace_id,
+            "session_id": operation_id,
+            "state": workspace["channel_discovery"],
+            "peer_count": len({member_id for member_id, _device in recipients}),
+        }
+        committed = self.store.commit_operation(
+            operation_id,
+            digest,
+            outcome,
+            [
+                ("workspace", self._workspace_record_id(workspace_id), workspace),
+                *[
+                    ("workspace_delivery", delivery["id"], delivery)
+                    for delivery in deliveries
+                ],
+                *self._due_records(add=deliveries),
+            ],
+        )
+        self._workspace_changed(workspace_id, resource_kind="channel_discovery")
+        return committed
+
+    def update_workspace_policies(
+        self,
+        workspace_id: Any,
+        channel_creation: Any,
+        posting: Any,
+        operation_id: Any,
+    ) -> dict[str, Any]:
+        payload = {
+            "workspace_id": workspace_id,
+            "channel_creation": channel_creation,
+            "posting": posting,
+        }
+        operation_id, digest, replay = self._workspace_operation(
+            "update_workspace_policies", operation_id, payload
+        )
+        if replay is not None:
+            return replay
+        workspace = self._require_workspace(workspace_id)
+        if workspace.get("state") != "active" or workspace.get("local_role") != "owner":
+            raise ContactNotApproved("Workspace policy changes wait for the active owner")
+        try:
+            creation_policy = WorkspaceChannelCreationPolicy(channel_creation)
+            posting_policy = WorkspacePostingPolicy(posting)
+        except (TypeError, ValueError) as exc:
+            raise ValidationError("Workspace channel policy is invalid") from exc
+        current = self._workspace_current_manifest(workspace)
+        if (
+            current.channel_creation == creation_policy
+            and current.posting == posting_policy
+        ):
+            raise ValidationError("Workspace channel policies are unchanged")
+        identity = self._identity
+        if identity is None:
+            raise ValidationError("Local identity is unavailable")
+        raw = create_workspace_manifest(
+            identity,
+            workspace_id=workspace_id,
+            epoch=current.epoch + 1,
+            previous_manifest_hash=current.digest,
+            name=current.name,
+            description=current.description,
+            authority_device_id=current.authority_device_id,
+            members=self._workspace_manifest_member_inputs(current),
+            retention_days=current.retention_days,
+            channel_creation=creation_policy,
+            posting=posting_policy,
+            invitation_requests=current.invitation_requests,
+        )
+        next_manifest = verify_workspace_manifest_transition(raw, current)
+        deliveries = self._workspace_manifest_deliveries(
+            workspace_id,
+            [next_manifest],
+            self._workspace_manifest_recipients(
+                current, excluding_member_id=workspace["local_member_id"]
+            ),
+        )
+        self._apply_manifest_to_workspace(workspace, next_manifest)
+        self._apply_manifest_public_identities(workspace, next_manifest)
+        outcome = self._public_workspace(workspace)
+        committed = self.store.commit_operation(
+            operation_id,
+            digest,
+            outcome,
+            [
+                ("workspace", self._workspace_record_id(workspace_id), workspace),
+                (
+                    "workspace_manifest",
+                    self._workspace_manifest_record_id(next_manifest.digest),
+                    self._manifest_record(next_manifest),
+                ),
+                self._manifest_epoch_record(next_manifest),
+                *[
+                    ("workspace_delivery", delivery["id"], delivery)
+                    for delivery in deliveries
+                ],
+                *self._due_records(add=deliveries),
+            ],
+        )
+        self._workspace_changed(workspace_id, resource_kind="policy")
         return committed
 
     def update_workspace_metadata(
@@ -3165,6 +4871,9 @@ class WorkspaceServiceMixin:
             "workspace_display_name_request",
             "workspace_channel",
             "workspace_channel_control",
+            "workspace_channel_version",
+            "workspace_channel_transfer",
+            "workspace_channel_discovery",
             "workspace_event",
             "workspace_message_state",
             "workspace_message_hidden",
@@ -3515,6 +5224,17 @@ class WorkspaceServiceMixin:
             self._receive_workspace_manifest(wire)
         elif wire.kind == "workspace_channel_record":
             self._receive_workspace_channel(wire)
+        elif wire.kind == "workspace_channel_transfer_offer":
+            self._receive_workspace_channel_transfer_offer(wire)
+        elif wire.kind in {
+            "workspace_channel_transfer",
+            "workspace_channel_recovery",
+        }:
+            self._receive_workspace_channel_head_transition(wire)
+        elif wire.kind == "workspace_channel_summary":
+            self._receive_workspace_channel_summary(wire)
+        elif wire.kind == "workspace_channel_fetch":
+            self._receive_workspace_channel_fetch(wire)
         elif wire.kind == "workspace_event":
             self._accept_workspace_event(wire)
         elif wire.kind == "workspace_leave_request":
@@ -3543,9 +5263,46 @@ class WorkspaceServiceMixin:
             self._public_workspace(item) for item in self.store.list("workspace")
         ]
         workspaces.sort(key=lambda item: (item["created_at"], item["id"]))
+        stored_channels = self.store.list("workspace_channel")
+        name_counts: dict[tuple[str, str], int] = defaultdict(int)
+        for item in stored_channels:
+            name_counts[
+                (
+                    str(item.get("workspace_id", "")),
+                    str(
+                        item.get("name_key")
+                        or channel_name_key(str(item.get("name", "")))
+                    ),
+                )
+            ] += 1
         channels = [
-            self._public_workspace_channel(item)
-            for item in self.store.list("workspace_channel")
+            self._public_workspace_channel(
+                item,
+                duplicate_name=name_counts[
+                    (
+                        str(item.get("workspace_id", "")),
+                        str(
+                            item.get("name_key")
+                            or channel_name_key(str(item.get("name", "")))
+                        ),
+                    )
+                ]
+                > 1,
+            )
+            for item in stored_channels
+        ]
+        channels.sort(
+            key=lambda item: (
+                item["workspace_id"],
+                item.get("name_key", ""),
+                item["id"],
+            )
+        )
+        channel_transfers = [
+            {key: value for key, value in item.items() if key != "document"}
+            for item in self.store.list("workspace_channel_transfer")
+            if item.get("state") == "offered"
+            and float(item.get("expires_at", 0)) > now
         ]
         requests = [
             {
@@ -3573,6 +5330,7 @@ class WorkspaceServiceMixin:
         return {
             "workspaces": workspaces,
             "workspace_channels": channels,
+            "workspace_channel_transfers": channel_transfers,
             "workspace_join_requests": requests,
             "workspace_display_name_requests": name_requests,
             "workspace_invitations": invitations,

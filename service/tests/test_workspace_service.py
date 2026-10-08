@@ -12,7 +12,7 @@ import LXMF
 import pytest
 import RNS
 
-from mesh_chat.errors import ValidationError
+from mesh_chat.errors import ContactNotApproved, ValidationError
 from mesh_chat.invitations import readable_fingerprint
 from mesh_chat.models import DeliveryState
 from mesh_chat.service import MeshChatService
@@ -21,6 +21,7 @@ from mesh_chat.workspace_protocol import (
     WorkspaceManifestMemberInput,
     create_workspace_channel_record,
     create_workspace_device_card,
+    create_workspace_event,
     create_workspace_manifest,
     verify_workspace_genesis,
 )
@@ -151,6 +152,76 @@ def _flush(service: MeshChatService, network: RecordingWorkspaceNetwork) -> list
 
 def _op(index: int) -> str:
     return str(uuid.UUID(int=index, version=4))
+
+
+def _joined_pair(
+    root: Path, *, base: int
+) -> tuple[
+    MeshChatService,
+    RecordingWorkspaceNetwork,
+    dict[str, Any],
+    MeshChatService,
+    RecordingWorkspaceNetwork,
+    dict[str, Any],
+    dict[str, Any],
+    bytes,
+    RNS.Identity,
+]:
+    owner_identity = RNS.Identity()
+    member_identity = RNS.Identity()
+    member_key = os.urandom(32)
+    owner, owner_network = _service(root / "owner", owner_identity, "Alex")
+    member, member_network = _service(
+        root / "member", member_identity, "Bailey", vault_key=member_key
+    )
+    owner_profile = owner._require_profile()
+    member_profile = member._require_profile()
+    workspace = owner.create_workspace(_op(base), "Channel lab", "Increment 3")
+    invitation = owner.create_workspace_invitation_command(
+        workspace["id"], _op(base + 1)
+    )
+    member.submit_workspace_join(invitation["text"], _op(base + 2))
+    for item in _flush(member, member_network):
+        _deliver(
+            owner,
+            item,
+            source_profile=member_profile,
+            recipient_profile=owner_profile,
+        )
+    request = next(
+        item
+        for item in owner.workspace_snapshot()["workspace_join_requests"]
+        if item["workspace_id"] == workspace["id"]
+    )
+    owner.approve_workspace_join(workspace["id"], request["id"], _op(base + 3))
+    controls = _flush(owner, owner_network)
+    controls.sort(
+        key=lambda item: 0
+        if parse_workspace_payload(
+            _native(item, source=b"\x00" * 16, destination=b"\x01" * 16)
+        ).kind
+        == "workspace_manifest_root"
+        else 1
+    )
+    for item in controls:
+        _deliver(
+            member,
+            item,
+            source_profile=owner_profile,
+            recipient_profile=member_profile,
+        )
+    assert member._require_workspace(workspace["id"])["state"] == "active"
+    return (
+        owner,
+        owner_network,
+        owner_profile,
+        member,
+        member_network,
+        member_profile,
+        workspace,
+        member_key,
+        member_identity,
+    )
 
 
 def test_two_member_workspace_create_join_chat_and_page(
@@ -772,4 +843,586 @@ def test_local_workspace_removal_redacts_duplicate_operation_results(
     assert service.store.command_response("renderer-request")["error"]["code"] == (
         "command_result_deleted"
     )
+    service.close()
+
+
+def test_public_channel_control_before_data_unread_restart_and_full_lifecycle(
+    tmp_path: Path,
+) -> None:
+    (
+        owner,
+        owner_network,
+        owner_profile,
+        member,
+        member_network,
+        member_profile,
+        workspace,
+        member_key,
+        member_identity,
+    ) = _joined_pair(tmp_path / "lifecycle", base=1_000)
+    workspace_id = workspace["id"]
+    member_id = member._require_workspace(workspace_id)["local_member_id"]
+
+    channel = owner.create_workspace_channel(
+        workspace_id, "Field notes", "Daily observations", _op(1_010)
+    )
+    channel_controls = _flush(owner, owner_network)
+    assert len(channel_controls) == 1
+    first = owner.send_workspace_message(
+        workspace_id,
+        channel["id"],
+        "Control arrives second.",
+        _op(1_011),
+        _op(1_012),
+    )
+    first_events = _flush(owner, owner_network)
+    assert len(first_events) == 1
+    _deliver(
+        member,
+        first_events[0],
+        source_profile=owner_profile,
+        recipient_profile=member_profile,
+    )
+    assert len(member.store.list("workspace_pending_event")) == 1
+    _deliver(
+        member,
+        channel_controls[0],
+        source_profile=owner_profile,
+        recipient_profile=member_profile,
+    )
+    assert member.store.list("workspace_pending_event") == []
+    assert [
+        item["text"]
+        for item in member.list_workspace_messages(workspace_id, channel["id"])[
+            "messages"
+        ]
+    ] == [first["text"]]
+    discovered = next(
+        item
+        for item in member.workspace_snapshot()["workspace_channels"]
+        if item["id"] == channel["id"]
+    )
+    assert discovered["subscribed"] is False
+    assert discovered["unread_count"] == 0
+
+    member.set_workspace_channel_subscription(
+        workspace_id, channel["id"], True, _op(1_013)
+    )
+    owner.send_workspace_message(
+        workspace_id,
+        channel["id"],
+        "Now count this message.",
+        _op(1_014),
+        _op(1_015),
+    )
+    message_items = _flush(owner, owner_network)
+    assert [
+        parse_workspace_payload(
+            _native(item, source=b"\x00" * 16, destination=b"\x01" * 16)
+        ).kind
+        for item in message_items
+    ] == ["workspace_event"]
+    for item in message_items:
+        _deliver(
+            member,
+            item,
+            source_profile=owner_profile,
+            recipient_profile=member_profile,
+        )
+    subscribed = next(
+        item
+        for item in member.workspace_snapshot()["workspace_channels"]
+        if item["id"] == channel["id"]
+    )
+    assert subscribed["unread_count"] == 1
+    member.close()
+    member, member_network = _service(
+        tmp_path / "lifecycle" / "member",
+        member_identity,
+        "Bailey",
+        vault_key=member_key,
+    )
+    persisted = next(
+        item
+        for item in member.workspace_snapshot()["workspace_channels"]
+        if item["id"] == channel["id"]
+    )
+    assert persisted["subscribed"] is True
+    assert persisted["unread_count"] == 1
+
+    renamed = owner.update_workspace_channel(
+        workspace_id,
+        channel["id"],
+        "Field reports",
+        "Validated daily observations",
+        False,
+        _op(1_016),
+    )
+    rename_items = _flush(owner, owner_network)
+    assert [
+        parse_workspace_payload(
+            _native(item, source=b"\x00" * 16, destination=b"\x01" * 16)
+        ).kind
+        for item in rename_items
+    ] == ["workspace_channel_record"]
+    for item in rename_items:
+        _deliver(
+            member,
+            item,
+            source_profile=owner_profile,
+            recipient_profile=member_profile,
+        )
+    assert renamed["version"] == 2
+    assert next(
+        item
+        for item in member.workspace_snapshot()["workspace_channels"]
+        if item["id"] == channel["id"]
+    )["version"] == 2
+    offer = owner.offer_workspace_channel_transfer(
+        workspace_id, channel["id"], member_id, _op(1_017)
+    )
+    offer_items = _flush(owner, owner_network)
+    assert [
+        parse_workspace_payload(
+            _native(item, source=b"\x00" * 16, destination=b"\x01" * 16)
+        ).kind
+        for item in offer_items
+    ] == ["workspace_channel_transfer_offer"]
+    for item in offer_items:
+        _deliver(
+            member,
+            item,
+            source_profile=owner_profile,
+            recipient_profile=member_profile,
+        )
+    transfer = next(
+        item
+        for item in member.workspace_snapshot()["workspace_channel_transfers"]
+        if item["channel_id"] == channel["id"]
+        and item["successor_member_id"] == member_id
+    )
+    accepted = member.accept_workspace_channel_transfer(
+        workspace_id, transfer["id"], _op(1_018)
+    )
+    for item in _flush(member, member_network):
+        _deliver(
+            owner,
+            item,
+            source_profile=member_profile,
+            recipient_profile=owner_profile,
+        )
+    assert accepted["manager_member_id"] == member_id
+    managed = member.update_workspace_channel(
+        workspace_id,
+        channel["id"],
+        "Field reports",
+        "Managed by Bailey",
+        False,
+        _op(1_019),
+    )
+    for item in _flush(member, member_network):
+        _deliver(
+            owner,
+            item,
+            source_profile=member_profile,
+            recipient_profile=owner_profile,
+        )
+    assert managed["topic"] == "Managed by Bailey"
+    recovered = owner.recover_workspace_channel(
+        workspace_id, channel["id"], _op(1_020)
+    )
+    for item in _flush(owner, owner_network):
+        _deliver(
+            member,
+            item,
+            source_profile=owner_profile,
+            recipient_profile=member_profile,
+        )
+    assert recovered["manager_member_id"] == workspace["local_member_id"]
+    archived = owner.update_workspace_channel(
+        workspace_id,
+        channel["id"],
+        recovered["name"],
+        recovered["topic"],
+        True,
+        _op(1_021),
+    )
+    for item in _flush(owner, owner_network):
+        _deliver(
+            member,
+            item,
+            source_profile=owner_profile,
+            recipient_profile=member_profile,
+        )
+    assert archived["state"] == "archived"
+    with pytest.raises(ContactNotApproved, match="not active"):
+        owner.update_workspace_channel(
+            workspace_id,
+            channel["id"],
+            "Cannot reopen",
+            "Terminal",
+            False,
+            _op(1_022),
+        )
+    assert next(
+        item
+        for item in member.workspace_snapshot()["workspace_channels"]
+        if item["id"] == channel["id"]
+    )["state"] == "archived"
+    owner.close()
+    member.close()
+
+
+def test_partitioned_channel_summary_fetch_converges_and_disambiguates_names(
+    tmp_path: Path,
+) -> None:
+    (
+        owner,
+        owner_network,
+        owner_profile,
+        member,
+        member_network,
+        member_profile,
+        workspace,
+        _member_key,
+        _member_identity,
+    ) = _joined_pair(tmp_path / "discovery", base=1_100)
+    workspace_id = workspace["id"]
+    first = owner.create_workspace_channel(
+        workspace_id, "Ops", "North team", _op(1_110)
+    )
+    second = owner.create_workspace_channel(
+        workspace_id, "ops", "South team", _op(1_111)
+    )
+    assert owner.sync_workspace_channels(workspace_id, _op(1_112))["state"] == (
+        "incomplete"
+    )
+    partitioned = _flush(owner, owner_network)
+    by_kind: dict[str, list[dict[str, Any]]] = {}
+    for item in partitioned:
+        kind = parse_workspace_payload(
+            _native(item, source=b"\x00" * 16, destination=b"\x01" * 16)
+        ).kind
+        by_kind.setdefault(kind, []).append(item)
+    assert len(by_kind["workspace_channel_record"]) == 2
+    assert len(by_kind["workspace_channel_summary"]) == 1
+
+    # Simulate a partition dropping the direct controls while the later signed
+    # summary reaches the member. The member must explicitly fetch the chain.
+    _deliver(
+        member,
+        by_kind["workspace_channel_summary"][0],
+        source_profile=owner_profile,
+        recipient_profile=member_profile,
+    )
+    assert {
+        item["name"] for item in member.workspace_snapshot()["workspace_channels"]
+    } == {"general"}
+    member_sync = _flush(member, member_network)
+    assert {
+        parse_workspace_payload(
+            _native(item, source=b"\x00" * 16, destination=b"\x01" * 16)
+        ).kind
+        for item in member_sync
+    } == {"workspace_channel_fetch", "workspace_channel_summary"}
+    for item in member_sync:
+        _deliver(
+            owner,
+            item,
+            source_profile=member_profile,
+            recipient_profile=owner_profile,
+        )
+    for item in _flush(owner, owner_network):
+        _deliver(
+            member,
+            item,
+            source_profile=owner_profile,
+            recipient_profile=member_profile,
+        )
+
+    discovered = [
+        item
+        for item in member.workspace_snapshot()["workspace_channels"]
+        if item["id"] in {first["id"], second["id"]}
+    ]
+    assert len(discovered) == 2
+    assert all(item["duplicate_name"] for item in discovered)
+    assert len({item["display_name"] for item in discovered}) == 2
+    assert all(item["short_id"] in item["display_name"] for item in discovered)
+    assert all(item["subscribed"] is False for item in discovered)
+    stable_labels = {item["id"]: item["display_name"] for item in discovered}
+    assert member._require_workspace(workspace_id)["channel_discovery"] == (
+        "converged"
+    )
+    assert owner._require_workspace(workspace_id)["channel_discovery"] == (
+        "incomplete"
+    )
+
+    # A second summary after the fetch proves both reachable peers now expose
+    # the same bounded directory.
+    member.sync_workspace_channels(workspace_id, _op(1_113))
+    for item in _flush(member, member_network):
+        _deliver(
+            owner,
+            item,
+            source_profile=member_profile,
+            recipient_profile=owner_profile,
+        )
+    for item in _flush(owner, owner_network):
+        _deliver(
+            member,
+            item,
+            source_profile=owner_profile,
+            recipient_profile=member_profile,
+        )
+    assert owner._require_workspace(workspace_id)["channel_discovery"] == (
+        "converged"
+    )
+    assert member._require_workspace(workspace_id)["channel_discovery"] == (
+        "converged"
+    )
+    assert {
+        item["id"]: item["display_name"]
+        for item in member.workspace_snapshot()["workspace_channels"]
+        if item["id"] in stable_labels
+    } == stable_labels
+
+    member.set_workspace_channel_subscription(
+        workspace_id, first["id"], True, _op(1_114)
+    )
+    assert next(
+        item
+        for item in member.workspace_snapshot()["workspace_channels"]
+        if item["id"] == first["id"]
+    )["subscribed"] is True
+    member.set_workspace_channel_subscription(
+        workspace_id, first["id"], False, _op(1_115)
+    )
+    assert next(
+        item
+        for item in member.workspace_snapshot()["workspace_channels"]
+        if item["id"] == first["id"]
+    )["subscribed"] is False
+    owner.close()
+    member.close()
+
+
+def test_channel_policies_reject_members_and_valid_same_version_conflict_forks_only_channel(
+    tmp_path: Path,
+) -> None:
+    (
+        owner,
+        owner_network,
+        owner_profile,
+        member,
+        member_network,
+        member_profile,
+        workspace,
+        _member_key,
+        _member_identity,
+    ) = _joined_pair(tmp_path / "policies", base=1_200)
+    workspace_id = workspace["id"]
+    owner.update_workspace_policies(
+        workspace_id,
+        "owner_and_admins",
+        "owner_and_admins",
+        _op(1_210),
+    )
+    for item in _flush(owner, owner_network):
+        _deliver(
+            member,
+            item,
+            source_profile=owner_profile,
+            recipient_profile=member_profile,
+        )
+    with pytest.raises(ContactNotApproved, match="owner"):
+        member.create_workspace_channel(
+            workspace_id, "Denied", "Policy test", _op(1_211)
+        )
+    with pytest.raises(ContactNotApproved, match="owner"):
+        member.send_workspace_message(
+            workspace_id,
+            workspace["general_channel_id"],
+            "Disallowed post",
+            _op(1_212),
+            _op(1_213),
+        )
+    restricted_workspace = member._require_workspace(workspace_id)
+    restricted_manifest = member._workspace_current_manifest(restricted_workspace)
+    restricted_channel = member._workspace_channel_by_digest(
+        member._require_workspace_channel(
+            workspace_id, workspace["general_channel_id"]
+        )["head_hash"]
+    )
+    assert member._identity is not None and restricted_channel is not None
+    disallowed_event = create_workspace_event(
+        member._identity,
+        workspace_id=workspace_id,
+        conversation_id=workspace["general_channel_id"],
+        event_id=_op(1_222),
+        author_member_id=restricted_workspace["local_member_id"],
+        author_device_id=restricted_workspace["local_device_id"],
+        sequence=1,
+        previous_event_digest=None,
+        manifest_digest=restricted_manifest.digest,
+        channel_digest=restricted_channel.digest,
+        text="Signed but forbidden by policy",
+    )
+    assert not owner._accept_workspace_event(
+        WorkspaceWirePayload(
+            kind="workspace_event",
+            logical_id=_op(1_223),
+            workspace_id=workspace_id,
+            expires_at=int(time.time()) + 60,
+            document=disallowed_event,
+        )
+    )
+    assert owner.list_workspace_messages(
+        workspace_id, workspace["general_channel_id"]
+    )["messages"] == []
+
+    owner.update_workspace_policies(
+        workspace_id,
+        "all_members",
+        "all_members",
+        _op(1_214),
+    )
+    for item in _flush(owner, owner_network):
+        _deliver(
+            member,
+            item,
+            source_profile=owner_profile,
+            recipient_profile=member_profile,
+        )
+    member_channel = member.create_workspace_channel(
+        workspace_id, "Member channel", "Allowed by policy", _op(1_215)
+    )
+    for item in _flush(member, member_network):
+        _deliver(
+            owner,
+            item,
+            source_profile=member_profile,
+            recipient_profile=owner_profile,
+        )
+    member.send_workspace_message(
+        workspace_id,
+        member_channel["id"],
+        "Member-created and member-posted.",
+        _op(1_216),
+        _op(1_217),
+    )
+    for item in _flush(member, member_network):
+        _deliver(
+            owner,
+            item,
+            source_profile=member_profile,
+            recipient_profile=owner_profile,
+        )
+    assert owner.list_workspace_messages(
+        workspace_id, member_channel["id"]
+    )["messages"][0]["text"] == "Member-created and member-posted."
+
+    channel = owner.create_workspace_channel(
+        workspace_id, "Fork test", "First head", _op(1_218)
+    )
+    for item in _flush(owner, owner_network):
+        _deliver(
+            member,
+            item,
+            source_profile=owner_profile,
+            recipient_profile=member_profile,
+        )
+    initial = owner._workspace_channel_by_digest(channel["head_hash"])
+    assert initial is not None
+    owner.update_workspace_channel(
+        workspace_id,
+        channel["id"],
+        channel["name"],
+        "Accepted second head",
+        False,
+        _op(1_219),
+    )
+    for item in _flush(owner, owner_network):
+        _deliver(
+            member,
+            item,
+            source_profile=owner_profile,
+            recipient_profile=member_profile,
+        )
+    manifest = owner._workspace_current_manifest(owner._require_workspace(workspace_id))
+    assert owner._identity is not None
+    conflicting = create_workspace_channel_record(
+        owner._identity,
+        workspace_id=workspace_id,
+        channel_id=channel["id"],
+        manifest_digest=manifest.digest,
+        name=channel["name"],
+        topic="Conflicting second head",
+        manager_member_id=initial.manager_member_id,
+        manager_device_id=initial.manager_device_id,
+        version=2,
+        previous_hash=initial.digest,
+    )
+    assert not member._receive_workspace_channel(
+        WorkspaceWirePayload(
+            kind="workspace_channel_record",
+            logical_id=_op(1_220),
+            workspace_id=workspace_id,
+            expires_at=int(time.time()) + 60,
+            document=conflicting,
+        )
+    )
+    assert member._require_workspace(workspace_id)["state"] == "active"
+    assert member._require_workspace_channel(workspace_id, channel["id"])[
+        "state"
+    ] == "forked"
+    with pytest.raises(ContactNotApproved, match="always subscribed"):
+        member.set_workspace_channel_subscription(
+            workspace_id, workspace["general_channel_id"], False, _op(1_221)
+        )
+    owner.close()
+    member.close()
+
+
+def test_archived_channels_release_active_capacity_and_directory_summary_pages(
+    tmp_path: Path,
+) -> None:
+    identity = RNS.Identity()
+    service, _network = _service(tmp_path / "channel-capacity", identity, "Alex")
+    workspace = service.create_workspace(_op(1_300), "Capacity", "")
+    channels = [
+        service.create_workspace_channel(
+            workspace["id"], f"channel-{index:02d}", "", _op(1_301 + index)
+        )
+        for index in range(31)
+    ]
+    with pytest.raises(ValidationError, match="at most 32"):
+        service.create_workspace_channel(
+            workspace["id"], "one-too-many", "", _op(1_340)
+        )
+    first = channels[0]
+    service.update_workspace_channel(
+        workspace["id"],
+        first["id"],
+        first["name"],
+        first["topic"],
+        True,
+        _op(1_341),
+    )
+    service.create_workspace_channel(
+        workspace["id"], "replacement", "", _op(1_342)
+    )
+    stored_workspace = service._require_workspace(workspace["id"])
+    manifest = service._workspace_current_manifest(stored_workspace)
+    assert service._identity is not None
+    pages = service._workspace_channel_summary_documents(
+        stored_workspace, manifest, service._identity, _op(1_343)
+    )
+    assert len(pages) == 2
+    snapshot_channels = service.workspace_snapshot()["workspace_channels"]
+    assert len(snapshot_channels) == 33
+    assert sum(item["state"] == "active" for item in snapshot_channels) == 32
+    assert service.sync_workspace_channels(workspace["id"], _op(1_344))[
+        "state"
+    ] == "converged"
     service.close()

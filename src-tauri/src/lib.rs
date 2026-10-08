@@ -423,9 +423,17 @@ fn allowed_renderer_command(command: &str) -> bool {
             | "approve_workspace_join"
             | "decline_workspace_join"
             | "update_workspace_metadata"
+            | "update_workspace_policies"
             | "remove_workspace_member"
             | "request_workspace_display_name"
             | "decide_workspace_display_name"
+            | "create_workspace_channel"
+            | "update_workspace_channel"
+            | "set_workspace_channel_subscription"
+            | "offer_workspace_channel_transfer"
+            | "accept_workspace_channel_transfer"
+            | "recover_workspace_channel"
+            | "sync_workspace_channels"
             | "send_workspace_message"
             | "list_workspace_messages"
             | "mark_workspace_read"
@@ -449,9 +457,17 @@ fn workspace_renderer_command(command: &str) -> bool {
             | "approve_workspace_join"
             | "decline_workspace_join"
             | "update_workspace_metadata"
+            | "update_workspace_policies"
             | "remove_workspace_member"
             | "request_workspace_display_name"
             | "decide_workspace_display_name"
+            | "create_workspace_channel"
+            | "update_workspace_channel"
+            | "set_workspace_channel_subscription"
+            | "offer_workspace_channel_transfer"
+            | "accept_workspace_channel_transfer"
+            | "recover_workspace_channel"
+            | "sync_workspace_channels"
             | "send_workspace_message"
             | "list_workspace_messages"
             | "mark_workspace_read"
@@ -849,9 +865,17 @@ mod tests {
             "approve_workspace_join",
             "decline_workspace_join",
             "update_workspace_metadata",
+            "update_workspace_policies",
             "remove_workspace_member",
             "request_workspace_display_name",
             "decide_workspace_display_name",
+            "create_workspace_channel",
+            "update_workspace_channel",
+            "set_workspace_channel_subscription",
+            "offer_workspace_channel_transfer",
+            "accept_workspace_channel_transfer",
+            "recover_workspace_channel",
+            "sync_workspace_channels",
             "send_workspace_message",
             "list_workspace_messages",
             "mark_workspace_read",

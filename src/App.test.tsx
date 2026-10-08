@@ -170,6 +170,7 @@ const workspace: Workspace = {
   manifest_hash: "66".repeat(32),
   genesis_digest: "77".repeat(32),
   general_channel_id: "44444444-4444-4444-8444-444444444444",
+  channel_discovery: "converged",
   retention_days: 90,
   policies: { channel_creation: "all_members", posting: "all_members", invitation_requests: "owner_only" },
   members: [{
@@ -190,6 +191,9 @@ const workspaceChannel: WorkspaceChannel = {
   id: workspace.general_channel_id!,
   workspace_id: workspace.id,
   name: "general",
+  name_key: "general",
+  display_name: "general",
+  short_id: "444444",
   topic: "",
   visibility: "public",
   state: "active",
@@ -199,6 +203,9 @@ const workspaceChannel: WorkspaceChannel = {
   head_hash: "88".repeat(32),
   manifest_digest: workspace.manifest_hash,
   unread_count: 0,
+  subscribed: true,
+  is_general: true,
+  duplicate_name: false,
   created_at: 4,
   updated_at: 4,
 };
@@ -2196,5 +2203,152 @@ describe("desktop workspaces", () => {
     expect(within(conversation).getByText("Casey · device bbbbbb")).toBeTruthy();
     expect(within(conversation).getByText("Expired")).toBeTruthy();
     expect(conversation.textContent).not.toContain("destination");
+  });
+
+  it("browses an incomplete public directory, disambiguates duplicates, and invokes sync and subscription actions", async () => {
+    const member = {
+      id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      display_name: "Bailey",
+      role: "member" as const,
+      status: "active" as const,
+      short_id: "aaaaaa",
+      device: { id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", destination_hash: "99".repeat(16), fingerprint: "BBBB CCCC DDDD EEEE" },
+    };
+    const memberWorkspace: Workspace = { ...workspace, local_role: "member", local_member_id: member.id, local_device_id: member.device.id, channel_discovery: "incomplete", members: [...workspace.members, member] };
+    const duplicateChannels: WorkspaceChannel[] = [
+      { ...workspaceChannel, id: "55555555-5555-4555-8555-555555555555", name: "Ops", name_key: "ops", display_name: "Ops · 555555", short_id: "555555", is_general: false, subscribed: false, duplicate_name: true, topic: "North team" },
+      { ...workspaceChannel, id: "66666666-6666-4666-8666-666666666666", name: "ops", name_key: "ops", display_name: "ops · 666666", short_id: "666666", is_general: false, subscribed: false, duplicate_name: true, topic: "South team" },
+    ];
+    const created = { ...duplicateChannels[0], id: "77777777-7777-4777-8777-777777777777", name: "Field notes", name_key: "field notes", display_name: "Field notes", short_id: "777777", duplicate_name: false, subscribed: true };
+    const current: Snapshot = { ...snapshot(), workspaces: [memberWorkspace], workspace_channels: [workspaceChannel, ...duplicateChannels], workspace_channel_transfers: [], workspace_join_requests: [], workspace_invitations: [], workspace_drafts: [] };
+    api.runtimePlatform.mockResolvedValue("desktop");
+    api.initializeService.mockResolvedValue(current);
+    api.onInvitation.mockResolvedValue(() => undefined);
+    api.onServiceEvent.mockResolvedValue(() => undefined);
+    api.serviceCommand.mockImplementation(async (command: string) => {
+      if (command === "snapshot") return current;
+      if (command === "list_workspace_messages") return { messages: [], next_cursor: null, high_water: 0 } satisfies WorkspaceMessagePage;
+      if (command === "create_workspace_channel") return created;
+      return {};
+    });
+
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Workspace Lakewatcher" }));
+    fireEvent.click(await screen.findByRole("button", { name: /Browse channels/ }));
+    let dialog = screen.getByRole("dialog", { name: "Browse channels in Lakewatcher" });
+    expect(within(dialog).getByText(/Directory may be incomplete/i)).toBeTruthy();
+    expect(within(dialog).getByText("Ops · 555555")).toBeTruthy();
+    expect(within(dialog).getByText("ops · 666666")).toBeTruthy();
+    fireEvent.click(within(dialog).getAllByRole("button", { name: "Subscribe" })[0]);
+    await waitFor(() => expect(api.serviceCommand).toHaveBeenCalledWith("set_workspace_channel_subscription", expect.objectContaining({ workspace_id: workspace.id, channel_id: duplicateChannels[0].id, subscribed: true, operation_id: expect.any(String) })));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Sync directory" }));
+    await waitFor(() => expect(api.serviceCommand).toHaveBeenCalledWith("sync_workspace_channels", expect.objectContaining({ workspace_id: workspace.id, operation_id: expect.any(String) })));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Create channel" }));
+    dialog = await screen.findByRole("dialog", { name: "Create a public channel" });
+    fireEvent.change(within(dialog).getByRole("textbox", { name: "Channel name" }), { target: { value: "Field notes" } });
+    fireEvent.change(within(dialog).getByRole("textbox", { name: /Topic/ }), { target: { value: "Daily observations" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Create channel" }));
+    await waitFor(() => expect(api.serviceCommand).toHaveBeenCalledWith("create_workspace_channel", expect.objectContaining({ workspace_id: workspace.id, name: "Field notes", topic: "Daily observations", operation_id: expect.any(String) })));
+  });
+
+  it("hides disallowed owner-only controls, blocks posting, and permits only a named transfer acceptance", async () => {
+    const member = {
+      id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      display_name: "Bailey",
+      role: "member" as const,
+      status: "active" as const,
+      short_id: "aaaaaa",
+      device: { id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", destination_hash: "99".repeat(16), fingerprint: "BBBB CCCC DDDD EEEE" },
+    };
+    const restricted: Workspace = { ...workspace, local_role: "member", local_member_id: member.id, local_device_id: member.device.id, policies: { ...workspace.policies, channel_creation: "owner_and_admins", posting: "owner_and_admins" }, members: [...workspace.members, member] };
+    const managed: WorkspaceChannel = { ...workspaceChannel, id: "55555555-5555-4555-8555-555555555555", name: "field-reports", name_key: "field-reports", display_name: "field-reports", short_id: "555555", is_general: false, subscribed: true, manager_member_id: workspace.local_member_id, manager_device_id: workspace.local_device_id };
+    const current: Snapshot = {
+      ...snapshot(),
+      workspaces: [restricted],
+      workspace_channels: [{ ...workspaceChannel, manager_member_id: workspace.local_member_id, manager_device_id: workspace.local_device_id }, managed],
+      workspace_channel_transfers: [{ id: "transfer-local", workspace_id: workspace.id, channel_id: managed.id, channel_head: managed.head_hash, manifest_digest: workspace.manifest_hash, manager_member_id: workspace.local_member_id, successor_member_id: member.id, successor_device_id: member.device.id, state: "offered", created_at: 10, expires_at: 2_000_000_000 }],
+      workspace_join_requests: [], workspace_invitations: [], workspace_drafts: [],
+    };
+    api.runtimePlatform.mockResolvedValue("desktop");
+    api.initializeService.mockResolvedValue(current);
+    api.onInvitation.mockResolvedValue(() => undefined);
+    api.onServiceEvent.mockResolvedValue(() => undefined);
+    api.serviceCommand.mockImplementation(async (command: string) => {
+      if (command === "snapshot") return current;
+      if (command === "list_workspace_messages") return { messages: [], next_cursor: null, high_water: 0 } satisfies WorkspaceMessagePage;
+      return {};
+    });
+
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Workspace Lakewatcher" }));
+    expect(await screen.findByText("Only the workspace owner can post under the current signed policy.")).toBeTruthy();
+    expect(screen.queryByRole("textbox", { name: "Message general" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Create channel" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: /Browse channels/ }));
+    const browse = screen.getByRole("dialog", { name: "Browse channels in Lakewatcher" });
+    expect(within(browse).queryByRole("button", { name: "Create channel" })).toBeNull();
+    fireEvent.click(within(browse).getAllByRole("button", { name: "Open" })[1]);
+    const conversation = await screen.findByLabelText("Workspace channel field-reports");
+    expect(within(conversation).getByText("Only the workspace owner can post under the current signed policy.")).toBeTruthy();
+    fireEvent.click(within(conversation).getByRole("button", { name: "Manage field-reports channel" }));
+    const manage = screen.getByRole("dialog", { name: "Manage #field-reports" });
+    expect(within(manage).queryByRole("button", { name: "Publish channel update" })).toBeNull();
+    expect(within(manage).queryByRole("button", { name: /Archive channel/ })).toBeNull();
+    fireEvent.click(within(manage).getByRole("button", { name: "Accept management" }));
+    await waitFor(() => expect(api.serviceCommand).toHaveBeenCalledWith("accept_workspace_channel_transfer", expect.objectContaining({ workspace_id: workspace.id, transfer_id: "transfer-local", operation_id: expect.any(String) })));
+    expect(api.serviceCommand).not.toHaveBeenCalledWith("create_workspace_channel", expect.anything());
+    expect(api.serviceCommand).not.toHaveBeenCalledWith("send_workspace_message", expect.anything());
+  });
+
+  it("exposes manager update, transfer, terminal archive, and owner recovery commands", async () => {
+    const member = {
+      id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      display_name: "Bailey",
+      role: "member" as const,
+      status: "active" as const,
+      short_id: "aaaaaa",
+      device: { id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", destination_hash: "99".repeat(16), fingerprint: "BBBB CCCC DDDD EEEE" },
+    };
+    const expanded: Workspace = { ...workspace, members: [...workspace.members, member] };
+    const channel: WorkspaceChannel = { ...workspaceChannel, id: "55555555-5555-4555-8555-555555555555", name: "field-reports", name_key: "field-reports", display_name: "field-reports", short_id: "555555", is_general: false, subscribed: true, topic: "Daily notes" };
+    let current: Snapshot = { ...snapshot(), workspaces: [expanded], workspace_channels: [workspaceChannel, channel], workspace_channel_transfers: [], workspace_join_requests: [], workspace_invitations: [], workspace_drafts: [] };
+    api.runtimePlatform.mockResolvedValue("desktop");
+    api.initializeService.mockResolvedValue(current);
+    api.onInvitation.mockResolvedValue(() => undefined);
+    api.onServiceEvent.mockResolvedValue(() => undefined);
+    api.serviceCommand.mockImplementation(async (command: string, payload: Record<string, unknown>) => {
+      if (command === "snapshot") return current;
+      if (command === "list_workspace_messages") return { messages: [], next_cursor: null, high_water: 0 } satisfies WorkspaceMessagePage;
+      if (command === "update_workspace_channel") return { ...channel, name: String(payload.name), topic: String(payload.topic), state: payload.archived ? "archived" : "active" };
+      return {};
+    });
+
+    const view = render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Workspace Lakewatcher" }));
+    fireEvent.click(await screen.findByRole("button", { name: /field-reports/ }));
+    const conversation = await screen.findByLabelText("Workspace channel field-reports");
+    fireEvent.click(within(conversation).getByRole("button", { name: "Manage field-reports channel" }));
+    let dialog = screen.getByRole("dialog", { name: "Manage #field-reports" });
+    fireEvent.change(within(dialog).getByRole("textbox", { name: "Channel name" }), { target: { value: "field-updates" } });
+    fireEvent.change(within(dialog).getByRole("textbox", { name: "Topic" }), { target: { value: "Validated notes" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Publish channel update" }));
+    await waitFor(() => expect(api.serviceCommand).toHaveBeenCalledWith("update_workspace_channel", expect.objectContaining({ workspace_id: workspace.id, channel_id: channel.id, name: "field-updates", topic: "Validated notes", archived: false, operation_id: expect.any(String) })));
+    fireEvent.change(within(dialog).getByRole("combobox", { name: "Successor manager" }), { target: { value: member.id } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Offer transfer" }));
+    await waitFor(() => expect(api.serviceCommand).toHaveBeenCalledWith("offer_workspace_channel_transfer", expect.objectContaining({ workspace_id: workspace.id, channel_id: channel.id, successor_member_id: member.id, operation_id: expect.any(String) })));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Archive channel…" }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Confirm archive" }));
+    await waitFor(() => expect(api.serviceCommand).toHaveBeenCalledWith("update_workspace_channel", expect.objectContaining({ workspace_id: workspace.id, channel_id: channel.id, archived: true, operation_id: expect.any(String) })));
+
+    view.unmount();
+    current = { ...current, workspace_channels: [workspaceChannel, { ...channel, manager_member_id: member.id, manager_device_id: member.device.id }] };
+    api.initializeService.mockResolvedValue(current);
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Workspace Lakewatcher" }));
+    fireEvent.click(await screen.findByRole("button", { name: /field-reports/ }));
+    fireEvent.click(within(await screen.findByLabelText("Workspace channel field-reports")).getByRole("button", { name: "Manage field-reports channel" }));
+    dialog = screen.getByRole("dialog", { name: "Manage #field-reports" });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Recover to owner" }));
+    await waitFor(() => expect(api.serviceCommand).toHaveBeenCalledWith("recover_workspace_channel", expect.objectContaining({ workspace_id: workspace.id, channel_id: channel.id, operation_id: expect.any(String) })));
   });
 });
