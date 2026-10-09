@@ -262,7 +262,7 @@ Invitation entry points are `meshchat://workspace/<base64url>` and
 `MESHWORKSPACE1:<base64url>`. Invitations are single-use and expire within 30
 days. The offered checkpoint must retain the exact genesis owner member and
 authority device card; a self-consistent manifest signed by another identity is
-not a valid checkpoint. Increment 6 supports eight people, one device per
+not a valid checkpoint. Increment 7 supports eight people, one device per
 member, and up to 32 active public or private channels including `#general`.
 It rejects attachments and does not exchange old message history. The authority is not a
 message relay: each event is copied directly to every other authorized device
@@ -334,13 +334,13 @@ after that removal.
 
 ### Workspace message mutations
 
-The original Increment 5 `message` envelope is byte-for-byte unchanged.
-Increment 6 adds `edit`, `delete`, and `reaction` values for `event_type`.
+An Increment 5 `message` with no structured mentions remains byte-for-byte
+unchanged. Increment 6 added `edit`, `delete`, and `reaction` values for `event_type`.
 Those event types add exactly `target_event_id`, `base_revision`, and
 `revision`; `revision` must equal `base_revision + 1`. An edit payload contains
 only nonempty bounded `text`, a delete payload is the empty object, and a
 reaction payload contains exactly one validated Emoji 18 `emoji` and Boolean
-`active` state. Threads and mentions remain JSON null and the empty array.
+`active` state. Threads remain JSON null in Increment 7.
 
 An edit or delete is authorized only when the signer is a current active device
 of the target message's author member. A reaction is authorized for any current
@@ -373,6 +373,35 @@ atomically. Missing targets, controls, stream predecessors, or mutation bases
 remain in the existing bounded encrypted pending queue and are retried when the
 dependency arrives. Exact retransmissions are idempotent; delayed stale
 candidates cannot overwrite a higher revision or resurrect a tombstone.
+
+### Structured workspace mentions
+
+Increment 7 activates the existing signed `mentions` field for `message` and
+`edit` events. It is a canonical sorted, unique list of at most eight member
+UUIDs; `delete` and `reaction` events still require the empty list. Every target
+must be active in the event's exact manifest. A private-channel or DM target
+must also occur in that event's frozen audience, so mention metadata cannot
+widen delivery or disclose a member outside the conversation. A public-channel
+target may be any active workspace member. Display names and raw `@name` text
+are never interpreted as authority-bearing mention metadata.
+
+The complete mention list is copied only with the already authorized signed
+event. Each receiver materializes a local mention index only when its own
+member UUID is present. Message edits replace both visible text and the signed
+mention list under the existing revision, conflict, equivocation, audience and
+current-entitlement rules. Removing a mention invalidates its old local index
+position; re-adding it allocates a new position rather than reviving stale
+unread state.
+
+The Mentions inbox, its read high-water, channel mute preferences, and draft
+mention IDs are encrypted local records and are never fanned out. Inbox cursors
+bind the current manifest, channel heads and rosters, mute state, retention
+generation, and index high-water. Listing re-checks current active membership,
+private-channel access, channel state, message hide/tombstone state, and the
+active mention position. Unsubscribing a public channel suppresses ordinary
+unread state but not its authorized mentions; an explicit mention mute hides
+them locally and invalidates older cursors. Marking mentions read does not send
+a network receipt.
 
 ## Delivery evidence
 

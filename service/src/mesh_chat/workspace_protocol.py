@@ -2479,12 +2479,21 @@ def create_workspace_event(
     channel_digest: str | None,
     text: str,
     audience_member_ids: Iterable[str] | None = None,
+    mention_member_ids: Iterable[str] | None = None,
     created_at: int | None = None,
 ) -> str:
     if not isinstance(text, str) or not text.strip() or len(text.encode("utf-8")) > MAX_MESSAGE_TEXT_BYTES:
         raise ValidationError("Workspace message is empty or too large")
     if isinstance(sequence, bool) or not isinstance(sequence, int) or not 1 <= sequence <= MAX_SEQUENCE:
         raise ValidationError("Workspace event sequence is invalid")
+    mentions = sorted(
+        {
+            _validate_uuid(member_id, "Workspace mention member ID")
+            for member_id in (mention_member_ids or ())
+        }
+    )
+    if len(mentions) > MAX_ACTIVE_MEMBERS:
+        raise ValidationError("Workspace event mentions are invalid")
     unsigned = {
         "v": WORKSPACE_PROTOCOL_VERSION,
         "type": "workspace_event",
@@ -2508,7 +2517,7 @@ def create_workspace_event(
         ),
         "payload": {"text": text},
         "thread_root": None,
-        "mentions": [],
+        "mentions": mentions,
         "created_at": int(time.time()) if created_at is None else int(created_at),
     }
     if audience_member_ids is not None:
@@ -2544,6 +2553,7 @@ def create_workspace_mutation_event(
     emoji: str | None = None,
     active: bool | None = None,
     audience_member_ids: Iterable[str] | None = None,
+    mention_member_ids: Iterable[str] | None = None,
     created_at: int | None = None,
 ) -> str:
     """Create an author mutation or member reaction without changing v1 messages."""
@@ -2574,6 +2584,14 @@ def create_workspace_mutation_event(
         if not is_valid_reaction_emoji(emoji) or not isinstance(active, bool):
             raise ValidationError("Workspace reaction payload is invalid")
         payload = {"emoji": emoji, "active": active}
+    mentions = sorted(
+        {
+            _validate_uuid(member_id, "Workspace mention member ID")
+            for member_id in (mention_member_ids or ())
+        }
+    )
+    if len(mentions) > MAX_ACTIVE_MEMBERS or (event_type != "edit" and mentions):
+        raise ValidationError("Workspace mutation mentions are invalid")
     unsigned = {
         "v": WORKSPACE_PROTOCOL_VERSION,
         "type": "workspace_event",
@@ -2598,7 +2616,7 @@ def create_workspace_mutation_event(
         "revision": revision,
         "payload": payload,
         "thread_root": None,
-        "mentions": [],
+        "mentions": mentions,
         "created_at": int(time.time()) if created_at is None else int(created_at),
     }
     if audience_member_ids is not None:
@@ -2747,6 +2765,26 @@ def verify_workspace_event(
             raise ValidationError("Public workspace events cannot carry a private audience")
         audience_member_ids = ()
         channel_digest = channel.digest
+    raw_mentions = value["mentions"]
+    if not isinstance(raw_mentions, list):
+        raise ValidationError("Workspace event mentions are invalid")
+    mentions = tuple(
+        _validate_uuid(member_id, "Workspace mention member ID")
+        for member_id in raw_mentions
+    )
+    if (
+        list(mentions) != sorted(mentions)
+        or len(set(mentions)) != len(mentions)
+        or len(mentions) > MAX_ACTIVE_MEMBERS
+        or (event_type not in {"message", "edit"} and mentions)
+        or any(
+            (mentioned := find_member(manifest, member_id)) is None
+            or mentioned.status != "active"
+            or (audience_member_ids and member_id not in audience_member_ids)
+            for member_id in mentions
+        )
+    ):
+        raise IdentityMismatch("Workspace event mention audience is invalid")
     if (
         channel is not None
         and event_type == "message"
@@ -2799,8 +2837,8 @@ def verify_workspace_event(
             or revision > MAX_SEQUENCE
         ):
             raise ValidationError("Workspace mutation revision is invalid")
-    if value["thread_root"] is not None or value["mentions"] != []:
-        raise ValidationError("Threads and mentions are not enabled in increment one")
+    if value["thread_root"] is not None:
+        raise ValidationError("Threads are not enabled in this increment")
     current = int(time.time()) if now is None else int(now)
     return VerifiedWorkspaceEvent(
         workspace_id=workspace_id,
@@ -2816,7 +2854,7 @@ def verify_workspace_event(
         channel_digest=channel_digest,
         text=text,
         thread_root=None,
-        mentions=(),
+        mentions=mentions,
         created_at=_validate_timestamp(value["created_at"], now=current),
         digest=_digest(value),
         serialized=_canonical(value),

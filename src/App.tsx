@@ -1,8 +1,11 @@
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   BookUser,
+  Bell,
+  BellOff,
   Building2,
   ArrowLeft,
+  AtSign,
   Ban,
   Check,
   ChevronRight,
@@ -77,6 +80,7 @@ import type {
   WorkspaceInvitationPreview,
   WorkspaceMessage,
   WorkspaceMessagePage,
+  WorkspaceMentionPage,
   WorkspaceSnapshot,
 } from "./types";
 import "./styles.css";
@@ -1884,6 +1888,7 @@ function WorkspaceMessageCard({
   onEdit,
   onDelete,
   onHide,
+  allowedMentionMemberIds,
 }: {
   workspace: Workspace;
   message: WorkspaceMessage;
@@ -1895,32 +1900,42 @@ function WorkspaceMessageCard({
   onReactionCatalogOpenChange: (open: boolean) => void;
   onCloseReaction: () => void;
   onSetReaction: (emoji: string, active: boolean) => void;
-  onEdit: (text: string) => void;
+  onEdit: (text: string, mentionMemberIds: string[]) => void;
   onDelete: () => void;
   onHide: () => void;
+  allowedMentionMemberIds: string[];
 }) {
   const [editing, setEditing] = useState(false);
   const [editText, setEditText] = useState(message.text);
+  const [editMentionMemberIds, setEditMentionMemberIds] = useState(
+    eligibleWorkspaceMentionMemberIds(workspace, allowedMentionMemberIds, message.mention_member_ids ?? []),
+  );
   const [confirmDelete, setConfirmDelete] = useState(false);
   const mutable = workspace.state === "active" && !message.deleted && !message.mutation_frozen;
   const authorMutable = mutable && message.author_member_id === workspace.local_member_id;
   useEffect(() => {
-    if (!editing) setEditText(message.text);
-  }, [editing, message.text]);
+    if (!editing) {
+      setEditText(message.text);
+      setEditMentionMemberIds(eligibleWorkspaceMentionMemberIds(workspace, allowedMentionMemberIds, message.mention_member_ids ?? []));
+    }
+  }, [allowedMentionMemberIds, editing, message.mention_member_ids, message.text, workspace]);
   return (
-    <article className={`workspace-message ${message.direction === "outbound" ? "workspace-message--self" : ""} ${message.deleted ? "workspace-message--deleted" : ""}`}>
+    <article className={`workspace-message ${message.direction === "outbound" ? "workspace-message--self" : ""} ${message.deleted ? "workspace-message--deleted" : ""} ${message.mention_member_ids?.includes(workspace.local_member_id) ? "workspace-message--mentioned" : ""}`}>
       <Avatar name={message.author_display_name} small />
       <div>
         <header>
           <strong>{message.author_display_name}</strong>
           <time dateTime={machineTime(message.created_at)}>{formatTime(message.created_at)}</time>
           {(message.revision ?? 0) > 0 && !message.deleted && <small>Edited</small>}
+          {message.mention_member_ids?.includes(workspace.local_member_id) && <small className="workspace-message__mention"><AtSign size={12} /> Mentioned you</small>}
           <button className="message-hide" onClick={onHide} aria-label={`Hide message from ${message.author_display_name}`} title="Hide locally"><X size={13} /></button>
         </header>
         {message.deleted ? <p className="workspace-message__tombstone">Message deleted by its author.</p> : editing ? (
           <div className="workspace-message__edit">
+            <WorkspaceMentionChips workspace={workspace} memberIds={editMentionMemberIds} onRemove={(memberId) => setEditMentionMemberIds((current) => current.filter((id) => id !== memberId))} />
+            <WorkspaceMentionPicker workspace={workspace} allowedMemberIds={allowedMentionMemberIds} selectedMemberIds={editMentionMemberIds} onSelect={(member) => { setEditText((current) => `${current}${current && !current.endsWith(" ") ? " " : ""}@${member.display_name} `); setEditMentionMemberIds((current) => [...current, member.id].sort()); }} />
             <textarea value={editText} maxLength={16 * 1024} aria-label="Edit workspace message" onChange={(event) => setEditText(event.target.value)} />
-            <span><Button variant="ghost" onClick={() => { setEditing(false); setEditText(message.text); }}>Cancel</Button><Button disabled={!editText.trim()} onClick={() => { onEdit(editText); setEditing(false); }}>Save</Button></span>
+            <span><Button variant="ghost" onClick={() => { setEditing(false); setEditText(message.text); setEditMentionMemberIds(eligibleWorkspaceMentionMemberIds(workspace, allowedMentionMemberIds, message.mention_member_ids ?? [])); }}>Cancel</Button><Button disabled={!editText.trim()} onClick={() => { onEdit(editText, eligibleWorkspaceMentionMemberIds(workspace, allowedMentionMemberIds, editMentionMemberIds)); setEditing(false); }}>Save</Button></span>
           </div>
         ) : <p>{message.text}</p>}
         {(message.mutation_conflict || message.mutation_frozen) && <p className="workspace-message__security" role="status">{message.mutation_frozen ? "Security warning: this message is frozen after conflicting mutations from one device." : "Concurrent author changes were resolved deterministically. A later edit can resolve the conflict."}</p>}
@@ -1947,25 +1962,45 @@ function WorkspaceMessageCard({
   );
 }
 
-function WorkspaceConversation({ workspace, channel, page, draft, loading, sending, error, reactionTargetId, reactionCatalogOpen, reactionBusyEmoji, reactionError, onDraft, onSend, onLoadOlder, onHide, onEdit, onDelete, onToggleReactionPicker, onReactionCatalogOpenChange, onCloseReactionPicker, onSetReaction, onPeople, onSettings, onInvite, onManage }: { workspace: Workspace; channel: WorkspaceChannel; page: WorkspaceMessagePage | null; draft: string; loading: boolean; sending: boolean; error: string; reactionTargetId: string | null; reactionCatalogOpen: boolean; reactionBusyEmoji: string | null; reactionError: string; onDraft: (value: string) => void; onSend: () => void; onLoadOlder: () => void; onHide: (eventId: string) => void; onEdit: (eventId: string, text: string) => void; onDelete: (eventId: string) => void; onToggleReactionPicker: (eventId: string) => void; onReactionCatalogOpenChange: (eventId: string, open: boolean) => void; onCloseReactionPicker: () => void; onSetReaction: (eventId: string, emoji: string, active: boolean) => void; onPeople: () => void; onSettings: () => void; onInvite: () => void; onManage: () => void }) {
+function WorkspaceMentionChips({ workspace, memberIds, onRemove }: { workspace: Workspace; memberIds: string[]; onRemove: (memberId: string) => void }) {
+  if (memberIds.length === 0) return null;
+  return <div className="workspace-mention-chips" aria-label="Selected mentions">{memberIds.map((memberId) => {
+    const member = workspace.members.find((candidate) => candidate.id === memberId);
+    return <span key={memberId}><AtSign size={12} />{member?.display_name ?? memberId.replaceAll("-", "").slice(0, 6)}<button type="button" onClick={() => onRemove(memberId)} aria-label={`Remove mention ${member?.display_name ?? memberId}`}><X size={12} /></button></span>;
+  })}</div>;
+}
+
+function eligibleWorkspaceMentionMemberIds(workspace: Workspace, allowedMemberIds: string[], memberIds: string[]) {
+  const allowed = new Set(allowedMemberIds);
+  const active = new Set(workspace.members.filter((member) => member.status === "active").map((member) => member.id));
+  return [...new Set(memberIds)].filter((memberId) => memberId !== workspace.local_member_id && allowed.has(memberId) && active.has(memberId)).sort();
+}
+
+function WorkspaceMentionPicker({ workspace, allowedMemberIds, selectedMemberIds, onSelect }: { workspace: Workspace; allowedMemberIds: string[]; selectedMemberIds: string[]; onSelect: (member: Workspace["members"][number]) => void }) {
+  const [open, setOpen] = useState(false);
+  const members = workspace.members.filter((member) => member.status === "active" && member.id !== workspace.local_member_id && allowedMemberIds.includes(member.id) && !selectedMemberIds.includes(member.id));
+  return <span className="workspace-mention-picker"><button type="button" className="icon-button" onClick={() => setOpen((current) => !current)} aria-label="Mention a workspace member" aria-expanded={open}><AtSign size={19} /></button>{open && <div className="workspace-mention-picker__menu" role="dialog" aria-label="Choose a member to mention"><strong>Mention someone</strong>{members.map((member) => <button type="button" key={member.id} onClick={() => { onSelect(member); setOpen(false); }}><Avatar name={member.display_name} small /><span>{member.display_name}<small>{member.short_id}</small></span></button>)}{members.length === 0 && <p>No other eligible members.</p>}</div>}</span>;
+}
+
+function WorkspaceConversation({ workspace, channel, page, draft, mentionMemberIds, loading, sending, error, reactionTargetId, reactionCatalogOpen, reactionBusyEmoji, reactionError, onDraft, onSend, onLoadOlder, onHide, onEdit, onDelete, onToggleReactionPicker, onReactionCatalogOpenChange, onCloseReactionPicker, onSetReaction, onPeople, onSettings, onInvite, onManage, onToggleMentionMute }: { workspace: Workspace; channel: WorkspaceChannel; page: WorkspaceMessagePage | null; draft: string; mentionMemberIds: string[]; loading: boolean; sending: boolean; error: string; reactionTargetId: string | null; reactionCatalogOpen: boolean; reactionBusyEmoji: string | null; reactionError: string; onDraft: (value: string, mentionMemberIds: string[]) => void; onSend: () => void; onLoadOlder: () => void; onHide: (eventId: string) => void; onEdit: (eventId: string, text: string, mentionMemberIds: string[]) => void; onDelete: (eventId: string) => void; onToggleReactionPicker: (eventId: string) => void; onReactionCatalogOpenChange: (eventId: string, open: boolean) => void; onCloseReactionPicker: () => void; onSetReaction: (eventId: string, emoji: string, active: boolean) => void; onPeople: () => void; onSettings: () => void; onInvite: () => void; onManage: () => void; onToggleMentionMute: () => void }) {
   const postingRestricted = workspace.policies.posting === "owner_and_admins" && workspace.local_role !== "owner";
   const readOnly = workspace.state !== "active" || channel.state !== "active" || postingRestricted;
   const [attachmentWarning, setAttachmentWarning] = useState("");
   const syncWarning = workspaceSyncIssueLabel(workspace);
   return <section className="conversation workspace-conversation" aria-label={`Workspace channel ${channel.name}`} onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); if (event.dataTransfer.files.length) setAttachmentWarning("Attachments are not supported yet. No file was sent."); }}>
-    <header className="conversation__header"><div className="conversation__identity"><span className="workspace-channel-icon">{channel.visibility === "private" ? <LockKeyhole size={19} /> : <Hash size={19} />}</span><span><h1>{channel.display_name || channel.name}</h1><small>{channel.topic || `${workspace.name} · ${channel.visibility === "private" ? "private signed roster" : workspaceStateLabel(workspace)}`}</small></span></div><div className="workspace-header-actions">{workspace.local_role === "owner" && workspace.state === "active" && workspace.members.filter((member) => member.status === "active").length < 8 && <button className="icon-button" onClick={onInvite} aria-label={`Invite people to ${workspace.name}`} title="Invite people"><UserRoundPlus size={18} /></button>}<button className="icon-button" onClick={onManage} aria-label={`Manage ${channel.name} channel`} title="Channel details"><Settings size={18} /></button><button className="icon-button" onClick={onPeople} aria-label={`People in ${workspace.name}`} title="People"><Users size={18} /></button><button className="icon-button" onClick={onSettings} aria-label={`${workspace.name} settings`} title="Workspace settings"><Building2 size={18} /></button></div></header>
+    <header className="conversation__header"><div className="conversation__identity"><span className="workspace-channel-icon">{channel.visibility === "private" ? <LockKeyhole size={19} /> : <Hash size={19} />}</span><span><h1>{channel.display_name || channel.name}</h1><small>{channel.topic || `${workspace.name} · ${channel.visibility === "private" ? "private signed roster" : workspaceStateLabel(workspace)}`}</small></span></div><div className="workspace-header-actions"><button className="icon-button" onClick={onToggleMentionMute} aria-label={`${channel.mentions_muted ? "Unmute" : "Mute"} mentions in ${channel.name}`} title={channel.mentions_muted ? "Show mentions in Mentions" : "Mute mentions from this channel"}>{channel.mentions_muted ? <BellOff size={18} /> : <Bell size={18} />}</button>{workspace.local_role === "owner" && workspace.state === "active" && workspace.members.filter((member) => member.status === "active").length < 8 && <button className="icon-button" onClick={onInvite} aria-label={`Invite people to ${workspace.name}`} title="Invite people"><UserRoundPlus size={18} /></button>}<button className="icon-button" onClick={onManage} aria-label={`Manage ${channel.name} channel`} title="Channel details"><Settings size={18} /></button><button className="icon-button" onClick={onPeople} aria-label={`People in ${workspace.name}`} title="People"><Users size={18} /></button><button className="icon-button" onClick={onSettings} aria-label={`${workspace.name} settings`} title="Workspace settings"><Building2 size={18} /></button></div></header>
     <div className="message-scroll workspace-message-scroll">
       {page?.next_cursor && <button className="load-older" disabled={loading} onClick={onLoadOlder}>{loading ? "Loading…" : "Load older messages"}</button>}
       {loading && !page && <div className="workspace-loading"><span className="spinner" /> Loading messages…</div>}
       {!loading && page?.messages.length === 0 && <div className="workspace-channel-empty">{channel.visibility === "private" ? <LockKeyhole size={26} /> : <Hash size={26} />}<h2>Welcome to #{channel.display_name || channel.name}</h2><p>{channel.visibility === "private" ? "Only the signed roster receives this channel or its future messages. Newly admitted members receive no earlier messages." : "Everyone in this workspace receives public-channel messages. History depends on copies retained by reachable members."}</p></div>}
-      {page?.messages.map((message) => <WorkspaceMessageCard key={message.id} workspace={workspace} message={message} reactionOpen={reactionTargetId === message.id} reactionCatalogOpen={reactionTargetId === message.id && reactionCatalogOpen} reactionBusyEmoji={reactionTargetId === message.id ? reactionBusyEmoji : null} reactionError={reactionTargetId === message.id ? reactionError : ""} onToggleReaction={() => onToggleReactionPicker(message.id)} onReactionCatalogOpenChange={(open) => onReactionCatalogOpenChange(message.id, open)} onCloseReaction={onCloseReactionPicker} onSetReaction={(emoji, active) => onSetReaction(message.id, emoji, active)} onEdit={(text) => onEdit(message.id, text)} onDelete={() => onDelete(message.id)} onHide={() => onHide(message.id)} />)}
+      {page?.messages.map((message) => <WorkspaceMessageCard key={message.id} workspace={workspace} message={message} allowedMentionMemberIds={channel.visibility === "private" ? channel.member_ids : workspace.members.filter((member) => member.status === "active").map((member) => member.id)} reactionOpen={reactionTargetId === message.id} reactionCatalogOpen={reactionTargetId === message.id && reactionCatalogOpen} reactionBusyEmoji={reactionTargetId === message.id ? reactionBusyEmoji : null} reactionError={reactionTargetId === message.id ? reactionError : ""} onToggleReaction={() => onToggleReactionPicker(message.id)} onReactionCatalogOpenChange={(open) => onReactionCatalogOpenChange(message.id, open)} onCloseReaction={onCloseReactionPicker} onSetReaction={(emoji, active) => onSetReaction(message.id, emoji, active)} onEdit={(text, editedMentionMemberIds) => onEdit(message.id, text, editedMentionMemberIds)} onDelete={() => onDelete(message.id)} onHide={() => onHide(message.id)} />)}
     </div>
     {(error || attachmentWarning || syncWarning) && <p className="form-error workspace-composer-error" role="alert">{error || attachmentWarning || syncWarning}</p>}
-    {readOnly ? <div className="composer-disabled"><LockKeyhole size={16} />{postingRestricted ? "Only the workspace owner can post under the current signed policy." : channel.state === "archived" ? "This channel is archived and read-only." : channel.state === "leaving" ? "Leaving is pending with the channel manager." : workspaceStateLabel(workspace)}</div> : <div className="composer workspace-composer"><button type="button" className="icon-button" onClick={() => setAttachmentWarning("Attachments are not supported yet. No file was sent.")} aria-label="Add attachment"><Plus size={20} /></button><textarea value={draft} onChange={(event) => { setAttachmentWarning(""); onDraft(event.target.value); }} onPaste={(event) => { if (event.clipboardData.files.length || Array.from(event.clipboardData.items).some((item) => item.kind === "file")) { event.preventDefault(); setAttachmentWarning("Attachments are not supported yet. No file was sent."); } }} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); onSend(); } }} placeholder={`Message #${channel.name}`} aria-label={`Message ${channel.name}`} maxLength={16 * 1024} /><Button disabled={sending || !draft.trim()} onClick={onSend} aria-label="Send workspace message"><Send size={18} /></Button></div>}
+    {readOnly ? <div className="composer-disabled"><LockKeyhole size={16} />{postingRestricted ? "Only the workspace owner can post under the current signed policy." : channel.state === "archived" ? "This channel is archived and read-only." : channel.state === "leaving" ? "Leaving is pending with the channel manager." : workspaceStateLabel(workspace)}</div> : <div className="workspace-composer-shell"><WorkspaceMentionChips workspace={workspace} memberIds={mentionMemberIds} onRemove={(memberId) => onDraft(draft, mentionMemberIds.filter((id) => id !== memberId))} /><div className="composer workspace-composer"><button type="button" className="icon-button" onClick={() => setAttachmentWarning("Attachments are not supported yet. No file was sent.")} aria-label="Add attachment"><Plus size={20} /></button><WorkspaceMentionPicker workspace={workspace} allowedMemberIds={channel.visibility === "private" ? channel.member_ids : workspace.members.filter((member) => member.status === "active").map((member) => member.id)} selectedMemberIds={mentionMemberIds} onSelect={(member) => onDraft(`${draft}${draft && !draft.endsWith(" ") ? " " : ""}@${member.display_name} `, [...mentionMemberIds, member.id].sort())} /><textarea value={draft} onChange={(event) => { setAttachmentWarning(""); onDraft(event.target.value, mentionMemberIds); }} onPaste={(event) => { if (event.clipboardData.files.length || Array.from(event.clipboardData.items).some((item) => item.kind === "file")) { event.preventDefault(); setAttachmentWarning("Attachments are not supported yet. No file was sent."); } }} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); onSend(); } }} placeholder={`Message #${channel.name}`} aria-label={`Message ${channel.name}`} maxLength={16 * 1024} /><Button disabled={sending || !draft.trim()} onClick={onSend} aria-label="Send workspace message"><Send size={18} /></Button></div></div>}
   </section>;
 }
 
-function WorkspaceDirectConversation({ workspace, direct, page, draft, loading, sending, error, reactionTargetId, reactionCatalogOpen, reactionBusyEmoji, reactionError, onDraft, onSend, onLoadOlder, onHideMessage, onEdit, onDelete, onToggleReactionPicker, onReactionCatalogOpenChange, onCloseReactionPicker, onSetReaction, onHideConversation, onPeople }: { workspace: Workspace; direct: WorkspaceDirect; page: WorkspaceMessagePage | null; draft: string; loading: boolean; sending: boolean; error: string; reactionTargetId: string | null; reactionCatalogOpen: boolean; reactionBusyEmoji: string | null; reactionError: string; onDraft: (value: string) => void; onSend: () => void; onLoadOlder: () => void; onHideMessage: (eventId: string) => void; onEdit: (eventId: string, text: string) => void; onDelete: (eventId: string) => void; onToggleReactionPicker: (eventId: string) => void; onReactionCatalogOpenChange: (eventId: string, open: boolean) => void; onCloseReactionPicker: () => void; onSetReaction: (eventId: string, emoji: string, active: boolean) => void; onHideConversation: () => void; onPeople: () => void }) {
+function WorkspaceDirectConversation({ workspace, direct, page, draft, mentionMemberIds, loading, sending, error, reactionTargetId, reactionCatalogOpen, reactionBusyEmoji, reactionError, onDraft, onSend, onLoadOlder, onHideMessage, onEdit, onDelete, onToggleReactionPicker, onReactionCatalogOpenChange, onCloseReactionPicker, onSetReaction, onHideConversation, onPeople }: { workspace: Workspace; direct: WorkspaceDirect; page: WorkspaceMessagePage | null; draft: string; mentionMemberIds: string[]; loading: boolean; sending: boolean; error: string; reactionTargetId: string | null; reactionCatalogOpen: boolean; reactionBusyEmoji: string | null; reactionError: string; onDraft: (value: string, mentionMemberIds: string[]) => void; onSend: () => void; onLoadOlder: () => void; onHideMessage: (eventId: string) => void; onEdit: (eventId: string, text: string, mentionMemberIds: string[]) => void; onDelete: (eventId: string) => void; onToggleReactionPicker: (eventId: string) => void; onReactionCatalogOpenChange: (eventId: string, open: boolean) => void; onCloseReactionPicker: () => void; onSetReaction: (eventId: string, emoji: string, active: boolean) => void; onHideConversation: () => void; onPeople: () => void }) {
   const [attachmentWarning, setAttachmentWarning] = useState("");
   const readOnly = workspace.state !== "active" || direct.state !== "open";
   const readOnlyLabel = direct.state !== "open"
@@ -1973,9 +2008,22 @@ function WorkspaceDirectConversation({ workspace, direct, page, draft, loading, 
     : workspaceStateLabel(workspace);
   return <section className="conversation workspace-conversation" aria-label={`Workspace direct message with ${direct.peer_display_name}`} onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); if (event.dataTransfer.files.length) setAttachmentWarning("Attachments are not supported yet. No file was sent."); }}>
     <header className="conversation__header"><div className="conversation__identity"><Avatar name={direct.peer_display_name} small /><span><h1>{direct.peer_display_name}</h1><small>{workspace.name} · workspace DM · {direct.peer_short_id}</small></span></div><div className="workspace-header-actions"><button className="icon-button" onClick={onHideConversation} aria-label={`Hide workspace conversation with ${direct.peer_display_name}`} title="Hide locally"><EyeOff size={18} /></button><button className="icon-button" onClick={onPeople} aria-label={`People in ${workspace.name}`} title="People"><Users size={18} /></button></div></header>
-    <div className="message-scroll workspace-message-scroll">{page?.next_cursor && <button className="load-older" disabled={loading} onClick={onLoadOlder}>{loading ? "Loading…" : "Load older messages"}</button>}{loading && !page && <div className="workspace-loading"><span className="spinner" /> Loading messages…</div>}{!loading && page?.messages.length === 0 && <div className="workspace-channel-empty"><MessageCircleMore size={28} /><h2>Message {direct.peer_display_name}</h2><p>This private workspace conversation is authorized by signed membership and does not create a global Contact.</p></div>}{page?.messages.map((message) => <WorkspaceMessageCard key={message.id} workspace={workspace} message={message} reactionOpen={reactionTargetId === message.id} reactionCatalogOpen={reactionTargetId === message.id && reactionCatalogOpen} reactionBusyEmoji={reactionTargetId === message.id ? reactionBusyEmoji : null} reactionError={reactionTargetId === message.id ? reactionError : ""} onToggleReaction={() => onToggleReactionPicker(message.id)} onReactionCatalogOpenChange={(open) => onReactionCatalogOpenChange(message.id, open)} onCloseReaction={onCloseReactionPicker} onSetReaction={(emoji, active) => onSetReaction(message.id, emoji, active)} onEdit={(text) => onEdit(message.id, text)} onDelete={() => onDelete(message.id)} onHide={() => onHideMessage(message.id)} />)}</div>
+    <div className="message-scroll workspace-message-scroll">{page?.next_cursor && <button className="load-older" disabled={loading} onClick={onLoadOlder}>{loading ? "Loading…" : "Load older messages"}</button>}{loading && !page && <div className="workspace-loading"><span className="spinner" /> Loading messages…</div>}{!loading && page?.messages.length === 0 && <div className="workspace-channel-empty"><MessageCircleMore size={28} /><h2>Message {direct.peer_display_name}</h2><p>This private workspace conversation is authorized by signed membership and does not create a global Contact.</p></div>}{page?.messages.map((message) => <WorkspaceMessageCard key={message.id} workspace={workspace} message={message} allowedMentionMemberIds={direct.participant_member_ids} reactionOpen={reactionTargetId === message.id} reactionCatalogOpen={reactionTargetId === message.id && reactionCatalogOpen} reactionBusyEmoji={reactionTargetId === message.id ? reactionBusyEmoji : null} reactionError={reactionTargetId === message.id ? reactionError : ""} onToggleReaction={() => onToggleReactionPicker(message.id)} onReactionCatalogOpenChange={(open) => onReactionCatalogOpenChange(message.id, open)} onCloseReaction={onCloseReactionPicker} onSetReaction={(emoji, active) => onSetReaction(message.id, emoji, active)} onEdit={(text, editedMentionMemberIds) => onEdit(message.id, text, editedMentionMemberIds)} onDelete={() => onDelete(message.id)} onHide={() => onHideMessage(message.id)} />)}</div>
     {(error || attachmentWarning) && <p className="form-error workspace-composer-error" role="alert">{error || attachmentWarning}</p>}
-    {readOnly ? <div className="composer-disabled"><LockKeyhole size={16} />{readOnlyLabel}</div> : <div className="composer workspace-composer"><button type="button" className="icon-button" onClick={() => setAttachmentWarning("Attachments are not supported yet. No file was sent.")} aria-label="Add attachment"><Plus size={20} /></button><textarea value={draft} onChange={(event) => { setAttachmentWarning(""); onDraft(event.target.value); }} onPaste={(event) => { if (event.clipboardData.files.length || Array.from(event.clipboardData.items).some((item) => item.kind === "file")) { event.preventDefault(); setAttachmentWarning("Attachments are not supported yet. No file was sent."); } }} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); onSend(); } }} placeholder={`Message ${direct.peer_display_name}`} aria-label={`Message ${direct.peer_display_name}`} maxLength={16 * 1024} /><Button disabled={sending || !draft.trim()} onClick={onSend} aria-label="Send workspace direct message"><Send size={18} /></Button></div>}
+    {readOnly ? <div className="composer-disabled"><LockKeyhole size={16} />{readOnlyLabel}</div> : <div className="workspace-composer-shell"><WorkspaceMentionChips workspace={workspace} memberIds={mentionMemberIds} onRemove={(memberId) => onDraft(draft, mentionMemberIds.filter((id) => id !== memberId))} /><div className="composer workspace-composer"><button type="button" className="icon-button" onClick={() => setAttachmentWarning("Attachments are not supported yet. No file was sent.")} aria-label="Add attachment"><Plus size={20} /></button><WorkspaceMentionPicker workspace={workspace} allowedMemberIds={direct.participant_member_ids} selectedMemberIds={mentionMemberIds} onSelect={(member) => onDraft(`${draft}${draft && !draft.endsWith(" ") ? " " : ""}@${member.display_name} `, [...mentionMemberIds, member.id].sort())} /><textarea value={draft} onChange={(event) => { setAttachmentWarning(""); onDraft(event.target.value, mentionMemberIds); }} onPaste={(event) => { if (event.clipboardData.files.length || Array.from(event.clipboardData.items).some((item) => item.kind === "file")) { event.preventDefault(); setAttachmentWarning("Attachments are not supported yet. No file was sent."); } }} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); onSend(); } }} placeholder={`Message ${direct.peer_display_name}`} aria-label={`Message ${direct.peer_display_name}`} maxLength={16 * 1024} /><Button disabled={sending || !draft.trim()} onClick={onSend} aria-label="Send workspace direct message"><Send size={18} /></Button></div></div>}
+  </section>;
+}
+
+function WorkspaceMentions({ workspace, page, loading, error, onLoadOlder, onMarkRead, onOpenConversation }: { workspace: Workspace; page: WorkspaceMentionPage | null; loading: boolean; error: string; onLoadOlder: () => void; onMarkRead: () => void; onOpenConversation: (kind: "channel" | "direct", conversationId: string) => void }) {
+  return <section className="conversation workspace-mentions" aria-label={`Mentions in ${workspace.name}`}>
+    <header className="conversation__header"><div className="conversation__identity"><span className="workspace-channel-icon"><AtSign size={19} /></span><span><h1>Mentions</h1><small>Structured mentions addressed to you in {workspace.name}</small></span></div>{(page?.unread_count ?? workspace.mention_unread_count) > 0 && <Button variant="secondary" onClick={onMarkRead}>Mark all read</Button>}</header>
+    <div className="message-scroll workspace-mention-list">
+      {loading && !page && <div className="workspace-loading"><span className="spinner" /> Loading mentions…</div>}
+      {!loading && page?.mentions.length === 0 && <div className="workspace-channel-empty"><AtSign size={28} /><h2>No mentions</h2><p>Only member IDs inserted with the mention picker appear here. Raw @name text remains ordinary message text.</p></div>}
+      {page?.mentions.map((mention) => <button type="button" className={`workspace-mention-row ${mention.read ? "" : "workspace-mention-row--unread"}`} key={`${mention.position}:${mention.message.id}`} onClick={() => onOpenConversation(mention.conversation.kind, mention.conversation.id)}><Avatar name={mention.message.author_display_name} small /><span><span className="workspace-mention-row__meta"><strong>{mention.message.author_display_name}</strong><small>{mention.conversation.kind === "channel" ? `#${mention.conversation.name}` : mention.conversation.name} · {formatTime(mention.message.created_at)}</small>{!mention.read && <i>New</i>}</span><span>{mention.message.text}</span></span></button>)}
+      {page?.next_cursor && <button className="load-older" disabled={loading} onClick={onLoadOlder}>{loading ? "Loading…" : "Load older mentions"}</button>}
+    </div>
+    {error && <p className="form-error workspace-composer-error" role="alert">{error}</p>}
   </section>;
 }
 
@@ -1992,6 +2040,11 @@ type DraftWriteSlot = {
   pending: DraftWrite | null;
   // Always-normalized tail used only as an ordering barrier.
   tail: Promise<void>;
+};
+
+type WorkspaceDraftValue = {
+  text: string;
+  mentionMemberIds: string[];
 };
 
 const DRAFT_SAVE_DELAY_MS = 200;
@@ -2034,14 +2087,18 @@ function Messenger({ snapshot, refresh, workspaceChannelInvalidation, onLock, in
   const [workspaceManageChannelOpen, setWorkspaceManageChannelOpen] = useState(false);
   const [workspaceSelectedChannelId, setWorkspaceSelectedChannelId] = useState<string | null>(null);
   const [workspaceSelectedDirectId, setWorkspaceSelectedDirectId] = useState<string | null>(null);
+  const [workspaceMentionsOpen, setWorkspaceMentionsOpen] = useState(false);
+  const [workspaceMentionPage, setWorkspaceMentionPage] = useState<WorkspaceMentionPage | null>(null);
+  const [workspaceMentionLoading, setWorkspaceMentionLoading] = useState(false);
   const [workspacePage, setWorkspacePage] = useState<WorkspaceMessagePage | null>(null);
   const [workspacePageLoading, setWorkspacePageLoading] = useState(false);
-  const [workspaceDrafts, setWorkspaceDrafts] = useState<Record<string, string>>(() => Object.fromEntries((snapshot.workspace_drafts ?? []).map((draft) => [draft.conversation_id, draft.text])));
+  const [workspaceDrafts, setWorkspaceDrafts] = useState<Record<string, WorkspaceDraftValue>>(() => Object.fromEntries((snapshot.workspace_drafts ?? []).map((draft) => [draft.conversation_id, { text: draft.text, mentionMemberIds: draft.mention_member_ids ?? [] }])));
   const [workspaceSending, setWorkspaceSending] = useState(false);
   const [workspaceError, setWorkspaceError] = useState("");
   const [workspaceActionBusy, setWorkspaceActionBusy] = useState(false);
   const [workspaceActionError, setWorkspaceActionError] = useState("");
   const workspacePageInFlight = useRef(false);
+  const workspaceMentionsInFlight = useRef(false);
   const loadedWorkspaceChannel = useRef<string | null>(null);
   const workspaceSendInFlight = useRef(false);
   const pendingWorkspaceSend = useRef<{
@@ -2051,6 +2108,7 @@ function Messenger({ snapshot, refresh, workspaceChannelInvalidation, onLock, in
     text: string;
     operationId: string;
     eventId: string;
+    mentionMemberIds: string[];
   } | null>(null);
   const [contactsOpen, setContactsOpen] = useState(false);
   const [settings, setSettings] = useState(false);
@@ -2160,6 +2218,8 @@ function Messenger({ snapshot, refresh, workspaceChannelInvalidation, onLock, in
   useEffect(() => {
     setWorkspaceSelectedChannelId(null);
     setWorkspaceSelectedDirectId(null);
+    setWorkspaceMentionsOpen(false);
+    setWorkspaceMentionPage(null);
     setWorkspaceManageChannelOpen(false);
   }, [activeSpaceId]);
 
@@ -2197,6 +2257,29 @@ function Messenger({ snapshot, refresh, workspaceChannelInvalidation, onLock, in
     if (selectionChanged) setWorkspacePage(null);
     void loadWorkspaceMessages(false);
   }, [selectedWorkspace?.id, selectedWorkspaceConversation?.id, selectedWorkspaceDirect?.id, workspaceChannelInvalidation]);
+
+  const loadWorkspaceMentions = useCallback(async (append = false) => {
+    if (!selectedWorkspace || workspaceMentionsInFlight.current) return;
+    workspaceMentionsInFlight.current = true;
+    setWorkspaceMentionLoading(true);
+    try {
+      const page = await serviceCommand<WorkspaceMentionPage>("list_workspace_mentions", {
+        workspace_id: selectedWorkspace.id,
+        cursor: append ? workspaceMentionPage?.next_cursor ?? null : null,
+        limit: 50,
+      });
+      setWorkspaceMentionPage((current) => append && current ? { ...page, mentions: [...current.mentions, ...page.mentions] } : page);
+    } catch (reason) { setWorkspaceError(errorMessage(reason)); }
+    finally { workspaceMentionsInFlight.current = false; setWorkspaceMentionLoading(false); }
+  }, [selectedWorkspace?.id, workspaceMentionPage?.next_cursor]);
+
+  useEffect(() => {
+    if (!workspaceMentionsOpen || !selectedWorkspace) {
+      if (!workspaceMentionsOpen) setWorkspaceMentionPage(null);
+      return;
+    }
+    void loadWorkspaceMentions(false);
+  }, [workspaceMentionsOpen, selectedWorkspace?.id, workspaceChannelInvalidation]);
 
   const conversationItems = [
     ...contacts.map((contact) => {
@@ -2376,18 +2459,18 @@ function Messenger({ snapshot, refresh, workspaceChannelInvalidation, onLock, in
       payload: { group_id: groupId, text },
     });
   };
-  const saveWorkspaceDraft = (workspaceId: string, channelId: string, text: string) => {
-    setWorkspaceDrafts((current) => ({ ...current, [channelId]: text }));
+  const saveWorkspaceDraft = (workspaceId: string, channelId: string, text: string, mentionMemberIds: string[]) => {
+    setWorkspaceDrafts((current) => ({ ...current, [channelId]: { text, mentionMemberIds } }));
     scheduleDraftWrite(`workspace:${channelId}`, {
       command: "save_workspace_draft",
-      payload: { operation_id: newOperationId(), workspace_id: workspaceId, channel_id: channelId, text },
+      payload: { operation_id: newOperationId(), workspace_id: workspaceId, channel_id: channelId, text, mention_member_ids: mentionMemberIds },
     });
   };
-  const saveWorkspaceDirectDraft = (workspaceId: string, conversationId: string, text: string) => {
-    setWorkspaceDrafts((current) => ({ ...current, [conversationId]: text }));
+  const saveWorkspaceDirectDraft = (workspaceId: string, conversationId: string, text: string, mentionMemberIds: string[]) => {
+    setWorkspaceDrafts((current) => ({ ...current, [conversationId]: { text, mentionMemberIds } }));
     scheduleDraftWrite(`workspace-direct:${conversationId}`, {
       command: "save_workspace_direct_draft",
-      payload: { operation_id: newOperationId(), workspace_id: workspaceId, conversation_id: conversationId, text },
+      payload: { operation_id: newOperationId(), workspace_id: workspaceId, conversation_id: conversationId, text, mention_member_ids: mentionMemberIds },
     });
   };
   const send = async () => {
@@ -2589,6 +2672,7 @@ function Messenger({ snapshot, refresh, workspaceChannelInvalidation, onLock, in
       | "update_workspace_private_channel_members"
       | "leave_workspace_private_channel"
       | "set_workspace_channel_subscription"
+      | "set_workspace_channel_mentions_muted"
       | "offer_workspace_channel_transfer"
       | "accept_workspace_channel_transfer"
       | "recover_workspace_channel"
@@ -2606,6 +2690,7 @@ function Messenger({ snapshot, refresh, workspaceChannelInvalidation, onLock, in
       if (command === "create_workspace_channel" && "id" in result) {
         setWorkspaceSelectedChannelId(result.id);
         setWorkspaceSelectedDirectId(null);
+        setWorkspaceMentionsOpen(false);
         setWorkspaceCreateChannelOpen(false);
         setWorkspaceBrowseOpen(false);
       }
@@ -2634,7 +2719,14 @@ function Messenger({ snapshot, refresh, workspaceChannelInvalidation, onLock, in
   };
   const sendWorkspaceMessage = async () => {
     if (!selectedWorkspace || !selectedWorkspaceConversation || workspaceSendInFlight.current) return;
-    const text = workspaceDrafts[selectedWorkspaceConversation.id] ?? "";
+    const draft = workspaceDrafts[selectedWorkspaceConversation.id] ?? { text: "", mentionMemberIds: [] };
+    const text = draft.text;
+    const allowedMentionMemberIds = selectedWorkspaceDirect
+      ? selectedWorkspaceDirect.participant_member_ids
+      : selectedWorkspaceChannel?.visibility === "private"
+        ? selectedWorkspaceChannel.member_ids
+        : selectedWorkspace.members.filter((member) => member.status === "active").map((member) => member.id);
+    const mentionMemberIds = eligibleWorkspaceMentionMemberIds(selectedWorkspace, allowedMentionMemberIds, draft.mentionMemberIds);
     if (!text.trim()) return;
     const workspaceId = selectedWorkspace.id;
     const conversationId = selectedWorkspaceConversation.id;
@@ -2646,12 +2738,14 @@ function Messenger({ snapshot, refresh, workspaceChannelInvalidation, onLock, in
       && prior.conversationId === conversationId
       && prior.kind === kind
       && prior.text === text
+      && prior.mentionMemberIds.join(",") === mentionMemberIds.join(",")
       ? prior
       : {
         workspaceId,
         conversationId,
         kind,
         text,
+        mentionMemberIds,
         operationId: newOperationId(),
         eventId: newOperationId(),
       };
@@ -2667,6 +2761,7 @@ function Messenger({ snapshot, refresh, workspaceChannelInvalidation, onLock, in
         workspace_id: workspaceId,
         ...(kind === "direct" ? { conversation_id: conversationId } : { channel_id: conversationId }),
         text,
+        mention_member_ids: durable.mentionMemberIds,
       });
     } catch (reason) {
       setWorkspaceError(`${errorMessage(reason)} Your text is still in the composer; retrying will reuse the same durable message ID.`);
@@ -2675,7 +2770,7 @@ function Messenger({ snapshot, refresh, workspaceChannelInvalidation, onLock, in
       return;
     }
     pendingWorkspaceSend.current = null;
-    setWorkspaceDrafts((current) => ({ ...current, [conversationId]: "" }));
+    setWorkspaceDrafts((current) => ({ ...current, [conversationId]: { text: "", mentionMemberIds: [] } }));
     setWorkspacePage((current) => {
       if (!current || current.messages.some((message) => message.id === saved.id)) return current;
       return {
@@ -2686,8 +2781,8 @@ function Messenger({ snapshot, refresh, workspaceChannelInvalidation, onLock, in
     });
     try {
       await writeDraftNow(draftKey, kind === "direct"
-        ? { command: "save_workspace_direct_draft", payload: { operation_id: newOperationId(), workspace_id: workspaceId, conversation_id: conversationId, text: "" } }
-        : { command: "save_workspace_draft", payload: { operation_id: newOperationId(), workspace_id: workspaceId, channel_id: conversationId, text: "" } });
+        ? { command: "save_workspace_direct_draft", payload: { operation_id: newOperationId(), workspace_id: workspaceId, conversation_id: conversationId, text: "", mention_member_ids: [] } }
+        : { command: "save_workspace_draft", payload: { operation_id: newOperationId(), workspace_id: workspaceId, channel_id: conversationId, text: "", mention_member_ids: [] } });
     } catch {
       setWorkspaceError("Your message was saved, but its saved draft could not be cleared. It may reappear after reopening Mesh Chat.");
     }
@@ -2707,6 +2802,7 @@ function Messenger({ snapshot, refresh, workspaceChannelInvalidation, onLock, in
       const direct = await serviceCommand<WorkspaceDirect>("open_workspace_direct", { operation_id: newOperationId(), workspace_id: selectedWorkspace.id, member_id: memberId });
       setWorkspaceSelectedDirectId(direct.id);
       setWorkspaceSelectedChannelId(null);
+      setWorkspaceMentionsOpen(false);
       setWorkspacePeopleOpen(false);
       await refresh(true);
     } catch (reason) { setWorkspaceActionError(errorMessage(reason)); }
@@ -2722,6 +2818,33 @@ function Messenger({ snapshot, refresh, workspaceChannelInvalidation, onLock, in
     } catch (reason) { setWorkspaceError(errorMessage(reason)); }
     finally { setWorkspaceActionBusy(false); }
   };
+  const markWorkspaceMentionsRead = async () => {
+    if (!selectedWorkspace || !workspaceMentionPage || workspaceMentionPage.unread_count === 0) return;
+    setWorkspaceError("");
+    try {
+      await serviceCommand("mark_workspace_mentions_read", {
+        operation_id: newOperationId(),
+        workspace_id: selectedWorkspace.id,
+        high_water: workspaceMentionPage.high_water,
+      });
+      setWorkspaceMentionPage((current) => current ? {
+        ...current,
+        unread_count: 0,
+        mentions: current.mentions.map((mention) => ({ ...mention, read: true })),
+      } : current);
+      await refresh(true);
+    } catch (reason) { setWorkspaceError(errorMessage(reason)); }
+  };
+  const openWorkspaceMentionConversation = (kind: "channel" | "direct", conversationId: string) => {
+    setWorkspaceMentionsOpen(false);
+    if (kind === "direct") {
+      setWorkspaceSelectedDirectId(conversationId);
+      setWorkspaceSelectedChannelId(null);
+    } else {
+      setWorkspaceSelectedChannelId(conversationId);
+      setWorkspaceSelectedDirectId(null);
+    }
+  };
   const hideWorkspaceMessage = async (eventId: string) => {
     if (!selectedWorkspace) return;
     setWorkspaceError("");
@@ -2734,6 +2857,7 @@ function Messenger({ snapshot, refresh, workspaceChannelInvalidation, onLock, in
     command: "edit_workspace_message" | "delete_workspace_message",
     eventId: string,
     text?: string,
+    mentionMemberIds: string[] = [],
   ) => {
     if (!selectedWorkspace) return;
     setWorkspaceError("");
@@ -2743,7 +2867,7 @@ function Messenger({ snapshot, refresh, workspaceChannelInvalidation, onLock, in
         mutation_event_id: newOperationId(),
         workspace_id: selectedWorkspace.id,
         event_id: eventId,
-        ...(command === "edit_workspace_message" ? { text } : {}),
+        ...(command === "edit_workspace_message" ? { text, mention_member_ids: mentionMemberIds } : {}),
       });
       setWorkspacePage((current) => current ? {
         ...current,
@@ -2921,13 +3045,14 @@ function Messenger({ snapshot, refresh, workspaceChannelInvalidation, onLock, in
           {workspaceActionError && <p className="form-error sidebar-action-error" role="alert">{workspaceActionError}</p>}
           <nav className="contact-list workspace-nav" aria-label={`${selectedWorkspace.name} conversations`}>
             {workspaceJoinRequests.filter((request) => request.workspace_id === selectedWorkspace.id).map((request) => <section className="request-card workspace-join-request" key={request.id}><div><Avatar name={request.display_name} small /><span><strong>{request.display_name}</strong><small>Requests to join · {request.member_id.replaceAll("-", "").slice(0, 6)}</small></span></div><p className="request-fingerprint">{request.fingerprint}</p><div><Button disabled={workspaceActionBusy} onClick={() => void respondToWorkspaceJoin(request.id, true)}>Approve</Button><Button variant="ghost" disabled={workspaceActionBusy} onClick={() => void respondToWorkspaceJoin(request.id, false)}>Decline</Button></div></section>)}
+            <button className={`workspace-nav-action ${workspaceMentionsOpen ? "workspace-nav-action--active" : ""}`} onClick={() => { setWorkspaceMentionsOpen(true); setWorkspaceError(""); }}><AtSign size={17} />Mentions {selectedWorkspace.mention_unread_count > 0 && <b className="unread-badge">{selectedWorkspace.mention_unread_count}</b>}</button>
             <p className="workspace-nav__label">Channels</p>
-            {selectedWorkspaceChannels.filter((channel) => channel.visibility === "private" || channel.subscribed || channel.id === selectedWorkspace.general_channel_id || channel.id === selectedWorkspaceChannel?.id).map((channel) => <button key={channel.id} className={`contact-row workspace-channel-row ${selectedWorkspaceChannel?.id === channel.id ? "contact-row--selected" : ""}`} onClick={() => { setWorkspaceSelectedChannelId(channel.id); setWorkspaceSelectedDirectId(null); }}><span className="workspace-channel-icon">{channel.visibility === "private" ? <LockKeyhole size={18} /> : <Hash size={18} />}</span><span className="contact-row__content"><span><strong>{channel.display_name || channel.name}</strong>{channel.unread_count > 0 && <b className="unread-badge">{channel.unread_count}</b>}</span><span className="contact-row__preview">{channel.state === "archived" ? "Archived · read-only" : channel.state === "leaving" ? "Leaving · read-only" : channel.topic || (channel.visibility === "private" ? "Private signed roster" : "Everyone in the workspace")}</span></span></button>)}
+            {selectedWorkspaceChannels.filter((channel) => channel.visibility === "private" || channel.subscribed || channel.id === selectedWorkspace.general_channel_id || channel.id === selectedWorkspaceChannel?.id).map((channel) => <button key={channel.id} className={`contact-row workspace-channel-row ${!workspaceMentionsOpen && selectedWorkspaceChannel?.id === channel.id ? "contact-row--selected" : ""}`} onClick={() => { setWorkspaceMentionsOpen(false); setWorkspaceSelectedChannelId(channel.id); setWorkspaceSelectedDirectId(null); }}><span className="workspace-channel-icon">{channel.visibility === "private" ? <LockKeyhole size={18} /> : <Hash size={18} />}</span><span className="contact-row__content"><span><strong>{channel.display_name || channel.name}</strong>{channel.unread_count > 0 && <b className="unread-badge">{channel.unread_count}</b>}</span><span className="contact-row__preview">{channel.state === "archived" ? "Archived · read-only" : channel.state === "leaving" ? "Leaving · read-only" : channel.topic || (channel.visibility === "private" ? "Private signed roster" : "Everyone in the workspace")}</span></span></button>)}
             {selectedWorkspaceChannels.length === 0 && <div className="workspace-channel-pending"><RefreshCw size={16} /><span>{selectedWorkspace.state === "joining" ? "Waiting for #general access" : "Channel controls are syncing"}</span></div>}
             <button className="workspace-nav-action" onClick={() => setWorkspaceBrowseOpen(true)}><Search size={17} />Browse channels <span>{selectedWorkspace.channel_discovery === "converged" ? selectedWorkspaceChannels.length : "…"}</span></button>
             {selectedWorkspace.state === "active" && (selectedWorkspace.policies.channel_creation === "all_members" || selectedWorkspace.local_role === "owner") && <button className="workspace-nav-action" onClick={() => setWorkspaceCreateChannelOpen(true)}><Plus size={17} />Create channel</button>}
             <p className="workspace-nav__label">Direct messages</p>
-            {selectedWorkspaceDirects.map((direct) => <button key={direct.id} className={`contact-row workspace-channel-row ${selectedWorkspaceDirect?.id === direct.id ? "contact-row--selected" : ""}`} onClick={() => { setWorkspaceSelectedDirectId(direct.id); setWorkspaceSelectedChannelId(null); }}><Avatar name={direct.peer_display_name} small /><span className="contact-row__content"><span><strong>{direct.peer_display_name}</strong>{direct.unread_count > 0 && <b className="unread-badge">{direct.unread_count}</b>}</span><span className="contact-row__preview">{direct.state === "read_only" ? "Former member · read-only" : `Workspace DM · ${direct.peer_short_id}`}</span></span></button>)}
+            {selectedWorkspaceDirects.map((direct) => <button key={direct.id} className={`contact-row workspace-channel-row ${!workspaceMentionsOpen && selectedWorkspaceDirect?.id === direct.id ? "contact-row--selected" : ""}`} onClick={() => { setWorkspaceMentionsOpen(false); setWorkspaceSelectedDirectId(direct.id); setWorkspaceSelectedChannelId(null); }}><Avatar name={direct.peer_display_name} small /><span className="contact-row__content"><span><strong>{direct.peer_display_name}</strong>{direct.unread_count > 0 && <b className="unread-badge">{direct.unread_count}</b>}</span><span className="contact-row__preview">{direct.state === "read_only" ? "Former member · read-only" : `Workspace DM · ${direct.peer_short_id}`}</span></span></button>)}
             {selectedWorkspaceDirects.length === 0 && <p className="workspace-direct-empty">Start a private workspace chat from People.</p>}
             <p className="workspace-nav__label">Workspace</p>
             <button className="workspace-nav-action" onClick={() => setWorkspacePeopleOpen(true)}><Users size={17} />People <span>{selectedWorkspace.members.filter((member) => member.status === "active").length}</span></button>
@@ -2944,12 +3069,15 @@ function Messenger({ snapshot, refresh, workspaceChannelInvalidation, onLock, in
             <span><strong>Networking is unavailable.</strong> Put both devices on the same local network and reopen Mesh Chat. Your profile and queued messages are safe.</span>
           </div>
         )}
-        {selectedWorkspace ? (selectedWorkspaceDirect ? (
+        {selectedWorkspace ? (workspaceMentionsOpen ? (
+          <WorkspaceMentions workspace={selectedWorkspace} page={workspaceMentionPage} loading={workspaceMentionLoading} error={workspaceError} onLoadOlder={() => void loadWorkspaceMentions(true)} onMarkRead={() => void markWorkspaceMentionsRead()} onOpenConversation={openWorkspaceMentionConversation} />
+        ) : selectedWorkspaceDirect ? (
           <WorkspaceDirectConversation
             workspace={selectedWorkspace}
             direct={selectedWorkspaceDirect}
             page={workspacePage}
-            draft={workspaceDrafts[selectedWorkspaceDirect.id] ?? ""}
+            draft={workspaceDrafts[selectedWorkspaceDirect.id]?.text ?? ""}
+            mentionMemberIds={eligibleWorkspaceMentionMemberIds(selectedWorkspace, selectedWorkspaceDirect.participant_member_ids, workspaceDrafts[selectedWorkspaceDirect.id]?.mentionMemberIds ?? [])}
             loading={workspacePageLoading}
             sending={workspaceSending}
             error={workspaceError}
@@ -2957,11 +3085,11 @@ function Messenger({ snapshot, refresh, workspaceChannelInvalidation, onLock, in
             reactionCatalogOpen={reactionTarget?.kind === "workspace" && reactionTarget.layer === "catalog"}
             reactionBusyEmoji={reactionBusy?.kind === "workspace" ? reactionBusy.emoji : null}
             reactionError={reactionTarget?.kind === "workspace" ? reactionError : ""}
-            onDraft={(value) => { setWorkspaceError(""); saveWorkspaceDirectDraft(selectedWorkspace.id, selectedWorkspaceDirect.id, value); }}
+            onDraft={(value, mentionMemberIds) => { setWorkspaceError(""); saveWorkspaceDirectDraft(selectedWorkspace.id, selectedWorkspaceDirect.id, value, mentionMemberIds); }}
             onSend={() => void sendWorkspaceMessage()}
             onLoadOlder={() => void loadWorkspaceMessages(true)}
             onHideMessage={(eventId) => void hideWorkspaceMessage(eventId)}
-            onEdit={(eventId, text) => void mutateWorkspaceMessage("edit_workspace_message", eventId, text)}
+            onEdit={(eventId, text, mentionMemberIds) => void mutateWorkspaceMessage("edit_workspace_message", eventId, text, mentionMemberIds)}
             onDelete={(eventId) => void mutateWorkspaceMessage("delete_workspace_message", eventId)}
             onToggleReactionPicker={(eventId) => toggleReactionPicker("workspace", eventId)}
             onReactionCatalogOpenChange={(eventId, open) => setReactionCatalogOpen("workspace", eventId, open)}
@@ -2975,7 +3103,8 @@ function Messenger({ snapshot, refresh, workspaceChannelInvalidation, onLock, in
             workspace={selectedWorkspace}
             channel={selectedWorkspaceChannel}
             page={workspacePage}
-            draft={workspaceDrafts[selectedWorkspaceChannel.id] ?? ""}
+            draft={workspaceDrafts[selectedWorkspaceChannel.id]?.text ?? ""}
+            mentionMemberIds={eligibleWorkspaceMentionMemberIds(selectedWorkspace, selectedWorkspaceChannel.visibility === "private" ? selectedWorkspaceChannel.member_ids : selectedWorkspace.members.filter((member) => member.status === "active").map((member) => member.id), workspaceDrafts[selectedWorkspaceChannel.id]?.mentionMemberIds ?? [])}
             loading={workspacePageLoading}
             sending={workspaceSending}
             error={workspaceError}
@@ -2983,11 +3112,11 @@ function Messenger({ snapshot, refresh, workspaceChannelInvalidation, onLock, in
             reactionCatalogOpen={reactionTarget?.kind === "workspace" && reactionTarget.layer === "catalog"}
             reactionBusyEmoji={reactionBusy?.kind === "workspace" ? reactionBusy.emoji : null}
             reactionError={reactionTarget?.kind === "workspace" ? reactionError : ""}
-            onDraft={(value) => { setWorkspaceError(""); saveWorkspaceDraft(selectedWorkspace.id, selectedWorkspaceChannel.id, value); }}
+            onDraft={(value, mentionMemberIds) => { setWorkspaceError(""); saveWorkspaceDraft(selectedWorkspace.id, selectedWorkspaceChannel.id, value, mentionMemberIds); }}
             onSend={() => void sendWorkspaceMessage()}
             onLoadOlder={() => void loadWorkspaceMessages(true)}
             onHide={(eventId) => void hideWorkspaceMessage(eventId)}
-            onEdit={(eventId, text) => void mutateWorkspaceMessage("edit_workspace_message", eventId, text)}
+            onEdit={(eventId, text, mentionMemberIds) => void mutateWorkspaceMessage("edit_workspace_message", eventId, text, mentionMemberIds)}
             onDelete={(eventId) => void mutateWorkspaceMessage("delete_workspace_message", eventId)}
             onToggleReactionPicker={(eventId) => toggleReactionPicker("workspace", eventId)}
             onReactionCatalogOpenChange={(eventId, open) => setReactionCatalogOpen("workspace", eventId, open)}
@@ -2997,6 +3126,7 @@ function Messenger({ snapshot, refresh, workspaceChannelInvalidation, onLock, in
             onSettings={() => setWorkspaceSettingsOpen(true)}
             onInvite={() => setInviteWorkspaceOpen(true)}
             onManage={() => setWorkspaceManageChannelOpen(true)}
+            onToggleMentionMute={() => void runWorkspaceChannelAction("set_workspace_channel_mentions_muted", { channel_id: selectedWorkspaceChannel.id, muted: !selectedWorkspaceChannel.mentions_muted })}
           />
         ) : (
           <section className="empty-state workspace-waiting"><div className="empty-state__icon"><Building2 size={31} /></div><h1>{selectedWorkspace.name}</h1><p>{workspaceStateLabel(selectedWorkspace)}. Keep Mesh Chat open so signed membership and channel controls can arrive.</p><Button variant="secondary" onClick={() => setWorkspacePeopleOpen(true)}><Users size={18} /> People</Button></section>
@@ -3058,7 +3188,7 @@ function Messenger({ snapshot, refresh, workspaceChannelInvalidation, onLock, in
       </div>
       {createWorkspaceOpen && <CreateWorkspaceDialog onClose={() => setCreateWorkspaceOpen(false)} onCreated={async (workspace) => { await refresh(true); setActiveSpaceId(workspace.id); setCreateWorkspaceOpen(false); }} />}
       {joinWorkspaceOpen && <JoinWorkspaceDialog initialValue={initialInvitation.startsWith("meshchat://workspace/") || initialInvitation.trim().startsWith("MESHWORKSPACE1:") || initialInvitation.includes("workspace_invite") ? initialInvitation : ""} onClose={() => { setJoinWorkspaceOpen(false); onInvitationHandled(); }} onJoined={async (workspace) => { await refresh(true); setActiveSpaceId(workspace.id); setJoinWorkspaceOpen(false); onInvitationHandled(); }} />}
-      {selectedWorkspace && workspaceBrowseOpen && <BrowseWorkspaceChannelsDialog workspace={selectedWorkspace} channels={selectedWorkspaceChannels.filter((channel) => channel.visibility === "public")} busy={workspaceActionBusy} error={workspaceActionError} onClose={() => setWorkspaceBrowseOpen(false)} onOpen={(channelId) => { setWorkspaceSelectedChannelId(channelId); setWorkspaceSelectedDirectId(null); setWorkspaceBrowseOpen(false); }} onSubscribe={(channelId, subscribed) => void runWorkspaceChannelAction("set_workspace_channel_subscription", { channel_id: channelId, subscribed })} onSync={() => void runWorkspaceChannelAction("sync_workspace_channels")} onCreate={() => { setWorkspaceBrowseOpen(false); setWorkspaceCreateChannelOpen(true); }} />}
+      {selectedWorkspace && workspaceBrowseOpen && <BrowseWorkspaceChannelsDialog workspace={selectedWorkspace} channels={selectedWorkspaceChannels.filter((channel) => channel.visibility === "public")} busy={workspaceActionBusy} error={workspaceActionError} onClose={() => setWorkspaceBrowseOpen(false)} onOpen={(channelId) => { setWorkspaceMentionsOpen(false); setWorkspaceSelectedChannelId(channelId); setWorkspaceSelectedDirectId(null); setWorkspaceBrowseOpen(false); }} onSubscribe={(channelId, subscribed) => void runWorkspaceChannelAction("set_workspace_channel_subscription", { channel_id: channelId, subscribed })} onSync={() => void runWorkspaceChannelAction("sync_workspace_channels")} onCreate={() => { setWorkspaceBrowseOpen(false); setWorkspaceCreateChannelOpen(true); }} />}
       {selectedWorkspace && workspaceCreateChannelOpen && <CreateWorkspaceChannelDialog workspace={selectedWorkspace} busy={workspaceActionBusy} error={workspaceActionError} onClose={() => setWorkspaceCreateChannelOpen(false)} onCreate={(name, topic, visibility, memberIds) => void runWorkspaceChannelAction("create_workspace_channel", { name, topic, visibility, member_ids: memberIds })} />}
       {selectedWorkspace && selectedWorkspaceChannel && workspaceManageChannelOpen && <ManageWorkspaceChannelDialog workspace={selectedWorkspace} channel={selectedWorkspaceChannel} transfers={workspaceChannelTransfers.filter((item) => item.workspace_id === selectedWorkspace.id)} busy={workspaceActionBusy} error={workspaceActionError} onClose={() => setWorkspaceManageChannelOpen(false)} onUpdate={(name, topic, archived) => void runWorkspaceChannelAction("update_workspace_channel", { channel_id: selectedWorkspaceChannel.id, name, topic, archived })} onMembers={(memberIds) => void runWorkspaceChannelAction("update_workspace_private_channel_members", { channel_id: selectedWorkspaceChannel.id, member_ids: memberIds })} onLeave={() => void runWorkspaceChannelAction("leave_workspace_private_channel", { channel_id: selectedWorkspaceChannel.id })} onOfferTransfer={(successorMemberId) => void runWorkspaceChannelAction("offer_workspace_channel_transfer", { channel_id: selectedWorkspaceChannel.id, successor_member_id: successorMemberId })} onAcceptTransfer={(transferId) => void runWorkspaceChannelAction("accept_workspace_channel_transfer", { transfer_id: transferId })} onRecover={() => void runWorkspaceChannelAction("recover_workspace_channel", { channel_id: selectedWorkspaceChannel.id })} />}
       {selectedWorkspace && inviteWorkspaceOpen && <WorkspaceInviteDialog workspace={selectedWorkspace} existingInvitations={workspaceInvitations.filter((invitation) => invitation.workspace_id === selectedWorkspace.id)} onClose={() => setInviteWorkspaceOpen(false)} />}

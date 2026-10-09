@@ -1624,6 +1624,52 @@ Artifact hashes for this run:
   accessibility, packet capture, protected-profile plaintext scanning,
   production signing, and in-place installation remain release gates.
 
+## Workspace increment 7 verification — 2026-10-09
+
+- Increment 7 adds canonical structured workspace mentions to messages and
+  edits. Protocol coverage verifies stable sorted member UUIDs, the eight-target
+  limit, exact signed-field validation, raw `@name` text remaining inert,
+  active-member authorization, private-channel and DM audience binding, and
+  edit/non-edit mention semantics.
+- Service coverage exercises mention delivery from unsubscribed public
+  channels, private-channel visibility, edit-time add/remove/re-add behavior,
+  stale-index suppression, independent encrypted paging/read state, per-channel
+  mention mute, encrypted draft mention IDs, restart durability, and removal or
+  local-leave filtering. Renderer coverage exercises the compose and edit
+  pickers, mention chips, highlighted messages, the paged Mentions inbox,
+  mark-all-read, mute controls, unread indicators, and stale-draft filtering.
+- The complete maintained verification passed **306 Python tests with 6
+  intentional environment/package skips**, **84 frontend tests**, all **3**
+  package-artwork verifier tests, TypeScript compilation, and the Vite
+  production build. `cargo fmt --check`, the locked Rust release check, and all
+  **6 release-profile tests** passed. The protected four-process topology and
+  both direct-LAN scenarios passed, as did all **3** exact 0.2.25
+  packaged-sidecar and 0.2.9 interoperability tests. The final executable
+  matched all **12** bundled artwork, metadata, and license files.
+- The maintained release driver immutably published desktop **0.2.25** without
+  changing prior releases. The 22,564,864-byte MSI has SHA-256
+  `AFBC45AB6339BC164E9DCAA0AFA3BAF4EC153BD28B4B3D43592F33153A2E7808`.
+  The 21,824,074-byte NSIS installer has SHA-256
+  `C59031E1A26A046924E53AA99E21EDC3019BEC9985372C1B01A87A03DDA0C4B9`.
+  The portable application reports file/product version 0.2.25 and hashes to
+  `41B6F21ED568A32C05BE4D51ABDD67F979E2027A8204906852490A1262730345`;
+  the sidecar hashes to
+  `B4649D04C799452566DF370B0580F8F5A3723E2A35FCB33A4AA6DBE4052F2C2C`.
+  The immutable manifest hashes to
+  `4AF385BDAB447916E3F29ECB89F90D3A7E62FBBDC0F2C6E74430D84D634F76D9`.
+  The immutable 0.2.23 and 0.2.24 builds remain preserved but were superseded
+  before installation. Final review found that hiding a workspace DM did not
+  suppress its otherwise inaccessible Mentions row. Version 0.2.24 corrected
+  that and filtered stale draft/edit mention targets, but its startup snapshot
+  still derived the mention badge by reading unread message bodies. Version
+  0.2.25 persists the derived count, migrates older records once, and verifies
+  that ordinary startup snapshots do not read message bodies.
+- No installer was launched and no existing Mesh Chat process or user profile
+  was modified. Physical concurrent-device mention partition/reconnect,
+  interactive native-window accessibility, packet capture, protected-profile
+  plaintext scanning, production signing, and in-place installation remain
+  release gates.
+
 ## Acceptance matrix
 
 | Gate | Current evidence |
@@ -1657,6 +1703,7 @@ Artifact hashes for this run:
 | Accessible joining | Labels, focus, keyboard, contrast and live regions implemented; assistive-tech audit pending |
 | Workspace increment 3 | Increment 2 coverage remains green. Public-channel signed chains, paged summaries/fetches, explicit incomplete discovery, duplicate names, policy enforcement, management transfer/recovery/archive, subscriptions, unread persistence, reversed controls, channel-scoped forks, Tauri allowlisting, and manager/member UI denial paths are automated. Isolated and direct-LAN process topologies plus the immutable packaged sidecar passed; physical eight-install restart/kill-point/partition runs and a native-window walkthrough remain release gates |
 | Workspace increment 5 | Increment 4 coverage remains green. Deterministic participant-only workspace DMs, canonical authorization, independent encrypted local state, bidirectional delivery, hide/reopen, restart, removal gating/cancellation, desktop command allowlisting, and Contacts isolation are automated. Isolated, direct-LAN, packaged-current, and 0.2.9 compatibility paths passed; physical multi-install DM partition/reconnect, native-window, and plaintext-scan gates remain open |
-| Workspace increment 6 | Canonical edits, author deletion tombstones, per-member/per-emoji reactions, inactive tombstones, target/base revision binding, deterministic concurrent resolution, same-device equivocation freeze, out-of-order pending/drain, restart durability, current/historical audience authorization, posting-policy independence, desktop command allowlisting, and public/private/DM renderer/service paths are automated. Physical concurrent-device partition/reconnect, native-window interaction, packet capture, protected-profile plaintext scan, and immutable package verification remain release gates |
+| Workspace increment 6 | Canonical edits, author deletion tombstones, per-member/per-emoji reactions, inactive tombstones, target/base revision binding, deterministic concurrent resolution, same-device equivocation freeze, out-of-order pending/drain, restart durability, current/historical audience authorization, posting-policy independence, desktop command allowlisting, and public/private/DM renderer/service paths are automated. Immutable package verification passed; physical concurrent-device partition/reconnect, native-window interaction, packet capture, and protected-profile plaintext scanning remain release gates |
+| Workspace increment 7 | Canonical structured mentions, exact audience authorization, edit add/remove/re-add semantics, encrypted mention index/paging/read/mute/draft state, unsubscribed-public delivery, private/DM isolation, stale-index and stale-draft filtering, desktop command allowlisting, and compose/edit/inbox renderer paths are automated. Protected topology, direct-LAN, immutable packaged-current, 0.2.9 compatibility, and final artwork verification passed; physical concurrent-device mention partition/reconnect, native-window accessibility, packet capture, and protected-profile plaintext scanning remain release gates |
 
 Do not mark a release complete from unit tests alone. Store packet captures, topology configs, full-tree scans, package hashes, platform versions, human timing sheets, and failure notes with the release evidence.

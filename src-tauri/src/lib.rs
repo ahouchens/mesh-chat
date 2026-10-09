@@ -447,6 +447,9 @@ fn allowed_renderer_command(command: &str) -> bool {
             | "list_workspace_direct_messages"
             | "mark_workspace_read"
             | "mark_workspace_direct_read"
+            | "list_workspace_mentions"
+            | "mark_workspace_mentions_read"
+            | "set_workspace_channel_mentions_muted"
             | "hide_workspace_message"
             | "save_workspace_draft"
             | "save_workspace_direct_draft"
@@ -492,6 +495,9 @@ fn workspace_renderer_command(command: &str) -> bool {
             | "list_workspace_direct_messages"
             | "mark_workspace_read"
             | "mark_workspace_direct_read"
+            | "list_workspace_mentions"
+            | "mark_workspace_mentions_read"
+            | "set_workspace_channel_mentions_muted"
             | "hide_workspace_message"
             | "save_workspace_draft"
             | "save_workspace_direct_draft"
@@ -911,6 +917,9 @@ mod tests {
             "list_workspace_direct_messages",
             "mark_workspace_read",
             "mark_workspace_direct_read",
+            "list_workspace_mentions",
+            "mark_workspace_mentions_read",
+            "set_workspace_channel_mentions_muted",
             "hide_workspace_message",
             "save_workspace_draft",
             "save_workspace_direct_draft",

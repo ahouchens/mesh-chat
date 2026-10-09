@@ -168,8 +168,11 @@ class MeshChatService(ReactionServiceMixin, GroupServiceMixin, WorkspaceServiceM
         "set_workspace_reaction",
         "list_workspace_messages",
         "list_workspace_direct_messages",
+        "list_workspace_mentions",
         "mark_workspace_read",
         "mark_workspace_direct_read",
+        "mark_workspace_mentions_read",
+        "set_workspace_channel_mentions_muted",
         "hide_workspace_message",
         "save_workspace_draft",
         "save_workspace_direct_draft",
@@ -190,6 +193,7 @@ class MeshChatService(ReactionServiceMixin, GroupServiceMixin, WorkspaceServiceM
         "preview_workspace_invitation",
         "list_workspace_messages",
         "list_workspace_direct_messages",
+        "list_workspace_mentions",
     }
 
     def __init__(self, store: VaultStore, profile_dir: Path, emit: EventCallback):
@@ -1990,6 +1994,7 @@ class MeshChatService(ReactionServiceMixin, GroupServiceMixin, WorkspaceServiceM
                     "channel_id",
                     "event_id",
                     "text",
+                    "mention_member_ids",
                 },
                 required={
                     "operation_id",
@@ -2005,6 +2010,7 @@ class MeshChatService(ReactionServiceMixin, GroupServiceMixin, WorkspaceServiceM
                 body["text"],
                 body["event_id"],
                 body["operation_id"],
+                body.get("mention_member_ids"),
             )
         if command == "open_workspace_direct":
             body = _payload(
@@ -2035,6 +2041,7 @@ class MeshChatService(ReactionServiceMixin, GroupServiceMixin, WorkspaceServiceM
                     "conversation_id",
                     "event_id",
                     "text",
+                    "mention_member_ids",
                 },
                 required={
                     "operation_id",
@@ -2050,13 +2057,14 @@ class MeshChatService(ReactionServiceMixin, GroupServiceMixin, WorkspaceServiceM
                 body["text"],
                 body["event_id"],
                 body["operation_id"],
+                body.get("mention_member_ids"),
             )
         if command == "edit_workspace_message":
             body = _payload(
                 value,
                 allowed={
                     "operation_id", "workspace_id", "event_id",
-                    "mutation_event_id", "text",
+                    "mutation_event_id", "text", "mention_member_ids",
                 },
                 required={
                     "operation_id", "workspace_id", "event_id",
@@ -2066,6 +2074,7 @@ class MeshChatService(ReactionServiceMixin, GroupServiceMixin, WorkspaceServiceM
             return self.edit_workspace_message(
                 body["workspace_id"], body["event_id"], body["text"],
                 body["mutation_event_id"], body["operation_id"],
+                body.get("mention_member_ids"),
             )
         if command == "delete_workspace_message":
             body = _payload(
@@ -2157,6 +2166,40 @@ class MeshChatService(ReactionServiceMixin, GroupServiceMixin, WorkspaceServiceM
                 body["high_water"],
                 body["operation_id"],
             )
+        if command == "list_workspace_mentions":
+            body = _payload(
+                value,
+                allowed={"workspace_id", "cursor", "limit"},
+                required={"workspace_id"},
+            )
+            return self.list_workspace_mentions(
+                body["workspace_id"],
+                body.get("cursor"),
+                body.get("limit", 50),
+            )
+        if command == "mark_workspace_mentions_read":
+            body = _payload(
+                value,
+                allowed={"operation_id", "workspace_id", "high_water"},
+                required={"operation_id", "workspace_id", "high_water"},
+            )
+            return self.mark_workspace_mentions_read(
+                body["workspace_id"],
+                body["high_water"],
+                body["operation_id"],
+            )
+        if command == "set_workspace_channel_mentions_muted":
+            body = _payload(
+                value,
+                allowed={"operation_id", "workspace_id", "channel_id", "muted"},
+                required={"operation_id", "workspace_id", "channel_id", "muted"},
+            )
+            return self.set_workspace_channel_mentions_muted(
+                body["workspace_id"],
+                body["channel_id"],
+                body["muted"],
+                body["operation_id"],
+            )
         if command == "hide_workspace_message":
             body = _payload(
                 value,
@@ -2169,7 +2212,7 @@ class MeshChatService(ReactionServiceMixin, GroupServiceMixin, WorkspaceServiceM
         if command == "save_workspace_draft":
             body = _payload(
                 value,
-                allowed={"operation_id", "workspace_id", "channel_id", "text"},
+                allowed={"operation_id", "workspace_id", "channel_id", "text", "mention_member_ids"},
                 required={"operation_id", "workspace_id", "channel_id", "text"},
             )
             return self.save_workspace_draft(
@@ -2177,6 +2220,7 @@ class MeshChatService(ReactionServiceMixin, GroupServiceMixin, WorkspaceServiceM
                 body["channel_id"],
                 body["text"],
                 body["operation_id"],
+                body.get("mention_member_ids"),
             )
         if command == "save_workspace_direct_draft":
             body = _payload(
@@ -2186,6 +2230,7 @@ class MeshChatService(ReactionServiceMixin, GroupServiceMixin, WorkspaceServiceM
                     "workspace_id",
                     "conversation_id",
                     "text",
+                    "mention_member_ids",
                 },
                 required={
                     "operation_id",
@@ -2199,6 +2244,7 @@ class MeshChatService(ReactionServiceMixin, GroupServiceMixin, WorkspaceServiceM
                 body["conversation_id"],
                 body["text"],
                 body["operation_id"],
+                body.get("mention_member_ids"),
             )
         if command in {"leave_workspace", "close_workspace"}:
             body = _payload(

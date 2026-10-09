@@ -150,6 +150,16 @@ class WorkspaceServiceMixin:
         conversation_id: str | None = None,
         resource_kind: str = "workspace",
     ) -> None:
+        workspace = self.store.get(
+            "workspace", self._workspace_record_id(workspace_id)
+        )
+        if workspace is not None:
+            unread = self._workspace_mention_unread_count(workspace)
+            if int(workspace.get("mention_unread_count", -1)) != unread:
+                workspace["mention_unread_count"] = unread
+                self.store.put(
+                    "workspace", self._workspace_record_id(workspace_id), workspace
+                )
         self.emit(
             {
                 "type": "event",
@@ -230,6 +240,22 @@ class WorkspaceServiceMixin:
     ) -> str:
         return self.store.opaque_id(
             "workspace-conversation-page", workspace_id, conversation_id, seed
+        )
+
+    def _workspace_mention_index_id(self, workspace_id: str) -> str:
+        return self.store.opaque_id("workspace-mention-index", workspace_id)
+
+    def _workspace_mention_page_id(self, workspace_id: str, seed: str) -> str:
+        return self.store.opaque_id("workspace-mention-page", workspace_id, seed)
+
+    def _workspace_mention_read_id(self, workspace_id: str) -> str:
+        return self.store.opaque_id("workspace-read-state", workspace_id, "mentions")
+
+    def _workspace_notification_preference_id(
+        self, workspace_id: str, conversation_id: str
+    ) -> str:
+        return self.store.opaque_id(
+            "workspace-notification-preference", workspace_id, conversation_id
         )
 
     def _workspace_stream_head_id(
@@ -925,6 +951,245 @@ class WorkspaceServiceMixin:
             "updated_at": float(channel.created_at),
         }
 
+    def _validate_workspace_mentions(
+        self,
+        workspace: dict[str, Any],
+        conversation_id: str,
+        value: Any,
+    ) -> tuple[str, ...]:
+        if value is None:
+            return ()
+        if not isinstance(value, list) or len(value) > MAX_ACTIVE_MEMBERS:
+            raise ValidationError("Workspace mentions are invalid")
+        try:
+            checked = [str(uuid.UUID(item)) for item in value]
+        except (ValueError, TypeError, AttributeError) as exc:
+            raise ValidationError("Workspace mentions are invalid") from exc
+        if any(checked_item != item for checked_item, item in zip(checked, value)):
+            raise ValidationError("Workspace mentions are invalid")
+        mentions = tuple(sorted(set(checked)))
+        if len(mentions) != len(value):
+            raise ValidationError("Workspace mentions are not canonical")
+        manifest = self._workspace_current_manifest(workspace)
+        kind, conversation = self._require_workspace_conversation(
+            workspace["id"], conversation_id
+        )
+        if kind == "direct":
+            entitled = set(conversation.get("participant_member_ids", ()))
+        elif conversation.get("visibility") == "private":
+            entitled = set(conversation.get("member_ids", ()))
+        else:
+            entitled = {
+                member.member_id
+                for member in active_members(manifest)
+            }
+        if any(
+            member_id not in entitled
+            or (member := find_member(manifest, member_id)) is None
+            or member.status != "active"
+            for member_id in mentions
+        ):
+            raise ContactNotApproved(
+                "A workspace mention target cannot read this conversation"
+            )
+        return mentions
+
+    def _workspace_mentions_muted(
+        self, workspace_id: str, conversation_id: str
+    ) -> bool:
+        preference = self.store.get(
+            "workspace_notification_preference",
+            self._workspace_notification_preference_id(
+                workspace_id, conversation_id
+            ),
+        )
+        return bool(preference and preference.get("mentions_muted"))
+
+    def _workspace_draft_for_snapshot(
+        self,
+        draft: dict[str, Any],
+        workspaces: dict[str, dict[str, Any]],
+    ) -> dict[str, Any] | None:
+        workspace_id = draft.get("workspace_id")
+        conversation_id = draft.get("conversation_id")
+        if not isinstance(workspace_id, str) or not isinstance(
+            conversation_id, str
+        ):
+            return None
+        workspace = workspaces.get(workspace_id)
+        if workspace is None:
+            return None
+        manifest = self._workspace_current_manifest(workspace)
+        local_member_id = str(workspace.get("local_member_id", ""))
+        local_member = find_member(manifest, local_member_id)
+        if local_member is None or local_member.status != "active":
+            return None
+        if workspace.get("state") not in {"active", "incomplete_sync"}:
+            return None
+        try:
+            kind, conversation = self._require_workspace_conversation(
+                workspace_id, conversation_id
+            )
+        except (ContactNotApproved, ValidationError):
+            return None
+        if kind == "direct":
+            entitled = set(conversation.get("participant_member_ids", ()))
+            if (
+                conversation.get("workspace_id") != workspace_id
+                or local_member_id not in entitled
+            ):
+                return None
+        elif conversation.get("visibility") == "private":
+            entitled = set(conversation.get("member_ids", ()))
+            if (
+                conversation.get("state") not in {"active", "archived"}
+                or local_member_id not in entitled
+            ):
+                return None
+        else:
+            if conversation.get("state") not in {"active", "archived"}:
+                return None
+            entitled = {member.member_id for member in active_members(manifest)}
+        visible_mentions = sorted(
+            member_id
+            for member_id in draft.get("mention_member_ids", ())
+            if member_id in entitled
+            and (member := find_member(manifest, member_id)) is not None
+            and member.status == "active"
+        )
+        public = {
+            "workspace_id": workspace_id,
+            "conversation_id": conversation_id,
+            "text": str(draft.get("text", "")),
+        }
+        if visible_mentions:
+            public["mention_member_ids"] = visible_mentions
+        return public
+
+    def _workspace_mention_visible(
+        self,
+        workspace: dict[str, Any],
+        entry: dict[str, Any],
+        message: dict[str, Any],
+    ) -> bool:
+        local_member_id = str(workspace.get("local_member_id", ""))
+        if (
+            local_member_id not in message.get("mention_member_ids", ())
+            or message.get("deleted")
+            or workspace.get("state") not in {"active", "incomplete_sync"}
+            or self.store.get(
+                "workspace_message_hidden",
+                self.store.opaque_id(
+                    "workspace-message-hidden", workspace["id"], message["id"]
+                ),
+            )
+            is not None
+        ):
+            return False
+        if int(entry.get("position", 0)) != int(
+            message.get("mention_position", 0)
+        ):
+            return False
+        manifest = self._workspace_current_manifest(workspace)
+        local_member = find_member(manifest, local_member_id)
+        if local_member is None or local_member.status != "active":
+            return False
+        conversation_id = str(entry.get("conversation_id", ""))
+        if entry.get("conversation_kind") == "direct":
+            direct = self.store.get(
+                "workspace_direct", self._workspace_direct_record_id(conversation_id)
+            )
+            return bool(
+                direct
+                and direct.get("workspace_id") == workspace["id"]
+                and not direct.get("hidden")
+                and local_member_id in direct.get("participant_member_ids", ())
+            )
+        channel = self.store.get(
+            "workspace_channel", self._workspace_channel_record_id(conversation_id)
+        )
+        if (
+            channel is None
+            or channel.get("workspace_id") != workspace["id"]
+            or channel.get("state") not in {"active", "archived"}
+            or (
+                channel.get("visibility") == "private"
+                and local_member_id not in channel.get("member_ids", ())
+            )
+            or self._workspace_mentions_muted(workspace["id"], conversation_id)
+        ):
+            return False
+        return True
+
+    def _workspace_mention_authorization_digest(
+        self, workspace: dict[str, Any]
+    ) -> str:
+        channel_state = []
+        for channel in self.store.list("workspace_channel"):
+            if channel.get("workspace_id") != workspace["id"]:
+                continue
+            channel_state.append(
+                {
+                    "id": channel.get("id"),
+                    "head": channel.get("head_hash"),
+                    "state": channel.get("state"),
+                    "members": channel.get("member_ids", []),
+                    "mentions_muted": self._workspace_mentions_muted(
+                        workspace["id"], str(channel.get("id", ""))
+                    ),
+                }
+            )
+        return hashlib.sha256(
+            canonical_bytes(
+                {
+                    "manifest": workspace.get("manifest_hash"),
+                    "channels": sorted(channel_state, key=lambda item: str(item["id"])),
+                }
+            )
+        ).hexdigest()
+
+    def _workspace_mention_unread_count(
+        self,
+        workspace: dict[str, Any],
+        read_high_water_override: int | None = None,
+    ) -> int:
+        index = self.store.get(
+            "workspace_mention_index",
+            self._workspace_mention_index_id(workspace["id"]),
+        )
+        if index is None:
+            return 0
+        read = self.store.get(
+            "workspace_read_state", self._workspace_mention_read_id(workspace["id"])
+        )
+        read_high_water = (
+            read_high_water_override
+            if read_high_water_override is not None
+            else int(read.get("high_water", 0)) if read else 0
+        )
+        unread = 0
+        page_id = index.get("head_page")
+        while isinstance(page_id, str):
+            page = self.store.get("workspace_mention_index", page_id)
+            if page is None:
+                break
+            stop = False
+            for entry in reversed(page.get("entries", ())):
+                if int(entry.get("position", 0)) <= read_high_water:
+                    stop = True
+                    break
+                message = self.store.get(
+                    "workspace_message_state", entry.get("message_record_id")
+                )
+                if message is not None and self._workspace_mention_visible(
+                    workspace, entry, message
+                ):
+                    unread += 1
+            if stop:
+                break
+            page_id = page.get("previous_page")
+        return unread
+
     def _public_workspace(self, workspace: dict[str, Any]) -> dict[str, Any]:
         public = {
             key: value
@@ -959,6 +1224,9 @@ class WorkspaceServiceMixin:
             <= 1
             else "incomplete",
         )
+        public["mention_unread_count"] = int(
+            workspace.get("mention_unread_count", 0)
+        )
         return public
 
     def _public_workspace_channel(
@@ -990,6 +1258,9 @@ class WorkspaceServiceMixin:
         public["is_general"] = is_general
         public["subscribed"] = is_general or bool(
             subscription and subscription.get("subscribed")
+        )
+        public["mentions_muted"] = self._workspace_mentions_muted(
+            workspace_id, channel_id
         )
         public["duplicate_name"] = duplicate_name
         public["display_name"] = (
@@ -2115,6 +2386,75 @@ class WorkspaceServiceMixin:
         self._workspace_changed(workspace_id, resource_kind="join_request")
         return committed
 
+    def _workspace_mention_index_records(
+        self,
+        *,
+        workspace_id: str,
+        event_id: str,
+        conversation_id: str,
+        conversation_kind: str,
+        created_at: float,
+        message_record_id: str,
+        message: dict[str, Any],
+    ) -> list[tuple[str, str, dict[str, Any]]]:
+        mention_index_id = self._workspace_mention_index_id(workspace_id)
+        mention_index = self.store.get(
+            "workspace_mention_index", mention_index_id
+        ) or {
+            "workspace_id": workspace_id,
+            "head_page": None,
+            "count": 0,
+            "high_water": 0,
+        }
+        mention_page_id = mention_index.get("head_page")
+        mention_page = (
+            self.store.get("workspace_mention_index", mention_page_id)
+            if isinstance(mention_page_id, str)
+            else None
+        )
+        mention_position = int(mention_index.get("high_water", 0)) + 1
+        mention_entry = {
+            "event_id": event_id,
+            "message_record_id": message_record_id,
+            "conversation_id": conversation_id,
+            "conversation_kind": conversation_kind,
+            "position": mention_position,
+            "created_at": created_at,
+        }
+        mention_size = len(
+            json.dumps(mention_entry, separators=(",", ":")).encode("utf-8")
+        )
+        if (
+            mention_page is None
+            or len(mention_page.get("entries", [])) >= MESSAGE_PAGE_ENTRIES
+            or int(mention_page.get("encoded_bytes", 0)) + mention_size
+            > MESSAGE_PAGE_MAX_BYTES
+        ):
+            mention_page_id = self._workspace_mention_page_id(
+                workspace_id, event_id
+            )
+            mention_page = {
+                "workspace_id": workspace_id,
+                "previous_page": mention_index.get("head_page"),
+                "entries": [],
+                "encoded_bytes": 0,
+            }
+            mention_index["head_page"] = mention_page_id
+        mention_page["entries"] = [
+            *mention_page.get("entries", []),
+            mention_entry,
+        ]
+        mention_page["encoded_bytes"] = int(
+            mention_page.get("encoded_bytes", 0)
+        ) + mention_size
+        mention_index["count"] = int(mention_index.get("count", 0)) + 1
+        mention_index["high_water"] = mention_position
+        message["mention_position"] = mention_position
+        return [
+            ("workspace_mention_index", mention_index_id, mention_index),
+            ("workspace_mention_index", mention_page_id, mention_page),
+        ]
+
     def _append_workspace_event_records(
         self,
         workspace: dict[str, Any],
@@ -2140,6 +2480,7 @@ class WorkspaceServiceMixin:
                 "direct" if event.channel_digest is None else "channel"
             ),
             "audience_member_ids": list(event.audience_member_ids),
+            "mention_member_ids": list(event.mentions),
             "target_event_id": event.target_event_id,
             "base_revision": event.base_revision,
             "revision": event.revision,
@@ -2210,6 +2551,7 @@ class WorkspaceServiceMixin:
             "mutation_frozen": False,
             "mutation_candidates": [],
             "reactions": [],
+            "mention_member_ids": list(event.mentions),
             "sequence": event.sequence,
             "event_digest": event.digest,
             "conversation_kind": (
@@ -2272,6 +2614,18 @@ class WorkspaceServiceMixin:
                 ("workspace_conversation_index", page_id, page),
             ]
         )
+        if workspace.get("local_member_id") in event.mentions:
+            records.extend(
+                self._workspace_mention_index_records(
+                    workspace_id=event.workspace_id,
+                    event_id=event.event_id,
+                    conversation_id=event.conversation_id,
+                    conversation_kind=message["conversation_kind"],
+                    created_at=float(event.created_at),
+                    message_record_id=message_record_id,
+                    message=message,
+                )
+            )
         return records, message
 
     def _workspace_mutation_context(
@@ -2337,6 +2691,9 @@ class WorkspaceServiceMixin:
         }
         if event.event_type == "edit":
             candidate["text"] = event.text
+            candidate["mention_member_ids"] = list(
+                getattr(event, "mentions", ())
+            )
         elif event.event_type == "reaction":
             candidate["active"] = event.reaction_active
         return candidate
@@ -2347,6 +2704,7 @@ class WorkspaceServiceMixin:
             candidate.get("event_type"),
             candidate.get("base_revision"),
             candidate.get("text"),
+            tuple(candidate.get("mention_member_ids", ())),
             candidate.get("active"),
         )
 
@@ -2402,6 +2760,10 @@ class WorkspaceServiceMixin:
         )
         updated["edited_at"] = float(winner.get("created_at", event.created_at))
         updated["text"] = "" if deleted else str(winner.get("text", ""))
+        if not deleted and winner.get("event_type") == "edit":
+            updated["mention_member_ids"] = list(
+                winner.get("mention_member_ids", ())
+            )
         return updated
 
     def _apply_workspace_reaction_mutation(
@@ -2479,7 +2841,34 @@ class WorkspaceServiceMixin:
         message_id = self._workspace_message_record_id(message["id"])
         if event.event_type in {"edit", "delete"}:
             updated = self._apply_workspace_message_mutation(message, event)
-            return [("workspace_message_state", message_id, updated)], updated
+            records = [("workspace_message_state", message_id, updated)]
+            local_member_id = str(
+                self._require_workspace(event.workspace_id).get(
+                    "local_member_id", ""
+                )
+            )
+            was_mentioned = local_member_id in message.get(
+                "mention_member_ids", ()
+            )
+            is_mentioned = (
+                not updated.get("deleted")
+                and local_member_id in updated.get("mention_member_ids", ())
+            )
+            if is_mentioned and not was_mentioned:
+                records.extend(
+                    self._workspace_mention_index_records(
+                        workspace_id=event.workspace_id,
+                        event_id=event.event_id,
+                        conversation_id=event.conversation_id,
+                        conversation_kind=str(message["conversation_kind"]),
+                        created_at=float(event.created_at),
+                        message_record_id=message_id,
+                        message=updated,
+                    )
+                )
+            elif was_mentioned and not is_mentioned:
+                updated.pop("mention_position", None)
+            return records, updated
         assert event.reaction_emoji is not None
         reaction_id = self._workspace_reaction_record_id(
             event.workspace_id,
@@ -2536,6 +2925,7 @@ class WorkspaceServiceMixin:
         operation_id: Any,
         *,
         text: Any = None,
+        mention_member_ids: Any = None,
         emoji: Any = None,
         active: Any = None,
     ) -> dict[str, Any]:
@@ -2551,6 +2941,7 @@ class WorkspaceServiceMixin:
         }
         if event_type == "edit":
             payload["text"] = text
+            payload["mention_member_ids"] = mention_member_ids or []
         elif event_type == "reaction":
             payload.update({"emoji": emoji, "active": active})
         operation_id, digest, replay = self._workspace_operation(
@@ -2604,6 +2995,13 @@ class WorkspaceServiceMixin:
             or len(text.encode("utf-8")) > MAX_MESSAGE_TEXT_BYTES
         ):
             raise ValidationError("Workspace message is empty or too large")
+        mentions = (
+            self._validate_workspace_mentions(
+                workspace, message["conversation_id"], mention_member_ids
+            )
+            if event_type == "edit"
+            else ()
+        )
         if event_type == "reaction" and not isinstance(active, bool):
             raise ValidationError("Workspace reaction state is invalid")
         if event_type == "reaction":
@@ -2642,6 +3040,7 @@ class WorkspaceServiceMixin:
             base_revision=base_revision,
             revision=base_revision + 1,
             text=text if event_type == "edit" else None,
+            mention_member_ids=mentions if event_type == "edit" else None,
             emoji=emoji if event_type == "reaction" else None,
             active=active if event_type == "reaction" else None,
             audience_member_ids=audience or None,
@@ -2681,11 +3080,13 @@ class WorkspaceServiceMixin:
 
     def edit_workspace_message(
         self, workspace_id: Any, event_id: Any, text: Any,
-        mutation_event_id: Any, operation_id: Any
+        mutation_event_id: Any, operation_id: Any,
+        mention_member_ids: Any = None,
     ) -> dict[str, Any]:
         return self._send_workspace_mutation(
             "edit_workspace_message", workspace_id, event_id,
-            mutation_event_id, operation_id, text=text
+            mutation_event_id, operation_id, text=text,
+            mention_member_ids=mention_member_ids,
         )
 
     def delete_workspace_message(
@@ -2713,6 +3114,7 @@ class WorkspaceServiceMixin:
         text: Any,
         event_id: Any,
         operation_id: Any,
+        mention_member_ids: Any = None,
     ) -> dict[str, Any]:
         payload = {
             "workspace_id": workspace_id,
@@ -2720,6 +3122,8 @@ class WorkspaceServiceMixin:
             "text": text,
             "event_id": event_id,
         }
+        if mention_member_ids:
+            payload["mention_member_ids"] = mention_member_ids
         operation_id, digest, replay = self._workspace_operation(
             "send_workspace_message", operation_id, payload
         )
@@ -2733,6 +3137,9 @@ class WorkspaceServiceMixin:
             raise ContactNotApproved("Workspace channel is not active")
         if not isinstance(text, str) or not text.strip() or len(text.encode("utf-8")) > MAX_MESSAGE_TEXT_BYTES:
             raise ValidationError("Workspace message is empty or too large")
+        mentions = self._validate_workspace_mentions(
+            workspace, channel_id, mention_member_ids
+        )
         if not isinstance(event_id, str):
             raise ValidationError("Workspace event ID is invalid")
         try:
@@ -2780,6 +3187,7 @@ class WorkspaceServiceMixin:
             manifest_digest=manifest.digest,
             channel_digest=channel.digest,
             text=text,
+            mention_member_ids=mentions,
             audience_member_ids=(
                 channel.member_ids if channel.visibility == "private" else None
             ),
@@ -2990,6 +3398,7 @@ class WorkspaceServiceMixin:
         text: Any,
         event_id: Any,
         operation_id: Any,
+        mention_member_ids: Any = None,
     ) -> dict[str, Any]:
         payload = {
             "workspace_id": workspace_id,
@@ -2997,6 +3406,8 @@ class WorkspaceServiceMixin:
             "text": text,
             "event_id": event_id,
         }
+        if mention_member_ids:
+            payload["mention_member_ids"] = mention_member_ids
         operation_id, digest, replay = self._workspace_operation(
             "send_workspace_direct_message", operation_id, payload
         )
@@ -3008,6 +3419,9 @@ class WorkspaceServiceMixin:
         if not isinstance(conversation_id, str):
             raise ValidationError("Workspace direct-message identifier is invalid")
         direct = self._require_workspace_direct(workspace_id, conversation_id)
+        mentions = self._validate_workspace_mentions(
+            workspace, conversation_id, mention_member_ids
+        )
         if (
             not isinstance(text, str)
             or not text.strip()
@@ -3064,6 +3478,7 @@ class WorkspaceServiceMixin:
             manifest_digest=manifest.digest,
             channel_digest=None,
             text=text,
+            mention_member_ids=mentions,
             audience_member_ids=participants,
         )
         event = verify_workspace_event(
@@ -5059,6 +5474,272 @@ class WorkspaceServiceMixin:
         )
         return committed
 
+    def list_workspace_mentions(
+        self,
+        workspace_id: Any,
+        cursor: Any = None,
+        limit: Any = MESSAGE_PAGE_DEFAULT,
+    ) -> dict[str, Any]:
+        workspace = self._require_workspace(workspace_id)
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= MESSAGE_PAGE_MAX:
+            raise ValidationError("Workspace mention page size is invalid")
+        index = self.store.get(
+            "workspace_mention_index", self._workspace_mention_index_id(workspace_id)
+        )
+        if index is None:
+            return {
+                "mentions": [],
+                "next_cursor": None,
+                "high_water": 0,
+                "unread_count": 0,
+            }
+        authorization_digest = self._workspace_mention_authorization_digest(
+            workspace
+        )
+        page_id = index.get("head_page")
+        offset = 0
+        if cursor is not None:
+            if not isinstance(cursor, str):
+                raise ValidationError("Workspace mention cursor is invalid")
+            value = self.store.open_cursor(cursor)
+            expected = {
+                "v": 1,
+                "workspace_id": workspace_id,
+                "authorization_digest": authorization_digest,
+                "retention_generation": int(
+                    workspace.get("retention_generation", 1)
+                ),
+                "high_water": int(index.get("high_water", 0)),
+            }
+            if any(value.get(key) != item for key, item in expected.items()):
+                raise ValidationError("Workspace mention cursor is stale")
+            page_id = value.get("page_id")
+            offset = value.get("offset")
+            if (
+                not isinstance(page_id, str)
+                or isinstance(offset, bool)
+                or not isinstance(offset, int)
+                or offset < 0
+            ):
+                raise ValidationError("Workspace mention cursor is invalid")
+        read = self.store.get(
+            "workspace_read_state", self._workspace_mention_read_id(workspace_id)
+        )
+        read_high_water = int(read.get("high_water", 0)) if read else 0
+        results: list[dict[str, Any]] = []
+        next_page: str | None = None
+        next_offset = 0
+        while isinstance(page_id, str) and len(results) < limit:
+            page = self.store.get("workspace_mention_index", page_id)
+            if page is None or page.get("workspace_id") != workspace_id:
+                raise ValidationError("Workspace mention page is unavailable")
+            entries = page.get("entries", [])
+            if not isinstance(entries, list) or offset > len(entries):
+                raise ValidationError("Workspace mention page is invalid")
+            position = len(entries) - 1 - offset
+            while position >= 0 and len(results) < limit:
+                entry = entries[position]
+                message = self.store.get(
+                    "workspace_message_state", entry.get("message_record_id")
+                )
+                if message is not None and self._workspace_mention_visible(
+                    workspace, entry, message
+                ):
+                    conversation_id = str(entry["conversation_id"])
+                    if entry.get("conversation_kind") == "direct":
+                        direct = self.store.get(
+                            "workspace_direct",
+                            self._workspace_direct_record_id(conversation_id),
+                        )
+                        public_direct = (
+                            self._public_workspace_direct(direct)
+                            if direct is not None
+                            else None
+                        )
+                        conversation = {
+                            "id": conversation_id,
+                            "kind": "direct",
+                            "name": (
+                                public_direct.get("peer_display_name", "Member")
+                                if public_direct is not None
+                                else "Member"
+                            ),
+                            "visibility": "direct",
+                        }
+                    else:
+                        channel = self.store.get(
+                            "workspace_channel",
+                            self._workspace_channel_record_id(conversation_id),
+                        )
+                        conversation = {
+                            "id": conversation_id,
+                            "kind": "channel",
+                            "name": (
+                                str(channel.get("name", "channel"))
+                                if channel is not None
+                                else "channel"
+                            ),
+                            "visibility": (
+                                str(channel.get("visibility", "public"))
+                                if channel is not None
+                                else "public"
+                            ),
+                        }
+                    mention_position = int(entry.get("position", 0))
+                    results.append(
+                        {
+                            "position": mention_position,
+                            "read": mention_position <= read_high_water,
+                            "conversation": conversation,
+                            "message": self._public_workspace_message(message),
+                        }
+                    )
+                position -= 1
+                offset += 1
+            if len(results) >= limit and position >= 0:
+                next_page = page_id
+                next_offset = offset
+                break
+            page_id = page.get("previous_page")
+            offset = 0
+            if len(results) >= limit and isinstance(page_id, str):
+                next_page = page_id
+                next_offset = 0
+                break
+        next_cursor = None
+        if next_page is not None:
+            next_cursor = self.store.seal_cursor(
+                {
+                    "v": 1,
+                    "workspace_id": workspace_id,
+                    "authorization_digest": authorization_digest,
+                    "retention_generation": int(
+                        workspace.get("retention_generation", 1)
+                    ),
+                    "high_water": int(index.get("high_water", 0)),
+                    "page_id": next_page,
+                    "offset": next_offset,
+                }
+            )
+        return {
+            "mentions": results,
+            "next_cursor": next_cursor,
+            "high_water": int(index.get("high_water", 0)),
+            "unread_count": self._workspace_mention_unread_count(workspace),
+        }
+
+    def mark_workspace_mentions_read(
+        self,
+        workspace_id: Any,
+        high_water: Any,
+        operation_id: Any,
+    ) -> dict[str, Any]:
+        payload = {"workspace_id": workspace_id, "high_water": high_water}
+        operation_id, digest, replay = self._workspace_operation(
+            "mark_workspace_mentions_read", operation_id, payload
+        )
+        if replay is not None:
+            return replay
+        workspace = self._require_workspace(workspace_id)
+        index = self.store.get(
+            "workspace_mention_index", self._workspace_mention_index_id(workspace_id)
+        )
+        maximum = int(index.get("high_water", 0)) if index else 0
+        if (
+            isinstance(high_water, bool)
+            or not isinstance(high_water, int)
+            or not 0 <= high_water <= maximum
+        ):
+            raise ValidationError("Workspace mention read position is invalid")
+        read_id = self._workspace_mention_read_id(workspace_id)
+        previous = self.store.get("workspace_read_state", read_id)
+        if previous is not None and high_water < int(previous.get("high_water", 0)):
+            raise ValidationError("Workspace mention read position cannot move backwards")
+        outcome = {
+            "workspace_id": workspace_id,
+            "high_water": high_water,
+            "unread_count": self._workspace_mention_unread_count(
+                workspace, high_water
+            ),
+        }
+        committed = self.store.commit_operation(
+            operation_id,
+            digest,
+            outcome,
+            [
+                (
+                    "workspace_read_state",
+                    read_id,
+                    {
+                        "workspace_id": workspace_id,
+                        "scope": "mentions",
+                        "high_water": high_water,
+                    },
+                )
+            ],
+        )
+        self._workspace_changed(workspace_id, resource_kind="mention_read_state")
+        return committed
+
+    def set_workspace_channel_mentions_muted(
+        self,
+        workspace_id: Any,
+        channel_id: Any,
+        muted: Any,
+        operation_id: Any,
+    ) -> dict[str, Any]:
+        payload = {
+            "workspace_id": workspace_id,
+            "channel_id": channel_id,
+            "muted": muted,
+        }
+        operation_id, digest, replay = self._workspace_operation(
+            "set_workspace_channel_mentions_muted", operation_id, payload
+        )
+        if replay is not None:
+            return replay
+        workspace = self._require_workspace(workspace_id)
+        channel = self._require_workspace_channel(workspace_id, channel_id)
+        if not isinstance(muted, bool):
+            raise ValidationError("Workspace mention preference is invalid")
+        if workspace.get("state") not in {"active", "incomplete_sync"}:
+            raise ContactNotApproved("Workspace mention preferences cannot change now")
+        if (
+            channel.get("visibility") == "private"
+            and workspace.get("local_member_id") not in channel.get("member_ids", ())
+        ):
+            raise ContactNotApproved("Local member is not in this private channel")
+        preference_id = self._workspace_notification_preference_id(
+            workspace_id, channel_id
+        )
+        outcome = {
+            "workspace_id": workspace_id,
+            "channel_id": channel_id,
+            "mentions_muted": muted,
+        }
+        committed = self.store.commit_operation(
+            operation_id,
+            digest,
+            outcome,
+            [
+                (
+                    "workspace_notification_preference",
+                    preference_id,
+                    {
+                        "workspace_id": workspace_id,
+                        "conversation_id": channel_id,
+                        "mentions_muted": muted,
+                    },
+                )
+            ],
+        )
+        self._workspace_changed(
+            workspace_id,
+            conversation_id=channel_id,
+            resource_kind="mention_preference",
+        )
+        return committed
+
     def hide_workspace_message(
         self, workspace_id: Any, event_id: Any, operation_id: Any
     ) -> dict[str, Any]:
@@ -5103,21 +5784,27 @@ class WorkspaceServiceMixin:
         channel_id: Any,
         text: Any,
         operation_id: Any,
+        mention_member_ids: Any = None,
     ) -> dict[str, Any]:
         payload = {
             "workspace_id": workspace_id,
             "channel_id": channel_id,
             "text": text,
         }
+        if mention_member_ids:
+            payload["mention_member_ids"] = mention_member_ids
         operation_id, digest, replay = self._workspace_operation(
             "save_workspace_draft", operation_id, payload
         )
         if replay is not None:
             return replay
-        self._require_workspace(workspace_id)
+        workspace = self._require_workspace(workspace_id)
         self._require_workspace_conversation(workspace_id, channel_id)
         if not isinstance(text, str) or len(text.encode("utf-8")) > MAX_MESSAGE_TEXT_BYTES:
             raise ValidationError("Workspace draft is invalid")
+        mentions = self._validate_workspace_mentions(
+            workspace, channel_id, mention_member_ids
+        )
         record_id = self.store.opaque_id(
             "workspace-draft", workspace_id, channel_id
         )
@@ -5126,8 +5813,11 @@ class WorkspaceServiceMixin:
             "conversation_id": channel_id,
             "text": text,
         }
-        records = [] if text == "" else [("workspace_draft", record_id, outcome)]
-        deletions = [("workspace_draft", record_id)] if text == "" else []
+        if mentions:
+            outcome["mention_member_ids"] = list(mentions)
+        empty = text == "" and not mentions
+        records = [] if empty else [("workspace_draft", record_id, outcome)]
+        deletions = [("workspace_draft", record_id)] if empty else []
         committed = self.store.commit_operation(
             operation_id, digest, outcome, records, deletions
         )
@@ -6914,7 +7604,9 @@ class WorkspaceServiceMixin:
             "workspace_pending_event",
             "workspace_pending_control",
             "workspace_conversation_index",
+            "workspace_mention_index",
             "workspace_subscription",
+            "workspace_notification_preference",
             "workspace_read_state",
             "workspace_stream_coverage",
             "workspace_draft",
@@ -7296,9 +7988,22 @@ class WorkspaceServiceMixin:
                         if key not in {"document", "join_document", "nonce"}
                     }
                 )
-        workspaces = [
-            self._public_workspace(item) for item in self.store.list("workspace")
-        ]
+        stored_workspaces = self.store.list("workspace")
+        for item in stored_workspaces:
+            if "mention_unread_count" in item:
+                continue
+            item["mention_unread_count"] = self._workspace_mention_unread_count(
+                item
+            )
+            self.store.put(
+                "workspace", self._workspace_record_id(item["id"]), item
+            )
+        workspaces_by_id = {
+            item["id"]: item
+            for item in stored_workspaces
+            if isinstance(item.get("id"), str)
+        }
+        workspaces = [self._public_workspace(item) for item in stored_workspaces]
         workspaces.sort(key=lambda item: (item["created_at"], item["id"]))
         workspace_local_members = {
             item["id"]: item.get("local_member_id")
@@ -7402,5 +8107,14 @@ class WorkspaceServiceMixin:
             "workspace_join_requests": requests,
             "workspace_display_name_requests": name_requests,
             "workspace_invitations": invitations,
-            "workspace_drafts": self.store.list("workspace_draft"),
+            "workspace_drafts": [
+                visible
+                for draft in self.store.list("workspace_draft")
+                if (
+                    visible := self._workspace_draft_for_snapshot(
+                        draft, workspaces_by_id
+                    )
+                )
+                is not None
+            ],
         }

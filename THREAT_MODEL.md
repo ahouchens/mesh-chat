@@ -13,6 +13,9 @@
 - Workspace membership, policy and closure cannot change without a valid,
   hash-linked authority manifest; events cannot escape the audience frozen by
   their referenced manifest and channel control.
+- A workspace mention cannot name an inactive or out-of-audience member, arise
+  from raw display-name text, or retain local inbox visibility after the reader
+  loses workspace or private-channel access.
 - A reaction cannot claim another actor, cross a direct/group boundary, target
   another conversation, reveal old group content to a later member, or be
   restored by an older revision after replacement, removal, or local deletion.
@@ -107,10 +110,20 @@
   author deletion remains a presentation tombstone. Distinct content from one
   device at one revision freezes mutation of the whole message and surfaces a
   security warning instead of silently choosing arrival order.
+- Structured workspace mentions are sorted active member UUIDs inside the
+  signed message or edit already delivered to the authorized conversation
+  audience. Private-channel and DM verification rejects mention targets outside
+  that exact audience; raw `@name` text creates no metadata. Only the mentioned
+  member creates sealed local inbox pages. Mention cursors bind current
+  manifest/channel authorization and mute state, and every listing rechecks
+  current local membership, private roster access, channel state, hides,
+  tombstones, and the active edited mention position. Read high-waters, mute
+  preferences, and draft mention IDs never leave the device.
 - Workspace record IDs and cursors are keyed opaque values. Message pages,
-  due-work shards, unread state, drafts, delivery legs and operation results are
-  separately sealed. Startup summaries do not decrypt message bodies. A stale
-  authorization or retention generation invalidates a cursor explicitly.
+  mention pages, due-work shards, unread state, notification preferences,
+  drafts, delivery legs and operation results are separately sealed. Startup
+  summaries do not decrypt message or mention bodies. A stale authorization,
+  preference, index or retention generation invalidates a cursor explicitly.
 - A workspace mutation and its durable operation result commit together. A
   message and its complete recipient set commit before asynchronous handoff;
   native endpoint proof is not presented as human read evidence.
@@ -168,10 +181,10 @@ Depending on configured interfaces, observers may learn local discovery presence
   after permanent owner-key loss, a globally ordered group timeline, public or
   large channels, discoverable groups, anonymous membership, selective history
   sharing, or safe multi-owner membership editing.
-- Workspace cooperative message-history backfill, threads, mentions, search
+- Workspace cooperative message-history backfill, threads, search
   exchange, private history catch-up, direct
   message history catch-up, linked devices, authority transfer, and mobile
-  workspace use. Increment 6 exposes only history already present locally;
+  workspace use. Increment 7 exposes only history already present locally;
   public discovery
   does not imply complete historical messages, and newly admitted private
   members receive future events only.

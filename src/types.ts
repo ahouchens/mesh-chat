@@ -206,6 +206,7 @@ export interface Workspace {
   members: WorkspaceMember[];
   authorization_generation: number;
   retention_generation: number;
+  mention_unread_count: number;
   security_error?: string;
   sync_issue?: "missing_controls" | "missing_predecessor" | "missing_manifest" | "missing_manifest_predecessor" | "queue_pressure" | string;
   created_at: number;
@@ -230,6 +231,7 @@ export interface WorkspaceChannel {
   manifest_digest: string;
   unread_count: number;
   subscribed: boolean;
+  mentions_muted: boolean;
   is_general: boolean;
   duplicate_name: boolean;
   created_at: number;
@@ -308,6 +310,8 @@ export interface WorkspaceMessage {
   mutation_conflict?: boolean;
   mutation_frozen?: boolean;
   reactions?: MessageReaction[];
+  mention_member_ids?: string[];
+  mention_position?: number;
   sequence: number;
   event_digest: string;
   created_at: number;
@@ -319,6 +323,32 @@ export interface WorkspaceMessagePage {
   messages: WorkspaceMessage[];
   next_cursor: string | null;
   high_water: number;
+}
+
+export interface WorkspaceMention {
+  position: number;
+  read: boolean;
+  conversation: {
+    id: string;
+    kind: "channel" | "direct";
+    name: string;
+    visibility: "public" | "private" | "direct";
+  };
+  message: WorkspaceMessage;
+}
+
+export interface WorkspaceMentionPage {
+  mentions: WorkspaceMention[];
+  next_cursor: string | null;
+  high_water: number;
+  unread_count: number;
+}
+
+export interface WorkspaceDraft {
+  workspace_id: string;
+  conversation_id: string;
+  text: string;
+  mention_member_ids?: string[];
 }
 
 export interface WorkspaceJoinRequest {
@@ -381,11 +411,7 @@ export interface WorkspaceSnapshot {
   workspace_join_requests: WorkspaceJoinRequest[];
   workspace_display_name_requests: WorkspaceDisplayNameRequest[];
   workspace_invitations: WorkspaceInvitation[];
-  workspace_drafts: Array<{
-    workspace_id: string;
-    conversation_id: string;
-    text: string;
-  }>;
+  workspace_drafts: WorkspaceDraft[];
 }
 
 export interface NetworkSettings {
@@ -424,7 +450,7 @@ export interface Snapshot {
   group_messages?: GroupMessage[];
   group_drafts?: GroupDraft[];
   group_invitations?: GroupInvitation[];
-  /** Desktop-only workspace summaries through Increment 5. Message bodies are paged separately. */
+  /** Desktop-only workspace summaries through Increment 7. Message bodies are paged separately. */
   workspaces?: Workspace[];
   workspace_channels?: WorkspaceChannel[];
   workspace_directs?: WorkspaceDirect[];
@@ -432,7 +458,7 @@ export interface Snapshot {
   workspace_join_requests?: WorkspaceJoinRequest[];
   workspace_display_name_requests?: WorkspaceDisplayNameRequest[];
   workspace_invitations?: WorkspaceInvitation[];
-  workspace_drafts?: Array<{ workspace_id: string; conversation_id: string; text: string }>;
+  workspace_drafts?: WorkspaceDraft[];
   settings: NetworkSettings;
   network: {
     transport_enabled: boolean;

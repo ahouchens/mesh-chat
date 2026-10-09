@@ -45,7 +45,7 @@ ordering, removal, and owner-loss consequences.
 
 ## Desktop workspaces
 
-The sixth workspace increment is an isolated desktop feature profile. It adds
+The seventh workspace increment is an isolated desktop feature profile. It adds
 canonical workspace authority, device, invitation, channel and event documents
 under the `mesh-chat-workspace` custom type without changing Personal or private
 group bytes. The React shell can switch between Personal and workspace views,
@@ -105,6 +105,28 @@ stream head, outbox legs, due-work shards, and durable operation result.
 Deleted plaintext is never returned in the public message model. Missing
 targets or bases remain bounded and inert until their predecessors arrive.
 
+Mentions are signed event metadata, not text parsing. A message or edit carries
+a canonical sorted list of zero to eight active member UUIDs; the service
+rejects a target outside the exact DM or private-channel audience. Public
+channel targets must be active workspace members. Raw `@name` text has no
+authority and does not enter the mention index. An edit's mention list is part
+of deterministic mutation content, so concurrent mention changes converge and
+same-device equivocation freezes them with the rest of the message.
+
+Each device materializes only mentions of its local member in sealed bounded
+`workspace_mention_index` pages. The active page entry is linked to the current
+derived message revision so removal and re-addition cannot resurrect or
+duplicate a stale inbox row. A separate sealed mention high-water supplies
+unread state; sealed per-channel preferences suppress mention presentation for
+both subscribed and unsubscribed public channels without changing delivery.
+Listing and cursor validation re-check the current manifest, private roster,
+channel state, local hide/tombstone state, and mute preference. Draft mention
+IDs are local encrypted metadata and are filtered against the same current
+authorization before entering a restart snapshot.
+The workspace summary persists the derived mention unread count after each
+workspace change, so ordinary startup snapshots do not decrypt message bodies;
+profiles from the superseded preview builds are re-derived once on migration.
+
 Checkpoints are pinned to the genesis owner member, authority device, public
 identity, and destination. The initial manifest also pins the genesis name and
 description. Each later manifest performs exactly one enabled transition:
@@ -136,8 +158,9 @@ identity material. Member-authored events do not depend on the authority being
 online; metadata, membership, and name decisions do.
 
 Workspace startup reads summaries, channels, invitations, join requests,
-unread positions, and encrypted drafts, but no message bodies or delivery-leg
-collections. Message lists use bounded linked pages with MAC-bound cursors.
+conversation and mention unread positions, and authorized encrypted drafts,
+but no message bodies, mention bodies, or delivery-leg collections. Message
+and mention lists use bounded linked pages with MAC-bound cursors.
 Public-channel discovery exchanges signed, paged summaries and bounded chain
 fetches. A directory remains explicitly incomplete until every tracked active
 device has supplied a complete summary equal to local retained heads. Duplicate

@@ -729,6 +729,7 @@ def test_workspace_direct_chat_hide_reopen_restart_and_removal(
         "Private field note",
         _op(455),
         _op(456),
+        [member_id],
     )
     assert first["delivery_summary"]["devices_total"] == 1
     outgoing = _flush(owner, owner_network)
@@ -770,6 +771,7 @@ def test_workspace_direct_chat_hide_reopen_restart_and_removal(
         "Private field note revised",
         _op(471),
         _op(472),
+        [member_id],
     )
     _deliver_all(
         member,
@@ -780,6 +782,10 @@ def test_workspace_direct_chat_hide_reopen_restart_and_removal(
     assert member.list_workspace_messages(workspace_id, direct["id"])[
         "messages"
     ][0]["text"] == "Private field note revised"
+    assert [
+        item["message"]["id"]
+        for item in member.list_workspace_mentions(workspace_id)["mentions"]
+    ] == [first["id"]]
     member.set_workspace_reaction(
         workspace_id, first["id"], "✅", True, _op(473), _op(474)
     )
@@ -831,11 +837,16 @@ def test_workspace_direct_chat_hide_reopen_restart_and_removal(
     )
     assert hidden["result"]["hidden"] is True
     assert member.workspace_snapshot()["workspace_directs"] == []
+    assert member.list_workspace_mentions(workspace_id)["mentions"] == []
     member_workspace = member.workspace_snapshot()["workspaces"][0]
     reopened = member.open_workspace_direct(
         workspace_id, member_workspace["owner_member_id"], _op(460)
     )
     assert reopened["id"] == direct["id"]
+    assert [
+        item["message"]["id"]
+        for item in member.list_workspace_mentions(workspace_id)["mentions"]
+    ] == [first["id"]]
     saved_draft, _ = member.dispatch(
         {
             "v": 1,
@@ -2226,7 +2237,16 @@ def test_private_channel_membership_audience_transfer_recovery_leave_and_privacy
     owner.send_workspace_message(
         workspace_id, private_id, "cancelled on departure", _op(3029), _op(3030)
     )
+    member.save_workspace_draft(
+        workspace_id,
+        private_id,
+        "@Alex private draft",
+        _op(3035),
+        [owner_id],
+    )
+    assert member.workspace_snapshot()["workspace_drafts"]
     member.leave_workspace_private_channel(workspace_id, private_id, _op(3020))
+    assert member.workspace_snapshot()["workspace_drafts"] == []
     leave_packets = _flush(member, member_network)
     assert len(leave_packets) == 1
     _deliver_all(
@@ -2340,3 +2360,236 @@ def test_private_channel_fork_is_scoped_and_does_not_freeze_workspace(
     ] == "forked"
     assert owner._require_workspace(workspace_id)["state"] == "active"
     owner.close()
+
+
+def test_structured_mentions_unsubscribed_mute_read_draft_and_restart(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    (
+        owner,
+        owner_network,
+        owner_profile,
+        member,
+        member_network,
+        member_profile,
+        workspace,
+        member_key,
+        member_identity,
+    ) = _joined_pair(tmp_path / "mentions", base=4_000)
+    workspace_id = workspace["id"]
+    owner_workspace = owner.workspace_snapshot()["workspaces"][0]
+    member_workspace = member.workspace_snapshot()["workspaces"][0]
+    owner_id = owner_workspace["local_member_id"]
+    member_id = member_workspace["local_member_id"]
+
+    channel = owner.create_workspace_channel(
+        workspace_id, "field-alerts", "Unsubscribed alerts", _op(4_010)
+    )
+    _deliver_all(
+        member,
+        _flush(owner, owner_network),
+        source_profile=owner_profile,
+        recipient_profile=member_profile,
+    )
+    member_channel = next(
+        item
+        for item in member.workspace_snapshot()["workspace_channels"]
+        if item["id"] == channel["id"]
+    )
+    assert member_channel["subscribed"] is False
+    assert member_channel["mentions_muted"] is False
+
+    raw_text = owner.send_workspace_message(
+        workspace_id,
+        channel["id"],
+        "@Bailey raw text does not create a mention",
+        _op(4_011),
+        _op(4_012),
+    )
+    _deliver_all(
+        member,
+        _flush(owner, owner_network),
+        source_profile=owner_profile,
+        recipient_profile=member_profile,
+    )
+    assert member.list_workspace_mentions(workspace_id)["mentions"] == []
+
+    first = owner.send_workspace_message(
+        workspace_id,
+        channel["id"],
+        "@Bailey inspect the north gauge",
+        _op(4_013),
+        _op(4_014),
+        [member_id],
+    )
+    second = owner.send_workspace_message(
+        workspace_id,
+        channel["id"],
+        "@Bailey confirm the reading",
+        _op(4_015),
+        _op(4_016),
+        [member_id],
+    )
+    _deliver_all(
+        member,
+        _flush(owner, owner_network),
+        source_profile=owner_profile,
+        recipient_profile=member_profile,
+    )
+    snapshot = member.workspace_snapshot()
+    assert snapshot["workspaces"][0]["mention_unread_count"] == 2
+    assert member._require_workspace(workspace_id)["mention_unread_count"] == 2
+    original_get = member.store.get
+    with monkeypatch.context() as patch:
+        def no_message_body_reads(kind: str, record_id: str) -> Any:
+            if kind == "workspace_message_state":
+                raise AssertionError("workspace startup decrypted a message body")
+            return original_get(kind, record_id)
+
+        patch.setattr(member.store, "get", no_message_body_reads)
+        assert member.workspace_snapshot()["workspaces"][0][
+            "mention_unread_count"
+        ] == 2
+    assert next(
+        item for item in snapshot["workspace_channels"] if item["id"] == channel["id"]
+    )["unread_count"] == 0
+    first_page = member.list_workspace_mentions(workspace_id, limit=1)
+    assert first_page["mentions"][0]["message"]["id"] == second["id"]
+    assert first_page["mentions"][0]["read"] is False
+    assert first_page["next_cursor"] is not None
+
+    member.set_workspace_channel_mentions_muted(
+        workspace_id, channel["id"], True, _op(4_017)
+    )
+    assert member.workspace_snapshot()["workspaces"][0]["mention_unread_count"] == 0
+    assert member.list_workspace_mentions(workspace_id)["mentions"] == []
+    with pytest.raises(ValidationError, match="cursor is stale"):
+        member.list_workspace_mentions(
+            workspace_id, cursor=first_page["next_cursor"], limit=1
+        )
+    member.set_workspace_channel_mentions_muted(
+        workspace_id, channel["id"], False, _op(4_018)
+    )
+    restored = member.list_workspace_mentions(workspace_id)
+    assert [item["message"]["id"] for item in restored["mentions"]] == [
+        second["id"],
+        first["id"],
+    ]
+    member.mark_workspace_mentions_read(
+        workspace_id, restored["high_water"], _op(4_019)
+    )
+    assert member.workspace_snapshot()["workspaces"][0]["mention_unread_count"] == 0
+
+    owner.edit_workspace_message(
+        workspace_id,
+        first["id"],
+        "Mention removed by a signed edit",
+        _op(4_030),
+        _op(4_031),
+        [],
+    )
+    _deliver_all(
+        member,
+        _flush(owner, owner_network),
+        source_profile=owner_profile,
+        recipient_profile=member_profile,
+    )
+    assert [
+        item["message"]["id"]
+        for item in member.list_workspace_mentions(workspace_id)["mentions"]
+    ] == [second["id"]]
+
+    owner.edit_workspace_message(
+        workspace_id,
+        raw_text["id"],
+        "@Bailey now added by the structured picker",
+        _op(4_032),
+        _op(4_033),
+        [member_id],
+    )
+    _deliver_all(
+        member,
+        _flush(owner, owner_network),
+        source_profile=owner_profile,
+        recipient_profile=member_profile,
+    )
+    added = member.list_workspace_mentions(workspace_id)
+    assert [item["message"]["id"] for item in added["mentions"]] == [
+        raw_text["id"],
+        second["id"],
+    ]
+    assert added["unread_count"] == 1
+
+    owner.edit_workspace_message(
+        workspace_id,
+        raw_text["id"],
+        "Structured mention removed again",
+        _op(4_034),
+        _op(4_035),
+        [],
+    )
+    _deliver_all(
+        member,
+        _flush(owner, owner_network),
+        source_profile=owner_profile,
+        recipient_profile=member_profile,
+    )
+    assert member.list_workspace_mentions(workspace_id)["unread_count"] == 0
+
+    owner.edit_workspace_message(
+        workspace_id,
+        raw_text["id"],
+        "@Bailey re-added without reviving the stale inbox entry",
+        _op(4_036),
+        _op(4_037),
+        [member_id],
+    )
+    _deliver_all(
+        member,
+        _flush(owner, owner_network),
+        source_profile=owner_profile,
+        recipient_profile=member_profile,
+    )
+    readded = member.list_workspace_mentions(workspace_id)
+    assert [item["message"]["id"] for item in readded["mentions"]] == [
+        raw_text["id"],
+        second["id"],
+    ]
+    assert readded["unread_count"] == 1
+    member.mark_workspace_mentions_read(
+        workspace_id, readded["high_water"], _op(4_038)
+    )
+
+    draft = member.save_workspace_draft(
+        workspace_id,
+        channel["id"],
+        "@Alex restart-safe structured draft",
+        _op(4_020),
+        [owner_id],
+    )
+    assert draft["mention_member_ids"] == [owner_id]
+    member.close()
+    member, member_network = _service(
+        tmp_path / "mentions" / "member",
+        member_identity,
+        "Bailey",
+        vault_key=member_key,
+    )
+    restarted = member.workspace_snapshot()
+    assert restarted["workspaces"][0]["mention_unread_count"] == 0
+    assert restarted["workspace_drafts"] == [draft]
+    assert all(
+        item["read"] for item in member.list_workspace_mentions(workspace_id)["mentions"]
+    )
+
+    with pytest.raises(ContactNotApproved, match="cannot read"):
+        member.save_workspace_draft(
+            workspace_id,
+            channel["id"],
+            "Invalid structured target",
+            _op(4_021),
+            [_op(4_099)],
+        )
+    owner.close()
+    member.close()

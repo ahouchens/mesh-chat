@@ -311,6 +311,196 @@ def test_workspace_mutation_events_bind_target_revision_and_payload() -> None:
         )
 
 
+def test_workspace_mentions_are_canonical_structured_and_audience_bound() -> None:
+    owner, created, genesis, initial = _workspace()
+    member_identity = RNS.Identity()
+    member_id = _id()
+    member_device_id = _id()
+    member_card = create_workspace_device_card(
+        member_identity,
+        workspace_id=genesis.workspace_id,
+        member_id=member_id,
+        device_id=member_device_id,
+        display_name="Bailey",
+        now=NOW,
+    )
+    manifest_raw = create_workspace_manifest(
+        owner,
+        workspace_id=genesis.workspace_id,
+        epoch=2,
+        previous_manifest_hash=initial.digest,
+        name=initial.name,
+        description=initial.description,
+        authority_device_id=initial.authority_device_id,
+        members=[
+            WorkspaceManifestMemberInput(
+                genesis.owner_member_id,
+                genesis.owner_device.display_name,
+                WorkspaceRole.OWNER,
+                [created.device_card],
+            ),
+            WorkspaceManifestMemberInput(
+                member_id,
+                "Bailey",
+                WorkspaceRole.MEMBER,
+                [member_card],
+            ),
+        ],
+        now=NOW,
+    )
+    manifest = verify_workspace_manifest_transition(manifest_raw, initial, now=NOW)
+    channel_raw = create_workspace_channel_record(
+        owner,
+        workspace_id=genesis.workspace_id,
+        channel_id=_id(),
+        manifest_digest=manifest.digest,
+        name="general",
+        topic="",
+        manager_member_id=genesis.owner_member_id,
+        manager_device_id=genesis.authority_device_id,
+        now=NOW,
+    )
+    channel = verify_workspace_channel_record(
+        channel_raw, manifest=manifest, now=NOW
+    )
+    mentioned = create_workspace_event(
+        owner,
+        workspace_id=genesis.workspace_id,
+        conversation_id=channel.channel_id,
+        event_id=_id(),
+        author_member_id=genesis.owner_member_id,
+        author_device_id=genesis.authority_device_id,
+        sequence=1,
+        previous_event_digest=None,
+        manifest_digest=manifest.digest,
+        channel_digest=channel.digest,
+        text="@Bailey inspect the north gauge",
+        mention_member_ids=[member_id],
+        created_at=NOW + 1,
+    )
+    assert json.loads(mentioned)["mentions"] == [member_id]
+    verified = verify_workspace_event(
+        mentioned, manifest=manifest, channel=channel, now=NOW + 1
+    )
+    assert verified.mentions == (member_id,)
+
+    edited = create_workspace_mutation_event(
+        owner,
+        workspace_id=genesis.workspace_id,
+        conversation_id=channel.channel_id,
+        event_id=_id(),
+        event_type="edit",
+        author_member_id=genesis.owner_member_id,
+        author_device_id=genesis.authority_device_id,
+        sequence=2,
+        previous_event_digest=verified.digest,
+        manifest_digest=manifest.digest,
+        channel_digest=channel.digest,
+        target_event_id=verified.event_id,
+        base_revision=0,
+        revision=1,
+        text="@Bailey inspect the south gauge",
+        mention_member_ids=[member_id],
+        created_at=NOW + 2,
+    )
+    assert verify_workspace_event(
+        edited, manifest=manifest, channel=channel, now=NOW + 2
+    ).mentions == (member_id,)
+    with pytest.raises(ValidationError, match="mentions"):
+        create_workspace_mutation_event(
+            owner,
+            workspace_id=genesis.workspace_id,
+            conversation_id=channel.channel_id,
+            event_id=_id(),
+            event_type="delete",
+            author_member_id=genesis.owner_member_id,
+            author_device_id=genesis.authority_device_id,
+            sequence=3,
+            previous_event_digest=verified.digest,
+            manifest_digest=manifest.digest,
+            channel_digest=channel.digest,
+            target_event_id=verified.event_id,
+            base_revision=0,
+            revision=1,
+            mention_member_ids=[member_id],
+            created_at=NOW + 3,
+        )
+
+    raw_text_only = create_workspace_event(
+        owner,
+        workspace_id=genesis.workspace_id,
+        conversation_id=channel.channel_id,
+        event_id=_id(),
+        author_member_id=genesis.owner_member_id,
+        author_device_id=genesis.authority_device_id,
+        sequence=3,
+        previous_event_digest=verified.digest,
+        manifest_digest=manifest.digest,
+        channel_digest=channel.digest,
+        text="@Bailey is ordinary text without picker metadata",
+        created_at=NOW + 3,
+    )
+    assert verify_workspace_event(
+        raw_text_only, manifest=manifest, channel=channel, now=NOW + 3
+    ).mentions == ()
+
+    unauthorized = create_workspace_event(
+        owner,
+        workspace_id=genesis.workspace_id,
+        conversation_id=channel.channel_id,
+        event_id=_id(),
+        author_member_id=genesis.owner_member_id,
+        author_device_id=genesis.authority_device_id,
+        sequence=4,
+        previous_event_digest=verified.digest,
+        manifest_digest=manifest.digest,
+        channel_digest=channel.digest,
+        text="Invisible mention",
+        mention_member_ids=[_id()],
+        created_at=NOW + 4,
+    )
+    with pytest.raises(IdentityMismatch, match="mention audience"):
+        verify_workspace_event(
+            unauthorized, manifest=manifest, channel=channel, now=NOW + 4
+        )
+
+    private_raw = create_workspace_channel_manifest(
+        owner,
+        workspace_id=genesis.workspace_id,
+        channel_id=_id(),
+        manifest_digest=manifest.digest,
+        name="owner-only",
+        topic="",
+        manager_member_id=genesis.owner_member_id,
+        manager_device_id=genesis.authority_device_id,
+        member_ids=[genesis.owner_member_id],
+        now=NOW,
+    )
+    private = verify_workspace_channel_manifest(
+        private_raw, manifest=manifest, now=NOW
+    )
+    leaked = create_workspace_event(
+        owner,
+        workspace_id=genesis.workspace_id,
+        conversation_id=private.channel_id,
+        event_id=_id(),
+        author_member_id=genesis.owner_member_id,
+        author_device_id=genesis.authority_device_id,
+        sequence=1,
+        previous_event_digest=None,
+        manifest_digest=manifest.digest,
+        channel_digest=private.digest,
+        text="Private metadata must stay private",
+        audience_member_ids=private.member_ids,
+        mention_member_ids=[member_id],
+        created_at=NOW + 1,
+    )
+    with pytest.raises(IdentityMismatch, match="mention audience"):
+        verify_workspace_event(
+            leaked, manifest=manifest, channel=private, now=NOW + 1
+        )
+
+
 def test_workspace_documents_fail_closed_on_tampering_expiry_and_wrong_signer() -> None:
     owner, _created, genesis, manifest = _workspace()
     raw = create_workspace_invitation(

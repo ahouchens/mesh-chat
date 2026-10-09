@@ -2,7 +2,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testi
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import packageInfo from "../package.json";
-import type { ChatMessage, Contact, Group, GroupInvitation, GroupMessage, Snapshot, Workspace, WorkspaceChannel, WorkspaceDirect, WorkspaceMessage, WorkspaceMessagePage } from "./types";
+import type { ChatMessage, Contact, Group, GroupInvitation, GroupMessage, Snapshot, Workspace, WorkspaceChannel, WorkspaceDirect, WorkspaceMentionPage, WorkspaceMessage, WorkspaceMessagePage } from "./types";
 
 const api = vi.hoisted(() => ({
   initializeService: vi.fn(),
@@ -183,6 +183,7 @@ const workspace: Workspace = {
   }],
   authorization_generation: 1,
   retention_generation: 1,
+  mention_unread_count: 0,
   created_at: 4,
   updated_at: 4,
 };
@@ -205,6 +206,7 @@ const workspaceChannel: WorkspaceChannel = {
   manifest_digest: workspace.manifest_hash,
   unread_count: 0,
   subscribed: true,
+  mentions_muted: false,
   is_general: true,
   duplicate_name: false,
   created_at: 4,
@@ -2065,7 +2067,148 @@ describe("desktop workspaces", () => {
     expect(within(conversation).getByText(/Saved locally/i)).toBeTruthy();
   });
 
+  it("inserts structured mentions, persists their draft IDs, and clears the Mentions inbox", async () => {
+    const member = {
+      id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      display_name: "Bailey",
+      role: "member" as const,
+      status: "active" as const,
+      short_id: "aaaaaa",
+      device: { id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", destination_hash: "99".repeat(16), fingerprint: "BBBB CCCC DDDD EEEE" },
+    };
+    const expanded: Workspace = { ...workspace, members: [...workspace.members, member], mention_unread_count: 1 };
+    const incoming: WorkspaceMessage = {
+      id: "78787878-7878-4878-8878-787878787878",
+      workspace_id: workspace.id,
+      conversation_id: workspaceChannel.id,
+      direction: "inbound",
+      author_member_id: member.id,
+      author_display_name: member.display_name,
+      text: "@Alex inspect the south marker",
+      mention_member_ids: [workspace.local_member_id],
+      sequence: 1,
+      event_digest: "ab".repeat(32),
+      created_at: 1_791_072_030,
+    };
+    let current: Snapshot = { ...snapshot(), workspaces: [expanded], workspace_channels: [workspaceChannel], workspace_join_requests: [], workspace_invitations: [], workspace_drafts: [] };
+    const mentionPage: WorkspaceMentionPage = {
+      mentions: [{ position: 1, read: false, conversation: { id: workspaceChannel.id, kind: "channel", name: "general", visibility: "public" }, message: incoming }],
+      next_cursor: null,
+      high_water: 1,
+      unread_count: 1,
+    };
+    api.runtimePlatform.mockResolvedValue("desktop");
+    api.initializeService.mockResolvedValue(current);
+    api.onInvitation.mockResolvedValue(() => undefined);
+    api.onServiceEvent.mockResolvedValue(() => undefined);
+    api.serviceCommand.mockImplementation(async (command: string, payload: Record<string, unknown>) => {
+      if (command === "snapshot") return current;
+      if (command === "list_workspace_messages") return { messages: [], next_cursor: null, high_water: 0 } satisfies WorkspaceMessagePage;
+      if (command === "list_workspace_mentions") return mentionPage;
+      if (command === "send_workspace_message") return {
+        ...incoming,
+        id: String(payload.event_id),
+        direction: "outbound",
+        author_member_id: workspace.local_member_id,
+        author_display_name: "Alex",
+        text: String(payload.text),
+        mention_member_ids: payload.mention_member_ids as string[],
+      } satisfies WorkspaceMessage;
+      if (command === "mark_workspace_mentions_read") {
+        current = { ...current, workspaces: [{ ...expanded, mention_unread_count: 0 }] };
+        return { workspace_id: workspace.id, high_water: 1, unread_count: 0 };
+      }
+      return {};
+    });
+
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Workspace Lakewatcher" }));
+    const conversation = await screen.findByLabelText("Workspace channel general");
+    fireEvent.click(within(conversation).getByRole("button", { name: "Mention a workspace member" }));
+    fireEvent.click(within(await screen.findByRole("dialog", { name: "Choose a member to mention" })).getByRole("button", { name: /Bailey/ }));
+    expect(within(conversation).getByLabelText("Selected mentions").textContent).toContain("Bailey");
+    const composer = within(conversation).getByRole("textbox", { name: "Message general" });
+    expect((composer as HTMLTextAreaElement).value).toBe("@Bailey ");
+    fireEvent.change(composer, { target: { value: "@Bailey inspect the north gauge" } });
+    await waitFor(() => expect(api.serviceCommand).toHaveBeenCalledWith("save_workspace_draft", expect.objectContaining({ workspace_id: workspace.id, channel_id: workspaceChannel.id, text: "@Bailey inspect the north gauge", mention_member_ids: [member.id], operation_id: expect.any(String) })));
+    fireEvent.click(within(conversation).getByRole("button", { name: "Send workspace message" }));
+    await waitFor(() => expect(api.serviceCommand).toHaveBeenCalledWith("send_workspace_message", expect.objectContaining({ workspace_id: workspace.id, channel_id: workspaceChannel.id, text: "@Bailey inspect the north gauge", mention_member_ids: [member.id], event_id: expect.any(String), operation_id: expect.any(String) })));
+
+    fireEvent.click(screen.getByRole("button", { name: /Mentions/ }));
+    const mentions = await screen.findByLabelText("Mentions in Lakewatcher");
+    expect(within(mentions).getByText("@Alex inspect the south marker")).toBeTruthy();
+    expect(within(mentions).getByText("New")).toBeTruthy();
+    fireEvent.click(within(mentions).getByRole("button", { name: "Mark all read" }));
+    await waitFor(() => expect(api.serviceCommand).toHaveBeenCalledWith("mark_workspace_mentions_read", expect.objectContaining({ workspace_id: workspace.id, high_water: 1, operation_id: expect.any(String) })));
+
+    fireEvent.click(within(mentions).getByRole("button", { name: /@Alex inspect the south marker/ }));
+    const reopened = await screen.findByLabelText("Workspace channel general");
+    fireEvent.click(within(reopened).getByRole("button", { name: "Mute mentions in general" }));
+    await waitFor(() => expect(api.serviceCommand).toHaveBeenCalledWith("set_workspace_channel_mentions_muted", expect.objectContaining({ workspace_id: workspace.id, channel_id: workspaceChannel.id, muted: true, operation_id: expect.any(String) })));
+  });
+
+  it("drops a stale draft mention ID without discarding its ordinary text", async () => {
+    const staleMemberId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    const current: Snapshot = {
+      ...snapshot(),
+      workspaces: [workspace],
+      workspace_channels: [workspaceChannel],
+      workspace_join_requests: [],
+      workspace_invitations: [],
+      workspace_drafts: [{
+        workspace_id: workspace.id,
+        conversation_id: workspaceChannel.id,
+        text: "@Former keep this field note",
+        mention_member_ids: [staleMemberId],
+      }],
+    };
+    api.runtimePlatform.mockResolvedValue("desktop");
+    api.initializeService.mockResolvedValue(current);
+    api.onInvitation.mockResolvedValue(() => undefined);
+    api.onServiceEvent.mockResolvedValue(() => undefined);
+    api.serviceCommand.mockImplementation(async (command: string, payload: Record<string, unknown>) => {
+      if (command === "snapshot") return current;
+      if (command === "list_workspace_messages") return { messages: [], next_cursor: null, high_water: 0 } satisfies WorkspaceMessagePage;
+      if (command === "send_workspace_message") return {
+        id: String(payload.event_id),
+        workspace_id: workspace.id,
+        conversation_id: workspaceChannel.id,
+        direction: "outbound",
+        author_member_id: workspace.local_member_id,
+        author_display_name: "Alex",
+        text: String(payload.text),
+        mention_member_ids: payload.mention_member_ids as string[],
+        sequence: 1,
+        event_digest: "cd".repeat(32),
+        created_at: 1_791_072_040,
+      } satisfies WorkspaceMessage;
+      return {};
+    });
+
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Workspace Lakewatcher" }));
+    const conversation = await screen.findByLabelText("Workspace channel general");
+    expect(within(conversation).queryByLabelText("Selected mentions")).toBeNull();
+    expect((within(conversation).getByRole("textbox", { name: "Message general" }) as HTMLTextAreaElement).value).toBe("@Former keep this field note");
+    fireEvent.click(within(conversation).getByRole("button", { name: "Send workspace message" }));
+    await waitFor(() => expect(api.serviceCommand).toHaveBeenCalledWith("send_workspace_message", expect.objectContaining({
+      workspace_id: workspace.id,
+      channel_id: workspaceChannel.id,
+      text: "@Former keep this field note",
+      mention_member_ids: [],
+    })));
+  });
+
   it("edits, reacts to, and tombstones workspace messages with durable mutation IDs", async () => {
+    const member = {
+      id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      display_name: "Bailey",
+      role: "member" as const,
+      status: "active" as const,
+      short_id: "aaaaaa",
+      device: { id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", destination_hash: "99".repeat(16), fingerprint: "BBBB CCCC DDDD EEEE" },
+    };
+    const expanded: Workspace = { ...workspace, members: [...workspace.members, member] };
     let message: WorkspaceMessage = {
       id: "56565656-5656-4656-8656-565656565656",
       workspace_id: workspace.id,
@@ -2083,7 +2226,7 @@ describe("desktop workspaces", () => {
       event_digest: "77".repeat(32),
       created_at: 1_791_072_021,
     };
-    const current: Snapshot = { ...snapshot(), workspaces: [workspace], workspace_channels: [workspaceChannel], workspace_join_requests: [], workspace_invitations: [], workspace_drafts: [] };
+    const current: Snapshot = { ...snapshot(), workspaces: [expanded], workspace_channels: [workspaceChannel], workspace_join_requests: [], workspace_invitations: [], workspace_drafts: [] };
     api.runtimePlatform.mockResolvedValue("desktop");
     api.initializeService.mockResolvedValue(current);
     api.onInvitation.mockResolvedValue(() => undefined);
@@ -2092,7 +2235,7 @@ describe("desktop workspaces", () => {
       if (command === "snapshot") return current;
       if (command === "list_workspace_messages") return { messages: [message], next_cursor: null, high_water: 1 } satisfies WorkspaceMessagePage;
       if (command === "edit_workspace_message") {
-        message = { ...message, text: String(payload.text), revision: 1 };
+        message = { ...message, text: String(payload.text), mention_member_ids: payload.mention_member_ids as string[], revision: 1 };
         return message;
       }
       if (command === "set_workspace_reaction") {
@@ -2110,9 +2253,11 @@ describe("desktop workspaces", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Workspace Lakewatcher" }));
     const conversation = await screen.findByLabelText("Workspace channel general");
     fireEvent.click(within(conversation).getByRole("button", { name: "Edit" }));
+    fireEvent.click(within(conversation).getAllByRole("button", { name: "Mention a workspace member" })[0]);
+    fireEvent.click(within(await screen.findByRole("dialog", { name: "Choose a member to mention" })).getByRole("button", { name: /Bailey/ }));
     fireEvent.change(within(conversation).getByRole("textbox", { name: "Edit workspace message" }), { target: { value: "Corrected field note" } });
     fireEvent.click(within(conversation).getByRole("button", { name: "Save" }));
-    await waitFor(() => expect(api.serviceCommand).toHaveBeenCalledWith("edit_workspace_message", expect.objectContaining({ workspace_id: workspace.id, event_id: message.id, text: "Corrected field note", operation_id: expect.any(String), mutation_event_id: expect.any(String) })));
+    await waitFor(() => expect(api.serviceCommand).toHaveBeenCalledWith("edit_workspace_message", expect.objectContaining({ workspace_id: workspace.id, event_id: message.id, text: "Corrected field note", mention_member_ids: [member.id], operation_id: expect.any(String), mutation_event_id: expect.any(String) })));
     expect(await within(conversation).findByText("Corrected field note")).toBeTruthy();
     expect(within(conversation).getByText("Edited")).toBeTruthy();
 
