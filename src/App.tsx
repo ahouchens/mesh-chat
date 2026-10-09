@@ -1098,6 +1098,7 @@ function MessageReactions({
   onClosePicker,
   onCatalogOpenChange,
   onSetReaction,
+  multiple = false,
 }: {
   messageText: string;
   reactions?: MessageReaction[];
@@ -1109,6 +1110,7 @@ function MessageReactions({
   onClosePicker: () => void;
   onCatalogOpenChange: (open: boolean) => void;
   onSetReaction: (emoji: string, active: boolean) => void;
+  multiple?: boolean;
 }) {
   const rootRef = useRef<HTMLDivElement>(null);
   const pickerRef = useRef<HTMLDivElement>(null);
@@ -1144,7 +1146,7 @@ function MessageReactions({
 
   const choiceLabel = (emoji: string, label: string, selected: boolean) => {
     if (selected) return `Remove your ${label} reaction`;
-    if (selfReaction) return `React with ${label}, replacing your ${selfReaction.emoji} reaction`;
+    if (!multiple && selfReaction) return `React with ${label}, replacing your ${selfReaction.emoji} reaction`;
     return `React with ${label}`;
   };
 
@@ -1255,7 +1257,7 @@ function MessageReactions({
       return;
     }
     setLocalError("");
-    const selected = selfReaction?.emoji === validation.emoji;
+    const selected = reactions.some((reaction) => reaction.emoji === validation.emoji && reaction.reacted_by_self);
     onSetReaction(validation.emoji, !selected);
   };
 
@@ -1360,7 +1362,7 @@ function MessageReactions({
           } : { visibility: "hidden" }}
           onKeyDown={movePickerFocus}
         >
-          <span className="sr-only">Choose one reaction. Choosing a different reaction replaces yours; choosing yours again removes it.</span>
+          <span className="sr-only">{multiple ? "Choose reactions. Choosing yours again removes it." : "Choose one reaction. Choosing a different reaction replaces yours; choosing yours again removes it."}</span>
           {!catalogOpen && <div className="reaction-picker__quick" aria-label="Quick reactions">{QUICK_REACTION_OPTIONS.map((option) => {
             const selected = reactions.some((reaction) => reaction.emoji === option.emoji && reaction.reacted_by_self);
             const label = choiceLabel(option.emoji, option.label, selected);
@@ -1405,7 +1407,7 @@ function MessageReactions({
             </div>
             <div className="reaction-picker__catalog" role="group" aria-label={normalizedSearch ? `Search results for ${searchQuery}` : REACTION_CATEGORIES.find((item) => item.id === category)?.label}>
               {catalogOptions.map((option) => {
-                const selected = selfReaction?.emoji === option.emoji;
+                const selected = reactions.some((reaction) => reaction.emoji === option.emoji && reaction.reacted_by_self);
                 return <button
                   key={option.emoji}
                   type="button"
@@ -1868,15 +1870,102 @@ function workspaceDeliveryStateLabel(state: NonNullable<WorkspaceMessage["delive
   return "Failed";
 }
 
-function WorkspaceConversation({ workspace, channel, page, draft, loading, sending, error, onDraft, onSend, onLoadOlder, onHide, onPeople, onSettings, onInvite, onManage }: { workspace: Workspace; channel: WorkspaceChannel; page: WorkspaceMessagePage | null; draft: string; loading: boolean; sending: boolean; error: string; onDraft: (value: string) => void; onSend: () => void; onLoadOlder: () => void; onHide: (eventId: string) => void; onPeople: () => void; onSettings: () => void; onInvite: () => void; onManage: () => void }) {
+function WorkspaceMessageCard({
+  workspace,
+  message,
+  reactionOpen,
+  reactionCatalogOpen,
+  reactionBusyEmoji,
+  reactionError,
+  onToggleReaction,
+  onReactionCatalogOpenChange,
+  onCloseReaction,
+  onSetReaction,
+  onEdit,
+  onDelete,
+  onHide,
+}: {
+  workspace: Workspace;
+  message: WorkspaceMessage;
+  reactionOpen: boolean;
+  reactionCatalogOpen: boolean;
+  reactionBusyEmoji: string | null;
+  reactionError: string;
+  onToggleReaction: () => void;
+  onReactionCatalogOpenChange: (open: boolean) => void;
+  onCloseReaction: () => void;
+  onSetReaction: (emoji: string, active: boolean) => void;
+  onEdit: (text: string) => void;
+  onDelete: () => void;
+  onHide: () => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [editText, setEditText] = useState(message.text);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const mutable = workspace.state === "active" && !message.deleted && !message.mutation_frozen;
+  const authorMutable = mutable && message.author_member_id === workspace.local_member_id;
+  useEffect(() => {
+    if (!editing) setEditText(message.text);
+  }, [editing, message.text]);
+  return (
+    <article className={`workspace-message ${message.direction === "outbound" ? "workspace-message--self" : ""} ${message.deleted ? "workspace-message--deleted" : ""}`}>
+      <Avatar name={message.author_display_name} small />
+      <div>
+        <header>
+          <strong>{message.author_display_name}</strong>
+          <time dateTime={machineTime(message.created_at)}>{formatTime(message.created_at)}</time>
+          {(message.revision ?? 0) > 0 && !message.deleted && <small>Edited</small>}
+          <button className="message-hide" onClick={onHide} aria-label={`Hide message from ${message.author_display_name}`} title="Hide locally"><X size={13} /></button>
+        </header>
+        {message.deleted ? <p className="workspace-message__tombstone">Message deleted by its author.</p> : editing ? (
+          <div className="workspace-message__edit">
+            <textarea value={editText} maxLength={16 * 1024} aria-label="Edit workspace message" onChange={(event) => setEditText(event.target.value)} />
+            <span><Button variant="ghost" onClick={() => { setEditing(false); setEditText(message.text); }}>Cancel</Button><Button disabled={!editText.trim()} onClick={() => { onEdit(editText); setEditing(false); }}>Save</Button></span>
+          </div>
+        ) : <p>{message.text}</p>}
+        {(message.mutation_conflict || message.mutation_frozen) && <p className="workspace-message__security" role="status">{message.mutation_frozen ? "Security warning: this message is frozen after conflicting mutations from one device." : "Concurrent author changes were resolved deterministically. A later edit can resolve the conflict."}</p>}
+        {!message.deleted && <footer className="workspace-message__actions">
+          {authorMutable && !confirmDelete && <><button type="button" onClick={() => setEditing(true)}>Edit</button><button type="button" onClick={() => setConfirmDelete(true)}>Delete</button></>}
+          {authorMutable && confirmDelete && <><span>Delete for workspace participants?</span><button type="button" onClick={() => setConfirmDelete(false)}>Cancel</button><button type="button" onClick={() => { setConfirmDelete(false); onDelete(); }}>Delete</button></>}
+          {mutable && <MessageReactions
+            messageText={message.text}
+            reactions={message.reactions}
+            pickerOpen={reactionOpen}
+            catalogOpen={reactionCatalogOpen}
+            busyEmoji={reactionBusyEmoji}
+            error={reactionError}
+            multiple
+            onTogglePicker={onToggleReaction}
+            onClosePicker={onCloseReaction}
+            onCatalogOpenChange={onReactionCatalogOpenChange}
+            onSetReaction={onSetReaction}
+          />}
+        </footer>}
+        {message.direction === "outbound" && <details className="workspace-delivery"><summary>{workspaceDeliveryLabel(message)}</summary>{message.deliveries && <ul>{message.deliveries.map((delivery) => <li key={delivery.device_id}><span>{delivery.member_display_name} · device {delivery.device_short_id}</span><strong>{workspaceDeliveryStateLabel(delivery.state)}</strong></li>)}</ul>}</details>}
+      </div>
+    </article>
+  );
+}
+
+function WorkspaceConversation({ workspace, channel, page, draft, loading, sending, error, reactionTargetId, reactionCatalogOpen, reactionBusyEmoji, reactionError, onDraft, onSend, onLoadOlder, onHide, onEdit, onDelete, onToggleReactionPicker, onReactionCatalogOpenChange, onCloseReactionPicker, onSetReaction, onPeople, onSettings, onInvite, onManage }: { workspace: Workspace; channel: WorkspaceChannel; page: WorkspaceMessagePage | null; draft: string; loading: boolean; sending: boolean; error: string; reactionTargetId: string | null; reactionCatalogOpen: boolean; reactionBusyEmoji: string | null; reactionError: string; onDraft: (value: string) => void; onSend: () => void; onLoadOlder: () => void; onHide: (eventId: string) => void; onEdit: (eventId: string, text: string) => void; onDelete: (eventId: string) => void; onToggleReactionPicker: (eventId: string) => void; onReactionCatalogOpenChange: (eventId: string, open: boolean) => void; onCloseReactionPicker: () => void; onSetReaction: (eventId: string, emoji: string, active: boolean) => void; onPeople: () => void; onSettings: () => void; onInvite: () => void; onManage: () => void }) {
   const postingRestricted = workspace.policies.posting === "owner_and_admins" && workspace.local_role !== "owner";
   const readOnly = workspace.state !== "active" || channel.state !== "active" || postingRestricted;
   const [attachmentWarning, setAttachmentWarning] = useState("");
   const syncWarning = workspaceSyncIssueLabel(workspace);
-  return <section className="conversation workspace-conversation" aria-label={`Workspace channel ${channel.name}`} onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); if (event.dataTransfer.files.length) setAttachmentWarning("Attachments are not supported yet. No file was sent."); }}><header className="conversation__header"><div className="conversation__identity"><span className="workspace-channel-icon">{channel.visibility === "private" ? <LockKeyhole size={19} /> : <Hash size={19} />}</span><span><h1>{channel.display_name || channel.name}</h1><small>{channel.topic || `${workspace.name} · ${channel.visibility === "private" ? "private signed roster" : workspaceStateLabel(workspace)}`}</small></span></div><div className="workspace-header-actions">{workspace.local_role === "owner" && workspace.state === "active" && workspace.members.filter((member) => member.status === "active").length < 8 && <button className="icon-button" onClick={onInvite} aria-label={`Invite people to ${workspace.name}`} title="Invite people"><UserRoundPlus size={18} /></button>}<button className="icon-button" onClick={onManage} aria-label={`Manage ${channel.name} channel`} title="Channel details"><Settings size={18} /></button><button className="icon-button" onClick={onPeople} aria-label={`People in ${workspace.name}`} title="People"><Users size={18} /></button><button className="icon-button" onClick={onSettings} aria-label={`${workspace.name} settings`} title="Workspace settings"><Building2 size={18} /></button></div></header><div className="message-scroll workspace-message-scroll">{page?.next_cursor && <button className="load-older" disabled={loading} onClick={onLoadOlder}>{loading ? "Loading…" : "Load older messages"}</button>}{loading && !page && <div className="workspace-loading"><span className="spinner" /> Loading messages…</div>}{!loading && page?.messages.length === 0 && <div className="workspace-channel-empty">{channel.visibility === "private" ? <LockKeyhole size={26} /> : <Hash size={26} />}<h2>Welcome to #{channel.display_name || channel.name}</h2><p>{channel.visibility === "private" ? "Only the signed roster receives this channel or its future messages. Newly admitted members receive no earlier messages." : "Everyone in this workspace receives public-channel messages. History depends on copies retained by reachable members."}</p></div>}{page?.messages.map((message) => <article className={`workspace-message ${message.direction === "outbound" ? "workspace-message--self" : ""}`} key={message.id}><Avatar name={message.author_display_name} small /><div><header><strong>{message.author_display_name}</strong><time dateTime={machineTime(message.created_at)}>{formatTime(message.created_at)}</time><button className="message-hide" onClick={() => onHide(message.id)} aria-label={`Hide message from ${message.author_display_name}`} title="Hide locally"><X size={13} /></button></header><p>{message.text}</p>{message.direction === "outbound" && <details className="workspace-delivery"><summary>{workspaceDeliveryLabel(message)}</summary>{message.deliveries && <ul>{message.deliveries.map((delivery) => <li key={delivery.device_id}><span>{delivery.member_display_name} · device {delivery.device_short_id}</span><strong>{workspaceDeliveryStateLabel(delivery.state)}</strong></li>)}</ul>}</details>}</div></article>)}</div>{(error || attachmentWarning || syncWarning) && <p className="form-error workspace-composer-error" role="alert">{error || attachmentWarning || syncWarning}</p>}{readOnly ? <div className="composer-disabled"><LockKeyhole size={16} />{postingRestricted ? "Only the workspace owner can post under the current signed policy." : channel.state === "archived" ? "This channel is archived and read-only." : channel.state === "leaving" ? "Leaving is pending with the channel manager." : workspaceStateLabel(workspace)}</div> : <div className="composer workspace-composer"><button type="button" className="icon-button" onClick={() => setAttachmentWarning("Attachments are not supported yet. No file was sent.")} aria-label="Add attachment"><Plus size={20} /></button><textarea value={draft} onChange={(event) => { setAttachmentWarning(""); onDraft(event.target.value); }} onPaste={(event) => { if (event.clipboardData.files.length || Array.from(event.clipboardData.items).some((item) => item.kind === "file")) { event.preventDefault(); setAttachmentWarning("Attachments are not supported yet. No file was sent."); } }} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); onSend(); } }} placeholder={`Message #${channel.name}`} aria-label={`Message ${channel.name}`} maxLength={16 * 1024} /><Button disabled={sending || !draft.trim()} onClick={onSend} aria-label="Send workspace message"><Send size={18} /></Button></div>}</section>;
+  return <section className="conversation workspace-conversation" aria-label={`Workspace channel ${channel.name}`} onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); if (event.dataTransfer.files.length) setAttachmentWarning("Attachments are not supported yet. No file was sent."); }}>
+    <header className="conversation__header"><div className="conversation__identity"><span className="workspace-channel-icon">{channel.visibility === "private" ? <LockKeyhole size={19} /> : <Hash size={19} />}</span><span><h1>{channel.display_name || channel.name}</h1><small>{channel.topic || `${workspace.name} · ${channel.visibility === "private" ? "private signed roster" : workspaceStateLabel(workspace)}`}</small></span></div><div className="workspace-header-actions">{workspace.local_role === "owner" && workspace.state === "active" && workspace.members.filter((member) => member.status === "active").length < 8 && <button className="icon-button" onClick={onInvite} aria-label={`Invite people to ${workspace.name}`} title="Invite people"><UserRoundPlus size={18} /></button>}<button className="icon-button" onClick={onManage} aria-label={`Manage ${channel.name} channel`} title="Channel details"><Settings size={18} /></button><button className="icon-button" onClick={onPeople} aria-label={`People in ${workspace.name}`} title="People"><Users size={18} /></button><button className="icon-button" onClick={onSettings} aria-label={`${workspace.name} settings`} title="Workspace settings"><Building2 size={18} /></button></div></header>
+    <div className="message-scroll workspace-message-scroll">
+      {page?.next_cursor && <button className="load-older" disabled={loading} onClick={onLoadOlder}>{loading ? "Loading…" : "Load older messages"}</button>}
+      {loading && !page && <div className="workspace-loading"><span className="spinner" /> Loading messages…</div>}
+      {!loading && page?.messages.length === 0 && <div className="workspace-channel-empty">{channel.visibility === "private" ? <LockKeyhole size={26} /> : <Hash size={26} />}<h2>Welcome to #{channel.display_name || channel.name}</h2><p>{channel.visibility === "private" ? "Only the signed roster receives this channel or its future messages. Newly admitted members receive no earlier messages." : "Everyone in this workspace receives public-channel messages. History depends on copies retained by reachable members."}</p></div>}
+      {page?.messages.map((message) => <WorkspaceMessageCard key={message.id} workspace={workspace} message={message} reactionOpen={reactionTargetId === message.id} reactionCatalogOpen={reactionTargetId === message.id && reactionCatalogOpen} reactionBusyEmoji={reactionTargetId === message.id ? reactionBusyEmoji : null} reactionError={reactionTargetId === message.id ? reactionError : ""} onToggleReaction={() => onToggleReactionPicker(message.id)} onReactionCatalogOpenChange={(open) => onReactionCatalogOpenChange(message.id, open)} onCloseReaction={onCloseReactionPicker} onSetReaction={(emoji, active) => onSetReaction(message.id, emoji, active)} onEdit={(text) => onEdit(message.id, text)} onDelete={() => onDelete(message.id)} onHide={() => onHide(message.id)} />)}
+    </div>
+    {(error || attachmentWarning || syncWarning) && <p className="form-error workspace-composer-error" role="alert">{error || attachmentWarning || syncWarning}</p>}
+    {readOnly ? <div className="composer-disabled"><LockKeyhole size={16} />{postingRestricted ? "Only the workspace owner can post under the current signed policy." : channel.state === "archived" ? "This channel is archived and read-only." : channel.state === "leaving" ? "Leaving is pending with the channel manager." : workspaceStateLabel(workspace)}</div> : <div className="composer workspace-composer"><button type="button" className="icon-button" onClick={() => setAttachmentWarning("Attachments are not supported yet. No file was sent.")} aria-label="Add attachment"><Plus size={20} /></button><textarea value={draft} onChange={(event) => { setAttachmentWarning(""); onDraft(event.target.value); }} onPaste={(event) => { if (event.clipboardData.files.length || Array.from(event.clipboardData.items).some((item) => item.kind === "file")) { event.preventDefault(); setAttachmentWarning("Attachments are not supported yet. No file was sent."); } }} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); onSend(); } }} placeholder={`Message #${channel.name}`} aria-label={`Message ${channel.name}`} maxLength={16 * 1024} /><Button disabled={sending || !draft.trim()} onClick={onSend} aria-label="Send workspace message"><Send size={18} /></Button></div>}
+  </section>;
 }
 
-function WorkspaceDirectConversation({ workspace, direct, page, draft, loading, sending, error, onDraft, onSend, onLoadOlder, onHideMessage, onHideConversation, onPeople }: { workspace: Workspace; direct: WorkspaceDirect; page: WorkspaceMessagePage | null; draft: string; loading: boolean; sending: boolean; error: string; onDraft: (value: string) => void; onSend: () => void; onLoadOlder: () => void; onHideMessage: (eventId: string) => void; onHideConversation: () => void; onPeople: () => void }) {
+function WorkspaceDirectConversation({ workspace, direct, page, draft, loading, sending, error, reactionTargetId, reactionCatalogOpen, reactionBusyEmoji, reactionError, onDraft, onSend, onLoadOlder, onHideMessage, onEdit, onDelete, onToggleReactionPicker, onReactionCatalogOpenChange, onCloseReactionPicker, onSetReaction, onHideConversation, onPeople }: { workspace: Workspace; direct: WorkspaceDirect; page: WorkspaceMessagePage | null; draft: string; loading: boolean; sending: boolean; error: string; reactionTargetId: string | null; reactionCatalogOpen: boolean; reactionBusyEmoji: string | null; reactionError: string; onDraft: (value: string) => void; onSend: () => void; onLoadOlder: () => void; onHideMessage: (eventId: string) => void; onEdit: (eventId: string, text: string) => void; onDelete: (eventId: string) => void; onToggleReactionPicker: (eventId: string) => void; onReactionCatalogOpenChange: (eventId: string, open: boolean) => void; onCloseReactionPicker: () => void; onSetReaction: (eventId: string, emoji: string, active: boolean) => void; onHideConversation: () => void; onPeople: () => void }) {
   const [attachmentWarning, setAttachmentWarning] = useState("");
   const readOnly = workspace.state !== "active" || direct.state !== "open";
   const readOnlyLabel = direct.state !== "open"
@@ -1884,14 +1973,14 @@ function WorkspaceDirectConversation({ workspace, direct, page, draft, loading, 
     : workspaceStateLabel(workspace);
   return <section className="conversation workspace-conversation" aria-label={`Workspace direct message with ${direct.peer_display_name}`} onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); if (event.dataTransfer.files.length) setAttachmentWarning("Attachments are not supported yet. No file was sent."); }}>
     <header className="conversation__header"><div className="conversation__identity"><Avatar name={direct.peer_display_name} small /><span><h1>{direct.peer_display_name}</h1><small>{workspace.name} · workspace DM · {direct.peer_short_id}</small></span></div><div className="workspace-header-actions"><button className="icon-button" onClick={onHideConversation} aria-label={`Hide workspace conversation with ${direct.peer_display_name}`} title="Hide locally"><EyeOff size={18} /></button><button className="icon-button" onClick={onPeople} aria-label={`People in ${workspace.name}`} title="People"><Users size={18} /></button></div></header>
-    <div className="message-scroll workspace-message-scroll">{page?.next_cursor && <button className="load-older" disabled={loading} onClick={onLoadOlder}>{loading ? "Loading…" : "Load older messages"}</button>}{loading && !page && <div className="workspace-loading"><span className="spinner" /> Loading messages…</div>}{!loading && page?.messages.length === 0 && <div className="workspace-channel-empty"><MessageCircleMore size={28} /><h2>Message {direct.peer_display_name}</h2><p>This private workspace conversation is authorized by signed membership and does not create a global Contact.</p></div>}{page?.messages.map((message) => <article className={`workspace-message ${message.direction === "outbound" ? "workspace-message--self" : ""}`} key={message.id}><Avatar name={message.author_display_name} small /><div><header><strong>{message.author_display_name}</strong><time dateTime={machineTime(message.created_at)}>{formatTime(message.created_at)}</time><button className="message-hide" onClick={() => onHideMessage(message.id)} aria-label={`Hide message from ${message.author_display_name}`} title="Hide locally"><X size={13} /></button></header><p>{message.text}</p>{message.direction === "outbound" && <details className="workspace-delivery"><summary>{workspaceDeliveryLabel(message)}</summary>{message.deliveries && <ul>{message.deliveries.map((delivery) => <li key={delivery.device_id}><span>{delivery.member_display_name} · device {delivery.device_short_id}</span><strong>{workspaceDeliveryStateLabel(delivery.state)}</strong></li>)}</ul>}</details>}</div></article>)}</div>
+    <div className="message-scroll workspace-message-scroll">{page?.next_cursor && <button className="load-older" disabled={loading} onClick={onLoadOlder}>{loading ? "Loading…" : "Load older messages"}</button>}{loading && !page && <div className="workspace-loading"><span className="spinner" /> Loading messages…</div>}{!loading && page?.messages.length === 0 && <div className="workspace-channel-empty"><MessageCircleMore size={28} /><h2>Message {direct.peer_display_name}</h2><p>This private workspace conversation is authorized by signed membership and does not create a global Contact.</p></div>}{page?.messages.map((message) => <WorkspaceMessageCard key={message.id} workspace={workspace} message={message} reactionOpen={reactionTargetId === message.id} reactionCatalogOpen={reactionTargetId === message.id && reactionCatalogOpen} reactionBusyEmoji={reactionTargetId === message.id ? reactionBusyEmoji : null} reactionError={reactionTargetId === message.id ? reactionError : ""} onToggleReaction={() => onToggleReactionPicker(message.id)} onReactionCatalogOpenChange={(open) => onReactionCatalogOpenChange(message.id, open)} onCloseReaction={onCloseReactionPicker} onSetReaction={(emoji, active) => onSetReaction(message.id, emoji, active)} onEdit={(text) => onEdit(message.id, text)} onDelete={() => onDelete(message.id)} onHide={() => onHideMessage(message.id)} />)}</div>
     {(error || attachmentWarning) && <p className="form-error workspace-composer-error" role="alert">{error || attachmentWarning}</p>}
     {readOnly ? <div className="composer-disabled"><LockKeyhole size={16} />{readOnlyLabel}</div> : <div className="composer workspace-composer"><button type="button" className="icon-button" onClick={() => setAttachmentWarning("Attachments are not supported yet. No file was sent.")} aria-label="Add attachment"><Plus size={20} /></button><textarea value={draft} onChange={(event) => { setAttachmentWarning(""); onDraft(event.target.value); }} onPaste={(event) => { if (event.clipboardData.files.length || Array.from(event.clipboardData.items).some((item) => item.kind === "file")) { event.preventDefault(); setAttachmentWarning("Attachments are not supported yet. No file was sent."); } }} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); onSend(); } }} placeholder={`Message ${direct.peer_display_name}`} aria-label={`Message ${direct.peer_display_name}`} maxLength={16 * 1024} /><Button disabled={sending || !draft.trim()} onClick={onSend} aria-label="Send workspace direct message"><Send size={18} /></Button></div>}
   </section>;
 }
 
 type ConversationSelection = { kind: "contact" | "group"; id: string } | null;
-type ReactionTarget = { kind: "direct" | "group"; messageId: string; layer: "quick" | "catalog" } | null;
+type ReactionTarget = { kind: "direct" | "group" | "workspace"; messageId: string; layer: "quick" | "catalog" } | null;
 
 type DraftWrite = {
   command: "save_draft" | "save_group_draft" | "save_workspace_draft" | "save_workspace_direct_draft";
@@ -1993,7 +2082,7 @@ function Messenger({ snapshot, refresh, workspaceChannelInvalidation, onLock, in
   const [deleteError, setDeleteError] = useState("");
   const [conversationActionError, setConversationActionError] = useState("");
   const [reactionTarget, setReactionTarget] = useState<ReactionTarget>(null);
-  const [reactionBusy, setReactionBusy] = useState<{ kind: "direct" | "group"; messageId: string; emoji: string } | null>(null);
+  const [reactionBusy, setReactionBusy] = useState<{ kind: "direct" | "group" | "workspace"; messageId: string; emoji: string } | null>(null);
   const [reactionError, setReactionError] = useState("");
   useEffect(() => { void runtimePlatform().then((platform) => setWorkspacesEnabled(platform === "desktop")); }, []);
   useEffect(() => {
@@ -2137,13 +2226,13 @@ function Messenger({ snapshot, refresh, workspaceChannelInvalidation, onLock, in
     setReactionError("");
   }, []);
 
-  const toggleReactionPicker = (kind: "direct" | "group", messageId: string) => {
+  const toggleReactionPicker = (kind: "direct" | "group" | "workspace", messageId: string) => {
     if (reactionInFlight.current) return;
     setReactionError("");
     setReactionTarget((current) => current?.kind === kind && current.messageId === messageId ? null : { kind, messageId, layer: "quick" });
   };
 
-  const setReactionCatalogOpen = (kind: "direct" | "group", messageId: string, open: boolean) => {
+  const setReactionCatalogOpen = (kind: "direct" | "group" | "workspace", messageId: string, open: boolean) => {
     setReactionTarget((current) => current?.kind === kind && current.messageId === messageId
       ? { ...current, layer: open ? "catalog" : "quick" }
       : current);
@@ -2641,6 +2730,57 @@ function Messenger({ snapshot, refresh, workspaceChannelInvalidation, onLock, in
       await loadWorkspaceMessages(false);
     } catch (reason) { setWorkspaceError(errorMessage(reason)); }
   };
+  const mutateWorkspaceMessage = async (
+    command: "edit_workspace_message" | "delete_workspace_message",
+    eventId: string,
+    text?: string,
+  ) => {
+    if (!selectedWorkspace) return;
+    setWorkspaceError("");
+    try {
+      const updated = await serviceCommand<WorkspaceMessage>(command, {
+        operation_id: newOperationId(),
+        mutation_event_id: newOperationId(),
+        workspace_id: selectedWorkspace.id,
+        event_id: eventId,
+        ...(command === "edit_workspace_message" ? { text } : {}),
+      });
+      setWorkspacePage((current) => current ? {
+        ...current,
+        messages: current.messages.map((message) => message.id === eventId ? updated : message),
+      } : current);
+    } catch (reason) { setWorkspaceError(errorMessage(reason)); }
+  };
+  const setWorkspaceReaction = async (messageId: string, emoji: string, active: boolean) => {
+    if (!selectedWorkspace || reactionInFlight.current) return;
+    const validation = validateSingleEmoji(emoji);
+    if (validation.error) { setReactionError(validation.error); return; }
+    reactionInFlight.current = true;
+    const interactionGeneration = ++reactionInteractionGeneration.current;
+    setReactionTarget((current) => current?.kind === "workspace" && current.messageId === messageId ? current : { kind: "workspace", messageId, layer: "quick" });
+    setReactionBusy({ kind: "workspace", messageId, emoji: validation.emoji });
+    setReactionError("");
+    try {
+      const updated = await serviceCommand<WorkspaceMessage>("set_workspace_reaction", {
+        operation_id: newOperationId(),
+        mutation_event_id: newOperationId(),
+        workspace_id: selectedWorkspace.id,
+        event_id: messageId,
+        emoji: validation.emoji,
+        active,
+      });
+      setWorkspacePage((current) => current ? {
+        ...current,
+        messages: current.messages.map((message) => message.id === messageId ? updated : message),
+      } : current);
+      if (reactionInteractionGeneration.current === interactionGeneration) setReactionTarget(null);
+    } catch (reason) {
+      if (reactionInteractionGeneration.current === interactionGeneration) setReactionError(errorMessage(reason));
+    } finally {
+      reactionInFlight.current = false;
+      setReactionBusy(null);
+    }
+  };
   const runWorkspaceLifecycle = async (command: "leave_workspace" | "close_workspace" | "remove_workspace_data", confirmation?: string) => {
     if (!selectedWorkspace || workspaceActionBusy) return;
     setWorkspaceActionBusy(true); setWorkspaceActionError("");
@@ -2813,10 +2953,20 @@ function Messenger({ snapshot, refresh, workspaceChannelInvalidation, onLock, in
             loading={workspacePageLoading}
             sending={workspaceSending}
             error={workspaceError}
+            reactionTargetId={reactionTarget?.kind === "workspace" ? reactionTarget.messageId : null}
+            reactionCatalogOpen={reactionTarget?.kind === "workspace" && reactionTarget.layer === "catalog"}
+            reactionBusyEmoji={reactionBusy?.kind === "workspace" ? reactionBusy.emoji : null}
+            reactionError={reactionTarget?.kind === "workspace" ? reactionError : ""}
             onDraft={(value) => { setWorkspaceError(""); saveWorkspaceDirectDraft(selectedWorkspace.id, selectedWorkspaceDirect.id, value); }}
             onSend={() => void sendWorkspaceMessage()}
             onLoadOlder={() => void loadWorkspaceMessages(true)}
             onHideMessage={(eventId) => void hideWorkspaceMessage(eventId)}
+            onEdit={(eventId, text) => void mutateWorkspaceMessage("edit_workspace_message", eventId, text)}
+            onDelete={(eventId) => void mutateWorkspaceMessage("delete_workspace_message", eventId)}
+            onToggleReactionPicker={(eventId) => toggleReactionPicker("workspace", eventId)}
+            onReactionCatalogOpenChange={(eventId, open) => setReactionCatalogOpen("workspace", eventId, open)}
+            onCloseReactionPicker={closeReactionPicker}
+            onSetReaction={(eventId, emoji, active) => void setWorkspaceReaction(eventId, emoji, active)}
             onHideConversation={() => void hideWorkspaceDirect()}
             onPeople={() => setWorkspacePeopleOpen(true)}
           />
@@ -2829,10 +2979,20 @@ function Messenger({ snapshot, refresh, workspaceChannelInvalidation, onLock, in
             loading={workspacePageLoading}
             sending={workspaceSending}
             error={workspaceError}
+            reactionTargetId={reactionTarget?.kind === "workspace" ? reactionTarget.messageId : null}
+            reactionCatalogOpen={reactionTarget?.kind === "workspace" && reactionTarget.layer === "catalog"}
+            reactionBusyEmoji={reactionBusy?.kind === "workspace" ? reactionBusy.emoji : null}
+            reactionError={reactionTarget?.kind === "workspace" ? reactionError : ""}
             onDraft={(value) => { setWorkspaceError(""); saveWorkspaceDraft(selectedWorkspace.id, selectedWorkspaceChannel.id, value); }}
             onSend={() => void sendWorkspaceMessage()}
             onLoadOlder={() => void loadWorkspaceMessages(true)}
             onHide={(eventId) => void hideWorkspaceMessage(eventId)}
+            onEdit={(eventId, text) => void mutateWorkspaceMessage("edit_workspace_message", eventId, text)}
+            onDelete={(eventId) => void mutateWorkspaceMessage("delete_workspace_message", eventId)}
+            onToggleReactionPicker={(eventId) => toggleReactionPicker("workspace", eventId)}
+            onReactionCatalogOpenChange={(eventId, open) => setReactionCatalogOpen("workspace", eventId, open)}
+            onCloseReactionPicker={closeReactionPicker}
+            onSetReaction={(eventId, emoji, active) => void setWorkspaceReaction(eventId, emoji, active)}
             onPeople={() => setWorkspacePeopleOpen(true)}
             onSettings={() => setWorkspaceSettingsOpen(true)}
             onInvite={() => setInviteWorkspaceOpen(true)}

@@ -97,6 +97,16 @@
   Only participant devices receive event legs or local summaries. Local hide
   does not delete encrypted history, and a known participant removal makes the
   retained DM read-only and cancels unhanded legs.
+- Workspace edits and deletion require a current active device of the original
+  author member; reactions require a current active member who remains in the
+  target's historical and current audience. Mutation target, conversation,
+  base revision, next revision, manifest, channel head, and frozen audience are
+  signature-bound. Channel posting policy is deliberately not reaction or DM
+  authority. Deterministic candidate ordering makes delayed and concurrent
+  delivery converge, inactive reaction records prevent resurrection, and an
+  author deletion remains a presentation tombstone. Distinct content from one
+  device at one revision freezes mutation of the whole message and surfaces a
+  security warning instead of silently choosing arrival order.
 - Workspace record IDs and cursors are keyed opaque values. Message pages,
   due-work shards, unread state, drafts, delivery legs and operation results are
   separately sealed. Startup summaries do not decrypt message bodies. A stale
@@ -136,7 +146,10 @@ Depending on configured interfaces, observers may learn local discovery presence
 
 - Malware, administrative access, or memory inspection on an unlocked endpoint.
 - Plaintext visible on screen, accessibility APIs, clipboard contents after a user copies an invite, or all operating-system swap/crash-dump behavior.
-- Delivery when no usable path/copy exists, recovery after all copies expire or are lost, remote deletion, or erasure from a member that already received a message.
+- Delivery when no usable path/copy exists, recovery after all copies expire or
+  are lost, or cryptographic erasure from a member that already received a
+  message. Author deletion is a convergent UI tombstone, not a promise to erase
+  the original signed ciphertext from every endpoint or backup.
 - Reaction convergence after every entitled endpoint has discarded all copies,
   or across peers that do not implement the additive reaction kinds. Endpoint
   receipt can retire a reaction job even when an older peer ignored the
@@ -155,10 +168,10 @@ Depending on configured interfaces, observers may learn local discovery presence
   after permanent owner-key loss, a globally ordered group timeline, public or
   large channels, discoverable groups, anonymous membership, selective history
   sharing, or safe multi-owner membership editing.
-- Workspace cooperative message-history backfill, edits, remote deletion,
-  reactions, threads, search exchange, private history catch-up, direct
+- Workspace cooperative message-history backfill, threads, mentions, search
+  exchange, private history catch-up, direct
   message history catch-up, linked devices, authority transfer, and mobile
-  workspace use. Increment 5 exposes only history already present locally;
+  workspace use. Increment 6 exposes only history already present locally;
   public discovery
   does not imply complete historical messages, and newly admitted private
   members receive future events only.

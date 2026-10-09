@@ -33,6 +33,7 @@ from mesh_chat.workspace_protocol import (
     create_workspace_channel_transfer,
     create_workspace_channel_transfer_offer,
     create_workspace_event,
+    create_workspace_mutation_event,
     create_workspace_genesis,
     create_workspace_invitation,
     create_workspace_join,
@@ -237,6 +238,77 @@ def test_workspace_bootstrap_join_channel_and_event_round_trip() -> None:
     )
     assert event.text == "Water level is stable."
     assert len(manifest.members) == 2
+
+
+def test_workspace_mutation_events_bind_target_revision_and_payload() -> None:
+    owner, _created, genesis, manifest = _workspace()
+    channel = verify_workspace_channel_record(
+        create_workspace_channel_record(
+            owner,
+            workspace_id=genesis.workspace_id,
+            channel_id=_id(),
+            manifest_digest=manifest.digest,
+            name="general",
+            topic="",
+            manager_member_id=genesis.owner_member_id,
+            manager_device_id=genesis.authority_device_id,
+            now=NOW,
+        ),
+        manifest=manifest,
+        now=NOW,
+    )
+    target = _id()
+    previous: str | None = None
+    for sequence, event_type, kwargs in (
+        (1, "edit", {"text": "Corrected field note"}),
+        (2, "delete", {}),
+        (3, "reaction", {"emoji": "👍", "active": True}),
+    ):
+        raw = create_workspace_mutation_event(
+            owner,
+            workspace_id=genesis.workspace_id,
+            conversation_id=channel.channel_id,
+            event_id=_id(),
+            event_type=event_type,
+            author_member_id=genesis.owner_member_id,
+            author_device_id=genesis.authority_device_id,
+            sequence=sequence,
+            previous_event_digest=previous,
+            manifest_digest=manifest.digest,
+            channel_digest=channel.digest,
+            target_event_id=target,
+            base_revision=sequence - 1,
+            revision=sequence,
+            created_at=NOW,
+            **kwargs,
+        )
+        event = verify_workspace_event(
+            raw, manifest=manifest, channel=channel, now=NOW
+        )
+        assert event.event_type == event_type
+        assert event.target_event_id == target
+        assert event.base_revision == sequence - 1
+        assert event.revision == sequence
+        previous = event.digest
+
+    with pytest.raises(ValidationError, match="revision"):
+        create_workspace_mutation_event(
+            owner,
+            workspace_id=genesis.workspace_id,
+            conversation_id=channel.channel_id,
+            event_id=_id(),
+            event_type="edit",
+            author_member_id=genesis.owner_member_id,
+            author_device_id=genesis.authority_device_id,
+            sequence=4,
+            previous_event_digest=previous,
+            manifest_digest=manifest.digest,
+            channel_digest=channel.digest,
+            target_event_id=target,
+            base_revision=1,
+            revision=3,
+            text="Skipped base",
+        )
 
 
 def test_workspace_documents_fail_closed_on_tampering_expiry_and_wrong_signer() -> None:

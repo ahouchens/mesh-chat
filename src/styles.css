@@ -378,6 +378,18 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus
   .group-details__panel { position: fixed; top: calc(60px + env(safe-area-inset-top)); right: 8px; width: calc(100vw - 16px); max-height: calc(100dvh - 68px - env(safe-area-inset-top) - env(safe-area-inset-bottom)); }
 }
 
+.workspace-message--deleted { opacity: .82; }
+.workspace-message__tombstone { color: var(--muted); font-style: italic; }
+.workspace-message__security { padding: 7px 9px; color: #6d5010; background: #fff4cb; border: 1px solid #ead38a; border-radius: 8px; font-size: .72rem; }
+.workspace-message__actions { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; margin-top: 6px; }
+.workspace-message__actions > button { padding: 3px 7px; color: var(--muted); background: transparent; border: 0; border-radius: 6px; font-size: .7rem; font-weight: 700; cursor: pointer; }
+.workspace-message__actions > button:hover, .workspace-message__actions > button:focus-visible { color: var(--green-700); background: #e8eee9; }
+.workspace-message__actions > span { color: #80544f; font-size: .72rem; }
+.workspace-message__actions .message-reactions { justify-content: flex-start; }
+.workspace-message__edit { display: grid; gap: 7px; margin-top: 6px; }
+.workspace-message__edit textarea { min-height: 68px; padding: 9px; resize: vertical; border: 1px solid #aebbb3; border-radius: 8px; font: inherit; }
+.workspace-message__edit > span { display: flex; justify-content: flex-end; gap: 6px; }
+
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
 }

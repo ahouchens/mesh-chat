@@ -45,7 +45,7 @@ ordering, removal, and owner-loss consequences.
 
 ## Desktop workspaces
 
-The fifth workspace increment is an isolated desktop feature profile. It adds
+The sixth workspace increment is an isolated desktop feature profile. It adds
 canonical workspace authority, device, invitation, channel and event documents
 under the `mesh-chat-workspace` custom type without changing Personal or private
 group bytes. The React shell can switch between Personal and workspace views,
@@ -83,6 +83,27 @@ current active participants. Dedicated sealed `workspace_direct` summaries,
 conversation indexes, read state, drafts, and local hidden state keep their
 presentation independent from Personal. Learning either participant's removal
 makes retained history read-only and cancels every unhanded leg for that DM.
+
+Edits, author deletion, and reactions are canonical `workspace_event` records,
+not mutable renderer commands or replacements for the signed original. The
+service first verifies the mutation envelope and current controls, then resolves
+the referenced message and repeats author-member, current-entitlement, and
+historical-audience checks. Public, private, and DM mutations share the same
+per-device sequence/predecessor stream as messages. They advance stream
+coverage and receive ordinary per-device delivery legs, but do not add timeline
+page entries.
+
+`workspace_message_state` materializes the deterministic winning author
+revision, durable deletion tombstone, conflict bit, and equivocation freeze.
+`workspace_reaction_state` is independently keyed by target, member, and emoji,
+so one member may retain several emojis and each inactive state remains a
+tombstone. Candidate ordering is `(revision, signer destination, event digest)`;
+a later revision clears a concurrent conflict, while distinct content from one
+device at one revision freezes the whole message. These encrypted derived
+records are updated in the same vault transaction as the canonical event,
+stream head, outbox legs, due-work shards, and durable operation result.
+Deleted plaintext is never returned in the public message model. Missing
+targets or bases remain bounded and inert until their predecessors arrive.
 
 Checkpoints are pinned to the genesis owner member, authority device, public
 identity, and destination. The initial manifest also pins the genesis name and

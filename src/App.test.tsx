@@ -2065,6 +2065,69 @@ describe("desktop workspaces", () => {
     expect(within(conversation).getByText(/Saved locally/i)).toBeTruthy();
   });
 
+  it("edits, reacts to, and tombstones workspace messages with durable mutation IDs", async () => {
+    let message: WorkspaceMessage = {
+      id: "56565656-5656-4656-8656-565656565656",
+      workspace_id: workspace.id,
+      conversation_id: workspaceChannel.id,
+      direction: "outbound",
+      author_member_id: workspace.local_member_id,
+      author_display_name: "Alex",
+      text: "Original field note",
+      revision: 0,
+      deleted: false,
+      mutation_conflict: false,
+      mutation_frozen: false,
+      reactions: [],
+      sequence: 1,
+      event_digest: "77".repeat(32),
+      created_at: 1_791_072_021,
+    };
+    const current: Snapshot = { ...snapshot(), workspaces: [workspace], workspace_channels: [workspaceChannel], workspace_join_requests: [], workspace_invitations: [], workspace_drafts: [] };
+    api.runtimePlatform.mockResolvedValue("desktop");
+    api.initializeService.mockResolvedValue(current);
+    api.onInvitation.mockResolvedValue(() => undefined);
+    api.onServiceEvent.mockResolvedValue(() => undefined);
+    api.serviceCommand.mockImplementation(async (command: string, payload: Record<string, unknown>) => {
+      if (command === "snapshot") return current;
+      if (command === "list_workspace_messages") return { messages: [message], next_cursor: null, high_water: 1 } satisfies WorkspaceMessagePage;
+      if (command === "edit_workspace_message") {
+        message = { ...message, text: String(payload.text), revision: 1 };
+        return message;
+      }
+      if (command === "set_workspace_reaction") {
+        message = { ...message, reactions: [{ emoji: String(payload.emoji), count: 1, reacted_by_self: true }] };
+        return message;
+      }
+      if (command === "delete_workspace_message") {
+        message = { ...message, text: "", revision: 2, deleted: true };
+        return message;
+      }
+      return {};
+    });
+
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Workspace Lakewatcher" }));
+    const conversation = await screen.findByLabelText("Workspace channel general");
+    fireEvent.click(within(conversation).getByRole("button", { name: "Edit" }));
+    fireEvent.change(within(conversation).getByRole("textbox", { name: "Edit workspace message" }), { target: { value: "Corrected field note" } });
+    fireEvent.click(within(conversation).getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(api.serviceCommand).toHaveBeenCalledWith("edit_workspace_message", expect.objectContaining({ workspace_id: workspace.id, event_id: message.id, text: "Corrected field note", operation_id: expect.any(String), mutation_event_id: expect.any(String) })));
+    expect(await within(conversation).findByText("Corrected field note")).toBeTruthy();
+    expect(within(conversation).getByText("Edited")).toBeTruthy();
+
+    fireEvent.click(within(conversation).getByRole("button", { name: "Add a reaction" }));
+    fireEvent.click(within(await screen.findByRole("dialog", { name: "Choose a reaction" })).getByRole("button", { name: "React with thumbs up" }));
+    await waitFor(() => expect(api.serviceCommand).toHaveBeenCalledWith("set_workspace_reaction", expect.objectContaining({ workspace_id: workspace.id, event_id: message.id, emoji: "👍", active: true, operation_id: expect.any(String), mutation_event_id: expect.any(String) })));
+    expect(await within(conversation).findByRole("button", { name: /Remove your thumbs up reaction; 1 reaction total/ })).toBeTruthy();
+
+    fireEvent.click(within(conversation).getByRole("button", { name: "Delete" }));
+    fireEvent.click(within(conversation).getAllByRole("button", { name: "Delete" }).at(-1)!);
+    await waitFor(() => expect(api.serviceCommand).toHaveBeenCalledWith("delete_workspace_message", expect.objectContaining({ workspace_id: workspace.id, event_id: message.id, operation_id: expect.any(String), mutation_event_id: expect.any(String) })));
+    expect(await within(conversation).findByText("Message deleted by its author.")).toBeTruthy();
+    expect(within(conversation).queryByText("Corrected field note")).toBeNull();
+  });
+
   it("reuses durable workspace send IDs after an uncertain failure", async () => {
     const current: Snapshot = { ...snapshot(), workspaces: [workspace], workspace_channels: [workspaceChannel], workspace_join_requests: [], workspace_invitations: [], workspace_drafts: [] };
     const sentPayloads: Record<string, unknown>[] = [];

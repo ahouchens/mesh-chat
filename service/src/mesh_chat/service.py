@@ -163,6 +163,9 @@ class MeshChatService(ReactionServiceMixin, GroupServiceMixin, WorkspaceServiceM
         "open_workspace_direct",
         "hide_workspace_direct",
         "send_workspace_direct_message",
+        "edit_workspace_message",
+        "delete_workspace_message",
+        "set_workspace_reaction",
         "list_workspace_messages",
         "list_workspace_direct_messages",
         "mark_workspace_read",
@@ -2047,6 +2050,54 @@ class MeshChatService(ReactionServiceMixin, GroupServiceMixin, WorkspaceServiceM
                 body["text"],
                 body["event_id"],
                 body["operation_id"],
+            )
+        if command == "edit_workspace_message":
+            body = _payload(
+                value,
+                allowed={
+                    "operation_id", "workspace_id", "event_id",
+                    "mutation_event_id", "text",
+                },
+                required={
+                    "operation_id", "workspace_id", "event_id",
+                    "mutation_event_id", "text",
+                },
+            )
+            return self.edit_workspace_message(
+                body["workspace_id"], body["event_id"], body["text"],
+                body["mutation_event_id"], body["operation_id"],
+            )
+        if command == "delete_workspace_message":
+            body = _payload(
+                value,
+                allowed={
+                    "operation_id", "workspace_id", "event_id",
+                    "mutation_event_id",
+                },
+                required={
+                    "operation_id", "workspace_id", "event_id",
+                    "mutation_event_id",
+                },
+            )
+            return self.delete_workspace_message(
+                body["workspace_id"], body["event_id"],
+                body["mutation_event_id"], body["operation_id"],
+            )
+        if command == "set_workspace_reaction":
+            body = _payload(
+                value,
+                allowed={
+                    "operation_id", "workspace_id", "event_id",
+                    "mutation_event_id", "emoji", "active",
+                },
+                required={
+                    "operation_id", "workspace_id", "event_id",
+                    "mutation_event_id", "emoji", "active",
+                },
+            )
+            return self.set_workspace_reaction(
+                body["workspace_id"], body["event_id"], body["emoji"],
+                body["active"], body["mutation_event_id"], body["operation_id"],
             )
         if command == "list_workspace_messages":
             body = _payload(

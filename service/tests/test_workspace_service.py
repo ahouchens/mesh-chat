@@ -412,6 +412,276 @@ def test_two_member_workspace_create_join_chat_and_page(
     joiner.close()
 
 
+def test_workspace_mutations_converge_and_survive_restart_under_posting_policy(
+    tmp_path: Path,
+) -> None:
+    (
+        owner,
+        owner_network,
+        owner_profile,
+        member,
+        member_network,
+        member_profile,
+        workspace,
+        member_key,
+        member_identity,
+    ) = _joined_pair(tmp_path / "mutations", base=1_800)
+    workspace_id = workspace["id"]
+    channel_id = workspace["general_channel_id"]
+    owner.update_workspace_policies(
+        workspace_id, "all_members", "owner_and_admins", _op(1_804)
+    )
+    _deliver_all(
+        member,
+        _flush(owner, owner_network),
+        source_profile=owner_profile,
+        recipient_profile=member_profile,
+    )
+    message = owner.send_workspace_message(
+        workspace_id, channel_id, "Initial field note", _op(1_805), _op(1_806)
+    )
+    _deliver_all(
+        member,
+        _flush(owner, owner_network),
+        source_profile=owner_profile,
+        recipient_profile=member_profile,
+    )
+    with pytest.raises(ContactNotApproved, match="author"):
+        member.edit_workspace_message(
+            workspace_id, message["id"], "Unauthorized", _op(1_807), _op(1_808)
+        )
+
+    reacted = member.set_workspace_reaction(
+        workspace_id, message["id"], "👍", True, _op(1_809), _op(1_810)
+    )
+    assert reacted["reactions"] == [
+        {"emoji": "👍", "count": 1, "reacted_by_self": True}
+    ]
+    _deliver_all(
+        owner,
+        _flush(member, member_network),
+        source_profile=member_profile,
+        recipient_profile=owner_profile,
+    )
+    member.set_workspace_reaction(
+        workspace_id, message["id"], "❤️", True, _op(1_817), _op(1_818)
+    )
+    member.set_workspace_reaction(
+        workspace_id, message["id"], "👍", False, _op(1_819), _op(1_820)
+    )
+    _deliver_all(
+        owner,
+        _flush(member, member_network),
+        source_profile=member_profile,
+        recipient_profile=owner_profile,
+    )
+    owner_reacted = owner.list_workspace_messages(workspace_id, channel_id)[
+        "messages"
+    ][0]
+    assert owner_reacted["reactions"] == [
+        {"emoji": "❤️", "count": 1, "reacted_by_self": False}
+    ]
+
+    edited = owner.edit_workspace_message(
+        workspace_id,
+        message["id"],
+        "Corrected field note",
+        _op(1_811),
+        _op(1_812),
+    )
+    assert edited["text"] == "Corrected field note"
+    assert edited["revision"] == 1
+    _deliver_all(
+        member,
+        _flush(owner, owner_network),
+        source_profile=owner_profile,
+        recipient_profile=member_profile,
+    )
+    deleted = owner.delete_workspace_message(
+        workspace_id, message["id"], _op(1_813), _op(1_814)
+    )
+    assert deleted["deleted"] is True
+    assert deleted["text"] == ""
+    _deliver_all(
+        member,
+        _flush(owner, owner_network),
+        source_profile=owner_profile,
+        recipient_profile=member_profile,
+    )
+    page = member.list_workspace_messages(workspace_id, channel_id)
+    assert page["high_water"] == 1
+    assert len(page["messages"]) == 1
+    assert page["messages"][0]["deleted"] is True
+    assert page["messages"][0]["revision"] == 2
+    with pytest.raises(ContactNotApproved, match="deleted"):
+        member.set_workspace_reaction(
+            workspace_id, message["id"], "❤️", True, _op(1_815), _op(1_816)
+        )
+
+    member.close()
+    member, _member_network = _service(
+        tmp_path / "mutations" / "member",
+        member_identity,
+        "Bailey",
+        vault_key=member_key,
+    )
+    restarted = member.list_workspace_messages(workspace_id, channel_id)["messages"]
+    assert len(restarted) == 1
+    assert restarted[0]["deleted"] is True
+    assert restarted[0]["revision"] == 2
+    assert restarted[0]["reactions"] == [
+        {"emoji": "❤️", "count": 1, "reacted_by_self": True}
+    ]
+    owner.close()
+    member.close()
+
+
+def test_concurrent_workspace_edits_resolve_then_same_device_equivocation_freezes(
+    tmp_path: Path,
+) -> None:
+    (
+        owner,
+        _owner_network,
+        _owner_profile,
+        member,
+        _member_network,
+        _member_profile,
+        workspace,
+        _member_key,
+        _member_identity,
+    ) = _joined_pair(tmp_path / "concurrent-mutations", base=1_900)
+    workspace_id = workspace["id"]
+    message = owner.send_workspace_message(
+        workspace_id,
+        workspace["general_channel_id"],
+        "Shared draft",
+        _op(1_906),
+        _op(1_907),
+    )
+    record_id = owner._workspace_message_record_id(message["id"])
+    original = owner.store.get("workspace_message_state", record_id)
+    assert original is not None
+
+    def edit_candidate(
+        event_id: str,
+        digest: str,
+        destination_byte: int,
+        base_revision: int,
+        revision: int,
+        text: str,
+    ) -> SimpleNamespace:
+        return SimpleNamespace(
+            event_id=event_id,
+            digest=digest,
+            event_type="edit",
+            base_revision=base_revision,
+            revision=revision,
+            author_destination=bytes([destination_byte]) * 16,
+            created_at=1_800_000_000 + revision,
+            text=text,
+            reaction_active=None,
+        )
+
+    first = edit_candidate(_op(1_908), "aa" * 32, 1, 0, 1, "Device one")
+    second = edit_candidate(_op(1_909), "bb" * 32, 2, 0, 1, "Device two")
+    first_then_second = owner._apply_workspace_message_mutation(
+        owner._apply_workspace_message_mutation(dict(original), first), second
+    )
+    second_then_first = owner._apply_workspace_message_mutation(
+        owner._apply_workspace_message_mutation(dict(original), second), first
+    )
+    assert first_then_second["text"] == second_then_first["text"]
+    assert first_then_second["revision"] == 1
+    assert first_then_second["mutation_conflict"] is True
+
+    resolution = edit_candidate(
+        _op(1_910), "cc" * 32, 2, 1, 2, "Merged resolution"
+    )
+    resolved = owner._apply_workspace_message_mutation(
+        first_then_second, resolution
+    )
+    assert resolved["text"] == "Merged resolution"
+    assert resolved["mutation_conflict"] is False
+
+    equivocation = edit_candidate(
+        _op(1_911), "dd" * 32, 2, 1, 2, "Conflicting device-two value"
+    )
+    frozen = owner._apply_workspace_message_mutation(resolved, equivocation)
+    assert frozen["mutation_frozen"] is True
+    owner.store.put("workspace_message_state", record_id, frozen)
+    with pytest.raises(ContactNotApproved, match="frozen"):
+        owner.edit_workspace_message(
+            workspace_id, message["id"], "Too late", _op(1_912), _op(1_913)
+        )
+    owner.close()
+    member.close()
+
+
+def test_out_of_order_workspace_mutations_wait_for_predecessor_and_converge(
+    tmp_path: Path,
+) -> None:
+    (
+        owner,
+        owner_network,
+        owner_profile,
+        member,
+        _member_network,
+        member_profile,
+        workspace,
+        _member_key,
+        _member_identity,
+    ) = _joined_pair(tmp_path / "out-of-order-mutations", base=1_950)
+    workspace_id = workspace["id"]
+    channel_id = workspace["general_channel_id"]
+    message = owner.send_workspace_message(
+        workspace_id, channel_id, "Revision zero", _op(1_954), _op(1_955)
+    )
+    _deliver_all(
+        member,
+        _flush(owner, owner_network),
+        source_profile=owner_profile,
+        recipient_profile=member_profile,
+    )
+    owner.edit_workspace_message(
+        workspace_id, message["id"], "Revision one", _op(1_956), _op(1_957)
+    )
+    owner.edit_workspace_message(
+        workspace_id, message["id"], "Revision two", _op(1_958), _op(1_959)
+    )
+    mutation_packets = _flush(owner, owner_network)
+    assert len(mutation_packets) == 2
+    _deliver(
+        member,
+        mutation_packets[1],
+        source_profile=owner_profile,
+        recipient_profile=member_profile,
+    )
+    assert len(member.store.list("workspace_pending_event")) == 1
+    assert member.list_workspace_messages(workspace_id, channel_id)["messages"][0][
+        "text"
+    ] == "Revision zero"
+    _deliver(
+        member,
+        mutation_packets[0],
+        source_profile=owner_profile,
+        recipient_profile=member_profile,
+    )
+    assert member.store.list("workspace_pending_event") == []
+    converged = member.list_workspace_messages(workspace_id, channel_id)["messages"]
+    assert len(converged) == 1
+    assert converged[0]["text"] == "Revision two"
+    assert converged[0]["revision"] == 2
+    _deliver(
+        member,
+        mutation_packets[1],
+        source_profile=owner_profile,
+        recipient_profile=member_profile,
+    )
+    assert member.list_workspace_messages(workspace_id, channel_id)["messages"] == converged
+    owner.close()
+    member.close()
+
+
 def test_workspace_direct_chat_hide_reopen_restart_and_removal(
     tmp_path: Path,
 ) -> None:
@@ -494,6 +764,37 @@ def test_workspace_direct_chat_hide_reopen_restart_and_removal(
         )["messages"]
     ] == ["Private field note"]
 
+    owner.edit_workspace_message(
+        workspace_id,
+        first["id"],
+        "Private field note revised",
+        _op(471),
+        _op(472),
+    )
+    _deliver_all(
+        member,
+        _flush(owner, owner_network),
+        source_profile=owner_profile,
+        recipient_profile=member_profile,
+    )
+    assert member.list_workspace_messages(workspace_id, direct["id"])[
+        "messages"
+    ][0]["text"] == "Private field note revised"
+    member.set_workspace_reaction(
+        workspace_id, first["id"], "✅", True, _op(473), _op(474)
+    )
+    _deliver_all(
+        owner,
+        _flush(member, member_network),
+        source_profile=member_profile,
+        recipient_profile=owner_profile,
+    )
+    assert owner.list_workspace_messages(workspace_id, direct["id"])[
+        "messages"
+    ][0]["reactions"] == [
+        {"emoji": "✅", "count": 1, "reacted_by_self": False}
+    ]
+
     reply = member.send_workspace_direct_message(
         workspace_id,
         direct["id"],
@@ -514,7 +815,7 @@ def test_workspace_direct_chat_hide_reopen_restart_and_removal(
         for item in owner.list_workspace_messages(
             workspace_id, direct["id"]
         )["messages"]
-    ] == ["Private field note", "Acknowledged"]
+    ] == ["Private field note revised", "Acknowledged"]
 
     hidden, _ = member.dispatch(
         {
@@ -571,7 +872,7 @@ def test_workspace_direct_chat_hide_reopen_restart_and_removal(
         for item in member.list_workspace_messages(
             workspace_id, direct["id"]
         )["messages"]
-    ] == ["Private field note", "Acknowledged"]
+    ] == ["Private field note revised", "Acknowledged"]
 
     pending = member.send_workspace_direct_message(
         workspace_id,
@@ -1755,7 +2056,7 @@ def test_private_channel_membership_audience_transfer_recovery_leave_and_privacy
         ).kind
         for packet in admission_controls
     } == {"workspace_channel_manifest"}
-    owner.send_workspace_message(
+    after_admission_message = owner.send_workspace_message(
         workspace_id, private_id, "after admission", _op(3015), _op(3016)
     )
     post_admission = _flush(owner, owner_network)
@@ -1804,6 +2105,23 @@ def test_private_channel_membership_audience_transfer_recovery_leave_and_privacy
         ]
     ] == ["after admission"]
 
+    owner.edit_workspace_message(
+        workspace_id,
+        after_admission_message["id"],
+        "after admission revised",
+        _op(3033),
+        _op(3034),
+    )
+    _deliver_all(
+        member,
+        _flush(owner, owner_network),
+        source_profile=owner_profile,
+        recipient_profile=member_profile,
+    )
+    assert member.list_workspace_messages(workspace_id, private_id)["messages"][0][
+        "text"
+    ] == "after admission revised"
+
     owner.send_workspace_message(
         workspace_id, private_id, "delayed across metadata", _op(3026), _op(3027)
     )
@@ -1844,7 +2162,7 @@ def test_private_channel_membership_audience_transfer_recovery_leave_and_privacy
         for message in member.list_workspace_messages(workspace_id, private_id)[
             "messages"
         ]
-    ] == ["after admission", "delayed across metadata"]
+    ] == ["after admission revised", "delayed across metadata"]
 
     owner.offer_workspace_channel_transfer(
         workspace_id, private_id, member_id, _op(3017)
@@ -1903,7 +2221,7 @@ def test_private_channel_membership_audience_transfer_recovery_leave_and_privacy
         for message in member.list_workspace_messages(workspace_id, private_id)[
             "messages"
         ]
-    ] == ["after admission", "delayed across metadata", "manager offline"]
+    ] == ["after admission revised", "delayed across metadata", "manager offline"]
 
     owner.send_workspace_message(
         workspace_id, private_id, "cancelled on departure", _op(3029), _op(3030)

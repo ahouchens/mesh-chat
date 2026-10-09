@@ -1582,6 +1582,48 @@ Artifact hashes for this run:
   walkthrough, physical multi-install DM partition/reconnect, packet capture,
   and protected-profile plaintext scans remain release gates.
 
+## Workspace increment 6 verification — 2026-10-08
+
+- Protocol coverage preserves the exact Increment 5 message envelope and adds
+  exact-field signed edit, delete, and reaction events with target UUIDs, base
+  revisions, next revisions, bounded payloads, and canonical verification.
+- Service coverage exercises author-only edits/deletes, durable deletion and
+  inactive-reaction tombstones, multiple emojis per member, reactions under an
+  owner-only posting policy, unauthorized-author rejection, deterministic
+  concurrent winners, visible conflict resolution, same-device equivocation
+  freeze, exact replay, reversed stream delivery, automatic pending drain, and
+  encrypted restart durability. Public channels, private channels, and
+  participant-only workspace DMs are all covered without creating Personal
+  Contacts or extra timeline rows.
+- Renderer coverage edits inline, confirms deletion, presents tombstones,
+  displays conflict/security state, and uses the local Emoji 18 picker with
+  independent workspace reactions. Rust and Python expose only the three named
+  mutation commands.
+- The complete maintained verification passed **304 Python tests with 6
+  intentional environment/package skips**, **82 frontend tests**, all **3**
+  package-artwork verifier tests, TypeScript compilation, and the Vite
+  production build. `cargo fmt --check`, the locked Rust release check, and all
+  **6 release-profile tests** passed. The protected four-process topology and
+  both direct-LAN scenarios passed, as did all **3** exact 0.2.22
+  packaged-sidecar and 0.2.9 interoperability tests. The final executable
+  matched all **12** bundled artwork, metadata, and license files.
+- The maintained release driver immutably published desktop **0.2.22** without
+  changing prior releases. The 22,552,576-byte MSI has SHA-256
+  `62CC4897C9A88DE826022322E873C5FAAA33CB8F9DEBD4F0AE81EC6C17DC5FA4`.
+  The 21,812,216-byte NSIS installer has SHA-256
+  `73FA42E3B2BCDA29CBEDAF7392F52B6BBAC08B6F5DD7E2746E401D8B0B9A8CCC`.
+  The portable application reports file/product version 0.2.22 and hashes to
+  `48A5914D0A580EFF26959CABBC0BA16E564E5BEC19C1A2A0BACC55DB617D92A3`;
+  the sidecar hashes to
+  `6B5AC3183DBC53CA632D40C78307C5D5626DFCCFCB51DC7EEC3C98EA6D1C9891`.
+  The immutable manifest hashes to
+  `9A1E0D6D9057B1F5476145916CAA34614BB58060F75B4A11CED08937832960B8`.
+- No installer was launched and no existing Mesh Chat process or user profile
+  was modified.
+- Physical concurrent-device partition/reconnect, interactive native-window
+  accessibility, packet capture, protected-profile plaintext scanning,
+  production signing, and in-place installation remain release gates.
+
 ## Acceptance matrix
 
 | Gate | Current evidence |
@@ -1615,5 +1657,6 @@ Artifact hashes for this run:
 | Accessible joining | Labels, focus, keyboard, contrast and live regions implemented; assistive-tech audit pending |
 | Workspace increment 3 | Increment 2 coverage remains green. Public-channel signed chains, paged summaries/fetches, explicit incomplete discovery, duplicate names, policy enforcement, management transfer/recovery/archive, subscriptions, unread persistence, reversed controls, channel-scoped forks, Tauri allowlisting, and manager/member UI denial paths are automated. Isolated and direct-LAN process topologies plus the immutable packaged sidecar passed; physical eight-install restart/kill-point/partition runs and a native-window walkthrough remain release gates |
 | Workspace increment 5 | Increment 4 coverage remains green. Deterministic participant-only workspace DMs, canonical authorization, independent encrypted local state, bidirectional delivery, hide/reopen, restart, removal gating/cancellation, desktop command allowlisting, and Contacts isolation are automated. Isolated, direct-LAN, packaged-current, and 0.2.9 compatibility paths passed; physical multi-install DM partition/reconnect, native-window, and plaintext-scan gates remain open |
+| Workspace increment 6 | Canonical edits, author deletion tombstones, per-member/per-emoji reactions, inactive tombstones, target/base revision binding, deterministic concurrent resolution, same-device equivocation freeze, out-of-order pending/drain, restart durability, current/historical audience authorization, posting-policy independence, desktop command allowlisting, and public/private/DM renderer/service paths are automated. Physical concurrent-device partition/reconnect, native-window interaction, packet capture, protected-profile plaintext scan, and immutable package verification remain release gates |
 
 Do not mark a release complete from unit tests alone. Store packet captures, topology configs, full-tree scans, package hashes, platform versions, human timing sheets, and failure notes with the release evidence.

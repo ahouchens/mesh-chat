@@ -44,6 +44,7 @@ from .workspace_protocol import (
     create_workspace_display_name_request,
     create_workspace_display_name_decision,
     create_workspace_event,
+    create_workspace_mutation_event,
     create_workspace_genesis,
     create_workspace_invitation,
     create_workspace_join,
@@ -1129,6 +1130,10 @@ class WorkspaceServiceMixin:
 
     def _public_workspace_message(self, message: dict[str, Any]) -> dict[str, Any]:
         public = dict(message)
+        public.pop("mutation_candidates", None)
+        public.pop("original_text", None)
+        public.pop("deletion_revision", None)
+        public["reactions"] = [dict(item) for item in message.get("reactions", ())]
         delivery_devices = public.pop("delivery_devices", None)
         if isinstance(delivery_devices, dict):
             public["deliveries"] = [
@@ -1146,6 +1151,50 @@ class WorkspaceServiceMixin:
         if message.get("direction") == "outbound" and "delivery_summary" not in public:
             public["delivery_summary"] = self._workspace_delivery_summary(message["id"])
         return public
+
+    def _workspace_reaction_record_id(
+        self, workspace_id: str, target_event_id: str, member_id: str, emoji: str
+    ) -> str:
+        return self.store.opaque_id(
+            "workspace-reaction-state", workspace_id, target_event_id, member_id, emoji
+        )
+
+    def _workspace_public_reactions(
+        self,
+        workspace_id: str,
+        target_event_id: str,
+        overlay: dict[str, Any] | None = None,
+    ) -> list[dict[str, Any]]:
+        workspace = self.store.get("workspace", self._workspace_record_id(workspace_id))
+        local_member_id = None if workspace is None else workspace.get("local_member_id")
+        states = [
+            state
+            for state in self.store.list("workspace_reaction_state")
+            if state.get("workspace_id") == workspace_id
+            and state.get("target_event_id") == target_event_id
+        ]
+        if overlay is not None:
+            states = [state for state in states if state.get("id") != overlay.get("id")]
+            states.append(overlay)
+        counts: dict[str, int] = defaultdict(int)
+        self_emojis: set[str] = set()
+        for state in states:
+            if state.get("active") is not True:
+                continue
+            emoji = state.get("emoji")
+            if not isinstance(emoji, str):
+                continue
+            counts[emoji] += 1
+            if state.get("member_id") == local_member_id:
+                self_emojis.add(emoji)
+        return [
+            {
+                "emoji": emoji,
+                "count": counts[emoji],
+                "reacted_by_self": emoji in self_emojis,
+            }
+            for emoji in sorted(counts)
+        ]
 
     def _workspace_hints(self) -> list[dict[str, Any]]:
         network = getattr(self, "network", None)
@@ -2073,8 +2122,77 @@ class WorkspaceServiceMixin:
         *,
         direction: str,
         author_display_name: str,
-    ) -> tuple[list[tuple[str, str, dict[str, Any]]], dict[str, Any]]:
+    ) -> tuple[list[tuple[str, str, dict[str, Any]]], dict[str, Any] | None]:
         event_record_id = self._workspace_event_record_id(event.event_id)
+        event_record = {
+            "id": event.event_id,
+            "workspace_id": event.workspace_id,
+            "conversation_id": event.conversation_id,
+            "author_member_id": event.author_member_id,
+            "author_device_id": event.author_device_id,
+            "author_destination": event.author_destination.hex(),
+            "event_type": event.event_type,
+            "sequence": event.sequence,
+            "previous_event_digest": event.previous_event_digest,
+            "manifest_digest": event.manifest_digest,
+            "channel_digest": event.channel_digest,
+            "conversation_kind": (
+                "direct" if event.channel_digest is None else "channel"
+            ),
+            "audience_member_ids": list(event.audience_member_ids),
+            "target_event_id": event.target_event_id,
+            "base_revision": event.base_revision,
+            "revision": event.revision,
+            "digest": event.digest,
+            "serialized": event.serialized,
+            "created_at": float(event.created_at),
+        }
+        if event.event_type == "edit":
+            event_record["text"] = event.text
+        elif event.event_type == "reaction":
+            event_record["emoji"] = event.reaction_emoji
+            event_record["active"] = event.reaction_active
+        stream_head_id = self._workspace_stream_head_id(
+            event.workspace_id, event.conversation_id, event.author_device_id
+        )
+        event_channel = (
+            self._workspace_channel_by_digest(event.channel_digest)
+            if event.channel_digest is not None
+            else None
+        )
+        stream_head = {
+            "workspace_id": event.workspace_id,
+            "conversation_id": event.conversation_id,
+            "device_id": event.author_device_id,
+            "high_water": event.sequence,
+            "head_digest": event.digest,
+            "channel_version": (
+                event_channel.version if event_channel is not None else 0
+            ),
+            "retained_floor": 1,
+            "gaps": [],
+        }
+        sequence_id = self._workspace_stream_sequence_id(
+            event.workspace_id,
+            event.conversation_id,
+            event.author_device_id,
+            event.sequence,
+        )
+        sequence = {
+            "workspace_id": event.workspace_id,
+            "conversation_id": event.conversation_id,
+            "device_id": event.author_device_id,
+            "sequence": event.sequence,
+            "event_digest": event.digest,
+            "event_id": event.event_id,
+        }
+        records = [
+            ("workspace_event", event_record_id, event_record),
+            ("workspace_stream_coverage", stream_head_id, stream_head),
+            ("workspace_stream_coverage", sequence_id, sequence),
+        ]
+        if event.event_type != "message":
+            return records, None
         message_record_id = self._workspace_message_record_id(event.event_id)
         message = {
             "id": event.event_id,
@@ -2084,29 +2202,19 @@ class WorkspaceServiceMixin:
             "author_member_id": event.author_member_id,
             "author_display_name": author_display_name,
             "text": event.text,
+            "original_text": event.text,
+            "revision": 0,
+            "deleted": False,
+            "deletion_revision": None,
+            "mutation_conflict": False,
+            "mutation_frozen": False,
+            "mutation_candidates": [],
+            "reactions": [],
             "sequence": event.sequence,
             "event_digest": event.digest,
             "conversation_kind": (
                 "direct" if event.channel_digest is None else "channel"
             ),
-            "created_at": float(event.created_at),
-        }
-        event_record = {
-            "id": event.event_id,
-            "workspace_id": event.workspace_id,
-            "conversation_id": event.conversation_id,
-            "author_member_id": event.author_member_id,
-            "author_device_id": event.author_device_id,
-            "sequence": event.sequence,
-            "previous_event_digest": event.previous_event_digest,
-            "manifest_digest": event.manifest_digest,
-            "channel_digest": event.channel_digest,
-            "conversation_kind": (
-                "direct" if event.channel_digest is None else "channel"
-            ),
-            "audience_member_ids": list(event.audience_member_ids),
-            "digest": event.digest,
-            "serialized": event.serialized,
             "created_at": float(event.created_at),
         }
         index_id = self._workspace_index_record_id(
@@ -2157,50 +2265,445 @@ class WorkspaceServiceMixin:
         page["encoded_bytes"] = int(page.get("encoded_bytes", 0)) + encoded_size
         index["count"] = int(index.get("count", 0)) + 1
         index["high_water"] = int(index.get("high_water", 0)) + 1
-        stream_head_id = self._workspace_stream_head_id(
-            event.workspace_id, event.conversation_id, event.author_device_id
-        )
-        event_channel = (
-            self._workspace_channel_by_digest(event.channel_digest)
-            if event.channel_digest is not None
-            else None
-        )
-        stream_head = {
-            "workspace_id": event.workspace_id,
-            "conversation_id": event.conversation_id,
-            "device_id": event.author_device_id,
-            "high_water": event.sequence,
-            "head_digest": event.digest,
-            "channel_version": (
-                event_channel.version if event_channel is not None else 0
-            ),
-            "retained_floor": 1,
-            "gaps": [],
-        }
-        sequence_id = self._workspace_stream_sequence_id(
-            event.workspace_id,
-            event.conversation_id,
-            event.author_device_id,
-            event.sequence,
-        )
-        sequence = {
-            "workspace_id": event.workspace_id,
-            "conversation_id": event.conversation_id,
-            "device_id": event.author_device_id,
-            "sequence": event.sequence,
-            "event_digest": event.digest,
-            "event_id": event.event_id,
-        }
-        return (
+        records.extend(
             [
-                ("workspace_event", event_record_id, event_record),
                 ("workspace_message_state", message_record_id, message),
                 ("workspace_conversation_index", index_id, index),
                 ("workspace_conversation_index", page_id, page),
-                ("workspace_stream_coverage", stream_head_id, stream_head),
-                ("workspace_stream_coverage", sequence_id, sequence),
-            ],
-            message,
+            ]
+        )
+        return records, message
+
+    def _workspace_mutation_context(
+        self,
+        workspace: dict[str, Any],
+        target_event: dict[str, Any],
+    ) -> tuple[
+        VerifiedWorkspaceManifest,
+        VerifiedWorkspaceChannel | None,
+        tuple[str, ...],
+    ]:
+        """Resolve current entitlement without widening the target's old audience."""
+
+        manifest = self._workspace_current_manifest(workspace)
+        if target_event.get("conversation_kind") == "direct":
+            audience = tuple(target_event.get("audience_member_ids", ()))
+            if (
+                len(audience) != 2
+                or tuple(sorted(audience)) != audience
+                or any(
+                    (member := find_member(manifest, member_id)) is None
+                    or member.status != "active"
+                    for member_id in audience
+                )
+            ):
+                raise ContactNotApproved(
+                    "Workspace direct-message mutations require two active participants"
+                )
+            return manifest, None, audience
+        channel_record = self._require_workspace_channel(
+            workspace["id"], target_event.get("conversation_id")
+        )
+        if channel_record.get("state") != "active":
+            raise ContactNotApproved("Workspace channel is not active")
+        channel = self._workspace_channel_by_digest(channel_record["head_hash"])
+        if channel is None:
+            raise ValidationError("Workspace channel control is unavailable")
+        old_audience = tuple(target_event.get("audience_member_ids", ()))
+        if old_audience:
+            if channel.visibility != "private":
+                raise ValidationError("Workspace message audience changed kind")
+            audience = tuple(
+                sorted(set(old_audience).intersection(channel.member_ids))
+            )
+            if not audience:
+                raise ContactNotApproved("No current member retains this message")
+        else:
+            if channel.visibility != "public":
+                raise ValidationError("Workspace message audience changed kind")
+            audience = ()
+        return manifest, channel, audience
+
+    @staticmethod
+    def _workspace_mutation_candidate(event: VerifiedWorkspaceEvent) -> dict[str, Any]:
+        candidate = {
+            "event_id": event.event_id,
+            "event_digest": event.digest,
+            "event_type": event.event_type,
+            "base_revision": event.base_revision,
+            "revision": event.revision,
+            "signer_destination": event.author_destination.hex(),
+            "created_at": float(event.created_at),
+        }
+        if event.event_type == "edit":
+            candidate["text"] = event.text
+        elif event.event_type == "reaction":
+            candidate["active"] = event.reaction_active
+        return candidate
+
+    @staticmethod
+    def _workspace_mutation_content(candidate: dict[str, Any]) -> tuple[Any, ...]:
+        return (
+            candidate.get("event_type"),
+            candidate.get("base_revision"),
+            candidate.get("text"),
+            candidate.get("active"),
+        )
+
+    def _apply_workspace_message_mutation(
+        self, message: dict[str, Any], event: VerifiedWorkspaceEvent
+    ) -> dict[str, Any]:
+        candidates = list(message.get("mutation_candidates", ()))
+        if any(item.get("event_digest") == event.digest for item in candidates):
+            return message
+        candidate = self._workspace_mutation_candidate(event)
+        equivocated = any(
+            item.get("signer_destination") == candidate["signer_destination"]
+            and item.get("revision") == candidate["revision"]
+            and self._workspace_mutation_content(item)
+            != self._workspace_mutation_content(candidate)
+            for item in candidates
+        )
+        candidates.append(candidate)
+        winner = max(
+            candidates,
+            key=lambda item: (
+                int(item.get("revision", 0)),
+                str(item.get("signer_destination", "")),
+                str(item.get("event_digest", "")),
+            ),
+        )
+        highest = int(winner["revision"])
+        highest_candidates = {
+            self._workspace_mutation_content(item)
+            for item in candidates
+            if int(item.get("revision", 0)) == highest
+        }
+        updated = dict(message)
+        updated["mutation_candidates"] = candidates
+        updated["revision"] = highest
+        updated["mutation_conflict"] = len(highest_candidates) > 1
+        updated["mutation_frozen"] = bool(
+            message.get("mutation_frozen") or equivocated
+        )
+        # A signed author deletion is a durable tombstone. Later edits cannot
+        # make already-deleted plaintext visible again on another device.
+        deleted = bool(message.get("deleted")) or any(
+            item.get("event_type") == "delete" for item in candidates
+        )
+        updated["deleted"] = deleted
+        deletion_revisions = [
+            int(item["revision"])
+            for item in candidates
+            if item.get("event_type") == "delete"
+        ]
+        updated["deletion_revision"] = (
+            min(deletion_revisions) if deletion_revisions else message.get("deletion_revision")
+        )
+        updated["edited_at"] = float(winner.get("created_at", event.created_at))
+        updated["text"] = "" if deleted else str(winner.get("text", ""))
+        return updated
+
+    def _apply_workspace_reaction_mutation(
+        self,
+        event: VerifiedWorkspaceEvent,
+        existing: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        assert event.reaction_emoji is not None
+        record_id = self._workspace_reaction_record_id(
+            event.workspace_id,
+            str(event.target_event_id),
+            event.author_member_id,
+            event.reaction_emoji,
+        )
+        state = existing or {
+            "id": record_id,
+            "workspace_id": event.workspace_id,
+            "target_event_id": event.target_event_id,
+            "member_id": event.author_member_id,
+            "emoji": event.reaction_emoji,
+            "revision": 0,
+            "active": False,
+            "mutation_conflict": False,
+            "mutation_frozen": False,
+            "mutation_candidates": [],
+        }
+        candidates = list(state.get("mutation_candidates", ()))
+        if any(item.get("event_digest") == event.digest for item in candidates):
+            return state
+        candidate = self._workspace_mutation_candidate(event)
+        equivocated = any(
+            item.get("signer_destination") == candidate["signer_destination"]
+            and item.get("revision") == candidate["revision"]
+            and self._workspace_mutation_content(item)
+            != self._workspace_mutation_content(candidate)
+            for item in candidates
+        )
+        candidates.append(candidate)
+        winner = max(
+            candidates,
+            key=lambda item: (
+                int(item.get("revision", 0)),
+                str(item.get("signer_destination", "")),
+                str(item.get("event_digest", "")),
+            ),
+        )
+        highest = int(winner["revision"])
+        updated = dict(state)
+        updated.update(
+            {
+                "mutation_candidates": candidates,
+                "revision": highest,
+                "active": bool(winner.get("active")),
+                "mutation_conflict": len(
+                    {
+                        self._workspace_mutation_content(item)
+                        for item in candidates
+                        if int(item.get("revision", 0)) == highest
+                    }
+                )
+                > 1,
+                "mutation_frozen": bool(
+                    state.get("mutation_frozen") or equivocated
+                ),
+                "updated_at": float(event.created_at),
+            }
+        )
+        return updated
+
+    def _workspace_mutation_records(
+        self,
+        event: VerifiedWorkspaceEvent,
+        message: dict[str, Any],
+    ) -> tuple[list[tuple[str, str, dict[str, Any]]], dict[str, Any]]:
+        message_id = self._workspace_message_record_id(message["id"])
+        if event.event_type in {"edit", "delete"}:
+            updated = self._apply_workspace_message_mutation(message, event)
+            return [("workspace_message_state", message_id, updated)], updated
+        assert event.reaction_emoji is not None
+        reaction_id = self._workspace_reaction_record_id(
+            event.workspace_id,
+            message["id"],
+            event.author_member_id,
+            event.reaction_emoji,
+        )
+        reaction = self._apply_workspace_reaction_mutation(
+            event, self.store.get("workspace_reaction_state", reaction_id)
+        )
+        updated = dict(message)
+        updated["reactions"] = self._workspace_public_reactions(
+            event.workspace_id, message["id"], reaction
+        )
+        if reaction.get("mutation_frozen"):
+            updated["mutation_frozen"] = True
+        return [
+            ("workspace_reaction_state", reaction_id, reaction),
+            ("workspace_message_state", message_id, updated),
+        ], updated
+
+    def _workspace_mutation_deliveries(
+        self,
+        manifest: VerifiedWorkspaceManifest,
+        event: VerifiedWorkspaceEvent,
+    ) -> list[dict[str, Any]]:
+        audience = set(event.audience_member_ids)
+        deliveries: list[dict[str, Any]] = []
+        for member in active_members(manifest):
+            if audience and member.member_id not in audience:
+                continue
+            for device in member.devices:
+                if device.device_id == event.author_device_id:
+                    continue
+                deliveries.append(
+                    self._workspace_delivery_record(
+                        workspace_id=event.workspace_id,
+                        recipient_member_id=member.member_id,
+                        recipient_device=device,
+                        kind="workspace_event",
+                        document=event.serialized,
+                        event_id=event.event_id,
+                        conversation_id=event.conversation_id,
+                    )
+                )
+        return deliveries
+
+    def _send_workspace_mutation(
+        self,
+        command: str,
+        workspace_id: Any,
+        target_event_id: Any,
+        event_id: Any,
+        operation_id: Any,
+        *,
+        text: Any = None,
+        emoji: Any = None,
+        active: Any = None,
+    ) -> dict[str, Any]:
+        event_type = {
+            "edit_workspace_message": "edit",
+            "delete_workspace_message": "delete",
+            "set_workspace_reaction": "reaction",
+        }[command]
+        payload = {
+            "workspace_id": workspace_id,
+            "target_event_id": target_event_id,
+            "event_id": event_id,
+        }
+        if event_type == "edit":
+            payload["text"] = text
+        elif event_type == "reaction":
+            payload.update({"emoji": emoji, "active": active})
+        operation_id, digest, replay = self._workspace_operation(
+            command, operation_id, payload
+        )
+        if replay is not None:
+            return replay
+        workspace = self._require_workspace(workspace_id)
+        if workspace.get("state") != "active":
+            raise ContactNotApproved("Workspace is not active")
+        try:
+            checked_target_id = str(uuid.UUID(target_event_id))
+            checked_event_id = str(uuid.UUID(event_id))
+        except (ValueError, TypeError, AttributeError) as exc:
+            raise ValidationError("Workspace event ID is invalid") from exc
+        if checked_target_id != target_event_id or checked_event_id != event_id:
+            raise ValidationError("Workspace event ID is invalid")
+        if self.store.get("workspace_event", self._workspace_event_record_id(event_id)):
+            raise ValidationError("Workspace event ID was already used")
+        message = self.store.get(
+            "workspace_message_state", self._workspace_message_record_id(target_event_id)
+        )
+        target_event = self.store.get(
+            "workspace_event", self._workspace_event_record_id(target_event_id)
+        )
+        if (
+            message is None
+            or target_event is None
+            or target_event.get("event_type", "message") != "message"
+            or message.get("workspace_id") != workspace_id
+        ):
+            raise ValidationError("Workspace message does not exist")
+        if message.get("mutation_frozen"):
+            raise ContactNotApproved("Workspace message mutations are frozen")
+        local_member_id = workspace["local_member_id"]
+        if event_type in {"edit", "delete"} and message.get("author_member_id") != local_member_id:
+            raise ContactNotApproved("Only the message author can change it")
+        if message.get("deleted"):
+            raise ContactNotApproved("Workspace message was deleted")
+        manifest, channel, audience = self._workspace_mutation_context(
+            workspace, target_event
+        )
+        local_member = find_member(manifest, local_member_id)
+        if local_member is None or local_member.status != "active":
+            raise ContactNotApproved("Local member is not active")
+        if audience and local_member_id not in audience:
+            raise ContactNotApproved("Local member no longer has message access")
+        if event_type == "edit" and (
+            not isinstance(text, str)
+            or not text.strip()
+            or len(text.encode("utf-8")) > MAX_MESSAGE_TEXT_BYTES
+        ):
+            raise ValidationError("Workspace message is empty or too large")
+        if event_type == "reaction" and not isinstance(active, bool):
+            raise ValidationError("Workspace reaction state is invalid")
+        if event_type == "reaction":
+            reaction_id = self._workspace_reaction_record_id(
+                workspace_id, target_event_id, local_member_id, str(emoji)
+            )
+            reaction = self.store.get("workspace_reaction_state", reaction_id)
+            if reaction is not None and reaction.get("mutation_frozen"):
+                raise ContactNotApproved("Workspace reaction mutations are frozen")
+            base_revision = int(reaction.get("revision", 0)) if reaction else 0
+        else:
+            base_revision = int(message.get("revision", 0))
+        stream_head = self.store.get(
+            "workspace_stream_coverage",
+            self._workspace_stream_head_id(
+                workspace_id, message["conversation_id"], workspace["local_device_id"]
+            ),
+        )
+        sequence = int(stream_head.get("high_water", 0)) + 1 if stream_head else 1
+        identity = self._identity
+        if identity is None:
+            raise ValidationError("Local identity is unavailable")
+        raw = create_workspace_mutation_event(
+            identity,
+            workspace_id=workspace_id,
+            conversation_id=message["conversation_id"],
+            event_id=event_id,
+            event_type=event_type,
+            author_member_id=local_member_id,
+            author_device_id=workspace["local_device_id"],
+            sequence=sequence,
+            previous_event_digest=stream_head.get("head_digest") if stream_head else None,
+            manifest_digest=manifest.digest,
+            channel_digest=None if channel is None else channel.digest,
+            target_event_id=target_event_id,
+            base_revision=base_revision,
+            revision=base_revision + 1,
+            text=text if event_type == "edit" else None,
+            emoji=emoji if event_type == "reaction" else None,
+            active=active if event_type == "reaction" else None,
+            audience_member_ids=audience or None,
+        )
+        event = verify_workspace_event(
+            raw,
+            manifest=manifest,
+            channel=channel,
+            direct_member_ids=audience if channel is None else None,
+        )
+        records, _ = self._append_workspace_event_records(
+            workspace, event, direction="outbound", author_display_name=local_member.display_name
+        )
+        mutation_records, updated_message = self._workspace_mutation_records(event, message)
+        records.extend(mutation_records)
+        deliveries = self._workspace_mutation_deliveries(manifest, event)
+        records.extend(("workspace_delivery", item["id"], item) for item in deliveries)
+        records.extend(self._due_records(add=deliveries))
+        public = dict(self._public_workspace_message(updated_message))
+        if event_type == "reaction":
+            reaction_overlay = next(
+                value for kind, _record_id, value in mutation_records
+                if kind == "workspace_reaction_state"
+            )
+            public["reactions"] = self._workspace_public_reactions(
+                workspace_id, target_event_id, reaction_overlay
+            )
+        committed = self.store.commit_operation(
+            operation_id, digest, public, records
+        )
+        self._workspace_changed(
+            workspace_id,
+            conversation_id=message["conversation_id"],
+            resource_kind="message_mutation",
+        )
+        return committed
+
+    def edit_workspace_message(
+        self, workspace_id: Any, event_id: Any, text: Any,
+        mutation_event_id: Any, operation_id: Any
+    ) -> dict[str, Any]:
+        return self._send_workspace_mutation(
+            "edit_workspace_message", workspace_id, event_id,
+            mutation_event_id, operation_id, text=text
+        )
+
+    def delete_workspace_message(
+        self, workspace_id: Any, event_id: Any,
+        mutation_event_id: Any, operation_id: Any
+    ) -> dict[str, Any]:
+        return self._send_workspace_mutation(
+            "delete_workspace_message", workspace_id, event_id,
+            mutation_event_id, operation_id
+        )
+
+    def set_workspace_reaction(
+        self, workspace_id: Any, event_id: Any, emoji: Any, active: Any,
+        mutation_event_id: Any, operation_id: Any
+    ) -> dict[str, Any]:
+        return self._send_workspace_mutation(
+            "set_workspace_reaction", workspace_id, event_id,
+            mutation_event_id, operation_id, emoji=emoji, active=active
         )
 
     def send_workspace_message(
@@ -2290,14 +2793,14 @@ class WorkspaceServiceMixin:
         )
         deliveries: list[dict[str, Any]] = []
         for member in active_members(manifest):
-            if member.member_id == workspace["local_member_id"]:
-                continue
             if (
                 channel.visibility == "private"
                 and member.member_id not in channel.member_ids
             ):
                 continue
             for device in member.devices:
+                if device.device_id == workspace["local_device_id"]:
+                    continue
                 deliveries.append(
                     self._workspace_delivery_record(
                         workspace_id=workspace_id,
@@ -2691,7 +3194,9 @@ class WorkspaceServiceMixin:
         )
         self._set_workspace_sync_issue(wire.workspace_id, reason)
 
-    def _accept_workspace_event(self, wire: WorkspaceWirePayload) -> bool:
+    def _accept_workspace_event(
+        self, wire: WorkspaceWirePayload, *, drain_pending: bool = True
+    ) -> bool:
         try:
             raw_value = json.loads(wire.document)
             if not isinstance(raw_value, dict):
@@ -2798,6 +3303,8 @@ class WorkspaceServiceMixin:
                 author is None
                 or author.status != "active"
                 or (
+                    event.event_type == "message"
+                    and
                     event.channel_digest is not None
                     and not self._posting_allowed(manifest, author)
                 )
@@ -2847,13 +3354,91 @@ class WorkspaceServiceMixin:
                 ):
                     self._store_pending_workspace_event(wire, "missing_predecessor")
                     return False
+            target_message: dict[str, Any] | None = None
+            if event.event_type != "message":
+                target_message = self.store.get(
+                    "workspace_message_state",
+                    self._workspace_message_record_id(event.target_event_id),
+                )
+                target_event = self.store.get(
+                    "workspace_event", self._workspace_event_record_id(event.target_event_id)
+                )
+                if target_message is None or target_event is None:
+                    self._store_pending_workspace_event(wire, "missing_mutation_target")
+                    return False
+                if (
+                    target_message.get("workspace_id") != event.workspace_id
+                    or target_message.get("conversation_id") != event.conversation_id
+                    or target_event.get("event_type", "message") != "message"
+                ):
+                    return False
+                if target_message.get("mutation_frozen"):
+                    return False
+                deletion_revision = target_message.get("deletion_revision")
+                if target_message.get("deleted") and (
+                    event.event_type == "reaction"
+                    or not isinstance(deletion_revision, int)
+                    or not isinstance(event.revision, int)
+                    or event.revision > deletion_revision
+                ):
+                    return False
+                if (
+                    event.event_type in {"edit", "delete"}
+                    and target_message.get("author_member_id") != event.author_member_id
+                ):
+                    return False
+                _current_manifest, current_channel, current_audience = (
+                    self._workspace_mutation_context(workspace, target_event)
+                )
+                if current_channel is None:
+                    if event.audience_member_ids != current_audience:
+                        return False
+                elif current_audience:
+                    old_audience = set(target_event.get("audience_member_ids", ()))
+                    if (
+                        not event.audience_member_ids
+                        or not set(event.audience_member_ids).issubset(old_audience)
+                        or workspace.get("local_member_id") not in event.audience_member_ids
+                        or event.author_member_id not in event.audience_member_ids
+                    ):
+                        return False
+                elif event.audience_member_ids:
+                    return False
+                if event.event_type == "reaction":
+                    assert event.reaction_emoji is not None
+                    reaction_id = self._workspace_reaction_record_id(
+                        event.workspace_id,
+                        str(event.target_event_id),
+                        event.author_member_id,
+                        event.reaction_emoji,
+                    )
+                    reaction_state = self.store.get(
+                        "workspace_reaction_state", reaction_id
+                    )
+                    if reaction_state is not None and reaction_state.get("mutation_frozen"):
+                        return False
+                    current_revision = (
+                        int(reaction_state.get("revision", 0)) if reaction_state else 0
+                    )
+                else:
+                    current_revision = int(target_message.get("revision", 0))
+                assert event.base_revision is not None
+                if event.base_revision > current_revision:
+                    self._store_pending_workspace_event(wire, "missing_mutation_base")
+                    return False
             records, _message = self._append_workspace_event_records(
                 workspace,
                 event,
                 direction="inbound",
                 author_display_name=author.display_name,
             )
-            if event.channel_digest is None:
+            if event.event_type != "message":
+                assert target_message is not None
+                mutation_records, _updated_message = self._workspace_mutation_records(
+                    event, target_message
+                )
+                records.extend(mutation_records)
+            elif event.channel_digest is None:
                 direct_id = self._workspace_direct_record_id(event.conversation_id)
                 direct = self.store.get("workspace_direct", direct_id)
                 current_manifest = self._workspace_current_manifest(workspace)
@@ -2912,10 +3497,14 @@ class WorkspaceServiceMixin:
                     )
                 )
             self.store.put_many(records)
+            if drain_pending:
+                self._drain_workspace_pending_events(event.workspace_id)
             self._workspace_changed(
                 event.workspace_id,
                 conversation_id=event.conversation_id,
-                resource_kind="message",
+                resource_kind=(
+                    "message" if event.event_type == "message" else "message_mutation"
+                ),
             )
             return True
         except (MeshChatError, json.JSONDecodeError):
@@ -4277,7 +4866,7 @@ class WorkspaceServiceMixin:
                 expires_at=int(pending["expires_at"]),
                 document=pending["document"],
             )
-            if self._accept_workspace_event(wire):
+            if self._accept_workspace_event(wire, drain_pending=False):
                 self.store.delete("workspace_pending_event", pending["id"])
         self._clear_workspace_sync_issue_if_resolved(workspace_id)
 
@@ -6319,6 +6908,7 @@ class WorkspaceServiceMixin:
             "workspace_channel_discovery",
             "workspace_event",
             "workspace_message_state",
+            "workspace_reaction_state",
             "workspace_message_hidden",
             "workspace_delivery",
             "workspace_pending_event",

@@ -440,6 +440,9 @@ fn allowed_renderer_command(command: &str) -> bool {
             | "open_workspace_direct"
             | "hide_workspace_direct"
             | "send_workspace_direct_message"
+            | "edit_workspace_message"
+            | "delete_workspace_message"
+            | "set_workspace_reaction"
             | "list_workspace_messages"
             | "list_workspace_direct_messages"
             | "mark_workspace_read"
@@ -482,6 +485,9 @@ fn workspace_renderer_command(command: &str) -> bool {
             | "open_workspace_direct"
             | "hide_workspace_direct"
             | "send_workspace_direct_message"
+            | "edit_workspace_message"
+            | "delete_workspace_message"
+            | "set_workspace_reaction"
             | "list_workspace_messages"
             | "list_workspace_direct_messages"
             | "mark_workspace_read"
@@ -898,6 +904,9 @@ mod tests {
             "open_workspace_direct",
             "hide_workspace_direct",
             "send_workspace_direct_message",
+            "edit_workspace_message",
+            "delete_workspace_message",
+            "set_workspace_reaction",
             "list_workspace_messages",
             "list_workspace_direct_messages",
             "mark_workspace_read",

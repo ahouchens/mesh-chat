@@ -15,6 +15,7 @@ from urllib.parse import urlsplit
 import RNS
 
 from .errors import IdentityMismatch, InvitationExpired, ValidationError
+from .emoji_validation import is_valid_reaction_emoji
 from .invitations import canonical_bytes, readable_fingerprint, validate_hints
 from .models import (
     WorkspaceChannelCreationPolicy,
@@ -259,13 +260,18 @@ class VerifiedWorkspaceEvent:
     previous_event_digest: str | None
     manifest_digest: str
     channel_digest: str | None
-    text: str
+    text: str | None
     thread_root: str | None
     mentions: tuple[str, ...]
     created_at: int
     digest: str
     serialized: str
     audience_member_ids: tuple[str, ...] = ()
+    target_event_id: str | None = None
+    base_revision: int | None = None
+    revision: int | None = None
+    reaction_emoji: str | None = None
+    reaction_active: bool | None = None
 
 
 def workspace_direct_conversation_id(
@@ -2518,6 +2524,96 @@ def create_workspace_event(
     return _sign(identity, unsigned, maximum=MAX_WORKSPACE_EVENT_BYTES)
 
 
+def create_workspace_mutation_event(
+    identity: RNS.Identity,
+    *,
+    workspace_id: str,
+    conversation_id: str,
+    event_id: str,
+    event_type: str,
+    author_member_id: str,
+    author_device_id: str,
+    sequence: int,
+    previous_event_digest: str | None,
+    manifest_digest: str,
+    channel_digest: str | None,
+    target_event_id: str,
+    base_revision: int,
+    revision: int,
+    text: str | None = None,
+    emoji: str | None = None,
+    active: bool | None = None,
+    audience_member_ids: Iterable[str] | None = None,
+    created_at: int | None = None,
+) -> str:
+    """Create an author mutation or member reaction without changing v1 messages."""
+
+    if event_type not in {"edit", "delete", "reaction"}:
+        raise ValidationError("Workspace mutation type is invalid")
+    if (
+        isinstance(base_revision, bool)
+        or not isinstance(base_revision, int)
+        or base_revision < 0
+        or isinstance(revision, bool)
+        or not isinstance(revision, int)
+        or revision != base_revision + 1
+        or revision > MAX_SEQUENCE
+    ):
+        raise ValidationError("Workspace mutation revision is invalid")
+    if isinstance(sequence, bool) or not isinstance(sequence, int) or not 1 <= sequence <= MAX_SEQUENCE:
+        raise ValidationError("Workspace event sequence is invalid")
+    if event_type == "edit":
+        if not isinstance(text, str) or not text.strip() or len(text.encode("utf-8")) > MAX_MESSAGE_TEXT_BYTES:
+            raise ValidationError("Workspace message is empty or too large")
+        payload: dict[str, Any] = {"text": text}
+    elif event_type == "delete":
+        if text is not None or emoji is not None or active is not None:
+            raise ValidationError("Workspace deletion payload is invalid")
+        payload = {}
+    else:
+        if not is_valid_reaction_emoji(emoji) or not isinstance(active, bool):
+            raise ValidationError("Workspace reaction payload is invalid")
+        payload = {"emoji": emoji, "active": active}
+    unsigned = {
+        "v": WORKSPACE_PROTOCOL_VERSION,
+        "type": "workspace_event",
+        "workspace_id": _validate_uuid(workspace_id, "Workspace ID"),
+        "conversation_id": _validate_uuid(conversation_id, "Conversation ID"),
+        "event_id": _validate_uuid(event_id, "Event ID"),
+        "event_type": event_type,
+        "author_member_id": _validate_uuid(author_member_id, "Author member ID"),
+        "author_device_id": _validate_uuid(author_device_id, "Author device ID"),
+        "sequence": sequence,
+        "previous_event_digest": (
+            None if previous_event_digest is None
+            else _validate_digest(previous_event_digest, "Previous event digest")
+        ),
+        "manifest_digest": _validate_digest(manifest_digest, "Manifest digest"),
+        "channel_digest": (
+            None if channel_digest is None
+            else _validate_digest(channel_digest, "Channel digest")
+        ),
+        "target_event_id": _validate_uuid(target_event_id, "Target event ID"),
+        "base_revision": base_revision,
+        "revision": revision,
+        "payload": payload,
+        "thread_root": None,
+        "mentions": [],
+        "created_at": int(time.time()) if created_at is None else int(created_at),
+    }
+    if audience_member_ids is not None:
+        audience = sorted(
+            {
+                _validate_uuid(member_id, "Workspace event audience member ID")
+                for member_id in audience_member_ids
+            }
+        )
+        if not audience or len(audience) > MAX_ACTIVE_MEMBERS:
+            raise ValidationError("Workspace event audience is invalid")
+        unsigned["audience_member_ids"] = audience
+    return _sign(identity, unsigned, maximum=MAX_WORKSPACE_EVENT_BYTES)
+
+
 def verify_workspace_event(
     raw: str,
     *,
@@ -2546,10 +2642,15 @@ def verify_workspace_event(
             "created_at",
             "signature",
         }
+    event_type = value.get("event_type")
+    if event_type in {"edit", "delete", "reaction"}:
+        fields.update({"target_event_id", "base_revision", "revision"})
     if "audience_member_ids" in value:
         fields.add("audience_member_ids")
     _require_fields(value, fields)
-    if value["v"] != WORKSPACE_PROTOCOL_VERSION or value["event_type"] != "message":
+    if value["v"] != WORKSPACE_PROTOCOL_VERSION or event_type not in {
+        "message", "edit", "delete", "reaction"
+    }:
         raise ValidationError("Workspace event version or type is unsupported")
     workspace_id = _validate_uuid(value["workspace_id"], "Workspace ID")
     conversation_id = _validate_uuid(value["conversation_id"], "Conversation ID")
@@ -2628,7 +2729,9 @@ def verify_workspace_event(
         if (
             list(audience_member_ids) != sorted(audience_member_ids)
             or len(set(audience_member_ids)) != len(audience_member_ids)
-            or audience_member_ids != channel.member_ids
+            or (event_type == "message" and audience_member_ids != channel.member_ids)
+            or not audience_member_ids
+            or len(audience_member_ids) > MAX_ACTIVE_MEMBERS
             or author_member_id not in audience_member_ids
         ):
             raise IdentityMismatch("Private workspace event audience is invalid")
@@ -2646,6 +2749,7 @@ def verify_workspace_event(
         channel_digest = channel.digest
     if (
         channel is not None
+        and event_type == "message"
         and manifest.posting == WorkspacePostingPolicy.OWNER_AND_ADMINS
         and found[0].role != WorkspaceRole.OWNER
     ):
@@ -2659,11 +2763,42 @@ def verify_workspace_event(
     if previous is not None:
         previous = _validate_digest(previous, "Previous event digest")
     payload = value["payload"]
-    if not isinstance(payload, dict) or set(payload) != {"text"}:
-        raise ValidationError("Workspace event payload is invalid")
-    text = payload["text"]
-    if not isinstance(text, str) or not text.strip() or len(text.encode("utf-8")) > MAX_MESSAGE_TEXT_BYTES:
-        raise ValidationError("Workspace message is empty or too large")
+    text: str | None = None
+    reaction_emoji: str | None = None
+    reaction_active: bool | None = None
+    target_event_id: str | None = None
+    base_revision: int | None = None
+    revision: int | None = None
+    if event_type in {"message", "edit"}:
+        if not isinstance(payload, dict) or set(payload) != {"text"}:
+            raise ValidationError("Workspace event payload is invalid")
+        text = payload["text"]
+        if not isinstance(text, str) or not text.strip() or len(text.encode("utf-8")) > MAX_MESSAGE_TEXT_BYTES:
+            raise ValidationError("Workspace message is empty or too large")
+    elif event_type == "delete":
+        if not isinstance(payload, dict) or payload:
+            raise ValidationError("Workspace deletion payload is invalid")
+    else:
+        if not isinstance(payload, dict) or set(payload) != {"emoji", "active"}:
+            raise ValidationError("Workspace reaction payload is invalid")
+        reaction_emoji = payload["emoji"]
+        reaction_active = payload["active"]
+        if not is_valid_reaction_emoji(reaction_emoji) or not isinstance(reaction_active, bool):
+            raise ValidationError("Workspace reaction payload is invalid")
+    if event_type != "message":
+        target_event_id = _validate_uuid(value["target_event_id"], "Target event ID")
+        base_revision = value["base_revision"]
+        revision = value["revision"]
+        if (
+            isinstance(base_revision, bool)
+            or not isinstance(base_revision, int)
+            or base_revision < 0
+            or isinstance(revision, bool)
+            or not isinstance(revision, int)
+            or revision != base_revision + 1
+            or revision > MAX_SEQUENCE
+        ):
+            raise ValidationError("Workspace mutation revision is invalid")
     if value["thread_root"] is not None or value["mentions"] != []:
         raise ValidationError("Threads and mentions are not enabled in increment one")
     current = int(time.time()) if now is None else int(now)
@@ -2671,7 +2806,7 @@ def verify_workspace_event(
         workspace_id=workspace_id,
         conversation_id=conversation_id,
         event_id=_validate_uuid(value["event_id"], "Event ID"),
-        event_type="message",
+        event_type=event_type,
         author_member_id=author_member_id,
         author_device_id=author_device_id,
         author_destination=found[1].destination_hash,
@@ -2686,6 +2821,11 @@ def verify_workspace_event(
         digest=_digest(value),
         serialized=_canonical(value),
         audience_member_ids=audience_member_ids,
+        target_event_id=target_event_id,
+        base_revision=base_revision,
+        revision=revision,
+        reaction_emoji=reaction_emoji,
+        reaction_active=reaction_active,
     )
 
 

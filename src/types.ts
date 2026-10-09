@@ -302,6 +302,12 @@ export interface WorkspaceMessage {
   author_member_id: string;
   author_display_name: string;
   text: string;
+  revision?: number;
+  deleted?: boolean;
+  edited_at?: number;
+  mutation_conflict?: boolean;
+  mutation_frozen?: boolean;
+  reactions?: MessageReaction[];
   sequence: number;
   event_digest: string;
   created_at: number;

@@ -253,7 +253,7 @@ document types are:
 | `workspace_channel_recovery` | The owner authority device explicitly assigns management at the exact current head; private recovery is valid only when that owner is already on the roster. |
 | `workspace_channel_summary` | An active device signs one canonical page of public channel IDs, versions, and head digests for a sync session. |
 | `workspace_channel_fetch` | An active device signs bounded channel/head requests and a maximum control count for one summary session. |
-| `workspace_event` | An author binds a message to its workspace/conversation, author stream predecessor, exact manifest, immutable payload, and either an exact channel control or a null channel digest plus the complete sorted two-member DM audience. Private channels repeat their complete sorted roster audience. |
+| `workspace_event` | An author binds a message or mutation to its workspace/conversation, author stream predecessor, exact manifest, payload, and either an exact channel control or a null channel digest plus the complete sorted two-member DM audience. Private channels bind a sorted audience that can only narrow the target message's historical roster. |
 | `workspace_leave_request` | A non-owner binds a leave request to the exact current manifest. |
 | `workspace_display_name_request` | An active device signs a replacement card that preserves its member, device, identity, and destination while requesting a new display name. |
 | `workspace_display_name_decision` | The authority signs an approval or decline bound to the exact request and its base manifest. Approval is completed by the next manifest; decline is returned directly to the requester. |
@@ -262,7 +262,7 @@ Invitation entry points are `meshchat://workspace/<base64url>` and
 `MESHWORKSPACE1:<base64url>`. Invitations are single-use and expire within 30
 days. The offered checkpoint must retain the exact genesis owner member and
 authority device card; a self-consistent manifest signed by another identity is
-not a valid checkpoint. Increment 5 supports eight people, one device per
+not a valid checkpoint. Increment 6 supports eight people, one device per
 member, and up to 32 active public or private channels including `#general`.
 It rejects attachments and does not exchange old message history. The authority is not a
 message relay: each event is copied directly to every other authorized device
@@ -331,6 +331,48 @@ hide/reopen state is not transmitted, and learning either participant's
 removal cancels unhanded DM legs. There is no DM history backfill in this
 increment, so an unseen event authored before a known removal is not admitted
 after that removal.
+
+### Workspace message mutations
+
+The original Increment 5 `message` envelope is byte-for-byte unchanged.
+Increment 6 adds `edit`, `delete`, and `reaction` values for `event_type`.
+Those event types add exactly `target_event_id`, `base_revision`, and
+`revision`; `revision` must equal `base_revision + 1`. An edit payload contains
+only nonempty bounded `text`, a delete payload is the empty object, and a
+reaction payload contains exactly one validated Emoji 18 `emoji` and Boolean
+`active` state. Threads and mentions remain JSON null and the empty array.
+
+An edit or delete is authorized only when the signer is a current active device
+of the target message's author member. A reaction is authorized for any current
+active member still entitled to the target. Channel posting policy applies only
+to new messages: it does not prevent an entitled reader from reacting, and it
+does not apply to workspace DMs. Public mutations carry no audience. A private
+mutation can address only the intersection of the target's historical audience
+and the current roster; a DM mutation repeats the exact current two-member
+audience. A target outside the same workspace and conversation, a widened
+audience, a removed signer, an unknown target, or a future base revision is
+inert or rejected.
+
+Message revisions begin at zero. Concurrent mutation candidates are retained
+and the visible candidate is the maximum tuple
+`(revision, signer_device_destination, event_digest)`. More than one distinct
+value at the highest revision is exposed as a conflict until one later author
+revision supersedes it. Two distinct values signed by the same device at the
+same revision are equivocation and freeze all further mutation of that message.
+An accepted author deletion is a durable tombstone and later edits cannot
+restore its plaintext. Reaction state is keyed by workspace, target message,
+member, and emoji; `active: false` is a durable inactive tombstone. Reaction
+states use the same revision, deterministic winner, conflict, and equivocation
+rules.
+
+Mutation events consume the same per-device conversation sequence and
+predecessor chain as messages, but never add an entry to the paged conversation
+timeline. Their canonical event, stream coverage, derived message/reaction
+state, recipient legs, due work, and idempotent operation result commit
+atomically. Missing targets, controls, stream predecessors, or mutation bases
+remain in the existing bounded encrypted pending queue and are retried when the
+dependency arrives. Exact retransmissions are idempotent; delayed stale
+candidates cannot overwrite a higher revision or resurrect a tombstone.
 
 ## Delivery evidence
 
