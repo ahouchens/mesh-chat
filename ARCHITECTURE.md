@@ -45,7 +45,7 @@ ordering, removal, and owner-loss consequences.
 
 ## Desktop workspaces
 
-The fourth workspace increment is an isolated desktop feature profile. It adds
+The fifth workspace increment is an isolated desktop feature profile. It adds
 canonical workspace authority, device, invitation, channel and event documents
 under the `mesh-chat-workspace` custom type without changing Personal or private
 group bytes. The React shell can switch between Personal and workspace views,
@@ -74,6 +74,16 @@ path: a verified join whose embedded identity and native source agree. Controls
 are queued ahead of dependent events, so no event becomes visible merely
 because it arrived before its authority data.
 
+Workspace DMs reuse the canonical workspace event, stream, paging, receipt,
+expiry, and due-work machinery without creating a channel control or a Personal
+contact. Their conversation UUID is UUIDv5 over the workspace UUID and sorted
+two-member pair. A signed DM event carries `channel_digest: null` and the exact
+sorted two-member audience; verification requires the author and receiver to be
+current active participants. Dedicated sealed `workspace_direct` summaries,
+conversation indexes, read state, drafts, and local hidden state keep their
+presentation independent from Personal. Learning either participant's removal
+makes retained history read-only and cancels every unhanded leg for that DM.
+
 Checkpoints are pinned to the genesis owner member, authority device, public
 identity, and destination. The initial manifest also pins the genesis name and
 description. Each later manifest performs exactly one enabled transition:
@@ -91,7 +101,8 @@ the same older checkpoint; approval appends to the authority's current epoch,
 delivers the missing ordered manifest and public-channel chains to the new
 device, and sends only the successor epoch to current members. Public-channel
 messages always fan out to every active device. Private-channel controls and
-messages fan out only to the signed roster. Adding a member sends one current
+messages fan out only to the signed roster. Workspace DMs fan out only to the
+two signed participants. Adding a member sends one current
 signed admission checkpoint, not predecessor controls or messages, so
 pre-admission names, topics and rosters are not disclosed. Removing a member
 cancels only that member's unhanded channel legs; retained local history cannot

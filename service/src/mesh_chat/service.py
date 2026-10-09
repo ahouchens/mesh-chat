@@ -160,10 +160,16 @@ class MeshChatService(ReactionServiceMixin, GroupServiceMixin, WorkspaceServiceM
         "recover_workspace_channel",
         "sync_workspace_channels",
         "send_workspace_message",
+        "open_workspace_direct",
+        "hide_workspace_direct",
+        "send_workspace_direct_message",
         "list_workspace_messages",
+        "list_workspace_direct_messages",
         "mark_workspace_read",
+        "mark_workspace_direct_read",
         "hide_workspace_message",
         "save_workspace_draft",
+        "save_workspace_direct_draft",
         "leave_workspace",
         "close_workspace",
         "remove_workspace_data",
@@ -180,6 +186,7 @@ class MeshChatService(ReactionServiceMixin, GroupServiceMixin, WorkspaceServiceM
         "connection_help",
         "preview_workspace_invitation",
         "list_workspace_messages",
+        "list_workspace_direct_messages",
     }
 
     def __init__(self, store: VaultStore, profile_dir: Path, emit: EventCallback):
@@ -1996,6 +2003,51 @@ class MeshChatService(ReactionServiceMixin, GroupServiceMixin, WorkspaceServiceM
                 body["event_id"],
                 body["operation_id"],
             )
+        if command == "open_workspace_direct":
+            body = _payload(
+                value,
+                allowed={"operation_id", "workspace_id", "member_id"},
+                required={"operation_id", "workspace_id", "member_id"},
+            )
+            return self.open_workspace_direct(
+                body["workspace_id"], body["member_id"], body["operation_id"]
+            )
+        if command == "hide_workspace_direct":
+            body = _payload(
+                value,
+                allowed={"operation_id", "workspace_id", "conversation_id"},
+                required={"operation_id", "workspace_id", "conversation_id"},
+            )
+            return self.hide_workspace_direct(
+                body["workspace_id"],
+                body["conversation_id"],
+                body["operation_id"],
+            )
+        if command == "send_workspace_direct_message":
+            body = _payload(
+                value,
+                allowed={
+                    "operation_id",
+                    "workspace_id",
+                    "conversation_id",
+                    "event_id",
+                    "text",
+                },
+                required={
+                    "operation_id",
+                    "workspace_id",
+                    "conversation_id",
+                    "event_id",
+                    "text",
+                },
+            )
+            return self.send_workspace_direct_message(
+                body["workspace_id"],
+                body["conversation_id"],
+                body["text"],
+                body["event_id"],
+                body["operation_id"],
+            )
         if command == "list_workspace_messages":
             body = _payload(
                 value,
@@ -2008,6 +2060,18 @@ class MeshChatService(ReactionServiceMixin, GroupServiceMixin, WorkspaceServiceM
                 body.get("cursor"),
                 body.get("limit", 50),
             )
+        if command == "list_workspace_direct_messages":
+            body = _payload(
+                value,
+                allowed={"workspace_id", "conversation_id", "cursor", "limit"},
+                required={"workspace_id", "conversation_id"},
+            )
+            return self.list_workspace_messages(
+                body["workspace_id"],
+                body["conversation_id"],
+                body.get("cursor"),
+                body.get("limit", 50),
+            )
         if command == "mark_workspace_read":
             body = _payload(
                 value,
@@ -2017,6 +2081,28 @@ class MeshChatService(ReactionServiceMixin, GroupServiceMixin, WorkspaceServiceM
             return self.mark_workspace_read(
                 body["workspace_id"],
                 body["channel_id"],
+                body["high_water"],
+                body["operation_id"],
+            )
+        if command == "mark_workspace_direct_read":
+            body = _payload(
+                value,
+                allowed={
+                    "operation_id",
+                    "workspace_id",
+                    "conversation_id",
+                    "high_water",
+                },
+                required={
+                    "operation_id",
+                    "workspace_id",
+                    "conversation_id",
+                    "high_water",
+                },
+            )
+            return self.mark_workspace_read(
+                body["workspace_id"],
+                body["conversation_id"],
                 body["high_water"],
                 body["operation_id"],
             )
@@ -2038,6 +2124,28 @@ class MeshChatService(ReactionServiceMixin, GroupServiceMixin, WorkspaceServiceM
             return self.save_workspace_draft(
                 body["workspace_id"],
                 body["channel_id"],
+                body["text"],
+                body["operation_id"],
+            )
+        if command == "save_workspace_direct_draft":
+            body = _payload(
+                value,
+                allowed={
+                    "operation_id",
+                    "workspace_id",
+                    "conversation_id",
+                    "text",
+                },
+                required={
+                    "operation_id",
+                    "workspace_id",
+                    "conversation_id",
+                    "text",
+                },
+            )
+            return self.save_workspace_draft(
+                body["workspace_id"],
+                body["conversation_id"],
                 body["text"],
                 body["operation_id"],
             )

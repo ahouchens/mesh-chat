@@ -437,10 +437,16 @@ fn allowed_renderer_command(command: &str) -> bool {
             | "recover_workspace_channel"
             | "sync_workspace_channels"
             | "send_workspace_message"
+            | "open_workspace_direct"
+            | "hide_workspace_direct"
+            | "send_workspace_direct_message"
             | "list_workspace_messages"
+            | "list_workspace_direct_messages"
             | "mark_workspace_read"
+            | "mark_workspace_direct_read"
             | "hide_workspace_message"
             | "save_workspace_draft"
+            | "save_workspace_direct_draft"
             | "leave_workspace"
             | "close_workspace"
             | "remove_workspace_data"
@@ -473,10 +479,16 @@ fn workspace_renderer_command(command: &str) -> bool {
             | "recover_workspace_channel"
             | "sync_workspace_channels"
             | "send_workspace_message"
+            | "open_workspace_direct"
+            | "hide_workspace_direct"
+            | "send_workspace_direct_message"
             | "list_workspace_messages"
+            | "list_workspace_direct_messages"
             | "mark_workspace_read"
+            | "mark_workspace_direct_read"
             | "hide_workspace_message"
             | "save_workspace_draft"
+            | "save_workspace_direct_draft"
             | "leave_workspace"
             | "close_workspace"
             | "remove_workspace_data"
@@ -883,10 +895,16 @@ mod tests {
             "recover_workspace_channel",
             "sync_workspace_channels",
             "send_workspace_message",
+            "open_workspace_direct",
+            "hide_workspace_direct",
+            "send_workspace_direct_message",
             "list_workspace_messages",
+            "list_workspace_direct_messages",
             "mark_workspace_read",
+            "mark_workspace_direct_read",
             "hide_workspace_message",
             "save_workspace_draft",
+            "save_workspace_direct_draft",
             "leave_workspace",
             "close_workspace",
             "remove_workspace_data",

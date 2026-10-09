@@ -14,7 +14,7 @@ import RNS
 
 from mesh_chat.app_protocol import TYPE_FIELD as LEGACY_TYPE_FIELD, build_fields
 from mesh_chat.errors import IdentityMismatch, InvitationExpired, ValidationError
-from mesh_chat.models import MessageKind, WorkspaceRole
+from mesh_chat.models import MessageKind, WorkspacePostingPolicy, WorkspaceRole
 from mesh_chat.network import ReticulumNetwork, validate_unknown_source_signature
 from mesh_chat.workspace_protocol import (
     MAX_CHANNEL_FETCH_CONTROLS,
@@ -54,6 +54,7 @@ from mesh_chat.workspace_protocol import (
     verify_workspace_invitation,
     verify_workspace_join,
     verify_workspace_manifest_transition,
+    workspace_direct_conversation_id,
     workspace_invitation_formats,
 )
 from mesh_chat.workspace_wire import (
@@ -871,6 +872,163 @@ def test_public_channel_control_chain_transfer_recovery_and_bounded_sync() -> No
             page_index=0,
             page_count=MAX_CHANNEL_SUMMARY_PAGES + 1,
             now=NOW + 5,
+        )
+
+
+def test_workspace_direct_event_binds_exact_two_member_audience_without_channel() -> None:
+    owner, created, genesis, initial = _workspace()
+    member_identity = RNS.Identity()
+    member_id = _id()
+    member_device_id = _id()
+    member_card = create_workspace_device_card(
+        member_identity,
+        workspace_id=genesis.workspace_id,
+        member_id=member_id,
+        device_id=member_device_id,
+        display_name="Bailey",
+        now=NOW,
+    )
+    manifest_raw = create_workspace_manifest(
+        owner,
+        workspace_id=genesis.workspace_id,
+        epoch=2,
+        previous_manifest_hash=initial.digest,
+        name=initial.name,
+        description=initial.description,
+        authority_device_id=initial.authority_device_id,
+        members=[
+            WorkspaceManifestMemberInput(
+                genesis.owner_member_id,
+                genesis.owner_device.display_name,
+                WorkspaceRole.OWNER,
+                [created.device_card],
+            ),
+            WorkspaceManifestMemberInput(
+                member_id,
+                "Bailey",
+                WorkspaceRole.MEMBER,
+                [member_card],
+            ),
+        ],
+        now=NOW,
+    )
+    admitted = verify_workspace_manifest_transition(
+        manifest_raw, initial, now=NOW
+    )
+    policy_raw = create_workspace_manifest(
+        owner,
+        workspace_id=genesis.workspace_id,
+        epoch=3,
+        previous_manifest_hash=admitted.digest,
+        name=admitted.name,
+        description=admitted.description,
+        authority_device_id=admitted.authority_device_id,
+        members=[
+            WorkspaceManifestMemberInput(
+                item.member_id,
+                item.display_name,
+                item.role,
+                [device.serialized for device in item.devices],
+                status=item.status,
+            )
+            for item in admitted.members
+        ],
+        posting=WorkspacePostingPolicy.OWNER_AND_ADMINS,
+        now=NOW + 1,
+    )
+    manifest = verify_workspace_manifest_transition(
+        policy_raw, admitted, now=NOW + 1
+    )
+    participants = tuple(sorted([genesis.owner_member_id, member_id]))
+    conversation_id = workspace_direct_conversation_id(
+        genesis.workspace_id, participants
+    )
+    assert conversation_id == workspace_direct_conversation_id(
+        genesis.workspace_id, reversed(participants)
+    )
+    event_raw = create_workspace_event(
+        member_identity,
+        workspace_id=genesis.workspace_id,
+        conversation_id=conversation_id,
+        event_id=_id(),
+        author_member_id=member_id,
+        author_device_id=member_device_id,
+        sequence=1,
+        previous_event_digest=None,
+        manifest_digest=manifest.digest,
+        channel_digest=None,
+        text="Private workspace hello",
+        audience_member_ids=participants,
+        created_at=NOW + 1,
+    )
+    raw_value = json.loads(event_raw)
+    assert raw_value["channel_digest"] is None
+    assert raw_value["audience_member_ids"] == list(participants)
+    verified = verify_workspace_event(
+        event_raw,
+        manifest=manifest,
+        channel=None,
+        direct_member_ids=participants,
+        now=NOW + 1,
+    )
+    assert verified.conversation_id == conversation_id
+    assert verified.audience_member_ids == participants
+
+    wrong_conversation = create_workspace_event(
+        member_identity,
+        workspace_id=genesis.workspace_id,
+        conversation_id=_id(),
+        event_id=_id(),
+        author_member_id=member_id,
+        author_device_id=member_device_id,
+        sequence=1,
+        previous_event_digest=None,
+        manifest_digest=manifest.digest,
+        channel_digest=None,
+        text="Wrong conversation",
+        audience_member_ids=participants,
+        created_at=NOW + 1,
+    )
+    with pytest.raises(ValidationError, match="identifier"):
+        verify_workspace_event(
+            wrong_conversation,
+            manifest=manifest,
+            channel=None,
+            direct_member_ids=participants,
+            now=NOW + 1,
+        )
+
+    wrong_audience = create_workspace_event(
+        member_identity,
+        workspace_id=genesis.workspace_id,
+        conversation_id=conversation_id,
+        event_id=_id(),
+        author_member_id=member_id,
+        author_device_id=member_device_id,
+        sequence=1,
+        previous_event_digest=None,
+        manifest_digest=manifest.digest,
+        channel_digest=None,
+        text="Wrong audience",
+        audience_member_ids=[member_id],
+        created_at=NOW + 1,
+    )
+    with pytest.raises(IdentityMismatch, match="audience"):
+        verify_workspace_event(
+            wrong_audience,
+            manifest=manifest,
+            channel=None,
+            direct_member_ids=participants,
+            now=NOW + 1,
+        )
+
+    with pytest.raises(ValidationError, match="participants"):
+        verify_workspace_event(
+            event_raw,
+            manifest=manifest,
+            channel=None,
+            direct_member_ids=None,
+            now=NOW + 1,
         )
 
 

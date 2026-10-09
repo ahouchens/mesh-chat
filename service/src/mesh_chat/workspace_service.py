@@ -70,6 +70,7 @@ from .workspace_protocol import (
     verify_workspace_leave_request,
     verify_workspace_manifest,
     verify_workspace_manifest_transition,
+    workspace_direct_conversation_id,
     workspace_invitation_formats,
 )
 from .workspace_wire import (
@@ -185,6 +186,9 @@ class WorkspaceServiceMixin:
 
     def _workspace_channel_record_id(self, channel_id: str) -> str:
         return self.store.opaque_id("workspace-channel", channel_id)
+
+    def _workspace_direct_record_id(self, conversation_id: str) -> str:
+        return self.store.opaque_id("workspace-direct", conversation_id)
 
     def _workspace_channel_control_id(self, digest: str) -> str:
         return self.store.opaque_id("workspace-channel-control", digest)
@@ -310,6 +314,33 @@ class WorkspaceServiceMixin:
         if channel is None or channel.get("workspace_id") != workspace_id:
             raise ValidationError("Workspace channel does not exist")
         return channel
+
+    def _require_workspace_direct(
+        self, workspace_id: str, conversation_id: str
+    ) -> dict[str, Any]:
+        direct = self.store.get(
+            "workspace_direct", self._workspace_direct_record_id(conversation_id)
+        )
+        if direct is None or direct.get("workspace_id") != workspace_id:
+            raise ValidationError("Workspace direct message does not exist")
+        participants = direct.get("participant_member_ids")
+        workspace = self._require_workspace(workspace_id)
+        if (
+            not isinstance(participants, list)
+            or workspace.get("local_member_id") not in participants
+        ):
+            raise ContactNotApproved("Workspace direct message is unavailable")
+        return direct
+
+    def _require_workspace_conversation(
+        self, workspace_id: str, conversation_id: str
+    ) -> tuple[str, dict[str, Any]]:
+        channel = self.store.get(
+            "workspace_channel", self._workspace_channel_record_id(conversation_id)
+        )
+        if channel is not None and channel.get("workspace_id") == workspace_id:
+            return "channel", channel
+        return "direct", self._require_workspace_direct(workspace_id, conversation_id)
 
     def _workspace_manifest_by_digest(
         self, digest: str
@@ -969,6 +1000,43 @@ class WorkspaceServiceMixin:
             public["unread_count"] = 0
         return public
 
+    def _public_workspace_direct(
+        self, direct: dict[str, Any]
+    ) -> dict[str, Any]:
+        workspace = self._require_workspace(str(direct.get("workspace_id", "")))
+        manifest = self._workspace_current_manifest(workspace)
+        local_member_id = str(workspace.get("local_member_id", ""))
+        participants = tuple(direct.get("participant_member_ids", ()))
+        peer_member_id = next(
+            (member_id for member_id in participants if member_id != local_member_id),
+            "",
+        )
+        peer = find_member(manifest, peer_member_id)
+        local = find_member(manifest, local_member_id)
+        active = bool(
+            workspace.get("state") in {"active", "incomplete_sync"}
+            and local is not None
+            and local.status == "active"
+            and peer is not None
+            and peer.status == "active"
+        )
+        return {
+            "id": direct["id"],
+            "workspace_id": direct["workspace_id"],
+            "participant_member_ids": list(participants),
+            "peer_member_id": peer_member_id,
+            "peer_display_name": (
+                peer.display_name
+                if peer is not None
+                else str(direct.get("peer_display_name", "Former member"))
+            ),
+            "peer_short_id": _short_id(peer_member_id) if peer_member_id else "",
+            "state": "open" if active else "read_only",
+            "unread_count": int(direct.get("unread_count", 0)),
+            "created_at": float(direct.get("created_at", 0)),
+            "updated_at": float(direct.get("updated_at", 0)),
+        }
+
     def _workspace_delivery_summary(
         self,
         event_id: str,
@@ -1513,9 +1581,25 @@ class WorkspaceServiceMixin:
         outbound_ids: set[str] = set()
         changed_messages: dict[str, dict[str, Any]] = {}
         for delivery_id, stored in self.store.items("workspace_delivery"):
+            conversation_id = stored.get("conversation_id")
+            direct = (
+                self.store.get(
+                    "workspace_direct",
+                    self._workspace_direct_record_id(conversation_id),
+                )
+                if isinstance(conversation_id, str)
+                else None
+            )
+            direct_involves_member = bool(
+                direct is not None
+                and member_id in direct.get("participant_member_ids", [])
+            )
             if (
                 stored.get("workspace_id") != workspace_id
-                or stored.get("recipient_member_id") != member_id
+                or (
+                    stored.get("recipient_member_id") != member_id
+                    and not direct_involves_member
+                )
                 or stored.get("state") in FINAL_DELIVERY_STATES
             ):
                 continue
@@ -1539,7 +1623,7 @@ class WorkspaceServiceMixin:
             existing = dict(devices.get(delivery["recipient_device_id"], {}))
             existing.update(
                 {
-                    "member_id": member_id,
+                    "member_id": delivery["recipient_member_id"],
                     "member_display_name": delivery.get(
                         "recipient_display_name", "Member"
                     ),
@@ -2002,6 +2086,9 @@ class WorkspaceServiceMixin:
             "text": event.text,
             "sequence": event.sequence,
             "event_digest": event.digest,
+            "conversation_kind": (
+                "direct" if event.channel_digest is None else "channel"
+            ),
             "created_at": float(event.created_at),
         }
         event_record = {
@@ -2014,6 +2101,9 @@ class WorkspaceServiceMixin:
             "previous_event_digest": event.previous_event_digest,
             "manifest_digest": event.manifest_digest,
             "channel_digest": event.channel_digest,
+            "conversation_kind": (
+                "direct" if event.channel_digest is None else "channel"
+            ),
             "audience_member_ids": list(event.audience_member_ids),
             "digest": event.digest,
             "serialized": event.serialized,
@@ -2070,7 +2160,11 @@ class WorkspaceServiceMixin:
         stream_head_id = self._workspace_stream_head_id(
             event.workspace_id, event.conversation_id, event.author_device_id
         )
-        event_channel = self._workspace_channel_by_digest(event.channel_digest)
+        event_channel = (
+            self._workspace_channel_by_digest(event.channel_digest)
+            if event.channel_digest is not None
+            else None
+        )
         stream_head = {
             "workspace_id": event.workspace_id,
             "conversation_id": event.conversation_id,
@@ -2247,6 +2341,300 @@ class WorkspaceServiceMixin:
         )
         return committed
 
+    def open_workspace_direct(
+        self, workspace_id: Any, member_id: Any, operation_id: Any
+    ) -> dict[str, Any]:
+        payload = {"workspace_id": workspace_id, "member_id": member_id}
+        operation_id, digest, replay = self._workspace_operation(
+            "open_workspace_direct", operation_id, payload
+        )
+        if replay is not None:
+            return replay
+        workspace = self._require_workspace(workspace_id)
+        if workspace.get("state") != "active":
+            raise ContactNotApproved("Workspace is not active")
+        manifest = self._workspace_current_manifest(workspace)
+        local_member_id = workspace["local_member_id"]
+        if not isinstance(member_id, str) or member_id == local_member_id:
+            raise ValidationError("Workspace direct-message member is invalid")
+        local = find_member(manifest, local_member_id)
+        peer = find_member(manifest, member_id)
+        if (
+            local is None
+            or local.status != "active"
+            or peer is None
+            or peer.status != "active"
+        ):
+            raise ContactNotApproved(
+                "Workspace direct messages require two active members"
+            )
+        participants = sorted([local_member_id, member_id])
+        conversation_id = workspace_direct_conversation_id(
+            workspace_id, participants
+        )
+        record_id = self._workspace_direct_record_id(conversation_id)
+        direct = self.store.get("workspace_direct", record_id)
+        now = time.time()
+        records: list[tuple[str, str, dict[str, Any]]] = []
+        if direct is None:
+            direct = {
+                "id": conversation_id,
+                "workspace_id": workspace_id,
+                "participant_member_ids": participants,
+                "peer_display_name": peer.display_name,
+                "hidden": False,
+                "unread_count": 0,
+                "created_at": now,
+                "updated_at": now,
+            }
+            index = {
+                "workspace_id": workspace_id,
+                "conversation_id": conversation_id,
+                "head_page": None,
+                "count": 0,
+                "high_water": 0,
+                "authorization_generation": int(
+                    workspace.get("authorization_generation", 1)
+                ),
+                "retention_generation": int(
+                    workspace.get("retention_generation", 1)
+                ),
+            }
+            records.extend(
+                [
+                    (
+                        "workspace_conversation_index",
+                        self._workspace_index_record_id(
+                            workspace_id, conversation_id
+                        ),
+                        index,
+                    ),
+                    (
+                        "workspace_read_state",
+                        self.store.opaque_id(
+                            "workspace-read-state", workspace_id, conversation_id
+                        ),
+                        {
+                            "workspace_id": workspace_id,
+                            "conversation_id": conversation_id,
+                            "high_water": 0,
+                        },
+                    ),
+                ]
+            )
+        elif direct.get("participant_member_ids") != participants:
+            raise ValidationError("Stored workspace direct-message participants changed")
+        direct["hidden"] = False
+        direct["peer_display_name"] = peer.display_name
+        direct["updated_at"] = now
+        records.insert(0, ("workspace_direct", record_id, direct))
+        outcome = self._public_workspace_direct(direct)
+        committed = self.store.commit_operation(
+            operation_id, digest, outcome, records
+        )
+        self._workspace_changed(
+            workspace_id,
+            conversation_id=conversation_id,
+            resource_kind="direct",
+        )
+        return committed
+
+    def hide_workspace_direct(
+        self, workspace_id: Any, conversation_id: Any, operation_id: Any
+    ) -> dict[str, Any]:
+        payload = {
+            "workspace_id": workspace_id,
+            "conversation_id": conversation_id,
+        }
+        operation_id, digest, replay = self._workspace_operation(
+            "hide_workspace_direct", operation_id, payload
+        )
+        if replay is not None:
+            return replay
+        if not isinstance(conversation_id, str):
+            raise ValidationError("Workspace direct-message identifier is invalid")
+        direct = self._require_workspace_direct(workspace_id, conversation_id)
+        direct["hidden"] = True
+        direct["updated_at"] = time.time()
+        outcome = {
+            "workspace_id": workspace_id,
+            "conversation_id": conversation_id,
+            "hidden": True,
+        }
+        committed = self.store.commit_operation(
+            operation_id,
+            digest,
+            outcome,
+            [
+                (
+                    "workspace_direct",
+                    self._workspace_direct_record_id(conversation_id),
+                    direct,
+                )
+            ],
+        )
+        self._workspace_changed(
+            workspace_id,
+            conversation_id=conversation_id,
+            resource_kind="direct_visibility",
+        )
+        return committed
+
+    def send_workspace_direct_message(
+        self,
+        workspace_id: Any,
+        conversation_id: Any,
+        text: Any,
+        event_id: Any,
+        operation_id: Any,
+    ) -> dict[str, Any]:
+        payload = {
+            "workspace_id": workspace_id,
+            "conversation_id": conversation_id,
+            "text": text,
+            "event_id": event_id,
+        }
+        operation_id, digest, replay = self._workspace_operation(
+            "send_workspace_direct_message", operation_id, payload
+        )
+        if replay is not None:
+            return replay
+        workspace = self._require_workspace(workspace_id)
+        if workspace.get("state") != "active":
+            raise ContactNotApproved("Workspace is not active")
+        if not isinstance(conversation_id, str):
+            raise ValidationError("Workspace direct-message identifier is invalid")
+        direct = self._require_workspace_direct(workspace_id, conversation_id)
+        if (
+            not isinstance(text, str)
+            or not text.strip()
+            or len(text.encode("utf-8")) > MAX_MESSAGE_TEXT_BYTES
+        ):
+            raise ValidationError("Workspace message is empty or too large")
+        if not isinstance(event_id, str):
+            raise ValidationError("Workspace event ID is invalid")
+        try:
+            if str(uuid.UUID(event_id)) != event_id:
+                raise ValueError
+        except (ValueError, AttributeError) as exc:
+            raise ValidationError("Workspace event ID is invalid") from exc
+        if self.store.get(
+            "workspace_event", self._workspace_event_record_id(event_id)
+        ) is not None:
+            raise ValidationError("Workspace event ID was already used")
+        manifest = self._workspace_current_manifest(workspace)
+        participants = tuple(direct.get("participant_member_ids", ()))
+        if (
+            len(participants) != 2
+            or tuple(sorted(participants)) != participants
+            or workspace["local_member_id"] not in participants
+            or workspace_direct_conversation_id(workspace_id, participants)
+            != conversation_id
+        ):
+            raise ValidationError("Workspace direct-message participants are invalid")
+        participant_members = [find_member(manifest, item) for item in participants]
+        if any(member is None or member.status != "active" for member in participant_members):
+            raise ContactNotApproved(
+                "Workspace direct messages stop after either participant leaves"
+            )
+        local_member = find_member(manifest, workspace["local_member_id"])
+        if local_member is None or local_member.status != "active":
+            raise ContactNotApproved("Local member is not active")
+        identity = self._identity
+        if identity is None:
+            raise ValidationError("Local identity is unavailable")
+        stream_head_id = self._workspace_stream_head_id(
+            workspace_id, conversation_id, workspace["local_device_id"]
+        )
+        stream_head = self.store.get("workspace_stream_coverage", stream_head_id)
+        sequence = int(stream_head.get("high_water", 0)) + 1 if stream_head else 1
+        previous = stream_head.get("head_digest") if stream_head else None
+        raw = create_workspace_event(
+            identity,
+            workspace_id=workspace_id,
+            conversation_id=conversation_id,
+            event_id=event_id,
+            author_member_id=workspace["local_member_id"],
+            author_device_id=workspace["local_device_id"],
+            sequence=sequence,
+            previous_event_digest=previous,
+            manifest_digest=manifest.digest,
+            channel_digest=None,
+            text=text,
+            audience_member_ids=participants,
+        )
+        event = verify_workspace_event(
+            raw,
+            manifest=manifest,
+            channel=None,
+            direct_member_ids=participants,
+        )
+        records, message = self._append_workspace_event_records(
+            workspace,
+            event,
+            direction="outbound",
+            author_display_name=local_member.display_name,
+        )
+        deliveries: list[dict[str, Any]] = []
+        for member in participant_members:
+            assert member is not None
+            for device in member.devices:
+                if device.device_id == workspace["local_device_id"]:
+                    continue
+                deliveries.append(
+                    self._workspace_delivery_record(
+                        workspace_id=workspace_id,
+                        recipient_member_id=member.member_id,
+                        recipient_device=device,
+                        kind="workspace_event",
+                        document=event.serialized,
+                        event_id=event.event_id,
+                        conversation_id=conversation_id,
+                    )
+                )
+        records.extend(
+            ("workspace_delivery", item["id"], item) for item in deliveries
+        )
+        records.extend(self._due_records(add=deliveries))
+        message["delivery_devices"] = {
+            item["recipient_device_id"]: {
+                "member_id": item["recipient_member_id"],
+                "member_display_name": item["recipient_display_name"],
+                "state": item["state"],
+            }
+            for item in deliveries
+        }
+        message["delivery_summary"] = self._workspace_delivery_summary_from_devices(
+            message["delivery_devices"]
+        )
+        records = [
+            (
+                kind,
+                record_id,
+                message if kind == "workspace_message_state" else value,
+            )
+            for kind, record_id, value in records
+        ]
+        direct["hidden"] = False
+        direct["updated_at"] = time.time()
+        records.append(
+            (
+                "workspace_direct",
+                self._workspace_direct_record_id(conversation_id),
+                direct,
+            )
+        )
+        outcome = self._public_workspace_message(message)
+        committed = self.store.commit_operation(
+            operation_id, digest, outcome, records
+        )
+        self._workspace_changed(
+            workspace_id,
+            conversation_id=conversation_id,
+            resource_kind="message",
+        )
+        return committed
+
     def _store_pending_workspace_event(
         self, wire: WorkspaceWirePayload, reason: str
     ) -> None:
@@ -2310,7 +2698,9 @@ class WorkspaceServiceMixin:
                 return False
             manifest_digest = raw_value.get("manifest_digest")
             channel_digest = raw_value.get("channel_digest")
-            if not isinstance(manifest_digest, str) or not isinstance(channel_digest, str):
+            if not isinstance(manifest_digest, str) or not (
+                channel_digest is None or isinstance(channel_digest, str)
+            ):
                 return False
             workspace = self._require_workspace(wire.workspace_id)
             untrusted_audience = raw_value.get("audience_member_ids")
@@ -2323,18 +2713,45 @@ class WorkspaceServiceMixin:
             ):
                 return False
             manifest = self._workspace_manifest_by_digest(manifest_digest)
-            channel = self._workspace_channel_by_digest(channel_digest)
-            if manifest is None or channel is None:
+            channel = (
+                self._workspace_channel_by_digest(channel_digest)
+                if isinstance(channel_digest, str)
+                else None
+            )
+            if manifest is None or (
+                isinstance(channel_digest, str) and channel is None
+            ):
                 self._store_pending_workspace_event(wire, "missing_controls")
                 return False
+            direct_member_ids = (
+                untrusted_audience
+                if channel_digest is None and isinstance(untrusted_audience, list)
+                else None
+            )
             event = verify_workspace_event(
-                wire.document, manifest=manifest, channel=channel
+                wire.document,
+                manifest=manifest,
+                channel=channel,
+                direct_member_ids=direct_member_ids,
             )
             if event.workspace_id != wire.workspace_id:
                 return False
             if workspace.get("state") not in {"active", "incomplete_sync"}:
                 return False
-            if event.audience_member_ids:
+            if event.channel_digest is None:
+                current_manifest = self._workspace_current_manifest(workspace)
+                if (
+                    len(event.audience_member_ids) != 2
+                    or workspace.get("local_member_id")
+                    not in event.audience_member_ids
+                    or any(
+                        (member := find_member(current_manifest, member_id)) is None
+                        or member.status != "active"
+                        for member_id in event.audience_member_ids
+                    )
+                ):
+                    return False
+            elif event.audience_member_ids:
                 channel_record = self.store.get(
                     "workspace_channel",
                     self._workspace_channel_record_id(event.conversation_id),
@@ -2380,7 +2797,10 @@ class WorkspaceServiceMixin:
             if (
                 author is None
                 or author.status != "active"
-                or not self._posting_allowed(manifest, author)
+                or (
+                    event.channel_digest is not None
+                    and not self._posting_allowed(manifest, author)
+                )
             ):
                 return False
             sequence_id = self._workspace_stream_sequence_id(
@@ -2411,6 +2831,9 @@ class WorkspaceServiceMixin:
             expected_sequence = int(stream_head.get("high_water", 0)) + 1 if stream_head else 1
             expected_previous = stream_head.get("head_digest") if stream_head else None
             if event.sequence != expected_sequence or event.previous_event_digest != expected_previous:
+                if channel is None:
+                    self._store_pending_workspace_event(wire, "missing_predecessor")
+                    return False
                 admission_version = self._private_channel_admission_version(
                     channel, str(workspace.get("local_member_id"))
                 )
@@ -2430,29 +2853,64 @@ class WorkspaceServiceMixin:
                 direction="inbound",
                 author_display_name=author.display_name,
             )
-            channel_record = self._require_workspace_channel(
-                event.workspace_id, event.conversation_id
-            )
-            subscription = self.store.get(
-                "workspace_subscription",
-                self.store.opaque_id(
-                    "workspace-subscription",
-                    event.workspace_id,
-                    event.conversation_id,
-                ),
-            )
-            if subscription is not None and subscription.get("subscribed"):
-                channel_record["unread_count"] = int(
-                    channel_record.get("unread_count", 0)
-                ) + 1
-            channel_record["updated_at"] = time.time()
-            records.append(
-                (
-                    "workspace_channel",
-                    self._workspace_channel_record_id(event.conversation_id),
-                    channel_record,
+            if event.channel_digest is None:
+                direct_id = self._workspace_direct_record_id(event.conversation_id)
+                direct = self.store.get("workspace_direct", direct_id)
+                current_manifest = self._workspace_current_manifest(workspace)
+                peer_member_id = next(
+                    member_id
+                    for member_id in event.audience_member_ids
+                    if member_id != workspace["local_member_id"]
                 )
-            )
+                peer = find_member(current_manifest, peer_member_id)
+                now = time.time()
+                if direct is None:
+                    direct = {
+                        "id": event.conversation_id,
+                        "workspace_id": event.workspace_id,
+                        "participant_member_ids": list(
+                            event.audience_member_ids
+                        ),
+                        "peer_display_name": (
+                            peer.display_name if peer is not None else "Member"
+                        ),
+                        "hidden": False,
+                        "unread_count": 0,
+                        "created_at": now,
+                        "updated_at": now,
+                    }
+                elif direct.get("participant_member_ids") != list(
+                    event.audience_member_ids
+                ):
+                    return False
+                direct["hidden"] = False
+                direct["unread_count"] = int(direct.get("unread_count", 0)) + 1
+                direct["updated_at"] = now
+                records.append(("workspace_direct", direct_id, direct))
+            else:
+                channel_record = self._require_workspace_channel(
+                    event.workspace_id, event.conversation_id
+                )
+                subscription = self.store.get(
+                    "workspace_subscription",
+                    self.store.opaque_id(
+                        "workspace-subscription",
+                        event.workspace_id,
+                        event.conversation_id,
+                    ),
+                )
+                if subscription is not None and subscription.get("subscribed"):
+                    channel_record["unread_count"] = int(
+                        channel_record.get("unread_count", 0)
+                    ) + 1
+                channel_record["updated_at"] = time.time()
+                records.append(
+                    (
+                        "workspace_channel",
+                        self._workspace_channel_record_id(event.conversation_id),
+                        channel_record,
+                    )
+                )
             self.store.put_many(records)
             self._workspace_changed(
                 event.workspace_id,
@@ -2553,6 +3011,15 @@ class WorkspaceServiceMixin:
             if incoming.epoch <= current.epoch:
                 return False
             checked = verify_workspace_manifest_transition(wire.document, current)
+            newly_inactive_member_ids = {
+                member.member_id
+                for member in current.members
+                if member.status == "active"
+                and (
+                    (next_member := find_member(checked, member.member_id)) is None
+                    or next_member.status != "active"
+                )
+            }
             self._apply_manifest_to_workspace(workspace, checked)
             self._apply_manifest_public_identities(workspace, checked)
             resolved_name_requests: list[
@@ -2579,6 +3046,16 @@ class WorkspaceServiceMixin:
                             request,
                         )
                     )
+            cancelled_records: list[tuple[str, str, dict[str, Any]]] = []
+            cancelled_ids: set[str] = set()
+            for member_id in newly_inactive_member_ids:
+                member_records, member_cancelled_ids = (
+                    self._cancel_workspace_member_deliveries(
+                        workspace["id"], member_id
+                    )
+                )
+                cancelled_records.extend(member_records)
+                cancelled_ids.update(member_cancelled_ids)
             self.store.put_many(
                 [
                     ("workspace", self._workspace_record_id(workspace["id"]), workspace),
@@ -2589,8 +3066,13 @@ class WorkspaceServiceMixin:
                     ),
                     self._manifest_epoch_record(checked),
                     *resolved_name_requests,
+                    *cancelled_records,
+                    *self._due_records(remove=cancelled_ids),
                 ]
             )
+            network = getattr(self, "network", None)
+            if network is not None and cancelled_ids:
+                network.cancel_outbound(cancelled_ids)
             self._remember_workspace_devices(workspace)
             if drain_pending:
                 self._drain_workspace_pending_controls(workspace["id"])
@@ -3817,7 +4299,7 @@ class WorkspaceServiceMixin:
             "incomplete_sync",
         }:
             raise ContactNotApproved("Workspace history is unavailable in this state")
-        self._require_workspace_channel(workspace_id, channel_id)
+        self._require_workspace_conversation(workspace_id, channel_id)
         if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= MESSAGE_PAGE_MAX:
             raise ValidationError("Workspace message page size is invalid")
         index_id = self._workspace_index_record_id(workspace_id, channel_id)
@@ -3929,7 +4411,9 @@ class WorkspaceServiceMixin:
         if replay is not None:
             return replay
         self._require_workspace(workspace_id)
-        channel = self._require_workspace_channel(workspace_id, channel_id)
+        conversation_kind, conversation = self._require_workspace_conversation(
+            workspace_id, channel_id
+        )
         index = self.store.get(
             "workspace_conversation_index",
             self._workspace_index_record_id(workspace_id, channel_id),
@@ -3943,17 +4427,32 @@ class WorkspaceServiceMixin:
         previous = self.store.get("workspace_read_state", read_id)
         if previous is not None and high_water < int(previous.get("high_water", 0)):
             raise ValidationError("Workspace read position cannot move backwards")
-        channel["unread_count"] = max(0, maximum - high_water)
-        outcome = {"workspace_id": workspace_id, "channel_id": channel_id, "high_water": high_water}
+        conversation["unread_count"] = max(0, maximum - high_water)
+        conversation["updated_at"] = time.time()
+        outcome = {
+            "workspace_id": workspace_id,
+            "conversation_id": channel_id,
+            "high_water": high_water,
+        }
+        if conversation_kind == "channel":
+            outcome["channel_id"] = channel_id
         committed = self.store.commit_operation(
             operation_id,
             digest,
             outcome,
             [
                 (
-                    "workspace_channel",
-                    self._workspace_channel_record_id(channel_id),
-                    channel,
+                    (
+                        "workspace_channel"
+                        if conversation_kind == "channel"
+                        else "workspace_direct"
+                    ),
+                    (
+                        self._workspace_channel_record_id(channel_id)
+                        if conversation_kind == "channel"
+                        else self._workspace_direct_record_id(channel_id)
+                    ),
+                    conversation,
                 ),
                 (
                     "workspace_read_state",
@@ -4027,7 +4526,7 @@ class WorkspaceServiceMixin:
         if replay is not None:
             return replay
         self._require_workspace(workspace_id)
-        self._require_workspace_channel(workspace_id, channel_id)
+        self._require_workspace_conversation(workspace_id, channel_id)
         if not isinstance(text, str) or len(text.encode("utf-8")) > MAX_MESSAGE_TEXT_BYTES:
             raise ValidationError("Workspace draft is invalid")
         record_id = self.store.opaque_id(
@@ -5813,6 +6312,7 @@ class WorkspaceServiceMixin:
             "workspace_join_request",
             "workspace_display_name_request",
             "workspace_channel",
+            "workspace_direct",
             "workspace_channel_control",
             "workspace_channel_version",
             "workspace_channel_transfer",
@@ -6257,6 +6757,20 @@ class WorkspaceServiceMixin:
                 item["id"],
             )
         )
+        directs = [
+            self._public_workspace_direct(item)
+            for item in self.store.list("workspace_direct")
+            if not item.get("hidden")
+            and workspace_local_members.get(item.get("workspace_id"))
+            in item.get("participant_member_ids", [])
+        ]
+        directs.sort(
+            key=lambda item: (
+                item["workspace_id"],
+                -float(item.get("updated_at", 0)),
+                item["id"],
+            )
+        )
         channel_transfers = [
             {key: value for key, value in item.items() if key != "document"}
             for item in self.store.list("workspace_channel_transfer")
@@ -6293,6 +6807,7 @@ class WorkspaceServiceMixin:
         return {
             "workspaces": workspaces,
             "workspace_channels": channels,
+            "workspace_directs": directs,
             "workspace_channel_transfers": channel_transfers,
             "workspace_join_requests": requests,
             "workspace_display_name_requests": name_requests,

@@ -2,7 +2,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testi
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import packageInfo from "../package.json";
-import type { ChatMessage, Contact, Group, GroupInvitation, GroupMessage, Snapshot, Workspace, WorkspaceChannel, WorkspaceMessage, WorkspaceMessagePage } from "./types";
+import type { ChatMessage, Contact, Group, GroupInvitation, GroupMessage, Snapshot, Workspace, WorkspaceChannel, WorkspaceDirect, WorkspaceMessage, WorkspaceMessagePage } from "./types";
 
 const api = vi.hoisted(() => ({
   initializeService: vi.fn(),
@@ -1770,6 +1770,100 @@ describe("small private groups", () => {
 });
 
 describe("desktop workspaces", () => {
+  it("opens, sends, hides, and reopens a workspace DM without creating a Contact", async () => {
+    const member = {
+      id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      display_name: "Bailey",
+      role: "member" as const,
+      status: "active" as const,
+      short_id: "aaaaaa",
+      device: { id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", destination_hash: "99".repeat(16), fingerprint: "BBBB CCCC DDDD EEEE" },
+    };
+    const expanded: Workspace = { ...workspace, members: [...workspace.members, member] };
+    const direct: WorkspaceDirect = {
+      id: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+      workspace_id: workspace.id,
+      participant_member_ids: [workspace.local_member_id, member.id].sort(),
+      peer_member_id: member.id,
+      peer_display_name: member.display_name,
+      peer_short_id: member.short_id,
+      state: "open",
+      unread_count: 0,
+      created_at: 10,
+      updated_at: 10,
+    };
+    let current: Snapshot = {
+      ...snapshot(),
+      workspaces: [expanded],
+      workspace_channels: [workspaceChannel],
+      workspace_directs: [],
+      workspace_join_requests: [],
+      workspace_invitations: [],
+      workspace_drafts: [],
+    };
+    api.runtimePlatform.mockResolvedValue("desktop");
+    api.initializeService.mockResolvedValue(current);
+    api.onInvitation.mockResolvedValue(() => undefined);
+    api.onServiceEvent.mockResolvedValue(() => undefined);
+    api.serviceCommand.mockImplementation(async (command: string, payload: Record<string, unknown>) => {
+      if (command === "snapshot") return current;
+      if (command === "list_workspace_messages" || command === "list_workspace_direct_messages") return { messages: [], next_cursor: null, high_water: 0 } satisfies WorkspaceMessagePage;
+      if (command === "open_workspace_direct") {
+        current = { ...current, workspace_directs: [direct] };
+        return direct;
+      }
+      if (command === "send_workspace_direct_message") {
+        return {
+          id: String(payload.event_id),
+          workspace_id: workspace.id,
+          conversation_id: direct.id,
+          direction: "outbound",
+          author_member_id: workspace.local_member_id,
+          author_display_name: "Alex",
+          text: String(payload.text),
+          sequence: 1,
+          event_digest: "99".repeat(32),
+          created_at: 20,
+        } satisfies WorkspaceMessage;
+      }
+      if (command === "hide_workspace_direct") {
+        current = { ...current, workspace_directs: [] };
+        return { hidden: true };
+      }
+      return {};
+    });
+
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Workspace Lakewatcher" }));
+    fireEvent.click(await screen.findByRole("button", { name: "People in Lakewatcher" }));
+    fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Message" }));
+    await waitFor(() => expect(api.serviceCommand).toHaveBeenCalledWith("open_workspace_direct", expect.objectContaining({ workspace_id: workspace.id, member_id: member.id, operation_id: expect.any(String) })));
+    let conversation = await screen.findByLabelText("Workspace direct message with Bailey");
+    expect(within(conversation).getByText(/does not create a global Contact/i)).toBeTruthy();
+    const composer = within(conversation).getByRole("textbox", { name: "Message Bailey" });
+    fireEvent.paste(composer, {
+      clipboardData: {
+        files: [new File(["image"], "private.png", { type: "image/png" })],
+        items: [{ kind: "file" }],
+      },
+    });
+    expect(await within(conversation).findByText(/Attachments are not supported yet/i)).toBeTruthy();
+    fireEvent.change(composer, { target: { value: "Private workspace hello" } });
+    fireEvent.click(within(conversation).getByRole("button", { name: "Send workspace direct message" }));
+    await waitFor(() => expect(api.serviceCommand).toHaveBeenCalledWith("send_workspace_direct_message", expect.objectContaining({ workspace_id: workspace.id, conversation_id: direct.id, text: "Private workspace hello", event_id: expect.any(String), operation_id: expect.any(String) })));
+
+    fireEvent.click(within(conversation).getByRole("button", { name: "Hide workspace conversation with Bailey" }));
+    await waitFor(() => expect(api.serviceCommand).toHaveBeenCalledWith("hide_workspace_direct", expect.objectContaining({ workspace_id: workspace.id, conversation_id: direct.id, operation_id: expect.any(String) })));
+    expect(await screen.findByText("Start a private workspace chat from People.")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "People in Lakewatcher" }));
+    fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Message" }));
+    conversation = await screen.findByLabelText("Workspace direct message with Bailey");
+    expect(conversation).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "Contacts" }));
+    expect(within(screen.getByRole("dialog", { name: "Contacts" })).getByText("No contacts yet.")).toBeTruthy();
+  });
+
   it("uses the bounded workspace summary command for scoped invalidations", async () => {
     const current: Snapshot = { ...snapshot(), workspaces: [workspace], workspace_channels: [workspaceChannel], workspace_join_requests: [], workspace_invitations: [], workspace_drafts: [] };
     let serviceEvent: ((event: { type: "event"; event: "workspace_changed"; workspace_id: string; resource_kind: string; generation: number }) => void) | undefined;

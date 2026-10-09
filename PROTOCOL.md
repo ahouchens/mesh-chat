@@ -253,7 +253,7 @@ document types are:
 | `workspace_channel_recovery` | The owner authority device explicitly assigns management at the exact current head; private recovery is valid only when that owner is already on the roster. |
 | `workspace_channel_summary` | An active device signs one canonical page of public channel IDs, versions, and head digests for a sync session. |
 | `workspace_channel_fetch` | An active device signs bounded channel/head requests and a maximum control count for one summary session. |
-| `workspace_event` | An author binds a message to its workspace/conversation, author stream predecessor, exact manifest and channel controls, immutable payload, and for private channels the complete sorted roster audience. |
+| `workspace_event` | An author binds a message to its workspace/conversation, author stream predecessor, exact manifest, immutable payload, and either an exact channel control or a null channel digest plus the complete sorted two-member DM audience. Private channels repeat their complete sorted roster audience. |
 | `workspace_leave_request` | A non-owner binds a leave request to the exact current manifest. |
 | `workspace_display_name_request` | An active device signs a replacement card that preserves its member, device, identity, and destination while requesting a new display name. |
 | `workspace_display_name_decision` | The authority signs an approval or decline bound to the exact request and its base manifest. Approval is completed by the next manifest; decline is returned directly to the requester. |
@@ -262,7 +262,7 @@ Invitation entry points are `meshchat://workspace/<base64url>` and
 `MESHWORKSPACE1:<base64url>`. Invitations are single-use and expire within 30
 days. The offered checkpoint must retain the exact genesis owner member and
 authority device card; a self-consistent manifest signed by another identity is
-not a valid checkpoint. Increment 4 supports eight people, one device per
+not a valid checkpoint. Increment 5 supports eight people, one device per
 member, and up to 32 active public or private channels including `#general`.
 It rejects attachments and does not exchange old message history. The authority is not a
 message relay: each event is copied directly to every other authorized device
@@ -319,6 +319,18 @@ only as a same-manager admission checkpoint. Same-version valid conflicts mark
 that channel forked. A member removal cancels only that member's unhanded legs.
 The manager cannot leave or be removed from the roster until management is
 transferred, and archival remains terminal.
+
+Workspace direct messages have no channel-control family. Their conversation ID
+is UUIDv5 in the workspace UUID namespace over
+`mesh-chat:workspace-direct:v1:` plus the two sorted member UUIDs. The canonical
+event sets `channel_digest` to JSON null and carries exactly those two sorted,
+unique, active member IDs in `audience_member_ids`; the author must be one of
+them. A recipient accepts the event only while both participants are active in
+its current manifest. Delivery fans out only to participant devices, local
+hide/reopen state is not transmitted, and learning either participant's
+removal cancels unhanded DM legs. There is no DM history backfill in this
+increment, so an unseen event authored before a known removal is not admitted
+after that removal.
 
 ## Delivery evidence
 

@@ -1502,6 +1502,86 @@ Artifact hashes for this run:
   walkthrough, physical multi-install private-channel partition/reconnect,
   packet capture, and protected-profile plaintext scans remain release gates.
 
+## Workspace increment 5 verification — 2026-10-08
+
+- The complete maintained verification passed **300 Python tests with 6
+  intentional environment/package skips**, **81 frontend tests**, all 3
+  package-artwork verifier tests, TypeScript compilation, and the Vite
+  production build. The Rust boundary passed `cargo fmt --check` and all **6
+  release-profile tests**.
+- Protocol and service coverage verifies the deterministic workspace-scoped
+  two-member conversation UUID, null channel digest, exact sorted audience,
+  author and current-participant authorization, participant-only fan-out,
+  independent sealed paging/drafts/unread state, local hide and People-based
+  reopen, restart persistence, bidirectional delivery, removal-driven read-only
+  state, and cancellation of unhanded DM legs. Both endpoints retain empty
+  global Contact lists. Renderer coverage opens from People, sends, hides,
+  reopens, and confirms the Contacts view remains unchanged.
+- The opt-in isolated three-hop RNS/LXMF topology and both direct-LAN scenarios
+  passed. The exact immutable 0.2.20 packaged sidecar passed the
+  phone-first/desktop-reply harness and the current-versus-0.2.9 compatibility
+  flow under native Windows EFS; all 3 packaged-harness tests passed. The final
+  application executable also matched all 12 bundled artwork, metadata, and
+  license files.
+- The maintained release driver immutably published desktop **0.2.20** with WiX
+  ICE validation and NSIS packaging enabled. The 22,536,192-byte MSI has
+  SHA-256
+  `7C22F0FE9B8E4A9C78B259E8FECFFC12DEF1054604144544E28BB94527C48D00`.
+  The 21,799,832-byte NSIS installer has SHA-256
+  `5E5C85C39F582DE6ED32450F84ED3FBCB1EAA31249B149D69D0F7E86C9D74D95`.
+  The portable application reports file/product version 0.2.20 and hashes to
+  `D90D5DBB3B184F8983DBEEE46EA73D1177F1BB9B2076A0BE3DE49DB1EFAE190E`;
+  the sidecar hashes to
+  `184D9809CB83AF9B3E1605B0D503A14ACE3E248102F9491D6589AE19790FA148`.
+  The immutable manifest hashes to
+  `0850FFFAD09E8EA9EE3DDAED129DC6A8A66BA8CD8FDD1E98809C5825318DC773`.
+  The earlier immutable 0.2.19 build was superseded before installation after
+  the final authorization review established that channel posting policy must
+  not suppress active-participant workspace DMs; 0.2.20 contains that fix.
+- No installer was launched and no existing Mesh Chat process or profile was
+  altered. Production signing, in-place installation, interactive native-window
+  walkthrough, physical multi-install DM partition/reconnect, packet capture,
+  and protected-profile plaintext scans remain release gates.
+
+## Workspace increment 5 corrective verification — 2026-10-08
+
+- Final review found that confirmed local workspace removal did not include the
+  new sealed `workspace_direct` summary records, and that cancellation of a DM
+  leg after removing its sender could relabel the remaining recipient in local
+  delivery details. Version **0.2.21** deletes the DM summaries with the rest of
+  the workspace, preserves the actual recipient identity in cancelled delivery
+  state, rejects a delayed unseen DM after removal, and adds regressions for all
+  three behaviors. The renderer also rejects pasted attachments in DMs and uses
+  accurate read-only wording for workspace-wide paused states.
+- The complete maintained verification passed **300 Python tests with 6
+  intentional environment/package skips**, **81 frontend tests**, all 3
+  package-artwork verifier tests, TypeScript compilation, and the Vite
+  production build. `cargo fmt --check`, the locked Rust release check, and all
+  **6 release-profile tests** passed. The opt-in protected three-hop topology
+  and both direct-LAN scenarios passed, as did all **3** exact packaged-sidecar
+  and 0.2.9 interoperability tests. The final application executable matched
+  all **12** bundled artwork, metadata, and license files.
+- The maintained release driver immutably published desktop **0.2.21** without
+  changing the verified 0.2.20 release. The 22,540,288-byte MSI has SHA-256
+  `F7316C13C9B7A24EA6ED0953500B4EC48711DBFE567A21F1FCE31CD623C98C40`.
+  The 21,800,652-byte NSIS installer has SHA-256
+  `C9B8538923FB0F04F6F5C34E099652F1195C8D8B66187197BDCA7493F5AC6569`.
+  The portable application reports file/product version 0.2.21 and hashes to
+  `FEFEB0253F4426288645E00D9B4B64DDC5F3827FB9EC67F81A07928D1F1E1AC0`;
+  the sidecar hashes to
+  `0C2FF802C4E21721D7D9624C92202416DD21BE52BE9C499871EEF30DBCD8B0DE`.
+  The immutable manifest hashes to
+  `2804AE21DE4860CCB6FAC90087C5CE8135B33287A8931B4430636653E5546299`.
+- A first follow-up Rust check/test attempt exhausted the nearly full system
+  drive while creating an additional debug tree after packaging. Only
+  reproducible Cargo and PyInstaller intermediates were removed; immutable
+  releases were preserved. The release tests then passed from a clean serial
+  build, followed by the locked release-profile check. No installer was
+  launched and no existing Mesh Chat process or profile was altered.
+- Production signing, in-place installation, interactive native-window
+  walkthrough, physical multi-install DM partition/reconnect, packet capture,
+  and protected-profile plaintext scans remain release gates.
+
 ## Acceptance matrix
 
 | Gate | Current evidence |
@@ -1534,5 +1614,6 @@ Artifact hashes for this run:
 | Connection help | State/action mapping implemented; recovery scenarios pending |
 | Accessible joining | Labels, focus, keyboard, contrast and live regions implemented; assistive-tech audit pending |
 | Workspace increment 3 | Increment 2 coverage remains green. Public-channel signed chains, paged summaries/fetches, explicit incomplete discovery, duplicate names, policy enforcement, management transfer/recovery/archive, subscriptions, unread persistence, reversed controls, channel-scoped forks, Tauri allowlisting, and manager/member UI denial paths are automated. Isolated and direct-LAN process topologies plus the immutable packaged sidecar passed; physical eight-install restart/kill-point/partition runs and a native-window walkthrough remain release gates |
+| Workspace increment 5 | Increment 4 coverage remains green. Deterministic participant-only workspace DMs, canonical authorization, independent encrypted local state, bidirectional delivery, hide/reopen, restart, removal gating/cancellation, desktop command allowlisting, and Contacts isolation are automated. Isolated, direct-LAN, packaged-current, and 0.2.9 compatibility paths passed; physical multi-install DM partition/reconnect, native-window, and plaintext-scan gates remain open |
 
 Do not mark a release complete from unit tests alone. Store packet captures, topology configs, full-tree scans, package hashes, platform versions, human timing sheets, and failure notes with the release evidence.

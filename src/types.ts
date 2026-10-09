@@ -236,6 +236,19 @@ export interface WorkspaceChannel {
   updated_at: number;
 }
 
+export interface WorkspaceDirect {
+  id: string;
+  workspace_id: string;
+  participant_member_ids: string[];
+  peer_member_id: string;
+  peer_display_name: string;
+  peer_short_id: string;
+  state: "open" | "read_only";
+  unread_count: number;
+  created_at: number;
+  updated_at: number;
+}
+
 export interface WorkspaceChannelTransfer {
   id: string;
   workspace_id: string;
@@ -357,6 +370,7 @@ export interface WorkspaceDisplayNameRequest {
 export interface WorkspaceSnapshot {
   workspaces: Workspace[];
   workspace_channels: WorkspaceChannel[];
+  workspace_directs: WorkspaceDirect[];
   workspace_channel_transfers: WorkspaceChannelTransfer[];
   workspace_join_requests: WorkspaceJoinRequest[];
   workspace_display_name_requests: WorkspaceDisplayNameRequest[];
@@ -404,9 +418,10 @@ export interface Snapshot {
   group_messages?: GroupMessage[];
   group_drafts?: GroupDraft[];
   group_invitations?: GroupInvitation[];
-  /** Desktop-only Increment 3 workspace summaries. Message bodies are paged separately. */
+  /** Desktop-only workspace summaries through Increment 5. Message bodies are paged separately. */
   workspaces?: Workspace[];
   workspace_channels?: WorkspaceChannel[];
+  workspace_directs?: WorkspaceDirect[];
   workspace_channel_transfers?: WorkspaceChannelTransfer[];
   workspace_join_requests?: WorkspaceJoinRequest[];
   workspace_display_name_requests?: WorkspaceDisplayNameRequest[];

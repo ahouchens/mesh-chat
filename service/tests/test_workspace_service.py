@@ -412,6 +412,257 @@ def test_two_member_workspace_create_join_chat_and_page(
     joiner.close()
 
 
+def test_workspace_direct_chat_hide_reopen_restart_and_removal(
+    tmp_path: Path,
+) -> None:
+    (
+        owner,
+        owner_network,
+        owner_profile,
+        member,
+        member_network,
+        member_profile,
+        workspace,
+        member_key,
+        member_identity,
+    ) = _joined_pair(tmp_path, base=450)
+    workspace_id = workspace["id"]
+    owner_view = owner.workspace_snapshot()["workspaces"][0]
+    member_id = next(
+        item["id"]
+        for item in owner_view["members"]
+        if item["id"] != owner_view["local_member_id"]
+    )
+    assert owner.snapshot()["contacts"] == []
+    assert member.snapshot()["contacts"] == []
+
+    opened, _ = owner.dispatch(
+        {
+            "v": 1,
+            "id": "workspace-direct-open",
+            "command": "open_workspace_direct",
+            "payload": {
+                "operation_id": _op(454),
+                "workspace_id": workspace_id,
+                "member_id": member_id,
+            },
+        }
+    )
+    direct = opened["result"]
+    assert direct["peer_display_name"] == "Bailey"
+    assert owner.workspace_snapshot()["workspace_directs"] == [direct]
+    assert member.workspace_snapshot()["workspace_directs"] == []
+
+    first = owner.send_workspace_direct_message(
+        workspace_id,
+        direct["id"],
+        "Private field note",
+        _op(455),
+        _op(456),
+    )
+    assert first["delivery_summary"]["devices_total"] == 1
+    outgoing = _flush(owner, owner_network)
+    assert len(outgoing) == 1
+    _deliver(
+        member,
+        outgoing[0],
+        source_profile=owner_profile,
+        recipient_profile=member_profile,
+    )
+    member_direct = member.workspace_snapshot()["workspace_directs"][0]
+    assert member_direct["id"] == direct["id"]
+    assert member_direct["unread_count"] == 1
+    marked, _ = member.dispatch(
+        {
+            "v": 1,
+            "id": "workspace-direct-read",
+            "command": "mark_workspace_direct_read",
+            "payload": {
+                "operation_id": _op(469),
+                "workspace_id": workspace_id,
+                "conversation_id": direct["id"],
+                "high_water": 1,
+            },
+        }
+    )
+    assert marked["result"]["high_water"] == 1
+    assert member.workspace_snapshot()["workspace_directs"][0]["unread_count"] == 0
+    assert [
+        item["text"]
+        for item in member.list_workspace_messages(
+            workspace_id, direct["id"]
+        )["messages"]
+    ] == ["Private field note"]
+
+    reply = member.send_workspace_direct_message(
+        workspace_id,
+        direct["id"],
+        "Acknowledged",
+        _op(457),
+        _op(458),
+    )
+    reply_packets = _flush(member, member_network)
+    assert len(reply_packets) == 1
+    _deliver(
+        owner,
+        reply_packets[0],
+        source_profile=member_profile,
+        recipient_profile=owner_profile,
+    )
+    assert [
+        item["text"]
+        for item in owner.list_workspace_messages(
+            workspace_id, direct["id"]
+        )["messages"]
+    ] == ["Private field note", "Acknowledged"]
+
+    hidden, _ = member.dispatch(
+        {
+            "v": 1,
+            "id": "workspace-direct-hide",
+            "command": "hide_workspace_direct",
+            "payload": {
+                "operation_id": _op(459),
+                "workspace_id": workspace_id,
+                "conversation_id": direct["id"],
+            },
+        }
+    )
+    assert hidden["result"]["hidden"] is True
+    assert member.workspace_snapshot()["workspace_directs"] == []
+    member_workspace = member.workspace_snapshot()["workspaces"][0]
+    reopened = member.open_workspace_direct(
+        workspace_id, member_workspace["owner_member_id"], _op(460)
+    )
+    assert reopened["id"] == direct["id"]
+    saved_draft, _ = member.dispatch(
+        {
+            "v": 1,
+            "id": "workspace-direct-draft",
+            "command": "save_workspace_direct_draft",
+            "payload": {
+                "operation_id": _op(461),
+                "workspace_id": workspace_id,
+                "conversation_id": direct["id"],
+                "text": "Restart-safe draft",
+            },
+        }
+    )
+    assert saved_draft["result"]["text"] == "Restart-safe draft"
+    member.close()
+
+    member, member_network = _service(
+        tmp_path / "member",
+        member_identity,
+        "Bailey",
+        vault_key=member_key,
+    )
+    restarted = member.workspace_snapshot()
+    assert restarted["workspace_directs"][0]["id"] == direct["id"]
+    assert restarted["workspace_drafts"] == [
+        {
+            "workspace_id": workspace_id,
+            "conversation_id": direct["id"],
+            "text": "Restart-safe draft",
+        }
+    ]
+    assert [
+        item["text"]
+        for item in member.list_workspace_messages(
+            workspace_id, direct["id"]
+        )["messages"]
+    ] == ["Private field note", "Acknowledged"]
+
+    pending = member.send_workspace_direct_message(
+        workspace_id,
+        direct["id"],
+        "Queued before removal",
+        _op(462),
+        _op(463),
+    )
+    pending_packets = _flush(member, member_network)
+    assert len(pending_packets) == 1
+    owner.remove_workspace_member(workspace_id, member_id, _op(464))
+    removal_packets = _flush(owner, owner_network)
+    removal_manifest = next(
+        item
+        for item in removal_packets
+        if parse_workspace_payload(
+            _native(item, source=b"\x00" * 16, destination=b"\x01" * 16)
+        ).kind
+        == "workspace_manifest_root"
+    )
+    _deliver(
+        member,
+        removal_manifest,
+        source_profile=owner_profile,
+        recipient_profile=member_profile,
+    )
+    pending_delivery = next(
+        item
+        for item in member.store.list("workspace_delivery")
+        if item.get("event_id") == pending["id"]
+    )
+    assert pending_delivery["state"] == DeliveryState.CANCELLED.value
+    pending_message = next(
+        item
+        for item in member.list_workspace_messages(
+            workspace_id, direct["id"]
+        )["messages"]
+        if item["id"] == pending["id"]
+    )
+    assert pending_message["deliveries"] == [
+        {
+            "device_id": owner._require_workspace(workspace_id)["local_device_id"],
+            "device_short_id": owner._require_workspace(workspace_id)[
+                "local_device_id"
+            ].replace("-", "")[:6],
+            "member_id": owner._require_workspace(workspace_id)["local_member_id"],
+            "member_display_name": "Alex",
+            "state": DeliveryState.CANCELLED.value,
+        }
+    ]
+    assert member.workspace_snapshot()["workspace_directs"][0]["state"] == "read_only"
+    assert owner.workspace_snapshot()["workspace_directs"][0]["state"] == "read_only"
+    owner_message_count = len(
+        owner.list_workspace_messages(workspace_id, direct["id"])["messages"]
+    )
+    _deliver(
+        owner,
+        pending_packets[0],
+        source_profile=member_profile,
+        recipient_profile=owner_profile,
+    )
+    assert len(
+        owner.list_workspace_messages(workspace_id, direct["id"])["messages"]
+    ) == owner_message_count
+    with pytest.raises(ContactNotApproved):
+        owner.send_workspace_direct_message(
+            workspace_id,
+            direct["id"],
+            "Too late",
+            _op(465),
+            _op(466),
+        )
+    with pytest.raises(ContactNotApproved):
+        member.send_workspace_direct_message(
+            workspace_id,
+            direct["id"],
+            "Also too late",
+            _op(467),
+            _op(468),
+        )
+    assert owner.snapshot()["contacts"] == []
+    assert member.snapshot()["contacts"] == []
+    assert reply["conversation_id"] == direct["id"]
+    removed = member.remove_workspace_data(workspace_id, workspace_id, _op(470))
+    assert removed == {"workspace_id": workspace_id, "removed": True}
+    assert member.store.list("workspace_direct") == []
+    assert member.store.list("workspace_draft") == []
+    owner.close()
+    member.close()
+
+
 def test_unauthorized_manifest_cannot_fork_and_nonmember_sources_are_ignored(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

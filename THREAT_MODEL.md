@@ -90,6 +90,13 @@
   only the current signed checkpoint; predecessor metadata and messages are
   not backfilled. Removal cancels the excluded member's unhanded delivery legs.
   A nonmember owner has no discovery or recovery override.
+- Workspace DMs are authorized by the exact two active members in the signed
+  manifest rather than by global Contact trust. Their deterministic
+  workspace-scoped UUID, null channel digest, exact sorted audience, author
+  membership, and current two-party activity all verify before persistence.
+  Only participant devices receive event legs or local summaries. Local hide
+  does not delete encrypted history, and a known participant removal makes the
+  retained DM read-only and cancels unhanded legs.
 - Workspace record IDs and cursors are keyed opaque values. Message pages,
   due-work shards, unread state, drafts, delivery legs and operation results are
   separately sealed. Startup summaries do not decrypt message bodies. A stale
@@ -150,8 +157,9 @@ Depending on configured interfaces, observers may learn local discovery presence
   sharing, or safe multi-owner membership editing.
 - Workspace cooperative message-history backfill, edits, remote deletion,
   reactions, threads, search exchange, private history catch-up, direct
-  messages, linked devices, authority transfer, and mobile workspace use.
-  Increment 4 exposes only history already present locally; public discovery
+  message history catch-up, linked devices, authority transfer, and mobile
+  workspace use. Increment 5 exposes only history already present locally;
+  public discovery
   does not imply complete historical messages, and newly admitted private
   members receive future events only.
 - NAT hole punching, mobile push, Bluetooth, LoRa, attachments, multi-device identity cloning, and cloud backup.

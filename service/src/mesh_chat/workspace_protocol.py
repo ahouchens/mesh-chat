@@ -258,7 +258,7 @@ class VerifiedWorkspaceEvent:
     sequence: int
     previous_event_digest: str | None
     manifest_digest: str
-    channel_digest: str
+    channel_digest: str | None
     text: str
     thread_root: str | None
     mentions: tuple[str, ...]
@@ -266,6 +266,24 @@ class VerifiedWorkspaceEvent:
     digest: str
     serialized: str
     audience_member_ids: tuple[str, ...] = ()
+
+
+def workspace_direct_conversation_id(
+    workspace_id: str, member_ids: Iterable[str]
+) -> str:
+    """Derive the stable, workspace-scoped identifier for a two-member DM."""
+
+    checked_workspace_id = _validate_uuid(workspace_id, "Workspace ID")
+    checked_members = sorted(
+        {
+            _validate_uuid(member_id, "Workspace direct-message participant ID")
+            for member_id in member_ids
+        }
+    )
+    if len(checked_members) != 2:
+        raise ValidationError("A workspace direct message requires exactly two members")
+    name = "mesh-chat:workspace-direct:v1:" + ":".join(checked_members)
+    return str(uuid.uuid5(uuid.UUID(checked_workspace_id), name))
 
 
 @dataclass(frozen=True, slots=True)
@@ -2452,7 +2470,7 @@ def create_workspace_event(
     sequence: int,
     previous_event_digest: str | None,
     manifest_digest: str,
-    channel_digest: str,
+    channel_digest: str | None,
     text: str,
     audience_member_ids: Iterable[str] | None = None,
     created_at: int | None = None,
@@ -2477,7 +2495,11 @@ def create_workspace_event(
             else _validate_digest(previous_event_digest, "Previous event digest")
         ),
         "manifest_digest": _validate_digest(manifest_digest, "Manifest digest"),
-        "channel_digest": _validate_digest(channel_digest, "Channel digest"),
+        "channel_digest": (
+            None
+            if channel_digest is None
+            else _validate_digest(channel_digest, "Channel digest")
+        ),
         "payload": {"text": text},
         "thread_root": None,
         "mentions": [],
@@ -2500,7 +2522,8 @@ def verify_workspace_event(
     raw: str,
     *,
     manifest: VerifiedWorkspaceManifest,
-    channel: VerifiedWorkspaceChannel,
+    channel: VerifiedWorkspaceChannel | None,
+    direct_member_ids: Iterable[str] | None = None,
     now: int | None = None,
 ) -> VerifiedWorkspaceEvent:
     value = _load_document(raw, "workspace_event")
@@ -2530,12 +2553,10 @@ def verify_workspace_event(
         raise ValidationError("Workspace event version or type is unsupported")
     workspace_id = _validate_uuid(value["workspace_id"], "Workspace ID")
     conversation_id = _validate_uuid(value["conversation_id"], "Conversation ID")
-    if workspace_id != manifest.workspace_id or workspace_id != channel.workspace_id:
+    if workspace_id != manifest.workspace_id:
         raise ValidationError("Workspace event controls do not match")
-    if conversation_id != channel.channel_id:
-        raise ValidationError("Workspace event belongs to another conversation")
-    if value["manifest_digest"] != manifest.digest or value["channel_digest"] != channel.digest:
-        raise ValidationError("Workspace event control digest is invalid")
+    if value["manifest_digest"] != manifest.digest:
+        raise ValidationError("Workspace event manifest digest is invalid")
     author_member_id = _validate_uuid(value["author_member_id"], "Author member ID")
     author_device_id = _validate_uuid(value["author_device_id"], "Author device ID")
     found = find_device(manifest, author_device_id)
@@ -2547,7 +2568,57 @@ def verify_workspace_event(
     ):
         raise IdentityMismatch("Workspace event author is not active")
     raw_audience = value.get("audience_member_ids")
-    if channel.visibility == "private":
+    if channel is None:
+        if direct_member_ids is None:
+            raise ValidationError("Workspace direct-message participants are missing")
+        direct_members = tuple(
+            sorted(
+                {
+                    _validate_uuid(
+                        member_id, "Workspace direct-message participant ID"
+                    )
+                    for member_id in direct_member_ids
+                }
+            )
+        )
+        if len(direct_members) != 2:
+            raise ValidationError(
+                "A workspace direct message requires exactly two members"
+            )
+        if conversation_id != workspace_direct_conversation_id(
+            workspace_id, direct_members
+        ):
+            raise ValidationError("Workspace direct-message identifier is invalid")
+        if value["channel_digest"] is not None:
+            raise ValidationError(
+                "Workspace direct messages cannot reference a channel control"
+            )
+        if not isinstance(raw_audience, list):
+            raise ValidationError("Workspace direct-message audience is missing")
+        audience_member_ids = tuple(
+            _validate_uuid(member_id, "Workspace event audience member ID")
+            for member_id in raw_audience
+        )
+        if (
+            list(audience_member_ids) != sorted(audience_member_ids)
+            or len(set(audience_member_ids)) != len(audience_member_ids)
+            or audience_member_ids != direct_members
+            or author_member_id not in audience_member_ids
+            or any(
+                (participant := find_member(manifest, member_id)) is None
+                or participant.status != "active"
+                for member_id in direct_members
+            )
+        ):
+            raise IdentityMismatch("Workspace direct-message audience is invalid")
+        channel_digest = None
+    elif channel.visibility == "private":
+        if workspace_id != channel.workspace_id:
+            raise ValidationError("Workspace event controls do not match")
+        if conversation_id != channel.channel_id:
+            raise ValidationError("Workspace event belongs to another conversation")
+        if value["channel_digest"] != channel.digest:
+            raise ValidationError("Workspace event channel digest is invalid")
         if not isinstance(raw_audience, list):
             raise ValidationError("Private workspace event audience is missing")
         audience_member_ids = tuple(
@@ -2561,12 +2632,21 @@ def verify_workspace_event(
             or author_member_id not in audience_member_ids
         ):
             raise IdentityMismatch("Private workspace event audience is invalid")
+        channel_digest = channel.digest
     else:
+        if workspace_id != channel.workspace_id:
+            raise ValidationError("Workspace event controls do not match")
+        if conversation_id != channel.channel_id:
+            raise ValidationError("Workspace event belongs to another conversation")
+        if value["channel_digest"] != channel.digest:
+            raise ValidationError("Workspace event channel digest is invalid")
         if raw_audience is not None:
             raise ValidationError("Public workspace events cannot carry a private audience")
         audience_member_ids = ()
+        channel_digest = channel.digest
     if (
-        manifest.posting == WorkspacePostingPolicy.OWNER_AND_ADMINS
+        channel is not None
+        and manifest.posting == WorkspacePostingPolicy.OWNER_AND_ADMINS
         and found[0].role != WorkspaceRole.OWNER
     ):
         raise IdentityMismatch("Workspace member is not allowed to post")
@@ -2598,7 +2678,7 @@ def verify_workspace_event(
         sequence=sequence,
         previous_event_digest=previous,
         manifest_digest=manifest.digest,
-        channel_digest=channel.digest,
+        channel_digest=channel_digest,
         text=text,
         thread_root=None,
         mentions=(),
