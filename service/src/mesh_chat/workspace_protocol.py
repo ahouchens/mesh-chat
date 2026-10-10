@@ -1109,12 +1109,11 @@ def verify_workspace_manifest_transition(
         expected_authority_destination=previous.authority_destination,
         now=now,
     )
-    # Authority rotation, linked-device admission and retention changes have
-    # their own later increments. Increment three permits one exact public
-    # channel policy change in addition to the increment-two transitions.
+    # Authority rotation and linked-device admission have their own later
+    # increments. Increment nine permits the exact validated cooperative
+    # retention values in addition to the earlier metadata and policy changes.
     if (
         manifest.authority_device_id != previous.authority_device_id
-        or manifest.retention_days != previous.retention_days
         or manifest.invitation_requests != previous.invitation_requests
         or manifest.created_at < previous.created_at
     ):
@@ -1178,8 +1177,16 @@ def verify_workspace_manifest_transition(
         manifest.channel_creation != previous.channel_creation
         or manifest.posting != previous.posting
     )
+    retention_changed = manifest.retention_days != previous.retention_days
     if manifest.status == "closed":
-        if added or status_changes or display_name_changes or metadata_changed or policies_changed:
+        if (
+            added
+            or status_changes
+            or display_name_changes
+            or metadata_changed
+            or policies_changed
+            or retention_changed
+        ):
             raise ValidationError(
                 "Workspace closure cannot change membership or metadata"
             )
@@ -1187,10 +1194,11 @@ def verify_workspace_manifest_transition(
         (
             bool(added),
             bool(status_changes),
-            bool(display_name_changes),
-            metadata_changed,
-            policies_changed,
-        )
+                bool(display_name_changes),
+                metadata_changed,
+                policies_changed,
+                retention_changed,
+            )
     ) != 1:
         # Publish exactly one semantic change per epoch so concurrent owner
         # operations have a deterministic predecessor and replay boundary.

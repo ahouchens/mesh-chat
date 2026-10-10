@@ -424,6 +424,8 @@ fn allowed_renderer_command(command: &str) -> bool {
             | "decline_workspace_join"
             | "update_workspace_metadata"
             | "update_workspace_policies"
+            | "update_workspace_retention"
+            | "prune_workspace_history"
             | "remove_workspace_member"
             | "request_workspace_display_name"
             | "decide_workspace_display_name"
@@ -451,6 +453,8 @@ fn allowed_renderer_command(command: &str) -> bool {
             | "list_workspace_mentions"
             | "list_workspace_threads"
             | "list_workspace_thread_messages"
+            | "list_workspace_message_revisions"
+            | "list_workspace_tombstones"
             | "mark_workspace_mentions_read"
             | "mark_workspace_thread_read"
             | "set_workspace_channel_mentions_muted"
@@ -477,6 +481,8 @@ fn workspace_renderer_command(command: &str) -> bool {
             | "decline_workspace_join"
             | "update_workspace_metadata"
             | "update_workspace_policies"
+            | "update_workspace_retention"
+            | "prune_workspace_history"
             | "remove_workspace_member"
             | "request_workspace_display_name"
             | "decide_workspace_display_name"
@@ -504,6 +510,8 @@ fn workspace_renderer_command(command: &str) -> bool {
             | "list_workspace_mentions"
             | "list_workspace_threads"
             | "list_workspace_thread_messages"
+            | "list_workspace_message_revisions"
+            | "list_workspace_tombstones"
             | "mark_workspace_mentions_read"
             | "mark_workspace_thread_read"
             | "set_workspace_channel_mentions_muted"
@@ -904,6 +912,8 @@ mod tests {
             "decline_workspace_join",
             "update_workspace_metadata",
             "update_workspace_policies",
+            "update_workspace_retention",
+            "prune_workspace_history",
             "remove_workspace_member",
             "request_workspace_display_name",
             "decide_workspace_display_name",
@@ -931,6 +941,8 @@ mod tests {
             "list_workspace_mentions",
             "list_workspace_threads",
             "list_workspace_thread_messages",
+            "list_workspace_message_revisions",
+            "list_workspace_tombstones",
             "mark_workspace_mentions_read",
             "mark_workspace_thread_read",
             "set_workspace_channel_mentions_muted",

@@ -147,6 +147,8 @@ class MeshChatService(ReactionServiceMixin, GroupServiceMixin, WorkspaceServiceM
         "decline_workspace_join",
         "update_workspace_metadata",
         "update_workspace_policies",
+        "update_workspace_retention",
+        "prune_workspace_history",
         "remove_workspace_member",
         "request_workspace_display_name",
         "decide_workspace_display_name",
@@ -172,6 +174,8 @@ class MeshChatService(ReactionServiceMixin, GroupServiceMixin, WorkspaceServiceM
         "list_workspace_mentions",
         "list_workspace_threads",
         "list_workspace_thread_messages",
+        "list_workspace_message_revisions",
+        "list_workspace_tombstones",
         "mark_workspace_read",
         "mark_workspace_direct_read",
         "mark_workspace_mentions_read",
@@ -201,6 +205,8 @@ class MeshChatService(ReactionServiceMixin, GroupServiceMixin, WorkspaceServiceM
         "list_workspace_mentions",
         "list_workspace_threads",
         "list_workspace_thread_messages",
+        "list_workspace_message_revisions",
+        "list_workspace_tombstones",
     }
 
     def __init__(self, store: VaultStore, profile_dir: Path, emit: EventCallback):
@@ -1805,6 +1811,28 @@ class MeshChatService(ReactionServiceMixin, GroupServiceMixin, WorkspaceServiceM
                 body["posting"],
                 body["operation_id"],
             )
+        if command == "update_workspace_retention":
+            body = _payload(
+                value,
+                allowed={"operation_id", "workspace_id", "retention_days"},
+                required={"operation_id", "workspace_id", "retention_days"},
+            )
+            return self.update_workspace_retention(
+                body["workspace_id"],
+                body["retention_days"],
+                body["operation_id"],
+            )
+        if command == "prune_workspace_history":
+            body = _payload(
+                value,
+                allowed={"operation_id", "workspace_id", "max_events"},
+                required={"operation_id", "workspace_id"},
+            )
+            return self.prune_workspace_history(
+                body["workspace_id"],
+                body["operation_id"],
+                body.get("max_events", 500),
+            )
         if command == "remove_workspace_member":
             body = _payload(
                 value,
@@ -2223,6 +2251,30 @@ class MeshChatService(ReactionServiceMixin, GroupServiceMixin, WorkspaceServiceM
             return self.list_workspace_thread_messages(
                 body["workspace_id"],
                 body["thread_root_id"],
+                body.get("cursor"),
+                body.get("limit", 50),
+            )
+        if command == "list_workspace_message_revisions":
+            body = _payload(
+                value,
+                allowed={"workspace_id", "event_id", "cursor", "limit"},
+                required={"workspace_id", "event_id"},
+            )
+            return self.list_workspace_message_revisions(
+                body["workspace_id"],
+                body["event_id"],
+                body.get("cursor"),
+                body.get("limit", 50),
+            )
+        if command == "list_workspace_tombstones":
+            body = _payload(
+                value,
+                allowed={"workspace_id", "conversation_id", "cursor", "limit"},
+                required={"workspace_id", "conversation_id"},
+            )
+            return self.list_workspace_tombstones(
+                body["workspace_id"],
+                body["conversation_id"],
                 body.get("cursor"),
                 body.get("limit", 50),
             )

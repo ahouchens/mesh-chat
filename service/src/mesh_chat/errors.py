@@ -8,6 +8,18 @@ class ValidationError(MeshChatError):
     code = "invalid_request"
 
 
+class StaleCursor(ValidationError):
+    """A sealed cursor belongs to an older authorization or retention view."""
+
+    code = "stale_cursor"
+
+
+class HistoryPruned(ValidationError):
+    """The requested retained-history object is no longer available locally."""
+
+    code = "history_pruned"
+
+
 class StorageUnavailable(MeshChatError):
     code = "protected_storage_unavailable"
 

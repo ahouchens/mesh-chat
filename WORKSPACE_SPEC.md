@@ -988,6 +988,17 @@ This increment is complete when a 50,000-event seeded device pages, changes
 retention, prunes, restarts, and continues chatting within the named benchmark
 targets.
 
+Implementation status: completed in the desktop 0.2.29 Increment 9 candidate. The
+encrypted implementation adds bounded conversation/revision/tombstone and
+retention-order pages, signed 30/90/365-day or indefinite cooperative policy,
+explicit stale/pruned results, restart-safe 1,000-event pruning, retired event
+IDs, preserved stream coverage facts, independent seven-day tombstone delivery
+protection, former-member read-only archives, and current plus historical
+entitlement checks. The reproducible `workspace_retention_benchmark.py` fixture
+seeds 50,000 events across eight synthetic members and 32 real channel control
+chains, including linked delivery legs, edits, reactions, deletions, and
+threads. Increment 10 search is not part of this implementation.
+
 ### Increment 10 adds local search
 
 1. Build encrypted HMAC-keyed token shards incrementally from retained events.

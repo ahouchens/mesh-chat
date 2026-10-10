@@ -13,7 +13,7 @@ import LXMF
 import pytest
 import RNS
 
-from mesh_chat.errors import ContactNotApproved, ValidationError
+from mesh_chat.errors import ContactNotApproved, StaleCursor, ValidationError
 from mesh_chat.invitations import readable_fingerprint
 from mesh_chat.models import DeliveryState
 from mesh_chat.service import MeshChatService
@@ -2787,8 +2787,20 @@ def test_workspace_threads_out_of_order_mentions_mutations_drafts_and_restart(
         recipient_profile=member_profile,
     )
     assert member.workspace_snapshot()["workspaces"][0]["thread_unread_count"] == 0
+    retained_archive = member.list_workspace_thread_messages(
+        workspace_id, root["id"]
+    )
+    assert retained_archive["root"]["id"] == root["id"]
+    assert retained_archive["replies"][0]["text"] == "Edited reply converges"
     with pytest.raises(ContactNotApproved):
-        member.list_workspace_thread_messages(workspace_id, root["id"])
+        member.send_workspace_thread_reply(
+            workspace_id,
+            channel_id,
+            root["id"],
+            "Former members cannot send",
+            _op(5_031),
+            _op(5_032),
+        )
     owner.close()
     member.close()
 
@@ -3009,3 +3021,195 @@ def test_workspace_threads_preserve_private_rosters_and_direct_participants(
     )
     owner.close()
     member.close()
+
+
+def test_workspace_retention_policy_is_owner_signed_and_invalidates_cursors(
+    tmp_path: Path,
+) -> None:
+    (
+        owner,
+        owner_network,
+        owner_profile,
+        member,
+        _member_network,
+        member_profile,
+        workspace,
+        _member_key,
+        _member_identity,
+    ) = _joined_pair(tmp_path / "retention-policy", base=6_000)
+    workspace_id = workspace["id"]
+    channel_id = workspace["general_channel_id"]
+    owner.send_workspace_message(
+        workspace_id, channel_id, "first retained message", _op(6_010), _op(6_011)
+    )
+    owner.send_workspace_message(
+        workspace_id, channel_id, "second retained message", _op(6_012), _op(6_013)
+    )
+    cursor = owner.list_workspace_messages(workspace_id, channel_id, limit=1)[
+        "next_cursor"
+    ]
+    assert cursor is not None
+    before_generation = owner._require_workspace(workspace_id)[
+        "retention_generation"
+    ]
+    updated = owner.update_workspace_retention(workspace_id, 30, _op(6_014))
+    assert updated["retention_days"] == 30
+    assert updated["retention_generation"] == before_generation + 1
+    assert updated["retention_pruning_state"] == "pending"
+    with pytest.raises(StaleCursor, match="stale"):
+        owner.list_workspace_messages(workspace_id, channel_id, cursor=cursor)
+    _deliver_all(
+        member,
+        _flush(owner, owner_network),
+        source_profile=owner_profile,
+        recipient_profile=member_profile,
+    )
+    assert member.workspace_snapshot()["workspaces"][0]["retention_days"] == 30
+    with pytest.raises(ContactNotApproved, match="owner"):
+        member.update_workspace_retention(workspace_id, 365, _op(6_015))
+    owner.close()
+    member.close()
+
+
+def test_workspace_revision_and_tombstone_views_are_bounded_and_authorized(
+    tmp_path: Path,
+) -> None:
+    service, _network = _service(tmp_path / "revision-view", RNS.Identity(), "Alex")
+    workspace = service.create_workspace(_op(6_100), "Revision view", "")
+    workspace_id = workspace["id"]
+    channel_id = workspace["general_channel_id"]
+    message = service.send_workspace_message(
+        workspace_id, channel_id, "initial", _op(6_101), _op(6_102)
+    )
+    service.edit_workspace_message(
+        workspace_id, message["id"], "edited", _op(6_103), _op(6_104)
+    )
+    service.set_workspace_reaction(
+        workspace_id, message["id"], "👍", True, _op(6_105), _op(6_106)
+    )
+    service.delete_workspace_message(
+        workspace_id, message["id"], _op(6_107), _op(6_108)
+    )
+    revisions = service.list_workspace_message_revisions(
+        workspace_id, message["id"], limit=2
+    )
+    assert [item["event_type"] for item in revisions["revisions"]] == [
+        "delete",
+        "reaction",
+    ]
+    assert revisions["next_cursor"] is not None
+    older = service.list_workspace_message_revisions(
+        workspace_id,
+        message["id"],
+        cursor=revisions["next_cursor"],
+        limit=2,
+    )
+    assert older["revisions"][0]["text"] == "edited"
+    tombstones = service.list_workspace_tombstones(workspace_id, channel_id)
+    assert tombstones["tombstones"][0]["message"]["id"] == message["id"]
+    assert tombstones["tombstones"][0]["message"]["text"] == ""
+    service.close()
+
+
+def test_workspace_pruning_resumes_after_restart_without_resurrection(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import mesh_chat.workspace_protocol as workspace_protocol_module
+    import mesh_chat.workspace_service as workspace_service_module
+
+    identity = RNS.Identity()
+    key = os.urandom(32)
+    profile = tmp_path / "prune-restart"
+    service, _network = _service(profile, identity, "Alex", vault_key=key)
+    now = time.time()
+    old = now - 31 * 24 * 60 * 60
+    with monkeypatch.context() as patch:
+        patch.setattr(workspace_service_module.time, "time", lambda: old)
+        patch.setattr(workspace_protocol_module.time, "time", lambda: old)
+        workspace = service.create_workspace(_op(6_200), "Prune restart", "")
+        for index in range(150):
+            service.send_workspace_message(
+                workspace["id"],
+                workspace["general_channel_id"],
+                f"expired-{index}",
+                _op(6_300 + index),
+                _op(6_500 + index),
+            )
+    workspace_id = workspace["id"]
+    channel_id = workspace["general_channel_id"]
+    cursor = service.list_workspace_messages(workspace_id, channel_id, limit=1)[
+        "next_cursor"
+    ]
+    service.update_workspace_retention(workspace_id, 30, _op(6_700))
+    first = service.prune_workspace_history(
+        workspace_id, _op(6_701), max_events=100
+    )
+    assert first["needs_more"] is True
+    assert 0 < first["pruned_this_batch"] <= 100
+    with pytest.raises(StaleCursor):
+        service.list_workspace_messages(workspace_id, channel_id, cursor=cursor)
+    service.close()
+
+    service, _network = _service(profile, identity, "Alex", vault_key=key)
+    result = first
+    operation = 6_702
+    while result["needs_more"]:
+        result = service.prune_workspace_history(
+            workspace_id, _op(operation), max_events=100
+        )
+        operation += 1
+    assert result["status"] == "complete"
+    assert result["pruned"] == 150
+    page = service.list_workspace_messages(workspace_id, channel_id)
+    assert page["messages"] == []
+    assert page["history_status"] == "pruned"
+    tombstones = service.store.list("workspace_event_tombstone")
+    assert len(tombstones) == 150
+    retired_id = tombstones[0]["event_id"]
+    with pytest.raises(ValidationError, match="already used"):
+        service.send_workspace_message(
+            workspace_id,
+            channel_id,
+            "resurrection attempt",
+            retired_id,
+            _op(6_900),
+        )
+    service.close()
+
+
+def test_workspace_pruning_keeps_fresh_deletion_tombstone_for_live_window(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import mesh_chat.workspace_protocol as workspace_protocol_module
+    import mesh_chat.workspace_service as workspace_service_module
+
+    service, _network = _service(tmp_path / "tombstone-window", RNS.Identity(), "Alex")
+    now = time.time()
+    old = now - 31 * 24 * 60 * 60
+    with monkeypatch.context() as patch:
+        patch.setattr(workspace_service_module.time, "time", lambda: old)
+        patch.setattr(workspace_protocol_module.time, "time", lambda: old)
+        workspace = service.create_workspace(_op(7_000), "Tombstone window", "")
+        message = service.send_workspace_message(
+            workspace["id"],
+            workspace["general_channel_id"],
+            "old plaintext",
+            _op(7_001),
+            _op(7_002),
+        )
+    service.delete_workspace_message(
+        workspace["id"], message["id"], _op(7_003), _op(7_004)
+    )
+    service.update_workspace_retention(workspace["id"], 30, _op(7_005))
+    result = service.prune_workspace_history(
+        workspace["id"], _op(7_006), max_events=100
+    )
+    assert result["pruned"] == 0
+    retained = service.list_workspace_messages(
+        workspace["id"], workspace["general_channel_id"]
+    )["messages"]
+    assert retained[0]["deleted"] is True
+    assert retained[0]["text"] == ""
+    service.close()

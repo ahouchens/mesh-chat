@@ -45,7 +45,7 @@ ordering, removal, and owner-loss consequences.
 
 ## Desktop workspaces
 
-The seventh workspace increment is an isolated desktop feature profile. It adds
+The ninth workspace increment is an isolated desktop feature profile. It adds
 canonical workspace authority, device, invitation, channel and event documents
 under the `mesh-chat-workspace` custom type without changing Personal or private
 group bytes. The React shell can switch between Personal and workspace views,
@@ -158,6 +158,30 @@ events and their derived pages, unread state, drafts, delivery legs, and
 idempotent result commit atomically; missing roots and predecessors remain in
 the existing bounded pending queue until they can be verified.
 
+Retained history adds sealed linked indexes for canonical retention order,
+message revisions, deletion tombstones, and long conversation archives. The
+authority owner signs one cooperative retention preference: 30, 90, or 365
+days, or indefinite. It is explicitly a per-device history preference, not a
+remote-deletion promise. Each policy change and each prune batch advances a
+retention generation used by conversation, mention, thread, activity,
+revision, and tombstone cursors; a mismatch returns `stale_cursor`.
+
+The local scheduler prunes at most 1,000 indexed canonical events in one
+transaction and persists its next page before yielding. Expired event and
+derived bodies, completed delivery detail, operation results, due work, and
+index references are removed together. Lightweight event-ID tombstones and
+pruned stream markers preserve replay rejection, high-water, retained-floor,
+seen-range, and permanent-gap meaning. Author deletion state waits for both the
+history boundary and the independent seven-day live-delivery window. Historical
+authority and channel controls are retained conservatively while dependents may
+reference them. Former-member archives remain read-only, private re-admission
+does not bridge roster eras, and owner status never grants workspace-DM access.
+
+Latest-page reads open only bounded pages and use request-local verification
+caches for repeated immutable manifests and channel controls. Reaction state is
+addressed by exact opaque IDs materialized with each Increment 9 message.
+Workspace startup still avoids message/event/delivery collections entirely.
+
 Checkpoints are pinned to the genesis owner member, authority device, public
 identity, and destination. The initial manifest also pins the genesis name and
 description. Each later manifest performs exactly one enabled transition:
@@ -208,8 +232,9 @@ workspace/conversation/resource invalidations; the renderer coalesces them and
 refreshes the bounded workspace summary rather than the full application
 snapshot. See
 [ADR 0005](docs/adr/0005-workspace-authority-and-bootstrap.md),
-[ADR 0006](docs/adr/0006-workspace-events-and-history-safety.md), and
-[ADR 0007](docs/adr/0007-sealed-workspace-paging-and-outbox.md).
+[ADR 0006](docs/adr/0006-workspace-events-and-history-safety.md),
+[ADR 0007](docs/adr/0007-sealed-workspace-paging-and-outbox.md), and
+[ADR 0008](docs/adr/0008-cooperative-retention-and-local-history.md).
 
 ## Message reactions
 
@@ -304,3 +329,4 @@ The service does not export private identities to ordinary files, enable crash u
 - [ADR 0005: workspace authority and bootstrap](docs/adr/0005-workspace-authority-and-bootstrap.md)
 - [ADR 0006: canonical workspace events and history safety](docs/adr/0006-workspace-events-and-history-safety.md)
 - [ADR 0007: sealed workspace paging and asynchronous outbox](docs/adr/0007-sealed-workspace-paging-and-outbox.md)
+- [ADR 0008: cooperative retention and retained local history](docs/adr/0008-cooperative-retention-and-local-history.md)

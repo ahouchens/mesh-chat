@@ -138,6 +138,20 @@
   drafts, delivery legs and operation results are separately sealed. Startup
   summaries do not decrypt message or mention bodies. A stale authorization,
   preference, index or retention generation invalidates a cursor explicitly.
+- The signed 30/90/365-day or indefinite retention value is cooperative. It
+  governs only each endpoint's encrypted local copy and cannot erase plaintext,
+  screenshots, exports, swap, or backups controlled by another endpoint.
+  Pruning is bounded and restart-safe; author-deletion state waits for both the
+  history boundary and the independent seven-day live-delivery window.
+- Pruned event IDs and stream positions retain sealed digest/high-water/floor/
+  gap markers. A delayed duplicate, reversed mutation, or ID reuse therefore
+  cannot resurrect a body or turn unavailable history into an apparently
+  complete range. Historical manifests and channel controls remain while a
+  retained dependent can reference them.
+- Retained and archived reads repeat historical-entitlement and current-access
+  checks. A former member's existing local copy is read-only and receives no
+  new catch-up or live leg. Private removal/re-admission does not bridge eras,
+  and workspace owner status never grants access to a two-member DM.
 - A workspace mutation and its durable operation result commit together. A
   message and its complete recipient set commit before asynchronous handoff;
   native endpoint proof is not presented as human read evidence.
@@ -195,10 +209,10 @@ Depending on configured interfaces, observers may learn local discovery presence
   after permanent owner-key loss, a globally ordered group timeline, public or
   large channels, discoverable groups, anonymous membership, selective history
   sharing, or safe multi-owner membership editing.
-- Workspace cooperative message-history backfill, search
-  exchange, private history catch-up, direct
-  message history catch-up, linked devices, authority transfer, and mobile
-  workspace use. Increment 8 exposes only history already present locally;
+- Workspace peer history backfill, search exchange, private history catch-up,
+  direct message history catch-up, linked devices, authority transfer, and
+  mobile workspace use. Increment 9 exposes only history already present
+  locally;
   public discovery
   does not imply complete historical messages, and newly admitted private
   members receive future events only.

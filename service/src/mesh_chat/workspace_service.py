@@ -6,11 +6,17 @@ import json
 import time
 import uuid
 from collections import defaultdict
-from typing import Any, Iterable
+from typing import Any, Callable, Iterable
 
 import RNS
 
-from .errors import ContactNotApproved, MeshChatError, ValidationError
+from .errors import (
+    ContactNotApproved,
+    HistoryPruned,
+    MeshChatError,
+    StaleCursor,
+    ValidationError,
+)
 from .invitations import canonical_bytes
 from .models import (
     DeliveryState,
@@ -87,6 +93,9 @@ MESSAGE_PAGE_MAX = 100
 MESSAGE_PAGE_ENTRIES = 100
 MESSAGE_PAGE_MAX_BYTES = 128 * 1024
 THREAD_ACTIVITY_MAX_ROOTS = 1024
+RETENTION_PRUNE_BATCH_DEFAULT = 500
+RETENTION_PRUNE_BATCH_MAX = 1000
+RETENTION_INDEX_PAGE_ENTRIES = 100
 MAX_PENDING_EVENTS = 256
 MAX_PENDING_EVENTS_PER_SENDER = 64
 MAX_PENDING_EVENT_BYTES = 16 * 1024 * 1024
@@ -254,6 +263,58 @@ class WorkspaceServiceMixin:
 
     def _workspace_mention_read_id(self, workspace_id: str) -> str:
         return self.store.opaque_id("workspace-read-state", workspace_id, "mentions")
+
+    def _workspace_revision_index_id(
+        self, workspace_id: str, target_event_id: str
+    ) -> str:
+        return self.store.opaque_id(
+            "workspace-revision-index", workspace_id, target_event_id
+        )
+
+    def _workspace_revision_page_id(
+        self, workspace_id: str, target_event_id: str, seed: str
+    ) -> str:
+        return self.store.opaque_id(
+            "workspace-revision-page", workspace_id, target_event_id, seed
+        )
+
+    def _workspace_tombstone_index_id(
+        self, workspace_id: str, conversation_id: str
+    ) -> str:
+        return self.store.opaque_id(
+            "workspace-tombstone-index", workspace_id, conversation_id
+        )
+
+    def _workspace_tombstone_page_id(
+        self, workspace_id: str, conversation_id: str, seed: str
+    ) -> str:
+        return self.store.opaque_id(
+            "workspace-tombstone-page", workspace_id, conversation_id, seed
+        )
+
+    def _workspace_retention_index_id(self, workspace_id: str) -> str:
+        return self.store.opaque_id("workspace-retention-index", workspace_id)
+
+    def _workspace_retention_page_id(self, workspace_id: str, seed: str) -> str:
+        return self.store.opaque_id(
+            "workspace-retention-page", workspace_id, seed
+        )
+
+    def _workspace_retention_state_id(self, workspace_id: str) -> str:
+        return self.store.opaque_id("workspace-retention-state", workspace_id)
+
+    def _workspace_event_tombstone_id(self, workspace_id: str, event_id: str) -> str:
+        return self.store.opaque_id(
+            "workspace-event-tombstone", workspace_id, event_id
+        )
+
+    def _workspace_event_id_is_retired(
+        self, workspace_id: str, event_id: str
+    ) -> bool:
+        return self.store.get(
+            "workspace_event_tombstone",
+            self._workspace_event_tombstone_id(workspace_id, event_id),
+        ) is not None
 
     def _workspace_thread_record_id(self, workspace_id: str, root_event_id: str) -> str:
         return self.store.opaque_id("workspace-thread", workspace_id, root_event_id)
@@ -799,6 +860,7 @@ class WorkspaceServiceMixin:
         self, workspace: dict[str, Any], manifest: VerifiedWorkspaceManifest
     ) -> dict[str, Any]:
         previous_state = workspace.get("state")
+        previous_retention = workspace.get("retention_days", 90)
         local_member = find_member(manifest, workspace["local_member_id"])
         workspace["name"] = manifest.name
         workspace["description"] = manifest.description
@@ -818,6 +880,14 @@ class WorkspaceServiceMixin:
         workspace["authorization_generation"] = int(
             workspace.get("authorization_generation", 0)
         ) + 1
+        if previous_retention != manifest.retention_days:
+            workspace["retention_generation"] = int(
+                workspace.get("retention_generation", 0)
+            ) + 1
+            workspace["retention_pruning_state"] = (
+                "disabled" if manifest.retention_days is None else "pending"
+            )
+            workspace["retention_pruning_updated_at"] = time.time()
         workspace["updated_at"] = time.time()
         if manifest.status == "closed":
             workspace["state"] = "closed"
@@ -1112,11 +1182,13 @@ class WorkspaceServiceMixin:
         workspace: dict[str, Any],
         entry: dict[str, Any],
         message: dict[str, Any],
+        cache: dict[str, dict[str, Any]] | None = None,
     ) -> bool:
         local_member_id = str(workspace.get("local_member_id", ""))
         if (
             local_member_id not in message.get("mention_member_ids", ())
             or message.get("deleted")
+            or not self._workspace_message_is_visible(workspace, message, cache)
             or workspace.get("state") not in {"active", "incomplete_sync"}
             or self.store.get(
                 "workspace_message_hidden",
@@ -1219,6 +1291,7 @@ class WorkspaceServiceMixin:
             else int(read.get("high_water", 0)) if read else 0
         )
         unread = 0
+        visibility_cache: dict[str, dict[str, Any]] = {}
         page_id = index.get("head_page")
         while isinstance(page_id, str):
             page = self.store.get("workspace_mention_index", page_id)
@@ -1233,7 +1306,7 @@ class WorkspaceServiceMixin:
                     "workspace_message_state", entry.get("message_record_id")
                 )
                 if message is not None and self._workspace_mention_visible(
-                    workspace, entry, message
+                    workspace, entry, message, visibility_cache
                 ):
                     unread += 1
             if stop:
@@ -1247,6 +1320,7 @@ class WorkspaceServiceMixin:
         root_event_id: str,
         *,
         require_writable: bool = False,
+        visibility_cache: dict[str, dict[str, Any]] | None = None,
     ) -> tuple[dict[str, Any], str, dict[str, Any]]:
         """Return a root and its currently authorized conversation.
 
@@ -1283,6 +1357,10 @@ class WorkspaceServiceMixin:
             is not None
         ):
             raise ContactNotApproved("Workspace thread is unavailable")
+        if not self._workspace_message_is_visible(
+            workspace, root, visibility_cache
+        ):
+            raise ContactNotApproved("Workspace thread is unavailable")
         conversation_id = str(root.get("conversation_id", ""))
         kind, conversation = self._workspace_thread_access_descriptor(
             workspace,
@@ -1313,7 +1391,14 @@ class WorkspaceServiceMixin:
             raise ValidationError("Workspace thread metadata is invalid") from exc
         if checked_root != root_event_id or checked_conversation != conversation_id:
             raise ValidationError("Workspace thread metadata is invalid")
-        if workspace.get("state") not in {"active", "incomplete_sync", "closed"}:
+        if workspace.get("state") not in {
+            "active",
+            "incomplete_sync",
+            "closed",
+            "left",
+            "removed",
+            "forked",
+        }:
             raise ContactNotApproved("Workspace thread is unavailable")
         if self.store.get(
             "workspace_message_hidden",
@@ -1326,6 +1411,12 @@ class WorkspaceServiceMixin:
             workspace["id"], conversation_id
         )
         local_member_id = str(workspace.get("local_member_id", ""))
+        former_archive = workspace.get("state") in {
+            "left",
+            "removed",
+            "closed",
+            "forked",
+        }
         if kind == "direct":
             if conversation.get("hidden") or local_member_id not in conversation.get(
                 "participant_member_ids", ()
@@ -1340,11 +1431,12 @@ class WorkspaceServiceMixin:
             if (
                 conversation.get("visibility") == "private"
                 and local_member_id not in conversation.get("member_ids", ())
+                and not former_archive
             ):
                 raise ContactNotApproved("Workspace thread is unavailable")
             if require_writable and state != "active":
                 raise ContactNotApproved("Workspace thread is read-only")
-            if conversation.get("visibility") == "private":
+            if conversation.get("visibility") == "private" and not former_archive:
                 current_channel = self._workspace_channel_by_digest(
                     str(conversation.get("head_hash", ""))
                 )
@@ -1654,9 +1746,18 @@ class WorkspaceServiceMixin:
 
     def _public_workspace_message(self, message: dict[str, Any]) -> dict[str, Any]:
         public = dict(message)
-        public.pop("mutation_candidates", None)
-        public.pop("original_text", None)
-        public.pop("deletion_revision", None)
+        for private_key in (
+            "mutation_candidates",
+            "original_text",
+            "deletion_revision",
+            "conversation_index_page_id",
+            "thread_index_page_id",
+            "mention_index_page_id",
+            "reaction_state_ids",
+            "tombstone_event_id",
+            "tombstone_retain_until",
+        ):
+            public.pop(private_key, None)
         public["reactions"] = [dict(item) for item in message.get("reactions", ())]
         delivery_devices = public.pop("delivery_devices", None)
         if isinstance(delivery_devices, dict):
@@ -1676,6 +1777,139 @@ class WorkspaceServiceMixin:
             public["delivery_summary"] = self._workspace_delivery_summary(message["id"])
         return public
 
+    def _workspace_message_is_visible(
+        self,
+        workspace: dict[str, Any],
+        message: dict[str, Any],
+        cache: dict[str, dict[str, Any]] | None = None,
+    ) -> bool:
+        """Recheck current access and the event's historical entitlement."""
+
+        visibility_cache = cache if cache is not None else {}
+
+        def cached(
+            section: str, key: str, loader: Callable[[], Any]
+        ) -> Any:
+            values = visibility_cache.setdefault(section, {})
+            if key not in values:
+                values[key] = loader()
+            return values[key]
+
+        if message.get("workspace_id") != workspace.get("id"):
+            return False
+        event_id = message.get("id")
+        if not isinstance(event_id, str):
+            return False
+        event = self.store.get(
+            "workspace_event", self._workspace_event_record_id(event_id)
+        )
+        if event is None or event.get("event_type", "message") != "message":
+            return False
+        local_member_id = str(workspace.get("local_member_id", ""))
+        historical_digest = str(event.get("manifest_digest", ""))
+        historical_manifest = cached(
+            "manifest",
+            historical_digest,
+            lambda: self._workspace_manifest_by_digest(historical_digest),
+        )
+        historical_member = (
+            find_member(historical_manifest, local_member_id)
+            if historical_manifest is not None
+            else None
+        )
+        if historical_member is None or historical_member.status != "active":
+            return False
+        workspace_state = str(workspace.get("state", ""))
+        former_archive = workspace_state in {"left", "removed", "closed", "forked"}
+        if event.get("channel_digest") is None:
+            audience = tuple(event.get("audience_member_ids", ()))
+            if local_member_id not in audience or len(audience) != 2:
+                return False
+            direct_id = str(event.get("conversation_id", ""))
+            direct = cached(
+                "direct",
+                direct_id,
+                lambda: self.store.get(
+                    "workspace_direct", self._workspace_direct_record_id(direct_id)
+                ),
+            )
+            if direct is None or direct.get("hidden"):
+                return False
+            if former_archive:
+                return True
+            current_manifest = cached(
+                "current_manifest",
+                workspace["id"],
+                lambda: self._workspace_current_manifest(workspace),
+            )
+            return all(
+                (member := find_member(current_manifest, member_id)) is not None
+                and member.status == "active"
+                for member_id in audience
+            )
+        event_channel_digest = str(event.get("channel_digest", ""))
+        event_channel = cached(
+            "channel_control",
+            event_channel_digest,
+            lambda: self._workspace_channel_by_digest(event_channel_digest),
+        )
+        if event_channel is None:
+            return False
+        conversation_id = str(event.get("conversation_id", ""))
+        channel_record = cached(
+            "channel_record",
+            conversation_id,
+            lambda: self.store.get(
+                "workspace_channel", self._workspace_channel_record_id(conversation_id)
+            ),
+        )
+        if channel_record is None or channel_record.get("workspace_id") != workspace["id"]:
+            return False
+        if event_channel.visibility == "public":
+            if former_archive:
+                return True
+            current_manifest = cached(
+                "current_manifest",
+                workspace["id"],
+                lambda: self._workspace_current_manifest(workspace),
+            )
+            current_member = find_member(current_manifest, local_member_id)
+            return bool(current_member is not None and current_member.status == "active")
+        if (
+            local_member_id not in event_channel.member_ids
+            or local_member_id not in event.get("audience_member_ids", ())
+        ):
+            return False
+        if former_archive:
+            return True
+        if (
+            channel_record.get("state") not in {"active", "archived"}
+            or local_member_id not in channel_record.get("member_ids", ())
+        ):
+            return False
+        current_channel_digest = str(channel_record.get("head_hash", ""))
+        current_channel = cached(
+            "channel_control",
+            current_channel_digest,
+            lambda: self._workspace_channel_by_digest(current_channel_digest),
+        )
+        admission_version = (
+            self._private_channel_admission_version(current_channel, local_member_id)
+            if current_channel is not None
+            else None
+        )
+        return bool(
+            current_channel is not None
+            and admission_version is not None
+            and event_channel.version >= admission_version
+            and self._private_event_is_currently_entitled(
+                current_channel,
+                event_channel,
+                local_member_id=local_member_id,
+                author_member_id=str(event.get("author_member_id", "")),
+            )
+        )
+
     def _workspace_reaction_record_id(
         self, workspace_id: str, target_event_id: str, member_id: str, emoji: str
     ) -> str:
@@ -1691,12 +1925,28 @@ class WorkspaceServiceMixin:
     ) -> list[dict[str, Any]]:
         workspace = self.store.get("workspace", self._workspace_record_id(workspace_id))
         local_member_id = None if workspace is None else workspace.get("local_member_id")
-        states = [
-            state
-            for state in self.store.list("workspace_reaction_state")
-            if state.get("workspace_id") == workspace_id
-            and state.get("target_event_id") == target_event_id
-        ]
+        message = self.store.get(
+            "workspace_message_state", self._workspace_message_record_id(target_event_id)
+        )
+        reaction_ids = None if message is None else message.get("reaction_state_ids")
+        if isinstance(reaction_ids, list):
+            states = [
+                state
+                for record_id in reaction_ids
+                if isinstance(record_id, str)
+                and (state := self.store.get("workspace_reaction_state", record_id))
+                is not None
+            ]
+        else:
+            # One compatibility read is retained for pre-Increment-9 messages.
+            # Every new or subsequently reacted-to message carries the exact
+            # opaque reaction record IDs and therefore never scans the table.
+            states = [
+                state
+                for state in self.store.list("workspace_reaction_state")
+                if state.get("workspace_id") == workspace_id
+                and state.get("target_event_id") == target_event_id
+            ]
         if overlay is not None:
             states = [state for state in states if state.get("id") != overlay.get("id")]
             states.append(overlay)
@@ -2144,6 +2394,26 @@ class WorkspaceServiceMixin:
             "created_at": now,
             "expires_at": now + DELIVERY_WINDOW_SECONDS,
         }
+
+    def _annotate_workspace_event_retention(
+        self,
+        records: list[tuple[str, str, dict[str, Any]]],
+        event_id: str,
+        deliveries: Iterable[dict[str, Any]],
+        operation_id: str,
+    ) -> None:
+        """Bind otherwise opaque delivery and operation records to one event."""
+
+        event_record_id = self._workspace_event_record_id(event_id)
+        for kind, record_id, value in records:
+            if kind == "workspace_event" and record_id == event_record_id:
+                value["delivery_ids"] = [
+                    item["id"] for item in deliveries if isinstance(item.get("id"), str)
+                ]
+                value["operation_record_id"] = self.store.opaque_id(
+                    "workspace-operation", operation_id
+                )
+                return
 
     def _cancel_workspace_member_deliveries(
         self, workspace_id: str, member_id: str
@@ -2707,10 +2977,191 @@ class WorkspaceServiceMixin:
         mention_index["count"] = int(mention_index.get("count", 0)) + 1
         mention_index["high_water"] = mention_position
         message["mention_position"] = mention_position
+        message["mention_index_page_id"] = mention_page_id
         return [
             ("workspace_mention_index", mention_index_id, mention_index),
             ("workspace_mention_index", mention_page_id, mention_page),
         ]
+
+    def _workspace_retention_index_records(
+        self,
+        workspace: dict[str, Any],
+        event: VerifiedWorkspaceEvent,
+        event_record: dict[str, Any],
+    ) -> list[tuple[str, str, dict[str, Any]]]:
+        """Append one canonical event to the bounded sealed pruning index."""
+
+        workspace_id = event.workspace_id
+        index_id = self._workspace_retention_index_id(workspace_id)
+        index = self.store.get("workspace_retention_index", index_id) or {
+            "workspace_id": workspace_id,
+            "head_page": None,
+            "count": 0,
+            "high_water": 0,
+            "retention_generation": int(workspace.get("retention_generation", 1)),
+        }
+        page_id = index.get("head_page")
+        page = (
+            self.store.get("workspace_retention_index", page_id)
+            if isinstance(page_id, str)
+            else None
+        )
+        if page is None or len(page.get("entries", ())) >= RETENTION_INDEX_PAGE_ENTRIES:
+            page_id = self._workspace_retention_page_id(workspace_id, event.event_id)
+            page = {
+                "workspace_id": workspace_id,
+                "previous_page": index.get("head_page"),
+                "entries": [],
+            }
+            index["head_page"] = page_id
+        entry = {
+            "event_id": event.event_id,
+            "event_record_id": self._workspace_event_record_id(event.event_id),
+            "conversation_id": event.conversation_id,
+            "event_type": event.event_type,
+            "target_event_id": event.target_event_id,
+            "thread_root": event.thread_root,
+            "created_at": float(event.created_at),
+        }
+        page["entries"] = [*page.get("entries", ()), entry]
+        index["count"] = int(index.get("count", 0)) + 1
+        index["high_water"] = int(index.get("high_water", 0)) + 1
+        index["retention_generation"] = int(
+            workspace.get("retention_generation", 1)
+        )
+        event_record["retention_page_id"] = page_id
+        return [
+            ("workspace_retention_index", index_id, index),
+            ("workspace_retention_index", str(page_id), page),
+        ]
+
+    def _workspace_mutation_index_records(
+        self,
+        workspace: dict[str, Any],
+        event: VerifiedWorkspaceEvent,
+        event_record: dict[str, Any],
+        message: dict[str, Any],
+    ) -> list[tuple[str, str, dict[str, Any]]]:
+        assert event.target_event_id is not None
+        index_id = self._workspace_revision_index_id(
+            event.workspace_id, event.target_event_id
+        )
+        index = self.store.get("workspace_revision_index", index_id) or {
+            "workspace_id": event.workspace_id,
+            "conversation_id": event.conversation_id,
+            "target_event_id": event.target_event_id,
+            "head_page": None,
+            "count": 0,
+            "high_water": 0,
+        }
+        page_id = index.get("head_page")
+        page = (
+            self.store.get("workspace_revision_index", page_id)
+            if isinstance(page_id, str)
+            else None
+        )
+        if page is None or len(page.get("entries", ())) >= MESSAGE_PAGE_ENTRIES:
+            page_id = self._workspace_revision_page_id(
+                event.workspace_id, event.target_event_id, event.event_id
+            )
+            page = {
+                "workspace_id": event.workspace_id,
+                "conversation_id": event.conversation_id,
+                "target_event_id": event.target_event_id,
+                "previous_page": index.get("head_page"),
+                "entries": [],
+            }
+            index["head_page"] = page_id
+        position = int(index.get("high_water", 0)) + 1
+        entry = {
+            "event_id": event.event_id,
+            "event_record_id": self._workspace_event_record_id(event.event_id),
+            "event_type": event.event_type,
+            "revision": event.revision,
+            "author_member_id": event.author_member_id,
+            "emoji": event.reaction_emoji,
+            "active": event.reaction_active,
+            "created_at": float(event.created_at),
+            "position": position,
+        }
+        page["entries"] = [*page.get("entries", ()), entry]
+        index["count"] = int(index.get("count", 0)) + 1
+        index["high_water"] = position
+        event_record["revision_page_id"] = page_id
+        records: list[tuple[str, str, dict[str, Any]]] = [
+            ("workspace_revision_index", index_id, index),
+            ("workspace_revision_index", str(page_id), page),
+        ]
+        if event.event_type == "delete":
+            tombstone_index_id = self._workspace_tombstone_index_id(
+                event.workspace_id, event.conversation_id
+            )
+            tombstone_index = self.store.get(
+                "workspace_tombstone_index", tombstone_index_id
+            ) or {
+                "workspace_id": event.workspace_id,
+                "conversation_id": event.conversation_id,
+                "head_page": None,
+                "count": 0,
+                "high_water": 0,
+            }
+            tombstone_page_id = tombstone_index.get("head_page")
+            tombstone_page = (
+                self.store.get("workspace_tombstone_index", tombstone_page_id)
+                if isinstance(tombstone_page_id, str)
+                else None
+            )
+            if (
+                tombstone_page is None
+                or len(tombstone_page.get("entries", ())) >= MESSAGE_PAGE_ENTRIES
+            ):
+                tombstone_page_id = self._workspace_tombstone_page_id(
+                    event.workspace_id, event.conversation_id, event.event_id
+                )
+                tombstone_page = {
+                    "workspace_id": event.workspace_id,
+                    "conversation_id": event.conversation_id,
+                    "previous_page": tombstone_index.get("head_page"),
+                    "entries": [],
+                }
+                tombstone_index["head_page"] = tombstone_page_id
+            tombstone_position = int(tombstone_index.get("high_water", 0)) + 1
+            tombstone_page["entries"] = [
+                *tombstone_page.get("entries", ()),
+                {
+                    "event_id": event.event_id,
+                    "event_record_id": self._workspace_event_record_id(event.event_id),
+                    "target_event_id": event.target_event_id,
+                    "message_record_id": self._workspace_message_record_id(
+                        event.target_event_id
+                    ),
+                    "position": tombstone_position,
+                    "created_at": float(event.created_at),
+                },
+            ]
+            tombstone_index["count"] = int(tombstone_index.get("count", 0)) + 1
+            tombstone_index["high_water"] = tombstone_position
+            event_record["tombstone_page_id"] = tombstone_page_id
+            message["tombstone_event_id"] = event.event_id
+            message["tombstone_retain_until"] = max(
+                float(message.get("tombstone_retain_until", 0)),
+                time.time() + DELIVERY_WINDOW_SECONDS,
+            )
+            records.extend(
+                [
+                    (
+                        "workspace_tombstone_index",
+                        tombstone_index_id,
+                        tombstone_index,
+                    ),
+                    (
+                        "workspace_tombstone_index",
+                        str(tombstone_page_id),
+                        tombstone_page,
+                    ),
+                ]
+            )
+        return records
 
     def _workspace_thread_reply_records(
         self,
@@ -2781,6 +3232,7 @@ class WorkspaceServiceMixin:
         index["count"] = int(index.get("count", 0)) + 1
         index["high_water"] = position
         message["thread_position"] = position
+        message["thread_index_page_id"] = page_id
 
         summary_id = self._workspace_thread_record_id(
             event.workspace_id, event.thread_root
@@ -2922,6 +3374,9 @@ class WorkspaceServiceMixin:
             ("workspace_stream_coverage", stream_head_id, stream_head),
             ("workspace_stream_coverage", sequence_id, sequence),
         ]
+        records.extend(
+            self._workspace_retention_index_records(workspace, event, event_record)
+        )
         if event.event_type != "message":
             return records, None
         message_record_id = self._workspace_message_record_id(event.event_id)
@@ -2941,6 +3396,7 @@ class WorkspaceServiceMixin:
             "mutation_frozen": False,
             "mutation_candidates": [],
             "reactions": [],
+            "reaction_state_ids": [],
             "mention_member_ids": list(event.mentions),
             "thread_root": event.thread_root,
             "sequence": event.sequence,
@@ -3022,6 +3478,7 @@ class WorkspaceServiceMixin:
         page["encoded_bytes"] = int(page.get("encoded_bytes", 0)) + encoded_size
         index["count"] = int(index.get("count", 0)) + 1
         index["high_water"] = int(index.get("high_water", 0)) + 1
+        message["conversation_index_page_id"] = page_id
         records.extend(
             [
                 ("workspace_message_state", message_record_id, message),
@@ -3174,8 +3631,17 @@ class WorkspaceServiceMixin:
             min(deletion_revisions) if deletion_revisions else message.get("deletion_revision")
         )
         updated["edited_at"] = float(winner.get("created_at", event.created_at))
-        updated["text"] = "" if deleted else str(winner.get("text", ""))
-        if not deleted and winner.get("event_type") == "edit":
+        if deleted:
+            updated["text"] = ""
+        elif winner.get("pruned"):
+            updated["text"] = str(message.get("text", ""))
+        else:
+            updated["text"] = str(winner.get("text", ""))
+        if (
+            not deleted
+            and winner.get("event_type") == "edit"
+            and not winner.get("pruned")
+        ):
             updated["mention_member_ids"] = list(
                 winner.get("mention_member_ids", ())
             )
@@ -3298,6 +3764,13 @@ class WorkspaceServiceMixin:
         updated["reactions"] = self._workspace_public_reactions(
             event.workspace_id, message["id"], reaction
         )
+        reaction_state_ids = {
+            item
+            for item in message.get("reaction_state_ids", ())
+            if isinstance(item, str)
+        }
+        reaction_state_ids.add(reaction_id)
+        updated["reaction_state_ids"] = sorted(reaction_state_ids)
         if reaction.get("mutation_frozen"):
             updated["mutation_frozen"] = True
         return [
@@ -3374,7 +3847,9 @@ class WorkspaceServiceMixin:
             raise ValidationError("Workspace event ID is invalid") from exc
         if checked_target_id != target_event_id or checked_event_id != event_id:
             raise ValidationError("Workspace event ID is invalid")
-        if self.store.get("workspace_event", self._workspace_event_record_id(event_id)):
+        if self.store.get(
+            "workspace_event", self._workspace_event_record_id(event_id)
+        ) or self._workspace_event_id_is_retired(workspace_id, event_id):
             raise ValidationError("Workspace event ID was already used")
         message = self.store.get(
             "workspace_message_state", self._workspace_message_record_id(target_event_id)
@@ -3484,9 +3959,23 @@ class WorkspaceServiceMixin:
         )
         mutation_records, updated_message = self._workspace_mutation_records(event, message)
         records.extend(mutation_records)
+        event_record = next(
+            value
+            for kind, record_id, value in records
+            if kind == "workspace_event"
+            and record_id == self._workspace_event_record_id(event.event_id)
+        )
+        records.extend(
+            self._workspace_mutation_index_records(
+                workspace, event, event_record, updated_message
+            )
+        )
         deliveries = self._workspace_mutation_deliveries(manifest, event)
         records.extend(("workspace_delivery", item["id"], item) for item in deliveries)
         records.extend(self._due_records(add=deliveries))
+        self._annotate_workspace_event_retention(
+            records, event.event_id, deliveries, operation_id
+        )
         public = dict(self._public_workspace_message(updated_message))
         if event_type == "reaction":
             reaction_overlay = next(
@@ -3578,7 +4067,9 @@ class WorkspaceServiceMixin:
         existing_event = self.store.get(
             "workspace_event", self._workspace_event_record_id(event_id)
         )
-        if existing_event is not None:
+        if existing_event is not None or self._workspace_event_id_is_retired(
+            workspace_id, event_id
+        ):
             raise ValidationError("Workspace event ID was already used")
         identity = self._identity
         if identity is None:
@@ -3652,6 +4143,9 @@ class WorkspaceServiceMixin:
             ("workspace_delivery", item["id"], item) for item in deliveries
         )
         records.extend(self._due_records(add=deliveries))
+        self._annotate_workspace_event_retention(
+            records, event.event_id, deliveries, operation_id
+        )
         message["delivery_devices"] = {
             item["recipient_device_id"]: {
                 "member_id": item["recipient_member_id"],
@@ -3865,7 +4359,7 @@ class WorkspaceServiceMixin:
             raise ValidationError("Workspace event ID is invalid") from exc
         if self.store.get(
             "workspace_event", self._workspace_event_record_id(event_id)
-        ) is not None:
+        ) is not None or self._workspace_event_id_is_retired(workspace_id, event_id):
             raise ValidationError("Workspace event ID was already used")
         manifest = self._workspace_current_manifest(workspace)
         participants = tuple(direct.get("participant_member_ids", ()))
@@ -3942,6 +4436,9 @@ class WorkspaceServiceMixin:
             ("workspace_delivery", item["id"], item) for item in deliveries
         )
         records.extend(self._due_records(add=deliveries))
+        self._annotate_workspace_event_retention(
+            records, event.event_id, deliveries, operation_id
+        )
         message["delivery_devices"] = {
             item["recipient_device_id"]: {
                 "member_id": item["recipient_member_id"],
@@ -4026,7 +4523,7 @@ class WorkspaceServiceMixin:
             raise ValidationError("Workspace event ID is invalid") from exc
         if checked_event_id != event_id or self.store.get(
             "workspace_event", self._workspace_event_record_id(event_id)
-        ) is not None:
+        ) is not None or self._workspace_event_id_is_retired(workspace_id, event_id):
             raise ValidationError("Workspace event ID was already used or is invalid")
         mentions = self._validate_workspace_mentions(
             workspace, conversation_id, mention_member_ids
@@ -4116,6 +4613,9 @@ class WorkspaceServiceMixin:
                 )
         records.extend(("workspace_delivery", item["id"], item) for item in deliveries)
         records.extend(self._due_records(add=deliveries))
+        self._annotate_workspace_event_retention(
+            records, event.event_id, deliveries, operation_id
+        )
         message["delivery_devices"] = {
             item["recipient_device_id"]: {
                 "member_id": item["recipient_member_id"],
@@ -4344,6 +4844,22 @@ class WorkspaceServiceMixin:
                 )
                 self._workspace_changed(event.workspace_id, resource_kind="security")
                 return False
+            pruned_event = self.store.get(
+                "workspace_event_tombstone",
+                self._workspace_event_tombstone_id(
+                    event.workspace_id, event.event_id
+                ),
+            )
+            if pruned_event is not None:
+                if pruned_event.get("digest") == event.digest:
+                    return True
+                workspace["state"] = "forked"
+                workspace["security_error"] = "pruned_event_id_equivocation"
+                self.store.put(
+                    "workspace", self._workspace_record_id(workspace["id"]), workspace
+                )
+                self._workspace_changed(event.workspace_id, resource_kind="security")
+                return False
             current = self._workspace_current_manifest(workspace)
             current_device = find_device(current, event.author_device_id)
             if current_device is None or current_device[0].status != "active":
@@ -4510,6 +5026,17 @@ class WorkspaceServiceMixin:
                     event, target_message
                 )
                 records.extend(mutation_records)
+                event_record = next(
+                    value
+                    for kind, record_id, value in records
+                    if kind == "workspace_event"
+                    and record_id == self._workspace_event_record_id(event.event_id)
+                )
+                records.extend(
+                    self._workspace_mutation_index_records(
+                        workspace, event, event_record, _updated_message
+                    )
+                )
             elif event.thread_root is not None:
                 # Reply unread state belongs to the thread summary, never the
                 # containing channel or DM badge.
@@ -5954,8 +6481,9 @@ class WorkspaceServiceMixin:
         limit: Any = MESSAGE_PAGE_DEFAULT,
     ) -> dict[str, Any]:
         workspace = self._require_workspace(workspace_id)
+        visibility_cache: dict[str, dict[str, Any]] = {}
         root, conversation_kind, conversation = self._workspace_thread_context(
-            workspace, thread_root_id
+            workspace, thread_root_id, visibility_cache=visibility_cache
         )
         if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= MESSAGE_PAGE_MAX:
             raise ValidationError("Workspace thread page size is invalid")
@@ -5982,7 +6510,7 @@ class WorkspaceServiceMixin:
                 "high_water": high_water,
             }
             if any(value.get(key) != item for key, item in expected.items()):
-                raise ValidationError("Workspace thread cursor is stale")
+                raise StaleCursor("Workspace thread cursor is stale")
             page_id = value.get("page_id")
             offset = value.get("offset")
             if not isinstance(page_id, str) or isinstance(offset, bool) or not isinstance(offset, int) or offset < 0:
@@ -6019,6 +6547,9 @@ class WorkspaceServiceMixin:
                     and hidden is None
                     and reply.get("thread_root") == thread_root_id
                     and reply.get("conversation_id") == root.get("conversation_id")
+                    and self._workspace_message_is_visible(
+                        workspace, reply, visibility_cache
+                    )
                 ):
                     replies.append(self._public_workspace_message(reply))
                 position -= 1
@@ -6103,6 +6634,7 @@ class WorkspaceServiceMixin:
         limit: Any = MESSAGE_PAGE_DEFAULT,
     ) -> dict[str, Any]:
         workspace = self._require_workspace(workspace_id)
+        visibility_cache: dict[str, dict[str, Any]] = {}
         if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= MESSAGE_PAGE_MAX:
             raise ValidationError("Workspace thread activity page size is invalid")
         activity = self.store.get(
@@ -6128,7 +6660,7 @@ class WorkspaceServiceMixin:
                 "high_water": high_water,
             }
             if any(value.get(key) != item for key, item in expected.items()):
-                raise ValidationError("Workspace thread activity cursor is stale")
+                raise StaleCursor("Workspace thread activity cursor is stale")
             offset = value.get("offset")
             if isinstance(offset, bool) or not isinstance(offset, int) or offset < 0:
                 raise ValidationError("Workspace thread activity cursor is invalid")
@@ -6149,7 +6681,9 @@ class WorkspaceServiceMixin:
             root_event_id = str(entry.get("root_event_id", ""))
             try:
                 root, kind, conversation = self._workspace_thread_context(
-                    workspace, root_event_id
+                    workspace,
+                    root_event_id,
+                    visibility_cache=visibility_cache,
                 )
             except (ContactNotApproved, ValidationError):
                 continue
@@ -6205,6 +6739,7 @@ class WorkspaceServiceMixin:
         limit: Any = MESSAGE_PAGE_DEFAULT,
     ) -> dict[str, Any]:
         workspace = self._require_workspace(workspace_id)
+        visibility_cache: dict[str, dict[str, Any]] = {}
         if workspace.get("state") not in {
             "active",
             "leaving",
@@ -6221,7 +6756,14 @@ class WorkspaceServiceMixin:
         index_id = self._workspace_index_record_id(workspace_id, channel_id)
         index = self.store.get("workspace_conversation_index", index_id)
         if index is None:
-            return {"messages": [], "next_cursor": None, "high_water": 0}
+            return {
+                "messages": [],
+                "next_cursor": None,
+                "high_water": 0,
+                "history_status": "complete",
+                "pruned_count": 0,
+                "permanent_gaps": [],
+            }
         page_id = index.get("head_page")
         offset = 0
         if cursor is not None:
@@ -6239,7 +6781,7 @@ class WorkspaceServiceMixin:
                 "high_water": int(index.get("high_water", 0)),
             }
             if any(value.get(key) != item for key, item in expected.items()):
-                raise ValidationError("Workspace message cursor is stale")
+                raise StaleCursor("Workspace message cursor is stale")
             page_id = value.get("page_id")
             offset = value.get("offset")
             if not isinstance(page_id, str) or isinstance(offset, bool) or not isinstance(offset, int) or offset < 0:
@@ -6270,7 +6812,13 @@ class WorkspaceServiceMixin:
                         "workspace-message-hidden", workspace_id, entry["event_id"]
                     ),
                 )
-                if message is not None and hidden is None:
+                if (
+                    message is not None
+                    and hidden is None
+                    and self._workspace_message_is_visible(
+                        workspace, message, visibility_cache
+                    )
+                ):
                     results.append(self._public_workspace_message(message))
                 position -= 1
                 offset += 1
@@ -6307,6 +6855,15 @@ class WorkspaceServiceMixin:
             "messages": results,
             "next_cursor": next_cursor,
             "high_water": int(index.get("high_water", 0)),
+            "history_status": (
+                "permanent_gap"
+                if index.get("permanent_gaps")
+                else "pruned"
+                if int(index.get("pruned_count", 0)) > 0
+                else "complete"
+            ),
+            "pruned_count": int(index.get("pruned_count", 0)),
+            "permanent_gaps": list(index.get("permanent_gaps", ()))[:32],
         }
 
     def mark_workspace_read(
@@ -6385,6 +6942,278 @@ class WorkspaceServiceMixin:
             workspace_id, conversation_id=channel_id, resource_kind="read_state"
         )
         return committed
+
+    def list_workspace_message_revisions(
+        self,
+        workspace_id: Any,
+        event_id: Any,
+        cursor: Any = None,
+        limit: Any = MESSAGE_PAGE_DEFAULT,
+    ) -> dict[str, Any]:
+        workspace = self._require_workspace(workspace_id)
+        if not isinstance(event_id, str):
+            raise ValidationError("Workspace message ID is invalid")
+        message = self.store.get(
+            "workspace_message_state", self._workspace_message_record_id(event_id)
+        )
+        if message is None:
+            if self._workspace_event_id_is_retired(workspace_id, event_id):
+                raise HistoryPruned("Workspace message history was pruned locally")
+            raise ValidationError("Workspace message does not exist")
+        if not self._workspace_message_is_visible(workspace, message):
+            raise ContactNotApproved("Workspace message history is unavailable")
+        if (
+            isinstance(limit, bool)
+            or not isinstance(limit, int)
+            or not 1 <= limit <= MESSAGE_PAGE_MAX
+        ):
+            raise ValidationError("Workspace revision page size is invalid")
+        index = self.store.get(
+            "workspace_revision_index",
+            self._workspace_revision_index_id(workspace_id, event_id),
+        )
+        if index is None:
+            return {
+                "message": self._public_workspace_message(message),
+                "revisions": [],
+                "next_cursor": None,
+                "high_water": 0,
+                "history_status": "complete",
+            }
+        high_water = int(index.get("high_water", 0))
+        page_id = index.get("head_page")
+        offset = 0
+        if cursor is not None:
+            if not isinstance(cursor, str):
+                raise ValidationError("Workspace revision cursor is invalid")
+            value = self.store.open_cursor(cursor)
+            expected = {
+                "v": 1,
+                "workspace_id": workspace_id,
+                "target_event_id": event_id,
+                "authorization_generation": int(
+                    workspace.get("authorization_generation", 1)
+                ),
+                "retention_generation": int(
+                    workspace.get("retention_generation", 1)
+                ),
+                "high_water": high_water,
+            }
+            if any(value.get(key) != item for key, item in expected.items()):
+                raise StaleCursor("Workspace revision cursor is stale")
+            page_id = value.get("page_id")
+            offset = value.get("offset")
+            if (
+                not isinstance(page_id, str)
+                or isinstance(offset, bool)
+                or not isinstance(offset, int)
+                or offset < 0
+            ):
+                raise ValidationError("Workspace revision cursor is invalid")
+        revisions: list[dict[str, Any]] = []
+        next_page: str | None = None
+        next_offset = 0
+        while isinstance(page_id, str) and len(revisions) < limit:
+            page = self.store.get("workspace_revision_index", page_id)
+            if (
+                page is None
+                or page.get("workspace_id") != workspace_id
+                or page.get("target_event_id") != event_id
+            ):
+                raise ValidationError("Workspace revision page is unavailable")
+            entries = page.get("entries", [])
+            if not isinstance(entries, list) or offset > len(entries):
+                raise ValidationError("Workspace revision page is invalid")
+            position = len(entries) - 1 - offset
+            while position >= 0 and len(revisions) < limit:
+                entry = entries[position]
+                record = self.store.get(
+                    "workspace_event", str(entry.get("event_record_id", ""))
+                )
+                if record is not None:
+                    revision = {
+                        "event_id": record.get("id"),
+                        "event_type": record.get("event_type"),
+                        "revision": record.get("revision"),
+                        "author_member_id": record.get("author_member_id"),
+                        "created_at": record.get("created_at"),
+                    }
+                    if record.get("event_type") == "edit":
+                        revision["text"] = record.get("text", "")
+                        revision["mention_member_ids"] = list(
+                            record.get("mention_member_ids", ())
+                        )
+                    elif record.get("event_type") == "reaction":
+                        revision["emoji"] = record.get("emoji")
+                        revision["active"] = bool(record.get("active"))
+                    revisions.append(revision)
+                position -= 1
+                offset += 1
+            if len(revisions) >= limit and position >= 0:
+                next_page = page_id
+                next_offset = offset
+                break
+            page_id = page.get("previous_page")
+            offset = 0
+            if len(revisions) >= limit and isinstance(page_id, str):
+                next_page = page_id
+                break
+        next_cursor = None
+        if next_page is not None:
+            next_cursor = self.store.seal_cursor(
+                {
+                    "v": 1,
+                    "workspace_id": workspace_id,
+                    "target_event_id": event_id,
+                    "authorization_generation": int(
+                        workspace.get("authorization_generation", 1)
+                    ),
+                    "retention_generation": int(
+                        workspace.get("retention_generation", 1)
+                    ),
+                    "high_water": high_water,
+                    "page_id": next_page,
+                    "offset": next_offset,
+                }
+            )
+        return {
+            "message": self._public_workspace_message(message),
+            "revisions": revisions,
+            "next_cursor": next_cursor,
+            "high_water": high_water,
+            "history_status": (
+                "pruned" if int(index.get("pruned_count", 0)) else "complete"
+            ),
+        }
+
+    def list_workspace_tombstones(
+        self,
+        workspace_id: Any,
+        conversation_id: Any,
+        cursor: Any = None,
+        limit: Any = MESSAGE_PAGE_DEFAULT,
+    ) -> dict[str, Any]:
+        workspace = self._require_workspace(workspace_id)
+        visibility_cache: dict[str, dict[str, Any]] = {}
+        self._require_workspace_conversation(workspace_id, conversation_id)
+        if (
+            isinstance(limit, bool)
+            or not isinstance(limit, int)
+            or not 1 <= limit <= MESSAGE_PAGE_MAX
+        ):
+            raise ValidationError("Workspace tombstone page size is invalid")
+        index = self.store.get(
+            "workspace_tombstone_index",
+            self._workspace_tombstone_index_id(workspace_id, conversation_id),
+        )
+        if index is None:
+            return {
+                "tombstones": [],
+                "next_cursor": None,
+                "high_water": 0,
+                "history_status": "complete",
+            }
+        high_water = int(index.get("high_water", 0))
+        page_id = index.get("head_page")
+        offset = 0
+        if cursor is not None:
+            if not isinstance(cursor, str):
+                raise ValidationError("Workspace tombstone cursor is invalid")
+            value = self.store.open_cursor(cursor)
+            expected = {
+                "v": 1,
+                "workspace_id": workspace_id,
+                "conversation_id": conversation_id,
+                "authorization_generation": int(
+                    workspace.get("authorization_generation", 1)
+                ),
+                "retention_generation": int(
+                    workspace.get("retention_generation", 1)
+                ),
+                "high_water": high_water,
+            }
+            if any(value.get(key) != item for key, item in expected.items()):
+                raise StaleCursor("Workspace tombstone cursor is stale")
+            page_id = value.get("page_id")
+            offset = value.get("offset")
+            if (
+                not isinstance(page_id, str)
+                or isinstance(offset, bool)
+                or not isinstance(offset, int)
+                or offset < 0
+            ):
+                raise ValidationError("Workspace tombstone cursor is invalid")
+        tombstones: list[dict[str, Any]] = []
+        next_page: str | None = None
+        next_offset = 0
+        while isinstance(page_id, str) and len(tombstones) < limit:
+            page = self.store.get("workspace_tombstone_index", page_id)
+            if (
+                page is None
+                or page.get("workspace_id") != workspace_id
+                or page.get("conversation_id") != conversation_id
+            ):
+                raise ValidationError("Workspace tombstone page is unavailable")
+            entries = page.get("entries", [])
+            if not isinstance(entries, list) or offset > len(entries):
+                raise ValidationError("Workspace tombstone page is invalid")
+            position = len(entries) - 1 - offset
+            while position >= 0 and len(tombstones) < limit:
+                entry = entries[position]
+                message = self.store.get(
+                    "workspace_message_state", str(entry.get("message_record_id", ""))
+                )
+                if (
+                    message is not None
+                    and message.get("deleted")
+                    and self._workspace_message_is_visible(
+                        workspace, message, visibility_cache
+                    )
+                ):
+                    tombstones.append(
+                        {
+                            "position": int(entry.get("position", 0)),
+                            "deleted_at": float(entry.get("created_at", 0)),
+                            "message": self._public_workspace_message(message),
+                        }
+                    )
+                position -= 1
+                offset += 1
+            if len(tombstones) >= limit and position >= 0:
+                next_page = page_id
+                next_offset = offset
+                break
+            page_id = page.get("previous_page")
+            offset = 0
+            if len(tombstones) >= limit and isinstance(page_id, str):
+                next_page = page_id
+                break
+        next_cursor = None
+        if next_page is not None:
+            next_cursor = self.store.seal_cursor(
+                {
+                    "v": 1,
+                    "workspace_id": workspace_id,
+                    "conversation_id": conversation_id,
+                    "authorization_generation": int(
+                        workspace.get("authorization_generation", 1)
+                    ),
+                    "retention_generation": int(
+                        workspace.get("retention_generation", 1)
+                    ),
+                    "high_water": high_water,
+                    "page_id": next_page,
+                    "offset": next_offset,
+                }
+            )
+        return {
+            "tombstones": tombstones,
+            "next_cursor": next_cursor,
+            "high_water": high_water,
+            "history_status": (
+                "pruned" if int(index.get("pruned_count", 0)) else "complete"
+            ),
+        }
 
     def mark_workspace_thread_read(
         self,
@@ -6471,6 +7300,7 @@ class WorkspaceServiceMixin:
         limit: Any = MESSAGE_PAGE_DEFAULT,
     ) -> dict[str, Any]:
         workspace = self._require_workspace(workspace_id)
+        visibility_cache: dict[str, dict[str, Any]] = {}
         if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= MESSAGE_PAGE_MAX:
             raise ValidationError("Workspace mention page size is invalid")
         index = self.store.get(
@@ -6502,7 +7332,7 @@ class WorkspaceServiceMixin:
                 "high_water": int(index.get("high_water", 0)),
             }
             if any(value.get(key) != item for key, item in expected.items()):
-                raise ValidationError("Workspace mention cursor is stale")
+                raise StaleCursor("Workspace mention cursor is stale")
             page_id = value.get("page_id")
             offset = value.get("offset")
             if (
@@ -6533,7 +7363,7 @@ class WorkspaceServiceMixin:
                     "workspace_message_state", entry.get("message_record_id")
                 )
                 if message is not None and self._workspace_mention_visible(
-                    workspace, entry, message
+                    workspace, entry, message, visibility_cache
                 ):
                     conversation_id = str(entry["conversation_id"])
                     if entry.get("conversation_kind") == "direct":
@@ -7934,6 +8764,526 @@ class WorkspaceServiceMixin:
         self._workspace_changed(workspace_id, resource_kind="policy")
         return committed
 
+    def update_workspace_retention(
+        self,
+        workspace_id: Any,
+        retention_days: Any,
+        operation_id: Any,
+    ) -> dict[str, Any]:
+        payload = {
+            "workspace_id": workspace_id,
+            "retention_days": retention_days,
+        }
+        operation_id, digest, replay = self._workspace_operation(
+            "update_workspace_retention", operation_id, payload
+        )
+        if replay is not None:
+            return replay
+        workspace = self._require_workspace(workspace_id)
+        if (
+            workspace.get("state") != "active"
+            or workspace.get("local_role") != WorkspaceRole.OWNER.value
+        ):
+            raise ContactNotApproved(
+                "Workspace retention changes require the active owner authority"
+            )
+        if retention_days not in {30, 90, 365, None}:
+            raise ValidationError("Workspace retention preference is invalid")
+        current = self._workspace_current_manifest(workspace)
+        if current.retention_days == retention_days:
+            raise ValidationError("Workspace retention preference is unchanged")
+        identity = self._identity
+        if identity is None:
+            raise ValidationError("Local identity is unavailable")
+        raw = create_workspace_manifest(
+            identity,
+            workspace_id=workspace_id,
+            epoch=current.epoch + 1,
+            previous_manifest_hash=current.digest,
+            name=current.name,
+            description=current.description,
+            authority_device_id=current.authority_device_id,
+            members=self._workspace_manifest_member_inputs(current),
+            retention_days=retention_days,
+            channel_creation=current.channel_creation,
+            posting=current.posting,
+            invitation_requests=current.invitation_requests,
+        )
+        next_manifest = verify_workspace_manifest_transition(raw, current)
+        deliveries = self._workspace_manifest_deliveries(
+            workspace_id,
+            [next_manifest],
+            self._workspace_manifest_recipients(
+                current, excluding_member_id=workspace["local_member_id"]
+            ),
+        )
+        self._apply_manifest_to_workspace(workspace, next_manifest)
+        self._apply_manifest_public_identities(workspace, next_manifest)
+        state_id = self._workspace_retention_state_id(workspace_id)
+        state = {
+            "workspace_id": workspace_id,
+            "policy_generation": int(workspace.get("retention_generation", 1)),
+            "status": "disabled" if retention_days is None else "pending",
+            "cutoff": None,
+            "page_id": None,
+            "scanned": 0,
+            "pruned": 0,
+            "updated_at": time.time(),
+        }
+        outcome = self._public_workspace(workspace)
+        committed = self.store.commit_operation(
+            operation_id,
+            digest,
+            outcome,
+            [
+                ("workspace", self._workspace_record_id(workspace_id), workspace),
+                (
+                    "workspace_manifest",
+                    self._workspace_manifest_record_id(next_manifest.digest),
+                    self._manifest_record(next_manifest),
+                ),
+                self._manifest_epoch_record(next_manifest),
+                ("workspace_retention_state", state_id, state),
+                *[
+                    ("workspace_delivery", delivery["id"], delivery)
+                    for delivery in deliveries
+                ],
+                *self._due_records(add=deliveries),
+            ],
+        )
+        self._workspace_changed(workspace_id, resource_kind="retention_policy")
+        return committed
+
+    @staticmethod
+    def _workspace_add_pruned_sequence(
+        stream_head: dict[str, Any], sequence: int
+    ) -> dict[str, Any]:
+        ranges = [
+            [int(item[0]), int(item[1])]
+            for item in stream_head.get("pruned_ranges", ())
+            if isinstance(item, list)
+            and len(item) == 2
+            and all(isinstance(value, int) for value in item)
+        ]
+        ranges.append([sequence, sequence])
+        ranges.sort()
+        merged: list[list[int]] = []
+        for start, end in ranges:
+            if merged and start <= merged[-1][1] + 1:
+                merged[-1][1] = max(merged[-1][1], end)
+            else:
+                merged.append([start, end])
+        updated = dict(stream_head)
+        updated["pruned_ranges"] = merged
+        floor = int(updated.get("retained_floor", 1))
+        for start, end in merged:
+            if start <= floor <= end:
+                floor = end + 1
+        updated["retained_floor"] = floor
+        return updated
+
+    def _workspace_prune_index_entry(
+        self,
+        staged: dict[tuple[str, str], dict[str, Any]],
+        *,
+        kind: str,
+        page_id: Any,
+        event_id: str,
+    ) -> bool:
+        if not isinstance(page_id, str):
+            return False
+        key = (kind, page_id)
+        page = staged.get(key)
+        if page is None:
+            stored = self.store.get(kind, page_id)
+            if stored is None:
+                return False
+            page = dict(stored)
+        entries = list(page.get("entries", ()))
+        kept = [item for item in entries if item.get("event_id") != event_id]
+        if len(kept) == len(entries):
+            return False
+        page["entries"] = kept
+        if "encoded_bytes" in page:
+            page["encoded_bytes"] = sum(
+                len(json.dumps(item, separators=(",", ":")).encode("utf-8"))
+                for item in kept
+            )
+        staged[key] = page
+        return True
+
+    def _workspace_prune_event(
+        self,
+        workspace: dict[str, Any],
+        event: dict[str, Any],
+        *,
+        now: float,
+        staged: dict[tuple[str, str], dict[str, Any]],
+        deletions: set[tuple[str, str]],
+        due_removals: set[str],
+    ) -> bool:
+        event_id = str(event.get("id", ""))
+        if not event_id:
+            return False
+        event_type = str(event.get("event_type", "message"))
+        target_id = event.get("target_event_id")
+        message_id = target_id if event_type != "message" else event_id
+        message_record_id = self._workspace_message_record_id(str(message_id))
+        message = self.store.get("workspace_message_state", message_record_id)
+        if (
+            message is not None
+            and message.get("deleted")
+            and now < float(message.get("tombstone_retain_until", 0))
+        ):
+            return False
+        deletions.add(("workspace_event", self._workspace_event_record_id(event_id)))
+        operation_record_id = event.get("operation_record_id")
+        if isinstance(operation_record_id, str):
+            deletions.add(("workspace_operation", operation_record_id))
+        for delivery_id in event.get("delivery_ids", ()):
+            if not isinstance(delivery_id, str):
+                continue
+            delivery = self.store.get("workspace_delivery", delivery_id)
+            if delivery is None:
+                continue
+            if (
+                delivery.get("state") in FINAL_DELIVERY_STATES
+                or float(delivery.get("expires_at", 0)) <= now
+            ):
+                deletions.add(("workspace_delivery", delivery_id))
+                due_removals.add(delivery_id)
+        sequence_id = self._workspace_stream_sequence_id(
+            str(event.get("workspace_id", "")),
+            str(event.get("conversation_id", "")),
+            str(event.get("author_device_id", "")),
+            int(event.get("sequence", 0)),
+        )
+        sequence = self.store.get("workspace_stream_coverage", sequence_id)
+        if sequence is not None:
+            staged[("workspace_stream_coverage", sequence_id)] = {
+                "workspace_id": event.get("workspace_id"),
+                "conversation_id": event.get("conversation_id"),
+                "device_id": event.get("author_device_id"),
+                "sequence": int(event.get("sequence", 0)),
+                "event_digest": event.get("digest"),
+                "pruned": True,
+            }
+        stream_head_id = self._workspace_stream_head_id(
+            str(event.get("workspace_id", "")),
+            str(event.get("conversation_id", "")),
+            str(event.get("author_device_id", "")),
+        )
+        stream_head = staged.get(("workspace_stream_coverage", stream_head_id))
+        if stream_head is None:
+            stream_head = self.store.get("workspace_stream_coverage", stream_head_id)
+        if stream_head is not None:
+            staged[("workspace_stream_coverage", stream_head_id)] = (
+                self._workspace_add_pruned_sequence(
+                    stream_head, int(event.get("sequence", 0))
+                )
+            )
+        staged[
+            (
+                "workspace_event_tombstone",
+                self._workspace_event_tombstone_id(workspace["id"], event_id),
+            )
+        ] = {
+            "workspace_id": workspace["id"],
+            "event_id": event_id,
+            "digest": event.get("digest"),
+            "conversation_id": event.get("conversation_id"),
+            "author_device_id": event.get("author_device_id"),
+            "sequence": event.get("sequence"),
+            "event_type": event_type,
+            "target_event_id": target_id,
+            "pruned_at": now,
+        }
+        if event_type == "message":
+            if message is not None:
+                if isinstance(message.get("thread_root"), str):
+                    index_kind = "workspace_thread_index"
+                    index_page = message.get("thread_index_page_id")
+                    index_id = self._workspace_thread_index_id(
+                        workspace["id"], str(message.get("thread_root"))
+                    )
+                else:
+                    index_kind = "workspace_conversation_index"
+                    index_page = message.get("conversation_index_page_id")
+                    index_id = self._workspace_index_record_id(
+                        workspace["id"], str(message.get("conversation_id", ""))
+                    )
+                if self._workspace_prune_index_entry(
+                    staged,
+                    kind=index_kind,
+                    page_id=index_page,
+                    event_id=event_id,
+                ):
+                    index_key = (index_kind, index_id)
+                    index = staged.get(index_key) or self.store.get(index_kind, index_id)
+                    if index is not None:
+                        index = dict(index)
+                        index["count"] = max(0, int(index.get("count", 0)) - 1)
+                        index["pruned_count"] = int(index.get("pruned_count", 0)) + 1
+                        staged[index_key] = index
+                self._workspace_prune_index_entry(
+                    staged,
+                    kind="workspace_mention_index",
+                    page_id=message.get("mention_index_page_id"),
+                    event_id=event_id,
+                )
+                for reaction_id in message.get("reaction_state_ids", ()):
+                    if isinstance(reaction_id, str):
+                        deletions.add(("workspace_reaction_state", reaction_id))
+                deletions.add(("workspace_message_state", message_record_id))
+                deletions.add(
+                    (
+                        "workspace_message_hidden",
+                        self.store.opaque_id(
+                            "workspace-message-hidden", workspace["id"], event_id
+                        ),
+                    )
+                )
+                if message.get("thread_root") is None:
+                    summary_id = self._workspace_thread_record_id(
+                        workspace["id"], event_id
+                    )
+                    summary = self.store.get("workspace_thread", summary_id)
+                    if summary is not None:
+                        deletions.add(("workspace_thread", summary_id))
+                        activity_id = self._workspace_thread_activity_id(workspace["id"])
+                        activity_key = ("workspace_thread_activity_index", activity_id)
+                        activity = staged.get(activity_key) or self.store.get(
+                            "workspace_thread_activity_index", activity_id
+                        )
+                        if activity is not None:
+                            activity = dict(activity)
+                            entries = dict(activity.get("entries", {}))
+                            entries.pop(event_id, None)
+                            activity["entries"] = entries
+                            staged[activity_key] = activity
+        else:
+            self._workspace_prune_index_entry(
+                staged,
+                kind="workspace_revision_index",
+                page_id=event.get("revision_page_id"),
+                event_id=event_id,
+            )
+            if event_type == "delete":
+                self._workspace_prune_index_entry(
+                    staged,
+                    kind="workspace_tombstone_index",
+                    page_id=event.get("tombstone_page_id"),
+                    event_id=event_id,
+                )
+            if message is not None:
+                updated_message = dict(message)
+                candidates = []
+                for candidate in message.get("mutation_candidates", ()):
+                    candidate = dict(candidate)
+                    if candidate.get("event_id") == event_id:
+                        candidate.pop("text", None)
+                        candidate.pop("mention_member_ids", None)
+                        candidate["pruned"] = True
+                    candidates.append(candidate)
+                updated_message["mutation_candidates"] = candidates
+                staged[("workspace_message_state", message_record_id)] = updated_message
+        return True
+
+    def _workspace_retention_batch_plan(
+        self, workspace: dict[str, Any], max_events: int
+    ) -> tuple[
+        dict[str, Any],
+        list[tuple[str, str, dict[str, Any]]],
+        list[tuple[str, str]],
+    ]:
+        now = time.time()
+        retention_days = workspace.get("retention_days", 90)
+        state_id = self._workspace_retention_state_id(workspace["id"])
+        existing_state = self.store.get("workspace_retention_state", state_id)
+        index_id = self._workspace_retention_index_id(workspace["id"])
+        retention_index = self.store.get("workspace_retention_index", index_id) or {
+            "workspace_id": workspace["id"],
+            "head_page": None,
+            "count": 0,
+            "high_water": 0,
+        }
+        if retention_days is None:
+            state = {
+                "workspace_id": workspace["id"],
+                "policy_generation": int(workspace.get("retention_generation", 1)),
+                "status": "disabled",
+                "cutoff": None,
+                "page_id": None,
+                "scanned": 0,
+                "pruned": 0,
+                "updated_at": now,
+            }
+            workspace["retention_pruning_state"] = "disabled"
+            return (
+                {
+                    "workspace_id": workspace["id"],
+                    "status": "disabled",
+                    "scanned": 0,
+                    "pruned": 0,
+                    "needs_more": False,
+                },
+                [
+                    ("workspace", self._workspace_record_id(workspace["id"]), workspace),
+                    ("workspace_retention_state", state_id, state),
+                ],
+                [],
+            )
+        policy_generation = int(workspace.get("retention_generation", 1))
+        state = dict(existing_state or {})
+        if (
+            state.get("status") != "running"
+            or state.get("policy_generation") != policy_generation
+        ):
+            state = {
+                "workspace_id": workspace["id"],
+                "policy_generation": policy_generation,
+                "status": "running",
+                "cutoff": now - int(retention_days) * 24 * 60 * 60,
+                "page_id": retention_index.get("head_page"),
+                "captured_high_water": int(retention_index.get("high_water", 0)),
+                "scanned": 0,
+                "pruned": 0,
+                "updated_at": now,
+            }
+        else:
+            state["status"] = "running"
+        cutoff = float(state.get("cutoff", now))
+        page_id = state.get("page_id")
+        staged: dict[tuple[str, str], dict[str, Any]] = {}
+        deletions: set[tuple[str, str]] = set()
+        due_removals: set[str] = set()
+        scanned_this_batch = 0
+        pruned_this_batch = 0
+        changed = False
+        while isinstance(page_id, str):
+            page = self.store.get("workspace_retention_index", page_id)
+            if page is None or page.get("workspace_id") != workspace["id"]:
+                state["status"] = "restart_required"
+                state["page_id"] = None
+                break
+            entries = list(page.get("entries", ()))
+            if scanned_this_batch and scanned_this_batch + len(entries) > max_events:
+                break
+            kept: list[dict[str, Any]] = []
+            for entry in entries:
+                scanned_this_batch += 1
+                event = self.store.get(
+                    "workspace_event", str(entry.get("event_record_id", ""))
+                )
+                if event is None:
+                    continue
+                if float(event.get("created_at", 0)) >= cutoff:
+                    kept.append(entry)
+                    continue
+                if not self._workspace_prune_event(
+                    workspace,
+                    event,
+                    now=now,
+                    staged=staged,
+                    deletions=deletions,
+                    due_removals=due_removals,
+                ):
+                    kept.append(entry)
+                    continue
+                pruned_this_batch += 1
+                changed = True
+            page["entries"] = kept
+            staged[("workspace_retention_index", page_id)] = page
+            page_id = page.get("previous_page")
+            state["page_id"] = page_id
+            if scanned_this_batch >= max_events:
+                break
+        state["scanned"] = int(state.get("scanned", 0)) + scanned_this_batch
+        state["pruned"] = int(state.get("pruned", 0)) + pruned_this_batch
+        state["updated_at"] = now
+        if not isinstance(state.get("page_id"), str):
+            state["status"] = "complete"
+            state["completed_at"] = now
+            state["next_due_at"] = now + 24 * 60 * 60
+        if changed:
+            workspace["retention_generation"] = int(
+                workspace.get("retention_generation", 1)
+            ) + 1
+            state["policy_generation"] = int(workspace["retention_generation"])
+            retention_index["count"] = max(
+                0, int(retention_index.get("count", 0)) - pruned_this_batch
+            )
+            retention_index["pruned_count"] = int(
+                retention_index.get("pruned_count", 0)
+            ) + pruned_this_batch
+            retention_index["retention_generation"] = int(
+                workspace["retention_generation"]
+            )
+            staged[("workspace_retention_index", index_id)] = retention_index
+        workspace["retention_pruning_state"] = state["status"]
+        workspace["retention_pruning_updated_at"] = now
+        staged[("workspace", self._workspace_record_id(workspace["id"]))] = workspace
+        staged[("workspace_retention_state", state_id)] = state
+        for record in self._due_records(remove=due_removals):
+            staged[(record[0], record[1])] = record[2]
+        outcome = {
+            "workspace_id": workspace["id"],
+            "status": state["status"],
+            "scanned": int(state.get("scanned", 0)),
+            "pruned": int(state.get("pruned", 0)),
+            "scanned_this_batch": scanned_this_batch,
+            "pruned_this_batch": pruned_this_batch,
+            "needs_more": state["status"] == "running",
+            "retention_generation": int(workspace.get("retention_generation", 1)),
+            "cutoff": cutoff,
+        }
+        return (
+            outcome,
+            [(kind, record_id, value) for (kind, record_id), value in staged.items()],
+            sorted(deletions),
+        )
+
+    def prune_workspace_history(
+        self,
+        workspace_id: Any,
+        operation_id: Any,
+        max_events: Any = RETENTION_PRUNE_BATCH_DEFAULT,
+    ) -> dict[str, Any]:
+        payload = {"workspace_id": workspace_id, "max_events": max_events}
+        operation_id, digest, replay = self._workspace_operation(
+            "prune_workspace_history", operation_id, payload
+        )
+        if replay is not None:
+            return replay
+        if (
+            isinstance(max_events, bool)
+            or not isinstance(max_events, int)
+            or not 100 <= max_events <= RETENTION_PRUNE_BATCH_MAX
+        ):
+            raise ValidationError("Workspace retention batch size is invalid")
+        workspace = self._require_workspace(workspace_id)
+        if workspace.get("state") not in {
+            "active",
+            "incomplete_sync",
+            "closed",
+            "left",
+            "removed",
+        }:
+            raise ContactNotApproved("Workspace history cannot be pruned now")
+        outcome, records, deletions = self._workspace_retention_batch_plan(
+            workspace, max_events
+        )
+        committed = self.store.commit_operation(
+            operation_id,
+            digest,
+            outcome,
+            records,
+            deletions,
+            redact_command_cache=bool(deletions),
+        )
+        self._workspace_changed(workspace_id, resource_kind="retention_pruning")
+        return committed
+
     def update_workspace_metadata(
         self,
         workspace_id: Any,
@@ -8693,6 +10043,11 @@ class WorkspaceServiceMixin:
             "workspace_pending_control",
             "workspace_conversation_index",
             "workspace_mention_index",
+            "workspace_revision_index",
+            "workspace_tombstone_index",
+            "workspace_retention_index",
+            "workspace_retention_state",
+            "workspace_event_tombstone",
             "workspace_thread",
             "workspace_thread_index",
             "workspace_thread_activity_index",
@@ -8947,6 +10302,36 @@ class WorkspaceServiceMixin:
             candidates, key=lambda item: (item[1], item[0], item[2])
         )[:16]:
             self._attempt_workspace_delivery(delivery_id)
+        self._advance_workspace_retention_jobs()
+
+    def _advance_workspace_retention_jobs(self) -> None:
+        """Advance at most one bounded local pruning batch per scheduler tick."""
+
+        now = time.time()
+        for workspace in self.store.list("workspace")[:MAX_WORKSPACES]:
+            if workspace.get("retention_days") is None:
+                continue
+            state = self.store.get(
+                "workspace_retention_state",
+                self._workspace_retention_state_id(str(workspace.get("id", ""))),
+            )
+            if state is not None and state.get("status") == "complete" and float(
+                state.get("next_due_at", 0)
+            ) > now:
+                continue
+            outcome, records, deletions = self._workspace_retention_batch_plan(
+                workspace, RETENTION_PRUNE_BATCH_DEFAULT
+            )
+            self.store.put_and_delete(
+                records,
+                deletions,
+                redact_command_cache=bool(deletions),
+            )
+            if outcome.get("pruned_this_batch"):
+                self._workspace_changed(
+                    workspace["id"], resource_kind="retention_pruning"
+                )
+            break
 
     def _on_workspace_native_status(
         self, logical_id: str, state: DeliveryState, native_id: str | None

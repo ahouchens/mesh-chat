@@ -107,6 +107,91 @@ def _workspace() -> tuple[RNS.Identity, object, object, object]:
     return owner, created, genesis, manifest
 
 
+@pytest.mark.parametrize(
+    ("initial_retention", "retention_days"),
+    [(90, 30), (30, 90), (90, 365), (90, None)],
+)
+def test_manifest_allows_one_owner_signed_retention_transition(
+    initial_retention: int, retention_days: int | None
+) -> None:
+    owner, _created, _genesis, manifest = _workspace()
+    if initial_retention != 90:
+        initial_raw = create_workspace_manifest(
+            owner,
+            workspace_id=manifest.workspace_id,
+            epoch=manifest.epoch + 1,
+            previous_manifest_hash=manifest.digest,
+            name=manifest.name,
+            description=manifest.description,
+            authority_device_id=manifest.authority_device_id,
+            retention_days=initial_retention,
+            members=[
+                WorkspaceManifestMemberInput(
+                    member.member_id,
+                    member.display_name,
+                    member.role,
+                    [device.serialized for device in member.devices],
+                    member.status,
+                )
+                for member in manifest.members
+            ],
+            now=NOW + 1,
+        )
+        manifest = verify_workspace_manifest_transition(
+            initial_raw, manifest, now=NOW + 1
+        )
+    raw = create_workspace_manifest(
+        owner,
+        workspace_id=manifest.workspace_id,
+        epoch=manifest.epoch + 1,
+        previous_manifest_hash=manifest.digest,
+        name=manifest.name,
+        description=manifest.description,
+        authority_device_id=manifest.authority_device_id,
+        retention_days=retention_days,
+        members=[
+            WorkspaceManifestMemberInput(
+                member.member_id,
+                member.display_name,
+                member.role,
+                [device.serialized for device in member.devices],
+                member.status,
+            )
+            for member in manifest.members
+        ],
+        now=NOW + 2,
+    )
+    updated = verify_workspace_manifest_transition(raw, manifest, now=NOW + 2)
+    assert updated.retention_days == retention_days
+
+
+def test_manifest_rejects_non_authority_retention_transition() -> None:
+    _owner, _created, _genesis, manifest = _workspace()
+    attacker = RNS.Identity()
+    with pytest.raises(IdentityMismatch):
+        create_workspace_manifest(
+            attacker,
+            workspace_id=manifest.workspace_id,
+            epoch=manifest.epoch + 1,
+            previous_manifest_hash=manifest.digest,
+            name=manifest.name,
+            description=manifest.description,
+            authority_device_id=manifest.authority_device_id,
+            retention_days=30,
+            members=[
+                WorkspaceManifestMemberInput(
+                    member.member_id,
+                    member.display_name,
+                    member.role,
+                    [device.serialized for device in member.devices],
+                    member.status,
+                )
+                for member in manifest.members
+            ],
+            now=NOW + 1,
+        )
+
+
 def test_thread_root_is_signed_without_changing_ordinary_event_bytes() -> None:
     owner, created, genesis, manifest = _workspace()
     channel_raw = create_workspace_channel_manifest(

@@ -8,6 +8,7 @@ import {
   AtSign,
   Ban,
   Check,
+  Clock3,
   ChevronRight,
   CircleHelp,
   Copy,
@@ -81,7 +82,10 @@ import type {
   WorkspaceMessage,
   WorkspaceMessagePage,
   WorkspaceMentionPage,
+  WorkspaceRetentionPruneResult,
+  WorkspaceRevisionPage,
   WorkspaceSnapshot,
+  WorkspaceTombstonePage,
   WorkspaceThreadActivityPage,
   WorkspaceThreadPage,
 } from "./types";
@@ -262,6 +266,12 @@ function errorMessage(error: unknown): string {
   }
   if (raw.includes("contact_in_use")) {
     return "Remove this contact from any pending group invitations before deleting them.";
+  }
+  if (raw.includes("stale_cursor")) {
+    return "History changed while this page was open. Reload from the newest retained page.";
+  }
+  if (raw.includes("history_pruned")) {
+    return "That history was pruned from this device under the active retention preference.";
   }
   if (raw.includes("invalid_request")) {
     return "That information could not be validated.";
@@ -1826,6 +1836,14 @@ function WorkspaceSettingsDialog({ workspace, networkSettings, busy, error, onCl
   return <Dialog title="Workspace settings" onClose={onClose}><div className="form-stack workspace-settings"><div><h3>{workspace.name}</h3><p>{workspace.description || "No description"}</p><span className={`workspace-state workspace-state--${workspace.state}`}>{workspaceStateLabel(workspace)}</span></div>{active && workspace.local_role === "owner" && <form className="form-stack" onSubmit={(event) => { event.preventDefault(); onUpdateMetadata(name, description); }}><label>Workspace name<input value={name} maxLength={64} onChange={(event) => setName(event.target.value)} /></label><label>Description<textarea value={description} maxLength={280} rows={3} onChange={(event) => setDescription(event.target.value)} /></label><Button disabled={busy || (name.trim() === workspace.name && description.trim() === workspace.description)}>Publish metadata update</Button></form>}{active && workspace.local_role === "owner" && <form className="form-stack" onSubmit={(event) => { event.preventDefault(); onUpdatePolicies(channelCreation, posting); }}><h3>Public-channel policies</h3><label>Who can create channels<select value={channelCreation} onChange={(event) => setChannelCreation(event.target.value as typeof channelCreation)}><option value="all_members">All members</option><option value="owner_and_admins">Owner only until admins ship</option></select></label><label>Who can post<select value={posting} onChange={(event) => setPosting(event.target.value as typeof posting)}><option value="all_members">All members</option><option value="owner_and_admins">Owner only until admins ship</option></select></label><Button disabled={busy || (channelCreation === workspace.policies.channel_creation && posting === workspace.policies.posting)}>Publish policy update</Button></form>}<dl className="security-list"><div><dt>Workspace ID</dt><dd>{workspace.id}</dd></div><div><dt>Manifest epoch</dt><dd>{workspace.epoch}</dd></div><div><dt>Retention preference</dt><dd>{workspace.retention_days === null ? "Indefinite" : `${workspace.retention_days} days`}</dd></div></dl><p className="muted">This cooperative preference does not guarantee remote deletion. A member device may retain plaintext it already received.</p>{active && <div className="propagation-consent"><h3>Offline delivery node</h3><p className="muted">A workspace may recommend a Reticulum propagation node, but joining never enables it. Approve its 32-character address explicitly on this device.</p><label>Propagation-node address<input value={propagationNode} spellCheck={false} maxLength={32} onChange={(event) => setPropagationNode(event.target.value.toLowerCase())} /></label><label className="checkbox-line"><input type="checkbox" checked={propagationConsent} onChange={(event) => setPropagationConsent(event.target.checked)} /> I approve this node for encrypted store-and-forward delivery.</label><Button variant="secondary" disabled={busy || !propagationConsent || !/^[0-9a-f]{32}$/.test(propagationNode) || networkSettings.approved_propagation_nodes.includes(propagationNode)} onClick={() => onApprovePropagationNode(propagationNode)}>Approve node</Button></div>}{workspace.state === "forked" && <p className="form-error" role="alert">Workspace activity is paused. Mesh Chat will not choose between conflicting signed histories.</p>}{workspace.state === "incomplete_sync" && <p className="form-error" role="alert">Some signed controls or events are missing. Messaging stays paused while Mesh Chat retains the history it can validate.</p>}{error && <p className="form-error" role="alert">{error}</p>}{active && workspace.local_role === "owner" && <div className="danger-zone"><h3>Close workspace</h3><p>This signs a terminal manifest. No later joins or messages are accepted.</p>{confirmingClose ? <><p role="alert"><strong>Close {workspace.name} permanently?</strong> Cached history remains until each member removes it locally.</p><div className="dialog-actions"><Button variant="ghost" disabled={busy} onClick={() => setConfirmingClose(false)}>Cancel</Button><Button variant="danger" disabled={busy} onClick={onCloseWorkspace}>Confirm close workspace</Button></div></> : <Button variant="danger" disabled={busy} onClick={() => setConfirmingClose(true)}>Close workspace…</Button>}</div>}{active && workspace.local_role !== "owner" && <div className="danger-zone"><h3>Leave workspace</h3><p>Your signed request waits for the owner to publish the membership change.</p><Button variant="danger" disabled={busy} onClick={onLeave}>Leave workspace</Button></div>}{terminal && <div className="danger-zone"><h3>Remove local workspace data</h3><p>This permanently erases this device’s encrypted workspace records. Re-entry needs a new invitation.</p>{confirmingRemove ? <><label>Type the workspace ID to confirm<input value={confirmation} onChange={(event) => setConfirmation(event.target.value)} aria-label="Workspace removal confirmation" /></label><Button variant="danger" disabled={busy || confirmation !== workspace.id} onClick={() => onRemove(confirmation)}>Remove local data</Button></> : <Button variant="danger" onClick={() => setConfirmingRemove(true)}>Remove local data…</Button>}</div>}</div></Dialog>;
 }
 
+function WorkspaceRetentionDialog({ workspace, busy, error, onClose, onUpdate, onPrune }: { workspace: Workspace; busy: boolean; error: string; onClose: () => void; onUpdate: (retentionDays: 30 | 90 | 365 | null) => void; onPrune: () => Promise<WorkspaceRetentionPruneResult | null> }) {
+  const [retention, setRetention] = useState<"30" | "90" | "365" | "indefinite">(workspace.retention_days === null ? "indefinite" : String(workspace.retention_days) as "30" | "90" | "365");
+  const [result, setResult] = useState<WorkspaceRetentionPruneResult | null>(null);
+  const selected = retention === "indefinite" ? null : Number(retention) as 30 | 90 | 365;
+  const owner = workspace.local_role === "owner" && workspace.state === "active";
+  return <Dialog title="History & retention" onClose={onClose}><div className="form-stack workspace-history-view"><div><h3>Retained local history</h3><p>{workspace.retention_days === null ? "Indefinite retention" : `${workspace.retention_days}-day retention`} · generation {workspace.retention_generation}</p></div>{owner && <form className="form-stack" onSubmit={(event) => { event.preventDefault(); onUpdate(selected); }}><label>Cooperative retention<select value={retention} onChange={(event) => setRetention(event.target.value as typeof retention)}><option value="30">30 days</option><option value="90">90 days (default)</option><option value="365">365 days</option><option value="indefinite">Indefinite</option></select></label><Button disabled={busy || selected === workspace.retention_days}>Publish signed retention update</Button></form>}<p className="muted">This is a cooperative preference for encrypted history on each member device. It cannot remotely delete plaintext, exports, or backups another device already holds.</p><div className="workspace-directory-status" role="status">Pruning is bounded and restart-safe. It preserves signed high-water marks, retained floors, permanent gaps, controls still referenced by retained events, and the independent seven-day live-delivery window.</div><Button variant="secondary" disabled={busy || workspace.retention_days === null} onClick={() => void onPrune().then(setResult)}>{workspace.retention_days === null ? "Pruning disabled for indefinite retention" : workspace.retention_pruning_state === "running" ? "Continue local pruning" : "Prune local history now"}</Button>{result && <p role="status">{result.status === "complete" ? `Pruning complete · ${result.pruned} canonical events removed.` : `${result.pruned} events removed · ${result.scanned} checked. Continue to process the next bounded batch.`}</p>}{workspace.retention_pruning_state === "restart_required" && <p className="form-error" role="alert">The interrupted pruning cursor was invalidated. Start a fresh bounded pruning pass.</p>}{workspace.state !== "active" && <p className="muted">This retained archive is read-only. It remains only until local retention pruning or confirmed local erasure.</p>}{error && <p className="form-error" role="alert">{error}</p>}</div></Dialog>;
+}
+
 function CreateWorkspaceChannelDialog({ workspace, busy, error, onClose, onCreate }: { workspace: Workspace; busy: boolean; error: string; onClose: () => void; onCreate: (name: string, topic: string, visibility: "public" | "private", memberIds: string[]) => void }) {
   const [name, setName] = useState("");
   const [topic, setTopic] = useState("");
@@ -1915,6 +1933,9 @@ function WorkspaceMessageCard({
     eligibleWorkspaceMentionMemberIds(workspace, allowedMentionMemberIds, message.mention_member_ids ?? []),
   );
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [revisionPage, setRevisionPage] = useState<WorkspaceRevisionPage | null>(null);
+  const [revisionLoading, setRevisionLoading] = useState(false);
+  const [revisionError, setRevisionError] = useState("");
   const mutable = workspace.state === "active" && !message.deleted && !message.mutation_frozen;
   const authorMutable = mutable && message.author_member_id === workspace.local_member_id;
   useEffect(() => {
@@ -1923,8 +1944,29 @@ function WorkspaceMessageCard({
       setEditMentionMemberIds(eligibleWorkspaceMentionMemberIds(workspace, allowedMentionMemberIds, message.mention_member_ids ?? []));
     }
   }, [allowedMentionMemberIds, editing, message.mention_member_ids, message.text, workspace]);
+  const loadRevisions = async (append = false) => {
+    if (revisionLoading) return;
+    setRevisionLoading(true);
+    setRevisionError("");
+    try {
+      const next = await serviceCommand<WorkspaceRevisionPage>("list_workspace_message_revisions", {
+        workspace_id: workspace.id,
+        event_id: message.id,
+        cursor: append ? revisionPage?.next_cursor ?? null : null,
+        limit: 50,
+      });
+      setRevisionPage((current) => append && current
+        ? { ...next, revisions: [...current.revisions, ...next.revisions] }
+        : next);
+    } catch (reason) {
+      setRevisionError(errorMessage(reason));
+      if (!append) setRevisionPage({ message, revisions: [], next_cursor: null, high_water: 0, history_status: "complete" });
+    } finally {
+      setRevisionLoading(false);
+    }
+  };
   return (
-    <article className={`workspace-message ${message.direction === "outbound" ? "workspace-message--self" : ""} ${message.deleted ? "workspace-message--deleted" : ""} ${message.mention_member_ids?.includes(workspace.local_member_id) ? "workspace-message--mentioned" : ""}`}>
+    <><article className={`workspace-message ${message.direction === "outbound" ? "workspace-message--self" : ""} ${message.deleted ? "workspace-message--deleted" : ""} ${message.mention_member_ids?.includes(workspace.local_member_id) ? "workspace-message--mentioned" : ""}`}>
       <Avatar name={message.author_display_name} small />
       <div>
         <header>
@@ -1932,6 +1974,7 @@ function WorkspaceMessageCard({
           <time dateTime={machineTime(message.created_at)}>{formatTime(message.created_at)}</time>
           {(message.revision ?? 0) > 0 && !message.deleted && <small>Edited</small>}
           {message.mention_member_ids?.includes(workspace.local_member_id) && <small className="workspace-message__mention"><AtSign size={12} /> Mentioned you</small>}
+          <button type="button" className="message-history" onClick={() => void loadRevisions(false)} aria-label={`Inspect revisions for message from ${message.author_display_name}`} title="Revision history">History</button>
           <button className="message-hide" onClick={onHide} aria-label={`Hide message from ${message.author_display_name}`} title="Hide locally"><X size={13} /></button>
         </header>
         {message.deleted ? <p className="workspace-message__tombstone">Message deleted by its author.</p> : editing ? (
@@ -1963,7 +2006,7 @@ function WorkspaceMessageCard({
         </footer>}
         {message.direction === "outbound" && <details className="workspace-delivery"><summary>{workspaceDeliveryLabel(message)}</summary>{message.deliveries && <ul>{message.deliveries.map((delivery) => <li key={delivery.device_id}><span>{delivery.member_display_name} · device {delivery.device_short_id}</span><strong>{workspaceDeliveryStateLabel(delivery.state)}</strong></li>)}</ul>}</details>}
       </div>
-    </article>
+    </article>{revisionPage && <Dialog title="Message history" onClose={() => { setRevisionPage(null); setRevisionError(""); }}><div className="form-stack workspace-history-view"><p className="muted">Signed edits, reactions, and deletion tombstones retained on this device. Access is rechecked each time this view opens.</p>{revisionPage.history_status === "pruned" && <div className="workspace-directory-status" role="status">Earlier revisions were pruned under the active retention preference.</div>}{revisionLoading && revisionPage.revisions.length === 0 && <div className="workspace-loading"><span className="spinner" /> Loading revisions…</div>}{!revisionLoading && revisionPage.revisions.length === 0 && <p className="muted">No retained revisions or reactions.</p>}{revisionPage.revisions.map((revision) => <article className="workspace-history-row" key={revision.event_id}><strong>{revision.event_type === "delete" ? "Deletion tombstone" : revision.event_type === "reaction" ? `${revision.active ? "Added" : "Removed"} reaction ${revision.emoji ?? ""}` : `Edit ${revision.revision}`}</strong><time dateTime={machineTime(revision.created_at)}>{formatTime(revision.created_at)}</time>{revision.text != null && <p>{revision.text}</p>}</article>)}{revisionPage.next_cursor && <Button variant="secondary" disabled={revisionLoading} onClick={() => void loadRevisions(true)}>{revisionLoading ? "Loading…" : "Load older revisions"}</Button>}{revisionError && <p className="form-error" role="alert">{revisionError}</p>}</div></Dialog>}</>
   );
 }
 
@@ -1973,6 +2016,34 @@ function WorkspaceMentionChips({ workspace, memberIds, onRemove }: { workspace: 
     const member = workspace.members.find((candidate) => candidate.id === memberId);
     return <span key={memberId}><AtSign size={12} />{member?.display_name ?? memberId.replaceAll("-", "").slice(0, 6)}<button type="button" onClick={() => onRemove(memberId)} aria-label={`Remove mention ${member?.display_name ?? memberId}`}><X size={12} /></button></span>;
   })}</div>;
+}
+
+function WorkspaceTombstoneDialog({ workspace, conversationId, onClose }: { workspace: Workspace; conversationId: string; onClose: () => void }) {
+  const [page, setPage] = useState<WorkspaceTombstonePage | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const load = useCallback(async (append = false) => {
+    if (loading) return;
+    setLoading(true);
+    setError("");
+    try {
+      const next = await serviceCommand<WorkspaceTombstonePage>("list_workspace_tombstones", {
+        workspace_id: workspace.id,
+        conversation_id: conversationId,
+        cursor: append ? page?.next_cursor ?? null : null,
+        limit: 50,
+      });
+      setPage((current) => append && current
+        ? { ...next, tombstones: [...current.tombstones, ...next.tombstones] }
+        : next);
+    } catch (reason) {
+      setError(errorMessage(reason));
+    } finally {
+      setLoading(false);
+    }
+  }, [conversationId, loading, page?.next_cursor, workspace.id]);
+  useEffect(() => { void load(false); }, [conversationId, workspace.id]);
+  return <Dialog title="Deleted-message history" onClose={onClose}><div className="form-stack workspace-history-view"><p className="muted">Author-signed deletion tombstones retained locally. Remote devices may keep plaintext they received before deletion.</p>{page?.history_status === "pruned" && <div className="workspace-directory-status" role="status">Older tombstones were safely pruned after the retention and live-delivery windows.</div>}{loading && !page && <div className="workspace-loading"><span className="spinner" /> Loading tombstones…</div>}{!loading && page?.tombstones.length === 0 && <p className="muted">No retained deletion tombstones in this conversation.</p>}{page?.tombstones.map((item) => <article className="workspace-history-row" key={`${item.position}:${item.message.id}`}><strong>{item.message.author_display_name}</strong><time dateTime={machineTime(item.deleted_at)}>{formatTime(item.deleted_at)}</time><p>Message deleted by its author.</p></article>)}{page?.next_cursor && <Button variant="secondary" disabled={loading} onClick={() => void load(true)}>{loading ? "Loading…" : "Load older tombstones"}</Button>}{error && <p className="form-error" role="alert">{error}</p>}</div></Dialog>;
 }
 
 function eligibleWorkspaceMentionMemberIds(workspace: Workspace, allowedMemberIds: string[], memberIds: string[]) {
@@ -1991,31 +2062,37 @@ function WorkspaceConversation({ workspace, channel, page, draft, mentionMemberI
   const postingRestricted = workspace.policies.posting === "owner_and_admins" && workspace.local_role !== "owner";
   const readOnly = workspace.state !== "active" || channel.state !== "active" || postingRestricted;
   const [attachmentWarning, setAttachmentWarning] = useState("");
+  const [tombstonesOpen, setTombstonesOpen] = useState(false);
   const syncWarning = workspaceSyncIssueLabel(workspace);
   return <section className="conversation workspace-conversation" aria-label={`Workspace channel ${channel.name}`} onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); if (event.dataTransfer.files.length) setAttachmentWarning("Attachments are not supported yet. No file was sent."); }}>
-    <header className="conversation__header"><div className="conversation__identity"><span className="workspace-channel-icon">{channel.visibility === "private" ? <LockKeyhole size={19} /> : <Hash size={19} />}</span><span><h1>{channel.display_name || channel.name}</h1><small>{channel.topic || `${workspace.name} · ${channel.visibility === "private" ? "private signed roster" : workspaceStateLabel(workspace)}`}</small></span></div><div className="workspace-header-actions"><button className="icon-button" onClick={onToggleMentionMute} aria-label={`${channel.mentions_muted ? "Unmute" : "Mute"} mentions in ${channel.name}`} title={channel.mentions_muted ? "Show mentions in Mentions" : "Mute mentions from this channel"}>{channel.mentions_muted ? <BellOff size={18} /> : <Bell size={18} />}</button>{workspace.local_role === "owner" && workspace.state === "active" && workspace.members.filter((member) => member.status === "active").length < 8 && <button className="icon-button" onClick={onInvite} aria-label={`Invite people to ${workspace.name}`} title="Invite people"><UserRoundPlus size={18} /></button>}<button className="icon-button" onClick={onManage} aria-label={`Manage ${channel.name} channel`} title="Channel details"><Settings size={18} /></button><button className="icon-button" onClick={onPeople} aria-label={`People in ${workspace.name}`} title="People"><Users size={18} /></button><button className="icon-button" onClick={onSettings} aria-label={`${workspace.name} settings`} title="Workspace settings"><Building2 size={18} /></button></div></header>
+    <header className="conversation__header"><div className="conversation__identity"><span className="workspace-channel-icon">{channel.visibility === "private" ? <LockKeyhole size={19} /> : <Hash size={19} />}</span><span><h1>{channel.display_name || channel.name}</h1><small>{channel.topic || `${workspace.name} · ${channel.visibility === "private" ? "private signed roster" : workspaceStateLabel(workspace)}`}</small></span></div><div className="workspace-header-actions"><button className="icon-button" onClick={() => setTombstonesOpen(true)} aria-label={`Deleted messages in ${channel.name}`} title="Deleted-message history"><Trash2 size={18} /></button><button className="icon-button" onClick={onToggleMentionMute} aria-label={`${channel.mentions_muted ? "Unmute" : "Mute"} mentions in ${channel.name}`} title={channel.mentions_muted ? "Show mentions in Mentions" : "Mute mentions from this channel"}>{channel.mentions_muted ? <BellOff size={18} /> : <Bell size={18} />}</button>{workspace.local_role === "owner" && workspace.state === "active" && workspace.members.filter((member) => member.status === "active").length < 8 && <button className="icon-button" onClick={onInvite} aria-label={`Invite people to ${workspace.name}`} title="Invite people"><UserRoundPlus size={18} /></button>}<button className="icon-button" onClick={onManage} aria-label={`Manage ${channel.name} channel`} title="Channel details"><Settings size={18} /></button><button className="icon-button" onClick={onPeople} aria-label={`People in ${workspace.name}`} title="People"><Users size={18} /></button><button className="icon-button" onClick={onSettings} aria-label={`${workspace.name} settings`} title="Workspace settings"><Building2 size={18} /></button></div></header>
     <div className="message-scroll workspace-message-scroll">
       {page?.next_cursor && <button className="load-older" disabled={loading} onClick={onLoadOlder}>{loading ? "Loading…" : "Load older messages"}</button>}
+      {page?.history_status === "pruned" && !page.next_cursor && <div className="workspace-directory-status" role="status">Earlier local history was pruned under the active retention preference.</div>}
+      {page?.history_status === "permanent_gap" && <div className="workspace-directory-status" role="status">Some signed ranges are permanently unavailable; this device does not claim the history is complete.</div>}
       {loading && !page && <div className="workspace-loading"><span className="spinner" /> Loading messages…</div>}
       {!loading && page?.messages.length === 0 && <div className="workspace-channel-empty">{channel.visibility === "private" ? <LockKeyhole size={26} /> : <Hash size={26} />}<h2>Welcome to #{channel.display_name || channel.name}</h2><p>{channel.visibility === "private" ? "Only the signed roster receives this channel or its future messages. Newly admitted members receive no earlier messages." : "Everyone in this workspace receives public-channel messages. History depends on copies retained by reachable members."}</p></div>}
       {page?.messages.map((message) => <WorkspaceMessageCard key={message.id} workspace={workspace} message={message} allowedMentionMemberIds={channel.visibility === "private" ? channel.member_ids : workspace.members.filter((member) => member.status === "active").map((member) => member.id)} reactionOpen={reactionTargetId === message.id} reactionCatalogOpen={reactionTargetId === message.id && reactionCatalogOpen} reactionBusyEmoji={reactionTargetId === message.id ? reactionBusyEmoji : null} reactionError={reactionTargetId === message.id ? reactionError : ""} onToggleReaction={() => onToggleReactionPicker(message.id)} onReactionCatalogOpenChange={(open) => onReactionCatalogOpenChange(message.id, open)} onCloseReaction={onCloseReactionPicker} onSetReaction={(emoji, active) => onSetReaction(message.id, emoji, active)} onEdit={(text, editedMentionMemberIds) => onEdit(message.id, text, editedMentionMemberIds)} onDelete={() => onDelete(message.id)} onHide={() => onHide(message.id)} onOpenThread={() => onOpenThread(message.id)} />)}
     </div>
     {(error || attachmentWarning || syncWarning) && <p className="form-error workspace-composer-error" role="alert">{error || attachmentWarning || syncWarning}</p>}
     {readOnly ? <div className="composer-disabled"><LockKeyhole size={16} />{postingRestricted ? "Only the workspace owner can post under the current signed policy." : channel.state === "archived" ? "This channel is archived and read-only." : channel.state === "leaving" ? "Leaving is pending with the channel manager." : workspaceStateLabel(workspace)}</div> : <div className="workspace-composer-shell"><WorkspaceMentionChips workspace={workspace} memberIds={mentionMemberIds} onRemove={(memberId) => onDraft(draft, mentionMemberIds.filter((id) => id !== memberId))} /><div className="composer workspace-composer"><button type="button" className="icon-button" onClick={() => setAttachmentWarning("Attachments are not supported yet. No file was sent.")} aria-label="Add attachment"><Plus size={20} /></button><WorkspaceMentionPicker workspace={workspace} allowedMemberIds={channel.visibility === "private" ? channel.member_ids : workspace.members.filter((member) => member.status === "active").map((member) => member.id)} selectedMemberIds={mentionMemberIds} onSelect={(member) => onDraft(`${draft}${draft && !draft.endsWith(" ") ? " " : ""}@${member.display_name} `, [...mentionMemberIds, member.id].sort())} /><textarea value={draft} onChange={(event) => { setAttachmentWarning(""); onDraft(event.target.value, mentionMemberIds); }} onPaste={(event) => { if (event.clipboardData.files.length || Array.from(event.clipboardData.items).some((item) => item.kind === "file")) { event.preventDefault(); setAttachmentWarning("Attachments are not supported yet. No file was sent."); } }} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); onSend(); } }} placeholder={`Message #${channel.name}`} aria-label={`Message ${channel.name}`} maxLength={16 * 1024} /><Button disabled={sending || !draft.trim()} onClick={onSend} aria-label="Send workspace message"><Send size={18} /></Button></div></div>}
+    {tombstonesOpen && <WorkspaceTombstoneDialog workspace={workspace} conversationId={channel.id} onClose={() => setTombstonesOpen(false)} />}
   </section>;
 }
 
 function WorkspaceDirectConversation({ workspace, direct, page, draft, mentionMemberIds, loading, sending, error, reactionTargetId, reactionCatalogOpen, reactionBusyEmoji, reactionError, onDraft, onSend, onLoadOlder, onHideMessage, onOpenThread, onEdit, onDelete, onToggleReactionPicker, onReactionCatalogOpenChange, onCloseReactionPicker, onSetReaction, onHideConversation, onPeople }: { workspace: Workspace; direct: WorkspaceDirect; page: WorkspaceMessagePage | null; draft: string; mentionMemberIds: string[]; loading: boolean; sending: boolean; error: string; reactionTargetId: string | null; reactionCatalogOpen: boolean; reactionBusyEmoji: string | null; reactionError: string; onDraft: (value: string, mentionMemberIds: string[]) => void; onSend: () => void; onLoadOlder: () => void; onHideMessage: (eventId: string) => void; onOpenThread: (eventId: string) => void; onEdit: (eventId: string, text: string, mentionMemberIds: string[]) => void; onDelete: (eventId: string) => void; onToggleReactionPicker: (eventId: string) => void; onReactionCatalogOpenChange: (eventId: string, open: boolean) => void; onCloseReactionPicker: () => void; onSetReaction: (eventId: string, emoji: string, active: boolean) => void; onHideConversation: () => void; onPeople: () => void }) {
   const [attachmentWarning, setAttachmentWarning] = useState("");
+  const [tombstonesOpen, setTombstonesOpen] = useState(false);
   const readOnly = workspace.state !== "active" || direct.state !== "open";
   const readOnlyLabel = direct.state !== "open"
     ? "This workspace DM is read-only because one participant is no longer active."
     : workspaceStateLabel(workspace);
   return <section className="conversation workspace-conversation" aria-label={`Workspace direct message with ${direct.peer_display_name}`} onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); if (event.dataTransfer.files.length) setAttachmentWarning("Attachments are not supported yet. No file was sent."); }}>
-    <header className="conversation__header"><div className="conversation__identity"><Avatar name={direct.peer_display_name} small /><span><h1>{direct.peer_display_name}</h1><small>{workspace.name} · workspace DM · {direct.peer_short_id}</small></span></div><div className="workspace-header-actions"><button className="icon-button" onClick={onHideConversation} aria-label={`Hide workspace conversation with ${direct.peer_display_name}`} title="Hide locally"><EyeOff size={18} /></button><button className="icon-button" onClick={onPeople} aria-label={`People in ${workspace.name}`} title="People"><Users size={18} /></button></div></header>
-    <div className="message-scroll workspace-message-scroll">{page?.next_cursor && <button className="load-older" disabled={loading} onClick={onLoadOlder}>{loading ? "Loading…" : "Load older messages"}</button>}{loading && !page && <div className="workspace-loading"><span className="spinner" /> Loading messages…</div>}{!loading && page?.messages.length === 0 && <div className="workspace-channel-empty"><MessageCircleMore size={28} /><h2>Message {direct.peer_display_name}</h2><p>This private workspace conversation is authorized by signed membership and does not create a global Contact.</p></div>}{page?.messages.map((message) => <WorkspaceMessageCard key={message.id} workspace={workspace} message={message} allowedMentionMemberIds={direct.participant_member_ids} reactionOpen={reactionTargetId === message.id} reactionCatalogOpen={reactionTargetId === message.id && reactionCatalogOpen} reactionBusyEmoji={reactionTargetId === message.id ? reactionBusyEmoji : null} reactionError={reactionTargetId === message.id ? reactionError : ""} onToggleReaction={() => onToggleReactionPicker(message.id)} onReactionCatalogOpenChange={(open) => onReactionCatalogOpenChange(message.id, open)} onCloseReaction={onCloseReactionPicker} onSetReaction={(emoji, active) => onSetReaction(message.id, emoji, active)} onEdit={(text, editedMentionMemberIds) => onEdit(message.id, text, editedMentionMemberIds)} onDelete={() => onDelete(message.id)} onHide={() => onHideMessage(message.id)} onOpenThread={() => onOpenThread(message.id)} />)}</div>
+    <header className="conversation__header"><div className="conversation__identity"><Avatar name={direct.peer_display_name} small /><span><h1>{direct.peer_display_name}</h1><small>{workspace.name} · workspace DM · {direct.peer_short_id}</small></span></div><div className="workspace-header-actions"><button className="icon-button" onClick={() => setTombstonesOpen(true)} aria-label={`Deleted messages with ${direct.peer_display_name}`} title="Deleted-message history"><Trash2 size={18} /></button><button className="icon-button" onClick={onHideConversation} aria-label={`Hide workspace conversation with ${direct.peer_display_name}`} title="Hide locally"><EyeOff size={18} /></button><button className="icon-button" onClick={onPeople} aria-label={`People in ${workspace.name}`} title="People"><Users size={18} /></button></div></header>
+    <div className="message-scroll workspace-message-scroll">{page?.next_cursor && <button className="load-older" disabled={loading} onClick={onLoadOlder}>{loading ? "Loading…" : "Load older messages"}</button>}{page?.history_status === "pruned" && !page.next_cursor && <div className="workspace-directory-status" role="status">Earlier local DM history was pruned under the active retention preference.</div>}{page?.history_status === "permanent_gap" && <div className="workspace-directory-status" role="status">Some signed DM ranges are permanently unavailable; no workspace owner or admin can recover them.</div>}{loading && !page && <div className="workspace-loading"><span className="spinner" /> Loading messages…</div>}{!loading && page?.messages.length === 0 && <div className="workspace-channel-empty"><MessageCircleMore size={28} /><h2>Message {direct.peer_display_name}</h2><p>This private workspace conversation is authorized by signed membership and does not create a global Contact.</p></div>}{page?.messages.map((message) => <WorkspaceMessageCard key={message.id} workspace={workspace} message={message} allowedMentionMemberIds={direct.participant_member_ids} reactionOpen={reactionTargetId === message.id} reactionCatalogOpen={reactionTargetId === message.id && reactionCatalogOpen} reactionBusyEmoji={reactionTargetId === message.id ? reactionBusyEmoji : null} reactionError={reactionTargetId === message.id ? reactionError : ""} onToggleReaction={() => onToggleReactionPicker(message.id)} onReactionCatalogOpenChange={(open) => onReactionCatalogOpenChange(message.id, open)} onCloseReaction={onCloseReactionPicker} onSetReaction={(emoji, active) => onSetReaction(message.id, emoji, active)} onEdit={(text, editedMentionMemberIds) => onEdit(message.id, text, editedMentionMemberIds)} onDelete={() => onDelete(message.id)} onHide={() => onHideMessage(message.id)} onOpenThread={() => onOpenThread(message.id)} />)}</div>
     {(error || attachmentWarning) && <p className="form-error workspace-composer-error" role="alert">{error || attachmentWarning}</p>}
     {readOnly ? <div className="composer-disabled"><LockKeyhole size={16} />{readOnlyLabel}</div> : <div className="workspace-composer-shell"><WorkspaceMentionChips workspace={workspace} memberIds={mentionMemberIds} onRemove={(memberId) => onDraft(draft, mentionMemberIds.filter((id) => id !== memberId))} /><div className="composer workspace-composer"><button type="button" className="icon-button" onClick={() => setAttachmentWarning("Attachments are not supported yet. No file was sent.")} aria-label="Add attachment"><Plus size={20} /></button><WorkspaceMentionPicker workspace={workspace} allowedMemberIds={direct.participant_member_ids} selectedMemberIds={mentionMemberIds} onSelect={(member) => onDraft(`${draft}${draft && !draft.endsWith(" ") ? " " : ""}@${member.display_name} `, [...mentionMemberIds, member.id].sort())} /><textarea value={draft} onChange={(event) => { setAttachmentWarning(""); onDraft(event.target.value, mentionMemberIds); }} onPaste={(event) => { if (event.clipboardData.files.length || Array.from(event.clipboardData.items).some((item) => item.kind === "file")) { event.preventDefault(); setAttachmentWarning("Attachments are not supported yet. No file was sent."); } }} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); onSend(); } }} placeholder={`Message ${direct.peer_display_name}`} aria-label={`Message ${direct.peer_display_name}`} maxLength={16 * 1024} /><Button disabled={sending || !draft.trim()} onClick={onSend} aria-label="Send workspace direct message"><Send size={18} /></Button></div></div>}
+    {tombstonesOpen && <WorkspaceTombstoneDialog workspace={workspace} conversationId={direct.id} onClose={() => setTombstonesOpen(false)} />}
   </section>;
 }
 
@@ -2141,6 +2218,7 @@ function Messenger({ snapshot, refresh, workspaceChannelInvalidation, onLock, in
   const [inviteWorkspaceOpen, setInviteWorkspaceOpen] = useState(false);
   const [workspacePeopleOpen, setWorkspacePeopleOpen] = useState(false);
   const [workspaceSettingsOpen, setWorkspaceSettingsOpen] = useState(false);
+  const [workspaceRetentionOpen, setWorkspaceRetentionOpen] = useState(false);
   const [workspaceBrowseOpen, setWorkspaceBrowseOpen] = useState(false);
   const [workspaceCreateChannelOpen, setWorkspaceCreateChannelOpen] = useState(false);
   const [workspaceManageChannelOpen, setWorkspaceManageChannelOpen] = useState(false);
@@ -2307,6 +2385,7 @@ function Messenger({ snapshot, refresh, workspaceChannelInvalidation, onLock, in
     setWorkspaceThreadRootId(null);
     setWorkspaceThreadPage(null);
     setWorkspaceManageChannelOpen(false);
+    setWorkspaceRetentionOpen(false);
   }, [activeSpaceId]);
 
   const loadWorkspaceMessages = useCallback(async (append = false) => {
@@ -2799,6 +2878,7 @@ function Messenger({ snapshot, refresh, workspaceChannelInvalidation, onLock, in
     command:
       | "update_workspace_metadata"
       | "update_workspace_policies"
+      | "update_workspace_retention"
       | "remove_workspace_member"
       | "request_workspace_display_name"
       | "decide_workspace_display_name",
@@ -2815,6 +2895,30 @@ function Messenger({ snapshot, refresh, workspaceChannelInvalidation, onLock, in
       await refresh(true);
     } catch (reason) { setWorkspaceActionError(errorMessage(reason)); }
     finally { setWorkspaceActionBusy(false); }
+  };
+  const pruneWorkspaceHistory = async (): Promise<WorkspaceRetentionPruneResult | null> => {
+    if (!selectedWorkspace || workspaceActionBusy) return null;
+    setWorkspaceActionBusy(true); setWorkspaceActionError("");
+    try {
+      const result = await serviceCommand<WorkspaceRetentionPruneResult>("prune_workspace_history", {
+        operation_id: newOperationId(),
+        workspace_id: selectedWorkspace.id,
+        max_events: 500,
+      });
+      await refresh(true);
+      if (result.pruned_this_batch) {
+        setWorkspacePage(null);
+        setWorkspaceMentionPage(null);
+        setWorkspaceThreadActivityPage(null);
+        setWorkspaceThreadPage(null);
+      }
+      return result;
+    } catch (reason) {
+      setWorkspaceActionError(errorMessage(reason));
+      return null;
+    } finally {
+      setWorkspaceActionBusy(false);
+    }
   };
   const runWorkspaceChannelAction = async (
     command:
@@ -3302,6 +3406,7 @@ function Messenger({ snapshot, refresh, workspaceChannelInvalidation, onLock, in
             <p className="workspace-nav__label">Workspace</p>
             <button className="workspace-nav-action" onClick={() => setWorkspacePeopleOpen(true)}><Users size={17} />People <span>{selectedWorkspace.members.filter((member) => member.status === "active").length}</span></button>
             {selectedWorkspace.local_role === "owner" && selectedWorkspace.state === "active" && selectedWorkspace.members.filter((member) => member.status === "active").length < 8 && <button className="workspace-nav-action" onClick={() => setInviteWorkspaceOpen(true)}><UserRoundPlus size={17} />Invite people</button>}
+            <button className="workspace-nav-action" onClick={() => setWorkspaceRetentionOpen(true)}><Clock3 size={17} />History &amp; retention</button>
             <button className="workspace-nav-action" onClick={() => setWorkspaceSettingsOpen(true)}><Settings size={17} />Workspace settings</button>
           </nav>
         </> : null}
@@ -3469,6 +3574,7 @@ function Messenger({ snapshot, refresh, workspaceChannelInvalidation, onLock, in
       {selectedWorkspace && inviteWorkspaceOpen && <WorkspaceInviteDialog workspace={selectedWorkspace} existingInvitations={workspaceInvitations.filter((invitation) => invitation.workspace_id === selectedWorkspace.id)} onClose={() => setInviteWorkspaceOpen(false)} />}
       {selectedWorkspace && workspacePeopleOpen && <WorkspacePeopleDialog workspace={selectedWorkspace} requests={workspaceDisplayNameRequests.filter((request) => request.workspace_id === selectedWorkspace.id)} busy={workspaceActionBusy} error={workspaceActionError} onClose={() => setWorkspacePeopleOpen(false)} onRequestName={(displayName) => void runWorkspaceAdministration("request_workspace_display_name", { display_name: displayName })} onDecideName={(requestId, approve) => void runWorkspaceAdministration("decide_workspace_display_name", { request_id: requestId, approve })} onRemove={(memberId) => void runWorkspaceAdministration("remove_workspace_member", { member_id: memberId })} onMessage={(memberId) => void openWorkspaceDirect(memberId)} />}
       {selectedWorkspace && workspaceSettingsOpen && <WorkspaceSettingsDialog workspace={selectedWorkspace} networkSettings={snapshot.settings} busy={workspaceActionBusy} error={workspaceActionError} onClose={() => setWorkspaceSettingsOpen(false)} onUpdateMetadata={(name, description) => void runWorkspaceAdministration("update_workspace_metadata", { name, description })} onUpdatePolicies={(channelCreation, posting) => void runWorkspaceAdministration("update_workspace_policies", { channel_creation: channelCreation, posting })} onApprovePropagationNode={(node) => void approveWorkspacePropagationNode(node)} onCloseWorkspace={() => void runWorkspaceLifecycle("close_workspace")} onLeave={() => void runWorkspaceLifecycle("leave_workspace")} onRemove={(confirmation) => void runWorkspaceLifecycle("remove_workspace_data", confirmation)} />}
+      {selectedWorkspace && workspaceRetentionOpen && <WorkspaceRetentionDialog workspace={selectedWorkspace} busy={workspaceActionBusy} error={workspaceActionError} onClose={() => setWorkspaceRetentionOpen(false)} onUpdate={(retentionDays) => void runWorkspaceAdministration("update_workspace_retention", { retention_days: retentionDays })} onPrune={pruneWorkspaceHistory} />}
       {newChat && <div className={hasForegroundRequest ? "dialog-suspended" : ""} aria-hidden={hasForegroundRequest ? true : undefined}><NewChatDialog initialInvitation={initialInvitation} onClose={() => { setNewChat(false); onInvitationHandled(); }} onChanged={async () => { await refresh(true); }} /></div>}
       {newGroup && <div className={hasForegroundRequest ? "dialog-suspended" : ""} aria-hidden={hasForegroundRequest ? true : undefined}><CreateGroupDialog contacts={snapshot.contacts} onClose={() => setNewGroup(false)} onCreated={async (group) => { await refresh(true); selectConversation({ kind: "group", id: group.id }); setNewGroup(false); }} /></div>}
       {contactsOpen && <div className={hasForegroundRequest ? "dialog-suspended" : ""} aria-hidden={hasForegroundRequest ? true : undefined}><ContactsDialog contacts={snapshot.contacts.filter((contact) => contact.trust !== "pending_request")} onClose={() => setContactsOpen(false)} onChanged={async () => { await refresh(true); }} onOpenConversation={async (contact) => { const hidden = hiddenConversationKeys.has(`direct:${contact.id}`); setContactsOpen(false); await restoreAndSelect({ kind: "contact", id: contact.id }, hidden); }} onDeleted={async (contactId) => { if (selection?.kind === "contact" && selection.id === contactId) setSelection(null); setDrafts((current) => { const next = { ...current }; delete next[contactId]; return next; }); setLocallySavedMessages((current) => Object.fromEntries(Object.entries(current).filter(([, message]) => message.contact_id !== contactId))); await refresh(true); }} /></div>}

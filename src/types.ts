@@ -208,6 +208,8 @@ export interface Workspace {
   retention_generation: number;
   mention_unread_count: number;
   thread_unread_count: number;
+  retention_pruning_state?: "pending" | "running" | "complete" | "disabled" | "restart_required";
+  retention_pruning_updated_at?: number;
   security_error?: string;
   sync_issue?: "missing_controls" | "missing_predecessor" | "missing_manifest" | "missing_manifest_predecessor" | "queue_pressure" | string;
   created_at: number;
@@ -329,6 +331,54 @@ export interface WorkspaceMessagePage {
   messages: WorkspaceMessage[];
   next_cursor: string | null;
   high_water: number;
+  history_status?: "complete" | "pruned" | "permanent_gap";
+  pruned_count?: number;
+  permanent_gaps?: Array<{ start?: number; end?: number; reason?: string }>;
+}
+
+export interface WorkspaceMessageRevision {
+  event_id: string;
+  event_type: "edit" | "delete" | "reaction";
+  revision: number;
+  author_member_id: string;
+  created_at: number;
+  text?: string;
+  mention_member_ids?: string[];
+  emoji?: string;
+  active?: boolean;
+}
+
+export interface WorkspaceRevisionPage {
+  message: WorkspaceMessage;
+  revisions: WorkspaceMessageRevision[];
+  next_cursor: string | null;
+  high_water: number;
+  history_status: "complete" | "pruned";
+}
+
+export interface WorkspaceTombstone {
+  position: number;
+  deleted_at: number;
+  message: WorkspaceMessage;
+}
+
+export interface WorkspaceTombstonePage {
+  tombstones: WorkspaceTombstone[];
+  next_cursor: string | null;
+  high_water: number;
+  history_status: "complete" | "pruned";
+}
+
+export interface WorkspaceRetentionPruneResult {
+  workspace_id: string;
+  status: "disabled" | "pending" | "running" | "complete" | "restart_required";
+  scanned: number;
+  pruned: number;
+  scanned_this_batch?: number;
+  pruned_this_batch?: number;
+  needs_more: boolean;
+  retention_generation?: number;
+  cutoff?: number | null;
 }
 
 export interface WorkspaceMention {

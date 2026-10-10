@@ -2809,4 +2809,72 @@ describe("desktop workspaces", () => {
     fireEvent.click(within(mentions).getByRole("button", { name: /@Alex the relay is stable/ }));
     expect(await screen.findByLabelText("Thread in Lakewatcher")).toBeTruthy();
   });
+
+  it("publishes cooperative retention and runs a bounded local prune", async () => {
+    const current: Snapshot = { ...snapshot(), workspaces: [workspace], workspace_channels: [workspaceChannel], workspace_join_requests: [], workspace_invitations: [], workspace_drafts: [] };
+    api.runtimePlatform.mockResolvedValue("desktop");
+    api.initializeService.mockResolvedValue(current);
+    api.onInvitation.mockResolvedValue(() => undefined);
+    api.onServiceEvent.mockResolvedValue(() => undefined);
+    api.serviceCommand.mockImplementation(async (command: string) => {
+      if (command === "snapshot" || command === "workspace_snapshot") return current;
+      if (command === "list_workspace_messages") return { messages: [], next_cursor: null, high_water: 0, history_status: "complete", pruned_count: 0, permanent_gaps: [] } satisfies WorkspaceMessagePage;
+      if (command === "prune_workspace_history") return { workspace_id: workspace.id, status: "running", scanned: 500, pruned: 480, scanned_this_batch: 500, pruned_this_batch: 480, needs_more: true, retention_generation: 3, cutoff: 1_700_000_000 };
+      return {};
+    });
+
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Workspace Lakewatcher" }));
+    fireEvent.click(await screen.findByRole("button", { name: "History & retention" }));
+    const dialog = screen.getByRole("dialog", { name: "History & retention" });
+    expect(within(dialog).getByText(/cannot remotely delete plaintext, exports, or backups/i)).toBeTruthy();
+    fireEvent.change(within(dialog).getByRole("combobox", { name: "Cooperative retention" }), { target: { value: "30" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Publish signed retention update" }));
+    await waitFor(() => expect(api.serviceCommand).toHaveBeenCalledWith("update_workspace_retention", expect.objectContaining({ workspace_id: workspace.id, retention_days: 30, operation_id: expect.any(String) })));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Prune local history now" }));
+    await waitFor(() => expect(api.serviceCommand).toHaveBeenCalledWith("prune_workspace_history", expect.objectContaining({ workspace_id: workspace.id, max_events: 500, operation_id: expect.any(String) })));
+    expect(await within(dialog).findByText(/480 events removed · 500 checked/i)).toBeTruthy();
+  });
+
+  it("shows permanent gaps plus bounded revision and deletion history", async () => {
+    const message: WorkspaceMessage = {
+      id: "98989898-9898-4989-8989-989898989898",
+      workspace_id: workspace.id,
+      conversation_id: workspaceChannel.id,
+      direction: "inbound",
+      author_member_id: workspace.local_member_id,
+      author_display_name: "Alex",
+      text: "Corrected retained field note",
+      revision: 2,
+      sequence: 5,
+      event_digest: "ef".repeat(32),
+      created_at: 1_791_072_050,
+    };
+    const current: Snapshot = { ...snapshot(), workspaces: [workspace], workspace_channels: [workspaceChannel], workspace_join_requests: [], workspace_invitations: [], workspace_drafts: [] };
+    api.runtimePlatform.mockResolvedValue("desktop");
+    api.initializeService.mockResolvedValue(current);
+    api.onInvitation.mockResolvedValue(() => undefined);
+    api.onServiceEvent.mockResolvedValue(() => undefined);
+    api.serviceCommand.mockImplementation(async (command: string) => {
+      if (command === "snapshot") return current;
+      if (command === "list_workspace_messages") return { messages: [message], next_cursor: null, high_water: 9, history_status: "permanent_gap", pruned_count: 4, permanent_gaps: [{ start: 1, end: 4, reason: "pruned" }] } satisfies WorkspaceMessagePage;
+      if (command === "list_workspace_message_revisions") return { message, revisions: [{ event_id: "edit-one", event_type: "edit", revision: 1, author_member_id: workspace.local_member_id, created_at: 1_791_072_040, text: "Earlier retained note" }], next_cursor: null, high_water: 1, history_status: "pruned" };
+      if (command === "list_workspace_tombstones") return { tombstones: [{ position: 1, deleted_at: 1_791_072_045, message: { ...message, id: "deleted-one", text: "", deleted: true } }], next_cursor: null, high_water: 1, history_status: "pruned" };
+      return {};
+    });
+
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Workspace Lakewatcher" }));
+    const conversation = await screen.findByLabelText("Workspace channel general");
+    expect(within(conversation).getByText(/permanently unavailable/i)).toBeTruthy();
+    fireEvent.click(within(conversation).getByRole("button", { name: "Inspect revisions for message from Alex" }));
+    let dialog = await screen.findByRole("dialog", { name: "Message history" });
+    expect(within(dialog).getByText("Earlier retained note")).toBeTruthy();
+    expect(within(dialog).getByText(/Earlier revisions were pruned/i)).toBeTruthy();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Close" }));
+    fireEvent.click(within(conversation).getByRole("button", { name: "Deleted messages in general" }));
+    dialog = await screen.findByRole("dialog", { name: "Deleted-message history" });
+    expect(within(dialog).getByText(/Message deleted by its author/i)).toBeTruthy();
+    expect(within(dialog).getByText(/Older tombstones were safely pruned/i)).toBeTruthy();
+  });
 });

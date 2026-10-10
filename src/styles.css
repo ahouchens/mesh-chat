@@ -431,6 +431,12 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus
 .workspace-thread-divider::before, .workspace-thread-divider::after { height: 1px; flex: 1; content: ""; background: var(--line); }
 .workspace-thread-empty { padding: 18px; color: var(--muted); text-align: center; font-size: .82rem; }
 .workspace-message__actions > button { display: inline-flex; align-items: center; gap: 4px; }
+.message-history { padding: 2px 5px; color: var(--muted); background: transparent; border: 0; border-radius: 6px; font-size: .65rem; font-weight: 750; cursor: pointer; }
+.message-history:hover, .message-history:focus-visible { color: var(--green-700); background: #e8eee9; }
+.workspace-history-view { min-width: min(520px, 78vw); }
+.workspace-history-row { display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 5px 12px; padding: 10px 11px; background: #f7f8f4; border: 1px solid var(--line); border-radius: 10px; }
+.workspace-history-row time { color: var(--muted); font-size: .68rem; }
+.workspace-history-row p { grid-column: 1 / -1; margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }

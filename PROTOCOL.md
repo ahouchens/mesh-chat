@@ -446,6 +446,49 @@ reply and adjusts its unread contribution. Removal, a private-roster gap,
 channel leave, hidden workspace DM, missing retained data, or a retention
 generation change cannot grant access through a stale index or cursor.
 
+### Retained local history and cooperative retention
+
+Increment 9 enables the manifest's signed `retention_days` transition. The
+authority owner may select exactly 30, 90, or 365 days, or JSON null for
+indefinite retention; 90 remains the default. The transition is one semantic
+manifest change and cannot be combined with membership, metadata, posting,
+channel-creation, or closure changes. A non-authority signature is invalid.
+This field communicates a cooperative local-history preference and cannot
+force another endpoint to delete plaintext or an export it already holds.
+
+Every accepted canonical event enters a sealed retention-order page. Separate
+sealed pages cover conversation roots, per-root replies, local mentions,
+per-message revisions/reactions, and per-conversation deletion tombstones. A
+cursor authenticates workspace and view identifiers, authorization generation,
+retention generation, high-water, page, and offset. A changed generation is
+`stale_cursor`; a requested retired event is `history_pruned`. No continuation
+silently crosses a policy or pruning boundary.
+
+Local pruning processes at most 1,000 canonical events per transaction and
+persists a restart cursor. It removes expired event bodies, derived
+message/reaction state, completed delivery detail, operation results, due work,
+and page entries. Authority manifests and channel controls are retained while
+any dependent event can reference them. An author-deletion tombstone and its
+target survive until the later of the active history boundary and local durable
+receipt plus seven days. The live-delivery expiry remains seven days under
+every retention choice, including indefinite history.
+
+Pruned sequence positions remain as content-free sealed coverage markers and
+each retired event UUID retains its digest. Stream summaries keep signed
+high-water, retained floor, seen ranges, and permanent gaps. These records
+prevent delayed duplicates, reversed mutations, or a reused UUID from
+resurrecting deleted/edited content, while page results distinguish complete,
+locally pruned, and permanently unavailable history.
+
+Every retained body is re-authorized when read. Active and archived public
+channels require historical membership and the current workspace boundary;
+private content additionally requires the exact historical roster and the
+current admission era; a workspace DM remains visible only to its two signed
+participants. Former members receive no new event or catch-up leg. Content
+already retained and historically authorized may remain as a read-only local
+archive until pruning or confirmed local erasure. Owner or future admin status
+never grants access to another pair's workspace-DM history.
+
 ## Delivery evidence
 
 | App state | Required evidence |
