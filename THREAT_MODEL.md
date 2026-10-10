@@ -119,6 +119,20 @@
   current local membership, private roster access, channel state, hides,
   tombstones, and the active edited mention position. Read high-waters, mute
   preferences, and draft mention IDs never leave the device.
+- Workspace thread replies sign one retained ordinary root UUID and repeat the
+  root conversation's exact public, private-roster, or two-participant DM
+  boundary. Roots cannot themselves be replies. Reply mutations repeat the
+  same root, use the existing deterministic resolution rules, and cannot widen
+  the historical audience. Missing or reversed roots, replies, controls, and
+  mutations remain inert in the bounded pending queue until their signed
+  dependencies validate.
+- Thread indexes, read high-waters, drafts, cursors, and the capped 1,024-root
+  activity map are sealed local records. Each access rechecks the current
+  workspace state, root hide/existence, channel state, private roster and
+  admission version, or exact DM participants. A removal/re-admission gap does
+  not restore an older private root. Startup thread badges and draft filtering
+  use encrypted bounded metadata and do not open message bodies or scan event
+  and delivery collections.
 - Workspace record IDs and cursors are keyed opaque values. Message pages,
   mention pages, due-work shards, unread state, notification preferences,
   drafts, delivery legs and operation results are separately sealed. Startup
@@ -181,10 +195,10 @@ Depending on configured interfaces, observers may learn local discovery presence
   after permanent owner-key loss, a globally ordered group timeline, public or
   large channels, discoverable groups, anonymous membership, selective history
   sharing, or safe multi-owner membership editing.
-- Workspace cooperative message-history backfill, threads, search
+- Workspace cooperative message-history backfill, search
   exchange, private history catch-up, direct
   message history catch-up, linked devices, authority transfer, and mobile
-  workspace use. Increment 7 exposes only history already present locally;
+  workspace use. Increment 8 exposes only history already present locally;
   public discovery
   does not imply complete historical messages, and newly admitted private
   members receive future events only.

@@ -127,6 +127,37 @@ The workspace summary persists the derived mention unread count after each
 workspace change, so ordinary startup snapshots do not decrypt message bodies;
 profiles from the superseded preview builds are re-derived once on migration.
 
+One-level workspace threads reuse the canonical workspace event stream. An
+ordinary root retains the existing JSON-null `thread_root`, so its canonical
+bytes do not change. A reply signs the root message UUID, and a mutation of a
+reply repeats the same root UUID. The service resolves that UUID to a retained
+ordinary message in the same workspace and conversation and rejects a root
+that is itself a reply. Public-channel replies retain empty audience metadata;
+private replies retain the exact signed roster; workspace-DM replies retain the
+exact sorted two-member audience.
+
+Reply bodies are materialized in sealed, per-root `workspace_thread_index`
+pages instead of the ordinary conversation timeline. `workspace_thread`
+stores the encrypted reply count, high-water, unread count, root authorization
+metadata, and latest activity time. A capped `workspace_thread_activity_index`
+contains at most 1,024 root IDs and metadata-only activity positions. Separate
+sealed read and draft records are keyed by root. Thread and activity cursors
+bind index high-water, retention generation, workspace authorization, channel
+heads/rosters, and DM visibility. Explicit thread listing may decrypt the root
+and requested reply page; ordinary startup snapshots read only the bounded
+activity summaries and encrypted draft authorization metadata, never message
+bodies or complete event/delivery collections.
+
+Every thread entry point treats indexes as hints rather than grants. It
+rechecks active workspace membership, root existence and local hide state,
+channel state, current private roster, the root channel checkpoint and the
+local member's latest admission version, or the exact current DM participants.
+This same check gates reply creation, edits, tombstones, reactions, mentions,
+read advancement, drafts, activity rows, and cursor continuation. Root/reply
+events and their derived pages, unread state, drafts, delivery legs, and
+idempotent result commit atomically; missing roots and predecessors remain in
+the existing bounded pending queue until they can be verified.
+
 Checkpoints are pinned to the genesis owner member, authority device, public
 identity, and destination. The initial manifest also pins the genesis name and
 description. Each later manifest performs exactly one enabled transition:

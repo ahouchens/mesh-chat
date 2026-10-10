@@ -86,6 +86,7 @@ MESSAGE_PAGE_DEFAULT = 50
 MESSAGE_PAGE_MAX = 100
 MESSAGE_PAGE_ENTRIES = 100
 MESSAGE_PAGE_MAX_BYTES = 128 * 1024
+THREAD_ACTIVITY_MAX_ROOTS = 1024
 MAX_PENDING_EVENTS = 256
 MAX_PENDING_EVENTS_PER_SENDER = 64
 MAX_PENDING_EVENT_BYTES = 16 * 1024 * 1024
@@ -157,9 +158,12 @@ class WorkspaceServiceMixin:
             unread = self._workspace_mention_unread_count(workspace)
             if int(workspace.get("mention_unread_count", -1)) != unread:
                 workspace["mention_unread_count"] = unread
-                self.store.put(
-                    "workspace", self._workspace_record_id(workspace_id), workspace
-                )
+            thread_unread = self._workspace_thread_unread_count(workspace)
+            if int(workspace.get("thread_unread_count", -1)) != thread_unread:
+                workspace["thread_unread_count"] = thread_unread
+            self.store.put(
+                "workspace", self._workspace_record_id(workspace_id), workspace
+            )
         self.emit(
             {
                 "type": "event",
@@ -250,6 +254,27 @@ class WorkspaceServiceMixin:
 
     def _workspace_mention_read_id(self, workspace_id: str) -> str:
         return self.store.opaque_id("workspace-read-state", workspace_id, "mentions")
+
+    def _workspace_thread_record_id(self, workspace_id: str, root_event_id: str) -> str:
+        return self.store.opaque_id("workspace-thread", workspace_id, root_event_id)
+
+    def _workspace_thread_index_id(self, workspace_id: str, root_event_id: str) -> str:
+        return self.store.opaque_id("workspace-thread-index", workspace_id, root_event_id)
+
+    def _workspace_thread_page_id(
+        self, workspace_id: str, root_event_id: str, seed: str
+    ) -> str:
+        return self.store.opaque_id(
+            "workspace-thread-page", workspace_id, root_event_id, seed
+        )
+
+    def _workspace_thread_activity_id(self, workspace_id: str) -> str:
+        return self.store.opaque_id("workspace-thread-activity", workspace_id)
+
+    def _workspace_thread_read_id(self, workspace_id: str, root_event_id: str) -> str:
+        return self.store.opaque_id(
+            "workspace-read-state", workspace_id, "thread", root_event_id
+        )
 
     def _workspace_notification_preference_id(
         self, workspace_id: str, conversation_id: str
@@ -1062,6 +1087,22 @@ class WorkspaceServiceMixin:
             "conversation_id": conversation_id,
             "text": str(draft.get("text", "")),
         }
+        thread_root_id = draft.get("thread_root_id")
+        if thread_root_id is not None:
+            if not isinstance(thread_root_id, str):
+                return None
+            try:
+                self._workspace_thread_access_descriptor(
+                    workspace,
+                    thread_root_id,
+                    conversation_id,
+                    require_writable=True,
+                    root_channel_digest=draft.get("root_channel_digest"),
+                    root_author_member_id=draft.get("root_author_member_id"),
+                )
+            except (ContactNotApproved, ValidationError):
+                return None
+            public["thread_root_id"] = thread_root_id
         if visible_mentions:
             public["mention_member_ids"] = visible_mentions
         return public
@@ -1090,6 +1131,16 @@ class WorkspaceServiceMixin:
             message.get("mention_position", 0)
         ):
             return False
+        thread_root = message.get("thread_root")
+        if isinstance(thread_root, str):
+            try:
+                root, _kind, _conversation = self._workspace_thread_context(
+                    workspace, thread_root
+                )
+            except (ContactNotApproved, ValidationError):
+                return False
+            if root.get("conversation_id") != message.get("conversation_id"):
+                return False
         manifest = self._workspace_current_manifest(workspace)
         local_member = find_member(manifest, local_member_id)
         if local_member is None or local_member.status != "active":
@@ -1190,6 +1241,205 @@ class WorkspaceServiceMixin:
             page_id = page.get("previous_page")
         return unread
 
+    def _workspace_thread_context(
+        self,
+        workspace: dict[str, Any],
+        root_event_id: str,
+        *,
+        require_writable: bool = False,
+    ) -> tuple[dict[str, Any], str, dict[str, Any]]:
+        """Return a root and its currently authorized conversation.
+
+        Thread indexes are local conveniences, never grants. Every entry point
+        rechecks the root, local hide state, current workspace state, and the
+        channel/DM disclosure boundary before returning a body.
+        """
+
+        try:
+            checked_root = str(uuid.UUID(root_event_id))
+        except (ValueError, TypeError, AttributeError) as exc:
+            raise ValidationError("Workspace thread root is invalid") from exc
+        if checked_root != root_event_id:
+            raise ValidationError("Workspace thread root is invalid")
+        root = self.store.get(
+            "workspace_message_state", self._workspace_message_record_id(root_event_id)
+        )
+        root_event = self.store.get(
+            "workspace_event", self._workspace_event_record_id(root_event_id)
+        )
+        if (
+            root is None
+            or root_event is None
+            or root.get("workspace_id") != workspace.get("id")
+            or root_event.get("event_type", "message") != "message"
+            or root_event.get("thread_root") is not None
+            or root.get("thread_root") is not None
+            or self.store.get(
+                "workspace_message_hidden",
+                self.store.opaque_id(
+                    "workspace-message-hidden", workspace["id"], root_event_id
+                ),
+            )
+            is not None
+        ):
+            raise ContactNotApproved("Workspace thread is unavailable")
+        conversation_id = str(root.get("conversation_id", ""))
+        kind, conversation = self._workspace_thread_access_descriptor(
+            workspace,
+            root_event_id,
+            conversation_id,
+            require_writable=require_writable,
+            root_channel_digest=root_event.get("channel_digest"),
+            root_author_member_id=root_event.get("author_member_id"),
+        )
+        return root, kind, conversation
+
+    def _workspace_thread_access_descriptor(
+        self,
+        workspace: dict[str, Any],
+        root_event_id: str,
+        conversation_id: str,
+        *,
+        require_writable: bool = False,
+        root_channel_digest: Any = None,
+        root_author_member_id: Any = None,
+    ) -> tuple[str, dict[str, Any]]:
+        """Authorize encrypted thread metadata without opening a message body."""
+
+        try:
+            checked_root = str(uuid.UUID(root_event_id))
+            checked_conversation = str(uuid.UUID(conversation_id))
+        except (ValueError, TypeError, AttributeError) as exc:
+            raise ValidationError("Workspace thread metadata is invalid") from exc
+        if checked_root != root_event_id or checked_conversation != conversation_id:
+            raise ValidationError("Workspace thread metadata is invalid")
+        if workspace.get("state") not in {"active", "incomplete_sync", "closed"}:
+            raise ContactNotApproved("Workspace thread is unavailable")
+        if self.store.get(
+            "workspace_message_hidden",
+            self.store.opaque_id(
+                "workspace-message-hidden", workspace["id"], root_event_id
+            ),
+        ) is not None:
+            raise ContactNotApproved("Workspace thread is unavailable")
+        kind, conversation = self._require_workspace_conversation(
+            workspace["id"], conversation_id
+        )
+        local_member_id = str(workspace.get("local_member_id", ""))
+        if kind == "direct":
+            if conversation.get("hidden") or local_member_id not in conversation.get(
+                "participant_member_ids", ()
+            ):
+                raise ContactNotApproved("Workspace thread is unavailable")
+            if require_writable and self._public_workspace_direct(conversation)["state"] != "open":
+                raise ContactNotApproved("Workspace thread is read-only")
+        else:
+            state = conversation.get("state")
+            if state not in {"active", "archived"}:
+                raise ContactNotApproved("Workspace thread is unavailable")
+            if (
+                conversation.get("visibility") == "private"
+                and local_member_id not in conversation.get("member_ids", ())
+            ):
+                raise ContactNotApproved("Workspace thread is unavailable")
+            if require_writable and state != "active":
+                raise ContactNotApproved("Workspace thread is read-only")
+            if conversation.get("visibility") == "private":
+                current_channel = self._workspace_channel_by_digest(
+                    str(conversation.get("head_hash", ""))
+                )
+                event_channel = (
+                    self._workspace_channel_by_digest(root_channel_digest)
+                    if isinstance(root_channel_digest, str)
+                    else None
+                )
+                admission_version = (
+                    self._private_channel_admission_version(
+                        current_channel, local_member_id
+                    )
+                    if current_channel is not None
+                    else None
+                )
+                if (
+                    current_channel is None
+                    or event_channel is None
+                    or not isinstance(root_author_member_id, str)
+                    or admission_version is None
+                    or event_channel.version < admission_version
+                    or not self._private_event_is_currently_entitled(
+                        current_channel,
+                        event_channel,
+                        local_member_id=local_member_id,
+                        author_member_id=root_author_member_id,
+                    )
+                ):
+                    raise ContactNotApproved("Workspace thread is unavailable")
+        return kind, conversation
+
+    def _workspace_thread_unread_count(self, workspace: dict[str, Any]) -> int:
+        unread = 0
+        activity = self.store.get(
+            "workspace_thread_activity_index",
+            self._workspace_thread_activity_id(str(workspace.get("id", ""))),
+        )
+        entries = activity.get("entries", {}) if activity else {}
+        if not isinstance(entries, dict):
+            return 0
+        for root_event_id, entry in list(entries.items())[:THREAD_ACTIVITY_MAX_ROOTS]:
+            if not isinstance(root_event_id, str) or not isinstance(entry, dict):
+                continue
+            summary = self.store.get(
+                "workspace_thread",
+                self._workspace_thread_record_id(workspace["id"], root_event_id),
+            )
+            if summary is None or summary.get("workspace_id") != workspace.get("id"):
+                continue
+            try:
+                self._workspace_thread_access_descriptor(
+                    workspace,
+                    root_event_id,
+                    str(summary.get("conversation_id", "")),
+                    root_channel_digest=summary.get("root_channel_digest"),
+                    root_author_member_id=summary.get("root_author_member_id"),
+                )
+            except (ContactNotApproved, ValidationError):
+                continue
+            unread += int(summary.get("unread_count", 0))
+        return unread
+
+    def _workspace_thread_authorization_digest(
+        self, workspace: dict[str, Any]
+    ) -> str:
+        channels = [
+            {
+                "id": channel.get("id"),
+                "head": channel.get("head_hash"),
+                "state": channel.get("state"),
+                "members": channel.get("member_ids", []),
+            }
+            for channel in self.store.list("workspace_channel")
+            if channel.get("workspace_id") == workspace.get("id")
+        ]
+        directs = [
+            {
+                "id": direct.get("id"),
+                "participants": direct.get("participant_member_ids", []),
+                "hidden": bool(direct.get("hidden")),
+            }
+            for direct in self.store.list("workspace_direct")
+            if direct.get("workspace_id") == workspace.get("id")
+        ]
+        return hashlib.sha256(
+            canonical_bytes(
+                {
+                    "manifest": workspace.get("manifest_hash"),
+                    "state": workspace.get("state"),
+                    "channels": sorted(channels, key=lambda item: str(item["id"])),
+                    "directs": sorted(directs, key=lambda item: str(item["id"])),
+                }
+            )
+        ).hexdigest()
+
     def _public_workspace(self, workspace: dict[str, Any]) -> dict[str, Any]:
         public = {
             key: value
@@ -1226,6 +1476,9 @@ class WorkspaceServiceMixin:
         )
         public["mention_unread_count"] = int(
             workspace.get("mention_unread_count", 0)
+        )
+        public["thread_unread_count"] = int(
+            workspace.get("thread_unread_count", 0)
         )
         return public
 
@@ -1666,6 +1919,8 @@ class WorkspaceServiceMixin:
             "members": [self._member_summary(item) for item in manifest.members],
             "authorization_generation": 1,
             "retention_generation": 1,
+            "mention_unread_count": 0,
+            "thread_unread_count": 0,
             "created_at": now,
             "updated_at": now,
         }
@@ -2099,6 +2354,8 @@ class WorkspaceServiceMixin:
             ],
             "authorization_generation": 1,
             "retention_generation": 1,
+            "mention_unread_count": 0,
+            "thread_unread_count": 0,
             "created_at": now,
             "updated_at": now,
         }
@@ -2455,6 +2712,138 @@ class WorkspaceServiceMixin:
             ("workspace_mention_index", mention_page_id, mention_page),
         ]
 
+    def _workspace_thread_reply_records(
+        self,
+        workspace: dict[str, Any],
+        event: VerifiedWorkspaceEvent,
+        message_record_id: str,
+        message: dict[str, Any],
+        *,
+        direction: str,
+    ) -> list[tuple[str, str, dict[str, Any]]]:
+        assert event.thread_root is not None
+        root_record_id = self._workspace_message_record_id(event.thread_root)
+        root = self.store.get("workspace_message_state", root_record_id)
+        root_event = self.store.get(
+            "workspace_event", self._workspace_event_record_id(event.thread_root)
+        )
+        if root is None or root_event is None:
+            raise ValidationError("Workspace thread root is unavailable")
+        index_id = self._workspace_thread_index_id(
+            event.workspace_id, event.thread_root
+        )
+        index = self.store.get("workspace_thread_index", index_id) or {
+            "workspace_id": event.workspace_id,
+            "conversation_id": event.conversation_id,
+            "root_event_id": event.thread_root,
+            "head_page": None,
+            "count": 0,
+            "high_water": 0,
+            "authorization_generation": int(
+                workspace.get("authorization_generation", 1)
+            ),
+            "retention_generation": int(workspace.get("retention_generation", 1)),
+        }
+        page_id = index.get("head_page")
+        page = (
+            self.store.get("workspace_thread_index", page_id)
+            if isinstance(page_id, str)
+            else None
+        )
+        position = int(index.get("high_water", 0)) + 1
+        entry = {
+            "event_id": event.event_id,
+            "message_record_id": message_record_id,
+            "position": position,
+            "created_at": float(event.created_at),
+        }
+        encoded_size = len(json.dumps(entry, separators=(",", ":")).encode("utf-8"))
+        if (
+            page is None
+            or len(page.get("entries", [])) >= MESSAGE_PAGE_ENTRIES
+            or int(page.get("encoded_bytes", 0)) + encoded_size
+            > MESSAGE_PAGE_MAX_BYTES
+        ):
+            page_id = self._workspace_thread_page_id(
+                event.workspace_id, event.thread_root, event.event_id
+            )
+            page = {
+                "workspace_id": event.workspace_id,
+                "conversation_id": event.conversation_id,
+                "root_event_id": event.thread_root,
+                "previous_page": index.get("head_page"),
+                "entries": [],
+                "encoded_bytes": 0,
+            }
+            index["head_page"] = page_id
+        page["entries"] = [*page.get("entries", []), entry]
+        page["encoded_bytes"] = int(page.get("encoded_bytes", 0)) + encoded_size
+        index["count"] = int(index.get("count", 0)) + 1
+        index["high_water"] = position
+        message["thread_position"] = position
+
+        summary_id = self._workspace_thread_record_id(
+            event.workspace_id, event.thread_root
+        )
+        summary = self.store.get("workspace_thread", summary_id) or {
+            "id": summary_id,
+            "workspace_id": event.workspace_id,
+            "conversation_id": event.conversation_id,
+            "conversation_kind": message["conversation_kind"],
+            "root_event_id": event.thread_root,
+            "root_channel_digest": root_event.get("channel_digest"),
+            "root_author_member_id": root_event.get("author_member_id"),
+            "reply_count": 0,
+            "unread_count": 0,
+            "high_water": 0,
+            "created_at": float(root.get("created_at", event.created_at)),
+        }
+        summary["reply_count"] = int(summary.get("reply_count", 0)) + 1
+        summary["high_water"] = position
+        summary["updated_at"] = float(event.created_at)
+        if direction == "inbound":
+            summary["unread_count"] = int(summary.get("unread_count", 0)) + 1
+
+        root = dict(root)
+        root["reply_count"] = int(summary["reply_count"])
+        root["thread_unread_count"] = int(summary.get("unread_count", 0))
+        root["latest_reply_at"] = float(event.created_at)
+
+        activity_id = self._workspace_thread_activity_id(event.workspace_id)
+        activity = self.store.get("workspace_thread_activity_index", activity_id) or {
+            "workspace_id": event.workspace_id,
+            "high_water": 0,
+            "entries": {},
+            "authorization_generation": int(
+                workspace.get("authorization_generation", 1)
+            ),
+            "retention_generation": int(workspace.get("retention_generation", 1)),
+        }
+        activity_position = int(activity.get("high_water", 0)) + 1
+        entries = dict(activity.get("entries", {}))
+        if event.thread_root not in entries and len(entries) >= THREAD_ACTIVITY_MAX_ROOTS:
+            oldest = min(
+                entries,
+                key=lambda root_id: int(entries[root_id].get("position", 0)),
+            )
+            entries.pop(oldest, None)
+        entries[event.thread_root] = {
+            "root_event_id": event.thread_root,
+            "conversation_id": event.conversation_id,
+            "conversation_kind": message["conversation_kind"],
+            "position": activity_position,
+            "updated_at": float(event.created_at),
+        }
+        activity["entries"] = entries
+        activity["high_water"] = activity_position
+        return [
+            ("workspace_thread_index", index_id, index),
+            ("workspace_thread_index", str(page_id), page),
+            ("workspace_thread", summary_id, summary),
+            ("workspace_thread_activity_index", activity_id, activity),
+            ("workspace_message_state", root_record_id, root),
+        ]
+
     def _append_workspace_event_records(
         self,
         workspace: dict[str, Any],
@@ -2481,6 +2870,7 @@ class WorkspaceServiceMixin:
             ),
             "audience_member_ids": list(event.audience_member_ids),
             "mention_member_ids": list(event.mentions),
+            "thread_root": event.thread_root,
             "target_event_id": event.target_event_id,
             "base_revision": event.base_revision,
             "revision": event.revision,
@@ -2552,6 +2942,7 @@ class WorkspaceServiceMixin:
             "mutation_candidates": [],
             "reactions": [],
             "mention_member_ids": list(event.mentions),
+            "thread_root": event.thread_root,
             "sequence": event.sequence,
             "event_digest": event.digest,
             "conversation_kind": (
@@ -2559,6 +2950,30 @@ class WorkspaceServiceMixin:
             ),
             "created_at": float(event.created_at),
         }
+        if event.thread_root is not None:
+            records.append(("workspace_message_state", message_record_id, message))
+            records.extend(
+                self._workspace_thread_reply_records(
+                    workspace,
+                    event,
+                    message_record_id,
+                    message,
+                    direction=direction,
+                )
+            )
+            if workspace.get("local_member_id") in event.mentions:
+                records.extend(
+                    self._workspace_mention_index_records(
+                        workspace_id=event.workspace_id,
+                        event_id=event.event_id,
+                        conversation_id=event.conversation_id,
+                        conversation_kind=message["conversation_kind"],
+                        created_at=float(event.created_at),
+                        message_record_id=message_record_id,
+                        message=message,
+                    )
+                )
+            return records, message
         index_id = self._workspace_index_record_id(
             event.workspace_id, event.conversation_id
         )
@@ -2981,6 +3396,18 @@ class WorkspaceServiceMixin:
             raise ContactNotApproved("Only the message author can change it")
         if message.get("deleted"):
             raise ContactNotApproved("Workspace message was deleted")
+        thread_root = target_event.get("thread_root")
+        if isinstance(thread_root, str):
+            self._workspace_thread_context(
+                workspace, thread_root, require_writable=True
+            )
+        elif self.store.get(
+            "workspace_thread",
+            self._workspace_thread_record_id(workspace_id, target_event_id),
+        ) is not None:
+            self._workspace_thread_context(
+                workspace, target_event_id, require_writable=True
+            )
         manifest, channel, audience = self._workspace_mutation_context(
             workspace, target_event
         )
@@ -3043,6 +3470,7 @@ class WorkspaceServiceMixin:
             mention_member_ids=mentions if event_type == "edit" else None,
             emoji=emoji if event_type == "reaction" else None,
             active=active if event_type == "reaction" else None,
+            thread_root=target_event.get("thread_root"),
             audience_member_ids=audience or None,
         )
         event = verify_workspace_event(
@@ -3553,6 +3981,169 @@ class WorkspaceServiceMixin:
         )
         return committed
 
+    def send_workspace_thread_reply(
+        self,
+        workspace_id: Any,
+        conversation_id: Any,
+        thread_root_id: Any,
+        text: Any,
+        event_id: Any,
+        operation_id: Any,
+        mention_member_ids: Any = None,
+    ) -> dict[str, Any]:
+        payload = {
+            "workspace_id": workspace_id,
+            "conversation_id": conversation_id,
+            "thread_root_id": thread_root_id,
+            "text": text,
+            "event_id": event_id,
+            "mention_member_ids": mention_member_ids or [],
+        }
+        operation_id, digest, replay = self._workspace_operation(
+            "send_workspace_thread_reply", operation_id, payload
+        )
+        if replay is not None:
+            return replay
+        workspace = self._require_workspace(workspace_id)
+        if workspace.get("state") != "active":
+            raise ContactNotApproved("Workspace is not active")
+        if not isinstance(conversation_id, str):
+            raise ValidationError("Workspace conversation is invalid")
+        root, conversation_kind, conversation = self._workspace_thread_context(
+            workspace, thread_root_id, require_writable=True
+        )
+        if root.get("conversation_id") != conversation_id:
+            raise ValidationError("Workspace thread belongs to another conversation")
+        if (
+            not isinstance(text, str)
+            or not text.strip()
+            or len(text.encode("utf-8")) > MAX_MESSAGE_TEXT_BYTES
+        ):
+            raise ValidationError("Workspace message is empty or too large")
+        try:
+            checked_event_id = str(uuid.UUID(event_id))
+        except (ValueError, TypeError, AttributeError) as exc:
+            raise ValidationError("Workspace event ID is invalid") from exc
+        if checked_event_id != event_id or self.store.get(
+            "workspace_event", self._workspace_event_record_id(event_id)
+        ) is not None:
+            raise ValidationError("Workspace event ID was already used or is invalid")
+        mentions = self._validate_workspace_mentions(
+            workspace, conversation_id, mention_member_ids
+        )
+        manifest = self._workspace_current_manifest(workspace)
+        local_member = find_member(manifest, workspace["local_member_id"])
+        if local_member is None or local_member.status != "active":
+            raise ContactNotApproved("Local member is not active")
+        channel: VerifiedWorkspaceChannel | None = None
+        if conversation_kind == "direct":
+            audience = tuple(conversation.get("participant_member_ids", ()))
+            if (
+                len(audience) != 2
+                or tuple(sorted(audience)) != audience
+                or any(
+                    (member := find_member(manifest, member_id)) is None
+                    or member.status != "active"
+                    for member_id in audience
+                )
+            ):
+                raise ContactNotApproved("Workspace thread participants are not active")
+        else:
+            if not self._posting_allowed(manifest, local_member):
+                raise ContactNotApproved(
+                    "Workspace posting is restricted to the owner"
+                )
+            channel = self._workspace_channel_by_digest(conversation["head_hash"])
+            if channel is None:
+                raise ValidationError("Workspace channel control is unavailable")
+            audience = (
+                tuple(channel.member_ids) if channel.visibility == "private" else ()
+            )
+        identity = self._identity
+        if identity is None:
+            raise ValidationError("Local identity is unavailable")
+        stream_head_id = self._workspace_stream_head_id(
+            workspace_id, conversation_id, workspace["local_device_id"]
+        )
+        stream_head = self.store.get("workspace_stream_coverage", stream_head_id)
+        sequence = int(stream_head.get("high_water", 0)) + 1 if stream_head else 1
+        raw = create_workspace_event(
+            identity,
+            workspace_id=workspace_id,
+            conversation_id=conversation_id,
+            event_id=event_id,
+            author_member_id=workspace["local_member_id"],
+            author_device_id=workspace["local_device_id"],
+            sequence=sequence,
+            previous_event_digest=stream_head.get("head_digest") if stream_head else None,
+            manifest_digest=manifest.digest,
+            channel_digest=None if channel is None else channel.digest,
+            text=text,
+            thread_root=thread_root_id,
+            mention_member_ids=mentions,
+            audience_member_ids=audience or None,
+        )
+        event = verify_workspace_event(
+            raw,
+            manifest=manifest,
+            channel=channel,
+            direct_member_ids=audience if channel is None else None,
+        )
+        records, message = self._append_workspace_event_records(
+            workspace,
+            event,
+            direction="outbound",
+            author_display_name=local_member.display_name,
+        )
+        assert message is not None
+        deliveries: list[dict[str, Any]] = []
+        for member in active_members(manifest):
+            if audience and member.member_id not in audience:
+                continue
+            for device in member.devices:
+                if device.device_id == workspace["local_device_id"]:
+                    continue
+                deliveries.append(
+                    self._workspace_delivery_record(
+                        workspace_id=workspace_id,
+                        recipient_member_id=member.member_id,
+                        recipient_device=device,
+                        kind="workspace_event",
+                        document=event.serialized,
+                        event_id=event.event_id,
+                        conversation_id=conversation_id,
+                    )
+                )
+        records.extend(("workspace_delivery", item["id"], item) for item in deliveries)
+        records.extend(self._due_records(add=deliveries))
+        message["delivery_devices"] = {
+            item["recipient_device_id"]: {
+                "member_id": item["recipient_member_id"],
+                "member_display_name": item["recipient_display_name"],
+                "state": item["state"],
+            }
+            for item in deliveries
+        }
+        message["delivery_summary"] = self._workspace_delivery_summary_from_devices(
+            message["delivery_devices"]
+        )
+        records = [
+            (
+                kind,
+                record_id,
+                message if kind == "workspace_message_state" and record_id == self._workspace_message_record_id(event_id) else value,
+            )
+            for kind, record_id, value in records
+        ]
+        outcome = self._public_workspace_message(message)
+        committed = self.store.commit_operation(operation_id, digest, outcome, records)
+        self._workspace_changed(
+            workspace_id,
+            conversation_id=conversation_id,
+            resource_kind="thread",
+        )
+        return committed
+
     def _store_pending_workspace_event(
         self, wire: WorkspaceWirePayload, reason: str
     ) -> None:
@@ -3671,6 +4262,15 @@ class WorkspaceServiceMixin:
                     )
                 ):
                     return False
+                if event.thread_root is not None:
+                    try:
+                        checked_root, _root_kind, _root_conversation = (
+                            self._workspace_thread_context(workspace, event.thread_root)
+                        )
+                    except (ContactNotApproved, ValidationError):
+                        return False
+                    if checked_root.get("conversation_id") != event.conversation_id:
+                        return False
             elif event.audience_member_ids:
                 channel_record = self.store.get(
                     "workspace_channel",
@@ -3695,6 +4295,41 @@ class WorkspaceServiceMixin:
                         author_member_id=event.author_member_id,
                     )
                 ):
+                    return False
+            if event.event_type == "message" and event.thread_root is not None:
+                root_message = self.store.get(
+                    "workspace_message_state",
+                    self._workspace_message_record_id(event.thread_root),
+                )
+                root_event = self.store.get(
+                    "workspace_event", self._workspace_event_record_id(event.thread_root)
+                )
+                if root_message is None or root_event is None:
+                    self._store_pending_workspace_event(wire, "missing_thread_root")
+                    return False
+                if (
+                    root_event.get("event_type", "message") != "message"
+                    or root_event.get("thread_root") is not None
+                    or root_message.get("workspace_id") != event.workspace_id
+                    or root_message.get("conversation_id") != event.conversation_id
+                    or self.store.get(
+                        "workspace_message_hidden",
+                        self.store.opaque_id(
+                            "workspace-message-hidden",
+                            event.workspace_id,
+                            event.thread_root,
+                        ),
+                    )
+                    is not None
+                ):
+                    return False
+                try:
+                    authorized_root, _root_kind, _root_conversation = (
+                        self._workspace_thread_context(workspace, event.thread_root)
+                    )
+                except (ContactNotApproved, ValidationError):
+                    return False
+                if authorized_root.get("conversation_id") != event.conversation_id:
                     return False
             existing_event = self.store.get(
                 "workspace_event", self._workspace_event_record_id(event.event_id)
@@ -3785,7 +4420,29 @@ class WorkspaceServiceMixin:
                     target_message.get("workspace_id") != event.workspace_id
                     or target_message.get("conversation_id") != event.conversation_id
                     or target_event.get("event_type", "message") != "message"
+                    or target_event.get("thread_root") != event.thread_root
                 ):
+                    return False
+                try:
+                    if isinstance(event.thread_root, str):
+                        authorized_root, _root_kind, _root_conversation = (
+                            self._workspace_thread_context(workspace, event.thread_root)
+                        )
+                        if (
+                            authorized_root.get("conversation_id")
+                            != event.conversation_id
+                        ):
+                            return False
+                    elif self.store.get(
+                        "workspace_thread",
+                        self._workspace_thread_record_id(
+                            event.workspace_id, str(event.target_event_id)
+                        ),
+                    ) is not None:
+                        self._workspace_thread_context(
+                            workspace, str(event.target_event_id)
+                        )
+                except (ContactNotApproved, ValidationError):
                     return False
                 if target_message.get("mutation_frozen"):
                     return False
@@ -3853,6 +4510,10 @@ class WorkspaceServiceMixin:
                     event, target_message
                 )
                 records.extend(mutation_records)
+            elif event.thread_root is not None:
+                # Reply unread state belongs to the thread summary, never the
+                # containing channel or DM badge.
+                pass
             elif event.channel_digest is None:
                 direct_id = self._workspace_direct_record_id(event.conversation_id)
                 direct = self.store.get("workspace_direct", direct_id)
@@ -5285,6 +5946,257 @@ class WorkspaceServiceMixin:
                 self.store.delete("workspace_pending_event", pending["id"])
         self._clear_workspace_sync_issue_if_resolved(workspace_id)
 
+    def list_workspace_thread_messages(
+        self,
+        workspace_id: Any,
+        thread_root_id: Any,
+        cursor: Any = None,
+        limit: Any = MESSAGE_PAGE_DEFAULT,
+    ) -> dict[str, Any]:
+        workspace = self._require_workspace(workspace_id)
+        root, conversation_kind, conversation = self._workspace_thread_context(
+            workspace, thread_root_id
+        )
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= MESSAGE_PAGE_MAX:
+            raise ValidationError("Workspace thread page size is invalid")
+        index_id = self._workspace_thread_index_id(workspace_id, thread_root_id)
+        index = self.store.get("workspace_thread_index", index_id)
+        high_water = int(index.get("high_water", 0)) if index else 0
+        page_id = index.get("head_page") if index else None
+        offset = 0
+        if cursor is not None:
+            if not isinstance(cursor, str):
+                raise ValidationError("Workspace thread cursor is invalid")
+            value = self.store.open_cursor(cursor)
+            expected = {
+                "v": 1,
+                "workspace_id": workspace_id,
+                "thread_root_id": thread_root_id,
+                "authorization_digest": self._workspace_thread_authorization_digest(
+                    workspace
+                ),
+                "authorization_generation": int(
+                    workspace.get("authorization_generation", 1)
+                ),
+                "retention_generation": int(workspace.get("retention_generation", 1)),
+                "high_water": high_water,
+            }
+            if any(value.get(key) != item for key, item in expected.items()):
+                raise ValidationError("Workspace thread cursor is stale")
+            page_id = value.get("page_id")
+            offset = value.get("offset")
+            if not isinstance(page_id, str) or isinstance(offset, bool) or not isinstance(offset, int) or offset < 0:
+                raise ValidationError("Workspace thread cursor is invalid")
+        replies: list[dict[str, Any]] = []
+        next_page: str | None = None
+        next_offset = 0
+        while isinstance(page_id, str) and len(replies) < limit:
+            page = self.store.get("workspace_thread_index", page_id)
+            if (
+                page is None
+                or page.get("workspace_id") != workspace_id
+                or page.get("root_event_id") != thread_root_id
+                or page.get("conversation_id") != root.get("conversation_id")
+            ):
+                raise ValidationError("Workspace thread page is unavailable")
+            entries = page.get("entries", [])
+            if not isinstance(entries, list) or offset > len(entries):
+                raise ValidationError("Workspace thread page is invalid")
+            position = len(entries) - 1 - offset
+            while position >= 0 and len(replies) < limit:
+                entry = entries[position]
+                reply = self.store.get(
+                    "workspace_message_state", entry.get("message_record_id")
+                )
+                hidden = self.store.get(
+                    "workspace_message_hidden",
+                    self.store.opaque_id(
+                        "workspace-message-hidden", workspace_id, entry.get("event_id", "")
+                    ),
+                )
+                if (
+                    reply is not None
+                    and hidden is None
+                    and reply.get("thread_root") == thread_root_id
+                    and reply.get("conversation_id") == root.get("conversation_id")
+                ):
+                    replies.append(self._public_workspace_message(reply))
+                position -= 1
+                offset += 1
+            if len(replies) >= limit and position >= 0:
+                next_page = page_id
+                next_offset = offset
+                break
+            page_id = page.get("previous_page")
+            offset = 0
+            if len(replies) >= limit and isinstance(page_id, str):
+                next_page = page_id
+                break
+        next_cursor = None
+        if next_page is not None:
+            next_cursor = self.store.seal_cursor(
+                {
+                    "v": 1,
+                    "workspace_id": workspace_id,
+                    "thread_root_id": thread_root_id,
+                    "authorization_digest": self._workspace_thread_authorization_digest(
+                        workspace
+                    ),
+                    "authorization_generation": int(
+                        workspace.get("authorization_generation", 1)
+                    ),
+                    "retention_generation": int(
+                        workspace.get("retention_generation", 1)
+                    ),
+                    "high_water": high_water,
+                    "page_id": next_page,
+                    "offset": next_offset,
+                }
+            )
+        replies.reverse()
+        return {
+            "root": self._public_workspace_message(root),
+            "replies": replies,
+            "next_cursor": next_cursor,
+            "high_water": high_water,
+            "unread_count": int(
+                (
+                    self.store.get(
+                        "workspace_thread",
+                        self._workspace_thread_record_id(workspace_id, thread_root_id),
+                    )
+                    or {}
+                ).get("unread_count", 0)
+            ),
+            "conversation": self._workspace_thread_conversation_model(
+                workspace, conversation_kind, conversation
+            ),
+        }
+
+    def _workspace_thread_conversation_model(
+        self,
+        workspace: dict[str, Any],
+        conversation_kind: str,
+        conversation: dict[str, Any],
+    ) -> dict[str, Any]:
+        if conversation_kind == "direct":
+            public = self._public_workspace_direct(conversation)
+            return {
+                "id": public["id"],
+                "kind": "direct",
+                "name": public["peer_display_name"],
+                "visibility": "direct",
+                "state": public["state"],
+            }
+        return {
+            "id": conversation["id"],
+            "kind": "channel",
+            "name": conversation.get("name", "channel"),
+            "visibility": conversation.get("visibility", "public"),
+            "state": conversation.get("state", "active"),
+        }
+
+    def list_workspace_threads(
+        self,
+        workspace_id: Any,
+        cursor: Any = None,
+        limit: Any = MESSAGE_PAGE_DEFAULT,
+    ) -> dict[str, Any]:
+        workspace = self._require_workspace(workspace_id)
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= MESSAGE_PAGE_MAX:
+            raise ValidationError("Workspace thread activity page size is invalid")
+        activity = self.store.get(
+            "workspace_thread_activity_index",
+            self._workspace_thread_activity_id(workspace_id),
+        ) or {"entries": {}, "high_water": 0}
+        high_water = int(activity.get("high_water", 0))
+        offset = 0
+        if cursor is not None:
+            if not isinstance(cursor, str):
+                raise ValidationError("Workspace thread activity cursor is invalid")
+            value = self.store.open_cursor(cursor)
+            expected = {
+                "v": 1,
+                "workspace_id": workspace_id,
+                "authorization_digest": self._workspace_thread_authorization_digest(
+                    workspace
+                ),
+                "authorization_generation": int(
+                    workspace.get("authorization_generation", 1)
+                ),
+                "retention_generation": int(workspace.get("retention_generation", 1)),
+                "high_water": high_water,
+            }
+            if any(value.get(key) != item for key, item in expected.items()):
+                raise ValidationError("Workspace thread activity cursor is stale")
+            offset = value.get("offset")
+            if isinstance(offset, bool) or not isinstance(offset, int) or offset < 0:
+                raise ValidationError("Workspace thread activity cursor is invalid")
+        entries = sorted(
+            (
+                item
+                for item in activity.get("entries", {}).values()
+                if isinstance(item, dict)
+            ),
+            key=lambda item: (int(item.get("position", 0)), str(item.get("root_event_id", ""))),
+            reverse=True,
+        )
+        results: list[dict[str, Any]] = []
+        scanned = offset
+        while scanned < len(entries) and len(results) < limit:
+            entry = entries[scanned]
+            scanned += 1
+            root_event_id = str(entry.get("root_event_id", ""))
+            try:
+                root, kind, conversation = self._workspace_thread_context(
+                    workspace, root_event_id
+                )
+            except (ContactNotApproved, ValidationError):
+                continue
+            summary = self.store.get(
+                "workspace_thread",
+                self._workspace_thread_record_id(workspace_id, root_event_id),
+            )
+            if summary is None or summary.get("conversation_id") != root.get("conversation_id"):
+                continue
+            results.append(
+                {
+                    "root": self._public_workspace_message(root),
+                    "conversation": self._workspace_thread_conversation_model(
+                        workspace, kind, conversation
+                    ),
+                    "reply_count": int(summary.get("reply_count", 0)),
+                    "unread_count": int(summary.get("unread_count", 0)),
+                    "high_water": int(summary.get("high_water", 0)),
+                    "updated_at": float(summary.get("updated_at", 0)),
+                }
+            )
+        next_cursor = None
+        if scanned < len(entries):
+            next_cursor = self.store.seal_cursor(
+                {
+                    "v": 1,
+                    "workspace_id": workspace_id,
+                    "authorization_digest": self._workspace_thread_authorization_digest(
+                        workspace
+                    ),
+                    "authorization_generation": int(
+                        workspace.get("authorization_generation", 1)
+                    ),
+                    "retention_generation": int(
+                        workspace.get("retention_generation", 1)
+                    ),
+                    "high_water": high_water,
+                    "offset": scanned,
+                }
+            )
+        return {
+            "threads": results,
+            "next_cursor": next_cursor,
+            "high_water": high_water,
+            "unread_count": self._workspace_thread_unread_count(workspace),
+        }
+
     def list_workspace_messages(
         self,
         workspace_id: Any,
@@ -5474,6 +6386,84 @@ class WorkspaceServiceMixin:
         )
         return committed
 
+    def mark_workspace_thread_read(
+        self,
+        workspace_id: Any,
+        thread_root_id: Any,
+        high_water: Any,
+        operation_id: Any,
+    ) -> dict[str, Any]:
+        payload = {
+            "workspace_id": workspace_id,
+            "thread_root_id": thread_root_id,
+            "high_water": high_water,
+        }
+        operation_id, digest, replay = self._workspace_operation(
+            "mark_workspace_thread_read", operation_id, payload
+        )
+        if replay is not None:
+            return replay
+        workspace = self._require_workspace(workspace_id)
+        root, _kind, _conversation = self._workspace_thread_context(
+            workspace, thread_root_id
+        )
+        index = self.store.get(
+            "workspace_thread_index",
+            self._workspace_thread_index_id(workspace_id, thread_root_id),
+        )
+        maximum = int(index.get("high_water", 0)) if index else 0
+        if (
+            isinstance(high_water, bool)
+            or not isinstance(high_water, int)
+            or high_water != maximum
+        ):
+            raise ValidationError("Workspace thread read position is stale")
+        read_id = self._workspace_thread_read_id(workspace_id, thread_root_id)
+        previous = self.store.get("workspace_read_state", read_id)
+        if previous is not None and high_water < int(previous.get("high_water", 0)):
+            raise ValidationError("Workspace thread read position cannot move backwards")
+        summary_id = self._workspace_thread_record_id(workspace_id, thread_root_id)
+        summary = self.store.get("workspace_thread", summary_id)
+        records: list[tuple[str, str, dict[str, Any]]] = [
+            (
+                "workspace_read_state",
+                read_id,
+                {
+                    "workspace_id": workspace_id,
+                    "conversation_id": root["conversation_id"],
+                    "thread_root_id": thread_root_id,
+                    "high_water": high_water,
+                },
+            )
+        ]
+        if summary is not None:
+            summary["unread_count"] = 0
+            records.append(("workspace_thread", summary_id, summary))
+        root = dict(root)
+        root["thread_unread_count"] = 0
+        records.append(
+            (
+                "workspace_message_state",
+                self._workspace_message_record_id(thread_root_id),
+                root,
+            )
+        )
+        outcome = {
+            "workspace_id": workspace_id,
+            "thread_root_id": thread_root_id,
+            "high_water": high_water,
+            "unread_count": 0,
+        }
+        committed = self.store.commit_operation(
+            operation_id, digest, outcome, records
+        )
+        self._workspace_changed(
+            workspace_id,
+            conversation_id=root["conversation_id"],
+            resource_kind="thread_read_state",
+        )
+        return committed
+
     def list_workspace_mentions(
         self,
         workspace_id: Any,
@@ -5586,14 +6576,15 @@ class WorkspaceServiceMixin:
                             ),
                         }
                     mention_position = int(entry.get("position", 0))
-                    results.append(
-                        {
+                    result = {
                             "position": mention_position,
                             "read": mention_position <= read_high_water,
                             "conversation": conversation,
                             "message": self._public_workspace_message(message),
                         }
-                    )
+                    if isinstance(message.get("thread_root"), str):
+                        result["thread_root_id"] = message["thread_root"]
+                    results.append(result)
                 position -= 1
                 offset += 1
             if len(results) >= limit and position >= 0:
@@ -5758,18 +6749,47 @@ class WorkspaceServiceMixin:
         marker_id = self.store.opaque_id(
             "workspace-message-hidden", workspace_id, event_id
         )
+        existing_marker = self.store.get("workspace_message_hidden", marker_id)
         outcome = {"workspace_id": workspace_id, "event_id": event_id, "hidden": True}
+        records: list[tuple[str, str, dict[str, Any]]] = [
+            (
+                "workspace_message_hidden",
+                marker_id,
+                {"workspace_id": workspace_id, "event_id": event_id},
+            )
+        ]
+        thread_root_id = message.get("thread_root")
+        if isinstance(thread_root_id, str):
+            summary_id = self._workspace_thread_record_id(
+                workspace_id, thread_root_id
+            )
+            summary = self.store.get("workspace_thread", summary_id)
+            read = self.store.get(
+                "workspace_read_state",
+                self._workspace_thread_read_id(workspace_id, thread_root_id),
+            )
+            if (
+                summary is not None
+                and existing_marker is None
+                and message.get("direction") == "inbound"
+                and int(message.get("thread_position", 0))
+                > int(read.get("high_water", 0) if read else 0)
+            ):
+                summary["unread_count"] = max(
+                    0, int(summary.get("unread_count", 0)) - 1
+                )
+                records.append(("workspace_thread", summary_id, summary))
+        else:
+            summary_id = self._workspace_thread_record_id(workspace_id, event_id)
+            summary = self.store.get("workspace_thread", summary_id)
+            if summary is not None:
+                summary["unread_count"] = 0
+                records.append(("workspace_thread", summary_id, summary))
         committed = self.store.commit_operation(
             operation_id,
             digest,
             outcome,
-            [
-                (
-                    "workspace_message_hidden",
-                    marker_id,
-                    {"workspace_id": workspace_id, "event_id": event_id},
-                )
-            ],
+            records,
         )
         self._workspace_changed(
             workspace_id,
@@ -5823,6 +6843,74 @@ class WorkspaceServiceMixin:
         )
         self._workspace_changed(
             workspace_id, conversation_id=channel_id, resource_kind="draft"
+        )
+        return committed
+
+    def save_workspace_thread_draft(
+        self,
+        workspace_id: Any,
+        conversation_id: Any,
+        thread_root_id: Any,
+        text: Any,
+        operation_id: Any,
+        mention_member_ids: Any = None,
+    ) -> dict[str, Any]:
+        payload = {
+            "workspace_id": workspace_id,
+            "conversation_id": conversation_id,
+            "thread_root_id": thread_root_id,
+            "text": text,
+            "mention_member_ids": mention_member_ids or [],
+        }
+        operation_id, digest, replay = self._workspace_operation(
+            "save_workspace_thread_draft", operation_id, payload
+        )
+        if replay is not None:
+            return replay
+        workspace = self._require_workspace(workspace_id)
+        root, _kind, _conversation = self._workspace_thread_context(
+            workspace, thread_root_id, require_writable=True
+        )
+        if root.get("conversation_id") != conversation_id:
+            raise ValidationError("Workspace thread belongs to another conversation")
+        if not isinstance(text, str) or len(text.encode("utf-8")) > MAX_MESSAGE_TEXT_BYTES:
+            raise ValidationError("Workspace draft is invalid")
+        mentions = self._validate_workspace_mentions(
+            workspace, conversation_id, mention_member_ids
+        )
+        record_id = self.store.opaque_id(
+            "workspace-thread-draft", workspace_id, thread_root_id
+        )
+        outcome = {
+            "workspace_id": workspace_id,
+            "conversation_id": conversation_id,
+            "thread_root_id": thread_root_id,
+            "text": text,
+        }
+        root_event = self.store.get(
+            "workspace_event", self._workspace_event_record_id(thread_root_id)
+        )
+        if root_event is None:
+            raise ContactNotApproved("Workspace thread is unavailable")
+        if mentions:
+            outcome["mention_member_ids"] = list(mentions)
+        stored_draft = {
+            **outcome,
+            "root_channel_digest": root_event.get("channel_digest"),
+            "root_author_member_id": root_event.get("author_member_id"),
+        }
+        empty = text == "" and not mentions
+        committed = self.store.commit_operation(
+            operation_id,
+            digest,
+            outcome,
+            [] if empty else [("workspace_draft", record_id, stored_draft)],
+            [("workspace_draft", record_id)] if empty else [],
+        )
+        self._workspace_changed(
+            workspace_id,
+            conversation_id=conversation_id,
+            resource_kind="thread_draft",
         )
         return committed
 
@@ -7605,6 +8693,9 @@ class WorkspaceServiceMixin:
             "workspace_pending_control",
             "workspace_conversation_index",
             "workspace_mention_index",
+            "workspace_thread",
+            "workspace_thread_index",
+            "workspace_thread_activity_index",
             "workspace_subscription",
             "workspace_notification_preference",
             "workspace_read_state",
@@ -7990,14 +9081,21 @@ class WorkspaceServiceMixin:
                 )
         stored_workspaces = self.store.list("workspace")
         for item in stored_workspaces:
-            if "mention_unread_count" in item:
-                continue
-            item["mention_unread_count"] = self._workspace_mention_unread_count(
-                item
-            )
-            self.store.put(
-                "workspace", self._workspace_record_id(item["id"]), item
-            )
+            changed = False
+            if "mention_unread_count" not in item:
+                item["mention_unread_count"] = self._workspace_mention_unread_count(
+                    item
+                )
+                changed = True
+            # Increment 7 profiles cannot contain thread records, so their
+            # one-time migration does not need to inspect any message body.
+            if "thread_unread_count" not in item:
+                item["thread_unread_count"] = 0
+                changed = True
+            if changed:
+                self.store.put(
+                    "workspace", self._workspace_record_id(item["id"]), item
+                )
         workspaces_by_id = {
             item["id"]: item
             for item in stored_workspaces

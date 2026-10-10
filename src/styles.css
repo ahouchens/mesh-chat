@@ -415,6 +415,22 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus
 .workspace-mention-row__meta { display: flex; align-items: center; gap: 7px; }
 .workspace-mention-row__meta small { color: var(--muted); }
 .workspace-mention-row__meta i { margin-left: auto; padding: 2px 6px; color: white; background: var(--green-700); border-radius: 999px; font-size: .62rem; font-style: normal; font-weight: 800; }
+.workspace-threads { grid-template-areas: "header" "messages" "error"; grid-template-rows: auto minmax(0,1fr) auto; }
+.workspace-thread-list { display: grid; align-content: start; gap: 8px; padding: 16px; overflow-y: auto; background: #f6f4ed; }
+.workspace-thread-row { display: grid; grid-template-columns: auto minmax(0,1fr); gap: 10px; padding: 13px; color: inherit; text-align: left; background: var(--paper); border: 1px solid var(--line); border-radius: 12px; cursor: pointer; }
+.workspace-thread-row:hover { border-color: #9db8a7; }
+.workspace-thread-row--unread { background: #f0f7f2; border-color: #9dc0a9; }
+.workspace-thread-row > span { display: grid; gap: 6px; min-width: 0; }
+.workspace-thread-row > span > span:not(.workspace-mention-row__meta) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.workspace-thread-row > span > small { color: var(--muted); font-size: .7rem; font-weight: 700; }
+.workspace-thread { grid-template-areas: "header" "messages" "error" "composer"; grid-template-rows: auto minmax(0,1fr) auto auto; }
+.workspace-thread-messages { padding: 14px 16px 18px; overflow-y: auto; background: #f6f4ed; }
+.workspace-thread-root { margin-bottom: 10px; padding: 10px; background: #edf2ec; border: 1px solid #d2ddd5; border-radius: 13px; }
+.workspace-thread-root > small { display: block; margin: 0 0 4px 43px; color: var(--muted); font-size: .67rem; font-weight: 800; letter-spacing: .04em; text-transform: uppercase; }
+.workspace-thread-divider { display: flex; align-items: center; gap: 10px; margin: 12px 0; color: var(--muted); font-size: .7rem; font-weight: 800; }
+.workspace-thread-divider::before, .workspace-thread-divider::after { height: 1px; flex: 1; content: ""; background: var(--line); }
+.workspace-thread-empty { padding: 18px; color: var(--muted); text-align: center; font-size: .82rem; }
+.workspace-message__actions > button { display: inline-flex; align-items: center; gap: 4px; }
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }

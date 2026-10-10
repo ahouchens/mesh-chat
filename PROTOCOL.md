@@ -340,7 +340,10 @@ Those event types add exactly `target_event_id`, `base_revision`, and
 `revision`; `revision` must equal `base_revision + 1`. An edit payload contains
 only nonempty bounded `text`, a delete payload is the empty object, and a
 reaction payload contains exactly one validated Emoji 18 `emoji` and Boolean
-`active` state. Threads remain JSON null in Increment 7.
+`active` state. Increment 8 leaves `thread_root` JSON null for an ordinary
+message or mutation and sets it to the canonical root event UUID for a reply or
+any mutation of that reply. This preserves the exact canonical bytes and
+signature of every pre-thread non-thread event.
 
 An edit or delete is authorized only when the signer is a current active device
 of the target message's author member. A reaction is authorized for any current
@@ -402,6 +405,46 @@ active mention position. Unsubscribing a public channel suppresses ordinary
 unread state but not its authorized mentions; an explicit mention mute hides
 them locally and invalidates older cursors. Marking mentions read does not send
 a network receipt.
+
+### One-level workspace threads
+
+Increment 8 activates the existing signed `thread_root` field. A thread reply
+is an otherwise ordinary `message` whose `thread_root` is a canonical UUID.
+The referenced event must already verify as a retained ordinary message in the
+same workspace and conversation, and its own `thread_root` must be null. A
+reply can therefore never become a root. An `edit`, `delete`, or `reaction`
+copies the target message's thread root, and verification rejects a mutation
+whose root differs from its target.
+
+The reply uses the root conversation's existing authorization without a new
+audience mechanism. Public-channel replies carry the empty audience. Private
+replies carry the exact signed channel roster and require the root checkpoint
+to remain on the current channel chain at or after the receiver's latest
+admission. Workspace-DM replies carry exactly the same sorted two active
+participants as the root. A missing root, control, stream predecessor,
+mutation target, or mutation base enters the existing bounded encrypted
+pending queue. Once dependencies arrive, per-device sequence and predecessor
+validation makes delayed, reversed, duplicated, and restarted processing
+converge identically.
+
+Thread replies do not enter the containing channel or DM timeline index. Each
+device writes them to sealed per-root pages with a monotonic high-water. A
+separate sealed summary stores reply count, unread count, root authorization
+metadata, and latest reply time; a capped encrypted activity map retains the
+1,024 most recently active roots. Thread cursors bind the root, reply or
+activity high-water, retention generation, and a digest of current workspace,
+channel-roster, channel-state, and DM-hide authorization. Every page rechecks
+the root and current access before returning plaintext.
+
+Thread unread state is a local sealed high-water and never produces a receipt.
+Opening a thread marks only that thread read. Thread drafts, activity summaries,
+indexes, and cursor state are local encrypted records. Startup exposes only the
+persisted bounded workspace thread-unread summary and authorized draft text; it
+does not decrypt roots/replies or scan the event and delivery collections.
+Hiding a root suppresses the whole thread; hiding a reply suppresses only that
+reply and adjusts its unread contribution. Removal, a private-roster gap,
+channel leave, hidden workspace DM, missing retained data, or a retention
+generation change cannot grant access through a stale index or cursor.
 
 ## Delivery evidence
 

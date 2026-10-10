@@ -163,19 +163,24 @@ class MeshChatService(ReactionServiceMixin, GroupServiceMixin, WorkspaceServiceM
         "open_workspace_direct",
         "hide_workspace_direct",
         "send_workspace_direct_message",
+        "send_workspace_thread_reply",
         "edit_workspace_message",
         "delete_workspace_message",
         "set_workspace_reaction",
         "list_workspace_messages",
         "list_workspace_direct_messages",
         "list_workspace_mentions",
+        "list_workspace_threads",
+        "list_workspace_thread_messages",
         "mark_workspace_read",
         "mark_workspace_direct_read",
         "mark_workspace_mentions_read",
+        "mark_workspace_thread_read",
         "set_workspace_channel_mentions_muted",
         "hide_workspace_message",
         "save_workspace_draft",
         "save_workspace_direct_draft",
+        "save_workspace_thread_draft",
         "leave_workspace",
         "close_workspace",
         "remove_workspace_data",
@@ -194,6 +199,8 @@ class MeshChatService(ReactionServiceMixin, GroupServiceMixin, WorkspaceServiceM
         "list_workspace_messages",
         "list_workspace_direct_messages",
         "list_workspace_mentions",
+        "list_workspace_threads",
+        "list_workspace_thread_messages",
     }
 
     def __init__(self, store: VaultStore, profile_dir: Path, emit: EventCallback):
@@ -2059,6 +2066,27 @@ class MeshChatService(ReactionServiceMixin, GroupServiceMixin, WorkspaceServiceM
                 body["operation_id"],
                 body.get("mention_member_ids"),
             )
+        if command == "send_workspace_thread_reply":
+            body = _payload(
+                value,
+                allowed={
+                    "operation_id", "workspace_id", "conversation_id",
+                    "thread_root_id", "event_id", "text", "mention_member_ids",
+                },
+                required={
+                    "operation_id", "workspace_id", "conversation_id",
+                    "thread_root_id", "event_id", "text",
+                },
+            )
+            return self.send_workspace_thread_reply(
+                body["workspace_id"],
+                body["conversation_id"],
+                body["thread_root_id"],
+                body["text"],
+                body["event_id"],
+                body["operation_id"],
+                body.get("mention_member_ids"),
+            )
         if command == "edit_workspace_message":
             body = _payload(
                 value,
@@ -2177,6 +2205,27 @@ class MeshChatService(ReactionServiceMixin, GroupServiceMixin, WorkspaceServiceM
                 body.get("cursor"),
                 body.get("limit", 50),
             )
+        if command == "list_workspace_threads":
+            body = _payload(
+                value,
+                allowed={"workspace_id", "cursor", "limit"},
+                required={"workspace_id"},
+            )
+            return self.list_workspace_threads(
+                body["workspace_id"], body.get("cursor"), body.get("limit", 50)
+            )
+        if command == "list_workspace_thread_messages":
+            body = _payload(
+                value,
+                allowed={"workspace_id", "thread_root_id", "cursor", "limit"},
+                required={"workspace_id", "thread_root_id"},
+            )
+            return self.list_workspace_thread_messages(
+                body["workspace_id"],
+                body["thread_root_id"],
+                body.get("cursor"),
+                body.get("limit", 50),
+            )
         if command == "mark_workspace_mentions_read":
             body = _payload(
                 value,
@@ -2185,6 +2234,18 @@ class MeshChatService(ReactionServiceMixin, GroupServiceMixin, WorkspaceServiceM
             )
             return self.mark_workspace_mentions_read(
                 body["workspace_id"],
+                body["high_water"],
+                body["operation_id"],
+            )
+        if command == "mark_workspace_thread_read":
+            body = _payload(
+                value,
+                allowed={"operation_id", "workspace_id", "thread_root_id", "high_water"},
+                required={"operation_id", "workspace_id", "thread_root_id", "high_water"},
+            )
+            return self.mark_workspace_thread_read(
+                body["workspace_id"],
+                body["thread_root_id"],
                 body["high_water"],
                 body["operation_id"],
             )
@@ -2242,6 +2303,26 @@ class MeshChatService(ReactionServiceMixin, GroupServiceMixin, WorkspaceServiceM
             return self.save_workspace_draft(
                 body["workspace_id"],
                 body["conversation_id"],
+                body["text"],
+                body["operation_id"],
+                body.get("mention_member_ids"),
+            )
+        if command == "save_workspace_thread_draft":
+            body = _payload(
+                value,
+                allowed={
+                    "operation_id", "workspace_id", "conversation_id",
+                    "thread_root_id", "text", "mention_member_ids",
+                },
+                required={
+                    "operation_id", "workspace_id", "conversation_id",
+                    "thread_root_id", "text",
+                },
+            )
+            return self.save_workspace_thread_draft(
+                body["workspace_id"],
+                body["conversation_id"],
+                body["thread_root_id"],
                 body["text"],
                 body["operation_id"],
                 body.get("mention_member_ids"),

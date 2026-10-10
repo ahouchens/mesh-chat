@@ -1670,6 +1670,71 @@ Artifact hashes for this run:
   plaintext scanning, production signing, and in-place installation remain
   release gates.
 
+## Workspace increment 8 verification — 2026-10-09
+
+- Increment 8 activates the existing signed `thread_root` field while
+  preserving the canonical bytes of ordinary messages and mutations. Protocol
+  and service coverage verifies retained same-conversation roots, rejection of
+  nested replies, exact public/private/DM authorization, private removal and
+  re-admission gaps, participant removal, local hides, archived or left
+  channels, tombstones, retention invalidation, bounded encrypted reply and
+  activity indexes, independent read high-waters and drafts, and stale-cursor
+  rejection.
+- Delayed reply-before-root delivery, duplicated and reversed events,
+  mutations, reactions, controls, restart recovery, structured reply mentions,
+  deterministic conflict resolution, and thread-specific unread/read state are
+  automated. Renderer coverage opens a mentioned reply directly into the
+  dedicated root-context thread view, pages replies, persists the encrypted
+  draft, sends a reply, marks only that thread read, and exposes the bounded
+  Threads activity view. Startup regression coverage verifies that ordinary
+  snapshots use persisted bounded thread summaries and authorization metadata
+  without decrypting message bodies or scanning the complete event/delivery
+  collections. Global Contacts and Personal/group protocol state remain
+  isolated.
+- The complete maintained verification passed **309 Python tests with 6
+  intentional environment/package skips**, **85 frontend tests**, all **3**
+  package-artwork verifier tests, TypeScript compilation, and the Vite
+  production build. `cargo fmt --check` and all **6 release-profile Rust
+  tests** passed. The protected four-process/three-hop topology and both
+  direct-LAN scenarios passed, as did all **3** exact 0.2.28 packaged-sidecar
+  and frozen 0.2.9 interoperability tests under native Windows EFS. The final
+  application executable matched all **12** bundled artwork, metadata, and
+  license files (1,947,195 source bytes).
+- The maintained release driver immutably published desktop **0.2.28** without
+  changing the preserved 0.2.23, 0.2.24, 0.2.25, 0.2.26, 0.2.27, or any
+  earlier release. The
+  22,581,248-byte MSI has SHA-256
+  `676B0BF354F93EF131A201B40EF562C2E4A790D0926582A21A9803AC3EE15376`.
+  The 21,841,451-byte NSIS installer has SHA-256
+  `195E798F7076055EB2AB4B88DF9389BC79EA90E47F2AEC30AB1F71D533216E7E`.
+  The 6,724,608-byte portable application reports file/product version 0.2.28
+  and hashes to
+  `3C9184E591563C55310ADEE78AB92852B4B7C9395CD7844A0632EA5991A5FB22`;
+  the 18,393,761-byte sidecar hashes to
+  `15859086925CE4D3F429491562D0C4AEFF050EBF629E9D2132B2AAC33AC13F28`.
+  The 3,239-byte release notice hashes to
+  `D663E6E7B26D12B33F5042B7C9F413BA57CABF331A6D0B0C37693F2B3D125D44`.
+  The immutable manifest hashes to
+  `411E531D96786425027E041BB612B47CC71FE73125CEC55521741AE4170AD356`,
+  and `dist/desktop/current.json` selects that manifest. The successful release
+  report is
+  `dist/reports/0.2.28/20261010T005138Z-0d94f736/report.json`. The immutable
+  0.2.26 review build was superseded before installation after final review
+  found that an inbound reply or mutation signed after private-channel
+  re-admission could reference a locally retained root from the member's prior
+  admission era. Version 0.2.27 applies the same root-era/current-access check
+  to inbound replies and reply/root mutations and includes hostile regression
+  coverage for both cases. The immutable 0.2.27 review build was then
+  superseded before installation because repeated local hide operations could
+  decrement the derived unread summary for the same reply more than once.
+  Version 0.2.28 makes that derived update idempotent and verifies that hiding
+  one of two unread replies twice leaves the other reply unread.
+- No installer or application executable was launched and no existing Mesh
+  Chat process or user profile was modified. Physical concurrent-device thread
+  partition/reconnect, interactive native-window accessibility, packet capture,
+  protected-profile plaintext scanning, production signing, and in-place
+  installation remain release gates. Increment 9 has not begun.
+
 ## Acceptance matrix
 
 | Gate | Current evidence |
@@ -1705,5 +1770,6 @@ Artifact hashes for this run:
 | Workspace increment 5 | Increment 4 coverage remains green. Deterministic participant-only workspace DMs, canonical authorization, independent encrypted local state, bidirectional delivery, hide/reopen, restart, removal gating/cancellation, desktop command allowlisting, and Contacts isolation are automated. Isolated, direct-LAN, packaged-current, and 0.2.9 compatibility paths passed; physical multi-install DM partition/reconnect, native-window, and plaintext-scan gates remain open |
 | Workspace increment 6 | Canonical edits, author deletion tombstones, per-member/per-emoji reactions, inactive tombstones, target/base revision binding, deterministic concurrent resolution, same-device equivocation freeze, out-of-order pending/drain, restart durability, current/historical audience authorization, posting-policy independence, desktop command allowlisting, and public/private/DM renderer/service paths are automated. Immutable package verification passed; physical concurrent-device partition/reconnect, native-window interaction, packet capture, and protected-profile plaintext scanning remain release gates |
 | Workspace increment 7 | Canonical structured mentions, exact audience authorization, edit add/remove/re-add semantics, encrypted mention index/paging/read/mute/draft state, unsubscribed-public delivery, private/DM isolation, stale-index and stale-draft filtering, desktop command allowlisting, and compose/edit/inbox renderer paths are automated. Protected topology, direct-LAN, immutable packaged-current, 0.2.9 compatibility, and final artwork verification passed; physical concurrent-device mention partition/reconnect, native-window accessibility, packet capture, and protected-profile plaintext scanning remain release gates |
+| Workspace increment 8 | One-level signed-root replies, non-thread canonical-byte compatibility, exact public/private/DM authorization, nested-reply rejection, mutations/reactions/mentions/tombstones, deterministic out-of-order recovery, encrypted bounded paging/activity/read/draft/cursor state, metadata-only startup summaries, current-access and private re-admission filtering, desktop command allowlisting, mentioned-thread navigation, reply composition, and thread-specific unread behavior are automated. Protected topology, direct-LAN, immutable packaged-current, frozen 0.2.9 compatibility, and final artwork verification passed; physical concurrent-device thread partition/reconnect, native-window accessibility, packet capture, and protected-profile plaintext scanning remain release gates |
 
 Do not mark a release complete from unit tests alone. Store packet captures, topology configs, full-tree scans, package hashes, platform versions, human timing sheets, and failure notes with the release evidence.

@@ -82,6 +82,8 @@ import type {
   WorkspaceMessagePage,
   WorkspaceMentionPage,
   WorkspaceSnapshot,
+  WorkspaceThreadActivityPage,
+  WorkspaceThreadPage,
 } from "./types";
 import "./styles.css";
 
@@ -1888,6 +1890,7 @@ function WorkspaceMessageCard({
   onEdit,
   onDelete,
   onHide,
+  onOpenThread,
   allowedMentionMemberIds,
 }: {
   workspace: Workspace;
@@ -1903,6 +1906,7 @@ function WorkspaceMessageCard({
   onEdit: (text: string, mentionMemberIds: string[]) => void;
   onDelete: () => void;
   onHide: () => void;
+  onOpenThread?: () => void;
   allowedMentionMemberIds: string[];
 }) {
   const [editing, setEditing] = useState(false);
@@ -1940,6 +1944,7 @@ function WorkspaceMessageCard({
         ) : <p>{message.text}</p>}
         {(message.mutation_conflict || message.mutation_frozen) && <p className="workspace-message__security" role="status">{message.mutation_frozen ? "Security warning: this message is frozen after conflicting mutations from one device." : "Concurrent author changes were resolved deterministically. A later edit can resolve the conflict."}</p>}
         {!message.deleted && <footer className="workspace-message__actions">
+          {message.thread_root == null && onOpenThread && <button type="button" onClick={onOpenThread}><MessageCircleMore size={13} /> Thread{(message.reply_count ?? 0) > 0 ? ` · ${message.reply_count}` : ""}{(message.thread_unread_count ?? 0) > 0 ? ` · ${message.thread_unread_count} new` : ""}</button>}
           {authorMutable && !confirmDelete && <><button type="button" onClick={() => setEditing(true)}>Edit</button><button type="button" onClick={() => setConfirmDelete(true)}>Delete</button></>}
           {authorMutable && confirmDelete && <><span>Delete for workspace participants?</span><button type="button" onClick={() => setConfirmDelete(false)}>Cancel</button><button type="button" onClick={() => { setConfirmDelete(false); onDelete(); }}>Delete</button></>}
           {mutable && <MessageReactions
@@ -1982,7 +1987,7 @@ function WorkspaceMentionPicker({ workspace, allowedMemberIds, selectedMemberIds
   return <span className="workspace-mention-picker"><button type="button" className="icon-button" onClick={() => setOpen((current) => !current)} aria-label="Mention a workspace member" aria-expanded={open}><AtSign size={19} /></button>{open && <div className="workspace-mention-picker__menu" role="dialog" aria-label="Choose a member to mention"><strong>Mention someone</strong>{members.map((member) => <button type="button" key={member.id} onClick={() => { onSelect(member); setOpen(false); }}><Avatar name={member.display_name} small /><span>{member.display_name}<small>{member.short_id}</small></span></button>)}{members.length === 0 && <p>No other eligible members.</p>}</div>}</span>;
 }
 
-function WorkspaceConversation({ workspace, channel, page, draft, mentionMemberIds, loading, sending, error, reactionTargetId, reactionCatalogOpen, reactionBusyEmoji, reactionError, onDraft, onSend, onLoadOlder, onHide, onEdit, onDelete, onToggleReactionPicker, onReactionCatalogOpenChange, onCloseReactionPicker, onSetReaction, onPeople, onSettings, onInvite, onManage, onToggleMentionMute }: { workspace: Workspace; channel: WorkspaceChannel; page: WorkspaceMessagePage | null; draft: string; mentionMemberIds: string[]; loading: boolean; sending: boolean; error: string; reactionTargetId: string | null; reactionCatalogOpen: boolean; reactionBusyEmoji: string | null; reactionError: string; onDraft: (value: string, mentionMemberIds: string[]) => void; onSend: () => void; onLoadOlder: () => void; onHide: (eventId: string) => void; onEdit: (eventId: string, text: string, mentionMemberIds: string[]) => void; onDelete: (eventId: string) => void; onToggleReactionPicker: (eventId: string) => void; onReactionCatalogOpenChange: (eventId: string, open: boolean) => void; onCloseReactionPicker: () => void; onSetReaction: (eventId: string, emoji: string, active: boolean) => void; onPeople: () => void; onSettings: () => void; onInvite: () => void; onManage: () => void; onToggleMentionMute: () => void }) {
+function WorkspaceConversation({ workspace, channel, page, draft, mentionMemberIds, loading, sending, error, reactionTargetId, reactionCatalogOpen, reactionBusyEmoji, reactionError, onDraft, onSend, onLoadOlder, onHide, onOpenThread, onEdit, onDelete, onToggleReactionPicker, onReactionCatalogOpenChange, onCloseReactionPicker, onSetReaction, onPeople, onSettings, onInvite, onManage, onToggleMentionMute }: { workspace: Workspace; channel: WorkspaceChannel; page: WorkspaceMessagePage | null; draft: string; mentionMemberIds: string[]; loading: boolean; sending: boolean; error: string; reactionTargetId: string | null; reactionCatalogOpen: boolean; reactionBusyEmoji: string | null; reactionError: string; onDraft: (value: string, mentionMemberIds: string[]) => void; onSend: () => void; onLoadOlder: () => void; onHide: (eventId: string) => void; onOpenThread: (eventId: string) => void; onEdit: (eventId: string, text: string, mentionMemberIds: string[]) => void; onDelete: (eventId: string) => void; onToggleReactionPicker: (eventId: string) => void; onReactionCatalogOpenChange: (eventId: string, open: boolean) => void; onCloseReactionPicker: () => void; onSetReaction: (eventId: string, emoji: string, active: boolean) => void; onPeople: () => void; onSettings: () => void; onInvite: () => void; onManage: () => void; onToggleMentionMute: () => void }) {
   const postingRestricted = workspace.policies.posting === "owner_and_admins" && workspace.local_role !== "owner";
   const readOnly = workspace.state !== "active" || channel.state !== "active" || postingRestricted;
   const [attachmentWarning, setAttachmentWarning] = useState("");
@@ -1993,14 +1998,14 @@ function WorkspaceConversation({ workspace, channel, page, draft, mentionMemberI
       {page?.next_cursor && <button className="load-older" disabled={loading} onClick={onLoadOlder}>{loading ? "Loading…" : "Load older messages"}</button>}
       {loading && !page && <div className="workspace-loading"><span className="spinner" /> Loading messages…</div>}
       {!loading && page?.messages.length === 0 && <div className="workspace-channel-empty">{channel.visibility === "private" ? <LockKeyhole size={26} /> : <Hash size={26} />}<h2>Welcome to #{channel.display_name || channel.name}</h2><p>{channel.visibility === "private" ? "Only the signed roster receives this channel or its future messages. Newly admitted members receive no earlier messages." : "Everyone in this workspace receives public-channel messages. History depends on copies retained by reachable members."}</p></div>}
-      {page?.messages.map((message) => <WorkspaceMessageCard key={message.id} workspace={workspace} message={message} allowedMentionMemberIds={channel.visibility === "private" ? channel.member_ids : workspace.members.filter((member) => member.status === "active").map((member) => member.id)} reactionOpen={reactionTargetId === message.id} reactionCatalogOpen={reactionTargetId === message.id && reactionCatalogOpen} reactionBusyEmoji={reactionTargetId === message.id ? reactionBusyEmoji : null} reactionError={reactionTargetId === message.id ? reactionError : ""} onToggleReaction={() => onToggleReactionPicker(message.id)} onReactionCatalogOpenChange={(open) => onReactionCatalogOpenChange(message.id, open)} onCloseReaction={onCloseReactionPicker} onSetReaction={(emoji, active) => onSetReaction(message.id, emoji, active)} onEdit={(text, editedMentionMemberIds) => onEdit(message.id, text, editedMentionMemberIds)} onDelete={() => onDelete(message.id)} onHide={() => onHide(message.id)} />)}
+      {page?.messages.map((message) => <WorkspaceMessageCard key={message.id} workspace={workspace} message={message} allowedMentionMemberIds={channel.visibility === "private" ? channel.member_ids : workspace.members.filter((member) => member.status === "active").map((member) => member.id)} reactionOpen={reactionTargetId === message.id} reactionCatalogOpen={reactionTargetId === message.id && reactionCatalogOpen} reactionBusyEmoji={reactionTargetId === message.id ? reactionBusyEmoji : null} reactionError={reactionTargetId === message.id ? reactionError : ""} onToggleReaction={() => onToggleReactionPicker(message.id)} onReactionCatalogOpenChange={(open) => onReactionCatalogOpenChange(message.id, open)} onCloseReaction={onCloseReactionPicker} onSetReaction={(emoji, active) => onSetReaction(message.id, emoji, active)} onEdit={(text, editedMentionMemberIds) => onEdit(message.id, text, editedMentionMemberIds)} onDelete={() => onDelete(message.id)} onHide={() => onHide(message.id)} onOpenThread={() => onOpenThread(message.id)} />)}
     </div>
     {(error || attachmentWarning || syncWarning) && <p className="form-error workspace-composer-error" role="alert">{error || attachmentWarning || syncWarning}</p>}
     {readOnly ? <div className="composer-disabled"><LockKeyhole size={16} />{postingRestricted ? "Only the workspace owner can post under the current signed policy." : channel.state === "archived" ? "This channel is archived and read-only." : channel.state === "leaving" ? "Leaving is pending with the channel manager." : workspaceStateLabel(workspace)}</div> : <div className="workspace-composer-shell"><WorkspaceMentionChips workspace={workspace} memberIds={mentionMemberIds} onRemove={(memberId) => onDraft(draft, mentionMemberIds.filter((id) => id !== memberId))} /><div className="composer workspace-composer"><button type="button" className="icon-button" onClick={() => setAttachmentWarning("Attachments are not supported yet. No file was sent.")} aria-label="Add attachment"><Plus size={20} /></button><WorkspaceMentionPicker workspace={workspace} allowedMemberIds={channel.visibility === "private" ? channel.member_ids : workspace.members.filter((member) => member.status === "active").map((member) => member.id)} selectedMemberIds={mentionMemberIds} onSelect={(member) => onDraft(`${draft}${draft && !draft.endsWith(" ") ? " " : ""}@${member.display_name} `, [...mentionMemberIds, member.id].sort())} /><textarea value={draft} onChange={(event) => { setAttachmentWarning(""); onDraft(event.target.value, mentionMemberIds); }} onPaste={(event) => { if (event.clipboardData.files.length || Array.from(event.clipboardData.items).some((item) => item.kind === "file")) { event.preventDefault(); setAttachmentWarning("Attachments are not supported yet. No file was sent."); } }} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); onSend(); } }} placeholder={`Message #${channel.name}`} aria-label={`Message ${channel.name}`} maxLength={16 * 1024} /><Button disabled={sending || !draft.trim()} onClick={onSend} aria-label="Send workspace message"><Send size={18} /></Button></div></div>}
   </section>;
 }
 
-function WorkspaceDirectConversation({ workspace, direct, page, draft, mentionMemberIds, loading, sending, error, reactionTargetId, reactionCatalogOpen, reactionBusyEmoji, reactionError, onDraft, onSend, onLoadOlder, onHideMessage, onEdit, onDelete, onToggleReactionPicker, onReactionCatalogOpenChange, onCloseReactionPicker, onSetReaction, onHideConversation, onPeople }: { workspace: Workspace; direct: WorkspaceDirect; page: WorkspaceMessagePage | null; draft: string; mentionMemberIds: string[]; loading: boolean; sending: boolean; error: string; reactionTargetId: string | null; reactionCatalogOpen: boolean; reactionBusyEmoji: string | null; reactionError: string; onDraft: (value: string, mentionMemberIds: string[]) => void; onSend: () => void; onLoadOlder: () => void; onHideMessage: (eventId: string) => void; onEdit: (eventId: string, text: string, mentionMemberIds: string[]) => void; onDelete: (eventId: string) => void; onToggleReactionPicker: (eventId: string) => void; onReactionCatalogOpenChange: (eventId: string, open: boolean) => void; onCloseReactionPicker: () => void; onSetReaction: (eventId: string, emoji: string, active: boolean) => void; onHideConversation: () => void; onPeople: () => void }) {
+function WorkspaceDirectConversation({ workspace, direct, page, draft, mentionMemberIds, loading, sending, error, reactionTargetId, reactionCatalogOpen, reactionBusyEmoji, reactionError, onDraft, onSend, onLoadOlder, onHideMessage, onOpenThread, onEdit, onDelete, onToggleReactionPicker, onReactionCatalogOpenChange, onCloseReactionPicker, onSetReaction, onHideConversation, onPeople }: { workspace: Workspace; direct: WorkspaceDirect; page: WorkspaceMessagePage | null; draft: string; mentionMemberIds: string[]; loading: boolean; sending: boolean; error: string; reactionTargetId: string | null; reactionCatalogOpen: boolean; reactionBusyEmoji: string | null; reactionError: string; onDraft: (value: string, mentionMemberIds: string[]) => void; onSend: () => void; onLoadOlder: () => void; onHideMessage: (eventId: string) => void; onOpenThread: (eventId: string) => void; onEdit: (eventId: string, text: string, mentionMemberIds: string[]) => void; onDelete: (eventId: string) => void; onToggleReactionPicker: (eventId: string) => void; onReactionCatalogOpenChange: (eventId: string, open: boolean) => void; onCloseReactionPicker: () => void; onSetReaction: (eventId: string, emoji: string, active: boolean) => void; onHideConversation: () => void; onPeople: () => void }) {
   const [attachmentWarning, setAttachmentWarning] = useState("");
   const readOnly = workspace.state !== "active" || direct.state !== "open";
   const readOnlyLabel = direct.state !== "open"
@@ -2008,22 +2013,76 @@ function WorkspaceDirectConversation({ workspace, direct, page, draft, mentionMe
     : workspaceStateLabel(workspace);
   return <section className="conversation workspace-conversation" aria-label={`Workspace direct message with ${direct.peer_display_name}`} onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); if (event.dataTransfer.files.length) setAttachmentWarning("Attachments are not supported yet. No file was sent."); }}>
     <header className="conversation__header"><div className="conversation__identity"><Avatar name={direct.peer_display_name} small /><span><h1>{direct.peer_display_name}</h1><small>{workspace.name} · workspace DM · {direct.peer_short_id}</small></span></div><div className="workspace-header-actions"><button className="icon-button" onClick={onHideConversation} aria-label={`Hide workspace conversation with ${direct.peer_display_name}`} title="Hide locally"><EyeOff size={18} /></button><button className="icon-button" onClick={onPeople} aria-label={`People in ${workspace.name}`} title="People"><Users size={18} /></button></div></header>
-    <div className="message-scroll workspace-message-scroll">{page?.next_cursor && <button className="load-older" disabled={loading} onClick={onLoadOlder}>{loading ? "Loading…" : "Load older messages"}</button>}{loading && !page && <div className="workspace-loading"><span className="spinner" /> Loading messages…</div>}{!loading && page?.messages.length === 0 && <div className="workspace-channel-empty"><MessageCircleMore size={28} /><h2>Message {direct.peer_display_name}</h2><p>This private workspace conversation is authorized by signed membership and does not create a global Contact.</p></div>}{page?.messages.map((message) => <WorkspaceMessageCard key={message.id} workspace={workspace} message={message} allowedMentionMemberIds={direct.participant_member_ids} reactionOpen={reactionTargetId === message.id} reactionCatalogOpen={reactionTargetId === message.id && reactionCatalogOpen} reactionBusyEmoji={reactionTargetId === message.id ? reactionBusyEmoji : null} reactionError={reactionTargetId === message.id ? reactionError : ""} onToggleReaction={() => onToggleReactionPicker(message.id)} onReactionCatalogOpenChange={(open) => onReactionCatalogOpenChange(message.id, open)} onCloseReaction={onCloseReactionPicker} onSetReaction={(emoji, active) => onSetReaction(message.id, emoji, active)} onEdit={(text, editedMentionMemberIds) => onEdit(message.id, text, editedMentionMemberIds)} onDelete={() => onDelete(message.id)} onHide={() => onHideMessage(message.id)} />)}</div>
+    <div className="message-scroll workspace-message-scroll">{page?.next_cursor && <button className="load-older" disabled={loading} onClick={onLoadOlder}>{loading ? "Loading…" : "Load older messages"}</button>}{loading && !page && <div className="workspace-loading"><span className="spinner" /> Loading messages…</div>}{!loading && page?.messages.length === 0 && <div className="workspace-channel-empty"><MessageCircleMore size={28} /><h2>Message {direct.peer_display_name}</h2><p>This private workspace conversation is authorized by signed membership and does not create a global Contact.</p></div>}{page?.messages.map((message) => <WorkspaceMessageCard key={message.id} workspace={workspace} message={message} allowedMentionMemberIds={direct.participant_member_ids} reactionOpen={reactionTargetId === message.id} reactionCatalogOpen={reactionTargetId === message.id && reactionCatalogOpen} reactionBusyEmoji={reactionTargetId === message.id ? reactionBusyEmoji : null} reactionError={reactionTargetId === message.id ? reactionError : ""} onToggleReaction={() => onToggleReactionPicker(message.id)} onReactionCatalogOpenChange={(open) => onReactionCatalogOpenChange(message.id, open)} onCloseReaction={onCloseReactionPicker} onSetReaction={(emoji, active) => onSetReaction(message.id, emoji, active)} onEdit={(text, editedMentionMemberIds) => onEdit(message.id, text, editedMentionMemberIds)} onDelete={() => onDelete(message.id)} onHide={() => onHideMessage(message.id)} onOpenThread={() => onOpenThread(message.id)} />)}</div>
     {(error || attachmentWarning) && <p className="form-error workspace-composer-error" role="alert">{error || attachmentWarning}</p>}
     {readOnly ? <div className="composer-disabled"><LockKeyhole size={16} />{readOnlyLabel}</div> : <div className="workspace-composer-shell"><WorkspaceMentionChips workspace={workspace} memberIds={mentionMemberIds} onRemove={(memberId) => onDraft(draft, mentionMemberIds.filter((id) => id !== memberId))} /><div className="composer workspace-composer"><button type="button" className="icon-button" onClick={() => setAttachmentWarning("Attachments are not supported yet. No file was sent.")} aria-label="Add attachment"><Plus size={20} /></button><WorkspaceMentionPicker workspace={workspace} allowedMemberIds={direct.participant_member_ids} selectedMemberIds={mentionMemberIds} onSelect={(member) => onDraft(`${draft}${draft && !draft.endsWith(" ") ? " " : ""}@${member.display_name} `, [...mentionMemberIds, member.id].sort())} /><textarea value={draft} onChange={(event) => { setAttachmentWarning(""); onDraft(event.target.value, mentionMemberIds); }} onPaste={(event) => { if (event.clipboardData.files.length || Array.from(event.clipboardData.items).some((item) => item.kind === "file")) { event.preventDefault(); setAttachmentWarning("Attachments are not supported yet. No file was sent."); } }} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); onSend(); } }} placeholder={`Message ${direct.peer_display_name}`} aria-label={`Message ${direct.peer_display_name}`} maxLength={16 * 1024} /><Button disabled={sending || !draft.trim()} onClick={onSend} aria-label="Send workspace direct message"><Send size={18} /></Button></div></div>}
   </section>;
 }
 
-function WorkspaceMentions({ workspace, page, loading, error, onLoadOlder, onMarkRead, onOpenConversation }: { workspace: Workspace; page: WorkspaceMentionPage | null; loading: boolean; error: string; onLoadOlder: () => void; onMarkRead: () => void; onOpenConversation: (kind: "channel" | "direct", conversationId: string) => void }) {
+function WorkspaceMentions({ workspace, page, loading, error, onLoadOlder, onMarkRead, onOpenConversation }: { workspace: Workspace; page: WorkspaceMentionPage | null; loading: boolean; error: string; onLoadOlder: () => void; onMarkRead: () => void; onOpenConversation: (kind: "channel" | "direct", conversationId: string, threadRootId?: string) => void }) {
   return <section className="conversation workspace-mentions" aria-label={`Mentions in ${workspace.name}`}>
     <header className="conversation__header"><div className="conversation__identity"><span className="workspace-channel-icon"><AtSign size={19} /></span><span><h1>Mentions</h1><small>Structured mentions addressed to you in {workspace.name}</small></span></div>{(page?.unread_count ?? workspace.mention_unread_count) > 0 && <Button variant="secondary" onClick={onMarkRead}>Mark all read</Button>}</header>
     <div className="message-scroll workspace-mention-list">
       {loading && !page && <div className="workspace-loading"><span className="spinner" /> Loading mentions…</div>}
       {!loading && page?.mentions.length === 0 && <div className="workspace-channel-empty"><AtSign size={28} /><h2>No mentions</h2><p>Only member IDs inserted with the mention picker appear here. Raw @name text remains ordinary message text.</p></div>}
-      {page?.mentions.map((mention) => <button type="button" className={`workspace-mention-row ${mention.read ? "" : "workspace-mention-row--unread"}`} key={`${mention.position}:${mention.message.id}`} onClick={() => onOpenConversation(mention.conversation.kind, mention.conversation.id)}><Avatar name={mention.message.author_display_name} small /><span><span className="workspace-mention-row__meta"><strong>{mention.message.author_display_name}</strong><small>{mention.conversation.kind === "channel" ? `#${mention.conversation.name}` : mention.conversation.name} · {formatTime(mention.message.created_at)}</small>{!mention.read && <i>New</i>}</span><span>{mention.message.text}</span></span></button>)}
+      {page?.mentions.map((mention) => <button type="button" className={`workspace-mention-row ${mention.read ? "" : "workspace-mention-row--unread"}`} key={`${mention.position}:${mention.message.id}`} onClick={() => onOpenConversation(mention.conversation.kind, mention.conversation.id, mention.thread_root_id)}><Avatar name={mention.message.author_display_name} small /><span><span className="workspace-mention-row__meta"><strong>{mention.message.author_display_name}</strong><small>{mention.conversation.kind === "channel" ? `#${mention.conversation.name}` : mention.conversation.name}{mention.thread_root_id ? " · thread" : ""} · {formatTime(mention.message.created_at)}</small>{!mention.read && <i>New</i>}</span><span>{mention.message.text}</span></span></button>)}
       {page?.next_cursor && <button className="load-older" disabled={loading} onClick={onLoadOlder}>{loading ? "Loading…" : "Load older mentions"}</button>}
     </div>
     {error && <p className="form-error workspace-composer-error" role="alert">{error}</p>}
+  </section>;
+}
+
+function WorkspaceThreads({ workspace, page, loading, error, onLoadOlder, onOpenThread }: { workspace: Workspace; page: WorkspaceThreadActivityPage | null; loading: boolean; error: string; onLoadOlder: () => void; onOpenThread: (kind: "channel" | "direct", conversationId: string, rootId: string) => void }) {
+  return <section className="conversation workspace-threads" aria-label={`Threads in ${workspace.name}`}>
+    <header className="conversation__header"><div className="conversation__identity"><span className="workspace-channel-icon"><MessageCircleMore size={19} /></span><span><h1>Threads</h1><small>Recent one-level discussions in {workspace.name}</small></span></div></header>
+    <div className="message-scroll workspace-thread-list">
+      {loading && !page && <div className="workspace-loading"><span className="spinner" /> Loading threads…</div>}
+      {!loading && page?.threads.length === 0 && <div className="workspace-channel-empty"><MessageCircleMore size={28} /><h2>No threads yet</h2><p>Open any workspace message and start a focused discussion.</p></div>}
+      {page?.threads.map((thread) => <button type="button" className={`workspace-thread-row ${thread.unread_count ? "workspace-thread-row--unread" : ""}`} key={thread.root.id} onClick={() => onOpenThread(thread.conversation.kind, thread.conversation.id, thread.root.id)}><Avatar name={thread.root.author_display_name} small /><span><span className="workspace-mention-row__meta"><strong>{thread.root.author_display_name}</strong><small>{thread.conversation.kind === "channel" ? `#${thread.conversation.name}` : thread.conversation.name} · {formatTime(thread.updated_at)}</small>{thread.unread_count > 0 && <i>{thread.unread_count} new</i>}</span><span>{thread.root.deleted ? "Message deleted by its author." : thread.root.text}</span><small>{thread.reply_count} {thread.reply_count === 1 ? "reply" : "replies"}</small></span></button>)}
+      {page?.next_cursor && <button className="load-older" disabled={loading} onClick={onLoadOlder}>{loading ? "Loading…" : "Load older threads"}</button>}
+    </div>
+    {error && <p className="form-error workspace-composer-error" role="alert">{error}</p>}
+  </section>;
+}
+
+type WorkspaceThreadViewProps = {
+  workspace: Workspace;
+  page: WorkspaceThreadPage | null;
+  draft: string;
+  mentionMemberIds: string[];
+  allowedMentionMemberIds: string[];
+  loading: boolean;
+  sending: boolean;
+  error: string;
+  reactionTargetId: string | null;
+  reactionCatalogOpen: boolean;
+  reactionBusyEmoji: string | null;
+  reactionError: string;
+  onBack: () => void;
+  onDraft: (value: string, mentionMemberIds: string[]) => void;
+  onSend: () => void;
+  onLoadOlder: () => void;
+  onHide: (eventId: string) => void;
+  onEdit: (eventId: string, text: string, mentionMemberIds: string[]) => void;
+  onDelete: (eventId: string) => void;
+  onToggleReactionPicker: (eventId: string) => void;
+  onReactionCatalogOpenChange: (eventId: string, open: boolean) => void;
+  onCloseReactionPicker: () => void;
+  onSetReaction: (eventId: string, emoji: string, active: boolean) => void;
+};
+
+function WorkspaceThreadView({ workspace, page, draft, mentionMemberIds, allowedMentionMemberIds, loading, sending, error, reactionTargetId, reactionCatalogOpen, reactionBusyEmoji, reactionError, onBack, onDraft, onSend, onLoadOlder, onHide, onEdit, onDelete, onToggleReactionPicker, onReactionCatalogOpenChange, onCloseReactionPicker, onSetReaction }: WorkspaceThreadViewProps) {
+  const [attachmentWarning, setAttachmentWarning] = useState("");
+  const readOnly = workspace.state !== "active" || (page != null && page.conversation.state !== "active" && page.conversation.state !== "open");
+  const card = (message: WorkspaceMessage) => <WorkspaceMessageCard key={message.id} workspace={workspace} message={message} allowedMentionMemberIds={allowedMentionMemberIds} reactionOpen={reactionTargetId === message.id} reactionCatalogOpen={reactionTargetId === message.id && reactionCatalogOpen} reactionBusyEmoji={reactionTargetId === message.id ? reactionBusyEmoji : null} reactionError={reactionTargetId === message.id ? reactionError : ""} onToggleReaction={() => onToggleReactionPicker(message.id)} onReactionCatalogOpenChange={(open) => onReactionCatalogOpenChange(message.id, open)} onCloseReaction={onCloseReactionPicker} onSetReaction={(emoji, active) => onSetReaction(message.id, emoji, active)} onEdit={(text, editedMentionMemberIds) => onEdit(message.id, text, editedMentionMemberIds)} onDelete={() => onDelete(message.id)} onHide={() => onHide(message.id)} />;
+  return <section className="conversation workspace-thread" aria-label={`Thread in ${workspace.name}`}>
+    <header className="conversation__header"><div className="conversation__identity"><button type="button" className="icon-button" onClick={onBack} aria-label="Back to workspace conversation"><ArrowLeft size={19} /></button><span className="workspace-channel-icon"><MessageCircleMore size={19} /></span><span><h1>Thread</h1><small>{page ? `${page.conversation.kind === "channel" ? "#" : ""}${page.conversation.name} · ${page.replies.length} loaded replies` : workspace.name}</small></span></div></header>
+    <div className="message-scroll workspace-thread-messages">
+      {loading && !page && <div className="workspace-loading"><span className="spinner" /> Loading thread…</div>}
+      {page && <><div className="workspace-thread-root"><small>Original message</small>{card(page.root)}</div><div className="workspace-thread-divider"><span>{page.high_water} {page.high_water === 1 ? "reply" : "replies"}</span></div>{page.next_cursor && <button className="load-older" disabled={loading} onClick={onLoadOlder}>{loading ? "Loading…" : "Load older replies"}</button>}{page.replies.map(card)}{page.replies.length === 0 && <p className="workspace-thread-empty">No replies yet. Start the discussion below.</p>}</>}
+    </div>
+    {(error || attachmentWarning) && <p className="form-error workspace-composer-error" role="alert">{error || attachmentWarning}</p>}
+    {readOnly ? <div className="composer-disabled"><LockKeyhole size={16} />This thread is read-only under current workspace access.</div> : <div className="workspace-composer-shell"><WorkspaceMentionChips workspace={workspace} memberIds={mentionMemberIds} onRemove={(memberId) => onDraft(draft, mentionMemberIds.filter((id) => id !== memberId))} /><div className="composer workspace-composer"><button type="button" className="icon-button" onClick={() => setAttachmentWarning("Attachments are not supported yet. No file was sent.")} aria-label="Add attachment"><Plus size={20} /></button><WorkspaceMentionPicker workspace={workspace} allowedMemberIds={allowedMentionMemberIds} selectedMemberIds={mentionMemberIds} onSelect={(member) => onDraft(`${draft}${draft && !draft.endsWith(" ") ? " " : ""}@${member.display_name} `, [...mentionMemberIds, member.id].sort())} /><textarea value={draft} onChange={(event) => { setAttachmentWarning(""); onDraft(event.target.value, mentionMemberIds); }} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); onSend(); } }} placeholder="Reply in thread" aria-label="Reply in thread" maxLength={16 * 1024} /><Button disabled={sending || !draft.trim()} onClick={onSend} aria-label="Send thread reply"><Send size={18} /></Button></div></div>}
   </section>;
 }
 
@@ -2031,7 +2090,7 @@ type ConversationSelection = { kind: "contact" | "group"; id: string } | null;
 type ReactionTarget = { kind: "direct" | "group" | "workspace"; messageId: string; layer: "quick" | "catalog" } | null;
 
 type DraftWrite = {
-  command: "save_draft" | "save_group_draft" | "save_workspace_draft" | "save_workspace_direct_draft";
+  command: "save_draft" | "save_group_draft" | "save_workspace_draft" | "save_workspace_direct_draft" | "save_workspace_thread_draft";
   payload: Record<string, unknown>;
 };
 
@@ -2090,21 +2149,38 @@ function Messenger({ snapshot, refresh, workspaceChannelInvalidation, onLock, in
   const [workspaceMentionsOpen, setWorkspaceMentionsOpen] = useState(false);
   const [workspaceMentionPage, setWorkspaceMentionPage] = useState<WorkspaceMentionPage | null>(null);
   const [workspaceMentionLoading, setWorkspaceMentionLoading] = useState(false);
+  const [workspaceThreadsOpen, setWorkspaceThreadsOpen] = useState(false);
+  const [workspaceThreadActivityPage, setWorkspaceThreadActivityPage] = useState<WorkspaceThreadActivityPage | null>(null);
+  const [workspaceThreadActivityLoading, setWorkspaceThreadActivityLoading] = useState(false);
+  const [workspaceThreadRootId, setWorkspaceThreadRootId] = useState<string | null>(null);
+  const [workspaceThreadPage, setWorkspaceThreadPage] = useState<WorkspaceThreadPage | null>(null);
+  const [workspaceThreadLoading, setWorkspaceThreadLoading] = useState(false);
   const [workspacePage, setWorkspacePage] = useState<WorkspaceMessagePage | null>(null);
   const [workspacePageLoading, setWorkspacePageLoading] = useState(false);
-  const [workspaceDrafts, setWorkspaceDrafts] = useState<Record<string, WorkspaceDraftValue>>(() => Object.fromEntries((snapshot.workspace_drafts ?? []).map((draft) => [draft.conversation_id, { text: draft.text, mentionMemberIds: draft.mention_member_ids ?? [] }])));
+  const [workspaceDrafts, setWorkspaceDrafts] = useState<Record<string, WorkspaceDraftValue>>(() => Object.fromEntries((snapshot.workspace_drafts ?? []).map((draft) => [draft.thread_root_id ? `thread:${draft.thread_root_id}` : draft.conversation_id, { text: draft.text, mentionMemberIds: draft.mention_member_ids ?? [] }])));
   const [workspaceSending, setWorkspaceSending] = useState(false);
   const [workspaceError, setWorkspaceError] = useState("");
   const [workspaceActionBusy, setWorkspaceActionBusy] = useState(false);
   const [workspaceActionError, setWorkspaceActionError] = useState("");
   const workspacePageInFlight = useRef(false);
   const workspaceMentionsInFlight = useRef(false);
+  const workspaceThreadsInFlight = useRef(false);
+  const workspaceThreadInFlight = useRef(false);
   const loadedWorkspaceChannel = useRef<string | null>(null);
   const workspaceSendInFlight = useRef(false);
   const pendingWorkspaceSend = useRef<{
     workspaceId: string;
     conversationId: string;
     kind: "channel" | "direct";
+    text: string;
+    operationId: string;
+    eventId: string;
+    mentionMemberIds: string[];
+  } | null>(null);
+  const pendingWorkspaceThreadSend = useRef<{
+    workspaceId: string;
+    conversationId: string;
+    threadRootId: string;
     text: string;
     operationId: string;
     eventId: string;
@@ -2203,6 +2279,12 @@ function Messenger({ snapshot, refresh, workspaceChannelInvalidation, onLock, in
       : null
     : null;
   const selectedWorkspaceConversation = selectedWorkspaceDirect ?? selectedWorkspaceChannel;
+  const selectedWorkspaceThreadAllowedMemberIds = selectedWorkspace && workspaceThreadPage
+    ? selectedWorkspaceDirects.find((direct) => direct.id === workspaceThreadPage.conversation.id)?.participant_member_ids
+      ?? (selectedWorkspaceChannels.find((channel) => channel.id === workspaceThreadPage.conversation.id)?.visibility === "private"
+        ? selectedWorkspaceChannels.find((channel) => channel.id === workspaceThreadPage.conversation.id)!.member_ids
+        : selectedWorkspace.members.filter((member) => member.status === "active").map((member) => member.id))
+    : [];
   const deleteTargetName = deleteTarget?.kind === "contact"
     ? snapshot.contacts.find((contact) => contact.id === deleteTarget.id)?.display_name ?? "this contact"
     : deleteTarget?.kind === "group"
@@ -2220,6 +2302,10 @@ function Messenger({ snapshot, refresh, workspaceChannelInvalidation, onLock, in
     setWorkspaceSelectedDirectId(null);
     setWorkspaceMentionsOpen(false);
     setWorkspaceMentionPage(null);
+    setWorkspaceThreadsOpen(false);
+    setWorkspaceThreadActivityPage(null);
+    setWorkspaceThreadRootId(null);
+    setWorkspaceThreadPage(null);
     setWorkspaceManageChannelOpen(false);
   }, [activeSpaceId]);
 
@@ -2280,6 +2366,63 @@ function Messenger({ snapshot, refresh, workspaceChannelInvalidation, onLock, in
     }
     void loadWorkspaceMentions(false);
   }, [workspaceMentionsOpen, selectedWorkspace?.id, workspaceChannelInvalidation]);
+
+  const loadWorkspaceThreads = useCallback(async (append = false) => {
+    if (!selectedWorkspace || workspaceThreadsInFlight.current) return;
+    workspaceThreadsInFlight.current = true;
+    setWorkspaceThreadActivityLoading(true);
+    try {
+      const page = await serviceCommand<WorkspaceThreadActivityPage>("list_workspace_threads", {
+        workspace_id: selectedWorkspace.id,
+        cursor: append ? workspaceThreadActivityPage?.next_cursor ?? null : null,
+        limit: 50,
+      });
+      setWorkspaceThreadActivityPage((current) => append && current ? { ...page, threads: [...current.threads, ...page.threads] } : page);
+    } catch (reason) { setWorkspaceError(errorMessage(reason)); }
+    finally { workspaceThreadsInFlight.current = false; setWorkspaceThreadActivityLoading(false); }
+  }, [selectedWorkspace?.id, workspaceThreadActivityPage?.next_cursor]);
+
+  useEffect(() => {
+    if (!workspaceThreadsOpen || !selectedWorkspace) {
+      if (!workspaceThreadsOpen) setWorkspaceThreadActivityPage(null);
+      return;
+    }
+    void loadWorkspaceThreads(false);
+  }, [workspaceThreadsOpen, selectedWorkspace?.id, workspaceChannelInvalidation]);
+
+  const loadWorkspaceThread = useCallback(async (append = false) => {
+    if (!selectedWorkspace || !workspaceThreadRootId || workspaceThreadInFlight.current) return;
+    workspaceThreadInFlight.current = true;
+    setWorkspaceThreadLoading(true);
+    try {
+      const page = await serviceCommand<WorkspaceThreadPage>("list_workspace_thread_messages", {
+        workspace_id: selectedWorkspace.id,
+        thread_root_id: workspaceThreadRootId,
+        cursor: append ? workspaceThreadPage?.next_cursor ?? null : null,
+        limit: 50,
+      });
+      setWorkspaceThreadPage((current) => append && current ? { ...page, unread_count: current.unread_count, replies: [...page.replies, ...current.replies] } : page);
+      if (!append && page.unread_count > 0) {
+        await serviceCommand("mark_workspace_thread_read", {
+          operation_id: newOperationId(),
+          workspace_id: selectedWorkspace.id,
+          thread_root_id: workspaceThreadRootId,
+          high_water: page.high_water,
+        });
+        setWorkspaceThreadPage((current) => current ? { ...current, unread_count: 0 } : current);
+        void refresh(true);
+      }
+    } catch (reason) { setWorkspaceError(errorMessage(reason)); }
+    finally { workspaceThreadInFlight.current = false; setWorkspaceThreadLoading(false); }
+  }, [selectedWorkspace?.id, workspaceThreadRootId, workspaceThreadPage?.next_cursor, refresh]);
+
+  useEffect(() => {
+    if (!workspaceThreadRootId || !selectedWorkspace) {
+      setWorkspaceThreadPage(null);
+      return;
+    }
+    void loadWorkspaceThread(false);
+  }, [workspaceThreadRootId, selectedWorkspace?.id, workspaceChannelInvalidation]);
 
   const conversationItems = [
     ...contacts.map((contact) => {
@@ -2471,6 +2614,14 @@ function Messenger({ snapshot, refresh, workspaceChannelInvalidation, onLock, in
     scheduleDraftWrite(`workspace-direct:${conversationId}`, {
       command: "save_workspace_direct_draft",
       payload: { operation_id: newOperationId(), workspace_id: workspaceId, conversation_id: conversationId, text, mention_member_ids: mentionMemberIds },
+    });
+  };
+  const saveWorkspaceThreadDraft = (workspaceId: string, conversationId: string, threadRootId: string, text: string, mentionMemberIds: string[]) => {
+    const key = `thread:${threadRootId}`;
+    setWorkspaceDrafts((current) => ({ ...current, [key]: { text, mentionMemberIds } }));
+    scheduleDraftWrite(`workspace-thread:${threadRootId}`, {
+      command: "save_workspace_thread_draft",
+      payload: { operation_id: newOperationId(), workspace_id: workspaceId, conversation_id: conversationId, thread_root_id: threadRootId, text, mention_member_ids: mentionMemberIds },
     });
   };
   const send = async () => {
@@ -2691,6 +2842,8 @@ function Messenger({ snapshot, refresh, workspaceChannelInvalidation, onLock, in
         setWorkspaceSelectedChannelId(result.id);
         setWorkspaceSelectedDirectId(null);
         setWorkspaceMentionsOpen(false);
+        setWorkspaceThreadsOpen(false);
+        setWorkspaceThreadRootId(null);
         setWorkspaceCreateChannelOpen(false);
         setWorkspaceBrowseOpen(false);
       }
@@ -2795,6 +2948,60 @@ function Messenger({ snapshot, refresh, workspaceChannelInvalidation, onLock, in
       setWorkspaceSending(false);
     }
   };
+  const sendWorkspaceThreadReply = async () => {
+    if (!selectedWorkspace || !workspaceThreadRootId || !workspaceThreadPage || workspaceSendInFlight.current) return;
+    const conversationId = workspaceThreadPage.conversation.id;
+    const draftStorageKey = `thread:${workspaceThreadRootId}`;
+    const draft = workspaceDrafts[draftStorageKey] ?? { text: "", mentionMemberIds: [] };
+    if (!draft.text.trim()) return;
+    const direct = selectedWorkspaceDirects.find((item) => item.id === conversationId);
+    const channel = selectedWorkspaceChannels.find((item) => item.id === conversationId);
+    const allowedMentionMemberIds = direct?.participant_member_ids
+      ?? (channel?.visibility === "private" ? channel.member_ids : selectedWorkspace.members.filter((member) => member.status === "active").map((member) => member.id));
+    const mentionMemberIds = eligibleWorkspaceMentionMemberIds(selectedWorkspace, allowedMentionMemberIds, draft.mentionMemberIds);
+    const prior = pendingWorkspaceThreadSend.current;
+    const durable = prior
+      && prior.workspaceId === selectedWorkspace.id
+      && prior.threadRootId === workspaceThreadRootId
+      && prior.text === draft.text
+      && prior.mentionMemberIds.join(",") === mentionMemberIds.join(",")
+      ? prior
+      : { workspaceId: selectedWorkspace.id, conversationId, threadRootId: workspaceThreadRootId, text: draft.text, mentionMemberIds, operationId: newOperationId(), eventId: newOperationId() };
+    pendingWorkspaceThreadSend.current = durable;
+    workspaceSendInFlight.current = true;
+    setWorkspaceSending(true);
+    setWorkspaceError("");
+    const draftWriteKey = `workspace-thread:${workspaceThreadRootId}`;
+    await cancelPendingDraftWrite(draftWriteKey);
+    let saved: WorkspaceMessage;
+    try {
+      saved = await serviceCommand<WorkspaceMessage>("send_workspace_thread_reply", {
+        operation_id: durable.operationId,
+        event_id: durable.eventId,
+        workspace_id: durable.workspaceId,
+        conversation_id: durable.conversationId,
+        thread_root_id: durable.threadRootId,
+        text: durable.text,
+        mention_member_ids: durable.mentionMemberIds,
+      });
+    } catch (reason) {
+      setWorkspaceError(`${errorMessage(reason)} Your reply is still in the composer; retrying will reuse the same durable message ID.`);
+      workspaceSendInFlight.current = false;
+      setWorkspaceSending(false);
+      return;
+    }
+    pendingWorkspaceThreadSend.current = null;
+    setWorkspaceDrafts((current) => ({ ...current, [draftStorageKey]: { text: "", mentionMemberIds: [] } }));
+    setWorkspaceThreadPage((current) => !current || current.replies.some((reply) => reply.id === saved.id) ? current : { ...current, replies: [...current.replies, saved], high_water: current.high_water + 1 });
+    try {
+      await writeDraftNow(draftWriteKey, { command: "save_workspace_thread_draft", payload: { operation_id: newOperationId(), workspace_id: durable.workspaceId, conversation_id: durable.conversationId, thread_root_id: durable.threadRootId, text: "", mention_member_ids: [] } });
+    } catch {
+      setWorkspaceError("Your reply was saved, but its saved draft could not be cleared. It may reappear after reopening Mesh Chat.");
+    }
+    try { await refresh(true); }
+    catch { setWorkspaceError((current) => current || "Your reply was saved. Thread summaries could not refresh yet, but the reply remains durable."); }
+    finally { workspaceSendInFlight.current = false; setWorkspaceSending(false); }
+  };
   const openWorkspaceDirect = async (memberId: string) => {
     if (!selectedWorkspace || workspaceActionBusy) return;
     setWorkspaceActionBusy(true); setWorkspaceActionError("");
@@ -2803,6 +3010,8 @@ function Messenger({ snapshot, refresh, workspaceChannelInvalidation, onLock, in
       setWorkspaceSelectedDirectId(direct.id);
       setWorkspaceSelectedChannelId(null);
       setWorkspaceMentionsOpen(false);
+      setWorkspaceThreadsOpen(false);
+      setWorkspaceThreadRootId(null);
       setWorkspacePeopleOpen(false);
       await refresh(true);
     } catch (reason) { setWorkspaceActionError(errorMessage(reason)); }
@@ -2835,8 +3044,28 @@ function Messenger({ snapshot, refresh, workspaceChannelInvalidation, onLock, in
       await refresh(true);
     } catch (reason) { setWorkspaceError(errorMessage(reason)); }
   };
-  const openWorkspaceMentionConversation = (kind: "channel" | "direct", conversationId: string) => {
+  const openWorkspaceThread = (kind: "channel" | "direct", conversationId: string, threadRootId: string) => {
     setWorkspaceMentionsOpen(false);
+    setWorkspaceThreadsOpen(false);
+    if (kind === "direct") {
+      setWorkspaceSelectedDirectId(conversationId);
+      setWorkspaceSelectedChannelId(null);
+    } else {
+      setWorkspaceSelectedChannelId(conversationId);
+      setWorkspaceSelectedDirectId(null);
+    }
+    setWorkspaceThreadRootId(threadRootId);
+    setWorkspaceThreadPage(null);
+    setWorkspaceError("");
+  };
+  const openWorkspaceMentionConversation = (kind: "channel" | "direct", conversationId: string, threadRootId?: string) => {
+    if (threadRootId) {
+      openWorkspaceThread(kind, conversationId, threadRootId);
+      return;
+    }
+    setWorkspaceMentionsOpen(false);
+    setWorkspaceThreadsOpen(false);
+    setWorkspaceThreadRootId(null);
     if (kind === "direct") {
       setWorkspaceSelectedDirectId(conversationId);
       setWorkspaceSelectedChannelId(null);
@@ -2850,7 +3079,12 @@ function Messenger({ snapshot, refresh, workspaceChannelInvalidation, onLock, in
     setWorkspaceError("");
     try {
       await serviceCommand("hide_workspace_message", { operation_id: newOperationId(), workspace_id: selectedWorkspace.id, event_id: eventId });
-      await loadWorkspaceMessages(false);
+      if (workspaceThreadRootId === eventId) {
+        setWorkspaceThreadRootId(null);
+        setWorkspaceThreadPage(null);
+        await loadWorkspaceMessages(false);
+      } else if (workspaceThreadRootId) await loadWorkspaceThread(false);
+      else await loadWorkspaceMessages(false);
     } catch (reason) { setWorkspaceError(errorMessage(reason)); }
   };
   const mutateWorkspaceMessage = async (
@@ -2872,6 +3106,11 @@ function Messenger({ snapshot, refresh, workspaceChannelInvalidation, onLock, in
       setWorkspacePage((current) => current ? {
         ...current,
         messages: current.messages.map((message) => message.id === eventId ? updated : message),
+      } : current);
+      setWorkspaceThreadPage((current) => current ? {
+        ...current,
+        root: current.root.id === eventId ? updated : current.root,
+        replies: current.replies.map((message) => message.id === eventId ? updated : message),
       } : current);
     } catch (reason) { setWorkspaceError(errorMessage(reason)); }
   };
@@ -2896,6 +3135,11 @@ function Messenger({ snapshot, refresh, workspaceChannelInvalidation, onLock, in
       setWorkspacePage((current) => current ? {
         ...current,
         messages: current.messages.map((message) => message.id === messageId ? updated : message),
+      } : current);
+      setWorkspaceThreadPage((current) => current ? {
+        ...current,
+        root: current.root.id === messageId ? updated : current.root,
+        replies: current.replies.map((message) => message.id === messageId ? updated : message),
       } : current);
       if (reactionInteractionGeneration.current === interactionGeneration) setReactionTarget(null);
     } catch (reason) {
@@ -3045,14 +3289,15 @@ function Messenger({ snapshot, refresh, workspaceChannelInvalidation, onLock, in
           {workspaceActionError && <p className="form-error sidebar-action-error" role="alert">{workspaceActionError}</p>}
           <nav className="contact-list workspace-nav" aria-label={`${selectedWorkspace.name} conversations`}>
             {workspaceJoinRequests.filter((request) => request.workspace_id === selectedWorkspace.id).map((request) => <section className="request-card workspace-join-request" key={request.id}><div><Avatar name={request.display_name} small /><span><strong>{request.display_name}</strong><small>Requests to join · {request.member_id.replaceAll("-", "").slice(0, 6)}</small></span></div><p className="request-fingerprint">{request.fingerprint}</p><div><Button disabled={workspaceActionBusy} onClick={() => void respondToWorkspaceJoin(request.id, true)}>Approve</Button><Button variant="ghost" disabled={workspaceActionBusy} onClick={() => void respondToWorkspaceJoin(request.id, false)}>Decline</Button></div></section>)}
-            <button className={`workspace-nav-action ${workspaceMentionsOpen ? "workspace-nav-action--active" : ""}`} onClick={() => { setWorkspaceMentionsOpen(true); setWorkspaceError(""); }}><AtSign size={17} />Mentions {selectedWorkspace.mention_unread_count > 0 && <b className="unread-badge">{selectedWorkspace.mention_unread_count}</b>}</button>
+            <button className={`workspace-nav-action ${workspaceThreadsOpen ? "workspace-nav-action--active" : ""}`} onClick={() => { setWorkspaceThreadsOpen(true); setWorkspaceMentionsOpen(false); setWorkspaceThreadRootId(null); setWorkspaceError(""); }}><MessageCircleMore size={17} />Threads {selectedWorkspace.thread_unread_count > 0 && <b className="unread-badge">{selectedWorkspace.thread_unread_count}</b>}</button>
+            <button className={`workspace-nav-action ${workspaceMentionsOpen ? "workspace-nav-action--active" : ""}`} onClick={() => { setWorkspaceMentionsOpen(true); setWorkspaceThreadsOpen(false); setWorkspaceThreadRootId(null); setWorkspaceError(""); }}><AtSign size={17} />Mentions {selectedWorkspace.mention_unread_count > 0 && <b className="unread-badge">{selectedWorkspace.mention_unread_count}</b>}</button>
             <p className="workspace-nav__label">Channels</p>
-            {selectedWorkspaceChannels.filter((channel) => channel.visibility === "private" || channel.subscribed || channel.id === selectedWorkspace.general_channel_id || channel.id === selectedWorkspaceChannel?.id).map((channel) => <button key={channel.id} className={`contact-row workspace-channel-row ${!workspaceMentionsOpen && selectedWorkspaceChannel?.id === channel.id ? "contact-row--selected" : ""}`} onClick={() => { setWorkspaceMentionsOpen(false); setWorkspaceSelectedChannelId(channel.id); setWorkspaceSelectedDirectId(null); }}><span className="workspace-channel-icon">{channel.visibility === "private" ? <LockKeyhole size={18} /> : <Hash size={18} />}</span><span className="contact-row__content"><span><strong>{channel.display_name || channel.name}</strong>{channel.unread_count > 0 && <b className="unread-badge">{channel.unread_count}</b>}</span><span className="contact-row__preview">{channel.state === "archived" ? "Archived · read-only" : channel.state === "leaving" ? "Leaving · read-only" : channel.topic || (channel.visibility === "private" ? "Private signed roster" : "Everyone in the workspace")}</span></span></button>)}
+            {selectedWorkspaceChannels.filter((channel) => channel.visibility === "private" || channel.subscribed || channel.id === selectedWorkspace.general_channel_id || channel.id === selectedWorkspaceChannel?.id).map((channel) => <button key={channel.id} className={`contact-row workspace-channel-row ${!workspaceMentionsOpen && !workspaceThreadsOpen && !workspaceThreadRootId && selectedWorkspaceChannel?.id === channel.id ? "contact-row--selected" : ""}`} onClick={() => { setWorkspaceMentionsOpen(false); setWorkspaceThreadsOpen(false); setWorkspaceThreadRootId(null); setWorkspaceSelectedChannelId(channel.id); setWorkspaceSelectedDirectId(null); }}><span className="workspace-channel-icon">{channel.visibility === "private" ? <LockKeyhole size={18} /> : <Hash size={18} />}</span><span className="contact-row__content"><span><strong>{channel.display_name || channel.name}</strong>{channel.unread_count > 0 && <b className="unread-badge">{channel.unread_count}</b>}</span><span className="contact-row__preview">{channel.state === "archived" ? "Archived · read-only" : channel.state === "leaving" ? "Leaving · read-only" : channel.topic || (channel.visibility === "private" ? "Private signed roster" : "Everyone in the workspace")}</span></span></button>)}
             {selectedWorkspaceChannels.length === 0 && <div className="workspace-channel-pending"><RefreshCw size={16} /><span>{selectedWorkspace.state === "joining" ? "Waiting for #general access" : "Channel controls are syncing"}</span></div>}
             <button className="workspace-nav-action" onClick={() => setWorkspaceBrowseOpen(true)}><Search size={17} />Browse channels <span>{selectedWorkspace.channel_discovery === "converged" ? selectedWorkspaceChannels.length : "…"}</span></button>
             {selectedWorkspace.state === "active" && (selectedWorkspace.policies.channel_creation === "all_members" || selectedWorkspace.local_role === "owner") && <button className="workspace-nav-action" onClick={() => setWorkspaceCreateChannelOpen(true)}><Plus size={17} />Create channel</button>}
             <p className="workspace-nav__label">Direct messages</p>
-            {selectedWorkspaceDirects.map((direct) => <button key={direct.id} className={`contact-row workspace-channel-row ${!workspaceMentionsOpen && selectedWorkspaceDirect?.id === direct.id ? "contact-row--selected" : ""}`} onClick={() => { setWorkspaceMentionsOpen(false); setWorkspaceSelectedDirectId(direct.id); setWorkspaceSelectedChannelId(null); }}><Avatar name={direct.peer_display_name} small /><span className="contact-row__content"><span><strong>{direct.peer_display_name}</strong>{direct.unread_count > 0 && <b className="unread-badge">{direct.unread_count}</b>}</span><span className="contact-row__preview">{direct.state === "read_only" ? "Former member · read-only" : `Workspace DM · ${direct.peer_short_id}`}</span></span></button>)}
+            {selectedWorkspaceDirects.map((direct) => <button key={direct.id} className={`contact-row workspace-channel-row ${!workspaceMentionsOpen && !workspaceThreadsOpen && !workspaceThreadRootId && selectedWorkspaceDirect?.id === direct.id ? "contact-row--selected" : ""}`} onClick={() => { setWorkspaceMentionsOpen(false); setWorkspaceThreadsOpen(false); setWorkspaceThreadRootId(null); setWorkspaceSelectedDirectId(direct.id); setWorkspaceSelectedChannelId(null); }}><Avatar name={direct.peer_display_name} small /><span className="contact-row__content"><span><strong>{direct.peer_display_name}</strong>{direct.unread_count > 0 && <b className="unread-badge">{direct.unread_count}</b>}</span><span className="contact-row__preview">{direct.state === "read_only" ? "Former member · read-only" : `Workspace DM · ${direct.peer_short_id}`}</span></span></button>)}
             {selectedWorkspaceDirects.length === 0 && <p className="workspace-direct-empty">Start a private workspace chat from People.</p>}
             <p className="workspace-nav__label">Workspace</p>
             <button className="workspace-nav-action" onClick={() => setWorkspacePeopleOpen(true)}><Users size={17} />People <span>{selectedWorkspace.members.filter((member) => member.status === "active").length}</span></button>
@@ -3069,7 +3314,35 @@ function Messenger({ snapshot, refresh, workspaceChannelInvalidation, onLock, in
             <span><strong>Networking is unavailable.</strong> Put both devices on the same local network and reopen Mesh Chat. Your profile and queued messages are safe.</span>
           </div>
         )}
-        {selectedWorkspace ? (workspaceMentionsOpen ? (
+        {selectedWorkspace ? (workspaceThreadRootId ? (
+          <WorkspaceThreadView
+            workspace={selectedWorkspace}
+            page={workspaceThreadPage}
+            draft={workspaceDrafts[`thread:${workspaceThreadRootId}`]?.text ?? ""}
+            mentionMemberIds={eligibleWorkspaceMentionMemberIds(selectedWorkspace, selectedWorkspaceThreadAllowedMemberIds, workspaceDrafts[`thread:${workspaceThreadRootId}`]?.mentionMemberIds ?? [])}
+            allowedMentionMemberIds={selectedWorkspaceThreadAllowedMemberIds}
+            loading={workspaceThreadLoading}
+            sending={workspaceSending}
+            error={workspaceError}
+            reactionTargetId={reactionTarget?.kind === "workspace" ? reactionTarget.messageId : null}
+            reactionCatalogOpen={reactionTarget?.kind === "workspace" && reactionTarget.layer === "catalog"}
+            reactionBusyEmoji={reactionBusy?.kind === "workspace" ? reactionBusy.emoji : null}
+            reactionError={reactionTarget?.kind === "workspace" ? reactionError : ""}
+            onBack={() => { setWorkspaceThreadRootId(null); setWorkspaceThreadPage(null); setWorkspaceError(""); }}
+            onDraft={(value, mentionMemberIds) => workspaceThreadPage && saveWorkspaceThreadDraft(selectedWorkspace.id, workspaceThreadPage.conversation.id, workspaceThreadRootId, value, mentionMemberIds)}
+            onSend={() => void sendWorkspaceThreadReply()}
+            onLoadOlder={() => void loadWorkspaceThread(true)}
+            onHide={(eventId) => void hideWorkspaceMessage(eventId)}
+            onEdit={(eventId, text, mentionMemberIds) => void mutateWorkspaceMessage("edit_workspace_message", eventId, text, mentionMemberIds)}
+            onDelete={(eventId) => void mutateWorkspaceMessage("delete_workspace_message", eventId)}
+            onToggleReactionPicker={(eventId) => toggleReactionPicker("workspace", eventId)}
+            onReactionCatalogOpenChange={(eventId, open) => setReactionCatalogOpen("workspace", eventId, open)}
+            onCloseReactionPicker={closeReactionPicker}
+            onSetReaction={(eventId, emoji, active) => void setWorkspaceReaction(eventId, emoji, active)}
+          />
+        ) : workspaceThreadsOpen ? (
+          <WorkspaceThreads workspace={selectedWorkspace} page={workspaceThreadActivityPage} loading={workspaceThreadActivityLoading} error={workspaceError} onLoadOlder={() => void loadWorkspaceThreads(true)} onOpenThread={openWorkspaceThread} />
+        ) : workspaceMentionsOpen ? (
           <WorkspaceMentions workspace={selectedWorkspace} page={workspaceMentionPage} loading={workspaceMentionLoading} error={workspaceError} onLoadOlder={() => void loadWorkspaceMentions(true)} onMarkRead={() => void markWorkspaceMentionsRead()} onOpenConversation={openWorkspaceMentionConversation} />
         ) : selectedWorkspaceDirect ? (
           <WorkspaceDirectConversation
@@ -3089,6 +3362,7 @@ function Messenger({ snapshot, refresh, workspaceChannelInvalidation, onLock, in
             onSend={() => void sendWorkspaceMessage()}
             onLoadOlder={() => void loadWorkspaceMessages(true)}
             onHideMessage={(eventId) => void hideWorkspaceMessage(eventId)}
+            onOpenThread={(eventId) => openWorkspaceThread("direct", selectedWorkspaceDirect.id, eventId)}
             onEdit={(eventId, text, mentionMemberIds) => void mutateWorkspaceMessage("edit_workspace_message", eventId, text, mentionMemberIds)}
             onDelete={(eventId) => void mutateWorkspaceMessage("delete_workspace_message", eventId)}
             onToggleReactionPicker={(eventId) => toggleReactionPicker("workspace", eventId)}
@@ -3116,6 +3390,7 @@ function Messenger({ snapshot, refresh, workspaceChannelInvalidation, onLock, in
             onSend={() => void sendWorkspaceMessage()}
             onLoadOlder={() => void loadWorkspaceMessages(true)}
             onHide={(eventId) => void hideWorkspaceMessage(eventId)}
+            onOpenThread={(eventId) => openWorkspaceThread("channel", selectedWorkspaceChannel.id, eventId)}
             onEdit={(eventId, text, mentionMemberIds) => void mutateWorkspaceMessage("edit_workspace_message", eventId, text, mentionMemberIds)}
             onDelete={(eventId) => void mutateWorkspaceMessage("delete_workspace_message", eventId)}
             onToggleReactionPicker={(eventId) => toggleReactionPicker("workspace", eventId)}
@@ -3188,7 +3463,7 @@ function Messenger({ snapshot, refresh, workspaceChannelInvalidation, onLock, in
       </div>
       {createWorkspaceOpen && <CreateWorkspaceDialog onClose={() => setCreateWorkspaceOpen(false)} onCreated={async (workspace) => { await refresh(true); setActiveSpaceId(workspace.id); setCreateWorkspaceOpen(false); }} />}
       {joinWorkspaceOpen && <JoinWorkspaceDialog initialValue={initialInvitation.startsWith("meshchat://workspace/") || initialInvitation.trim().startsWith("MESHWORKSPACE1:") || initialInvitation.includes("workspace_invite") ? initialInvitation : ""} onClose={() => { setJoinWorkspaceOpen(false); onInvitationHandled(); }} onJoined={async (workspace) => { await refresh(true); setActiveSpaceId(workspace.id); setJoinWorkspaceOpen(false); onInvitationHandled(); }} />}
-      {selectedWorkspace && workspaceBrowseOpen && <BrowseWorkspaceChannelsDialog workspace={selectedWorkspace} channels={selectedWorkspaceChannels.filter((channel) => channel.visibility === "public")} busy={workspaceActionBusy} error={workspaceActionError} onClose={() => setWorkspaceBrowseOpen(false)} onOpen={(channelId) => { setWorkspaceMentionsOpen(false); setWorkspaceSelectedChannelId(channelId); setWorkspaceSelectedDirectId(null); setWorkspaceBrowseOpen(false); }} onSubscribe={(channelId, subscribed) => void runWorkspaceChannelAction("set_workspace_channel_subscription", { channel_id: channelId, subscribed })} onSync={() => void runWorkspaceChannelAction("sync_workspace_channels")} onCreate={() => { setWorkspaceBrowseOpen(false); setWorkspaceCreateChannelOpen(true); }} />}
+      {selectedWorkspace && workspaceBrowseOpen && <BrowseWorkspaceChannelsDialog workspace={selectedWorkspace} channels={selectedWorkspaceChannels.filter((channel) => channel.visibility === "public")} busy={workspaceActionBusy} error={workspaceActionError} onClose={() => setWorkspaceBrowseOpen(false)} onOpen={(channelId) => { setWorkspaceMentionsOpen(false); setWorkspaceThreadsOpen(false); setWorkspaceThreadRootId(null); setWorkspaceSelectedChannelId(channelId); setWorkspaceSelectedDirectId(null); setWorkspaceBrowseOpen(false); }} onSubscribe={(channelId, subscribed) => void runWorkspaceChannelAction("set_workspace_channel_subscription", { channel_id: channelId, subscribed })} onSync={() => void runWorkspaceChannelAction("sync_workspace_channels")} onCreate={() => { setWorkspaceBrowseOpen(false); setWorkspaceCreateChannelOpen(true); }} />}
       {selectedWorkspace && workspaceCreateChannelOpen && <CreateWorkspaceChannelDialog workspace={selectedWorkspace} busy={workspaceActionBusy} error={workspaceActionError} onClose={() => setWorkspaceCreateChannelOpen(false)} onCreate={(name, topic, visibility, memberIds) => void runWorkspaceChannelAction("create_workspace_channel", { name, topic, visibility, member_ids: memberIds })} />}
       {selectedWorkspace && selectedWorkspaceChannel && workspaceManageChannelOpen && <ManageWorkspaceChannelDialog workspace={selectedWorkspace} channel={selectedWorkspaceChannel} transfers={workspaceChannelTransfers.filter((item) => item.workspace_id === selectedWorkspace.id)} busy={workspaceActionBusy} error={workspaceActionError} onClose={() => setWorkspaceManageChannelOpen(false)} onUpdate={(name, topic, archived) => void runWorkspaceChannelAction("update_workspace_channel", { channel_id: selectedWorkspaceChannel.id, name, topic, archived })} onMembers={(memberIds) => void runWorkspaceChannelAction("update_workspace_private_channel_members", { channel_id: selectedWorkspaceChannel.id, member_ids: memberIds })} onLeave={() => void runWorkspaceChannelAction("leave_workspace_private_channel", { channel_id: selectedWorkspaceChannel.id })} onOfferTransfer={(successorMemberId) => void runWorkspaceChannelAction("offer_workspace_channel_transfer", { channel_id: selectedWorkspaceChannel.id, successor_member_id: successorMemberId })} onAcceptTransfer={(transferId) => void runWorkspaceChannelAction("accept_workspace_channel_transfer", { transfer_id: transferId })} onRecover={() => void runWorkspaceChannelAction("recover_workspace_channel", { channel_id: selectedWorkspaceChannel.id })} />}
       {selectedWorkspace && inviteWorkspaceOpen && <WorkspaceInviteDialog workspace={selectedWorkspace} existingInvitations={workspaceInvitations.filter((invitation) => invitation.workspace_id === selectedWorkspace.id)} onClose={() => setInviteWorkspaceOpen(false)} />}

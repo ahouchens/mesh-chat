@@ -107,6 +107,93 @@ def _workspace() -> tuple[RNS.Identity, object, object, object]:
     return owner, created, genesis, manifest
 
 
+def test_thread_root_is_signed_without_changing_ordinary_event_bytes() -> None:
+    owner, created, genesis, manifest = _workspace()
+    channel_raw = create_workspace_channel_manifest(
+        owner,
+        workspace_id=genesis.workspace_id,
+        channel_id=_id(),
+        manifest_digest=manifest.digest,
+        name="general",
+        topic="",
+        manager_member_id=genesis.owner_member_id,
+        manager_device_id=genesis.authority_device_id,
+        member_ids=[genesis.owner_member_id],
+        now=NOW,
+    )
+    channel = verify_workspace_channel_manifest(
+        channel_raw, manifest=manifest, now=NOW
+    )
+    event_id = _id()
+    ordinary = create_workspace_event(
+        owner,
+        workspace_id=genesis.workspace_id,
+        conversation_id=channel.channel_id,
+        event_id=event_id,
+        author_member_id=genesis.owner_member_id,
+        author_device_id=genesis.authority_device_id,
+        sequence=1,
+        previous_event_digest=None,
+        manifest_digest=manifest.digest,
+        channel_digest=channel.digest,
+        text="ordinary bytes stay stable",
+        audience_member_ids=channel.member_ids,
+        created_at=NOW + 1,
+    )
+    explicit_null = create_workspace_event(
+        owner,
+        workspace_id=genesis.workspace_id,
+        conversation_id=channel.channel_id,
+        event_id=event_id,
+        author_member_id=genesis.owner_member_id,
+        author_device_id=genesis.authority_device_id,
+        sequence=1,
+        previous_event_digest=None,
+        manifest_digest=manifest.digest,
+        channel_digest=channel.digest,
+        text="ordinary bytes stay stable",
+        thread_root=None,
+        audience_member_ids=channel.member_ids,
+        created_at=NOW + 1,
+    )
+    assert ordinary == explicit_null
+    assert json.loads(ordinary)["thread_root"] is None
+    verified_root = verify_workspace_event(
+        ordinary, manifest=manifest, channel=channel, now=NOW + 1
+    )
+    assert verified_root.thread_root is None
+
+    reply = create_workspace_event(
+        owner,
+        workspace_id=genesis.workspace_id,
+        conversation_id=channel.channel_id,
+        event_id=_id(),
+        author_member_id=genesis.owner_member_id,
+        author_device_id=genesis.authority_device_id,
+        sequence=2,
+        previous_event_digest=verified_root.digest,
+        manifest_digest=manifest.digest,
+        channel_digest=channel.digest,
+        text="one level only",
+        thread_root=event_id,
+        audience_member_ids=channel.member_ids,
+        created_at=NOW + 2,
+    )
+    verified_reply = verify_workspace_event(
+        reply, manifest=manifest, channel=channel, now=NOW + 2
+    )
+    assert verified_reply.thread_root == event_id
+    tampered = json.loads(reply)
+    tampered["thread_root"] = _id()
+    with pytest.raises(IdentityMismatch, match="signature"):
+        verify_workspace_event(
+            json.dumps(tampered, separators=(",", ":"), sort_keys=True),
+            manifest=manifest,
+            channel=channel,
+            now=NOW + 2,
+        )
+
+
 def test_workspace_bootstrap_join_channel_and_event_round_trip() -> None:
     owner, created, genesis, initial = _workspace()
     invitee = RNS.Identity()

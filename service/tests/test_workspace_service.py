@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import json
 import os
 import time
 import uuid
@@ -24,6 +25,7 @@ from mesh_chat.workspace_protocol import (
     create_workspace_device_card,
     create_workspace_event,
     create_workspace_manifest,
+    create_workspace_mutation_event,
     verify_workspace_genesis,
 )
 from mesh_chat.workspace_wire import WorkspaceWirePayload, parse_workspace_payload
@@ -2591,5 +2593,419 @@ def test_structured_mentions_unsubscribed_mute_read_draft_and_restart(
             _op(4_021),
             [_op(4_099)],
         )
+    owner.close()
+    member.close()
+
+
+def test_workspace_threads_out_of_order_mentions_mutations_drafts_and_restart(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    (
+        owner,
+        owner_network,
+        owner_profile,
+        member,
+        member_network,
+        member_profile,
+        workspace,
+        member_key,
+        member_identity,
+    ) = _joined_pair(tmp_path / "threads", base=5_000)
+    workspace_id = workspace["id"]
+    channel_id = workspace["general_channel_id"]
+    owner_id = owner.workspace_snapshot()["workspaces"][0]["local_member_id"]
+    member_id = member.workspace_snapshot()["workspaces"][0]["local_member_id"]
+
+    root = owner.send_workspace_message(
+        workspace_id,
+        channel_id,
+        "Inspect the north relay",
+        _op(5_010),
+        _op(5_011),
+    )
+    reply = owner.send_workspace_thread_reply(
+        workspace_id,
+        channel_id,
+        root["id"],
+        "@Bailey the thread carries exact audience state",
+        _op(5_012),
+        _op(5_013),
+        [member_id],
+    )
+    outgoing = _flush(owner, owner_network)
+    event_deliveries = []
+    for item in outgoing:
+        payload = parse_workspace_payload(
+            _native(item, source=b"\x00" * 16, destination=b"\x01" * 16)
+        )
+        if payload.kind == "workspace_event":
+            event_deliveries.append((json.loads(payload.document)["thread_root"], item))
+    assert len(event_deliveries) == 2
+    delayed_reply = next(item for thread_root, item in event_deliveries if thread_root)
+    delayed_root = next(item for thread_root, item in event_deliveries if thread_root is None)
+    _deliver(
+        member,
+        delayed_reply,
+        source_profile=owner_profile,
+        recipient_profile=member_profile,
+    )
+    assert member.list_workspace_messages(workspace_id, channel_id)["messages"] == []
+    _deliver(
+        member,
+        delayed_root,
+        source_profile=owner_profile,
+        recipient_profile=member_profile,
+    )
+
+    timeline = member.list_workspace_messages(workspace_id, channel_id)
+    assert [message["id"] for message in timeline["messages"]] == [root["id"]]
+    assert timeline["messages"][0]["reply_count"] == 1
+    assert timeline["messages"][0]["thread_unread_count"] == 1
+    activity = member.list_workspace_threads(workspace_id)
+    assert activity["unread_count"] == 1
+    assert activity["threads"][0]["root"]["id"] == root["id"]
+    assert activity["threads"][0]["reply_count"] == 1
+    thread = member.list_workspace_thread_messages(
+        workspace_id, root["id"], limit=1
+    )
+    assert thread["root"]["text"] == "Inspect the north relay"
+    assert [message["id"] for message in thread["replies"]] == [reply["id"]]
+    assert thread["conversation"]["kind"] == "channel"
+    assert thread["unread_count"] == 1
+    mention = member.list_workspace_mentions(workspace_id)["mentions"][0]
+    assert mention["message"]["id"] == reply["id"]
+    assert mention["thread_root_id"] == root["id"]
+
+    with pytest.raises(ContactNotApproved, match="unavailable"):
+        member.send_workspace_thread_reply(
+            workspace_id,
+            channel_id,
+            reply["id"],
+            "Nested replies are forbidden",
+            _op(5_014),
+            _op(5_015),
+        )
+
+    hidden_reply = owner.send_workspace_thread_reply(
+        workspace_id,
+        channel_id,
+        root["id"],
+        "Hide this reply exactly once",
+        _op(5_018),
+        _op(5_019),
+    )
+    _deliver_all(
+        member,
+        _flush(owner, owner_network),
+        source_profile=owner_profile,
+        recipient_profile=member_profile,
+    )
+    assert member.list_workspace_thread_messages(workspace_id, root["id"])[
+        "unread_count"
+    ] == 2
+    member.hide_workspace_message(workspace_id, hidden_reply["id"], _op(5_040))
+    assert member.list_workspace_thread_messages(workspace_id, root["id"])[
+        "unread_count"
+    ] == 1
+    member.hide_workspace_message(workspace_id, hidden_reply["id"], _op(5_041))
+    thread = member.list_workspace_thread_messages(workspace_id, root["id"])
+    assert thread["unread_count"] == 1
+
+    member.mark_workspace_thread_read(
+        workspace_id, root["id"], thread["high_water"], _op(5_016)
+    )
+    assert member.workspace_snapshot()["workspaces"][0]["thread_unread_count"] == 0
+    draft = member.save_workspace_thread_draft(
+        workspace_id,
+        channel_id,
+        root["id"],
+        "@Alex restart-safe reply",
+        _op(5_017),
+        [owner_id],
+    )
+    assert draft["thread_root_id"] == root["id"]
+
+    original_get = member.store.get
+    with monkeypatch.context() as patch:
+        def no_message_body_reads(kind: str, record_id: str) -> Any:
+            if kind in {"workspace_message_state", "workspace_event"}:
+                raise AssertionError("ordinary startup opened thread message content")
+            return original_get(kind, record_id)
+
+        patch.setattr(member.store, "get", no_message_body_reads)
+        startup = member.workspace_snapshot()
+        assert startup["workspaces"][0]["thread_unread_count"] == 0
+        assert startup["workspace_drafts"] == [draft]
+
+    member.close()
+    member, member_network = _service(
+        tmp_path / "threads" / "member",
+        member_identity,
+        "Bailey",
+        vault_key=member_key,
+    )
+    restarted = member.workspace_snapshot()
+    assert restarted["workspace_drafts"] == [draft]
+    assert member.list_workspace_thread_messages(workspace_id, root["id"])[
+        "unread_count"
+    ] == 0
+
+    owner.edit_workspace_message(
+        workspace_id,
+        reply["id"],
+        "Edited reply converges",
+        _op(5_020),
+        _op(5_021),
+    )
+    owner.set_workspace_reaction(
+        workspace_id,
+        reply["id"],
+        "👍",
+        True,
+        _op(5_022),
+        _op(5_023),
+    )
+    mutations = _flush(owner, owner_network)
+    assert len(mutations) == 2
+    for item in reversed(mutations):
+        _deliver(
+            member,
+            item,
+            source_profile=owner_profile,
+            recipient_profile=member_profile,
+        )
+    converged = member.list_workspace_thread_messages(workspace_id, root["id"])
+    assert converged["replies"][0]["text"] == "Edited reply converges"
+    assert converged["replies"][0]["reactions"][0]["emoji"] == "👍"
+
+    owner.remove_workspace_member(workspace_id, member_id, _op(5_030))
+    _deliver_all(
+        member,
+        _flush(owner, owner_network),
+        source_profile=owner_profile,
+        recipient_profile=member_profile,
+    )
+    assert member.workspace_snapshot()["workspaces"][0]["thread_unread_count"] == 0
+    with pytest.raises(ContactNotApproved):
+        member.list_workspace_thread_messages(workspace_id, root["id"])
+    owner.close()
+    member.close()
+
+
+def test_workspace_threads_preserve_private_rosters_and_direct_participants(
+    tmp_path: Path,
+) -> None:
+    (
+        owner,
+        owner_network,
+        owner_profile,
+        member,
+        member_network,
+        member_profile,
+        workspace,
+        _member_key,
+        _member_identity,
+    ) = _joined_pair(tmp_path / "thread-audiences", base=5_100)
+    workspace_id = workspace["id"]
+    owner_id = owner.workspace_snapshot()["workspaces"][0]["local_member_id"]
+    member_id = member.workspace_snapshot()["workspaces"][0]["local_member_id"]
+
+    private = owner.create_workspace_channel(
+        workspace_id,
+        "thread-private",
+        "Signed roster",
+        _op(5_110),
+        "private",
+        [owner_id, member_id],
+    )
+    _deliver_all(
+        member,
+        _flush(owner, owner_network),
+        source_profile=owner_profile,
+        recipient_profile=member_profile,
+    )
+    private_root = owner.send_workspace_message(
+        workspace_id,
+        private["id"],
+        "Private root",
+        _op(5_111),
+        _op(5_112),
+    )
+    owner.send_workspace_thread_reply(
+        workspace_id,
+        private["id"],
+        private_root["id"],
+        "Private reply",
+        _op(5_113),
+        _op(5_114),
+    )
+    _deliver_all(
+        member,
+        _flush(owner, owner_network),
+        source_profile=owner_profile,
+        recipient_profile=member_profile,
+    )
+    private_thread = member.list_workspace_thread_messages(
+        workspace_id, private_root["id"]
+    )
+    assert private_thread["conversation"]["visibility"] == "private"
+
+    owner.update_workspace_private_channel_members(
+        workspace_id, private["id"], [owner_id], _op(5_115)
+    )
+    # Removed recipients are not sent future private controls. Model a device
+    # that learned the signed removal through a retained control copy.
+    assert _flush(owner, owner_network) == []
+    removed_record = owner._require_workspace_channel(workspace_id, private["id"])
+    removed_control = owner._workspace_channel_by_digest(removed_record["head_hash"])
+    assert removed_control is not None
+    member.store.put_many(
+        [
+            (
+                "workspace_channel",
+                member._workspace_channel_record_id(private["id"]),
+                member._channel_record(removed_control),
+            ),
+            (
+                "workspace_channel_control",
+                member._workspace_channel_control_id(removed_control.digest),
+                member._workspace_channel_control_record(
+                    removed_control, document_type="workspace_channel_manifest"
+                ),
+            ),
+            member._workspace_channel_version_record(removed_control),
+        ]
+    )
+    member._workspace_changed(workspace_id, conversation_id=private["id"])
+    with pytest.raises(ContactNotApproved):
+        member.list_workspace_thread_messages(workspace_id, private_root["id"])
+    owner.update_workspace_private_channel_members(
+        workspace_id, private["id"], [owner_id, member_id], _op(5_116)
+    )
+    _deliver_all(
+        member,
+        _flush(owner, owner_network),
+        source_profile=owner_profile,
+        recipient_profile=member_profile,
+    )
+    # A later re-admission does not disclose a root from the earlier roster era.
+    with pytest.raises(ContactNotApproved):
+        member.list_workspace_thread_messages(workspace_id, private_root["id"])
+
+    # A current member cannot resurrect that inaccessible root by signing a new
+    # reply against the current roster checkpoint.
+    owner_workspace = owner._require_workspace(workspace_id)
+    owner_manifest = owner._workspace_current_manifest(owner_workspace)
+    owner_channel_record = owner._require_workspace_channel(
+        workspace_id, private["id"]
+    )
+    owner_channel = owner._workspace_channel_by_digest(
+        owner_channel_record["head_hash"]
+    )
+    stream_head = owner.store.get(
+        "workspace_stream_coverage",
+        owner._workspace_stream_head_id(
+            workspace_id, private["id"], owner_workspace["local_device_id"]
+        ),
+    )
+    assert owner._identity is not None and owner_channel is not None
+    resurrecting_event_id = _op(5_117)
+    resurrecting_reply = create_workspace_event(
+        owner._identity,
+        workspace_id=workspace_id,
+        conversation_id=private["id"],
+        event_id=resurrecting_event_id,
+        author_member_id=owner_id,
+        author_device_id=owner_workspace["local_device_id"],
+        sequence=int(stream_head["high_water"]) + 1,
+        previous_event_digest=stream_head["head_digest"],
+        manifest_digest=owner_manifest.digest,
+        channel_digest=owner_channel.digest,
+        text="Must not resurrect an old private root",
+        thread_root=private_root["id"],
+        audience_member_ids=[owner_id, member_id],
+    )
+    assert not member._accept_workspace_event(
+        WorkspaceWirePayload(
+            kind="workspace_event",
+            logical_id=_op(5_118),
+            workspace_id=workspace_id,
+            expires_at=int(time.time()) + 60,
+            document=resurrecting_reply,
+        )
+    )
+    assert member.store.get(
+        "workspace_event",
+        member._workspace_event_record_id(resurrecting_event_id),
+    ) is None
+
+    resurrecting_mutation_id = _op(5_119)
+    resurrecting_mutation = create_workspace_mutation_event(
+        owner._identity,
+        workspace_id=workspace_id,
+        conversation_id=private["id"],
+        event_id=resurrecting_mutation_id,
+        event_type="edit",
+        author_member_id=owner_id,
+        author_device_id=owner_workspace["local_device_id"],
+        sequence=int(stream_head["high_water"]) + 1,
+        previous_event_digest=stream_head["head_digest"],
+        manifest_digest=owner_manifest.digest,
+        channel_digest=owner_channel.digest,
+        target_event_id=_op(5_113),
+        base_revision=0,
+        revision=1,
+        text="Must not mutate an inaccessible private thread",
+        thread_root=private_root["id"],
+        audience_member_ids=[owner_id, member_id],
+    )
+    assert not member._accept_workspace_event(
+        WorkspaceWirePayload(
+            kind="workspace_event",
+            logical_id=_op(5_126),
+            workspace_id=workspace_id,
+            expires_at=int(time.time()) + 60,
+            document=resurrecting_mutation,
+        )
+    )
+    assert member.store.get(
+        "workspace_event",
+        member._workspace_event_record_id(resurrecting_mutation_id),
+    ) is None
+
+    direct = owner.open_workspace_direct(workspace_id, member_id, _op(5_120))
+    direct_root = owner.send_workspace_direct_message(
+        workspace_id,
+        direct["id"],
+        "Participant-only root",
+        _op(5_121),
+        _op(5_122),
+    )
+    owner.send_workspace_thread_reply(
+        workspace_id,
+        direct["id"],
+        direct_root["id"],
+        "Participant-only reply",
+        _op(5_123),
+        _op(5_124),
+    )
+    _deliver_all(
+        member,
+        _flush(owner, owner_network),
+        source_profile=owner_profile,
+        recipient_profile=member_profile,
+    )
+    direct_thread = member.list_workspace_thread_messages(
+        workspace_id, direct_root["id"]
+    )
+    assert direct_thread["conversation"]["kind"] == "direct"
+    member.hide_workspace_direct(workspace_id, direct["id"], _op(5_125))
+    with pytest.raises(ContactNotApproved):
+        member.list_workspace_thread_messages(workspace_id, direct_root["id"])
+    assert all(
+        item["root"]["id"] != direct_root["id"]
+        for item in member.list_workspace_threads(workspace_id)["threads"]
+    )
     owner.close()
     member.close()

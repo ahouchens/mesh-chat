@@ -966,6 +966,15 @@ metadata to another member.
 This increment is complete when a user can open a mentioned thread, reply,
 mark it read, restart, and recover the same convergent thread state.
 
+Implementation status: completed in the desktop 0.2.28 candidate. Ordinary
+non-thread canonical bytes remain unchanged; replies and their mutations bind
+the signed root UUID. The encrypted implementation includes per-root pages,
+draft/read state, a bounded Threads activity index, mentioned-thread
+navigation, current-access and private re-admission checks, and metadata-only
+startup summaries. Physical multi-device partition/reconnect, native-window
+accessibility, packet capture, and protected-profile plaintext inspection
+remain release gates rather than prerequisites for beginning Increment 9.
+
 ### Increment 9 adds retained local history and policy
 
 1. Extend the bounded paging foundation to long retained histories, archived

@@ -2478,6 +2478,7 @@ def create_workspace_event(
     manifest_digest: str,
     channel_digest: str | None,
     text: str,
+    thread_root: str | None = None,
     audience_member_ids: Iterable[str] | None = None,
     mention_member_ids: Iterable[str] | None = None,
     created_at: int | None = None,
@@ -2516,7 +2517,11 @@ def create_workspace_event(
             else _validate_digest(channel_digest, "Channel digest")
         ),
         "payload": {"text": text},
-        "thread_root": None,
+        "thread_root": (
+            None
+            if thread_root is None
+            else _validate_uuid(thread_root, "Workspace thread root event ID")
+        ),
         "mentions": mentions,
         "created_at": int(time.time()) if created_at is None else int(created_at),
     }
@@ -2552,6 +2557,7 @@ def create_workspace_mutation_event(
     text: str | None = None,
     emoji: str | None = None,
     active: bool | None = None,
+    thread_root: str | None = None,
     audience_member_ids: Iterable[str] | None = None,
     mention_member_ids: Iterable[str] | None = None,
     created_at: int | None = None,
@@ -2615,7 +2621,11 @@ def create_workspace_mutation_event(
         "base_revision": base_revision,
         "revision": revision,
         "payload": payload,
-        "thread_root": None,
+        "thread_root": (
+            None
+            if thread_root is None
+            else _validate_uuid(thread_root, "Workspace thread root event ID")
+        ),
         "mentions": mentions,
         "created_at": int(time.time()) if created_at is None else int(created_at),
     }
@@ -2837,8 +2847,12 @@ def verify_workspace_event(
             or revision > MAX_SEQUENCE
         ):
             raise ValidationError("Workspace mutation revision is invalid")
-    if value["thread_root"] is not None:
-        raise ValidationError("Threads are not enabled in this increment")
+    raw_thread_root = value["thread_root"]
+    thread_root = (
+        None
+        if raw_thread_root is None
+        else _validate_uuid(raw_thread_root, "Workspace thread root event ID")
+    )
     current = int(time.time()) if now is None else int(now)
     return VerifiedWorkspaceEvent(
         workspace_id=workspace_id,
@@ -2853,7 +2867,7 @@ def verify_workspace_event(
         manifest_digest=manifest.digest,
         channel_digest=channel_digest,
         text=text,
-        thread_root=None,
+        thread_root=thread_root,
         mentions=mentions,
         created_at=_validate_timestamp(value["created_at"], now=current),
         digest=_digest(value),

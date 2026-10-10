@@ -440,6 +440,7 @@ fn allowed_renderer_command(command: &str) -> bool {
             | "open_workspace_direct"
             | "hide_workspace_direct"
             | "send_workspace_direct_message"
+            | "send_workspace_thread_reply"
             | "edit_workspace_message"
             | "delete_workspace_message"
             | "set_workspace_reaction"
@@ -448,11 +449,15 @@ fn allowed_renderer_command(command: &str) -> bool {
             | "mark_workspace_read"
             | "mark_workspace_direct_read"
             | "list_workspace_mentions"
+            | "list_workspace_threads"
+            | "list_workspace_thread_messages"
             | "mark_workspace_mentions_read"
+            | "mark_workspace_thread_read"
             | "set_workspace_channel_mentions_muted"
             | "hide_workspace_message"
             | "save_workspace_draft"
             | "save_workspace_direct_draft"
+            | "save_workspace_thread_draft"
             | "leave_workspace"
             | "close_workspace"
             | "remove_workspace_data"
@@ -488,6 +493,7 @@ fn workspace_renderer_command(command: &str) -> bool {
             | "open_workspace_direct"
             | "hide_workspace_direct"
             | "send_workspace_direct_message"
+            | "send_workspace_thread_reply"
             | "edit_workspace_message"
             | "delete_workspace_message"
             | "set_workspace_reaction"
@@ -496,11 +502,15 @@ fn workspace_renderer_command(command: &str) -> bool {
             | "mark_workspace_read"
             | "mark_workspace_direct_read"
             | "list_workspace_mentions"
+            | "list_workspace_threads"
+            | "list_workspace_thread_messages"
             | "mark_workspace_mentions_read"
+            | "mark_workspace_thread_read"
             | "set_workspace_channel_mentions_muted"
             | "hide_workspace_message"
             | "save_workspace_draft"
             | "save_workspace_direct_draft"
+            | "save_workspace_thread_draft"
             | "leave_workspace"
             | "close_workspace"
             | "remove_workspace_data"
@@ -910,6 +920,7 @@ mod tests {
             "open_workspace_direct",
             "hide_workspace_direct",
             "send_workspace_direct_message",
+            "send_workspace_thread_reply",
             "edit_workspace_message",
             "delete_workspace_message",
             "set_workspace_reaction",
@@ -918,11 +929,15 @@ mod tests {
             "mark_workspace_read",
             "mark_workspace_direct_read",
             "list_workspace_mentions",
+            "list_workspace_threads",
+            "list_workspace_thread_messages",
             "mark_workspace_mentions_read",
+            "mark_workspace_thread_read",
             "set_workspace_channel_mentions_muted",
             "hide_workspace_message",
             "save_workspace_draft",
             "save_workspace_direct_draft",
+            "save_workspace_thread_draft",
             "leave_workspace",
             "close_workspace",
             "remove_workspace_data",

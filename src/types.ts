@@ -207,6 +207,7 @@ export interface Workspace {
   authorization_generation: number;
   retention_generation: number;
   mention_unread_count: number;
+  thread_unread_count: number;
   security_error?: string;
   sync_issue?: "missing_controls" | "missing_predecessor" | "missing_manifest" | "missing_manifest_predecessor" | "queue_pressure" | string;
   created_at: number;
@@ -312,6 +313,11 @@ export interface WorkspaceMessage {
   reactions?: MessageReaction[];
   mention_member_ids?: string[];
   mention_position?: number;
+  thread_root?: string | null;
+  thread_position?: number;
+  reply_count?: number;
+  thread_unread_count?: number;
+  latest_reply_at?: number;
   sequence: number;
   event_digest: string;
   created_at: number;
@@ -335,6 +341,7 @@ export interface WorkspaceMention {
     visibility: "public" | "private" | "direct";
   };
   message: WorkspaceMessage;
+  thread_root_id?: string;
 }
 
 export interface WorkspaceMentionPage {
@@ -347,8 +354,42 @@ export interface WorkspaceMentionPage {
 export interface WorkspaceDraft {
   workspace_id: string;
   conversation_id: string;
+  thread_root_id?: string;
   text: string;
   mention_member_ids?: string[];
+}
+
+export interface WorkspaceThreadConversation {
+  id: string;
+  kind: "channel" | "direct";
+  name: string;
+  visibility: "public" | "private" | "direct";
+  state: "active" | "archived" | "open" | "read_only";
+}
+
+export interface WorkspaceThreadPage {
+  root: WorkspaceMessage;
+  replies: WorkspaceMessage[];
+  next_cursor: string | null;
+  high_water: number;
+  unread_count: number;
+  conversation: WorkspaceThreadConversation;
+}
+
+export interface WorkspaceThreadActivity {
+  root: WorkspaceMessage;
+  conversation: WorkspaceThreadConversation;
+  reply_count: number;
+  unread_count: number;
+  high_water: number;
+  updated_at: number;
+}
+
+export interface WorkspaceThreadActivityPage {
+  threads: WorkspaceThreadActivity[];
+  next_cursor: string | null;
+  high_water: number;
+  unread_count: number;
 }
 
 export interface WorkspaceJoinRequest {

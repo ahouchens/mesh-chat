@@ -2,7 +2,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testi
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import packageInfo from "../package.json";
-import type { ChatMessage, Contact, Group, GroupInvitation, GroupMessage, Snapshot, Workspace, WorkspaceChannel, WorkspaceDirect, WorkspaceMentionPage, WorkspaceMessage, WorkspaceMessagePage } from "./types";
+import type { ChatMessage, Contact, Group, GroupInvitation, GroupMessage, Snapshot, Workspace, WorkspaceChannel, WorkspaceDirect, WorkspaceMentionPage, WorkspaceMessage, WorkspaceMessagePage, WorkspaceThreadActivityPage, WorkspaceThreadPage } from "./types";
 
 const api = vi.hoisted(() => ({
   initializeService: vi.fn(),
@@ -184,6 +184,7 @@ const workspace: Workspace = {
   authorization_generation: 1,
   retention_generation: 1,
   mention_unread_count: 0,
+  thread_unread_count: 0,
   created_at: 4,
   updated_at: 4,
 };
@@ -2709,5 +2710,103 @@ describe("desktop workspaces", () => {
     dialog = screen.getByRole("dialog", { name: "Manage #field-reports" });
     fireEvent.click(within(dialog).getByRole("button", { name: "Recover to owner" }));
     await waitFor(() => expect(api.serviceCommand).toHaveBeenCalledWith("recover_workspace_channel", expect.objectContaining({ workspace_id: workspace.id, channel_id: channel.id, operation_id: expect.any(String) })));
+  });
+
+  it("opens mentioned threads, persists reply drafts, marks read, and resumes from Threads", async () => {
+    const member = {
+      id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      display_name: "Bailey",
+      role: "member" as const,
+      status: "active" as const,
+      short_id: "aaaaaa",
+      device: { id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", destination_hash: "99".repeat(16), fingerprint: "BBBB CCCC DDDD EEEE" },
+    };
+    const root: WorkspaceMessage = {
+      id: "78787878-7878-4878-8878-787878787878",
+      workspace_id: workspace.id,
+      conversation_id: workspaceChannel.id,
+      direction: "inbound",
+      author_member_id: member.id,
+      author_display_name: member.display_name,
+      text: "Inspect the north relay",
+      reply_count: 1,
+      thread_unread_count: 1,
+      sequence: 1,
+      event_digest: "ab".repeat(32),
+      created_at: 1_791_072_030,
+    };
+    const reply: WorkspaceMessage = {
+      ...root,
+      id: "89898989-8989-4989-8989-898989898989",
+      text: "@Alex the relay is stable",
+      mention_member_ids: [workspace.local_member_id],
+      thread_root: root.id,
+      thread_position: 1,
+      sequence: 2,
+      event_digest: "cd".repeat(32),
+      created_at: 1_791_072_040,
+    };
+    const expanded: Workspace = { ...workspace, members: [...workspace.members, member], mention_unread_count: 1, thread_unread_count: 1 };
+    let current: Snapshot = { ...snapshot(), workspaces: [expanded], workspace_channels: [workspaceChannel], workspace_join_requests: [], workspace_invitations: [], workspace_drafts: [] };
+    const threadPage: WorkspaceThreadPage = {
+      root,
+      replies: [reply],
+      next_cursor: null,
+      high_water: 1,
+      unread_count: 1,
+      conversation: { id: workspaceChannel.id, kind: "channel", name: "general", visibility: "public", state: "active" },
+    };
+    const activityPage: WorkspaceThreadActivityPage = {
+      threads: [{ root, conversation: threadPage.conversation, reply_count: 1, unread_count: 1, high_water: 1, updated_at: reply.created_at }],
+      next_cursor: null,
+      high_water: 1,
+      unread_count: 1,
+    };
+    const mentionPage: WorkspaceMentionPage = {
+      mentions: [{ position: 1, read: false, conversation: { id: workspaceChannel.id, kind: "channel", name: "general", visibility: "public" }, message: reply, thread_root_id: root.id }],
+      next_cursor: null,
+      high_water: 1,
+      unread_count: 1,
+    };
+    api.runtimePlatform.mockResolvedValue("desktop");
+    api.initializeService.mockResolvedValue(current);
+    api.onInvitation.mockResolvedValue(() => undefined);
+    api.onServiceEvent.mockResolvedValue(() => undefined);
+    api.serviceCommand.mockImplementation(async (command: string, payload: Record<string, unknown>) => {
+      if (command === "snapshot") return current;
+      if (command === "list_workspace_messages") return { messages: [root], next_cursor: null, high_water: 1 } satisfies WorkspaceMessagePage;
+      if (command === "list_workspace_thread_messages") return threadPage;
+      if (command === "list_workspace_threads") return activityPage;
+      if (command === "list_workspace_mentions") return mentionPage;
+      if (command === "mark_workspace_thread_read") {
+        current = { ...current, workspaces: [{ ...expanded, thread_unread_count: 0 }] };
+        return { workspace_id: workspace.id, thread_root_id: root.id, high_water: 1, unread_count: 0 };
+      }
+      if (command === "send_workspace_thread_reply") return { ...reply, id: String(payload.event_id), direction: "outbound", author_member_id: workspace.local_member_id, author_display_name: "Alex", text: String(payload.text), mention_member_ids: payload.mention_member_ids as string[], sequence: 3 } satisfies WorkspaceMessage;
+      return {};
+    });
+
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Workspace Lakewatcher" }));
+    const conversation = await screen.findByLabelText("Workspace channel general");
+    fireEvent.click(within(conversation).getByRole("button", { name: /Thread · 1 · 1 new/ }));
+    const thread = await screen.findByLabelText("Thread in Lakewatcher");
+    expect(within(thread).getByText("Original message")).toBeTruthy();
+    expect(within(thread).getByText("@Alex the relay is stable")).toBeTruthy();
+    await waitFor(() => expect(api.serviceCommand).toHaveBeenCalledWith("mark_workspace_thread_read", expect.objectContaining({ workspace_id: workspace.id, thread_root_id: root.id, high_water: 1, operation_id: expect.any(String) })));
+
+    const composer = within(thread).getByRole("textbox", { name: "Reply in thread" });
+    fireEvent.change(composer, { target: { value: "Thread reply after restart" } });
+    await waitFor(() => expect(api.serviceCommand).toHaveBeenCalledWith("save_workspace_thread_draft", expect.objectContaining({ workspace_id: workspace.id, conversation_id: workspaceChannel.id, thread_root_id: root.id, text: "Thread reply after restart", operation_id: expect.any(String) })));
+    fireEvent.click(within(thread).getByRole("button", { name: "Send thread reply" }));
+    await waitFor(() => expect(api.serviceCommand).toHaveBeenCalledWith("send_workspace_thread_reply", expect.objectContaining({ workspace_id: workspace.id, conversation_id: workspaceChannel.id, thread_root_id: root.id, text: "Thread reply after restart", event_id: expect.any(String), operation_id: expect.any(String) })));
+
+    fireEvent.click(screen.getByRole("button", { name: /Threads/ }));
+    const threads = await screen.findByLabelText("Threads in Lakewatcher");
+    expect(within(threads).getByText("1 reply")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /Mentions/ }));
+    const mentions = await screen.findByLabelText("Mentions in Lakewatcher");
+    fireEvent.click(within(mentions).getByRole("button", { name: /@Alex the relay is stable/ }));
+    expect(await screen.findByLabelText("Thread in Lakewatcher")).toBeTruthy();
   });
 });
