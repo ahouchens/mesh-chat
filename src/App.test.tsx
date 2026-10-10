@@ -2,7 +2,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testi
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import packageInfo from "../package.json";
-import type { ChatMessage, Contact, Group, GroupInvitation, GroupMessage, Snapshot, Workspace, WorkspaceChannel, WorkspaceDirect, WorkspaceMentionPage, WorkspaceMessage, WorkspaceMessagePage, WorkspaceThreadActivityPage, WorkspaceThreadPage } from "./types";
+import type { ChatMessage, Contact, Group, GroupInvitation, GroupMessage, Snapshot, Workspace, WorkspaceChannel, WorkspaceDirect, WorkspaceMentionPage, WorkspaceMessage, WorkspaceMessagePage, WorkspaceSearchPage, WorkspaceThreadActivityPage, WorkspaceThreadPage } from "./types";
 
 const api = vi.hoisted(() => ({
   initializeService: vi.fn(),
@@ -2808,6 +2808,102 @@ describe("desktop workspaces", () => {
     const mentions = await screen.findByLabelText("Mentions in Lakewatcher");
     fireEvent.click(within(mentions).getByRole("button", { name: /@Alex the relay is stable/ }));
     expect(await screen.findByLabelText("Thread in Lakewatcher")).toBeTruthy();
+  });
+
+  it("searches retained workspace data, filters categories, paginates, and opens the exact thread", async () => {
+    const root: WorkspaceMessage = {
+      id: "abababab-abab-4bab-8bab-abababababab",
+      workspace_id: workspace.id,
+      conversation_id: workspaceChannel.id,
+      direction: "outbound",
+      author_member_id: workspace.local_member_id,
+      author_display_name: "Alex",
+      text: "Inspect the encrypted relay",
+      reply_count: 1,
+      sequence: 7,
+      event_digest: "12".repeat(32),
+      created_at: 1_791_072_060,
+    };
+    const reply: WorkspaceMessage = {
+      ...root,
+      id: "cdcdcdcd-cdcd-4dcd-8dcd-cdcdcdcdcdcd",
+      text: "The encrypted relay is stable",
+      thread_root: root.id,
+      thread_position: 1,
+      sequence: 8,
+      event_digest: "34".repeat(32),
+      created_at: 1_791_072_070,
+    };
+    const firstPage: WorkspaceSearchPage = {
+      results: [{
+        id: reply.id,
+        kind: "thread",
+        title: "Alex",
+        snippet: reply.text,
+        created_at: reply.created_at,
+        event_id: reply.id,
+        is_reply: true,
+        thread_root_id: root.id,
+        conversation: { id: workspaceChannel.id, kind: "channel", name: "general", visibility: "public", state: "active" },
+      }],
+      next_cursor: "opaque-next-page",
+      scope: "all",
+      coverage: "retained",
+      indexing: false,
+      indexed_events: 8,
+      target_events: 8,
+      candidate_count: 1,
+      candidate_limit_reached: false,
+      shard_pages_opened: 1,
+      search_generation: 2,
+    };
+    const secondPage: WorkspaceSearchPage = {
+      ...firstPage,
+      results: [{
+        id: workspaceChannel.id,
+        kind: "channel",
+        title: "#general",
+        snippet: "Everyone in the workspace",
+        conversation: { id: workspaceChannel.id, kind: "channel", name: "general", visibility: "public", state: "active" },
+      }],
+      next_cursor: null,
+    };
+    const channelPage: WorkspaceSearchPage = { ...secondPage, scope: "channels", results: [secondPage.results[0]] };
+    const current: Snapshot = { ...snapshot(), workspaces: [{ ...workspace, search_index: { status: "ready", indexed_events: 8, target_events: 8, incomplete: false } }], workspace_channels: [workspaceChannel], workspace_join_requests: [], workspace_invitations: [], workspace_drafts: [] };
+    api.runtimePlatform.mockResolvedValue("desktop");
+    api.initializeService.mockResolvedValue(current);
+    api.onInvitation.mockResolvedValue(() => undefined);
+    api.onServiceEvent.mockResolvedValue(() => undefined);
+    api.serviceCommand.mockImplementation(async (command: string, payload: Record<string, unknown>) => {
+      if (command === "snapshot") return current;
+      if (command === "list_workspace_messages") return { messages: [root], next_cursor: null, high_water: 8 } satisfies WorkspaceMessagePage;
+      if (command === "list_workspace_thread_messages") return { root, replies: [reply], next_cursor: null, high_water: 1, unread_count: 0, conversation: firstPage.results[0].conversation! } satisfies WorkspaceThreadPage;
+      if (command === "search_workspace") {
+        if (payload.scope === "channels") return channelPage;
+        return payload.cursor ? secondPage : firstPage;
+      }
+      return {};
+    });
+
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Workspace Lakewatcher" }));
+    fireEvent.click(screen.getByRole("button", { name: /^Search/ }));
+    const searchView = await screen.findByLabelText("Search Lakewatcher", { selector: "section" });
+    const search = within(searchView).getByRole("searchbox", { name: "Search Lakewatcher" });
+    fireEvent.change(search, { target: { value: "encrypted relay" } });
+    const results = within(searchView).getByRole("region");
+    expect(await within(results).findByText("The encrypted relay is stable")).toBeTruthy();
+    await waitFor(() => expect(api.serviceCommand).toHaveBeenCalledWith("search_workspace", expect.objectContaining({ workspace_id: workspace.id, query: "encrypted relay", scope: "all", cursor: null, limit: 25 })));
+    fireEvent.click(within(results).getByRole("button", { name: "More results" }));
+    expect(await within(results).findByText("Everyone in the workspace")).toBeTruthy();
+    await waitFor(() => expect(api.serviceCommand).toHaveBeenCalledWith("search_workspace", expect.objectContaining({ cursor: "opaque-next-page" })));
+    fireEvent.click(within(searchView).getByRole("button", { name: "Channels" }));
+    await waitFor(() => expect(api.serviceCommand).toHaveBeenCalledWith("search_workspace", expect.objectContaining({ scope: "channels", cursor: null })));
+    fireEvent.click(within(searchView).getByRole("button", { name: "All" }));
+    const threadResult = await screen.findByRole("button", { name: /The encrypted relay is stable/ });
+    fireEvent.click(threadResult);
+    expect(await screen.findByLabelText("Thread in Lakewatcher")).toBeTruthy();
+    await waitFor(() => expect(api.serviceCommand).toHaveBeenCalledWith("list_workspace_thread_messages", expect.objectContaining({ workspace_id: workspace.id, thread_root_id: root.id })));
   });
 
   it("publishes cooperative retention and runs a bounded local prune", async () => {

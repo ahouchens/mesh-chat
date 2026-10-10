@@ -489,6 +489,47 @@ already retained and historically authorized may remain as a read-only local
 archive until pruning or confirmed local erasure. Owner or future admin status
 never grants access to another pair's workspace-DM history.
 
+### Encrypted local workspace search
+
+Increment 10 adds no wire document, packet kind, peer request, or canonical
+event field. Search is a local derived index over retained records and does not
+change interoperability with peers that do not implement it.
+
+Search text is normalized by Unicode NFKC, Unicode default case folding, then
+NFC. Unicode letters and numbers form tokens; a combining mark remains attached
+to a preceding letter or number; punctuation, symbols, separators, controls,
+and whitespace end a token. Tokens outside 2–64 characters are omitted and
+duplicates collapse in first-occurrence order. A query is 1–256 characters,
+at most 1,024 UTF-8 bytes and eight retained tokens. Matching is exact-token
+AND; prefix, substring, fuzzy, and remote matching are absent.
+
+The vault derives every token, document, catalog, shard, and page identifier
+with its local HMAC key. A token page holds at most 100 opaque document
+references. Execution chooses the least common query token and opens at most
+eight shard pages, 256 candidate documents, and 50 authorized presentation
+results (25 by default). One document contributes at most 512 unique tokens and
+the retained index stops at 2,000,000 references. Hitting any content, shard,
+candidate, or growth bound returns explicit incomplete coverage.
+
+Every candidate is reloaded from its authoritative sealed record, freshly
+tokenized, and passed through historical manifest/channel entitlement plus the
+current workspace state, private admission version, exact DM participants,
+thread root, local hide, author deletion, and retention boundary. Search index
+membership never grants access. Root results and reply results are distinct and
+carry the exact conversation and thread-root identifiers needed for navigation.
+Current permitted display names and visible channel name/topic records use the
+same candidate rule; unsubscribed public channels remain searchable when their
+records were locally retained.
+
+A cursor MAC binds the workspace, opaque normalized-query and scope digests,
+authorization generation, retention generation, search generation, opaque
+token shard and head page, and result offset. It contains no raw query. Edits,
+deletions, hides, pruning, access/directory changes, and retention transitions
+remove references or make old cursors stale; reaction-only mutations do not
+alter message-text tokens. Existing retained data rebuilds from the sealed
+retention order in restart-safe transactions of at most 128 events. Until it
+finishes, results report indexing rather than claiming retained completeness.
+
 ## Delivery evidence
 
 | App state | Required evidence |
@@ -516,6 +557,7 @@ Receipts are ordinary signed, end-to-end encrypted LXMF messages. They reference
 - Signed connection hints per group member card: at most two validated TCP hints.
 - Private group or announcement channel: at most eight people including the owner.
 - Desktop workspace: at most eight people, 32 active channels including `#general`, 32 entries per signed public-summary page, 32 pages per sync session, and 64 controls per signed public fetch response. Archived public channels are retained in the bounded 1,024-entry directory; private channels are never summarized publicly.
+- Workspace local search: at most 256 query characters, 1,024 UTF-8 bytes, 8 exact tokens, 8 keyed shard pages, 256 candidates, and 50 results; rebuilds advance at most 128 retained events per transaction.
 - Pending reactions: at most 256 total and 32 per authenticated actor.
 - IPC frame: 4 MiB; renderer-originated payload: 32 KiB.
 - LXMF direct and propagated modes: enabled.

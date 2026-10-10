@@ -2176,6 +2176,19 @@ class MeshChatService(ReactionServiceMixin, GroupServiceMixin, WorkspaceServiceM
                 body.get("cursor"),
                 body.get("limit", 50),
             )
+        if command == "search_workspace":
+            body = _payload(
+                value,
+                allowed={"workspace_id", "query", "scope", "cursor", "limit"},
+                required={"workspace_id", "query"},
+            )
+            return self.search_workspace(
+                body["workspace_id"],
+                body["query"],
+                body.get("scope", "all"),
+                body.get("cursor"),
+                body.get("limit", 25),
+            )
         if command == "list_workspace_direct_messages":
             body = _payload(
                 value,

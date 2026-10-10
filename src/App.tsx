@@ -84,6 +84,9 @@ import type {
   WorkspaceMentionPage,
   WorkspaceRetentionPruneResult,
   WorkspaceRevisionPage,
+  WorkspaceSearchPage,
+  WorkspaceSearchResult,
+  WorkspaceSearchScope,
   WorkspaceSnapshot,
   WorkspaceTombstonePage,
   WorkspaceThreadActivityPage,
@@ -2109,6 +2112,35 @@ function WorkspaceMentions({ workspace, page, loading, error, onLoadOlder, onMar
   </section>;
 }
 
+function WorkspaceSearchView({ workspace, query, scope, page, loading, error, onQuery, onScope, onLoadMore, onOpen }: { workspace: Workspace; query: string; scope: WorkspaceSearchScope; page: WorkspaceSearchPage | null; loading: boolean; error: string; onQuery: (value: string) => void; onScope: (value: WorkspaceSearchScope) => void; onLoadMore: () => void; onOpen: (result: WorkspaceSearchResult) => void }) {
+  const scopes: Array<{ id: WorkspaceSearchScope; label: string }> = [
+    { id: "all", label: "All" },
+    { id: "messages", label: "Messages" },
+    { id: "threads", label: "Threads" },
+    { id: "people", label: "People" },
+    { id: "channels", label: "Channels" },
+  ];
+  const readyQuery = query.trim().length >= 2;
+  return <section className="conversation workspace-search" aria-label={`Search ${workspace.name}`}>
+    <header className="conversation__header"><div className="conversation__identity"><span className="workspace-channel-icon"><Search size={19} /></span><span><h1>Search</h1><small>Encrypted local results retained on this device</small></span></div></header>
+    <div className="workspace-search__controls">
+      <label className="workspace-search__input"><Search size={18} aria-hidden="true" /><span className="sr-only">Search {workspace.name}</span><input autoFocus type="search" value={query} maxLength={256} onChange={(event) => onQuery(event.target.value)} placeholder={`Search ${workspace.name}`} aria-label={`Search ${workspace.name}`} /></label>
+      <div className="workspace-search__filters" role="group" aria-label="Search category">{scopes.map((item) => <button type="button" key={item.id} aria-pressed={scope === item.id} className={scope === item.id ? "workspace-search__filter--active" : ""} onClick={() => onScope(item.id)}>{item.label}</button>)}</div>
+    </div>
+    <div className="message-scroll workspace-search__results" role="region" aria-live="polite" aria-busy={loading}>
+      {!readyQuery && <div className="workspace-channel-empty"><Search size={28} /><h2>Search retained workspace data</h2><p>Enter at least two characters. Queries stay on this device and are never sent to peers.</p></div>}
+      {loading && !page && <div className="workspace-loading"><span className="spinner" /> Searching encrypted local history…</div>}
+      {readyQuery && !loading && page?.results.length === 0 && <div className="workspace-channel-empty"><Search size={28} /><h2>No retained results</h2><p>{page.indexing ? "Indexing is still in progress, so results may be incomplete." : "No currently authorized retained item matches this exact-token search."}</p></div>}
+      {page?.coverage === "indexing" && <div className="workspace-directory-status" role="status">Indexing retained history · {page.indexed_events} of {page.target_events}. Results are incomplete until indexing finishes.</div>}
+      {page?.coverage === "pruned" && <div className="workspace-directory-status" role="status">Results cover retained local data only. Earlier content was pruned under the active history preference.</div>}
+      {page?.coverage === "incomplete" && <div className="workspace-directory-status" role="status">Local search coverage is incomplete because a documented index or candidate bound was reached.</div>}
+      {page?.results.map((result) => <button type="button" className="workspace-search-result" key={`${result.kind}:${result.id}`} onClick={() => onOpen(result)}><span className="workspace-search-result__icon">{result.kind === "channel" ? <Hash size={18} /> : result.kind === "person" ? <Users size={18} /> : result.kind === "thread" ? <MessageCircleMore size={18} /> : <Search size={18} />}</span><span><span className="workspace-search-result__meta"><strong>{result.title}</strong><small>{result.kind === "message" ? "Message" : result.kind === "thread" ? "Thread reply" : result.kind === "person" ? "Person" : "Channel"}{result.conversation ? ` · ${result.conversation.kind === "channel" ? "#" : ""}${result.conversation.name}` : ""}{result.created_at ? ` · ${formatTime(result.created_at)}` : ""}</small></span><span>{result.snippet}</span></span><ChevronRight size={17} aria-hidden="true" /></button>)}
+      {page?.next_cursor && <button className="load-older" disabled={loading} onClick={onLoadMore}>{loading ? "Loading…" : "More results"}</button>}
+    </div>
+    {error && <p className="form-error workspace-composer-error" role="alert">{error.includes("stale") ? "Search access or retained history changed. Run the search again." : error}</p>}
+  </section>;
+}
+
 function WorkspaceThreads({ workspace, page, loading, error, onLoadOlder, onOpenThread }: { workspace: Workspace; page: WorkspaceThreadActivityPage | null; loading: boolean; error: string; onLoadOlder: () => void; onOpenThread: (kind: "channel" | "direct", conversationId: string, rootId: string) => void }) {
   return <section className="conversation workspace-threads" aria-label={`Threads in ${workspace.name}`}>
     <header className="conversation__header"><div className="conversation__identity"><span className="workspace-channel-icon"><MessageCircleMore size={19} /></span><span><h1>Threads</h1><small>Recent one-level discussions in {workspace.name}</small></span></div></header>
@@ -2227,6 +2259,12 @@ function Messenger({ snapshot, refresh, workspaceChannelInvalidation, onLock, in
   const [workspaceMentionsOpen, setWorkspaceMentionsOpen] = useState(false);
   const [workspaceMentionPage, setWorkspaceMentionPage] = useState<WorkspaceMentionPage | null>(null);
   const [workspaceMentionLoading, setWorkspaceMentionLoading] = useState(false);
+  const [workspaceSearchOpen, setWorkspaceSearchOpen] = useState(false);
+  const [workspaceSearchQuery, setWorkspaceSearchQuery] = useState("");
+  const [workspaceSearchScope, setWorkspaceSearchScope] = useState<WorkspaceSearchScope>("all");
+  const [workspaceSearchPage, setWorkspaceSearchPage] = useState<WorkspaceSearchPage | null>(null);
+  const [workspaceSearchLoading, setWorkspaceSearchLoading] = useState(false);
+  const [workspaceSearchError, setWorkspaceSearchError] = useState("");
   const [workspaceThreadsOpen, setWorkspaceThreadsOpen] = useState(false);
   const [workspaceThreadActivityPage, setWorkspaceThreadActivityPage] = useState<WorkspaceThreadActivityPage | null>(null);
   const [workspaceThreadActivityLoading, setWorkspaceThreadActivityLoading] = useState(false);
@@ -2242,6 +2280,7 @@ function Messenger({ snapshot, refresh, workspaceChannelInvalidation, onLock, in
   const [workspaceActionError, setWorkspaceActionError] = useState("");
   const workspacePageInFlight = useRef(false);
   const workspaceMentionsInFlight = useRef(false);
+  const workspaceSearchRequest = useRef(0);
   const workspaceThreadsInFlight = useRef(false);
   const workspaceThreadInFlight = useRef(false);
   const loadedWorkspaceChannel = useRef<string | null>(null);
@@ -2380,6 +2419,10 @@ function Messenger({ snapshot, refresh, workspaceChannelInvalidation, onLock, in
     setWorkspaceSelectedDirectId(null);
     setWorkspaceMentionsOpen(false);
     setWorkspaceMentionPage(null);
+    setWorkspaceSearchOpen(false);
+    setWorkspaceSearchQuery("");
+    setWorkspaceSearchPage(null);
+    setWorkspaceSearchError("");
     setWorkspaceThreadsOpen(false);
     setWorkspaceThreadActivityPage(null);
     setWorkspaceThreadRootId(null);
@@ -2445,6 +2488,42 @@ function Messenger({ snapshot, refresh, workspaceChannelInvalidation, onLock, in
     }
     void loadWorkspaceMentions(false);
   }, [workspaceMentionsOpen, selectedWorkspace?.id, workspaceChannelInvalidation]);
+
+  const loadWorkspaceSearch = useCallback(async (append = false) => {
+    if (!selectedWorkspace || workspaceSearchQuery.trim().length < 2) return;
+    const request = ++workspaceSearchRequest.current;
+    setWorkspaceSearchLoading(true);
+    if (!append) setWorkspaceSearchError("");
+    try {
+      const page = await serviceCommand<WorkspaceSearchPage>("search_workspace", {
+        workspace_id: selectedWorkspace.id,
+        query: workspaceSearchQuery,
+        scope: workspaceSearchScope,
+        cursor: append ? workspaceSearchPage?.next_cursor ?? null : null,
+        limit: 25,
+      });
+      if (request !== workspaceSearchRequest.current) return;
+      setWorkspaceSearchPage((current) => append && current
+        ? { ...page, results: [...current.results, ...page.results] }
+        : page);
+    } catch (reason) {
+      if (request === workspaceSearchRequest.current) setWorkspaceSearchError(errorMessage(reason));
+    } finally {
+      if (request === workspaceSearchRequest.current) setWorkspaceSearchLoading(false);
+    }
+  }, [selectedWorkspace?.id, workspaceSearchQuery, workspaceSearchScope, workspaceSearchPage?.next_cursor]);
+
+  useEffect(() => {
+    if (!workspaceSearchOpen || !selectedWorkspace || workspaceSearchQuery.trim().length < 2) {
+      workspaceSearchRequest.current += 1;
+      setWorkspaceSearchPage(null);
+      setWorkspaceSearchLoading(false);
+      if (workspaceSearchQuery.trim().length < 2) setWorkspaceSearchError("");
+      return;
+    }
+    const timer = window.setTimeout(() => void loadWorkspaceSearch(false), 250);
+    return () => window.clearTimeout(timer);
+  }, [workspaceSearchOpen, selectedWorkspace?.id, workspaceSearchQuery, workspaceSearchScope, workspaceChannelInvalidation]);
 
   const loadWorkspaceThreads = useCallback(async (append = false) => {
     if (!selectedWorkspace || workspaceThreadsInFlight.current) return;
@@ -3115,6 +3194,7 @@ function Messenger({ snapshot, refresh, workspaceChannelInvalidation, onLock, in
       setWorkspaceSelectedChannelId(null);
       setWorkspaceMentionsOpen(false);
       setWorkspaceThreadsOpen(false);
+      setWorkspaceSearchOpen(false);
       setWorkspaceThreadRootId(null);
       setWorkspacePeopleOpen(false);
       await refresh(true);
@@ -3151,6 +3231,7 @@ function Messenger({ snapshot, refresh, workspaceChannelInvalidation, onLock, in
   const openWorkspaceThread = (kind: "channel" | "direct", conversationId: string, threadRootId: string) => {
     setWorkspaceMentionsOpen(false);
     setWorkspaceThreadsOpen(false);
+    setWorkspaceSearchOpen(false);
     if (kind === "direct") {
       setWorkspaceSelectedDirectId(conversationId);
       setWorkspaceSelectedChannelId(null);
@@ -3176,6 +3257,30 @@ function Messenger({ snapshot, refresh, workspaceChannelInvalidation, onLock, in
     } else {
       setWorkspaceSelectedChannelId(conversationId);
       setWorkspaceSelectedDirectId(null);
+    }
+  };
+  const openWorkspaceSearchResult = (result: WorkspaceSearchResult) => {
+    setWorkspaceSearchOpen(false);
+    setWorkspaceSearchError("");
+    if (result.kind === "person" && result.member_id) {
+      if (result.member_id === selectedWorkspace?.local_member_id) setWorkspacePeopleOpen(true);
+      else void openWorkspaceDirect(result.member_id);
+      return;
+    }
+    if (result.kind === "channel" && result.conversation) {
+      setWorkspaceMentionsOpen(false);
+      setWorkspaceThreadsOpen(false);
+      setWorkspaceThreadRootId(null);
+      setWorkspaceSelectedChannelId(result.conversation.id);
+      setWorkspaceSelectedDirectId(null);
+      return;
+    }
+    if (result.conversation && result.event_id) {
+      openWorkspaceThread(
+        result.conversation.kind,
+        result.conversation.id,
+        result.thread_root_id ?? result.event_id,
+      );
     }
   };
   const hideWorkspaceMessage = async (eventId: string) => {
@@ -3393,15 +3498,16 @@ function Messenger({ snapshot, refresh, workspaceChannelInvalidation, onLock, in
           {workspaceActionError && <p className="form-error sidebar-action-error" role="alert">{workspaceActionError}</p>}
           <nav className="contact-list workspace-nav" aria-label={`${selectedWorkspace.name} conversations`}>
             {workspaceJoinRequests.filter((request) => request.workspace_id === selectedWorkspace.id).map((request) => <section className="request-card workspace-join-request" key={request.id}><div><Avatar name={request.display_name} small /><span><strong>{request.display_name}</strong><small>Requests to join · {request.member_id.replaceAll("-", "").slice(0, 6)}</small></span></div><p className="request-fingerprint">{request.fingerprint}</p><div><Button disabled={workspaceActionBusy} onClick={() => void respondToWorkspaceJoin(request.id, true)}>Approve</Button><Button variant="ghost" disabled={workspaceActionBusy} onClick={() => void respondToWorkspaceJoin(request.id, false)}>Decline</Button></div></section>)}
-            <button className={`workspace-nav-action ${workspaceThreadsOpen ? "workspace-nav-action--active" : ""}`} onClick={() => { setWorkspaceThreadsOpen(true); setWorkspaceMentionsOpen(false); setWorkspaceThreadRootId(null); setWorkspaceError(""); }}><MessageCircleMore size={17} />Threads {selectedWorkspace.thread_unread_count > 0 && <b className="unread-badge">{selectedWorkspace.thread_unread_count}</b>}</button>
-            <button className={`workspace-nav-action ${workspaceMentionsOpen ? "workspace-nav-action--active" : ""}`} onClick={() => { setWorkspaceMentionsOpen(true); setWorkspaceThreadsOpen(false); setWorkspaceThreadRootId(null); setWorkspaceError(""); }}><AtSign size={17} />Mentions {selectedWorkspace.mention_unread_count > 0 && <b className="unread-badge">{selectedWorkspace.mention_unread_count}</b>}</button>
+            <button className={`workspace-nav-action ${workspaceSearchOpen ? "workspace-nav-action--active" : ""}`} onClick={() => { setWorkspaceSearchOpen(true); setWorkspaceThreadsOpen(false); setWorkspaceMentionsOpen(false); setWorkspaceThreadRootId(null); setWorkspaceSearchError(""); }}><Search size={17} />Search {selectedWorkspace.search_index?.status === "rebuilding" && <span aria-label="Indexing">…</span>}</button>
+            <button className={`workspace-nav-action ${workspaceThreadsOpen ? "workspace-nav-action--active" : ""}`} onClick={() => { setWorkspaceSearchOpen(false); setWorkspaceThreadsOpen(true); setWorkspaceMentionsOpen(false); setWorkspaceThreadRootId(null); setWorkspaceError(""); }}><MessageCircleMore size={17} />Threads {selectedWorkspace.thread_unread_count > 0 && <b className="unread-badge">{selectedWorkspace.thread_unread_count}</b>}</button>
+            <button className={`workspace-nav-action ${workspaceMentionsOpen ? "workspace-nav-action--active" : ""}`} onClick={() => { setWorkspaceSearchOpen(false); setWorkspaceMentionsOpen(true); setWorkspaceThreadsOpen(false); setWorkspaceThreadRootId(null); setWorkspaceError(""); }}><AtSign size={17} />Mentions {selectedWorkspace.mention_unread_count > 0 && <b className="unread-badge">{selectedWorkspace.mention_unread_count}</b>}</button>
             <p className="workspace-nav__label">Channels</p>
-            {selectedWorkspaceChannels.filter((channel) => channel.visibility === "private" || channel.subscribed || channel.id === selectedWorkspace.general_channel_id || channel.id === selectedWorkspaceChannel?.id).map((channel) => <button key={channel.id} className={`contact-row workspace-channel-row ${!workspaceMentionsOpen && !workspaceThreadsOpen && !workspaceThreadRootId && selectedWorkspaceChannel?.id === channel.id ? "contact-row--selected" : ""}`} onClick={() => { setWorkspaceMentionsOpen(false); setWorkspaceThreadsOpen(false); setWorkspaceThreadRootId(null); setWorkspaceSelectedChannelId(channel.id); setWorkspaceSelectedDirectId(null); }}><span className="workspace-channel-icon">{channel.visibility === "private" ? <LockKeyhole size={18} /> : <Hash size={18} />}</span><span className="contact-row__content"><span><strong>{channel.display_name || channel.name}</strong>{channel.unread_count > 0 && <b className="unread-badge">{channel.unread_count}</b>}</span><span className="contact-row__preview">{channel.state === "archived" ? "Archived · read-only" : channel.state === "leaving" ? "Leaving · read-only" : channel.topic || (channel.visibility === "private" ? "Private signed roster" : "Everyone in the workspace")}</span></span></button>)}
+            {selectedWorkspaceChannels.filter((channel) => channel.visibility === "private" || channel.subscribed || channel.id === selectedWorkspace.general_channel_id || channel.id === selectedWorkspaceChannel?.id).map((channel) => <button key={channel.id} className={`contact-row workspace-channel-row ${!workspaceSearchOpen && !workspaceMentionsOpen && !workspaceThreadsOpen && !workspaceThreadRootId && selectedWorkspaceChannel?.id === channel.id ? "contact-row--selected" : ""}`} onClick={() => { setWorkspaceSearchOpen(false); setWorkspaceMentionsOpen(false); setWorkspaceThreadsOpen(false); setWorkspaceThreadRootId(null); setWorkspaceSelectedChannelId(channel.id); setWorkspaceSelectedDirectId(null); }}><span className="workspace-channel-icon">{channel.visibility === "private" ? <LockKeyhole size={18} /> : <Hash size={18} />}</span><span className="contact-row__content"><span><strong>{channel.display_name || channel.name}</strong>{channel.unread_count > 0 && <b className="unread-badge">{channel.unread_count}</b>}</span><span className="contact-row__preview">{channel.state === "archived" ? "Archived · read-only" : channel.state === "leaving" ? "Leaving · read-only" : channel.topic || (channel.visibility === "private" ? "Private signed roster" : "Everyone in the workspace")}</span></span></button>)}
             {selectedWorkspaceChannels.length === 0 && <div className="workspace-channel-pending"><RefreshCw size={16} /><span>{selectedWorkspace.state === "joining" ? "Waiting for #general access" : "Channel controls are syncing"}</span></div>}
             <button className="workspace-nav-action" onClick={() => setWorkspaceBrowseOpen(true)}><Search size={17} />Browse channels <span>{selectedWorkspace.channel_discovery === "converged" ? selectedWorkspaceChannels.length : "…"}</span></button>
             {selectedWorkspace.state === "active" && (selectedWorkspace.policies.channel_creation === "all_members" || selectedWorkspace.local_role === "owner") && <button className="workspace-nav-action" onClick={() => setWorkspaceCreateChannelOpen(true)}><Plus size={17} />Create channel</button>}
             <p className="workspace-nav__label">Direct messages</p>
-            {selectedWorkspaceDirects.map((direct) => <button key={direct.id} className={`contact-row workspace-channel-row ${!workspaceMentionsOpen && !workspaceThreadsOpen && !workspaceThreadRootId && selectedWorkspaceDirect?.id === direct.id ? "contact-row--selected" : ""}`} onClick={() => { setWorkspaceMentionsOpen(false); setWorkspaceThreadsOpen(false); setWorkspaceThreadRootId(null); setWorkspaceSelectedDirectId(direct.id); setWorkspaceSelectedChannelId(null); }}><Avatar name={direct.peer_display_name} small /><span className="contact-row__content"><span><strong>{direct.peer_display_name}</strong>{direct.unread_count > 0 && <b className="unread-badge">{direct.unread_count}</b>}</span><span className="contact-row__preview">{direct.state === "read_only" ? "Former member · read-only" : `Workspace DM · ${direct.peer_short_id}`}</span></span></button>)}
+            {selectedWorkspaceDirects.map((direct) => <button key={direct.id} className={`contact-row workspace-channel-row ${!workspaceSearchOpen && !workspaceMentionsOpen && !workspaceThreadsOpen && !workspaceThreadRootId && selectedWorkspaceDirect?.id === direct.id ? "contact-row--selected" : ""}`} onClick={() => { setWorkspaceSearchOpen(false); setWorkspaceMentionsOpen(false); setWorkspaceThreadsOpen(false); setWorkspaceThreadRootId(null); setWorkspaceSelectedDirectId(direct.id); setWorkspaceSelectedChannelId(null); }}><Avatar name={direct.peer_display_name} small /><span className="contact-row__content"><span><strong>{direct.peer_display_name}</strong>{direct.unread_count > 0 && <b className="unread-badge">{direct.unread_count}</b>}</span><span className="contact-row__preview">{direct.state === "read_only" ? "Former member · read-only" : `Workspace DM · ${direct.peer_short_id}`}</span></span></button>)}
             {selectedWorkspaceDirects.length === 0 && <p className="workspace-direct-empty">Start a private workspace chat from People.</p>}
             <p className="workspace-nav__label">Workspace</p>
             <button className="workspace-nav-action" onClick={() => setWorkspacePeopleOpen(true)}><Users size={17} />People <span>{selectedWorkspace.members.filter((member) => member.status === "active").length}</span></button>
@@ -3419,7 +3525,20 @@ function Messenger({ snapshot, refresh, workspaceChannelInvalidation, onLock, in
             <span><strong>Networking is unavailable.</strong> Put both devices on the same local network and reopen Mesh Chat. Your profile and queued messages are safe.</span>
           </div>
         )}
-        {selectedWorkspace ? (workspaceThreadRootId ? (
+        {selectedWorkspace ? (workspaceSearchOpen ? (
+          <WorkspaceSearchView
+            workspace={selectedWorkspace}
+            query={workspaceSearchQuery}
+            scope={workspaceSearchScope}
+            page={workspaceSearchPage}
+            loading={workspaceSearchLoading}
+            error={workspaceSearchError}
+            onQuery={setWorkspaceSearchQuery}
+            onScope={(value) => { setWorkspaceSearchScope(value); setWorkspaceSearchPage(null); setWorkspaceSearchError(""); }}
+            onLoadMore={() => void loadWorkspaceSearch(true)}
+            onOpen={openWorkspaceSearchResult}
+          />
+        ) : workspaceThreadRootId ? (
           <WorkspaceThreadView
             workspace={selectedWorkspace}
             page={workspaceThreadPage}

@@ -446,6 +446,7 @@ fn allowed_renderer_command(command: &str) -> bool {
             | "edit_workspace_message"
             | "delete_workspace_message"
             | "set_workspace_reaction"
+            | "search_workspace"
             | "list_workspace_messages"
             | "list_workspace_direct_messages"
             | "mark_workspace_read"
@@ -503,6 +504,7 @@ fn workspace_renderer_command(command: &str) -> bool {
             | "edit_workspace_message"
             | "delete_workspace_message"
             | "set_workspace_reaction"
+            | "search_workspace"
             | "list_workspace_messages"
             | "list_workspace_direct_messages"
             | "mark_workspace_read"
@@ -934,6 +936,7 @@ mod tests {
             "edit_workspace_message",
             "delete_workspace_message",
             "set_workspace_reaction",
+            "search_workspace",
             "list_workspace_messages",
             "list_workspace_direct_messages",
             "mark_workspace_read",

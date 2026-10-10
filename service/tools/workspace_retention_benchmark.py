@@ -326,6 +326,8 @@ def seed_fixture(
     workspace: dict[str, Any],
     channels: list[dict[str, Any]],
     event_count: int,
+    *,
+    history_age_days: int = 120,
 ) -> dict[str, Any]:
     if event_count < 2_000:
         raise ValueError("benchmark fixture requires at least 2,000 events")
@@ -341,7 +343,7 @@ def seed_fixture(
     reactions = int(event_count * 0.04)
     deletes = int(event_count * 0.02)
     roots = event_count - replies - edits - reactions - deletes
-    old_start = time.time() - 120 * DAY
+    old_start = time.time() - history_age_days * DAY
     channel_by_id = {item["id"]: item for item in channels}
     roots_by_index: list[tuple[str, str]] = []
     root_message_records: dict[str, dict[str, Any]] = {}

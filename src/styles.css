@@ -152,6 +152,25 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus
 .contact-search { display: flex; min-height: 41px; align-items: center; gap: 7px; padding: 0 10px; color: #718078; background: white; border: 1px solid #d2d8d3; border-radius: 10px; }
 .contact-search:focus-within { border-color: #78a18d; box-shadow: 0 0 0 2px rgba(93, 159, 132, .13); }
 .contact-search input { width: 100%; min-width: 0; background: transparent; border: 0; outline: 0; font-size: .82rem; }
+
+.workspace-search__controls { display: grid; gap: 10px; padding: 14px 18px 12px; border-bottom: 1px solid var(--line); background: #f5f7f3; }
+.workspace-search__input { display: flex; min-height: 44px; align-items: center; gap: 9px; padding: 0 12px; color: #66776e; background: white; border: 1px solid #cfd8d2; border-radius: 11px; }
+.workspace-search__input:focus-within { border-color: #6f9e86; box-shadow: 0 0 0 3px rgba(93, 159, 132, .14); }
+.workspace-search__input input { min-width: 0; flex: 1; border: 0; outline: 0; background: transparent; color: var(--ink); font: inherit; }
+.workspace-search__filters { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 2px; }
+.workspace-search__filters button { min-height: 34px; padding: 0 12px; white-space: nowrap; color: #4f6258; background: transparent; border: 1px solid #cfd8d2; border-radius: 999px; font: inherit; font-size: .78rem; font-weight: 700; cursor: pointer; }
+.workspace-search__filters button:hover, .workspace-search__filters button:focus-visible { border-color: #739b87; outline: none; }
+.workspace-search__filters .workspace-search__filter--active { color: #173c2c; background: #dcebe3; border-color: #8ab39e; }
+.workspace-search__results { padding: 12px 18px 24px; }
+.workspace-search-result { width: 100%; display: grid; grid-template-columns: 34px minmax(0, 1fr) auto; align-items: center; gap: 10px; padding: 12px; text-align: left; color: var(--ink); background: white; border: 1px solid #d9dfdb; border-radius: 11px; cursor: pointer; }
+.workspace-search-result + .workspace-search-result { margin-top: 8px; }
+.workspace-search-result:hover, .workspace-search-result:focus-visible { border-color: #80a790; box-shadow: 0 3px 14px rgba(38, 63, 50, .08); outline: none; }
+.workspace-search-result > span:nth-child(2) { min-width: 0; display: grid; gap: 5px; }
+.workspace-search-result > span:nth-child(2) > span:last-child { overflow: hidden; color: #56665d; font-size: .84rem; text-overflow: ellipsis; white-space: nowrap; }
+.workspace-search-result__icon { width: 32px; height: 32px; display: grid; place-items: center; color: #37634e; background: #e5efe9; border-radius: 9px; }
+.workspace-search-result__meta { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+.workspace-search-result__meta strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.workspace-search-result__meta small { margin-left: auto; flex: 0 0 auto; color: #738078; }
 .contacts-manager__list [role="listbox"] { min-height: 0; flex: 1; padding-top: 7px; overflow: auto; overscroll-behavior: contain; }
 .contacts-manager__list [role="option"] { display: flex; width: 100%; align-items: center; gap: 9px; padding: 8px; text-align: left; background: transparent; border: 0; border-radius: 10px; cursor: pointer; }
 .contacts-manager__list [role="option"]:hover { background: #e8ece7; }

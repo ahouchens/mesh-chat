@@ -152,6 +152,18 @@
   checks. A former member's existing local copy is read-only and receives no
   new catch-up or live leg. Private removal/re-admission does not bridge eras,
   and workspace owner status never grants access to a two-member DM.
+- Workspace search uses sealed HMAC-keyed exact-token pages and bounded opaque
+  document references. Queries never leave the device. A search index is only
+  a hint: at most eight shard pages and 256 candidates are decrypted, then the
+  canonical historical entitlement, current private/DM boundary, thread root,
+  hide, deletion, and retention checks run again before a 50-result maximum is
+  presented. Authenticated cursors contain opaque query/scope digests rather
+  than raw text and bind authorization, retention, and search generations.
+- SQLite observers can still learn generic search-record kinds, ciphertext
+  sizes, counts, update timing, and repeated access patterns. They do not see
+  plaintext queries, tokens, messages, person/channel names, or destinations
+  in record IDs or cursor bodies without the local vault key. An unlocked
+  endpoint holding that key remains outside this protection.
 - A workspace mutation and its durable operation result commit together. A
   message and its complete recipient set commit before asynchronous handoff;
   native endpoint proof is not presented as human read evidence.
@@ -211,8 +223,8 @@ Depending on configured interfaces, observers may learn local discovery presence
   sharing, or safe multi-owner membership editing.
 - Workspace peer history backfill, search exchange, private history catch-up,
   direct message history catch-up, linked devices, authority transfer, and
-  mobile workspace use. Increment 9 exposes only history already present
-  locally;
+  mobile workspace use. Increment 10 searches only authorized history already
+  retained locally and never requests search or missing history from peers;
   public discovery
   does not imply complete historical messages, and newly admitted private
   members receive future events only.

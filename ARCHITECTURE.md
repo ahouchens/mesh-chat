@@ -45,7 +45,7 @@ ordering, removal, and owner-loss consequences.
 
 ## Desktop workspaces
 
-The ninth workspace increment is an isolated desktop feature profile. It adds
+The tenth workspace increment is an isolated desktop feature profile. It adds
 canonical workspace authority, device, invitation, channel and event documents
 under the `mesh-chat-workspace` custom type without changing Personal or private
 group bytes. The React shell can switch between Personal and workspace views,
@@ -182,6 +182,25 @@ caches for repeated immutable manifests and channel controls. Reaction state is
 addressed by exact opaque IDs materialized with each Increment 9 message.
 Workspace startup still avoids message/event/delivery collections entirely.
 
+Local search is another sealed derived view, never a network protocol. Frozen
+NFKC/casefold/NFC exact tokens become workspace-scoped HMAC identifiers; token
+pages contain at most 100 opaque document references. A query selects the
+rarest exact token and opens at most eight pages, 256 candidate documents, and
+50 results. Candidate message text, person names, and channel names/topics are
+decrypted only through exact keyed lookups. Each result then repeats the
+canonical historical-entitlement, current workspace/private-channel/DM,
+thread-root, hide, deletion, and retention checks used by direct history views.
+
+Search cursors authenticate opaque query and filter digests, authorization and
+retention generations, the search generation, selected shard head, and offset;
+they never contain the raw query. New messages and winning edits update search
+documents with derived message state in the same transaction. Delete, hide,
+prune, directory, and access changes remove references or invalidate cursors;
+reaction-only events do not add text tokens. A 0.2.29 profile enters an honest
+rebuilding state and advances at most 128 retained events per transaction from
+the existing retention pages. Startup creates only member/channel directory
+metadata and does not scan message or event collections.
+
 Checkpoints are pinned to the genesis owner member, authority device, public
 identity, and destination. The initial manifest also pins the genesis name and
 description. Each later manifest performs exactly one enabled transition:
@@ -233,8 +252,9 @@ refreshes the bounded workspace summary rather than the full application
 snapshot. See
 [ADR 0005](docs/adr/0005-workspace-authority-and-bootstrap.md),
 [ADR 0006](docs/adr/0006-workspace-events-and-history-safety.md),
-[ADR 0007](docs/adr/0007-sealed-workspace-paging-and-outbox.md), and
-[ADR 0008](docs/adr/0008-cooperative-retention-and-local-history.md).
+[ADR 0007](docs/adr/0007-sealed-workspace-paging-and-outbox.md),
+[ADR 0008](docs/adr/0008-cooperative-retention-and-local-history.md), and
+[ADR 0009](docs/adr/0009-encrypted-local-search.md).
 
 ## Message reactions
 

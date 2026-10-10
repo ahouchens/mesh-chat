@@ -409,7 +409,13 @@ class VaultStore:
         def __exit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
             try:
                 if exc_type:
-                    self.store._db.execute("ROLLBACK")
+                    # SQLite may already have rolled back a failed write (for
+                    # example after SQLITE_FULL). Preserve the original body
+                    # exception if no transaction remains to roll back.
+                    try:
+                        self.store._db.execute("ROLLBACK")
+                    except BaseException:
+                        pass
                 else:
                     try:
                         self.store._db.execute("COMMIT")

@@ -1811,7 +1811,95 @@ Artifact hashes for this run:
   retention/prune partition and reconnect, interactive native-window
   accessibility, packet capture, protected-profile plaintext scanning,
   production signing, in-place installation, and Windows-to-Android validation
-  remain release gates. Increment 10 is outside this task.
+  remain release gates.
+
+## Workspace increment 10 verification — 2026-10-09
+
+- Increment 10 adds encrypted local exact-token search over retained workspace
+  message roots, thread replies, current permitted people names, and visible
+  channel names/topics. Frozen NFKC/default-casefold/NFC normalization feeds
+  workspace-keyed HMAC token IDs and sealed 100-reference pages. Queries are
+  capped at 256 characters, 1,024 UTF-8 bytes, and eight tokens; execution is
+  capped at eight shard pages, 256 decrypted candidates, and 50 results.
+  Authenticated cursors contain opaque query/scope digests and bind access,
+  retention, search generation, shard, page, and offset. They never carry raw
+  queries.
+- Service/protocol coverage verifies normalization and punctuation, token/query
+  limits, deterministic ordering and duplicate-free pagination, cursor MAC
+  tampering and cross-query/scope/generation staleness, incremental edit
+  replacement, reaction non-indexing, deletion/hide/prune suppression, bounded
+  shards/candidates/pages, 0.2.29 migration and restart recovery, roots/replies,
+  people/channels, former-member read-only archives, private removal and
+  re-admission gaps, owner/nonparticipant workspace-DM isolation, no whole-kind
+  query scan, encrypted-at-rest representative markers, and SQLite-safe keyed
+  metadata. Renderer coverage exercises All/Messages/Threads/People/Channels,
+  debounce/loading/pagination, accessible labels and focus, and exact thread
+  navigation. Rust coverage verifies the desktop-only command allowlist.
+- The complete maintained verification passed **322 Python tests with 6
+  intentional environment/package skips**, **88 frontend tests**, all **3**
+  package-artwork verifier tests, TypeScript compilation, and the Vite
+  production build. `cargo fmt --check`, the locked Rust release check, and all
+  **6 release-profile tests** passed. The protected four-process/three-hop
+  topology and both direct-LAN scenarios passed. All **3** tests against the
+  exact immutable 0.2.30 sidecar passed, including frozen 0.2.9
+  interoperability. The final application matched all **12** bundled artwork
+  files (1,947,195 source bytes). The maintained verification report is
+  `dist/reports/0.2.30/20261010T032511Z-61d71b79/report.json`.
+- The reproducible `service/tools/workspace_search_benchmark.py` ran on Windows
+  10.0.19045, Python 3.13.15, a 12-logical-CPU Intel Family 6 Model 158 host
+  with 17,019,686,912 bytes of physical memory. Its Increment 9-derived fixture
+  retained **50,000** events for 8 synthetic members and 32 public channel
+  chains plus one private authorization probe: 42,000 roots, 3,000 replies,
+  2,000 edits, 2,000 reactions, 1,000 tombstones, 4,000 linked-device delivery
+  legs, and 2,000 pending items. Metadata-only startup took **76.582 ms** and
+  opened no event/message bodies or whole message collection. Restart-safe
+  indexing covered 50,000 event positions in **190.148 s** across **391**
+  transactions, producing 45,041 search documents and 95,226 keyed index/page
+  records without reference duplication after restart.
+- Over 30 samples per series, first-page p95 was **728.881 ms** for a common
+  message query, **13.699 ms** rare, **1.437 ms** no-result, **16.365 ms**
+  thread, **4.123 ms** person, **3.404 ms** channel, **786.925 ms** warm, and
+  **773.836 ms** process-cold. Process-cold means a new `VaultStore` and service
+  instance without flushing the OS file cache. All remained below the 2-second
+  desktop target. The common query opened 256 candidates and three shard pages;
+  ordinary send committed in **111.378 ms** with zero route attempts. Peak
+  working set was 970,940,416 bytes and Python tracemalloc peak was 897,159,730
+  bytes for the combined seed/rebuild/timing process. The encrypted index grew
+  the vault by 364,130,304 bytes; the final benchmark vault was 896,327,680
+  bytes. All access, mutation, cursor, prune/restart, no-scan, and plaintext
+  absence assertions passed. The 10,637-byte evidence JSON hashes to
+  `6A25C46812A4921CD2EED77975AE24D49112D149ED962D130A9E3371A228C05E`
+  at `dist/reports/0.2.30/increment10-search-benchmark.json`.
+- The first full benchmark attempt stopped during index growth with SQLite
+  `database or disk is full` when only 4 MiB remained. No release or user data
+  changed. Three validated temporary benchmark profiles and the disposable
+  generated Rust release cache were removed, restoring 3.3 GB, and the full
+  rerun above passed. An initial unscoped `vitest run` also collected the
+  separate Node `node:test` artwork file and reported “no test suite”; the
+  maintained scoped frontend runner then passed all 88 Vitest tests and the
+  separate Node runner passed its 3 artwork tests. A direct shell `cargo`
+  lookup was absent from `PATH`; the pinned `~/.cargo/bin/cargo.exe` toolchain
+  completed all required Rust gates.
+- The maintained release driver immutably published desktop **0.2.30** without
+  changing 0.2.29 or any earlier release. The 22,302,720-byte MSI has SHA-256
+  `B573C7E457FB69411890A8B36293EE1F1DD18E5B4D6DFD1A2EB4A129B109B158`.
+  The 21,569,391-byte NSIS installer hashes to
+  `2B8ADB16FD3F2623ECDD95925E1FC667F7C5B92BBB8FF0AEBEBC527E6C524DEE`.
+  The 6,727,680-byte portable application reports file/product version 0.2.30
+  and hashes to
+  `8BC26948ADE1B4FC93C2CE20DD84D2B002DF78E5A5677BD66DCFEC66B84B4320`;
+  the 18,082,474-byte sidecar hashes to
+  `B87B171E1553EB9BD3609C1D2E4CE58AE5D425DCAE2FC72BCEAA0CC13DAE86C7`.
+  The immutable manifest hashes to
+  `05F773EFFF28FF231AC33B86131B01B39BBB08AAD7C026EB1EEA10624C44C530`,
+  and `dist/desktop/current.json` selects it. The successful release report is
+  `dist/reports/0.2.30/20261010T032654Z-daea9a5a/report.json`.
+- No installer or application executable was launched and no existing Mesh
+  Chat user profile was modified. Physical concurrent-device search under
+  private removal/re-admission and retention partition/reconnect, interactive
+  native-window keyboard/screen-reader review, packet capture, protected-profile
+  full-tree plaintext scanning, production signing, in-place installation, and
+  Windows-to-Android validation remain release gates.
 
 ## Acceptance matrix
 
@@ -1838,7 +1926,7 @@ Artifact hashes for this run:
 | One-to-one approval | Always-on deterministic full flow and prior real bidirectional-hint Reticulum/LXMF runs passed; the phone-shaped harness covers phone-first delivery followed by the desktop reply on the same connection. Exact 0.2.12 physical Windows↔Android validation remains pending |
 | Contact management | Rename, verification toggling, block/unblock trust restoration, deletion cleanup, active-group identity retention, pending-group-invitation refusal, search, confirmations, mobile Back handling, and responsive dialog layout are covered. The shared UI was matched inside the exact Android APK; physical desktop/phone interaction remains pending |
 | Reconnection/interoperability | Upstream format preserved; bidirectional direct-LAN attachment, dirty-route retry, signed-client route replacement, deferred callback re-entry, and phone-shaped full-duplex return traffic are covered; reference-client and suspend/resume runs pending |
-| Platform packaging | Windows x64 0.2.29 MSI/NSIS and Android arm64 debug 0.2.12 packages were built, hashed, and inspected; the exact 0.2.29 Windows binary was verified but was not installed or launched. Versions, manifest, installer payloads, Android v2 signature/certificate, native architecture, embedded contact UI, and all 12 embedded artwork files were verified. The transactional publisher rejects mixed/stale output and records immutable release/current manifests. Physical Windows↔Android 0.2.12 validation, a 0.2.12 portable bundle, macOS/Linux/iOS native package runs, and production signing remain pending |
+| Platform packaging | Windows x64 0.2.30 MSI/NSIS and Android arm64 debug 0.2.12 packages were built, hashed, and inspected; the exact 0.2.30 Windows binary was verified but was not installed or launched. Versions, manifest, installer payloads, Android v2 signature/certificate, native architecture, embedded contact UI, and all 12 embedded artwork files were verified. The transactional publisher rejects mixed/stale output and records immutable release/current manifests. Physical Windows↔Android 0.2.12 validation, a 0.2.12 portable bundle, macOS/Linux/iOS native package runs, and production signing remain pending |
 | First-message usability | 0.2.12 retains desktop timeout guidance, exact draft preservation, callback/retry concurrency regressions, and the phone-first/desktop-reply harness together with durable-result, bounded-draft, duplicate-submit, IME, stale-refresh, delivery-state, and responsive-layout coverage. Exact 0.2.12 physical Windows↔Android validation and a broader human study remain open |
 | Invitation entry points | UI and validation implemented; installed-app OS matrix pending |
 | Common flow without technical setup | UI implemented; fresh/returning human run pending |
@@ -1850,5 +1938,6 @@ Artifact hashes for this run:
 | Workspace increment 7 | Canonical structured mentions, exact audience authorization, edit add/remove/re-add semantics, encrypted mention index/paging/read/mute/draft state, unsubscribed-public delivery, private/DM isolation, stale-index and stale-draft filtering, desktop command allowlisting, and compose/edit/inbox renderer paths are automated. Protected topology, direct-LAN, immutable packaged-current, 0.2.9 compatibility, and final artwork verification passed; physical concurrent-device mention partition/reconnect, native-window accessibility, packet capture, and protected-profile plaintext scanning remain release gates |
 | Workspace increment 8 | One-level signed-root replies, non-thread canonical-byte compatibility, exact public/private/DM authorization, nested-reply rejection, mutations/reactions/mentions/tombstones, deterministic out-of-order recovery, encrypted bounded paging/activity/read/draft/cursor state, metadata-only startup summaries, current-access and private re-admission filtering, desktop command allowlisting, mentioned-thread navigation, reply composition, and thread-specific unread behavior are automated. Protected topology, direct-LAN, immutable packaged-current, frozen 0.2.9 compatibility, and final artwork verification passed; physical concurrent-device thread partition/reconnect, native-window accessibility, packet capture, and protected-profile plaintext scanning remain release gates |
 | Workspace increment 9 | Signed cooperative 30/90/365-day or indefinite retention, bounded encrypted history/revision/tombstone indexes, stale-cursor invalidation, restart-safe pruning, seven-day live-delivery preservation, durable floors and gaps, replay-resistant retired event IDs, historical/current entitlement checks, former-member read-only archives, and desktop retention/history/prune states are automated. The reproducible 50,000-event benchmark, protected topology, direct-LAN, immutable packaged-current, frozen 0.2.9 compatibility, and final artwork verification passed; physical concurrent-device retention/prune partition/reconnect, native-window accessibility, packet capture, protected-profile plaintext scanning, production signing, and in-place installation remain release gates |
+| Workspace increment 10 | Encrypted workspace-keyed exact-token search, bounded shard/candidate/result execution, authenticated query/access/retention/search cursors, incremental atomic mutation updates, restart-safe migration, current plus historical authorization, private-era and DM isolation, honest indexing/pruned/incomplete states, desktop filters/navigation, and SQLite plaintext absence are automated. The reproducible 50,000-event benchmark, protected topology, direct-LAN, immutable 0.2.30 package, frozen 0.2.9 compatibility, and final artwork verification passed; physical concurrent-device access/retention partitions, native-window accessibility, packet capture, protected-profile plaintext scanning, production signing, and in-place installation remain release gates |
 
 Do not mark a release complete from unit tests alone. Store packet captures, topology configs, full-tree scans, package hashes, platform versions, human timing sheets, and failure notes with the release evidence.

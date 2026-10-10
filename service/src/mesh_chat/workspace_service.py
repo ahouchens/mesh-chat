@@ -4,6 +4,7 @@ import base64
 import hashlib
 import json
 import time
+import unicodedata
 import uuid
 from collections import defaultdict
 from typing import Any, Callable, Iterable
@@ -96,6 +97,19 @@ THREAD_ACTIVITY_MAX_ROOTS = 1024
 RETENTION_PRUNE_BATCH_DEFAULT = 500
 RETENTION_PRUNE_BATCH_MAX = 1000
 RETENTION_INDEX_PAGE_ENTRIES = 100
+SEARCH_PAGE_DEFAULT = 25
+SEARCH_PAGE_MAX = 50
+SEARCH_QUERY_MAX_CHARS = 256
+SEARCH_QUERY_MAX_BYTES = 1024
+SEARCH_QUERY_MAX_TOKENS = 8
+SEARCH_TOKEN_MIN_CHARS = 2
+SEARCH_TOKEN_MAX_CHARS = 64
+SEARCH_DOCUMENT_MAX_TOKENS = 512
+SEARCH_TOKEN_PAGE_ENTRIES = 100
+SEARCH_SHARD_PAGE_MAX = 8
+SEARCH_CANDIDATE_MAX = 256
+SEARCH_REBUILD_BATCH = 128
+SEARCH_INDEX_REFERENCE_MAX = 2_000_000
 MAX_PENDING_EVENTS = 256
 MAX_PENDING_EVENTS_PER_SENDER = 64
 MAX_PENDING_EVENT_BYTES = 16 * 1024 * 1024
@@ -145,6 +159,51 @@ def _short_id(value: str) -> str:
     return value.replace("-", "")[:6]
 
 
+def normalize_workspace_search_text(value: str) -> str:
+    """Return the frozen Increment 10 search comparison form.
+
+    NFKC is applied before Unicode default case folding, followed by NFC so
+    canonically equivalent input always produces the same keyed token IDs.
+    """
+
+    if not isinstance(value, str):
+        raise ValidationError("Workspace search text is invalid")
+    return unicodedata.normalize(
+        "NFC", unicodedata.normalize("NFKC", value).casefold()
+    )
+
+
+def tokenize_workspace_search_text(value: str) -> tuple[str, ...]:
+    """Split normalized text into unique Unicode letter/number tokens.
+
+    Punctuation, symbols, separators, and controls are boundaries. Combining
+    marks stay attached to a preceding letter or number. Tokens shorter than
+    two characters or longer than 64 characters are deliberately not indexed.
+    Duplicate tokens collapse in first-occurrence order.
+    """
+
+    normalized = normalize_workspace_search_text(value)
+    tokens: list[str] = []
+    current: list[str] = []
+
+    def finish() -> None:
+        if not current:
+            return
+        token = "".join(current)
+        current.clear()
+        if SEARCH_TOKEN_MIN_CHARS <= len(token) <= SEARCH_TOKEN_MAX_CHARS:
+            tokens.append(token)
+
+    for character in normalized:
+        category = unicodedata.category(character)
+        if category[0] in {"L", "N"} or (category[0] == "M" and current):
+            current.append(character)
+        else:
+            finish()
+    finish()
+    return tuple(dict.fromkeys(tokens))
+
+
 class WorkspaceServiceMixin:
     """Workspace service for the bounded eight-person public-channel increment."""
 
@@ -173,6 +232,29 @@ class WorkspaceServiceMixin:
             self.store.put(
                 "workspace", self._workspace_record_id(workspace_id), workspace
             )
+            catalog = self.store.get(
+                "workspace_search_catalog",
+                self._workspace_search_catalog_id(workspace_id),
+            ) or {}
+            channel_ids = {
+                item
+                for item in catalog.get("channel_ids", ())
+                if isinstance(item, str)
+            }
+            if isinstance(conversation_id, str):
+                channel_ids.add(conversation_id)
+            search_channels = [
+                channel
+                for channel_id in sorted(channel_ids)
+                if (
+                    channel := self.store.get(
+                        "workspace_channel",
+                        self._workspace_channel_record_id(channel_id),
+                    )
+                )
+                is not None
+            ]
+            self._sync_workspace_search_directory(workspace, search_channels)
         self.emit(
             {
                 "type": "event",
@@ -302,6 +384,351 @@ class WorkspaceServiceMixin:
 
     def _workspace_retention_state_id(self, workspace_id: str) -> str:
         return self.store.opaque_id("workspace-retention-state", workspace_id)
+
+    def _workspace_search_state_id(self, workspace_id: str) -> str:
+        return self.store.opaque_id("workspace-search-state", workspace_id)
+
+    def _workspace_search_catalog_id(self, workspace_id: str) -> str:
+        return self.store.opaque_id("workspace-search-catalog", workspace_id)
+
+    def _workspace_search_document_id(
+        self, workspace_id: str, category: str, entity_id: str
+    ) -> str:
+        return self.store.opaque_id(
+            "workspace-search-document", workspace_id, category, entity_id
+        )
+
+    def _workspace_search_token_id(self, workspace_id: str, token: str) -> str:
+        return self.store.opaque_id("workspace-search-token", workspace_id, token)
+
+    def _workspace_search_token_page_id(
+        self, workspace_id: str, token_id: str, seed: str
+    ) -> str:
+        return self.store.opaque_id(
+            "workspace-search-token-page", workspace_id, token_id, seed
+        )
+
+    def _workspace_search_base_state(self, workspace: dict[str, Any]) -> dict[str, Any]:
+        workspace_id = str(workspace["id"])
+        retention = self.store.get(
+            "workspace_retention_index",
+            self._workspace_retention_index_id(workspace_id),
+        ) or {}
+        retained_count = int(retention.get("count", 0))
+        return {
+            "workspace_id": workspace_id,
+            "schema": 1,
+            "status": "rebuilding" if retained_count else "ready",
+            "search_generation": 1,
+            "indexed_events": 0,
+            "target_events": retained_count,
+            "rebuild_page_id": retention.get("head_page"),
+            "rebuild_offset": 0,
+            "index_references": 0,
+            "truncated_documents": 0,
+            "growth_limited": False,
+            "pruned_count": 0,
+            "updated_at": time.time(),
+        }
+
+    def _workspace_search_staged_get(
+        self,
+        staged: dict[tuple[str, str], dict[str, Any]],
+        kind: str,
+        record_id: str,
+    ) -> dict[str, Any] | None:
+        value = staged.get((kind, record_id))
+        if value is not None:
+            return value
+        stored = self.store.get(kind, record_id)
+        return None if stored is None else dict(stored)
+
+    def _workspace_search_document_records(
+        self,
+        workspace: dict[str, Any],
+        *,
+        category: str,
+        entity_id: str,
+        text: str,
+        active: bool,
+        sort_at: float = 0,
+        conversation_id: str | None = None,
+        thread_root_id: str | None = None,
+        staged: dict[tuple[str, str], dict[str, Any]] | None = None,
+    ) -> list[tuple[str, str, dict[str, Any]]]:
+        """Replace one sealed search document and its exact token references.
+
+        The document remembers the opaque page used for every token, so edits,
+        deletion, hide, and pruning remove references without a token-page scan.
+        """
+
+        if category not in {"message", "thread", "person", "channel"}:
+            raise ValidationError("Workspace search category is invalid")
+        workspace_id = str(workspace["id"])
+        own_staged = staged is None
+        changed = staged if staged is not None else {}
+        state_id = self._workspace_search_state_id(workspace_id)
+        state = self._workspace_search_staged_get(
+            changed, "workspace_search_state", state_id
+        ) or self._workspace_search_base_state(workspace)
+        document_id = self._workspace_search_document_id(
+            workspace_id, category, entity_id
+        )
+        existing = self._workspace_search_staged_get(
+            changed, "workspace_search_document", document_id
+        )
+        normalized = normalize_workspace_search_text(text)
+        all_tokens = list(tokenize_workspace_search_text(text))
+        truncated = len(all_tokens) > SEARCH_DOCUMENT_MAX_TOKENS
+        tokens = all_tokens[:SEARCH_DOCUMENT_MAX_TOKENS] if active else []
+        token_ids = [
+            self._workspace_search_token_id(workspace_id, token) for token in tokens
+        ]
+        signature = hashlib.sha256(
+            canonical_bytes(
+                {
+                    "active": bool(active),
+                    "category": category,
+                    "content": normalized,
+                    "conversation_id": conversation_id,
+                    "entity_id": entity_id,
+                    "sort_at": float(sort_at),
+                    "thread_root_id": thread_root_id,
+                    "token_ids": token_ids,
+                    "truncated": truncated,
+                }
+            )
+        ).hexdigest()
+        if existing is not None and existing.get("signature") == signature:
+            return []
+
+        old_pages = existing.get("token_pages", {}) if existing else {}
+        if isinstance(old_pages, dict):
+            for token_id, page_id in old_pages.items():
+                if not isinstance(token_id, str) or not isinstance(page_id, str):
+                    continue
+                index = self._workspace_search_staged_get(
+                    changed, "workspace_search_index", token_id
+                )
+                page = self._workspace_search_staged_get(
+                    changed, "workspace_search_index", page_id
+                )
+                if index is None or page is None:
+                    continue
+                entries = list(page.get("entries", ()))
+                kept = [
+                    item for item in entries if item.get("document_id") != document_id
+                ]
+                if len(kept) == len(entries):
+                    continue
+                page["entries"] = kept
+                index["count"] = max(0, int(index.get("count", 0)) - 1)
+                state["index_references"] = max(
+                    0, int(state.get("index_references", 0)) - 1
+                )
+                changed[("workspace_search_index", page_id)] = page
+                changed[("workspace_search_index", token_id)] = index
+
+        generation = int(existing.get("generation", 0) if existing else 0) + 1
+        token_pages: dict[str, str] = {}
+        available = max(
+            0,
+            SEARCH_INDEX_REFERENCE_MAX - int(state.get("index_references", 0)),
+        )
+        if len(token_ids) > available:
+            token_ids = token_ids[:available]
+            state["growth_limited"] = True
+            truncated = True
+        for token_id in token_ids:
+            index = self._workspace_search_staged_get(
+                changed, "workspace_search_index", token_id
+            ) or {
+                "workspace_id": workspace_id,
+                "head_page": None,
+                "count": 0,
+                "high_water": 0,
+            }
+            page_id = index.get("head_page")
+            page = (
+                self._workspace_search_staged_get(
+                    changed, "workspace_search_index", page_id
+                )
+                if isinstance(page_id, str)
+                else None
+            )
+            if page is None or len(page.get("entries", ())) >= SEARCH_TOKEN_PAGE_ENTRIES:
+                page_id = self._workspace_search_token_page_id(
+                    workspace_id, token_id, f"{document_id}:{generation}"
+                )
+                page = {
+                    "workspace_id": workspace_id,
+                    "previous_page": index.get("head_page"),
+                    "entries": [],
+                }
+                index["head_page"] = page_id
+            page["entries"] = [
+                *page.get("entries", ()),
+                {
+                    "document_id": document_id,
+                    "document_generation": generation,
+                    "sort_at": float(sort_at),
+                },
+            ]
+            index["count"] = int(index.get("count", 0)) + 1
+            index["high_water"] = int(index.get("high_water", 0)) + 1
+            state["index_references"] = int(state.get("index_references", 0)) + 1
+            token_pages[token_id] = str(page_id)
+            changed[("workspace_search_index", token_id)] = index
+            changed[("workspace_search_index", str(page_id))] = page
+
+        if existing is not None and bool(existing.get("truncated")) != truncated:
+            state["truncated_documents"] = max(
+                0,
+                int(state.get("truncated_documents", 0))
+                + (1 if truncated else -1),
+            )
+        elif existing is None and truncated:
+            state["truncated_documents"] = int(
+                state.get("truncated_documents", 0)
+            ) + 1
+        document = {
+            "workspace_id": workspace_id,
+            "category": category,
+            "entity_id": entity_id,
+            "active": bool(active),
+            "generation": generation,
+            "signature": signature,
+            "token_ids": token_ids,
+            "token_pages": token_pages,
+            "sort_at": float(sort_at),
+            "conversation_id": conversation_id,
+            "thread_root_id": thread_root_id,
+            "truncated": truncated,
+        }
+        state["search_generation"] = int(state.get("search_generation", 0)) + 1
+        state["updated_at"] = time.time()
+        changed[("workspace_search_document", document_id)] = document
+        changed[("workspace_search_state", state_id)] = state
+        if not own_staged:
+            return []
+        return [(kind, record_id, value) for (kind, record_id), value in changed.items()]
+
+    def _workspace_search_directory_records(
+        self,
+        workspace: dict[str, Any],
+        channels: Iterable[dict[str, Any]],
+    ) -> list[tuple[str, str, dict[str, Any]]]:
+        workspace_id = str(workspace["id"])
+        checked_channels = [
+            item for item in channels if item.get("workspace_id") == workspace_id
+        ]
+        local_member_id = str(workspace.get("local_member_id", ""))
+        former_archive = workspace.get("state") in {"left", "removed", "closed", "forked"}
+        people = [
+            item
+            for item in workspace.get("members", ())
+            if isinstance(item.get("id"), str)
+        ]
+        visible_channels = [
+            item
+            for item in checked_channels
+            if item.get("state") in {"active", "archived", "leaving", "left"}
+            and (
+                item.get("visibility") == "public"
+                or local_member_id in item.get("member_ids", ())
+                or former_archive
+            )
+        ]
+        signature = hashlib.sha256(
+            canonical_bytes(
+                {
+                    "authorization_generation": int(
+                        workspace.get("authorization_generation", 1)
+                    ),
+                    "channels": [
+                        {
+                            "id": item.get("id"),
+                            "members": item.get("member_ids", []),
+                            "name": item.get("name"),
+                            "state": item.get("state"),
+                            "topic": item.get("topic"),
+                            "visibility": item.get("visibility"),
+                        }
+                        for item in sorted(visible_channels, key=lambda value: str(value.get("id")))
+                    ],
+                    "people": [
+                        {
+                            "display_name": item.get("display_name"),
+                            "id": item.get("id"),
+                            "status": item.get("status"),
+                        }
+                        for item in sorted(people, key=lambda value: str(value.get("id")))
+                    ],
+                }
+            )
+        ).hexdigest()
+        catalog_id = self._workspace_search_catalog_id(workspace_id)
+        existing = self.store.get("workspace_search_catalog", catalog_id)
+        if existing is not None and existing.get("signature") == signature:
+            return []
+        staged: dict[tuple[str, str], dict[str, Any]] = {}
+        old_people = set(existing.get("member_ids", ())) if existing else set()
+        old_channels = set(existing.get("channel_ids", ())) if existing else set()
+        new_people = {str(item["id"]) for item in people}
+        new_channels = {str(item["id"]) for item in visible_channels}
+        for member_id in sorted(old_people - new_people):
+            self._workspace_search_document_records(
+                workspace,
+                category="person",
+                entity_id=member_id,
+                text="",
+                active=False,
+                staged=staged,
+            )
+        for channel_id in sorted(old_channels - new_channels):
+            self._workspace_search_document_records(
+                workspace,
+                category="channel",
+                entity_id=channel_id,
+                text="",
+                active=False,
+                staged=staged,
+            )
+        for member in people:
+            self._workspace_search_document_records(
+                workspace,
+                category="person",
+                entity_id=str(member["id"]),
+                text=str(member.get("display_name", "")),
+                active=member.get("status") == "active",
+                staged=staged,
+            )
+        for channel in visible_channels:
+            self._workspace_search_document_records(
+                workspace,
+                category="channel",
+                entity_id=str(channel["id"]),
+                text=f"{channel.get('name', '')} {channel.get('topic', '')}",
+                active=True,
+                sort_at=float(channel.get("updated_at", channel.get("created_at", 0))),
+                conversation_id=str(channel["id"]),
+                staged=staged,
+            )
+        staged[("workspace_search_catalog", catalog_id)] = {
+            "workspace_id": workspace_id,
+            "signature": signature,
+            "member_ids": sorted(new_people),
+            "channel_ids": sorted(new_channels),
+            "updated_at": time.time(),
+        }
+        return [(kind, record_id, value) for (kind, record_id), value in staged.items()]
+
+    def _sync_workspace_search_directory(
+        self, workspace: dict[str, Any], channels: Iterable[dict[str, Any]]
+    ) -> None:
+        records = self._workspace_search_directory_records(workspace, channels)
+        if records:
+            self.store.put_many(records)
 
     def _workspace_event_tombstone_id(self, workspace_id: str, event_id: str) -> str:
         return self.store.opaque_id(
@@ -1572,6 +1999,23 @@ class WorkspaceServiceMixin:
         public["thread_unread_count"] = int(
             workspace.get("thread_unread_count", 0)
         )
+        search_state = self.store.get(
+            "workspace_search_state",
+            self._workspace_search_state_id(str(workspace.get("id", ""))),
+        )
+        public["search_index"] = {
+            "status": str(search_state.get("status", "indexing")) if search_state else "indexing",
+            "indexed_events": int(search_state.get("indexed_events", 0)) if search_state else 0,
+            "target_events": int(search_state.get("target_events", 0)) if search_state else 0,
+            "incomplete": bool(
+                search_state
+                and (
+                    search_state.get("growth_limited")
+                    or int(search_state.get("truncated_documents", 0)) > 0
+                    or search_state.get("status") not in {"ready", "rebuilding"}
+                )
+            ),
+        }
         return public
 
     def _public_workspace_channel(
@@ -2239,6 +2683,9 @@ class WorkspaceServiceMixin:
                         "conversation_id": channel.channel_id,
                         "high_water": 0,
                     },
+                ),
+                *self._workspace_search_directory_records(
+                    workspace, [channel_record]
                 ),
             ],
         )
@@ -3406,6 +3853,18 @@ class WorkspaceServiceMixin:
             ),
             "created_at": float(event.created_at),
         }
+        records.extend(
+            self._workspace_search_document_records(
+                workspace,
+                category="thread" if event.thread_root is not None else "message",
+                entity_id=event.event_id,
+                text=event.text,
+                active=True,
+                sort_at=float(event.created_at),
+                conversation_id=event.conversation_id,
+                thread_root_id=event.thread_root,
+            )
+        )
         if event.thread_root is not None:
             records.append(("workspace_message_state", message_record_id, message))
             records.extend(
@@ -3749,6 +4208,27 @@ class WorkspaceServiceMixin:
                 )
             elif was_mentioned and not is_mentioned:
                 updated.pop("mention_position", None)
+            workspace = self._require_workspace(event.workspace_id)
+            records.extend(
+                self._workspace_search_document_records(
+                    workspace,
+                    category=(
+                        "thread"
+                        if isinstance(updated.get("thread_root"), str)
+                        else "message"
+                    ),
+                    entity_id=str(updated["id"]),
+                    text=str(updated.get("text", "")),
+                    active=not bool(updated.get("deleted")),
+                    sort_at=float(updated.get("created_at", 0)),
+                    conversation_id=str(updated.get("conversation_id", "")),
+                    thread_root_id=(
+                        str(updated["thread_root"])
+                        if isinstance(updated.get("thread_root"), str)
+                        else None
+                    ),
+                )
+            )
             return records, updated
         assert event.reaction_emoji is not None
         reaction_id = self._workspace_reaction_record_id(
@@ -6473,6 +6953,486 @@ class WorkspaceServiceMixin:
                 self.store.delete("workspace_pending_event", pending["id"])
         self._clear_workspace_sync_issue_if_resolved(workspace_id)
 
+    def _advance_workspace_search_rebuild(
+        self, workspace: dict[str, Any], max_events: int = SEARCH_REBUILD_BATCH
+    ) -> dict[str, Any]:
+        """Resume a metadata-bounded search migration without startup scanning."""
+
+        workspace_id = str(workspace["id"])
+        state_id = self._workspace_search_state_id(workspace_id)
+        state = self.store.get("workspace_search_state", state_id)
+        if state is None:
+            state = self._workspace_search_base_state(workspace)
+            self.store.put("workspace_search_state", state_id, state)
+        if state.get("status") != "rebuilding":
+            if state.get("status") == "ready":
+                retention = self.store.get(
+                    "workspace_retention_index",
+                    self._workspace_retention_index_id(workspace_id),
+                ) or {}
+                retained_count = int(retention.get("count", 0))
+                if (
+                    int(state.get("target_events", 0)) != retained_count
+                    or int(state.get("indexed_events", 0)) != retained_count
+                ):
+                    state["target_events"] = retained_count
+                    state["indexed_events"] = retained_count
+                    state["updated_at"] = time.time()
+                    self.store.put("workspace_search_state", state_id, state)
+            return state
+        if (
+            isinstance(max_events, bool)
+            or not isinstance(max_events, int)
+            or not 1 <= max_events <= SEARCH_REBUILD_BATCH
+        ):
+            raise ValidationError("Workspace search rebuild batch is invalid")
+        retention = self.store.get(
+            "workspace_retention_index",
+            self._workspace_retention_index_id(workspace_id),
+        ) or {}
+        staged: dict[tuple[str, str], dict[str, Any]] = {
+            ("workspace_search_state", state_id): dict(state)
+        }
+        state = staged[("workspace_search_state", state_id)]
+        state["target_events"] = int(retention.get("count", 0))
+        page_id = state.get("rebuild_page_id")
+        offset = int(state.get("rebuild_offset", 0))
+        processed = 0
+        while isinstance(page_id, str) and processed < max_events:
+            page = self.store.get("workspace_retention_index", page_id)
+            if page is None or page.get("workspace_id") != workspace_id:
+                state["status"] = "incomplete"
+                state["incomplete_reason"] = "retention_page_unavailable"
+                page_id = None
+                break
+            entries = page.get("entries", ())
+            if not isinstance(entries, list) or offset > len(entries):
+                state["status"] = "incomplete"
+                state["incomplete_reason"] = "retention_page_invalid"
+                page_id = None
+                break
+            position = len(entries) - 1 - offset
+            while position >= 0 and processed < max_events:
+                entry = entries[position]
+                processed += 1
+                offset += 1
+                state["indexed_events"] = int(state.get("indexed_events", 0)) + 1
+                if entry.get("event_type") == "message":
+                    event_id = entry.get("event_id")
+                    if isinstance(event_id, str):
+                        message = self.store.get(
+                            "workspace_message_state",
+                            self._workspace_message_record_id(event_id),
+                        )
+                        if message is not None:
+                            hidden = self.store.get(
+                                "workspace_message_hidden",
+                                self.store.opaque_id(
+                                    "workspace-message-hidden", workspace_id, event_id
+                                ),
+                            )
+                            self._workspace_search_document_records(
+                                workspace,
+                                category=(
+                                    "thread"
+                                    if isinstance(message.get("thread_root"), str)
+                                    else "message"
+                                ),
+                                entity_id=event_id,
+                                text=str(message.get("text", "")),
+                                active=hidden is None and not bool(message.get("deleted")),
+                                sort_at=float(message.get("created_at", 0)),
+                                conversation_id=str(message.get("conversation_id", "")),
+                                thread_root_id=(
+                                    str(message["thread_root"])
+                                    if isinstance(message.get("thread_root"), str)
+                                    else None
+                                ),
+                                staged=staged,
+                            )
+                position -= 1
+            if position < 0:
+                page_id = page.get("previous_page")
+                offset = 0
+        state = staged[("workspace_search_state", state_id)]
+        state["rebuild_page_id"] = page_id
+        state["rebuild_offset"] = offset
+        state["updated_at"] = time.time()
+        if page_id is None and state.get("status") == "rebuilding":
+            state["status"] = "ready"
+            state["indexed_events"] = int(state.get("target_events", 0))
+            state.pop("incomplete_reason", None)
+        self.store.put_many(
+            (kind, record_id, value)
+            for (kind, record_id), value in staged.items()
+        )
+        return state
+
+    @staticmethod
+    def _workspace_search_snippet(text: str, limit: int = 240) -> str:
+        collapsed = " ".join(str(text).split())
+        return collapsed if len(collapsed) <= limit else f"{collapsed[: limit - 1].rstrip()}…"
+
+    def _workspace_search_result(
+        self,
+        workspace: dict[str, Any],
+        document: dict[str, Any],
+        query_tokens: tuple[str, ...],
+        query_token_ids: set[str],
+        scope_categories: set[str],
+        visibility_cache: dict[str, dict[str, Any]],
+    ) -> dict[str, Any] | None:
+        category = document.get("category")
+        if category not in scope_categories or document.get("active") is not True:
+            return None
+        if not query_token_ids.issubset(set(document.get("token_ids", ()))):
+            return None
+        entity_id = document.get("entity_id")
+        if not isinstance(entity_id, str):
+            return None
+        if category in {"message", "thread"}:
+            message = self.store.get(
+                "workspace_message_state", self._workspace_message_record_id(entity_id)
+            )
+            if (
+                message is None
+                or message.get("workspace_id") != workspace.get("id")
+                or message.get("deleted")
+                or self.store.get(
+                    "workspace_message_hidden",
+                    self.store.opaque_id(
+                        "workspace-message-hidden", workspace["id"], entity_id
+                    ),
+                )
+                is not None
+                or not self._workspace_message_is_visible(
+                    workspace, message, visibility_cache
+                )
+            ):
+                return None
+            retention_days = workspace.get("retention_days", 90)
+            if retention_days is not None and float(message.get("created_at", 0)) < (
+                time.time() - int(retention_days) * 24 * 60 * 60
+            ):
+                return None
+            current_tokens = set(
+                tokenize_workspace_search_text(str(message.get("text", "")))
+            )
+            if not set(query_tokens).issubset(current_tokens):
+                return None
+            conversation_id = str(message.get("conversation_id", ""))
+            try:
+                conversation_kind, conversation = self._require_workspace_conversation(
+                    workspace["id"], conversation_id
+                )
+                thread_root = message.get("thread_root")
+                if isinstance(thread_root, str):
+                    root, _root_kind, _root_conversation = self._workspace_thread_context(
+                        workspace, thread_root, visibility_cache=visibility_cache
+                    )
+                    if root.get("conversation_id") != conversation_id:
+                        return None
+            except (ContactNotApproved, ValidationError):
+                return None
+            conversation_model = self._workspace_thread_conversation_model(
+                workspace, conversation_kind, conversation
+            )
+            current_author = next(
+                (
+                    item
+                    for item in workspace.get("members", ())
+                    if item.get("id") == message.get("author_member_id")
+                ),
+                None,
+            )
+            return {
+                "id": entity_id,
+                "kind": category,
+                "title": str(
+                    current_author.get("display_name")
+                    if current_author is not None
+                    else message.get("author_display_name", "Member")
+                ),
+                "snippet": self._workspace_search_snippet(str(message.get("text", ""))),
+                "created_at": float(message.get("created_at", 0)),
+                "conversation": conversation_model,
+                "event_id": entity_id,
+                "is_reply": isinstance(message.get("thread_root"), str),
+                "thread_root_id": message.get("thread_root"),
+                "_sort": (
+                    0 if category == "message" else 1,
+                    -float(message.get("created_at", 0)),
+                    entity_id,
+                ),
+            }
+        if category == "person":
+            member = next(
+                (
+                    item
+                    for item in workspace.get("members", ())
+                    if item.get("id") == entity_id and item.get("status") == "active"
+                ),
+                None,
+            )
+            if member is None or not set(query_tokens).issubset(
+                set(tokenize_workspace_search_text(str(member.get("display_name", ""))))
+            ):
+                return None
+            return {
+                "id": entity_id,
+                "kind": "person",
+                "title": str(member.get("display_name", "Member")),
+                "snippet": f"{member.get('role', 'member')} · {member.get('short_id', _short_id(entity_id))}",
+                "member_id": entity_id,
+                "_sort": (2, 0, entity_id),
+            }
+        channel = self.store.get(
+            "workspace_channel", self._workspace_channel_record_id(entity_id)
+        )
+        local_member_id = str(workspace.get("local_member_id", ""))
+        former_archive = workspace.get("state") in {"left", "removed", "closed", "forked"}
+        if (
+            channel is None
+            or channel.get("workspace_id") != workspace.get("id")
+            or channel.get("state") not in {"active", "archived", "leaving", "left"}
+            or (
+                channel.get("visibility") == "private"
+                and local_member_id not in channel.get("member_ids", ())
+                and not former_archive
+            )
+            or not set(query_tokens).issubset(
+                set(
+                    tokenize_workspace_search_text(
+                        f"{channel.get('name', '')} {channel.get('topic', '')}"
+                    )
+                )
+            )
+        ):
+            return None
+        public_channel = self._public_workspace_channel(channel)
+        return {
+            "id": entity_id,
+            "kind": "channel",
+            "title": f"#{public_channel.get('display_name') or public_channel.get('name', 'channel')}",
+            "snippet": self._workspace_search_snippet(
+                str(
+                    channel.get("topic")
+                    or (
+                        "Private channel"
+                        if channel.get("visibility") == "private"
+                        else "Public channel"
+                    )
+                )
+            ),
+            "conversation": {
+                "id": entity_id,
+                "kind": "channel",
+                "name": str(public_channel.get("display_name") or channel.get("name", "channel")),
+                "visibility": str(channel.get("visibility", "public")),
+                "state": str(channel.get("state", "active")),
+            },
+            "_sort": (3, 0, entity_id),
+        }
+
+    def search_workspace(
+        self,
+        workspace_id: Any,
+        query: Any,
+        scope: Any = "all",
+        cursor: Any = None,
+        limit: Any = SEARCH_PAGE_DEFAULT,
+    ) -> dict[str, Any]:
+        workspace = self._require_workspace(workspace_id)
+        if workspace.get("state") not in {
+            "active", "incomplete_sync", "leaving", "left", "removed", "closed", "forked"
+        }:
+            raise ContactNotApproved("Workspace search is unavailable in this state")
+        if (
+            not isinstance(query, str)
+            or not 1 <= len(query) <= SEARCH_QUERY_MAX_CHARS
+            or len(query.encode("utf-8")) > SEARCH_QUERY_MAX_BYTES
+        ):
+            raise ValidationError("Workspace search query is invalid")
+        normalized_query = normalize_workspace_search_text(query).strip()
+        tokens = tokenize_workspace_search_text(query)
+        if (
+            len(normalized_query) < SEARCH_TOKEN_MIN_CHARS
+            or not tokens
+            or len(tokens) > SEARCH_QUERY_MAX_TOKENS
+        ):
+            raise ValidationError(
+                "Workspace search requires one to eight tokens of 2–64 characters"
+            )
+        scope_map = {
+            "all": {"message", "thread", "person", "channel"},
+            "messages": {"message"},
+            "threads": {"thread"},
+            "people": {"person"},
+            "channels": {"channel"},
+        }
+        if scope not in scope_map:
+            raise ValidationError("Workspace search scope is invalid")
+        if (
+            isinstance(limit, bool)
+            or not isinstance(limit, int)
+            or not 1 <= limit <= SEARCH_PAGE_MAX
+        ):
+            raise ValidationError("Workspace search page size is invalid")
+
+        state = self._advance_workspace_search_rebuild(workspace)
+        token_ids = [
+            self._workspace_search_token_id(workspace_id, token) for token in tokens
+        ]
+        token_indexes: list[tuple[int, str, dict[str, Any]]] = []
+        for token_id in token_ids:
+            index = self.store.get("workspace_search_index", token_id)
+            if index is None:
+                token_indexes = []
+                break
+            token_indexes.append((int(index.get("count", 0)), token_id, index))
+        selected_token_id: str | None = None
+        selected_index: dict[str, Any] | None = None
+        if token_indexes:
+            _count, selected_token_id, selected_index = min(
+                token_indexes, key=lambda item: (item[0], item[1])
+            )
+        query_digest = self.store.opaque_id(
+            "workspace-search-query", workspace_id, "\x1f".join(tokens)
+        )
+        filter_digest = self.store.opaque_id(
+            "workspace-search-filter", workspace_id, str(scope)
+        )
+        head_page = selected_index.get("head_page") if selected_index else None
+        result_offset = 0
+        if cursor is not None:
+            if not isinstance(cursor, str):
+                raise ValidationError("Workspace search cursor is invalid")
+            value = self.store.open_cursor(cursor)
+            expected = {
+                "v": 1,
+                "view": "workspace_search",
+                "workspace_id": workspace_id,
+                "query_digest": query_digest,
+                "filter_digest": filter_digest,
+                "authorization_generation": int(workspace.get("authorization_generation", 1)),
+                "retention_generation": int(workspace.get("retention_generation", 1)),
+                "search_generation": int(state.get("search_generation", 1)),
+                "token_shard_id": selected_token_id,
+                "page_id": head_page,
+            }
+            if any(value.get(key) != expected_value for key, expected_value in expected.items()):
+                raise StaleCursor("Workspace search cursor is stale")
+            result_offset = value.get("offset")
+            if (
+                isinstance(result_offset, bool)
+                or not isinstance(result_offset, int)
+                or result_offset < 0
+            ):
+                raise ValidationError("Workspace search cursor is invalid")
+
+        candidates: list[dict[str, Any]] = []
+        seen_documents: set[str] = set()
+        page_id = head_page
+        pages_opened = 0
+        candidate_limit_reached = False
+        while (
+            isinstance(page_id, str)
+            and pages_opened < SEARCH_SHARD_PAGE_MAX
+            and len(candidates) < SEARCH_CANDIDATE_MAX
+        ):
+            page = self.store.get("workspace_search_index", page_id)
+            if page is None or page.get("workspace_id") != workspace_id:
+                raise ValidationError("Workspace search shard is unavailable")
+            entries = page.get("entries", ())
+            if not isinstance(entries, list) or len(entries) > SEARCH_TOKEN_PAGE_ENTRIES:
+                raise ValidationError("Workspace search shard is invalid")
+            for entry in reversed(entries):
+                document_id = entry.get("document_id")
+                if not isinstance(document_id, str) or document_id in seen_documents:
+                    continue
+                seen_documents.add(document_id)
+                document = self.store.get("workspace_search_document", document_id)
+                if (
+                    document is None
+                    or int(document.get("generation", 0))
+                    != int(entry.get("document_generation", -1))
+                ):
+                    continue
+                candidates.append(document)
+                if len(candidates) >= SEARCH_CANDIDATE_MAX:
+                    candidate_limit_reached = True
+                    break
+            page_id = page.get("previous_page")
+            pages_opened += 1
+        if isinstance(page_id, str):
+            candidate_limit_reached = True
+
+        visibility_cache: dict[str, dict[str, Any]] = {}
+        query_token_id_set = set(token_ids)
+        results = [
+            result
+            for document in candidates
+            if (
+                result := self._workspace_search_result(
+                    workspace,
+                    document,
+                    tokens,
+                    query_token_id_set,
+                    scope_map[str(scope)],
+                    visibility_cache,
+                )
+            )
+            is not None
+        ]
+        results.sort(key=lambda item: item["_sort"])
+        page_results = results[result_offset : result_offset + limit]
+        for item in page_results:
+            item.pop("_sort", None)
+        next_offset = result_offset + len(page_results)
+        next_cursor = None
+        if next_offset < len(results):
+            next_cursor = self.store.seal_cursor(
+                {
+                    "v": 1,
+                    "view": "workspace_search",
+                    "workspace_id": workspace_id,
+                    "query_digest": query_digest,
+                    "filter_digest": filter_digest,
+                    "authorization_generation": int(workspace.get("authorization_generation", 1)),
+                    "retention_generation": int(workspace.get("retention_generation", 1)),
+                    "search_generation": int(state.get("search_generation", 1)),
+                    "token_shard_id": selected_token_id,
+                    "page_id": head_page,
+                    "offset": next_offset,
+                }
+            )
+        if state.get("status") == "rebuilding":
+            coverage = "indexing"
+        elif int(state.get("pruned_count", 0)) > 0:
+            coverage = "pruned"
+        elif (
+            state.get("status") != "ready"
+            or state.get("growth_limited")
+            or int(state.get("truncated_documents", 0)) > 0
+            or candidate_limit_reached
+        ):
+            coverage = "incomplete"
+        else:
+            coverage = "retained"
+        return {
+            "results": page_results,
+            "next_cursor": next_cursor,
+            "scope": scope,
+            "coverage": coverage,
+            "indexing": state.get("status") == "rebuilding",
+            "indexed_events": int(state.get("indexed_events", 0)),
+            "target_events": int(state.get("target_events", 0)),
+            "candidate_count": len(candidates),
+            "candidate_limit_reached": candidate_limit_reached,
+            "shard_pages_opened": pages_opened,
+            "search_generation": int(state.get("search_generation", 1)),
+        }
+
     def list_workspace_thread_messages(
         self,
         workspace_id: Any,
@@ -6883,7 +7843,7 @@ class WorkspaceServiceMixin:
         )
         if replay is not None:
             return replay
-        self._require_workspace(workspace_id)
+        workspace = self._require_workspace(workspace_id)
         conversation_kind, conversation = self._require_workspace_conversation(
             workspace_id, channel_id
         )
@@ -7570,7 +8530,7 @@ class WorkspaceServiceMixin:
         )
         if replay is not None:
             return replay
-        self._require_workspace(workspace_id)
+        workspace = self._require_workspace(workspace_id)
         message = self.store.get(
             "workspace_message_state", self._workspace_message_record_id(event_id)
         )
@@ -7588,6 +8548,26 @@ class WorkspaceServiceMixin:
                 {"workspace_id": workspace_id, "event_id": event_id},
             )
         ]
+        records.extend(
+            self._workspace_search_document_records(
+                workspace,
+                category=(
+                    "thread"
+                    if isinstance(message.get("thread_root"), str)
+                    else "message"
+                ),
+                entity_id=str(message["id"]),
+                text="",
+                active=False,
+                sort_at=float(message.get("created_at", 0)),
+                conversation_id=str(message.get("conversation_id", "")),
+                thread_root_id=(
+                    str(message["thread_root"])
+                    if isinstance(message.get("thread_root"), str)
+                    else None
+                ),
+            )
+        )
         thread_root_id = message.get("thread_root")
         if isinstance(thread_root_id, str):
             summary_id = self._workspace_thread_record_id(
@@ -9000,6 +9980,34 @@ class WorkspaceServiceMixin:
         }
         if event_type == "message":
             if message is not None:
+                self._workspace_search_document_records(
+                    workspace,
+                    category=(
+                        "thread"
+                        if isinstance(message.get("thread_root"), str)
+                        else "message"
+                    ),
+                    entity_id=event_id,
+                    text="",
+                    active=False,
+                    sort_at=float(message.get("created_at", 0)),
+                    conversation_id=str(message.get("conversation_id", "")),
+                    thread_root_id=(
+                        str(message["thread_root"])
+                        if isinstance(message.get("thread_root"), str)
+                        else None
+                    ),
+                    staged=staged,
+                )
+                search_state_key = (
+                    "workspace_search_state",
+                    self._workspace_search_state_id(workspace["id"]),
+                )
+                search_state = staged.get(search_state_key)
+                if search_state is not None:
+                    search_state["pruned_count"] = int(
+                        search_state.get("pruned_count", 0)
+                    ) + 1
                 if isinstance(message.get("thread_root"), str):
                     index_kind = "workspace_thread_index"
                     index_page = message.get("thread_index_page_id")
@@ -10048,6 +11056,10 @@ class WorkspaceServiceMixin:
             "workspace_retention_index",
             "workspace_retention_state",
             "workspace_event_tombstone",
+            "workspace_search_state",
+            "workspace_search_catalog",
+            "workspace_search_document",
+            "workspace_search_index",
             "workspace_thread",
             "workspace_thread_index",
             "workspace_thread_activity_index",
@@ -10303,6 +11315,23 @@ class WorkspaceServiceMixin:
         )[:16]:
             self._attempt_workspace_delivery(delivery_id)
         self._advance_workspace_retention_jobs()
+        self._advance_workspace_search_jobs()
+
+    def _advance_workspace_search_jobs(self) -> None:
+        """Advance one restart-safe 128-event search batch per scheduler tick."""
+
+        for workspace in self.store.list("workspace")[:MAX_WORKSPACES]:
+            state = self.store.get(
+                "workspace_search_state",
+                self._workspace_search_state_id(str(workspace.get("id", ""))),
+            )
+            if state is None or state.get("status") != "rebuilding":
+                continue
+            self._advance_workspace_search_rebuild(workspace)
+            self._workspace_changed(
+                str(workspace["id"]), resource_kind="search_index"
+            )
+            break
 
     def _advance_workspace_retention_jobs(self) -> None:
         """Advance at most one bounded local pruning batch per scheduler tick."""
@@ -10501,6 +11530,13 @@ class WorkspaceServiceMixin:
             in item.get("member_ids", [])
             or item.get("state") in {"leaving", "left", "removed"}
         ]
+        # Increment 10 migration is metadata-bounded here: startup already
+        # opens at most the retained workspace/member/channel summaries. Event
+        # and message bodies are rebuilt later in restart-safe bounded batches.
+        for workspace in stored_workspaces:
+            self._sync_workspace_search_directory(workspace, stored_channels)
+        workspaces = [self._public_workspace(item) for item in stored_workspaces]
+        workspaces.sort(key=lambda item: (item["created_at"], item["id"]))
         name_counts: dict[tuple[str, str], int] = defaultdict(int)
         for item in stored_channels:
             name_counts[

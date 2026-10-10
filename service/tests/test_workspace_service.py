@@ -29,6 +29,10 @@ from mesh_chat.workspace_protocol import (
     verify_workspace_genesis,
 )
 from mesh_chat.workspace_wire import WorkspaceWirePayload, parse_workspace_payload
+from mesh_chat.workspace_service import (
+    normalize_workspace_search_text,
+    tokenize_workspace_search_text,
+)
 
 
 class RecordingWorkspaceNetwork:
@@ -2792,6 +2796,10 @@ def test_workspace_threads_out_of_order_mentions_mutations_drafts_and_restart(
     )
     assert retained_archive["root"]["id"] == root["id"]
     assert retained_archive["replies"][0]["text"] == "Edited reply converges"
+    archived_search = member.search_workspace(
+        workspace_id, "edited reply converges", scope="threads"
+    )
+    assert archived_search["results"][0]["id"] == reply["id"]
     with pytest.raises(ContactNotApproved):
         member.send_workspace_thread_reply(
             workspace_id,
@@ -2862,6 +2870,12 @@ def test_workspace_threads_preserve_private_rosters_and_direct_participants(
         workspace_id, private_root["id"]
     )
     assert private_thread["conversation"]["visibility"] == "private"
+    private_search = member.search_workspace(workspace_id, "Private", limit=1)
+    assert private_search["results"][0]["id"] in {
+        private_root["id"],
+        private_thread["replies"][0]["id"],
+    }
+    assert private_search["next_cursor"] is not None
 
     owner.update_workspace_private_channel_members(
         workspace_id, private["id"], [owner_id], _op(5_115)
@@ -2892,6 +2906,16 @@ def test_workspace_threads_preserve_private_rosters_and_direct_participants(
     member._workspace_changed(workspace_id, conversation_id=private["id"])
     with pytest.raises(ContactNotApproved):
         member.list_workspace_thread_messages(workspace_id, private_root["id"])
+    assert member.search_workspace(
+        workspace_id, "Private", scope="messages"
+    )["results"] == []
+    with pytest.raises(StaleCursor):
+        member.search_workspace(
+            workspace_id,
+            "Private",
+            cursor=private_search["next_cursor"],
+            limit=1,
+        )
     owner.update_workspace_private_channel_members(
         workspace_id, private["id"], [owner_id, member_id], _op(5_116)
     )
@@ -2904,6 +2928,9 @@ def test_workspace_threads_preserve_private_rosters_and_direct_participants(
     # A later re-admission does not disclose a root from the earlier roster era.
     with pytest.raises(ContactNotApproved):
         member.list_workspace_thread_messages(workspace_id, private_root["id"])
+    assert member.search_workspace(
+        workspace_id, "Private", scope="messages"
+    )["results"] == []
 
     # A current member cannot resurrect that inaccessible root by signing a new
     # reply against the current roster checkpoint.
@@ -3071,6 +3098,246 @@ def test_workspace_retention_policy_is_owner_signed_and_invalidates_cursors(
     member.close()
 
 
+def test_workspace_search_normalization_is_frozen_and_bounded() -> None:
+    assert normalize_workspace_search_text("  Café ＴＥＡＭ  ") == "  café team  "
+    assert tokenize_workspace_search_text("Café—TEAM, team; a _ 42") == (
+        "café",
+        "team",
+        "42",
+    )
+    assert tokenize_workspace_search_text("e\u0301lan") == ("élan",)
+
+
+def test_workspace_search_is_incremental_encrypted_and_stale_safe(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    service, _network = _service(tmp_path / "search", RNS.Identity(), "Alex Rivera")
+    workspace = service.create_workspace(_op(7_100), "Search lab", "")
+    workspace_id = workspace["id"]
+    channel_id = workspace["general_channel_id"]
+    first = service.send_workspace_message(
+        workspace_id,
+        channel_id,
+        "Café launch zephyr",
+        _op(7_101),
+        _op(7_102),
+    )
+    second = service.send_workspace_message(
+        workspace_id,
+        channel_id,
+        "Café launch planning cedar",
+        _op(7_103),
+        _op(7_104),
+    )
+    reply = service.send_workspace_thread_reply(
+        workspace_id,
+        channel_id,
+        first["id"],
+        "Thread zephyr followup",
+        _op(7_105),
+        _op(7_106),
+    )
+
+    page = service.search_workspace(workspace_id, "CAFÉ", limit=1)
+    assert page["coverage"] == "retained"
+    assert page["next_cursor"] is not None
+    older = service.search_workspace(
+        workspace_id, "cafe\u0301", cursor=page["next_cursor"], limit=1
+    )
+    assert {page["results"][0]["id"], older["results"][0]["id"]} == {
+        first["id"],
+        second["id"],
+    }
+    thread = service.search_workspace(workspace_id, "followup", scope="threads")
+    assert len(thread["results"]) == 1
+    assert thread["results"][0]["id"] == reply["id"]
+    assert thread["results"][0]["kind"] == "thread"
+    assert thread["results"][0]["is_reply"] is True
+    assert thread["results"][0]["thread_root_id"] == first["id"]
+
+    service.edit_workspace_message(
+        workspace_id,
+        first["id"],
+        "Café launch aurora",
+        _op(7_107),
+        _op(7_108),
+    )
+    assert service.search_workspace(workspace_id, "zephyr", scope="messages")[
+        "results"
+    ] == []
+    assert service.search_workspace(workspace_id, "aurora", scope="messages")[
+        "results"
+    ][0]["id"] == first["id"]
+    service.hide_workspace_message(workspace_id, second["id"], _op(7_109))
+    assert service.search_workspace(workspace_id, "cedar")["results"] == []
+    service.delete_workspace_message(
+        workspace_id, reply["id"], _op(7_110), _op(7_111)
+    )
+    assert service.search_workspace(workspace_id, "followup")["results"] == []
+
+    assert service.search_workspace(workspace_id, "Alex", scope="people")[
+        "results"
+    ][0]["member_id"] == workspace["local_member_id"]
+    assert service.search_workspace(workspace_id, "general", scope="channels")[
+        "results"
+    ][0]["id"] == channel_id
+
+    cursor = service.search_workspace(workspace_id, "café", limit=1)["next_cursor"]
+    assert cursor is None  # the other matching result is locally hidden
+    service.send_workspace_message(
+        workspace_id,
+        channel_id,
+        "launch glacier",
+        _op(7_112),
+        _op(7_113),
+    )
+    cursor = service.search_workspace(workspace_id, "launch", limit=1)["next_cursor"]
+    assert cursor is not None
+    cursor_value = service.store.open_cursor(cursor)
+    assert "query" not in cursor_value
+    assert "launch" not in json.dumps(cursor_value)
+    assert cursor_value["workspace_id"] == workspace_id
+    assert cursor_value["authorization_generation"] == 1
+    assert cursor_value["retention_generation"] == 1
+    assert cursor_value["search_generation"] >= 1
+    assert isinstance(cursor_value["token_shard_id"], str)
+    assert cursor_value["offset"] == 1
+    with pytest.raises(StaleCursor):
+        service.search_workspace(workspace_id, "café", cursor=cursor, limit=1)
+    with pytest.raises(StaleCursor):
+        service.search_workspace(
+            workspace_id, "launch", scope="threads", cursor=cursor, limit=1
+        )
+    tampered = f"{cursor[:-1]}{'A' if cursor[-1] != 'A' else 'B'}"
+    with pytest.raises(ValidationError, match="Cursor is invalid"):
+        service.search_workspace(workspace_id, "launch", cursor=tampered, limit=1)
+    service.send_workspace_message(
+        workspace_id,
+        channel_id,
+        "launch tundra",
+        _op(7_114),
+        _op(7_115),
+    )
+    with pytest.raises(StaleCursor):
+        service.search_workspace(workspace_id, "launch", cursor=cursor, limit=1)
+
+    for invalid_query in ("a", " ".join(f"token{index}" for index in range(9)), "z" * 65, "z" * 257):
+        with pytest.raises(ValidationError):
+            service.search_workspace(workspace_id, invalid_query)
+    with pytest.raises(ValidationError):
+        service.search_workspace(workspace_id, "launch", scope="unknown")
+    with pytest.raises(ValidationError):
+        service.search_workspace(workspace_id, "launch", limit=51)
+
+    def reject_whole_kind_scan(kind: str) -> list[dict[str, Any]]:
+        raise AssertionError(f"search attempted a whole-kind scan: {kind}")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(service.store, "list", reject_whole_kind_scan)
+        bounded = service.search_workspace(workspace_id, "glacier")
+    assert bounded["results"][0]["id"]
+    assert bounded["candidate_count"] <= 256
+    assert bounded["shard_pages_opened"] <= 8
+
+    database = tmp_path / "search" / "mesh-chat.vault"
+    raw = database.read_bytes()
+    for plaintext in (b"zephyr", b"aurora", b"Alex Rivera", b"general"):
+        assert plaintext not in raw
+    service.close()
+
+
+def test_workspace_search_rechecks_direct_participants_even_for_owner(
+    tmp_path: Path,
+) -> None:
+    (
+        owner,
+        _owner_network,
+        _owner_profile,
+        member,
+        _member_network,
+        _member_profile,
+        workspace,
+        _member_key,
+        _member_identity,
+    ) = _joined_pair(tmp_path / "search-direct-authorization", base=7_200)
+    workspace_id = workspace["id"]
+    member_id = member.workspace_snapshot()["workspaces"][0]["local_member_id"]
+    direct = owner.open_workspace_direct(workspace_id, member_id, _op(7_210))
+    message = owner.send_workspace_direct_message(
+        workspace_id,
+        direct["id"],
+        "participant-only solarwind",
+        _op(7_211),
+        _op(7_212),
+    )
+    visible = owner.search_workspace(workspace_id, "solarwind")
+    assert visible["results"][0]["id"] == message["id"]
+    assert owner._require_workspace(workspace_id)["local_role"] == "owner"
+
+    # Treat the keyed index as a hostile hint: even if an old result remains
+    # indexed, current direct participants are checked before presentation.
+    direct_record = owner._require_workspace_direct(workspace_id, direct["id"])
+    direct_record["participant_member_ids"] = [member_id, _op(7_213)]
+    owner.store.put(
+        "workspace_direct",
+        owner._workspace_direct_record_id(direct["id"]),
+        direct_record,
+    )
+    assert owner.search_workspace(workspace_id, "solarwind")["results"] == []
+    owner.close()
+    member.close()
+
+
+def test_workspace_search_candidate_and_shard_bounds_are_explicit(
+    tmp_path: Path,
+) -> None:
+    service, _network = _service(tmp_path / "search-bounds", RNS.Identity(), "Alex")
+    workspace = service.create_workspace(_op(7_300), "Bounded search", "")
+    workspace_id = workspace["id"]
+    stored_workspace = service._require_workspace(workspace_id)
+    staged: dict[tuple[str, str], dict[str, Any]] = {}
+    for index in range(530):
+        service._workspace_search_document_records(
+            stored_workspace,
+            category="message",
+            entity_id=_op(7_400 + index),
+            text="commonbound",
+            active=True,
+            sort_at=float(index),
+            conversation_id=workspace["general_channel_id"],
+            staged=staged,
+        )
+    service.store.put_many(
+        (kind, record_id, value)
+        for (kind, record_id), value in staged.items()
+    )
+
+    result = service.search_workspace(workspace_id, "commonbound", limit=50)
+    assert result["results"] == []
+    assert result["candidate_count"] == 256
+    assert result["candidate_limit_reached"] is True
+    assert result["shard_pages_opened"] <= 8
+    assert result["coverage"] == "incomplete"
+    token_index = service.store.get(
+        "workspace_search_index",
+        service._workspace_search_token_id(workspace_id, "commonbound"),
+    )
+    assert token_index is not None
+    page_id = token_index["head_page"]
+    page_count = 0
+    entry_count = 0
+    while isinstance(page_id, str):
+        page = service.store.get("workspace_search_index", page_id)
+        assert page is not None
+        assert len(page["entries"]) <= 100
+        page_count += 1
+        entry_count += len(page["entries"])
+        page_id = page["previous_page"]
+    assert page_count == 6
+    assert entry_count == 530
+    service.close()
+
+
 def test_workspace_revision_and_tombstone_views_are_bounded_and_authorized(
     tmp_path: Path,
 ) -> None:
@@ -3138,6 +3405,38 @@ def test_workspace_pruning_resumes_after_restart_without_resurrection(
             )
     workspace_id = workspace["id"]
     channel_id = workspace["general_channel_id"]
+
+    # Model an upgrade from 0.2.29 by removing only derived search records.
+    # Startup recreates directory metadata, while message bodies are indexed in
+    # bounded batches and the saved page/offset survives a restart.
+    for kind in (
+        "workspace_search_state",
+        "workspace_search_catalog",
+        "workspace_search_document",
+        "workspace_search_index",
+    ):
+        for record_id, _value in list(service.store.items(kind)):
+            service.store.delete(kind, record_id)
+    migrated = service.workspace_snapshot()["workspaces"][0]["search_index"]
+    assert migrated["status"] == "rebuilding"
+    first_search = service.search_workspace(workspace_id, "expired 149")
+    assert first_search["results"][0]["snippet"] == "expired-149"
+    assert first_search["coverage"] == "indexing"
+    assert first_search["indexed_events"] == 128
+    service.close()
+
+    service, _network = _service(profile, identity, "Alex", vault_key=key)
+    resumed = service.search_workspace(workspace_id, "expired 0")
+    assert resumed["results"][0]["snippet"] == "expired-0"
+    assert resumed["coverage"] == "retained"
+    assert resumed["indexed_events"] == 150
+    expired_index = service.store.get(
+        "workspace_search_index",
+        service._workspace_search_token_id(workspace_id, "expired"),
+    )
+    assert expired_index is not None
+    assert expired_index["count"] == 150
+
     cursor = service.list_workspace_messages(workspace_id, channel_id, limit=1)[
         "next_cursor"
     ]
@@ -3164,6 +3463,9 @@ def test_workspace_pruning_resumes_after_restart_without_resurrection(
     page = service.list_workspace_messages(workspace_id, channel_id)
     assert page["messages"] == []
     assert page["history_status"] == "pruned"
+    pruned_search = service.search_workspace(workspace_id, "expired 149")
+    assert pruned_search["results"] == []
+    assert pruned_search["coverage"] == "pruned"
     tombstones = service.store.list("workspace_event_tombstone")
     assert len(tombstones) == 150
     retired_id = tombstones[0]["event_id"]

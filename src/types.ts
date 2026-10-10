@@ -208,6 +208,12 @@ export interface Workspace {
   retention_generation: number;
   mention_unread_count: number;
   thread_unread_count: number;
+  search_index?: {
+    status: "ready" | "rebuilding" | "incomplete" | "indexing";
+    indexed_events: number;
+    target_events: number;
+    incomplete: boolean;
+  };
   retention_pruning_state?: "pending" | "running" | "complete" | "disabled" | "restart_required";
   retention_pruning_updated_at?: number;
   security_error?: string;
@@ -440,6 +446,35 @@ export interface WorkspaceThreadActivityPage {
   next_cursor: string | null;
   high_water: number;
   unread_count: number;
+}
+
+export type WorkspaceSearchScope = "all" | "messages" | "threads" | "people" | "channels";
+
+export interface WorkspaceSearchResult {
+  id: string;
+  kind: "message" | "thread" | "person" | "channel";
+  title: string;
+  snippet: string;
+  created_at?: number;
+  member_id?: string;
+  event_id?: string;
+  is_reply?: boolean;
+  thread_root_id?: string | null;
+  conversation?: WorkspaceThreadConversation;
+}
+
+export interface WorkspaceSearchPage {
+  results: WorkspaceSearchResult[];
+  next_cursor: string | null;
+  scope: WorkspaceSearchScope;
+  coverage: "retained" | "indexing" | "pruned" | "incomplete";
+  indexing: boolean;
+  indexed_events: number;
+  target_events: number;
+  candidate_count: number;
+  candidate_limit_reached: boolean;
+  shard_pages_opened: number;
+  search_generation: number;
 }
 
 export interface WorkspaceJoinRequest {

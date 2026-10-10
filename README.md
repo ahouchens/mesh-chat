@@ -6,9 +6,9 @@ Messages use native individual LXMF delivery destinations. Reticulum owns paths 
 
 > This repository is not independently audited and is not yet suitable for sensitive operational use. See [TESTING.md](TESTING.md) for verified and unverified release gates.
 
-## Desktop workspace increment 9
+## Desktop workspace increment 10
 
-This source tree now implements the ninth bounded desktop workspace increment from
+This source tree now implements the tenth bounded desktop workspace increment from
 [WORKSPACE_SPEC.md](WORKSPACE_SPEC.md): create and switch up to 16 workspaces,
 invite and approve up to seven additional people, and use up to 32 active public or private
 channels including canonical `#general`. Workspace creation explains that the creating device is the authority,
@@ -126,22 +126,39 @@ receive no new traffic and can only keep their previously authorized local copy
 as a read-only archive until pruning or confirmed local erasure. Workspace
 owners do not gain access to other members' DMs.
 
+Encrypted local search covers retained workspace message roots, thread replies,
+current permitted people names, and visible public/private channel names and
+topics. Queries use exact Unicode tokens and remain entirely on the device;
+there is no hosted index, peer request, telemetry, or history fetch. The vault
+stores only sealed documents and workspace-keyed HMAC token/page identifiers,
+and every bounded candidate is re-authorized before its safe snippet reaches
+the renderer. Filters cover All, Messages, Threads, People, and Channels, and a
+result opens its exact channel, workspace DM, person, root, or reply context.
+
+Search pages return 25 results by default and never more than 50. Execution
+opens at most eight token shards and 256 candidates. Authenticated cursors bind
+opaque query/scope digests plus access, retention, and search generations, so
+an edit, hide, deletion, prune, or access change cannot silently continue an
+older view. Upgrading a retained 0.2.29 profile exposes a truthful indexing
+state and rebuilds at most 128 events per transaction without turning startup
+into a full history scan.
+
 This increment is deliberately desktop-only and capped at eight people
-with one device each. It has no attachments, history backfill, search,
+with one device each. It has no attachments, history backfill,
 private or DM history catch-up, linked devices, or mobile UI
 yet; those remain the later increments in the spec.
 
 ## Install Mesh Chat
 
-**Current desktop workspace candidate: Mesh Chat 0.2.29.** Install it over the
+**Current desktop workspace candidate: Mesh Chat 0.2.30.** Install it over the
 existing app; do not uninstall Mesh Chat or clear its data first. The current
 paired desktop/mobile install record remains 0.2.12 until workspace support reaches
 the mobile UI and completes physical cross-device validation.
 
 Mesh Chat must be packaged for the operating system where it will run. This
 workspace contains Windows x64 and Android arm64 packaging flows. Check the
-workspace Increment 9 record in [TESTING.md](TESTING.md) for the exact desktop
-verification completed for 0.2.29, and the 0.2.12 record for current Android
+workspace Increment 10 record in [TESTING.md](TESTING.md) for the exact desktop
+verification completed for 0.2.30, and the 0.2.12 record for current Android
 artifacts. The macOS, Linux, and
 iOS packaging paths are implemented, but their packages still need to be built
 and tested on those operating systems.
@@ -356,17 +373,17 @@ Before installing, confirm that:
   code-signed.
 
 Choose one verified installer from the immutable release directory
-`dist\desktop\releases\0.2.29\x86_64-pc-windows-msvc\bundle`:
+`dist\desktop\releases\0.2.30\x86_64-pc-windows-msvc\bundle`:
 
-- `nsis\Mesh Chat_0.2.29_x64-setup.exe` — normal interactive setup.
-- `msi\Mesh Chat_0.2.29_x64_en-US.msi` — MSI package for Windows deployment
+- `nsis\Mesh Chat_0.2.30_x64-setup.exe` — normal interactive setup.
+- `msi\Mesh Chat_0.2.30_x64_en-US.msi` — MSI package for Windows deployment
   tools or manual installation.
 
 For a portable test without installing, run `mesh-chat.exe` with its sibling
 `mesh-chat-service.exe` from
-`dist\desktop\releases\0.2.29\x86_64-pc-windows-msvc`. Close every
+`dist\desktop\releases\0.2.30\x86_64-pc-windows-msvc`. Close every
 older Mesh Chat process first because the single-instance guard will otherwise
-return to the older window. Confirm **Mesh Chat 0.2.29** in Settings before
+return to the older window. Confirm **Mesh Chat 0.2.30** in Settings before
 testing.
 
 Do not use an older unversioned developer output merely because it is still at
@@ -375,14 +392,14 @@ its sidecar locked while a newer release is packaged elsewhere. The immutable
 versioned `dist\desktop\releases` directory and its `manifest.json` are the
 release authority; `dist\desktop\current.json` identifies the current set.
 
-Verify a 0.2.29 installer against the SHA-256 value in the sibling
-`manifest.json` and the 0.2.29 release record in [TESTING.md](TESTING.md).
+Verify a 0.2.30 installer against the SHA-256 value in the sibling
+`manifest.json` and the 0.2.30 release record in [TESTING.md](TESTING.md).
 `dist\desktop\current.json` records the current manifest hash. The recorded
-older hashes do not apply to 0.2.29. These development packages are not
+older hashes do not apply to 0.2.30. These development packages are not
 Authenticode-signed.
 
 If an earlier Mesh Chat version is installed, close the running app and run the
-0.2.29 desktop installer over the existing release. The current Android
+0.2.30 desktop installer over the existing release. The current Android
 companion remains 0.2.12 until workspace support reaches the mobile UI and completes
 physical cross-device validation.
 The package identities are unchanged, so existing profiles, contacts,
@@ -400,10 +417,10 @@ Versions before 0.2.3 could leave a PyInstaller supervisor or worker running
 after the window closed. That stale process could keep a valid EFS-encrypted
 profile lock and was incorrectly shown as **Protected storage is unavailable**.
 This condition did not remove encryption, write private data in plaintext, or
-damage the profile. If the first 0.2.29 launch appears to do nothing, or an
+damage the profile. If the first 0.2.30 launch appears to do nothing, or an
 older build shows that storage screen, restart Windows or use Task Manager to
 end **Mesh Chat** and every `mesh-chat-service.exe` process, then install or
-launch 0.2.29. Do not uninstall Mesh Chat or clear its data.
+launch 0.2.30. Do not uninstall Mesh Chat or clear its data.
 
 Version 0.2.3 gives profile-lock contention its own **profile is still in use**
 message. On close, the desktop uses an independent deadline and terminates only
@@ -671,7 +688,7 @@ service unless the complete RNS/LXMF workspace has verified at-rest protection:
 
 | Platform | Required protected storage | Packaging status |
 | --- | --- | --- |
-| Windows | NTFS EFS; Mesh Chat enables and verifies inheritance on its profile directory | 0.2.29 x64 EXE, NSIS, and MSI built, hashed, and immutably published; the packaged sidecar topology passed, while a host-window walkthrough, in-place installation, and physical Windows↔Android testing remain pending |
+| Windows | NTFS EFS; Mesh Chat enables and verifies inheritance on its profile directory | 0.2.30 x64 EXE, NSIS, and MSI built, hashed, and immutably published; the packaged sidecar topology passed, while a host-window walkthrough, in-place installation, and physical Windows↔Android testing remain pending |
 | macOS | Active FileVault on the local user-data volume containing the app profile | Native build path implemented; macOS package test pending |
 | Linux | fscrypt on the profile, dm-crypt/LUKS beneath its filesystem, or a recognized eCryptfs/gocryptfs/CryFS mount | Native build path implemented; distribution package tests pending |
 | Android | App-private internal storage, Android Keystore-wrapped vault key, backups disabled | 0.2.12 arm64 debug APK built, hashed, v2-signature-verified, and inspected; physical installation and Windows↔Android testing remain pending because no device was attached |

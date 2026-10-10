@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "mesh-chat-service"
-version = "0.2.29"
+version = "0.2.30"
 description = "Private Reticulum/LXMF messaging service for Mesh Chat"
 requires-python = ">=3.11,<3.15"
 dependencies = [

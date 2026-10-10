@@ -708,7 +708,13 @@ Initial limits are safety bounds, not claims of maximum protocol capacity.
 | Live delivery expiry | 7 days |
 | Invitation | Single use; 7 days by default, 30 days maximum |
 | Message page | 50 by default, 100 maximum |
-| Search page | 50 maximum |
+| Search query | 256 characters, 1,024 UTF-8 bytes, 8 exact tokens |
+| Search token | 2–64 Unicode characters after frozen normalization |
+| Search page | 25 by default, 50 maximum |
+| Search execution | 8 keyed shard pages and 256 candidate documents maximum |
+| Search shard page | 100 opaque document references |
+| Search document/index | 512 unique tokens per document and 2,000,000 references per local profile |
+| Search rebuild | 128 retained events per transaction |
 | Future workspace manifests | 8 inert records per workspace |
 | Pending unknown-source joins | 32 per workspace and 4 per source fingerprint |
 | Inert dependent events | 256 per workspace, 64 per sender, and 16 MiB per local profile |
@@ -997,7 +1003,8 @@ protection, former-member read-only archives, and current plus historical
 entitlement checks. The reproducible `workspace_retention_benchmark.py` fixture
 seeds 50,000 events across eight synthetic members and 32 real channel control
 chains, including linked delivery legs, edits, reactions, deletions, and
-threads. Increment 10 search is not part of this implementation.
+threads. Increment 10 builds on these sealed retention pages without changing
+their canonical event bytes.
 
 ### Increment 10 adds local search
 
@@ -1010,6 +1017,20 @@ threads. Increment 10 search is not part of this implementation.
 This increment is complete when search returns correct first pages within the
 benchmark, excludes inaccessible and expired records, and never places
 plaintext search material in SQLite-visible fields.
+
+Implementation status: completed in the desktop 0.2.30 Increment 10 candidate.
+The local-only index uses frozen NFKC/default-casefold/NFC exact tokens, sealed
+100-reference pages, workspace-keyed HMAC IDs, a 256-candidate/eight-shard
+execution cap, and authenticated cursors that bind opaque query/scope digests
+plus authorization, retention, and search generations. Messages, roots,
+replies, current permitted people names, and visible channel names/topics are
+covered. Every result repeats historical and current authorization; edits,
+deletion, hide, pruning, access changes, and local erasure replace or remove
+derived references, while reactions do not add text tokens. Existing 0.2.29
+history migrates in restart-safe 128-event batches and exposes indexing,
+pruned, or bounded-incomplete coverage honestly. Search never adds a wire kind,
+peer request, telemetry path, or canonical-event change. See
+[ADR 0009](docs/adr/0009-encrypted-local-search.md).
 
 ### Increment 11 adds peer history catch-up
 
