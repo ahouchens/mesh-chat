@@ -46,6 +46,10 @@ MAX_HISTORY_CHECKPOINTS = 32
 MAX_HISTORY_RESPONSE_BYTES = 128 * 1024
 MIN_HISTORY_RESPONSE_BYTES = 4 * 1024
 MAX_HISTORY_REQUEST_LIFETIME_SECONDS = 15 * 60
+MAX_ADMIN_REQUEST_BYTES = 4 * 1024
+MAX_ADMIN_DECISION_BYTES = 48 * 1024
+MAX_ADMIN_REQUEST_LIFETIME_SECONDS = 7 * 24 * 60 * 60
+MAX_ADMIN_REQUEST_NOTE_LENGTH = 250
 # The text field itself is 16 KiB. The canonical event has a separate bounded
 # allowance for IDs and the author signature.
 MAX_MESSAGE_TEXT_BYTES = 16 * 1024
@@ -347,6 +351,45 @@ class VerifiedWorkspaceHistoryResponse:
     serialized: str
 
 
+@dataclass(frozen=True, slots=True)
+class VerifiedWorkspaceAdminRequest:
+    workspace_id: str
+    request_id: str
+    request_kind: str
+    base_manifest_epoch: int
+    base_manifest_digest: str
+    requester_member_id: str
+    requester_device_id: str
+    target_member_id: str | None
+    requested_role: WorkspaceRole | None
+    note: str
+    replay_key: str
+    created_at: int
+    expires_at: int
+    digest: str
+    serialized: str
+
+
+@dataclass(frozen=True, slots=True)
+class VerifiedWorkspaceAdminDecision:
+    workspace_id: str
+    request_id: str
+    request_digest: str
+    request_kind: str
+    base_manifest_epoch: int
+    base_manifest_digest: str
+    authority_member_id: str
+    authority_device_id: str
+    outcome: str
+    result_kind: str
+    result_digest: str | None
+    result_document: str | None
+    replay_key: str
+    created_at: int
+    digest: str
+    serialized: str
+
+
 def workspace_direct_conversation_id(
     workspace_id: str, member_ids: Iterable[str]
 ) -> str:
@@ -434,6 +477,8 @@ def _load_document(raw: str, document_type: str) -> dict[str, Any]:
         if document_type == "workspace_event"
         else MAX_HISTORY_RESPONSE_BYTES
         if document_type == "workspace_history_response"
+        else MAX_ADMIN_DECISION_BYTES
+        if document_type == "workspace_admin_request"
         else MAX_WORKSPACE_DOCUMENT_BYTES
     )
     if (
@@ -451,6 +496,20 @@ def _load_document(raw: str, document_type: str) -> dict[str, Any]:
     if raw != _canonical(value):
         raise ValidationError("Workspace document encoding is not canonical")
     return value
+
+
+def workspace_document_digest(raw: str) -> str:
+    """Return the canonical SHA-256 digest of one validated JSON document."""
+
+    if not isinstance(raw, str) or not raw:
+        raise ValidationError("Workspace document is invalid")
+    try:
+        value = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise ValidationError("Workspace document encoding is invalid") from exc
+    if not isinstance(value, dict) or raw != _canonical(value):
+        raise ValidationError("Workspace document encoding is not canonical")
+    return _digest(value)
 
 
 def _require_fields(value: dict[str, Any], fields: set[str]) -> None:
@@ -1199,7 +1258,6 @@ def verify_workspace_manifest_transition(
     # retention values in addition to the earlier metadata and policy changes.
     if (
         manifest.authority_device_id != previous.authority_device_id
-        or manifest.invitation_requests != previous.invitation_requests
         or manifest.created_at < previous.created_at
     ):
         raise ValidationError("Workspace manifest transition is not enabled")
@@ -1208,6 +1266,7 @@ def verify_workspace_manifest_transition(
     if not previous_members.keys() <= next_members.keys():
         raise ValidationError("Workspace manifest cannot remove member history")
     display_name_changes: list[str] = []
+    role_changes: list[str] = []
     for member_id, old_member in previous_members.items():
         new_member = next_members[member_id]
         old_devices = tuple(device.serialized for device in old_member.devices)
@@ -1217,8 +1276,17 @@ def verify_workspace_manifest_transition(
             if old_member.status == "active" and old_member.role != WorkspaceRole.OWNER
             else {old_member.status}
         )
-        if new_member.role != old_member.role or new_member.status not in allowed_statuses:
+        if new_member.status not in allowed_statuses:
             raise ValidationError("Workspace member transition is not enabled")
+        if new_member.role != old_member.role:
+            if (
+                old_member.role == WorkspaceRole.OWNER
+                or old_member.status != "active"
+                or new_member.status != "active"
+                or new_member.role not in {WorkspaceRole.ADMIN, WorkspaceRole.MEMBER}
+            ):
+                raise ValidationError("Workspace role transition is not enabled")
+            role_changes.append(member_id)
         if new_member.display_name == old_member.display_name:
             if new_devices != old_devices:
                 raise ValidationError("Workspace device transition is not enabled")
@@ -1255,22 +1323,38 @@ def verify_workspace_manifest_transition(
         raise ValidationError("Workspace member transition is invalid")
     if len(display_name_changes) > 1:
         raise ValidationError("Workspace display-name transition is invalid")
+    if len(role_changes) > 1:
+        raise ValidationError("Workspace role transition is invalid")
     metadata_changed = (
         manifest.name != previous.name or manifest.description != previous.description
     )
     policies_changed = (
         manifest.channel_creation != previous.channel_creation
         or manifest.posting != previous.posting
+        or manifest.invitation_requests != previous.invitation_requests
     )
     retention_changed = manifest.retention_days != previous.retention_days
+    checkpoints_changed = (
+        manifest.removal_checkpoint_digests
+        != previous.removal_checkpoint_digests
+    )
+    removed_member = any(
+        previous_members[member_id].status == "active"
+        and next_members[member_id].status == "removed"
+        for member_id in status_changes
+    )
+    if checkpoints_changed and not removed_member:
+        raise ValidationError("Workspace removal checkpoints changed without a removal")
     if manifest.status == "closed":
         if (
             added
             or status_changes
             or display_name_changes
+            or role_changes
             or metadata_changed
             or policies_changed
             or retention_changed
+            or checkpoints_changed
         ):
             raise ValidationError(
                 "Workspace closure cannot change membership or metadata"
@@ -1279,11 +1363,12 @@ def verify_workspace_manifest_transition(
         (
             bool(added),
             bool(status_changes),
-                bool(display_name_changes),
-                metadata_changed,
-                policies_changed,
-                retention_changed,
-            )
+            bool(display_name_changes),
+            bool(role_changes),
+            metadata_changed,
+            policies_changed,
+            retention_changed,
+        )
     ) != 1:
         # Publish exactly one semantic change per epoch so concurrent owner
         # operations have a deterministic predecessor and replay boundary.
@@ -2902,7 +2987,7 @@ def verify_workspace_event(
         channel is not None
         and event_type == "message"
         and manifest.posting == WorkspacePostingPolicy.OWNER_AND_ADMINS
-        and found[0].role != WorkspaceRole.OWNER
+        and found[0].role not in {WorkspaceRole.OWNER, WorkspaceRole.ADMIN}
     ):
         raise IdentityMismatch("Workspace member is not allowed to post")
     identity = _identity_from_public_key(found[1].public_identity)
@@ -3796,6 +3881,365 @@ def verify_workspace_history_response(
         complete=value["complete"],
         document_bytes=document_bytes,
         created_at=created,
+        digest=_digest(value),
+        serialized=_canonical(value),
+    )
+
+
+_ADMIN_REQUEST_KINDS = frozenset({"invitation", "member_removal", "role_change"})
+_ADMIN_DECISION_OUTCOMES = frozenset({"approved", "declined"})
+_ADMIN_RESULT_KINDS = frozenset({"invitation", "manifest", "no_change"})
+
+
+def _admin_requester_authorized(
+    manifest: VerifiedWorkspaceManifest,
+    member: VerifiedWorkspaceMember,
+    request_kind: str,
+) -> bool:
+    if member.status != "active" or manifest.status != "active":
+        return False
+    if request_kind == "invitation":
+        return (
+            member.role == WorkspaceRole.OWNER
+            or manifest.invitation_requests
+            == WorkspaceInvitationPolicy.ALL_MEMBERS_REQUEST
+            or (
+                manifest.invitation_requests
+                == WorkspaceInvitationPolicy.OWNER_AND_ADMINS
+                and member.role == WorkspaceRole.ADMIN
+            )
+        )
+    return member.role in {WorkspaceRole.OWNER, WorkspaceRole.ADMIN}
+
+
+def create_workspace_admin_request(
+    identity: RNS.Identity,
+    *,
+    manifest: VerifiedWorkspaceManifest,
+    request_id: str,
+    request_kind: str,
+    requester_member_id: str,
+    requester_device_id: str,
+    target_member_id: str | None = None,
+    requested_role: WorkspaceRole | str | None = None,
+    note: str = "",
+    replay_key: str | None = None,
+    created_at: int | None = None,
+    expires_at: int | None = None,
+) -> str:
+    """Create the canonical request phase of ``workspace_admin_request``."""
+
+    if request_kind not in _ADMIN_REQUEST_KINDS:
+        raise ValidationError("Workspace administrative request kind is invalid")
+    found = find_device(manifest, requester_device_id)
+    if (
+        found is None
+        or found[0].member_id != requester_member_id
+        or not _admin_requester_authorized(manifest, found[0], request_kind)
+    ):
+        raise IdentityMismatch("Workspace administrative requester is not authorized")
+    if _destination_for(identity) != found[1].destination_hash:
+        raise IdentityMismatch("Workspace administrative request signer is invalid")
+    checked_target: str | None = None
+    checked_role: str | None = None
+    if request_kind == "invitation":
+        if target_member_id is not None or requested_role is not None:
+            raise ValidationError("Invitation requests cannot target a member or role")
+    else:
+        checked_target = _validate_uuid(target_member_id, "Target member ID")
+        target = find_member(manifest, checked_target)
+        if target is None or target.status != "active" or target.role == WorkspaceRole.OWNER:
+            raise ValidationError("Workspace administrative request target is invalid")
+        if request_kind == "role_change":
+            role = _coerce_role(requested_role)
+            if role not in {WorkspaceRole.ADMIN, WorkspaceRole.MEMBER}:
+                raise ValidationError("Requested workspace role is invalid")
+            if target.role == role:
+                raise ValidationError("Workspace role-change request is a no-op")
+            checked_role = role.value
+        elif requested_role is not None:
+            raise ValidationError("Member-removal requests cannot include a role")
+    created = int(time.time()) if created_at is None else int(created_at)
+    expires = (
+        created + MAX_ADMIN_REQUEST_LIFETIME_SECONDS
+        if expires_at is None
+        else int(expires_at)
+    )
+    if expires < created or expires > created + MAX_ADMIN_REQUEST_LIFETIME_SECONDS:
+        raise ValidationError("Workspace administrative request expiry is invalid")
+    unsigned = {
+        "v": WORKSPACE_PROTOCOL_VERSION,
+        "type": "workspace_admin_request",
+        "phase": "request",
+        "workspace_id": manifest.workspace_id,
+        "request_id": _validate_uuid(request_id, "Administrative request ID"),
+        "request_kind": request_kind,
+        "base_manifest_epoch": manifest.epoch,
+        "base_manifest_digest": manifest.digest,
+        "requester_member_id": _validate_uuid(requester_member_id, "Requester member ID"),
+        "requester_device_id": _validate_uuid(requester_device_id, "Requester device ID"),
+        "target_member_id": checked_target,
+        "requested_role": checked_role,
+        "note": _normalize_text(
+            note,
+            "Administrative request note",
+            MAX_ADMIN_REQUEST_NOTE_LENGTH,
+            allow_empty=True,
+        ),
+        "replay_key": _validate_uuid(replay_key or str(uuid.uuid4()), "Replay key"),
+        "created_at": created,
+        "expires_at": expires,
+    }
+    return _sign(identity, unsigned, maximum=MAX_ADMIN_REQUEST_BYTES)
+
+
+def verify_workspace_admin_request(
+    raw: str,
+    *,
+    manifest: VerifiedWorkspaceManifest,
+    now: int | None = None,
+    allow_expired: bool = False,
+) -> VerifiedWorkspaceAdminRequest:
+    if not isinstance(raw, str) or len(raw.encode("utf-8")) > MAX_ADMIN_REQUEST_BYTES:
+        raise ValidationError("Workspace administrative request is too large")
+    value = _load_document(raw, "workspace_admin_request")
+    _require_fields(
+        value,
+        {
+            "v", "type", "phase", "workspace_id", "request_id",
+            "request_kind", "base_manifest_epoch", "base_manifest_digest",
+            "requester_member_id", "requester_device_id", "target_member_id",
+            "requested_role", "note", "replay_key", "created_at", "expires_at",
+            "signature",
+        },
+    )
+    if (
+        value["v"] != WORKSPACE_PROTOCOL_VERSION
+        or value["phase"] != "request"
+        or value["workspace_id"] != manifest.workspace_id
+        or value["base_manifest_epoch"] != manifest.epoch
+        or value["base_manifest_digest"] != manifest.digest
+    ):
+        raise ValidationError("Workspace administrative request controls do not match")
+    request_kind = value["request_kind"]
+    if request_kind not in _ADMIN_REQUEST_KINDS:
+        raise ValidationError("Workspace administrative request kind is invalid")
+    requester_member_id = _validate_uuid(value["requester_member_id"], "Requester member ID")
+    requester_device_id = _validate_uuid(value["requester_device_id"], "Requester device ID")
+    found = find_device(manifest, requester_device_id)
+    if (
+        found is None
+        or found[0].member_id != requester_member_id
+        or not _admin_requester_authorized(manifest, found[0], request_kind)
+    ):
+        raise IdentityMismatch("Workspace administrative requester is not authorized")
+    _verify_signature(
+        _identity_from_public_key(found[1].public_identity),
+        value,
+        "Workspace administrative request",
+    )
+    target_member_id: str | None = None
+    requested_role: WorkspaceRole | None = None
+    if request_kind == "invitation":
+        if value["target_member_id"] is not None or value["requested_role"] is not None:
+            raise ValidationError("Invitation requests cannot target a member or role")
+    else:
+        target_member_id = _validate_uuid(value["target_member_id"], "Target member ID")
+        target = find_member(manifest, target_member_id)
+        if target is None or target.status != "active" or target.role == WorkspaceRole.OWNER:
+            raise ValidationError("Workspace administrative request target is invalid")
+        if request_kind == "role_change":
+            requested_role = _coerce_role(value["requested_role"])
+            if requested_role not in {WorkspaceRole.ADMIN, WorkspaceRole.MEMBER}:
+                raise ValidationError("Requested workspace role is invalid")
+            if target.role == requested_role:
+                raise ValidationError("Workspace role-change request is a no-op")
+        elif value["requested_role"] is not None:
+            raise ValidationError("Member-removal requests cannot include a role")
+    current = int(time.time()) if now is None else int(now)
+    created = _validate_timestamp(value["created_at"], now=current)
+    expires = value["expires_at"]
+    if (
+        isinstance(expires, bool)
+        or not isinstance(expires, int)
+        or expires < created
+        or expires > created + MAX_ADMIN_REQUEST_LIFETIME_SECONDS
+    ):
+        raise ValidationError("Workspace administrative request expiry is invalid")
+    if not allow_expired and expires < current:
+        raise InvitationExpired("Workspace administrative request has expired")
+    return VerifiedWorkspaceAdminRequest(
+        workspace_id=manifest.workspace_id,
+        request_id=_validate_uuid(value["request_id"], "Administrative request ID"),
+        request_kind=request_kind,
+        base_manifest_epoch=manifest.epoch,
+        base_manifest_digest=manifest.digest,
+        requester_member_id=requester_member_id,
+        requester_device_id=requester_device_id,
+        target_member_id=target_member_id,
+        requested_role=requested_role,
+        note=_normalize_text(
+            value["note"],
+            "Administrative request note",
+            MAX_ADMIN_REQUEST_NOTE_LENGTH,
+            allow_empty=True,
+        ),
+        replay_key=_validate_uuid(value["replay_key"], "Replay key"),
+        created_at=created,
+        expires_at=expires,
+        digest=_digest(value),
+        serialized=_canonical(value),
+    )
+
+
+def create_workspace_admin_decision(
+    authority_identity: RNS.Identity,
+    *,
+    authority_manifest: VerifiedWorkspaceManifest,
+    request: VerifiedWorkspaceAdminRequest,
+    outcome: str,
+    result_kind: str = "no_change",
+    result_document: str | None = None,
+    replay_key: str | None = None,
+    created_at: int | None = None,
+) -> str:
+    if outcome not in _ADMIN_DECISION_OUTCOMES:
+        raise ValidationError("Workspace administrative decision outcome is invalid")
+    authority = find_device(authority_manifest, authority_manifest.authority_device_id)
+    if (
+        authority is None
+        or authority[0].role != WorkspaceRole.OWNER
+        or authority[0].status != "active"
+        or _destination_for(authority_identity) != authority[1].destination_hash
+        or request.workspace_id != authority_manifest.workspace_id
+    ):
+        raise IdentityMismatch("Workspace administrative decision signer is invalid")
+    if result_kind not in _ADMIN_RESULT_KINDS:
+        raise ValidationError("Workspace administrative decision result is invalid")
+    expected_kind = "invitation" if request.request_kind == "invitation" else "manifest"
+    if outcome == "declined":
+        if result_kind != "no_change" or result_document is not None:
+            raise ValidationError("Declined administrative decisions cannot carry a result")
+        result_digest = None
+    else:
+        if result_kind != expected_kind or not isinstance(result_document, str):
+            raise ValidationError("Approved administrative decision result is invalid")
+        result_digest = workspace_document_digest(result_document)
+        try:
+            result_value = json.loads(result_document)
+        except json.JSONDecodeError as exc:
+            raise ValidationError("Administrative decision result is invalid") from exc
+        expected_type = (
+            "workspace_invite"
+            if result_kind == "invitation"
+            else "workspace_manifest_root"
+        )
+        if result_value.get("type") != expected_type:
+            raise ValidationError("Administrative decision result type is invalid")
+    unsigned = {
+        "v": WORKSPACE_PROTOCOL_VERSION,
+        "type": "workspace_admin_request",
+        "phase": "decision",
+        "workspace_id": request.workspace_id,
+        "request_id": request.request_id,
+        "request_digest": request.digest,
+        "request_kind": request.request_kind,
+        "base_manifest_epoch": request.base_manifest_epoch,
+        "base_manifest_digest": request.base_manifest_digest,
+        "authority_member_id": authority[0].member_id,
+        "authority_device_id": authority[1].device_id,
+        "outcome": outcome,
+        "result_kind": result_kind,
+        "result_digest": result_digest,
+        "result_document": result_document,
+        "replay_key": _validate_uuid(replay_key or str(uuid.uuid4()), "Replay key"),
+        "created_at": int(time.time()) if created_at is None else int(created_at),
+    }
+    return _sign(authority_identity, unsigned, maximum=MAX_ADMIN_DECISION_BYTES)
+
+
+def verify_workspace_admin_decision(
+    raw: str,
+    *,
+    authority_manifest: VerifiedWorkspaceManifest,
+    request: VerifiedWorkspaceAdminRequest,
+    now: int | None = None,
+) -> VerifiedWorkspaceAdminDecision:
+    value = _load_document(raw, "workspace_admin_request")
+    _require_fields(
+        value,
+        {
+            "v", "type", "phase", "workspace_id", "request_id",
+            "request_digest", "request_kind", "base_manifest_epoch",
+            "base_manifest_digest", "authority_member_id", "authority_device_id",
+            "outcome", "result_kind", "result_digest", "result_document",
+            "replay_key", "created_at", "signature",
+        },
+    )
+    if (
+        value["v"] != WORKSPACE_PROTOCOL_VERSION
+        or value["phase"] != "decision"
+        or value["workspace_id"] != request.workspace_id
+        or value["workspace_id"] != authority_manifest.workspace_id
+        or value["request_id"] != request.request_id
+        or value["request_digest"] != request.digest
+        or value["request_kind"] != request.request_kind
+        or value["base_manifest_epoch"] != request.base_manifest_epoch
+        or value["base_manifest_digest"] != request.base_manifest_digest
+    ):
+        raise ValidationError("Workspace administrative decision is not bound to its request")
+    authority_member_id = _validate_uuid(value["authority_member_id"], "Authority member ID")
+    authority_device_id = _validate_uuid(value["authority_device_id"], "Authority device ID")
+    authority = find_device(authority_manifest, authority_device_id)
+    if (
+        authority is None
+        or authority_device_id != authority_manifest.authority_device_id
+        or authority[0].member_id != authority_member_id
+        or authority[0].role != WorkspaceRole.OWNER
+        or authority[0].status != "active"
+    ):
+        raise IdentityMismatch("Workspace administrative decision authority is invalid")
+    _verify_signature(
+        _identity_from_public_key(authority[1].public_identity),
+        value,
+        "Workspace administrative decision",
+    )
+    outcome = value["outcome"]
+    result_kind = value["result_kind"]
+    result_document = value["result_document"]
+    if outcome not in _ADMIN_DECISION_OUTCOMES or result_kind not in _ADMIN_RESULT_KINDS:
+        raise ValidationError("Workspace administrative decision result is invalid")
+    expected_kind = "invitation" if request.request_kind == "invitation" else "manifest"
+    result_digest: str | None = None
+    if outcome == "declined":
+        if result_kind != "no_change" or value["result_digest"] is not None or result_document is not None:
+            raise ValidationError("Declined administrative decision changed workspace state")
+    else:
+        if result_kind != expected_kind or not isinstance(result_document, str):
+            raise ValidationError("Approved administrative decision result is invalid")
+        result_digest = _validate_digest(value["result_digest"], "Administrative result digest")
+        if workspace_document_digest(result_document) != result_digest:
+            raise ValidationError("Administrative decision result digest is invalid")
+        result_value = json.loads(result_document)
+        expected_type = "workspace_invite" if result_kind == "invitation" else "workspace_manifest_root"
+        if result_value.get("type") != expected_type:
+            raise ValidationError("Administrative decision result type is invalid")
+    current = int(time.time()) if now is None else int(now)
+    return VerifiedWorkspaceAdminDecision(
+        workspace_id=request.workspace_id,
+        request_id=request.request_id,
+        request_digest=request.digest,
+        request_kind=request.request_kind,
+        base_manifest_epoch=request.base_manifest_epoch,
+        base_manifest_digest=request.base_manifest_digest,
+        authority_member_id=authority_member_id,
+        authority_device_id=authority_device_id,
+        outcome=outcome,
+        result_kind=result_kind,
+        result_digest=result_digest,
+        result_document=result_document,
+        replay_key=_validate_uuid(value["replay_key"], "Replay key"),
+        created_at=_validate_timestamp(value["created_at"], now=current),
         digest=_digest(value),
         serialized=_canonical(value),
     )

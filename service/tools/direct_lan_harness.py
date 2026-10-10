@@ -20,6 +20,7 @@ import os
 import queue
 import tempfile
 import time
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -371,6 +372,7 @@ def run(
     timeout: float = 60,
     *,
     joiner_lan_fallback: bool = True,
+    workspace_admin: bool = False,
 ) -> dict[str, Any]:
     """Run the signed-hint-only contact and message flow."""
 
@@ -640,6 +642,342 @@ def run(
                 text=after_group_marker,
             )["match"]
 
+            administrator_result: dict[str, Any] = {}
+            if workspace_admin:
+                def workspace_call(
+                    peer: dict[str, Any], command: str, payload: dict[str, Any]
+                ) -> Any:
+                    return _call(
+                        peer["commands"],
+                        peer["responses"],
+                        "framed_command",
+                        response_timeout=30,
+                        request_id=uuid.uuid4().hex,
+                        service_command=command,
+                        payload=payload,
+                    )["result"]
+
+                def wait_workspace(
+                    peer: dict[str, Any], predicate: Any, description: str
+                ) -> Any:
+                    deadline = time.monotonic() + timeout
+                    latest: Any = None
+                    while time.monotonic() < deadline:
+                        latest = workspace_call(peer, "workspace_snapshot", {})
+                        match = predicate(latest)
+                        if match is not None:
+                            return match
+                        time.sleep(0.2)
+                    raise TimeoutError(
+                        f"Timed out waiting for {description}; snapshot={latest!r}"
+                    )
+
+                operation = lambda label: str(
+                    uuid.uuid5(uuid.NAMESPACE_URL, f"{marker}-{label}")
+                )
+                created_workspace = workspace_call(
+                    inviter,
+                    "create_workspace",
+                    {
+                        "name": "Direct LAN administrators",
+                        "description": "Owner-approved administration probe",
+                        "operation_id": operation("workspace-create"),
+                    },
+                )
+                workspace_id = created_workspace["id"]
+                workspace_invitation = workspace_call(
+                    inviter,
+                    "create_workspace_invitation",
+                    {
+                        "workspace_id": workspace_id,
+                        "operation_id": operation("workspace-invitation"),
+                    },
+                )
+                workspace_call(
+                    joiner,
+                    "submit_workspace_join",
+                    {
+                        "invitation": workspace_invitation["text"],
+                        "operation_id": operation("workspace-join"),
+                    },
+                )
+                join_request = wait_workspace(
+                    inviter,
+                    lambda snap: next(
+                        (
+                            item
+                            for item in snap.get("workspace_join_requests", [])
+                            if item.get("workspace_id") == workspace_id
+                            and item.get("state") == "pending"
+                        ),
+                        None,
+                    ),
+                    "workspace join request",
+                )
+                workspace_call(
+                    inviter,
+                    "approve_workspace_join",
+                    {
+                        "workspace_id": workspace_id,
+                        "request_id": join_request["id"],
+                        "operation_id": operation("workspace-join-approval"),
+                    },
+                )
+                joined_workspace = wait_workspace(
+                    joiner,
+                    lambda snap: next(
+                        (
+                            item for item in snap.get("workspaces", [])
+                            if item.get("id") == workspace_id
+                            and item.get("state") == "active"
+                        ),
+                        None,
+                    ),
+                    "active workspace",
+                )
+                admin_member_id = joined_workspace["local_member_id"]
+                workspace_call(
+                    inviter,
+                    "change_workspace_role",
+                    {
+                        "workspace_id": workspace_id,
+                        "member_id": admin_member_id,
+                        "role": "admin",
+                        "operation_id": operation("workspace-promote"),
+                    },
+                )
+                wait_workspace(
+                    joiner,
+                    lambda snap: next(
+                        (
+                            item for item in snap.get("workspaces", [])
+                            if item.get("id") == workspace_id
+                            and item.get("local_role") == "admin"
+                        ),
+                        None,
+                    ),
+                    "administrator promotion",
+                )
+                workspace_call(
+                    inviter,
+                    "update_workspace_policies",
+                    {
+                        "workspace_id": workspace_id,
+                        "channel_creation": "owner_and_admins",
+                        "posting": "owner_and_admins",
+                        "invitation_requests": "owner_and_admins",
+                        "operation_id": operation("workspace-policy"),
+                    },
+                )
+                wait_workspace(
+                    joiner,
+                    lambda snap: next(
+                        (
+                            item for item in snap.get("workspaces", [])
+                            if item.get("id") == workspace_id
+                            and item.get("policies", {}).get("posting")
+                            == "owner_and_admins"
+                        ),
+                        None,
+                    ),
+                    "administrator policy",
+                )
+
+                # No owner command participates between these two calls. The
+                # administrator signs the channel and event while the owner is
+                # operationally offline, then the live transport converges.
+                admin_channel = workspace_call(
+                    joiner,
+                    "create_workspace_channel",
+                    {
+                        "workspace_id": workspace_id,
+                        "name": "admin-offline",
+                        "topic": "Owner offline",
+                        "visibility": "public",
+                        "member_ids": [],
+                        "operation_id": operation("admin-channel"),
+                    },
+                )
+                admin_message = workspace_call(
+                    joiner,
+                    "send_workspace_message",
+                    {
+                        "workspace_id": workspace_id,
+                        "channel_id": admin_channel["id"],
+                        "text": f"{marker}-admin-offline",
+                        "event_id": operation("admin-event"),
+                        "operation_id": operation("admin-send"),
+                    },
+                )
+                owner_channel = wait_workspace(
+                    inviter,
+                    lambda snap: next(
+                        (
+                            item for item in snap.get("workspace_channels", [])
+                            if item.get("workspace_id") == workspace_id
+                            and item.get("id") == admin_channel["id"]
+                        ),
+                        None,
+                    ),
+                    "administrator-created channel",
+                )
+                deadline = time.monotonic() + timeout
+                owner_message: dict[str, Any] | None = None
+                while time.monotonic() < deadline and owner_message is None:
+                    page = workspace_call(
+                        inviter,
+                        "list_workspace_messages",
+                        {
+                            "workspace_id": workspace_id,
+                            "channel_id": admin_channel["id"],
+                            "limit": 50,
+                        },
+                    )
+                    owner_message = next(
+                        (
+                            item for item in page.get("messages", [])
+                            if item.get("id") == admin_message["id"]
+                        ),
+                        None,
+                    )
+                    if owner_message is None:
+                        time.sleep(0.2)
+                if owner_message is None:
+                    raise TimeoutError("Administrator message did not converge")
+
+                decline_request = workspace_call(
+                    joiner,
+                    "submit_workspace_admin_request",
+                    {
+                        "workspace_id": workspace_id,
+                        "request_kind": "member_removal",
+                        "target_member_id": admin_member_id,
+                        "requested_role": None,
+                        "note": "Decline probe",
+                        "operation_id": operation("decline-request"),
+                    },
+                )
+                owner_decline = wait_workspace(
+                    inviter,
+                    lambda snap: next(
+                        (
+                            item for item in snap.get("workspace_admin_requests", [])
+                            if item.get("request_kind") == "member_removal"
+                            and item.get("state") == "pending"
+                        ),
+                        None,
+                    ),
+                    "decline request",
+                )
+                workspace_call(
+                    inviter,
+                    "decline_workspace_admin_request",
+                    {
+                        "workspace_id": workspace_id,
+                        "request_id": owner_decline["id"],
+                        "operation_id": operation("decline-decision"),
+                    },
+                )
+                declined = wait_workspace(
+                    joiner,
+                    lambda snap: next(
+                        (
+                            item for item in snap.get("workspace_admin_requests", [])
+                            if item.get("id") == decline_request["id"]
+                            and item.get("state") == "declined"
+                        ),
+                        None,
+                    ),
+                    "declined administrative request",
+                )
+
+                demotion_operation = operation("demotion-request")
+                demotion_request = workspace_call(
+                    joiner,
+                    "submit_workspace_admin_request",
+                    {
+                        "workspace_id": workspace_id,
+                        "request_kind": "role_change",
+                        "target_member_id": admin_member_id,
+                        "requested_role": "member",
+                        "note": "Demotion convergence",
+                        "operation_id": demotion_operation,
+                    },
+                )
+                replayed_request = workspace_call(
+                    joiner,
+                    "submit_workspace_admin_request",
+                    {
+                        "workspace_id": workspace_id,
+                        "request_kind": "role_change",
+                        "target_member_id": admin_member_id,
+                        "requested_role": "member",
+                        "note": "Demotion convergence",
+                        "operation_id": demotion_operation,
+                    },
+                )
+                owner_demotion = wait_workspace(
+                    inviter,
+                    lambda snap: next(
+                        (
+                            item for item in snap.get("workspace_admin_requests", [])
+                            if item.get("request_kind") == "role_change"
+                            and item.get("state") == "pending"
+                        ),
+                        None,
+                    ),
+                    "demotion request",
+                )
+                workspace_call(
+                    inviter,
+                    "approve_workspace_admin_request",
+                    {
+                        "workspace_id": workspace_id,
+                        "request_id": owner_demotion["id"],
+                        "operation_id": operation("demotion-approval"),
+                    },
+                )
+                demoted = wait_workspace(
+                    joiner,
+                    lambda snap: next(
+                        (
+                            item for item in snap.get("workspaces", [])
+                            if item.get("id") == workspace_id
+                            and item.get("local_role") == "member"
+                        ),
+                        None,
+                    ),
+                    "administrator demotion",
+                )
+                denied_after_demotion = False
+                try:
+                    workspace_call(
+                        joiner,
+                        "create_workspace_channel",
+                        {
+                            "workspace_id": workspace_id,
+                            "name": "must-fail",
+                            "topic": "",
+                            "visibility": "public",
+                            "member_ids": [],
+                            "operation_id": operation("post-demotion-denial"),
+                        },
+                    )
+                except RuntimeError as exc:
+                    denied_after_demotion = "ContactNotApproved:" in str(exc)
+                administrator_result = {
+                    "workspace_admin_created_channel": owner_channel["id"]
+                    == admin_channel["id"],
+                    "workspace_admin_posted_owner_offline": owner_message["id"]
+                    == admin_message["id"],
+                    "workspace_decline_no_effect": declined["state"] == "declined",
+                    "workspace_request_replay_idempotent": replayed_request["id"]
+                    == demotion_request["id"],
+                    "workspace_owner_approved_exact_request": demoted["local_role"]
+                    == "member",
+                    "workspace_demotion_enforced": denied_after_demotion,
+                }
+
             inviter_config = (root / "alex" / "reticulum" / "config").read_text(
                 encoding="utf-8"
             )
@@ -732,6 +1070,7 @@ def run(
                         "state": "delivered",
                     }
                 ],
+                **administrator_result,
             }
         finally:
             for peer in peers.values():
@@ -757,8 +1096,9 @@ def run(
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--timeout", type=float, default=60)
+    parser.add_argument("--workspace-admin", action="store_true")
     args = parser.parse_args()
-    result = run(timeout=args.timeout)
+    result = run(timeout=args.timeout, workspace_admin=args.workspace_admin)
     print(json.dumps(result, indent=2))
     success = (
         result["route"] == "signed_tcp_hint_only"
@@ -797,6 +1137,18 @@ def main() -> int:
         and result["group_sender_delivered"] is True
         and result["group_single_recipient"] is True
     )
+    if args.workspace_admin:
+        success = success and all(
+            result.get(key) is True
+            for key in (
+                "workspace_admin_created_channel",
+                "workspace_admin_posted_owner_offline",
+                "workspace_decline_no_effect",
+                "workspace_request_replay_idempotent",
+                "workspace_owner_approved_exact_request",
+                "workspace_demotion_enforced",
+            )
+        )
     return 0 if success else 1
 
 

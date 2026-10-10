@@ -511,6 +511,283 @@ def run(binary: Path) -> dict[str, Any]:
         return result
 
 
+def run_workspace_admin(binary: Path) -> dict[str, Any]:
+    """Exercise Increment 12 through two exact packaged sidecars."""
+
+    with tempfile.TemporaryDirectory(prefix="mesh-chat-packaged-admin-") as temporary:
+        root = Path(temporary)
+        owner = PackagedPeer(binary, root / "owner", "Packaged Owner")
+        admin = PackagedPeer(binary, root / "admin", "Packaged Admin")
+        close_results: list[dict[str, Any]] = []
+        result: dict[str, Any] = {}
+
+        def op() -> str:
+            return str(uuid.uuid4())
+
+        try:
+            # Establish the real encrypted route first; workspace traffic then
+            # crosses the same production LXMF and framed-IPC boundaries.
+            invitation, _ = owner.call("create_invitation")
+            admin_contact, _ = admin.call(
+                "accept_invitation", {"invitation": invitation["file"]}
+            )
+            owner_contact = owner.wait_for(
+                lambda snap: _contact(snap, {"pending_request"}),
+                description="packaged admin route request",
+            )
+            owner.call("approve_request", {"contact_id": owner_contact["id"]})
+            admin.wait_for(
+                lambda snap: next(
+                    (
+                        item for item in snap.get("contacts", [])
+                        if item.get("id") == admin_contact["id"]
+                        and item.get("trust") in {"approved", "verified"}
+                    ),
+                    None,
+                ),
+                description="packaged admin route approval",
+            )
+
+            workspace, _ = owner.call(
+                "create_workspace",
+                {
+                    "name": "Packaged administrators",
+                    "description": "Exact candidate flow",
+                    "operation_id": op(),
+                },
+            )
+            workspace_id = workspace["id"]
+            workspace_invitation, _ = owner.call(
+                "create_workspace_invitation",
+                {"workspace_id": workspace_id, "operation_id": op()},
+            )
+            admin.call(
+                "submit_workspace_join",
+                {"invitation": workspace_invitation["text"], "operation_id": op()},
+            )
+            join_request = owner.wait_for(
+                lambda snap: next(
+                    (
+                        item for item in snap.get("workspace_join_requests", [])
+                        if item.get("workspace_id") == workspace_id
+                        and item.get("state") == "pending"
+                    ),
+                    None,
+                ),
+                description="packaged workspace join request",
+            )
+            owner.call(
+                "approve_workspace_join",
+                {
+                    "workspace_id": workspace_id,
+                    "request_id": join_request["id"],
+                    "operation_id": op(),
+                },
+            )
+            joined = admin.wait_for(
+                lambda snap: next(
+                    (
+                        item for item in snap.get("workspaces", [])
+                        if item.get("id") == workspace_id
+                        and item.get("state") == "active"
+                    ),
+                    None,
+                ),
+                description="packaged active workspace",
+            )
+            admin_member_id = joined["local_member_id"]
+            owner.call(
+                "change_workspace_role",
+                {
+                    "workspace_id": workspace_id,
+                    "member_id": admin_member_id,
+                    "role": "admin",
+                    "operation_id": op(),
+                },
+            )
+            admin.wait_for(
+                lambda snap: next(
+                    (
+                        item for item in snap.get("workspaces", [])
+                        if item.get("id") == workspace_id
+                        and item.get("local_role") == "admin"
+                    ),
+                    None,
+                ),
+                description="packaged administrator promotion",
+            )
+            owner.call(
+                "update_workspace_policies",
+                {
+                    "workspace_id": workspace_id,
+                    "channel_creation": "owner_and_admins",
+                    "posting": "owner_and_admins",
+                    "invitation_requests": "owner_and_admins",
+                    "operation_id": op(),
+                },
+            )
+            admin.wait_for(
+                lambda snap: next(
+                    (
+                        item for item in snap.get("workspaces", [])
+                        if item.get("id") == workspace_id
+                        and item.get("policies", {}).get("posting")
+                        == "owner_and_admins"
+                    ),
+                    None,
+                ),
+                description="packaged administrator policy",
+            )
+
+            channel, _ = admin.call(
+                "create_workspace_channel",
+                {
+                    "workspace_id": workspace_id,
+                    "name": "packaged-admin-offline",
+                    "topic": "Owner command path idle",
+                    "visibility": "public",
+                    "member_ids": [],
+                    "operation_id": op(),
+                },
+            )
+            message, _ = admin.call(
+                "send_workspace_message",
+                {
+                    "workspace_id": workspace_id,
+                    "channel_id": channel["id"],
+                    "text": "Packaged administrator message",
+                    "event_id": op(),
+                    "operation_id": op(),
+                },
+            )
+            owner.wait_for(
+                lambda snap: next(
+                    (
+                        item for item in snap.get("workspace_channels", [])
+                        if item.get("id") == channel["id"]
+                    ),
+                    None,
+                ),
+                description="packaged administrator channel convergence",
+            )
+            owner_message = owner.wait_for(
+                lambda _snap: next(
+                    (
+                        item
+                        for item in owner.call(
+                            "list_workspace_messages",
+                            {
+                                "workspace_id": workspace_id,
+                                "channel_id": channel["id"],
+                                "limit": 50,
+                            },
+                        )[0].get("messages", [])
+                        if item.get("id") == message["id"]
+                    ),
+                    None,
+                ),
+                description="packaged administrator message convergence",
+            )
+
+            removal, _ = admin.call(
+                "submit_workspace_admin_request",
+                {
+                    "workspace_id": workspace_id,
+                    "request_kind": "member_removal",
+                    "target_member_id": admin_member_id,
+                    "requested_role": None,
+                    "note": "Packaged decline",
+                    "operation_id": op(),
+                },
+            )
+            owner_removal = owner.wait_for(
+                lambda snap: next(
+                    (
+                        item for item in snap.get("workspace_admin_requests", [])
+                        if item.get("request_kind") == "member_removal"
+                        and item.get("state") == "pending"
+                    ),
+                    None,
+                ),
+                description="packaged removal request",
+            )
+            owner.call(
+                "decline_workspace_admin_request",
+                {
+                    "workspace_id": workspace_id,
+                    "request_id": owner_removal["id"],
+                    "operation_id": op(),
+                },
+            )
+            declined = admin.wait_for(
+                lambda snap: next(
+                    (
+                        item for item in snap.get("workspace_admin_requests", [])
+                        if item.get("id") == removal["id"]
+                        and item.get("state") == "declined"
+                    ),
+                    None,
+                ),
+                description="packaged declined removal",
+            )
+
+            demotion, _ = admin.call(
+                "submit_workspace_admin_request",
+                {
+                    "workspace_id": workspace_id,
+                    "request_kind": "role_change",
+                    "target_member_id": admin_member_id,
+                    "requested_role": "member",
+                    "note": "Packaged demotion",
+                    "operation_id": op(),
+                },
+            )
+            owner_demotion = owner.wait_for(
+                lambda snap: next(
+                    (
+                        item for item in snap.get("workspace_admin_requests", [])
+                        if item.get("request_kind") == "role_change"
+                        and item.get("state") == "pending"
+                    ),
+                    None,
+                ),
+                description="packaged demotion request",
+            )
+            owner.call(
+                "approve_workspace_admin_request",
+                {
+                    "workspace_id": workspace_id,
+                    "request_id": owner_demotion["id"],
+                    "operation_id": op(),
+                },
+            )
+            demoted = admin.wait_for(
+                lambda snap: next(
+                    (
+                        item for item in snap.get("workspaces", [])
+                        if item.get("id") == workspace_id
+                        and item.get("local_role") == "member"
+                    ),
+                    None,
+                ),
+                description="packaged administrator demotion",
+            )
+            result = {
+                "admin_channel_converged": channel["id"] is not None,
+                "admin_message_converged": owner_message["id"] == message["id"],
+                "decline_no_effect": declined["state"] == "declined",
+                "approved_demotion_converged": demoted["local_role"] == "member",
+                "demotion_request_audited": demotion["state"] == "pending",
+            }
+        finally:
+            close_results.extend([admin.close(), owner.close()])
+        result["clean_shutdown"] = all(item["clean"] for item in close_results)
+        result["stderr_content_free"] = all(
+            item["stderr_content_free"] for item in close_results
+        )
+        return result
+
+
 def run_mixed(current_binary: Path, legacy_binary: Path) -> dict[str, Any]:
     """Exercise the 0.2.10/0.2.9 direct-chat compatibility boundary.
 
@@ -786,6 +1063,19 @@ def run_mixed(current_binary: Path, legacy_binary: Path) -> dict[str, Any]:
                     {"emoji": "👍", "count": 1, "reacted_by_self": True}
                 ],
             )
+            legacy_expanded_target = _message_with_reactions(
+                legacy_final,
+                text=initial_desktop_text,
+                direction="inbound",
+                reactions=[
+                    {"emoji": "👍", "count": 1, "reacted_by_self": True},
+                    {
+                        "emoji": expanded_emoji,
+                        "count": 1,
+                        "reacted_by_self": False,
+                    },
+                ],
+            )
             current_target = _message_with_reactions(
                 current_final,
                 text=initial_desktop_text,
@@ -827,6 +1117,8 @@ def run_mixed(current_binary: Path, legacy_binary: Path) -> dict[str, Any]:
                 "expanded_reaction_visible_on_current": expanded_local["id"]
                 == initial_desktop_sent["id"],
                 "legacy_safely_ignored_expanded_reaction": legacy_target is not None
+                and current_target is not None,
+                "legacy_expanded_reaction_converged": legacy_expanded_target is not None
                 and current_target is not None,
                 "post_emoji_desktop_message_id_preserved": post_desktop_sent["id"]
                 == post_phone_received["id"]

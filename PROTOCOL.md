@@ -527,6 +527,35 @@ future availability. `complete_known` therefore means complete only within the
 heads actually signed by the exhausted peers. See
 [ADR 0010](docs/adr/0010-peer-history-catch-up.md).
 
+### Workspace administrators and authority requests
+
+Increment 12 makes `owner`, `admin`, and `member` effective roles. There is
+exactly one owner and the named owner device remains the sole manifest
+authority. Channel creation and posting accept exactly `all_members` or
+`owner_and_admins`; invitation requests accept exactly `owner_only`,
+`owner_and_admins`, or `all_members_request`. Posting policy does not restrict
+authorized reactions. Administrator status does not replace the independent
+channel-manager signature and grants no private-channel discovery/recovery or
+third-party workspace-DM access.
+
+The canonical `workspace_admin_request` family has explicit `request` and
+`decision` phases. A request signs its workspace/request/kind, exact base epoch
+and digest, requester member/device, optional single nonowner target, optional
+`admin|member` role, bounded note, replay key and seven-day-or-shorter lifetime.
+A decision signs the exact request UUID and digest, base state, owner authority,
+`approved|declined`, `invitation|manifest|no_change`, exact result digest and
+embedded canonical result, replay key and creation time. Only the owner
+authority can sign a decision or resulting manifest. Unknown fields,
+noncanonical bytes, mismatched native/inner identities, stale bases, wrong
+targets/roles/results, replays and conflicting decisions fail closed.
+
+Requests are at most 4 KiB, decisions 48 KiB, and notes 250 characters. Pending
+state is capped at 128 per workspace, 512 per profile and 32 per authenticated
+requester/source; pages contain at most 100 rows and future/inert decisions at
+most 64. Terminal audit and replay evidence remains sealed for 90 days. Exact
+schemas, lifecycle, transitions and compatibility behavior are frozen in
+[ADR 0011](docs/adr/0011-workspace-administrators.md).
+
 ### Encrypted local workspace search
 
 Increment 10 adds no wire document, packet kind, peer request, or canonical
@@ -597,6 +626,7 @@ Receipts are ordinary signed, end-to-end encrypted LXMF messages. They reference
 - Desktop workspace: at most eight people, 32 active channels including `#general`, 32 entries per signed public-summary page, 32 pages per sync session, and 64 controls per signed public fetch response. Archived public channels are retained in the bounded 1,024-entry directory; private channels are never summarized publicly.
 - Workspace local search: at most 256 query characters, 1,024 UTF-8 bytes, 8 exact tokens, 8 keyed shard pages, 256 candidates, and 50 results; rebuilds advance at most 128 retained events per transaction.
 - Workspace history catch-up: 32 streams, 64 ranges, 32 events, 32 controls, 32 checkpoints, 128 KiB and 15 minutes per request; 256 sequence probes per response; 2 jobs per workspace and 4 per profile.
+- Workspace administration: 4 KiB requests, 48 KiB decisions, 250-character notes, seven-day maximum lifetime, 128 pending requests per workspace, 512 administrative requests per profile, 32 pending per requester/source, 100 rows per page, 64 inert decisions, and 90-day replay/audit retention.
 - Pending reactions: at most 256 total and 32 per authenticated actor.
 - IPC frame: 4 MiB; renderer-originated payload: 32 KiB.
 - LXMF direct and propagated modes: enabled.

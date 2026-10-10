@@ -3,6 +3,12 @@ import { defineConfig } from "vitest/config";
 export default defineConfig({
   test: {
     environment: "jsdom",
+    include: [
+      "src/**/*.test.ts",
+      "src/**/*.test.tsx",
+      "src/**/*.spec.ts",
+      "src/**/*.spec.tsx",
+    ],
     exclude: [
       "node_modules/**",
       "dist/**",
@@ -11,6 +17,7 @@ export default defineConfig({
       "src-tauri/**",
       "plugins/**",
       ".test-tmp/**",
+      "scripts/**",
     ],
   },
 });

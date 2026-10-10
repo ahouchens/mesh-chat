@@ -574,6 +574,12 @@ class VaultStore:
             )
         except Exception as exc:
             raise ValidationError("Cursor is invalid") from exc
+        canonical_body = base64.urlsafe_b64encode(body).rstrip(b"=").decode("ascii")
+        canonical_signature = (
+            base64.urlsafe_b64encode(signature).rstrip(b"=").decode("ascii")
+        )
+        if encoded_body != canonical_body or encoded_signature != canonical_signature:
+            raise ValidationError("Cursor is invalid")
         expected = hmac.new(
             self._key, b"mesh-chat:cursor:v1:" + body, hashlib.sha256
         ).digest()

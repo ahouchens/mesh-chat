@@ -1061,6 +1061,16 @@ conversations.
 3. Show pending, approved, declined, stale, and superseded requests without
    presenting them as effective changes.
 
+The implementation freezes request/decision schemas, limits, replay and crash
+semantics in [ADR 0011](docs/adr/0011-workspace-administrators.md). It also
+includes expired and safely pre-handoff-cancelled presentation states, bounded
+encrypted owner-review/outgoing history pages, and direct owner authority paths.
+Promotion or demotion changes exactly one active nonowner role; it never changes
+channel management, workspace metadata, policy, retention, closure, authority,
+or ownership. Approval of an invitation creates one one-use invitation without
+admitting a member. Existing channel-manager, private-disclosure, DM,
+inactive-author checkpoint and fork rules continue unchanged.
+
 This increment is complete when admins perform daily channel operations while
 the owner is offline and every membership or role change has one auditable
 authority-approved result.

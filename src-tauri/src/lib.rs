@@ -431,6 +431,19 @@ fn allowed_renderer_command(command: &str) -> bool {
             | "cancel_workspace_history"
             | "list_workspace_history_gaps"
             | "remove_workspace_member"
+            | "change_workspace_role"
+            | "submit_workspace_admin_request"
+            | "submit_workspace_invitation_request"
+            | "submit_workspace_member_removal_request"
+            | "submit_workspace_role_change_request"
+            | "list_workspace_members"
+            | "list_workspace_admin_requests"
+            | "list_workspace_admin_history"
+            | "get_workspace_admin_request"
+            | "approve_workspace_admin_request"
+            | "decline_workspace_admin_request"
+            | "cancel_workspace_admin_request"
+            | "dismiss_workspace_admin_request"
             | "request_workspace_display_name"
             | "decide_workspace_display_name"
             | "create_workspace_channel"
@@ -493,6 +506,19 @@ fn workspace_renderer_command(command: &str) -> bool {
             | "cancel_workspace_history"
             | "list_workspace_history_gaps"
             | "remove_workspace_member"
+            | "change_workspace_role"
+            | "submit_workspace_admin_request"
+            | "submit_workspace_invitation_request"
+            | "submit_workspace_member_removal_request"
+            | "submit_workspace_role_change_request"
+            | "list_workspace_members"
+            | "list_workspace_admin_requests"
+            | "list_workspace_admin_history"
+            | "get_workspace_admin_request"
+            | "approve_workspace_admin_request"
+            | "decline_workspace_admin_request"
+            | "cancel_workspace_admin_request"
+            | "dismiss_workspace_admin_request"
             | "request_workspace_display_name"
             | "decide_workspace_display_name"
             | "create_workspace_channel"
@@ -929,6 +955,19 @@ mod tests {
             "cancel_workspace_history",
             "list_workspace_history_gaps",
             "remove_workspace_member",
+            "change_workspace_role",
+            "submit_workspace_admin_request",
+            "submit_workspace_invitation_request",
+            "submit_workspace_member_removal_request",
+            "submit_workspace_role_change_request",
+            "list_workspace_members",
+            "list_workspace_admin_requests",
+            "list_workspace_admin_history",
+            "get_workspace_admin_request",
+            "approve_workspace_admin_request",
+            "decline_workspace_admin_request",
+            "cancel_workspace_admin_request",
+            "dismiss_workspace_admin_request",
             "request_workspace_display_name",
             "decide_workspace_display_name",
             "create_workspace_channel",

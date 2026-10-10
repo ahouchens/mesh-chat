@@ -14,16 +14,25 @@ import RNS
 
 from mesh_chat.app_protocol import TYPE_FIELD as LEGACY_TYPE_FIELD, build_fields
 from mesh_chat.errors import IdentityMismatch, InvitationExpired, ValidationError
-from mesh_chat.models import MessageKind, WorkspacePostingPolicy, WorkspaceRole
+from mesh_chat.models import (
+    MessageKind,
+    WorkspaceInvitationPolicy,
+    WorkspacePostingPolicy,
+    WorkspaceRole,
+)
 from mesh_chat.network import ReticulumNetwork, validate_unknown_source_signature
 from mesh_chat.workspace_protocol import (
     MAX_CHANNEL_FETCH_CONTROLS,
     MAX_CHANNEL_SUMMARY_ENTRIES,
     MAX_CHANNEL_SUMMARY_PAGES,
     MAX_HISTORY_RESPONSE_BYTES,
+    MAX_ADMIN_DECISION_BYTES,
+    MAX_ADMIN_REQUEST_BYTES,
     MAX_WORKSPACE_DOCUMENT_BYTES,
     WorkspaceManifestMemberInput,
     create_workspace_device_card,
+    create_workspace_admin_decision,
+    create_workspace_admin_request,
     create_workspace_display_name_request,
     create_workspace_display_name_decision,
     create_workspace_channel_record,
@@ -44,6 +53,8 @@ from mesh_chat.workspace_protocol import (
     create_workspace_manifest,
     derive_workspace_id,
     verify_workspace_channel_record,
+    verify_workspace_admin_decision,
+    verify_workspace_admin_request,
     verify_workspace_channel_fetch,
     verify_workspace_channel_manifest,
     verify_workspace_channel_manifest_transition,
@@ -469,6 +480,343 @@ def test_thread_root_is_signed_without_changing_ordinary_event_bytes() -> None:
             manifest=manifest,
             channel=channel,
             now=NOW + 2,
+        )
+
+
+def _workspace_with_admin() -> tuple[
+    RNS.Identity, RNS.Identity, RNS.Identity, object, object, object
+]:
+    owner, created, genesis, manifest = _workspace()
+    admin_identity = RNS.Identity()
+    member_identity = RNS.Identity()
+    admin_id, admin_device_id = _id(), _id()
+    member_id, member_device_id = _id(), _id()
+    admin_card = create_workspace_device_card(
+        admin_identity,
+        workspace_id=manifest.workspace_id,
+        member_id=admin_id,
+        device_id=admin_device_id,
+        display_name="Ada Admin",
+        now=NOW,
+    )
+    member_card = create_workspace_device_card(
+        member_identity,
+        workspace_id=manifest.workspace_id,
+        member_id=member_id,
+        device_id=member_device_id,
+        display_name="Morgan Member",
+        now=NOW,
+    )
+
+    def inputs(current: object) -> list[WorkspaceManifestMemberInput]:
+        return [
+            WorkspaceManifestMemberInput(
+                item.member_id,
+                item.display_name,
+                item.role,
+                [device.serialized for device in item.devices],
+                item.status,
+            )
+            for item in current.members
+        ]
+
+    add_admin_raw = create_workspace_manifest(
+        owner,
+        workspace_id=manifest.workspace_id,
+        epoch=2,
+        previous_manifest_hash=manifest.digest,
+        name=manifest.name,
+        description=manifest.description,
+        authority_device_id=manifest.authority_device_id,
+        members=[
+            *inputs(manifest),
+            WorkspaceManifestMemberInput(
+                admin_id, "Ada Admin", WorkspaceRole.MEMBER, [admin_card]
+            ),
+        ],
+        now=NOW + 1,
+    )
+    manifest = verify_workspace_manifest_transition(
+        add_admin_raw, manifest, now=NOW + 1
+    )
+    add_member_raw = create_workspace_manifest(
+        owner,
+        workspace_id=manifest.workspace_id,
+        epoch=3,
+        previous_manifest_hash=manifest.digest,
+        name=manifest.name,
+        description=manifest.description,
+        authority_device_id=manifest.authority_device_id,
+        members=[
+            *inputs(manifest),
+            WorkspaceManifestMemberInput(
+                member_id, "Morgan Member", WorkspaceRole.MEMBER, [member_card]
+            ),
+        ],
+        now=NOW + 2,
+    )
+    manifest = verify_workspace_manifest_transition(
+        add_member_raw, manifest, now=NOW + 2
+    )
+    promote_raw = create_workspace_manifest(
+        owner,
+        workspace_id=manifest.workspace_id,
+        epoch=4,
+        previous_manifest_hash=manifest.digest,
+        name=manifest.name,
+        description=manifest.description,
+        authority_device_id=manifest.authority_device_id,
+        members=[
+            WorkspaceManifestMemberInput(
+                item.member_id,
+                item.display_name,
+                WorkspaceRole.ADMIN if item.member_id == admin_id else item.role,
+                [device.serialized for device in item.devices],
+                item.status,
+            )
+            for item in manifest.members
+        ],
+        now=NOW + 3,
+    )
+    manifest = verify_workspace_manifest_transition(
+        promote_raw, manifest, now=NOW + 3
+    )
+    return owner, admin_identity, member_identity, created, genesis, manifest
+
+
+def _policy_manifest(
+    owner: RNS.Identity,
+    manifest: object,
+    invitation_policy: WorkspaceInvitationPolicy,
+) -> object:
+    if manifest.invitation_requests == invitation_policy:
+        return manifest
+    raw = create_workspace_manifest(
+        owner,
+        workspace_id=manifest.workspace_id,
+        epoch=manifest.epoch + 1,
+        previous_manifest_hash=manifest.digest,
+        name=manifest.name,
+        description=manifest.description,
+        authority_device_id=manifest.authority_device_id,
+        members=[
+            WorkspaceManifestMemberInput(
+                item.member_id,
+                item.display_name,
+                item.role,
+                [device.serialized for device in item.devices],
+                item.status,
+            )
+            for item in manifest.members
+        ],
+        invitation_requests=invitation_policy,
+        now=NOW + manifest.epoch,
+    )
+    return verify_workspace_manifest_transition(
+        raw, manifest, now=NOW + manifest.epoch
+    )
+
+
+def test_admin_role_transition_is_exact_and_preserves_one_owner() -> None:
+    owner, _admin_identity, _member_identity, _created, _genesis, manifest = (
+        _workspace_with_admin()
+    )
+    admin = next(item for item in manifest.members if item.role == WorkspaceRole.ADMIN)
+    assert sum(item.role == WorkspaceRole.OWNER for item in manifest.members) == 1
+    assert admin.status == "active"
+
+    combined = create_workspace_manifest(
+        owner,
+        workspace_id=manifest.workspace_id,
+        epoch=manifest.epoch + 1,
+        previous_manifest_hash=manifest.digest,
+        name="Changed at the same time",
+        description=manifest.description,
+        authority_device_id=manifest.authority_device_id,
+        members=[
+            WorkspaceManifestMemberInput(
+                item.member_id,
+                item.display_name,
+                WorkspaceRole.MEMBER if item.member_id == admin.member_id else item.role,
+                [device.serialized for device in item.devices],
+                item.status,
+            )
+            for item in manifest.members
+        ],
+        now=NOW + 10,
+    )
+    with pytest.raises(ValidationError, match="transition is not enabled"):
+        verify_workspace_manifest_transition(combined, manifest, now=NOW + 10)
+
+
+@pytest.mark.parametrize(
+    ("policy", "actor_role", "allowed"),
+    [
+        (WorkspaceInvitationPolicy.OWNER_ONLY, WorkspaceRole.ADMIN, False),
+        (WorkspaceInvitationPolicy.OWNER_AND_ADMINS, WorkspaceRole.ADMIN, True),
+        (WorkspaceInvitationPolicy.OWNER_AND_ADMINS, WorkspaceRole.MEMBER, False),
+        (WorkspaceInvitationPolicy.ALL_MEMBERS_REQUEST, WorkspaceRole.MEMBER, True),
+    ],
+)
+def test_invitation_request_policy_is_exact(
+    policy: WorkspaceInvitationPolicy, actor_role: WorkspaceRole, allowed: bool
+) -> None:
+    owner, admin_identity, member_identity, _created, _genesis, manifest = (
+        _workspace_with_admin()
+    )
+    manifest = _policy_manifest(owner, manifest, policy)
+    actor = next(item for item in manifest.members if item.role == actor_role)
+    identity = admin_identity if actor_role == WorkspaceRole.ADMIN else member_identity
+    create = lambda: create_workspace_admin_request(
+        identity,
+        manifest=manifest,
+        request_id=_id(),
+        request_kind="invitation",
+        requester_member_id=actor.member_id,
+        requester_device_id=actor.devices[0].device_id,
+        note="Invite a field observer",
+        replay_key=_id(),
+        created_at=NOW + 20,
+        expires_at=NOW + 20 + 3600,
+    )
+    if not allowed:
+        with pytest.raises(IdentityMismatch, match="not authorized"):
+            create()
+        return
+    raw = create()
+    request = verify_workspace_admin_request(
+        raw, manifest=manifest, now=NOW + 20
+    )
+    assert request.request_kind == "invitation"
+    assert len(raw.encode()) <= MAX_ADMIN_REQUEST_BYTES
+
+
+def test_admin_removal_and_role_requests_are_signed_but_do_not_apply() -> None:
+    _owner, admin_identity, member_identity, _created, _genesis, manifest = (
+        _workspace_with_admin()
+    )
+    admin = next(item for item in manifest.members if item.role == WorkspaceRole.ADMIN)
+    member = next(
+        item
+        for item in manifest.members
+        if item.role == WorkspaceRole.MEMBER and item.status == "active"
+    )
+    raw = create_workspace_admin_request(
+        admin_identity,
+        manifest=manifest,
+        request_id=_id(),
+        request_kind="role_change",
+        requester_member_id=admin.member_id,
+        requester_device_id=admin.devices[0].device_id,
+        target_member_id=member.member_id,
+        requested_role=WorkspaceRole.ADMIN,
+        note="Cover offline operations",
+        replay_key=_id(),
+        created_at=NOW + 20,
+        expires_at=NOW + 3600,
+    )
+    request = verify_workspace_admin_request(raw, manifest=manifest, now=NOW + 20)
+    assert request.requested_role == WorkspaceRole.ADMIN
+    assert next(item for item in manifest.members if item.member_id == member.member_id).role == WorkspaceRole.MEMBER
+
+    with pytest.raises(IdentityMismatch, match="not authorized"):
+        create_workspace_admin_request(
+            member_identity,
+            manifest=manifest,
+            request_id=_id(),
+            request_kind="member_removal",
+            requester_member_id=member.member_id,
+            requester_device_id=member.devices[0].device_id,
+            target_member_id=admin.member_id,
+            created_at=NOW + 20,
+        )
+
+
+def test_admin_decision_binds_request_result_and_rejects_unknown_fields() -> None:
+    owner, admin_identity, _member_identity, created, _genesis, manifest = (
+        _workspace_with_admin()
+    )
+    manifest = _policy_manifest(
+        owner, manifest, WorkspaceInvitationPolicy.OWNER_AND_ADMINS
+    )
+    admin = next(item for item in manifest.members if item.role == WorkspaceRole.ADMIN)
+    request_raw = create_workspace_admin_request(
+        admin_identity,
+        manifest=manifest,
+        request_id=_id(),
+        request_kind="invitation",
+        requester_member_id=admin.member_id,
+        requester_device_id=admin.devices[0].device_id,
+        note="\U0010ffff" * 250,
+        replay_key=_id(),
+        created_at=NOW + 30,
+        expires_at=NOW + 3600,
+    )
+    request = verify_workspace_admin_request(
+        request_raw, manifest=manifest, now=NOW + 30
+    )
+    invitation_raw = create_workspace_invitation(
+        owner,
+        genesis=created.serialized,
+        manifest=manifest.serialized,
+        now=NOW + 31,
+    )
+    decision_raw = create_workspace_admin_decision(
+        owner,
+        authority_manifest=manifest,
+        request=request,
+        outcome="approved",
+        result_kind="invitation",
+        result_document=invitation_raw,
+        replay_key=_id(),
+        created_at=NOW + 31,
+    )
+    decision = verify_workspace_admin_decision(
+        decision_raw,
+        authority_manifest=manifest,
+        request=request,
+        now=NOW + 31,
+    )
+    assert decision.outcome == "approved"
+    assert decision.result_kind == "invitation"
+    assert decision.result_document == invitation_raw
+    assert len(request_raw.encode("utf-8")) <= MAX_ADMIN_REQUEST_BYTES
+    assert len(decision_raw.encode("utf-8")) <= MAX_ADMIN_DECISION_BYTES
+
+    with pytest.raises(ValidationError, match="canonical"):
+        verify_workspace_admin_request(
+            json.dumps(json.loads(request_raw), indent=2),
+            manifest=manifest,
+            now=NOW + 30,
+        )
+    oversized = json.loads(request_raw)
+    oversized["padding"] = "x" * MAX_ADMIN_REQUEST_BYTES
+    with pytest.raises(ValidationError, match="too large"):
+        verify_workspace_admin_request(
+            json.dumps(oversized, sort_keys=True, separators=(",", ":")),
+            manifest=manifest,
+            now=NOW + 30,
+        )
+
+    value = json.loads(request_raw)
+    value["unexpected"] = True
+    noncanonical = json.dumps(
+        value, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    )
+    with pytest.raises(ValidationError, match="fields"):
+        verify_workspace_admin_request(
+            noncanonical, manifest=manifest, now=NOW + 30
+        )
+
+    value = json.loads(decision_raw)
+    value["request_digest"] = "0" * 64
+    tampered = json.dumps(value, sort_keys=True, separators=(",", ":"))
+    with pytest.raises((ValidationError, IdentityMismatch)):
+        verify_workspace_admin_decision(
+            tampered,
+            authority_manifest=manifest,
+            request=request,
+            now=NOW + 31,
         )
 
 

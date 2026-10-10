@@ -82,6 +82,14 @@ $env:MESH_CHAT_RUN_DIRECT_LAN_TESTS = "1"
 .\.venv\Scripts\python.exe -m pytest .\service\tests\test_direct_lan_harness.py -v -s
 ```
 
+Increment 12 administrator scale benchmark:
+
+```powershell
+.\.venv\Scripts\python.exe .\service\tools\workspace_administrator_benchmark.py `
+  --events 50000 --samples 30 `
+  --output .\docs\benchmarks\increment-12-workspace-administrators.json
+```
+
 The 0.2.7 harness runs two configurations. The first advertises signed TCP hints
 from both peers, times reverse-route approval, then verifies direct chat,
 application receipt, group invitation and join, a group message, and another
@@ -1999,6 +2007,106 @@ Artifact hashes for this run:
   protected-profile full-tree plaintext scanning, production signing, in-place
   installation, and Windows-to-Android validation remain release gates.
 
+## Workspace increment 12 verification — 2026-10-10
+
+- Increment 12 adds effective `owner`, `admin`, and `member` roles, exact
+  `all_members|owner_and_admins` channel/posting policies, and exact
+  `owner_only|owner_and_admins|all_members_request` invitation-request policy.
+  Administrators can create/post and manage channels for which they hold the
+  signed manager role while the owner is offline. They gain no manifest key,
+  global policy/retention/closure authority, arbitrary channel control,
+  private-channel discovery/recovery, or third-party DM access.
+- ADR 0011 freezes the 4 KiB request and 48 KiB decision phases of
+  `workspace_admin_request`, seven-day lifetime, 250-character note, replay and
+  result bindings, one-target invitation/removal/role workflows, and
+  pending/approved/declined/stale/superseded/expired/safe-cancel lifecycle.
+  Sealed HMAC-addressed indexes cap pending requests at 128 per workspace, 512
+  per profile and 32 per requester/source; pages are at most 100 rows, inert
+  decisions at most 64, and terminal replay/audit retention 90 days. Role
+  manifests change exactly one active nonowner between member/admin and cannot
+  combine another mutation.
+- Protocol/service tests cover canonical and worst-case Unicode serialization,
+  byte/field/signature/workspace/base/target/role/result binding, every
+  invitation policy, unauthorized members and administrators, duplicate and
+  conflicting results, safe cancellation, direct owner transitions,
+  supersession/staleness/expiry, restart durability, demotion enforcement,
+  owner-only operations, manager-transfer constraints, private/DM isolation,
+  erasure and bounded indexed paging. Renderer tests cover effective versus
+  requested roles, owner review warnings and confirmation, destructive removal,
+  outgoing outcomes, pending counts, and immediate control changes. Rust tests
+  cover every new desktop-only command.
+- The maintained verification passed **347 Python tests with 8 intentional
+  environment/package skips**, **90 frontend tests**, all **3** standalone
+  package-artwork verifier tests, TypeScript project compilation, and the Vite
+  production build. `cargo fmt --check`, locked Rust release check and all
+  **6 release-profile tests** passed. The Windows protected four-process,
+  three-hop topology passed. All three direct-LAN scenarios passed, including
+  the two-real-process administrator owner-offline flow. The exact immutable
+  0.2.32 package passed phone-first/direct/reaction/delete/reopen and
+  administrator flows. Exact 0.2.31 interoperability converged its supported
+  expanded reaction; frozen 0.2.9 safely ignored it and continued bidirectional
+  chat. Final app artwork matched all **12** bundled files (1,947,195 source
+  bytes). The successful maintained report is
+  `dist/reports/0.2.32/20261010T172636Z-6519e129/report.json` and the successful
+  delivery report is
+  `dist/reports/0.2.32/20261010T173233Z-0abbc471/report.json`.
+- The reproducible administrator benchmark ran on Windows 10.0.19045,
+  Intel64 Family 6 Model 158, Python 3.13.15, Rust 1.99.0, Node 24.19.0 and
+  17,019,686,912 bytes physical memory. Its encrypted fixture held 50,000
+  events, 8 members, 24 public/4 private/4 archived control chains, 42,000
+  roots, 3,000 replies, 2,000 edits, 2,000 reactions, 1,000 tombstones, 4,000
+  linked-device legs and 2,000 pending items across independent owner/admin/
+  member profiles. Over 30 samples, request p50/p95 was **2.509/2.683 ms**,
+  owner-page **7.407/8.132 ms**, decision **4.386/4.802 ms**, role commit
+  **26.814/30.432 ms**, invitation approval **54.088/57.892 ms**, owner-offline
+  admin create/post **80.455/98.869 ms**, duplicate rejection
+  **0.480/0.758 ms**, and stale/superseded resolution **70.278/87.311 ms**.
+  Restart was **12.454 ms**, first owner-visible request **2,635.476 ms**, and
+  end-to-end 30-request approval/result delivery **4,754.499 ms**.
+- The benchmark observed 1,686-byte maximum canonical requests, 5,248-byte
+  decisions, 4,063-byte invitations and 2,576-byte result manifests; 62 queued
+  packets, 1,447 route attempts and 196 modeled transactions; 99,636,650-byte
+  peak Python allocation and 228,233,216-byte peak working set. Vault growth was
+  3,063,808 owner, 3,022,848 admin and 987,136 member bytes. All 31 policy,
+  state, replay, conflict, demotion, private confidentiality, resource and
+  timing assertions passed in 142.669 seconds. The 4,917-byte evidence file is
+  `docs/benchmarks/increment-12-workspace-administrators.json`, SHA-256
+  `90D6A5F18E1D45E3AA54E2334CB4F88597DEBEF2C97995F6E8CF3449E98DF379`.
+- The release driver immutably published desktop **0.2.32** without changing an
+  earlier release. The 22,380,544-byte MSI hashes to
+  `2E9417144762F9C74046FDE0B4FEDAA1B567B9D6D37E961A06D440F290B52909`;
+  the 21,644,516-byte NSIS installer hashes to
+  `7A06986FC4174A685E8A59B524460E34932858EA77CEED02FE404487AEAC9590`.
+  The 6,730,752-byte portable app reports file/product 0.2.32 and hashes to
+  `850C8004FD9A3498943F9560AFDF33874C81E894A05027B83F95B33BF5F5A740`;
+  the 18,156,246-byte sidecar hashes to
+  `407AE337232FEBC83D90566766A47CEFDFF5C3868CE12D6DB04978A337891CF2`.
+  The immutable manifest is 1,345 bytes, hashes to
+  `B17156AAC0D1A6E6D33AA7F293FBA67974A8E98CE26AE524B276EC55A727EEFD`,
+  and is selected by `dist/desktop/current.json`.
+- Transient failures were preserved honestly. A full Cargo debug test first
+  exhausted the host disk/PDB allocator; after deleting only the exact
+  disposable target, single-job non-incremental release check/test passed with
+  debug symbols disabled. An unscoped Vitest run collected the separate Node
+  artwork test until the dedicated config was scoped. The first full benchmark
+  confidentiality probe counted unrelated retried public packets by destination
+  until it was narrowed to the exact private channel document; the corrected
+  50K run passed. Initial direct-LAN probes used an overlong IPC request ID and
+  then matched a snake-case error instead of the typed `ContactNotApproved`;
+  the exact flow passed after those harness fixes. The first maintained verify
+  run found a widened Vite `minify` type; restoring `UserConfig` passed. The
+  first package build hit pnpm sandbox `EPERM`; the identical elevated retry
+  reused the sidecar, repaired local dependencies, and passed. A mixed 0.2.31
+  assertion initially expected old-peer ignore behavior; capability-aware
+  0.2.31 convergence and exact 0.2.9 ignore gates both passed.
+- No installer or application was launched and no existing Mesh Chat process
+  or user profile was modified. Physical concurrent-device admin partitions,
+  hostile request floods/fault injection, native-window keyboard/screen-reader
+  review, packet capture, protected-profile full-tree plaintext scanning,
+  production signing, in-place installation, and Windows-to-Android validation
+  remain manual/physical release gates. Permanent owner-authority loss remains
+  intentionally unresolved until Increment 13.
+
 ## Acceptance matrix
 
 | Gate | Current evidence |
@@ -2024,7 +2132,7 @@ Artifact hashes for this run:
 | One-to-one approval | Always-on deterministic full flow and prior real bidirectional-hint Reticulum/LXMF runs passed; the phone-shaped harness covers phone-first delivery followed by the desktop reply on the same connection. Exact 0.2.12 physical Windows↔Android validation remains pending |
 | Contact management | Rename, verification toggling, block/unblock trust restoration, deletion cleanup, active-group identity retention, pending-group-invitation refusal, search, confirmations, mobile Back handling, and responsive dialog layout are covered. The shared UI was matched inside the exact Android APK; physical desktop/phone interaction remains pending |
 | Reconnection/interoperability | Upstream format preserved; bidirectional direct-LAN attachment, dirty-route retry, signed-client route replacement, deferred callback re-entry, and phone-shaped full-duplex return traffic are covered; reference-client and suspend/resume runs pending |
-| Platform packaging | Windows x64 0.2.31 MSI/NSIS and Android arm64 debug 0.2.12 packages were built, hashed, and inspected; the exact 0.2.31 Windows binary was verified but was not installed or launched. Versions, manifest, installer payloads, Android v2 signature/certificate, native architecture, embedded contact UI, and all 12 embedded artwork files were verified. The transactional publisher rejects mixed/stale output and records immutable release/current manifests. Physical Windows↔Android 0.2.12 validation, a 0.2.12 portable bundle, macOS/Linux/iOS native package runs, and production signing remain pending |
+| Platform packaging | Windows x64 0.2.32 MSI/NSIS and Android arm64 debug 0.2.12 packages were built, hashed, and inspected; the exact 0.2.32 Windows binary and sidecar were verified but the app/installer was not launched. Versions, manifest, installer payloads, Android v2 signature/certificate, native architecture, embedded contact UI, and all 12 embedded artwork files were verified. The transactional publisher rejects mixed/stale output and records immutable release/current manifests. Physical Windows↔Android 0.2.12 validation, a 0.2.12 portable bundle, macOS/Linux/iOS native package runs, and production signing remain pending |
 | First-message usability | 0.2.12 retains desktop timeout guidance, exact draft preservation, callback/retry concurrency regressions, and the phone-first/desktop-reply harness together with durable-result, bounded-draft, duplicate-submit, IME, stale-refresh, delivery-state, and responsive-layout coverage. Exact 0.2.12 physical Windows↔Android validation and a broader human study remain open |
 | Invitation entry points | UI and validation implemented; installed-app OS matrix pending |
 | Common flow without technical setup | UI implemented; fresh/returning human run pending |
@@ -2038,5 +2146,6 @@ Artifact hashes for this run:
 | Workspace increment 9 | Signed cooperative 30/90/365-day or indefinite retention, bounded encrypted history/revision/tombstone indexes, stale-cursor invalidation, restart-safe pruning, seven-day live-delivery preservation, durable floors and gaps, replay-resistant retired event IDs, historical/current entitlement checks, former-member read-only archives, and desktop retention/history/prune states are automated. The reproducible 50,000-event benchmark, protected topology, direct-LAN, immutable packaged-current, frozen 0.2.9 compatibility, and final artwork verification passed; physical concurrent-device retention/prune partition/reconnect, native-window accessibility, packet capture, protected-profile plaintext scanning, production signing, and in-place installation remain release gates |
 | Workspace increment 10 | Encrypted workspace-keyed exact-token search, bounded shard/candidate/result execution, authenticated query/access/retention/search cursors, incremental atomic mutation updates, restart-safe migration, current plus historical authorization, private-era and DM isolation, honest indexing/pruned/incomplete states, desktop filters/navigation, and SQLite plaintext absence are automated. The reproducible 50,000-event benchmark, protected topology, direct-LAN, immutable 0.2.30 package, frozen 0.2.9 compatibility, and final artwork verification passed; physical concurrent-device access/retention partitions, native-window accessibility, packet capture, protected-profile plaintext scanning, production signing, and in-place installation remain release gates |
 | Workspace increment 11 | Canonical signed history requests/responses, bounded streams/ranges/pages/bytes, replay-safe continuation binding, prerequisite controls, signed author checkpoints, removal commitments, encrypted restart-safe jobs/caches/nonces/coverage, direct indexed disclosure, exact canonical-byte acceptance, public/private-era/DM authorization, honest complete/peer-limited/pruned/permanent-gap states, scheduling bounds, erasure, desktop status/actions, and command allowlisting are automated. The reproducible 50,000-event benchmark, protected topology, direct-LAN, immutable 0.2.31 package, frozen 0.2.9 compatibility, and final artwork verification passed; physical concurrent-device partition/removal/re-admission, hostile peer fault injection, native-window accessibility, packet capture, protected-profile plaintext scanning, production signing, and in-place installation remain release gates |
+| Workspace increment 12 | Effective owner/admin/member roles, exact role-aware channel/posting/invitation-request policies, signed bounded owner-approved invitation/removal/role requests, exact one-member manifest transitions, sealed indexed lifecycle/replay/audit state, owner-offline channel operation, private/DM isolation, accessible owner review/outgoing history, demotion enforcement, and command allowlisting are automated. The reproducible 50,000-event benchmark, protected topology, all direct-LAN scenarios, immutable 0.2.32 package administrator flow, exact 0.2.31 and frozen 0.2.9 compatibility, and final artwork verification passed; physical concurrent-device admin partitions, hostile request floods/fault injection, native-window accessibility, packet capture, protected-profile plaintext scanning, production signing, and in-place installation remain release gates |
 
 Do not mark a release complete from unit tests alone. Store packet captures, topology configs, full-tree scans, package hashes, platform versions, human timing sheets, and failure notes with the release evidence.

@@ -93,3 +93,20 @@ def test_real_phone_shaped_joiner_sends_without_reverse_listener() -> None:
     assert result["direct_before_group_delivered"] is True
     assert result["direct_after_group_received"] is True
     assert result["direct_after_group_delivered"] is True
+
+
+@pytest.mark.integration
+def test_real_direct_lan_workspace_administrator_owner_offline_flow() -> None:
+    if os.environ.get("MESH_CHAT_RUN_DIRECT_LAN_TESTS") != "1":
+        pytest.skip(
+            "Set MESH_CHAT_RUN_DIRECT_LAN_TESTS=1 to launch isolated direct-LAN peers"
+        )
+
+    result = run(workspace_admin=True)
+
+    assert result["workspace_admin_created_channel"] is True
+    assert result["workspace_admin_posted_owner_offline"] is True
+    assert result["workspace_decline_no_effect"] is True
+    assert result["workspace_request_replay_idempotent"] is True
+    assert result["workspace_owner_approved_exact_request"] is True
+    assert result["workspace_demotion_enforced"] is True

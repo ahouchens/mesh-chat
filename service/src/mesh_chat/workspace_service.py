@@ -23,6 +23,7 @@ from .invitations import canonical_bytes
 from .models import (
     DeliveryState,
     WorkspaceChannelCreationPolicy,
+    WorkspaceInvitationPolicy,
     WorkspacePostingPolicy,
     WorkspaceRole,
 )
@@ -30,6 +31,7 @@ from .workspace_protocol import (
     DEFAULT_INVITATION_LIFETIME_SECONDS,
     MAX_ACTIVE_MEMBERS,
     MAX_INVITATION_LIFETIME_SECONDS,
+    MAX_ADMIN_REQUEST_LIFETIME_SECONDS,
     MAX_HISTORY_CHECKPOINTS,
     MAX_HISTORY_EVENTS,
     MAX_HISTORY_RANGES,
@@ -42,6 +44,7 @@ from .workspace_protocol import (
     MAX_CHANNEL_SUMMARY_ENTRIES,
     MAX_RETAINED_PUBLIC_CHANNELS,
     VerifiedWorkspaceChannel,
+    VerifiedWorkspaceAdminRequest,
     VerifiedWorkspaceEvent,
     VerifiedWorkspaceHistoryRequest,
     VerifiedWorkspaceManifest,
@@ -49,6 +52,8 @@ from .workspace_protocol import (
     active_members,
     channel_name_key,
     create_workspace_channel_fetch,
+    create_workspace_admin_decision,
+    create_workspace_admin_request,
     create_workspace_channel_leave_request,
     create_workspace_channel_manifest,
     create_workspace_channel_recovery,
@@ -71,6 +76,8 @@ from .workspace_protocol import (
     find_device,
     find_member,
     verify_workspace_channel_record,
+    verify_workspace_admin_decision,
+    verify_workspace_admin_request,
     verify_workspace_channel_record_transition,
     verify_workspace_channel_fetch,
     verify_workspace_channel_leave_request,
@@ -94,6 +101,7 @@ from .workspace_protocol import (
     verify_workspace_manifest_transition,
     workspace_direct_conversation_id,
     workspace_invitation_formats,
+    workspace_document_digest,
 )
 from .workspace_wire import (
     DELIVERY_WINDOW_SECONDS,
@@ -132,6 +140,13 @@ MAX_FUTURE_MANIFESTS = 8
 MAX_PENDING_JOINS = 32
 MAX_PENDING_JOINS_PER_SOURCE = 4
 MAX_PENDING_CHANNEL_TRANSFERS = 32
+MAX_PENDING_ADMIN_REQUESTS_PER_WORKSPACE = 128
+MAX_ADMIN_REQUESTS_PER_PROFILE = 512
+MAX_ADMIN_REQUESTS_PER_SOURCE = 32
+MAX_ADMIN_REQUEST_PAGE = 100
+DEFAULT_ADMIN_REQUEST_PAGE = 50
+MAX_INERT_ADMIN_DECISIONS = 64
+ADMIN_REPLAY_RETENTION_SECONDS = 90 * 24 * 60 * 60
 MAX_HISTORY_JOBS_PER_WORKSPACE = 2
 MAX_HISTORY_JOBS_PER_PROFILE = 4
 MAX_HISTORY_SEQUENCE_PROBES = 256
@@ -833,6 +848,104 @@ class WorkspaceServiceMixin:
     def _workspace_history_scheduler_id(self) -> str:
         return self.store.opaque_id("workspace-history-scheduler", "profile")
 
+    def _workspace_admin_request_id(self, workspace_id: str, request_id: str) -> str:
+        return self.store.opaque_id(
+            "workspace-admin-request", workspace_id, request_id
+        )
+
+    def _workspace_admin_replay_id(self, workspace_id: str, replay_key: str) -> str:
+        return self.store.opaque_id(
+            "workspace-admin-replay", workspace_id, replay_key
+        )
+
+    def _workspace_admin_decision_id(self, workspace_id: str, digest: str) -> str:
+        return self.store.opaque_id(
+            "workspace-admin-decision", workspace_id, digest
+        )
+
+    def _workspace_admin_profile_index_id(self) -> str:
+        return self.store.opaque_id("workspace-admin-profile-index", "v1")
+
+    def _workspace_admin_workspace_index_id(self, workspace_id: str) -> str:
+        return self.store.opaque_id("workspace-admin-workspace-index", workspace_id)
+
+    def _workspace_admin_aux_index_id(self) -> str:
+        return self.store.opaque_id("workspace-admin-aux-index", "v1")
+
+    def _workspace_admin_index(
+        self, workspace_id: str
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        profile_id = self._workspace_admin_profile_index_id()
+        workspace_index_id = self._workspace_admin_workspace_index_id(workspace_id)
+        profile = self.store.get("workspace_admin_profile_index", profile_id) or {
+            "request_ids": [],
+        }
+        workspace_index = self.store.get(
+            "workspace_admin_workspace_index", workspace_index_id
+        ) or {
+            "workspace_id": workspace_id,
+            "request_ids": [],
+        }
+        return profile, workspace_index
+
+    def _workspace_admin_index_records(
+        self,
+        workspace_id: str,
+        request_id: str,
+        *,
+        aux: tuple[str, str, float] | None = None,
+    ) -> list[tuple[str, str, dict[str, Any]]]:
+        profile, workspace_index = self._workspace_admin_index(workspace_id)
+        profile_ids = list(profile.get("request_ids", []))
+        workspace_ids = list(workspace_index.get("request_ids", []))
+        if request_id not in profile_ids:
+            profile_ids.append(request_id)
+        if request_id not in workspace_ids:
+            workspace_ids.append(request_id)
+        if len(profile_ids) > MAX_ADMIN_REQUESTS_PER_PROFILE:
+            raise ValidationError("The administrative request profile limit is reached")
+        records = [
+            (
+                "workspace_admin_profile_index",
+                self._workspace_admin_profile_index_id(),
+                {"request_ids": profile_ids},
+            ),
+            (
+                "workspace_admin_workspace_index",
+                self._workspace_admin_workspace_index_id(workspace_id),
+                {"workspace_id": workspace_id, "request_ids": workspace_ids},
+            ),
+        ]
+        if aux is not None:
+            kind, record_id, expires_at = aux
+            aux_id = self._workspace_admin_aux_index_id()
+            aux_index = self.store.get("workspace_admin_aux_index", aux_id) or {
+                "entries": [],
+            }
+            entries = [
+                item for item in aux_index.get("entries", [])
+                if item.get("id") != record_id
+            ]
+            entries.append({
+                "kind": kind,
+                "id": record_id,
+                "workspace_id": workspace_id,
+                "expires_at": float(expires_at),
+            })
+            records.append(("workspace_admin_aux_index", aux_id, {"entries": entries}))
+        return records
+
+    def _workspace_admin_records(self, workspace_id: str) -> list[dict[str, Any]]:
+        _, workspace_index = self._workspace_admin_index(workspace_id)
+        records: list[dict[str, Any]] = []
+        for record_id in workspace_index.get("request_ids", []):
+            if not isinstance(record_id, str):
+                continue
+            record = self.store.get("workspace_admin_request", record_id)
+            if record is not None and record.get("workspace_id") == workspace_id:
+                records.append(record)
+        return records
+
     def _due_record_id(self, shard: int) -> str:
         return self.store.opaque_id("workspace-due-shard", str(shard))
 
@@ -1378,6 +1491,7 @@ class WorkspaceServiceMixin:
         replacement_display_name: str | None = None,
         replacement_device: str | None = None,
         replacement_status: str | None = None,
+        replacement_role: WorkspaceRole | str | None = None,
     ) -> list[WorkspaceManifestMemberInput]:
         inputs: list[WorkspaceManifestMemberInput] = []
         for member in manifest.members:
@@ -1390,7 +1504,11 @@ class WorkspaceServiceMixin:
                         if replacing and replacement_display_name is not None
                         else member.display_name
                     ),
-                    member.role,
+                    (
+                        replacement_role
+                        if replacing and replacement_role is not None
+                        else member.role
+                    ),
                     (
                         [replacement_device]
                         if replacing and replacement_device is not None
@@ -2555,7 +2673,7 @@ class WorkspaceServiceMixin:
             and (
                 manifest.channel_creation
                 == WorkspaceChannelCreationPolicy.ALL_MEMBERS
-                or member.role == WorkspaceRole.OWNER
+                or member.role in {WorkspaceRole.OWNER, WorkspaceRole.ADMIN}
             )
         )
 
@@ -2567,7 +2685,7 @@ class WorkspaceServiceMixin:
             member.status == "active"
             and (
                 manifest.posting == WorkspacePostingPolicy.ALL_MEMBERS
-                or member.role == WorkspaceRole.OWNER
+                or member.role in {WorkspaceRole.OWNER, WorkspaceRole.ADMIN}
             )
         )
 
@@ -4689,7 +4807,9 @@ class WorkspaceServiceMixin:
         if local_member is None or local_member.status != "active":
             raise ContactNotApproved("Local member is not active")
         if not self._posting_allowed(manifest, local_member):
-            raise ContactNotApproved("Workspace posting is restricted to the owner")
+            raise ContactNotApproved(
+                "Workspace posting is restricted to owners and administrators"
+            )
         channel = self._workspace_channel_by_digest(channel_record["head_hash"])
         if channel is None:
             raise ValidationError("Workspace channel control is unavailable")
@@ -5172,7 +5292,7 @@ class WorkspaceServiceMixin:
         else:
             if not self._posting_allowed(manifest, local_member):
                 raise ContactNotApproved(
-                    "Workspace posting is restricted to the owner"
+                    "Workspace posting is restricted to owners and administrators"
                 )
             channel = self._workspace_channel_by_digest(conversation["head_hash"])
             if channel is None:
@@ -5904,6 +6024,22 @@ class WorkspaceServiceMixin:
                             request,
                         )
                     )
+            changed_member_ids = [
+                member.member_id
+                for member in current.members
+                if (
+                    (next_member := find_member(checked, member.member_id)) is not None
+                    and (
+                        next_member.role != member.role
+                        or next_member.status != member.status
+                    )
+                )
+            ]
+            admin_request_updates = self._admin_request_state_records_after_manifest(
+                workspace["id"],
+                "",
+                changed_member_ids[0] if len(changed_member_ids) == 1 else None,
+            )
             cancelled_records: list[tuple[str, str, dict[str, Any]]] = []
             cancelled_ids: set[str] = set()
             for member_id in newly_inactive_member_ids:
@@ -5924,6 +6060,7 @@ class WorkspaceServiceMixin:
                     ),
                     self._manifest_epoch_record(checked),
                     *resolved_name_requests,
+                    *admin_request_updates,
                     *cancelled_records,
                     *self._due_records(remove=cancelled_ids),
                 ]
@@ -7111,6 +7248,8 @@ class WorkspaceServiceMixin:
                     "workspace_channel_recovery",
                 }:
                     applied = self._receive_workspace_channel_head_transition(wire)
+                elif wire.kind == "workspace_admin_request":
+                    applied = self._receive_workspace_admin_request(wire)
                 else:
                     applied = False
                 if applied:
@@ -8936,7 +9075,7 @@ class WorkspaceServiceMixin:
             manifest, local_member
         ):
             raise ContactNotApproved(
-                "Workspace channel creation is restricted to the owner"
+                "Workspace channel creation is restricted to owners and administrators"
             )
         if visibility not in {"public", "private"}:
             raise ValidationError("Workspace channel visibility is invalid")
@@ -9895,12 +10034,15 @@ class WorkspaceServiceMixin:
         channel_creation: Any,
         posting: Any,
         operation_id: Any,
+        invitation_requests: Any = None,
     ) -> dict[str, Any]:
         payload = {
             "workspace_id": workspace_id,
             "channel_creation": channel_creation,
             "posting": posting,
         }
+        if invitation_requests is not None:
+            payload["invitation_requests"] = invitation_requests
         operation_id, digest, replay = self._workspace_operation(
             "update_workspace_policies", operation_id, payload
         )
@@ -9912,14 +10054,20 @@ class WorkspaceServiceMixin:
         try:
             creation_policy = WorkspaceChannelCreationPolicy(channel_creation)
             posting_policy = WorkspacePostingPolicy(posting)
+            invitation_policy = (
+                self._workspace_current_manifest(workspace).invitation_requests
+                if invitation_requests is None
+                else WorkspaceInvitationPolicy(invitation_requests)
+            )
         except (TypeError, ValueError) as exc:
-            raise ValidationError("Workspace channel policy is invalid") from exc
+            raise ValidationError("Workspace policy is invalid") from exc
         current = self._workspace_current_manifest(workspace)
         if (
             current.channel_creation == creation_policy
             and current.posting == posting_policy
+            and current.invitation_requests == invitation_policy
         ):
-            raise ValidationError("Workspace channel policies are unchanged")
+            raise ValidationError("Workspace policies are unchanged")
         identity = self._identity
         if identity is None:
             raise ValidationError("Local identity is unavailable")
@@ -9935,7 +10083,7 @@ class WorkspaceServiceMixin:
             retention_days=current.retention_days,
             channel_creation=creation_policy,
             posting=posting_policy,
-            invitation_requests=current.invitation_requests,
+            invitation_requests=invitation_policy,
         )
         next_manifest = verify_workspace_manifest_transition(raw, current)
         deliveries = self._workspace_manifest_deliveries(
@@ -9947,6 +10095,9 @@ class WorkspaceServiceMixin:
         )
         self._apply_manifest_to_workspace(workspace, next_manifest)
         self._apply_manifest_public_identities(workspace, next_manifest)
+        admin_request_updates = self._admin_request_state_records_after_manifest(
+            workspace_id, "", None
+        )
         outcome = self._public_workspace(workspace)
         committed = self.store.commit_operation(
             operation_id,
@@ -9960,6 +10111,7 @@ class WorkspaceServiceMixin:
                     self._manifest_record(next_manifest),
                 ),
                 self._manifest_epoch_record(next_manifest),
+                *admin_request_updates,
                 *[
                     ("workspace_delivery", delivery["id"], delivery)
                     for delivery in deliveries
@@ -10026,6 +10178,9 @@ class WorkspaceServiceMixin:
         self._apply_manifest_to_workspace(workspace, next_manifest)
         self._apply_manifest_public_identities(workspace, next_manifest)
         state_id = self._workspace_retention_state_id(workspace_id)
+        admin_request_updates = self._admin_request_state_records_after_manifest(
+            workspace_id, "", None
+        )
         state = {
             "workspace_id": workspace_id,
             "policy_generation": int(workspace.get("retention_generation", 1)),
@@ -10049,6 +10204,7 @@ class WorkspaceServiceMixin:
                     self._manifest_record(next_manifest),
                 ),
                 self._manifest_epoch_record(next_manifest),
+                *admin_request_updates,
                 ("workspace_retention_state", state_id, state),
                 *[
                     ("workspace_delivery", delivery["id"], delivery)
@@ -10570,6 +10726,9 @@ class WorkspaceServiceMixin:
         )
         self._apply_manifest_to_workspace(workspace, next_manifest)
         self._apply_manifest_public_identities(workspace, next_manifest)
+        admin_request_updates = self._admin_request_state_records_after_manifest(
+            workspace_id, "", None
+        )
         outcome = self._public_workspace(workspace)
         committed = self.store.commit_operation(
             operation_id,
@@ -10583,6 +10742,7 @@ class WorkspaceServiceMixin:
                     self._manifest_record(next_manifest),
                 ),
                 self._manifest_epoch_record(next_manifest),
+                *admin_request_updates,
                 *[
                     ("workspace_delivery", delivery["id"], delivery)
                     for delivery in deliveries
@@ -10621,6 +10781,10 @@ class WorkspaceServiceMixin:
             or member.status != "active"
         ):
             raise ValidationError("Workspace member cannot be removed")
+        if self._member_manages_active_private_channel(workspace_id, member_id):
+            raise ValidationError(
+                "Transfer private-channel management before removing this member"
+            )
         raw = create_workspace_manifest(
             identity,
             workspace_id=workspace_id,
@@ -10656,6 +10820,9 @@ class WorkspaceServiceMixin:
         )
         self._apply_manifest_to_workspace(workspace, next_manifest)
         self._apply_manifest_public_identities(workspace, next_manifest)
+        admin_request_updates = self._admin_request_state_records_after_manifest(
+            workspace_id, "", member_id
+        )
         outcome = self._public_workspace(workspace)
         committed = self.store.commit_operation(
             operation_id,
@@ -10669,6 +10836,7 @@ class WorkspaceServiceMixin:
                     self._manifest_record(next_manifest),
                 ),
                 self._manifest_epoch_record(next_manifest),
+                *admin_request_updates,
                 *cancelled_records,
                 *[
                     ("workspace_delivery", delivery["id"], delivery)
@@ -10682,6 +10850,965 @@ class WorkspaceServiceMixin:
             network.cancel_outbound(cancelled_ids)
         self._workspace_changed(workspace_id, resource_kind="membership")
         return committed
+
+    def _member_manages_active_private_channel(
+        self, workspace_id: str, member_id: str
+    ) -> bool:
+        return any(
+            item.get("workspace_id") == workspace_id
+            and item.get("visibility") == "private"
+            and item.get("state") == "active"
+            and item.get("manager_member_id") == member_id
+            for item in self.store.list("workspace_channel")
+        )
+
+    def change_workspace_role(
+        self,
+        workspace_id: Any,
+        member_id: Any,
+        role: Any,
+        operation_id: Any,
+    ) -> dict[str, Any]:
+        payload = {"workspace_id": workspace_id, "member_id": member_id, "role": role}
+        operation_id, digest, replay = self._workspace_operation(
+            "change_workspace_role", operation_id, payload
+        )
+        if replay is not None:
+            return replay
+        workspace = self._require_workspace(workspace_id)
+        if (
+            workspace.get("state") != "active"
+            or workspace.get("local_role") != WorkspaceRole.OWNER.value
+        ):
+            raise ContactNotApproved("Role changes require the active owner authority")
+        try:
+            requested_role = WorkspaceRole(role)
+        except (TypeError, ValueError) as exc:
+            raise ValidationError("Workspace role is invalid") from exc
+        if requested_role not in {WorkspaceRole.ADMIN, WorkspaceRole.MEMBER}:
+            raise ValidationError("Only administrator and member roles may be assigned")
+        current = self._workspace_current_manifest(workspace)
+        member = find_member(current, member_id) if isinstance(member_id, str) else None
+        if (
+            member is None
+            or member.status != "active"
+            or member.role == WorkspaceRole.OWNER
+            or member.role == requested_role
+        ):
+            raise ValidationError("Workspace member role cannot be changed")
+        identity = self._identity
+        if identity is None:
+            raise ValidationError("Local identity is unavailable")
+        raw = create_workspace_manifest(
+            identity,
+            workspace_id=workspace_id,
+            epoch=current.epoch + 1,
+            previous_manifest_hash=current.digest,
+            name=current.name,
+            description=current.description,
+            authority_device_id=current.authority_device_id,
+            members=self._workspace_manifest_member_inputs(
+                current,
+                replacement_member_id=member_id,
+                replacement_role=requested_role,
+            ),
+            retention_days=current.retention_days,
+            channel_creation=current.channel_creation,
+            posting=current.posting,
+            invitation_requests=current.invitation_requests,
+        )
+        next_manifest = verify_workspace_manifest_transition(raw, current)
+        deliveries = self._workspace_manifest_deliveries(
+            workspace_id,
+            [next_manifest],
+            self._workspace_manifest_recipients(
+                current, excluding_member_id=workspace["local_member_id"]
+            ),
+        )
+        self._apply_manifest_to_workspace(workspace, next_manifest)
+        self._apply_manifest_public_identities(workspace, next_manifest)
+        admin_request_updates = self._admin_request_state_records_after_manifest(
+            workspace_id, "", member_id
+        )
+        outcome = self._public_workspace(workspace)
+        committed = self.store.commit_operation(
+            operation_id,
+            digest,
+            outcome,
+            [
+                ("workspace", self._workspace_record_id(workspace_id), workspace),
+                (
+                    "workspace_manifest",
+                    self._workspace_manifest_record_id(next_manifest.digest),
+                    self._manifest_record(next_manifest),
+                ),
+                self._manifest_epoch_record(next_manifest),
+                *admin_request_updates,
+                *[("workspace_delivery", item["id"], item) for item in deliveries],
+                *self._due_records(add=deliveries),
+            ],
+        )
+        self._workspace_changed(workspace_id, resource_kind="role")
+        return committed
+
+    @staticmethod
+    def _admin_request_terminal(state: Any) -> bool:
+        return state in {
+            "approved", "declined", "stale", "superseded", "expired",
+            "cancelled", "failed",
+        }
+
+    def _public_workspace_admin_request(
+        self, record: dict[str, Any], workspace: dict[str, Any]
+    ) -> dict[str, Any]:
+        members = {
+            item.get("id"): item for item in workspace.get("members", [])
+            if isinstance(item.get("id"), str)
+        }
+        requester = members.get(record.get("requester_member_id"), {})
+        target = members.get(record.get("target_member_id"), {})
+        public = {
+            "id": record["id"],
+            "workspace_id": record["workspace_id"],
+            "direction": record.get("direction", "outgoing"),
+            "request_kind": record["request_kind"],
+            "state": record["state"],
+            "requester_display_name": requester.get("display_name", "Member"),
+            "requester_role": requester.get("role"),
+            "target_member_id": record.get("target_member_id"),
+            "target_display_name": target.get("display_name"),
+            "effective_role": target.get("role"),
+            "requested_role": record.get("requested_role"),
+            "note": record.get("note", ""),
+            "created_at": record.get("created_at", 0),
+            "expires_at": record.get("expires_at", 0),
+            "updated_at": record.get("updated_at", record.get("created_at", 0)),
+            "dismissed": bool(record.get("dismissed", False)),
+            "failure": record.get("failure"),
+        }
+        delivery_id = record.get("delivery_id")
+        delivery = (
+            self.store.get("workspace_delivery", delivery_id)
+            if isinstance(delivery_id, str)
+            else None
+        )
+        if record["state"] == "pending":
+            if record.get("direction") == "incoming" or delivery is None:
+                public["delivery_state"] = "delivered_to_owner"
+            else:
+                state = delivery.get("state")
+                public["delivery_state"] = (
+                    "delivered_to_owner"
+                    if state in {
+                        DeliveryState.RECEIVED_BY_ENDPOINT.value,
+                        DeliveryState.DELIVERED.value,
+                    }
+                    else "waiting_for_route"
+                    if state in {
+                        DeliveryState.WAITING_FOR_KEYS.value,
+                        DeliveryState.QUEUED.value,
+                        DeliveryState.SENDING.value,
+                        DeliveryState.STORED_FOR_DELIVERY.value,
+                    }
+                    else "failed_retryable"
+                )
+        if (
+            record.get("state") == "approved"
+            and record.get("result_kind") == "invitation"
+            and isinstance(record.get("result_document"), str)
+        ):
+            public["invitation"] = workspace_invitation_formats(
+                record["result_document"]
+            )
+        return public
+
+    def _refresh_workspace_admin_requests(
+        self, workspace: dict[str, Any]
+    ) -> list[dict[str, Any]]:
+        now = time.time()
+        current_digest = workspace.get("manifest_hash")
+        records: list[dict[str, Any]] = []
+        changed: list[tuple[str, str, dict[str, Any]]] = []
+        for original in self._workspace_admin_records(workspace["id"]):
+            record_id = original["id"]
+            record = dict(original)
+            if record.get("state") == "pending":
+                if float(record.get("expires_at", 0)) < now:
+                    record["state"] = "expired"
+                elif record.get("base_manifest_digest") != current_digest:
+                    record["state"] = "stale"
+                if record != original:
+                    record["updated_at"] = now
+                    changed.append(("workspace_admin_request", record_id, record))
+            records.append(record)
+        if changed:
+            self.store.put_many(changed)
+        return records
+
+    def submit_workspace_admin_request(
+        self,
+        workspace_id: Any,
+        request_kind: Any,
+        operation_id: Any,
+        target_member_id: Any = None,
+        requested_role: Any = None,
+        note: Any = "",
+    ) -> dict[str, Any]:
+        payload = {
+            "workspace_id": workspace_id,
+            "request_kind": request_kind,
+            "target_member_id": target_member_id,
+            "requested_role": requested_role,
+            "note": note,
+        }
+        operation_id, digest, replay = self._workspace_operation(
+            "submit_workspace_admin_request", operation_id, payload
+        )
+        if replay is not None:
+            return replay
+        workspace = self._require_workspace(workspace_id)
+        if workspace.get("state") != "active":
+            raise ContactNotApproved("Workspace is not active")
+        profile_index, _ = self._workspace_admin_index(workspace_id)
+        if len(profile_index.get("request_ids", [])) >= MAX_ADMIN_REQUESTS_PER_PROFILE:
+            raise ValidationError("The administrative request profile limit is reached")
+        existing = self._refresh_workspace_admin_requests(workspace)
+        if sum(item.get("state") == "pending" for item in existing) >= MAX_PENDING_ADMIN_REQUESTS_PER_WORKSPACE:
+            raise ValidationError("The workspace pending-request limit is reached")
+        if sum(
+            item.get("state") == "pending"
+            and item.get("requester_member_id") == workspace.get("local_member_id")
+            for item in existing
+        ) >= MAX_ADMIN_REQUESTS_PER_SOURCE:
+            raise ValidationError("The requester pending-request limit is reached")
+        if not isinstance(request_kind, str) or not isinstance(note, str):
+            raise ValidationError("Workspace administrative request is invalid")
+        identity = self._identity
+        if identity is None:
+            raise ValidationError("Local identity is unavailable")
+        manifest = self._workspace_current_manifest(workspace)
+        raw = create_workspace_admin_request(
+            identity,
+            manifest=manifest,
+            request_id=_new_id(),
+            request_kind=request_kind,
+            requester_member_id=workspace["local_member_id"],
+            requester_device_id=workspace["local_device_id"],
+            target_member_id=target_member_id,
+            requested_role=requested_role,
+            note=note,
+        )
+        request = verify_workspace_admin_request(raw, manifest=manifest)
+        record_id = self._workspace_admin_request_id(workspace_id, request.request_id)
+        authority = find_device(manifest, manifest.authority_device_id)
+        if authority is None:
+            raise ValidationError("Workspace authority is unavailable")
+        deliveries = [] if workspace.get("local_role") == WorkspaceRole.OWNER.value else [
+            self._workspace_delivery_record(
+                workspace_id=workspace_id,
+                recipient_member_id=authority[0].member_id,
+                recipient_device=authority[1],
+                kind="workspace_admin_request",
+                document=request.serialized,
+                priority=0,
+            )
+        ]
+        record = {
+            "id": record_id,
+            "workspace_id": workspace_id,
+            "protocol_request_id": request.request_id,
+            "request_digest": request.digest,
+            "request_kind": request.request_kind,
+            "base_manifest_epoch": request.base_manifest_epoch,
+            "base_manifest_digest": request.base_manifest_digest,
+            "requester_member_id": request.requester_member_id,
+            "requester_device_id": request.requester_device_id,
+            "target_member_id": request.target_member_id,
+            "requested_role": request.requested_role.value if request.requested_role else None,
+            "note": request.note,
+            "replay_key": request.replay_key,
+            "document": request.serialized,
+            "direction": "incoming" if workspace.get("local_role") == WorkspaceRole.OWNER.value else "outgoing",
+            "state": "pending",
+            "delivery_id": deliveries[0]["id"] if deliveries else None,
+            "created_at": float(request.created_at),
+            "expires_at": float(request.expires_at),
+            "updated_at": time.time(),
+        }
+        replay_record = {
+            "workspace_id": workspace_id,
+            "request_digest": request.digest,
+            "request_id": request.request_id,
+            "created_at": time.time(),
+            "expires_at": float(request.expires_at + ADMIN_REPLAY_RETENTION_SECONDS),
+        }
+        replay_id = self._workspace_admin_replay_id(
+            workspace_id, request.replay_key
+        )
+        outcome = self._public_workspace_admin_request(record, workspace)
+        committed = self.store.commit_operation(
+            operation_id,
+            digest,
+            outcome,
+            [
+                ("workspace_admin_request", record_id, record),
+                (
+                    "workspace_admin_replay",
+                    replay_id,
+                    replay_record,
+                ),
+                *self._workspace_admin_index_records(
+                    workspace_id,
+                    record_id,
+                    aux=(
+                        "workspace_admin_replay",
+                        replay_id,
+                        replay_record["expires_at"],
+                    ),
+                ),
+                *[("workspace_delivery", item["id"], item) for item in deliveries],
+                *self._due_records(add=deliveries),
+            ],
+        )
+        self._workspace_changed(workspace_id, resource_kind="admin_request")
+        return committed
+
+    def list_workspace_admin_requests(
+        self,
+        workspace_id: Any,
+        direction: Any,
+        cursor: Any = None,
+        limit: Any = DEFAULT_ADMIN_REQUEST_PAGE,
+    ) -> dict[str, Any]:
+        workspace = self._require_workspace(workspace_id)
+        if direction not in {"incoming", "outgoing", "history"}:
+            raise ValidationError("Administrative request list is invalid")
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= MAX_ADMIN_REQUEST_PAGE:
+            raise ValidationError("Administrative request page limit is invalid")
+        if direction == "incoming" and workspace.get("local_role") != WorkspaceRole.OWNER.value:
+            raise ContactNotApproved("Only the owner may review incoming requests")
+        records = self._refresh_workspace_admin_requests(workspace)
+        local_member_id = workspace.get("local_member_id")
+        records = [
+            item for item in records
+            if (
+                direction == "incoming"
+                and item.get("direction") == "incoming"
+                and item.get("state") == "pending"
+            )
+            or (
+                direction == "outgoing"
+                and item.get("requester_member_id") == local_member_id
+                and not item.get("dismissed")
+            )
+            or (
+                direction == "history"
+                and self._admin_request_terminal(item.get("state"))
+                and (
+                    workspace.get("local_role") == WorkspaceRole.OWNER.value
+                    or item.get("requester_member_id") == local_member_id
+                )
+            )
+        ]
+        records.sort(
+            key=lambda item: (float(item.get("created_at", 0)), str(item.get("id", ""))),
+            reverse=True,
+        )
+        offset = 0
+        if cursor is not None:
+            opened = self.store.open_cursor(str(cursor))
+            if opened.get("kind") != "workspace_admin_requests" or opened.get("workspace_id") != workspace_id or opened.get("direction") != direction:
+                raise StaleCursor("Administrative request cursor is stale")
+            offset = int(opened.get("offset", 0))
+        page = records[offset : offset + limit]
+        next_cursor = None
+        if offset + len(page) < len(records):
+            next_cursor = self.store.seal_cursor({
+                "kind": "workspace_admin_requests",
+                "workspace_id": workspace_id,
+                "direction": direction,
+                "offset": offset + len(page),
+            })
+        return {
+            "requests": [self._public_workspace_admin_request(item, workspace) for item in page],
+            "next_cursor": next_cursor,
+            "pending_count": sum(item.get("state") == "pending" for item in records),
+        }
+
+    def get_workspace_admin_request(
+        self, workspace_id: Any, request_id: Any
+    ) -> dict[str, Any]:
+        workspace = self._require_workspace(workspace_id)
+        if not isinstance(request_id, str):
+            raise ValidationError("Administrative request ID is invalid")
+        self._refresh_workspace_admin_requests(workspace)
+        record = self.store.get("workspace_admin_request", request_id)
+        if record is not None and record.get("workspace_id") != workspace_id:
+            record = None
+        if record is None:
+            raise ValidationError("Administrative request does not exist")
+        if (
+            workspace.get("local_role") != WorkspaceRole.OWNER.value
+            and record.get("requester_member_id") != workspace.get("local_member_id")
+        ):
+            raise ContactNotApproved("Administrative request is not visible")
+        return self._public_workspace_admin_request(record, workspace)
+
+    def _admin_request_state_records_after_manifest(
+        self,
+        workspace_id: str,
+        approved_record_id: str,
+        target_member_id: str | None,
+    ) -> list[tuple[str, str, dict[str, Any]]]:
+        now = time.time()
+        changed: list[tuple[str, str, dict[str, Any]]] = []
+        for original in self._workspace_admin_records(workspace_id):
+            record_id = original["id"]
+            if (
+                record_id == approved_record_id
+                or original.get("state") != "pending"
+            ):
+                continue
+            record = dict(original)
+            record["state"] = (
+                "superseded"
+                if target_member_id is not None
+                and record.get("target_member_id") == target_member_id
+                else "stale"
+            )
+            record["updated_at"] = now
+            changed.append(("workspace_admin_request", record_id, record))
+        return changed
+
+    def decide_workspace_admin_request(
+        self,
+        workspace_id: Any,
+        request_id: Any,
+        approve: Any,
+        operation_id: Any,
+    ) -> dict[str, Any]:
+        payload = {
+            "workspace_id": workspace_id,
+            "request_id": request_id,
+            "approve": approve,
+        }
+        operation_id, digest, replay = self._workspace_operation(
+            "decide_workspace_admin_request", operation_id, payload
+        )
+        if replay is not None:
+            return replay
+        workspace = self._require_workspace(workspace_id)
+        if workspace.get("state") != "active" or workspace.get("local_role") != WorkspaceRole.OWNER.value:
+            raise ContactNotApproved("Administrative decisions require the active owner authority")
+        if not isinstance(request_id, str) or not isinstance(approve, bool):
+            raise ValidationError("Administrative decision is invalid")
+        record = self.store.get("workspace_admin_request", request_id)
+        if record is None or record.get("workspace_id") != workspace_id or record.get("state") != "pending":
+            raise ValidationError("Administrative request is no longer pending")
+        base = self._workspace_manifest_by_digest(record.get("base_manifest_digest", ""))
+        if base is None:
+            raise ValidationError("Administrative request base manifest is unavailable")
+        request = verify_workspace_admin_request(
+            record["document"], manifest=base, allow_expired=True
+        )
+        current = self._workspace_current_manifest(workspace)
+        if request.expires_at < int(time.time()):
+            record["state"] = "expired"
+            record["updated_at"] = time.time()
+            return self.store.commit_operation(
+                operation_id, digest,
+                self._public_workspace_admin_request(record, workspace),
+                [("workspace_admin_request", request_id, record)],
+            )
+        if current.digest != request.base_manifest_digest:
+            record["state"] = "stale"
+            record["updated_at"] = time.time()
+            return self.store.commit_operation(
+                operation_id, digest,
+                self._public_workspace_admin_request(record, workspace),
+                [("workspace_admin_request", request_id, record)],
+            )
+        # Revalidate the requester's current role and the exact target state.
+        verify_workspace_admin_request(request.serialized, manifest=current)
+        identity = self._identity
+        if identity is None:
+            raise ValidationError("Local identity is unavailable")
+        requester = find_member(current, request.requester_member_id)
+        if requester is None:
+            raise ValidationError("Administrative requester is no longer active")
+        result_kind = "no_change"
+        result_document: str | None = None
+        invitation_record: tuple[str, str, dict[str, Any]] | None = None
+        next_manifest: VerifiedWorkspaceManifest | None = None
+        cancelled_records: list[tuple[str, str, dict[str, Any]]] = []
+        cancelled_ids: set[str] = set()
+        if approve and request.request_kind == "invitation":
+            if len(active_members(current)) >= MAX_ACTIVE_MEMBERS:
+                raise ValidationError("A workspace supports at most eight people")
+            manifest_record = self.store.get(
+                "workspace_manifest", self._workspace_manifest_record_id(current.digest)
+            )
+            if manifest_record is None:
+                raise ValidationError("Workspace manifest is unavailable")
+            result_document = create_workspace_invitation(
+                identity,
+                genesis=workspace["genesis"],
+                manifest=manifest_record["serialized"],
+            )
+            invitation = verify_workspace_invitation(result_document)
+            invitation_id = self._workspace_invitation_record_id(invitation.nonce)
+            invitation_record = (
+                "workspace_invitation",
+                invitation_id,
+                {
+                    "id": invitation_id,
+                    "workspace_id": workspace_id,
+                    "nonce": invitation.nonce.hex(),
+                    "offered_manifest_digest": invitation.offered_manifest_digest,
+                    "state": "active",
+                    "document": invitation.serialized,
+                    "created_at": float(invitation.created_at),
+                    "expires_at": float(invitation.expires_at),
+                    "admin_request_id": request_id,
+                },
+            )
+            result_kind = "invitation"
+        elif approve:
+            target = find_member(current, request.target_member_id or "")
+            if target is None or target.status != "active" or target.role == WorkspaceRole.OWNER:
+                raise ValidationError("Administrative request target is stale")
+            replacement_role = None
+            replacement_status = None
+            checkpoints: Iterable[str] = current.removal_checkpoint_digests
+            if request.request_kind == "role_change":
+                if request.requested_role is None or target.role == request.requested_role:
+                    raise ValidationError("Administrative role request is stale")
+                replacement_role = request.requested_role
+            else:
+                if self._member_manages_active_private_channel(workspace_id, target.member_id):
+                    raise ValidationError("Transfer private-channel management before removing this member")
+                replacement_status = "removed"
+                checkpoints = self._workspace_removal_checkpoint_digests(
+                    workspace_id, target
+                )
+            result_document = create_workspace_manifest(
+                identity,
+                workspace_id=workspace_id,
+                epoch=current.epoch + 1,
+                previous_manifest_hash=current.digest,
+                name=current.name,
+                description=current.description,
+                authority_device_id=current.authority_device_id,
+                members=self._workspace_manifest_member_inputs(
+                    current,
+                    replacement_member_id=target.member_id,
+                    replacement_role=replacement_role,
+                    replacement_status=replacement_status,
+                ),
+                retention_days=current.retention_days,
+                channel_creation=current.channel_creation,
+                posting=current.posting,
+                invitation_requests=current.invitation_requests,
+                removal_checkpoint_digests=checkpoints,
+            )
+            next_manifest = verify_workspace_manifest_transition(result_document, current)
+            result_kind = "manifest"
+            if replacement_status == "removed":
+                cancelled_records, cancelled_ids = self._cancel_workspace_member_deliveries(
+                    workspace_id, target.member_id
+                )
+        decision_raw = create_workspace_admin_decision(
+            identity,
+            authority_manifest=current,
+            request=request,
+            outcome="approved" if approve else "declined",
+            result_kind=result_kind,
+            result_document=result_document,
+        )
+        decision = verify_workspace_admin_decision(
+            decision_raw, authority_manifest=current, request=request
+        )
+        requester_device = find_device(current, request.requester_device_id)
+        if requester_device is None:
+            raise ValidationError("Administrative requester device is unavailable")
+        decision_deliveries = [] if request.requester_member_id == workspace.get("local_member_id") else [
+            self._workspace_delivery_record(
+                workspace_id=workspace_id,
+                recipient_member_id=request.requester_member_id,
+                recipient_device=requester_device[1],
+                kind="workspace_admin_request",
+                document=decision.serialized,
+                priority=0,
+            )
+        ]
+        manifest_deliveries: list[dict[str, Any]] = []
+        extra_request_records: list[tuple[str, str, dict[str, Any]]] = []
+        workspace_records: list[tuple[str, str, dict[str, Any]]] = []
+        if next_manifest is not None:
+            manifest_deliveries = self._workspace_manifest_deliveries(
+                workspace_id,
+                [next_manifest],
+                self._workspace_manifest_recipients(
+                    current,
+                    excluding_member_id=workspace.get("local_member_id"),
+                    include_member_ids={request.target_member_id or ""},
+                ),
+            )
+            self._apply_manifest_to_workspace(workspace, next_manifest)
+            self._apply_manifest_public_identities(workspace, next_manifest)
+            workspace_records = [
+                ("workspace", self._workspace_record_id(workspace_id), workspace),
+                (
+                    "workspace_manifest",
+                    self._workspace_manifest_record_id(next_manifest.digest),
+                    self._manifest_record(next_manifest),
+                ),
+                self._manifest_epoch_record(next_manifest),
+            ]
+            extra_request_records = self._admin_request_state_records_after_manifest(
+                workspace_id, request_id, request.target_member_id
+            )
+        record["state"] = "approved" if approve else "declined"
+        record["decision_digest"] = decision.digest
+        record["result_kind"] = decision.result_kind
+        record["result_digest"] = decision.result_digest
+        record["result_document"] = decision.result_document
+        record["updated_at"] = time.time()
+        all_deliveries = [*decision_deliveries, *manifest_deliveries]
+        outcome = self._public_workspace_admin_request(record, workspace)
+        committed = self.store.commit_operation(
+            operation_id,
+            digest,
+            outcome,
+            [
+                *workspace_records,
+                ("workspace_admin_request", request_id, record),
+                (
+                    "workspace_admin_decision",
+                    self._workspace_admin_decision_id(workspace_id, decision.digest),
+                    {
+                        "workspace_id": workspace_id,
+                        "request_id": request_id,
+                        "request_digest": request.digest,
+                        "decision_digest": decision.digest,
+                        "document": decision.serialized,
+                        "outcome": decision.outcome,
+                        "result_kind": decision.result_kind,
+                        "result_digest": decision.result_digest,
+                        "created_at": float(decision.created_at),
+                    },
+                ),
+                *([invitation_record] if invitation_record is not None else []),
+                *extra_request_records,
+                *cancelled_records,
+                *[("workspace_delivery", item["id"], item) for item in all_deliveries],
+                *self._due_records(add=all_deliveries, remove=cancelled_ids),
+            ],
+        )
+        network = getattr(self, "network", None)
+        if network is not None and cancelled_ids:
+            network.cancel_outbound(cancelled_ids)
+        self._workspace_changed(workspace_id, resource_kind="admin_request")
+        return committed
+
+    def cancel_workspace_admin_request(
+        self, workspace_id: Any, request_id: Any, operation_id: Any
+    ) -> dict[str, Any]:
+        payload = {"workspace_id": workspace_id, "request_id": request_id}
+        operation_id, digest, replay = self._workspace_operation(
+            "cancel_workspace_admin_request", operation_id, payload
+        )
+        if replay is not None:
+            return replay
+        workspace = self._require_workspace(workspace_id)
+        record = self.store.get("workspace_admin_request", request_id) if isinstance(request_id, str) else None
+        if (
+            record is None
+            or record.get("workspace_id") != workspace_id
+            or record.get("requester_member_id") != workspace.get("local_member_id")
+            or record.get("state") != "pending"
+        ):
+            raise ValidationError("Administrative request cannot be cancelled")
+        delivery_id = record.get("delivery_id")
+        delivery = self.store.get("workspace_delivery", delivery_id) if isinstance(delivery_id, str) else None
+        if delivery is None or delivery.get("native_message_id") or int(delivery.get("attempt_count", 0)) > 0:
+            raise ValidationError("A handed-off administrative request cannot be cancelled")
+        delivery["state"] = DeliveryState.CANCELLED.value
+        record["state"] = "cancelled"
+        record["updated_at"] = time.time()
+        outcome = self._public_workspace_admin_request(record, workspace)
+        committed = self.store.commit_operation(
+            operation_id,
+            digest,
+            outcome,
+            [
+                ("workspace_admin_request", request_id, record),
+                ("workspace_delivery", delivery_id, delivery),
+                *self._due_records(remove=[delivery_id]),
+            ],
+        )
+        self._workspace_changed(workspace_id, resource_kind="admin_request")
+        return committed
+
+    def dismiss_workspace_admin_request(
+        self, workspace_id: Any, request_id: Any, operation_id: Any
+    ) -> dict[str, Any]:
+        payload = {"workspace_id": workspace_id, "request_id": request_id}
+        operation_id, digest, replay = self._workspace_operation(
+            "dismiss_workspace_admin_request", operation_id, payload
+        )
+        if replay is not None:
+            return replay
+        workspace = self._require_workspace(workspace_id)
+        record = self.store.get("workspace_admin_request", request_id) if isinstance(request_id, str) else None
+        if (
+            record is None
+            or record.get("workspace_id") != workspace_id
+            or not self._admin_request_terminal(record.get("state"))
+            or (
+                workspace.get("local_role") != WorkspaceRole.OWNER.value
+                and record.get("requester_member_id") != workspace.get("local_member_id")
+            )
+        ):
+            raise ValidationError("Administrative request cannot be dismissed")
+        record["dismissed"] = True
+        record["updated_at"] = time.time()
+        outcome = self._public_workspace_admin_request(record, workspace)
+        return self.store.commit_operation(
+            operation_id,
+            digest,
+            outcome,
+            [("workspace_admin_request", request_id, record)],
+        )
+
+    def _receive_workspace_admin_request(self, wire: WorkspaceWirePayload) -> bool:
+        workspace = self.store.get("workspace", self._workspace_record_id(wire.workspace_id))
+        if workspace is None:
+            return False
+        try:
+            value = json.loads(wire.document)
+            if not isinstance(value, dict):
+                return False
+            phase = value.get("phase")
+            if phase == "request":
+                if workspace.get("local_role") != WorkspaceRole.OWNER.value or workspace.get("state") != "active":
+                    return False
+                base_digest = value.get("base_manifest_digest")
+                if not isinstance(base_digest, str):
+                    return False
+                base = self._workspace_manifest_by_digest(base_digest)
+                if base is None:
+                    self._store_pending_workspace_control(wire, "missing_manifest")
+                    return False
+                request = verify_workspace_admin_request(
+                    wire.document, manifest=base, allow_expired=True
+                )
+                record_id = self._workspace_admin_request_id(
+                    wire.workspace_id, request.request_id
+                )
+                existing = self.store.get("workspace_admin_request", record_id)
+                if existing is not None:
+                    if existing.get("request_digest") != request.digest:
+                        workspace["security_error"] = "admin_request_conflict"
+                        self.store.put("workspace", self._workspace_record_id(wire.workspace_id), workspace)
+                    return existing.get("request_digest") == request.digest
+                replay_id = self._workspace_admin_replay_id(
+                    wire.workspace_id, request.replay_key
+                )
+                replay = self.store.get("workspace_admin_replay", replay_id)
+                if replay is not None:
+                    if replay.get("request_digest") != request.digest:
+                        workspace["security_error"] = "admin_request_replay_conflict"
+                        self.store.put("workspace", self._workspace_record_id(wire.workspace_id), workspace)
+                    return replay.get("request_digest") == request.digest
+                profile_index, _ = self._workspace_admin_index(wire.workspace_id)
+                all_records = self._workspace_admin_records(wire.workspace_id)
+                pending = [
+                    item for item in all_records
+                    if item.get("workspace_id") == wire.workspace_id
+                    and item.get("state") == "pending"
+                ]
+                if (
+                    len(profile_index.get("request_ids", [])) >= MAX_ADMIN_REQUESTS_PER_PROFILE
+                    or len(pending) >= MAX_PENDING_ADMIN_REQUESTS_PER_WORKSPACE
+                    or sum(item.get("requester_member_id") == request.requester_member_id for item in pending) >= MAX_ADMIN_REQUESTS_PER_SOURCE
+                ):
+                    return False
+                current = self._workspace_current_manifest(workspace)
+                state = (
+                    "expired" if request.expires_at < int(time.time())
+                    else "stale" if current.digest != request.base_manifest_digest
+                    else "pending"
+                )
+                record = {
+                    "id": record_id,
+                    "workspace_id": wire.workspace_id,
+                    "protocol_request_id": request.request_id,
+                    "request_digest": request.digest,
+                    "request_kind": request.request_kind,
+                    "base_manifest_epoch": request.base_manifest_epoch,
+                    "base_manifest_digest": request.base_manifest_digest,
+                    "requester_member_id": request.requester_member_id,
+                    "requester_device_id": request.requester_device_id,
+                    "target_member_id": request.target_member_id,
+                    "requested_role": request.requested_role.value if request.requested_role else None,
+                    "note": request.note,
+                    "replay_key": request.replay_key,
+                    "document": request.serialized,
+                    "direction": "incoming",
+                    "state": state,
+                    "created_at": float(request.created_at),
+                    "expires_at": float(request.expires_at),
+                    "updated_at": time.time(),
+                }
+                replay_expires_at = float(
+                    request.expires_at + ADMIN_REPLAY_RETENTION_SECONDS
+                )
+                self.store.put_many([
+                    ("workspace_admin_request", record_id, record),
+                    (
+                        "workspace_admin_replay",
+                        replay_id,
+                        {
+                            "workspace_id": wire.workspace_id,
+                            "request_id": request.request_id,
+                            "request_digest": request.digest,
+                            "created_at": time.time(),
+                            "expires_at": replay_expires_at,
+                        },
+                    ),
+                    *self._workspace_admin_index_records(
+                        wire.workspace_id,
+                        record_id,
+                        aux=("workspace_admin_replay", replay_id, replay_expires_at),
+                    ),
+                ])
+                self._workspace_changed(wire.workspace_id, resource_kind="admin_request")
+                return True
+            if phase != "decision":
+                return False
+            protocol_request_id = value.get("request_id")
+            if not isinstance(protocol_request_id, str):
+                return False
+            record_id = self._workspace_admin_request_id(
+                wire.workspace_id, protocol_request_id
+            )
+            record = self.store.get("workspace_admin_request", record_id)
+            if record is None:
+                aux_id = self._workspace_admin_aux_index_id()
+                aux_index = self.store.get("workspace_admin_aux_index", aux_id) or {
+                    "entries": [],
+                }
+                inert_count = sum(
+                    item.get("kind") == "workspace_admin_inert_decision"
+                    for item in aux_index.get("entries", [])
+                )
+                if inert_count < MAX_INERT_ADMIN_DECISIONS:
+                    inert_id = self.store.opaque_id(
+                        "workspace-admin-inert-decision",
+                        wire.workspace_id,
+                        workspace_document_digest(wire.document),
+                    )
+                    entries = [
+                        item for item in aux_index.get("entries", [])
+                        if item.get("id") != inert_id
+                    ]
+                    entries.append({
+                        "kind": "workspace_admin_inert_decision",
+                        "id": inert_id,
+                        "workspace_id": wire.workspace_id,
+                        "expires_at": float(wire.expires_at),
+                    })
+                    self.store.put_many([
+                        ("workspace_admin_inert_decision", inert_id, {
+                            "workspace_id": wire.workspace_id,
+                            "protocol_request_id": protocol_request_id,
+                            "document": wire.document,
+                            "expires_at": float(wire.expires_at),
+                            "created_at": time.time(),
+                        }),
+                        ("workspace_admin_aux_index", aux_id, {"entries": entries}),
+                    ])
+                return False
+            base = self._workspace_manifest_by_digest(record.get("base_manifest_digest", ""))
+            if base is None:
+                self._store_pending_workspace_control(wire, "missing_manifest")
+                return False
+            request = verify_workspace_admin_request(
+                record["document"], manifest=base, allow_expired=True
+            )
+            decision = verify_workspace_admin_decision(
+                wire.document, authority_manifest=base, request=request
+            )
+            if record.get("decision_digest"):
+                if record["decision_digest"] != decision.digest:
+                    record["state"] = "failed"
+                    record["failure"] = "conflicting_authority_results"
+                    workspace["security_error"] = "admin_decision_conflict"
+                    self.store.put_many([
+                        ("workspace", self._workspace_record_id(wire.workspace_id), workspace),
+                        ("workspace_admin_request", record_id, record),
+                    ])
+                    return False
+                return True
+            result_records: list[tuple[str, str, dict[str, Any]]] = []
+            if decision.outcome == "approved" and decision.result_kind == "invitation":
+                invitation = verify_workspace_invitation(decision.result_document or "")
+                if invitation.workspace_id != wire.workspace_id or invitation.offered_manifest_digest != request.base_manifest_digest:
+                    raise ValidationError("Administrative invitation result is not bound to the request")
+                invitation_id = self._workspace_invitation_record_id(invitation.nonce)
+                result_records.append(("workspace_invitation", invitation_id, {
+                    "id": invitation_id,
+                    "workspace_id": wire.workspace_id,
+                    "nonce": invitation.nonce.hex(),
+                    "offered_manifest_digest": invitation.offered_manifest_digest,
+                    "state": "active",
+                    "document": invitation.serialized,
+                    "created_at": float(invitation.created_at),
+                    "expires_at": float(invitation.expires_at),
+                    "admin_request_id": record_id,
+                }))
+            elif decision.outcome == "approved" and decision.result_kind == "manifest":
+                result_manifest = verify_workspace_manifest_transition(
+                    decision.result_document or "", base
+                )
+                result_wire = WorkspaceWirePayload(
+                    kind="workspace_manifest_root",
+                    logical_id=wire.logical_id,
+                    workspace_id=wire.workspace_id,
+                    expires_at=wire.expires_at,
+                    document=result_manifest.serialized,
+                )
+                self._receive_workspace_manifest(result_wire)
+            record["state"] = "approved" if decision.outcome == "approved" else "declined"
+            record["decision_digest"] = decision.digest
+            record["result_kind"] = decision.result_kind
+            record["result_digest"] = decision.result_digest
+            record["result_document"] = decision.result_document
+            record["updated_at"] = time.time()
+            self.store.put_many([
+                ("workspace_admin_request", record_id, record),
+                (
+                    "workspace_admin_decision",
+                    self._workspace_admin_decision_id(wire.workspace_id, decision.digest),
+                    {
+                        "workspace_id": wire.workspace_id,
+                        "request_id": record_id,
+                        "request_digest": request.digest,
+                        "decision_digest": decision.digest,
+                        "document": decision.serialized,
+                        "outcome": decision.outcome,
+                        "result_kind": decision.result_kind,
+                        "result_digest": decision.result_digest,
+                        "created_at": float(decision.created_at),
+                    },
+                ),
+                *result_records,
+            ])
+            self._workspace_changed(wire.workspace_id, resource_kind="admin_request")
+            return True
+        except (MeshChatError, json.JSONDecodeError, TypeError, ValueError):
+            return False
 
     def request_workspace_display_name(
         self, workspace_id: Any, display_name: Any, operation_id: Any
@@ -11310,6 +12437,59 @@ class WorkspaceServiceMixin:
         }
         deletions: list[tuple[str, str]] = []
         delivery_ids: list[str] = []
+        admin_index_records: list[tuple[str, str, dict[str, Any]]] = []
+        admin_workspace_index_id = self._workspace_admin_workspace_index_id(
+            workspace_id
+        )
+        _, admin_workspace_index = self._workspace_admin_index(workspace_id)
+        removed_admin_ids = {
+            item for item in admin_workspace_index.get("request_ids", [])
+            if isinstance(item, str)
+        }
+        for request_id in removed_admin_ids:
+            request = self.store.get("workspace_admin_request", request_id)
+            if request is None:
+                continue
+            deletions.append(("workspace_admin_request", request_id))
+            decision_digest = request.get("decision_digest")
+            if isinstance(decision_digest, str):
+                deletions.append((
+                    "workspace_admin_decision",
+                    self._workspace_admin_decision_id(workspace_id, decision_digest),
+                ))
+        deletions.append((
+            "workspace_admin_workspace_index", admin_workspace_index_id
+        ))
+        admin_profile_index_id = self._workspace_admin_profile_index_id()
+        admin_profile_index = self.store.get(
+            "workspace_admin_profile_index", admin_profile_index_id
+        ) or {"request_ids": []}
+        admin_index_records.append((
+            "workspace_admin_profile_index",
+            admin_profile_index_id,
+            {
+                "request_ids": [
+                    item for item in admin_profile_index.get("request_ids", [])
+                    if item not in removed_admin_ids
+                ]
+            },
+        ))
+        admin_aux_index_id = self._workspace_admin_aux_index_id()
+        admin_aux_index = self.store.get(
+            "workspace_admin_aux_index", admin_aux_index_id
+        ) or {"entries": []}
+        retained_admin_aux = []
+        for entry in admin_aux_index.get("entries", []):
+            if entry.get("workspace_id") == workspace_id:
+                if isinstance(entry.get("kind"), str) and isinstance(entry.get("id"), str):
+                    deletions.append((entry["kind"], entry["id"]))
+            else:
+                retained_admin_aux.append(entry)
+        admin_index_records.append((
+            "workspace_admin_aux_index",
+            admin_aux_index_id,
+            {"entries": retained_admin_aux},
+        ))
         for kind in scoped_kinds:
             for record_id, value in self.store.items(kind):
                 if value.get("workspace_id") == workspace_id or (
@@ -11361,7 +12541,12 @@ class WorkspaceServiceMixin:
             operation_id,
             digest,
             outcome,
-            [*due_records, *operation_redactions, *scheduler_records],
+            [
+                *due_records,
+                *operation_redactions,
+                *scheduler_records,
+                *admin_index_records,
+            ],
             deletions,
             redact_command_cache=True,
         )
@@ -11527,6 +12712,7 @@ class WorkspaceServiceMixin:
     def _expire_workspace_invitations(self) -> None:
         now = time.time()
         records: list[tuple[str, str, dict[str, Any]]] = []
+        deletions: list[tuple[str, str]] = []
         changed_workspaces: set[str] = set()
         for record_id, stored in self.store.items("workspace_invitation"):
             if (
@@ -11540,9 +12726,88 @@ class WorkspaceServiceMixin:
             records.append(("workspace_invitation", record_id, invitation))
             if isinstance(invitation.get("workspace_id"), str):
                 changed_workspaces.add(invitation["workspace_id"])
-        if not records:
+        profile_index_id = self._workspace_admin_profile_index_id()
+        profile_index = self.store.get(
+            "workspace_admin_profile_index", profile_index_id
+        ) or {"request_ids": []}
+        retained_request_ids: list[str] = []
+        removed_by_workspace: dict[str, set[str]] = {}
+        for record_id in profile_index.get("request_ids", []):
+            if not isinstance(record_id, str):
+                continue
+            stored = self.store.get("workspace_admin_request", record_id)
+            if stored is None:
+                continue
+            workspace_id = stored.get("workspace_id")
+            if (
+                self._admin_request_terminal(stored.get("state"))
+                and float(stored.get("updated_at", stored.get("created_at", now)))
+                + ADMIN_REPLAY_RETENTION_SECONDS
+                <= now
+            ):
+                deletions.append(("workspace_admin_request", record_id))
+                decision_digest = stored.get("decision_digest")
+                if isinstance(workspace_id, str) and isinstance(decision_digest, str):
+                    deletions.append((
+                        "workspace_admin_decision",
+                        self._workspace_admin_decision_id(
+                            workspace_id, decision_digest
+                        ),
+                    ))
+                if isinstance(workspace_id, str):
+                    removed_by_workspace.setdefault(workspace_id, set()).add(record_id)
+                continue
+            retained_request_ids.append(record_id)
+            if stored.get("state") != "pending" or float(stored.get("expires_at", 0)) > now:
+                continue
+            request = dict(stored)
+            request["state"] = "expired"
+            request["updated_at"] = now
+            records.append(("workspace_admin_request", record_id, request))
+            if isinstance(workspace_id, str):
+                changed_workspaces.add(workspace_id)
+        if retained_request_ids != profile_index.get("request_ids", []):
+            records.append((
+                "workspace_admin_profile_index",
+                profile_index_id,
+                {"request_ids": retained_request_ids},
+            ))
+        for workspace_id, removed_ids in removed_by_workspace.items():
+            index_id = self._workspace_admin_workspace_index_id(workspace_id)
+            workspace_index = self.store.get(
+                "workspace_admin_workspace_index", index_id
+            ) or {"workspace_id": workspace_id, "request_ids": []}
+            records.append((
+                "workspace_admin_workspace_index",
+                index_id,
+                {
+                    "workspace_id": workspace_id,
+                    "request_ids": [
+                        item for item in workspace_index.get("request_ids", [])
+                        if item not in removed_ids
+                    ],
+                },
+            ))
+        aux_index_id = self._workspace_admin_aux_index_id()
+        aux_index = self.store.get("workspace_admin_aux_index", aux_index_id) or {
+            "entries": [],
+        }
+        retained_aux = []
+        for entry in aux_index.get("entries", []):
+            if float(entry.get("expires_at", now + 1)) <= now:
+                if isinstance(entry.get("kind"), str) and isinstance(entry.get("id"), str):
+                    deletions.append((entry["kind"], entry["id"]))
+            else:
+                retained_aux.append(entry)
+        if retained_aux != aux_index.get("entries", []):
+            records.append((
+                "workspace_admin_aux_index",
+                aux_index_id,
+                {"entries": retained_aux},
+            ))
+        if not records and not deletions:
             return
-        self.store.put_many(records)
+        self.store.put_and_delete(records, deletions)
         for workspace_id in changed_workspaces:
             self._workspace_changed(workspace_id, resource_kind="invitation")
 
@@ -13174,6 +14439,8 @@ class WorkspaceServiceMixin:
             self._receive_workspace_history_response(
                 wire, getattr(native, "source_hash", None)
             )
+        elif wire.kind == "workspace_admin_request":
+            self._receive_workspace_admin_request(wire)
         elif wire.kind == "workspace_leave_request":
             self._receive_workspace_leave_request(wire)
         elif wire.kind == "workspace_display_name_request":
@@ -13321,6 +14588,35 @@ class WorkspaceServiceMixin:
         name_requests.sort(
             key=lambda item: (item.get("created_at", 0), item["id"])
         )
+        admin_requests: list[dict[str, Any]] = []
+        owner_review_counts: dict[str, int] = defaultdict(int)
+        for stored_workspace in stored_workspaces:
+            for request in self._refresh_workspace_admin_requests(stored_workspace):
+                if request.get("dismissed"):
+                    continue
+                if (
+                    request.get("requester_member_id")
+                    != stored_workspace.get("local_member_id")
+                    and stored_workspace.get("local_role") != WorkspaceRole.OWNER.value
+                ):
+                    continue
+                admin_requests.append(
+                    self._public_workspace_admin_request(request, stored_workspace)
+                )
+                if (
+                    stored_workspace.get("local_role") == WorkspaceRole.OWNER.value
+                    and request.get("direction") == "incoming"
+                    and request.get("state") == "pending"
+                ):
+                    owner_review_counts[stored_workspace["id"]] += 1
+        admin_requests.sort(
+            key=lambda item: (float(item.get("created_at", 0)), item["id"]),
+            reverse=True,
+        )
+        for public_workspace in workspaces:
+            public_workspace["pending_owner_review_count"] = owner_review_counts.get(
+                public_workspace["id"], 0
+            )
         return {
             "workspaces": workspaces,
             "workspace_channels": channels,
@@ -13328,6 +14624,7 @@ class WorkspaceServiceMixin:
             "workspace_channel_transfers": channel_transfers,
             "workspace_join_requests": requests,
             "workspace_display_name_requests": name_requests,
+            "workspace_admin_requests": admin_requests,
             "workspace_invitations": invitations,
             "workspace_drafts": [
                 visible

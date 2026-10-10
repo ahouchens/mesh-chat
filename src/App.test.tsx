@@ -2,7 +2,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testi
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import packageInfo from "../package.json";
-import type { ChatMessage, Contact, Group, GroupInvitation, GroupMessage, Snapshot, Workspace, WorkspaceChannel, WorkspaceDirect, WorkspaceMentionPage, WorkspaceMessage, WorkspaceMessagePage, WorkspaceSearchPage, WorkspaceThreadActivityPage, WorkspaceThreadPage } from "./types";
+import type { ChatMessage, Contact, Group, GroupInvitation, GroupMessage, Snapshot, Workspace, WorkspaceAdminRequest, WorkspaceChannel, WorkspaceDirect, WorkspaceMentionPage, WorkspaceMessage, WorkspaceMessagePage, WorkspaceSearchPage, WorkspaceThreadActivityPage, WorkspaceThreadPage } from "./types";
 
 const api = vi.hoisted(() => ({
   initializeService: vi.fn(),
@@ -1773,6 +1773,107 @@ describe("small private groups", () => {
 });
 
 describe("desktop workspaces", () => {
+  it("shows effective administrator authority and submits owner-reviewed requests", async () => {
+    const administrator = {
+      id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      display_name: "Bailey",
+      role: "admin" as const,
+      status: "active" as const,
+      short_id: "aaaaaa",
+      device: { id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", destination_hash: "99".repeat(16), fingerprint: "BBBB CCCC DDDD EEEE" },
+    };
+    const member = {
+      id: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+      display_name: "Casey",
+      role: "member" as const,
+      status: "active" as const,
+      short_id: "cccccc",
+      device: { id: "dddddddd-dddd-4ddd-8ddd-dddddddddddd", destination_hash: "aa".repeat(16), fingerprint: "CCCC DDDD EEEE FFFF" },
+    };
+    const adminWorkspace: Workspace = {
+      ...workspace,
+      local_role: "admin",
+      local_member_id: administrator.id,
+      local_device_id: administrator.device.id,
+      policies: { channel_creation: "owner_and_admins", posting: "owner_and_admins", invitation_requests: "owner_and_admins" },
+      members: [...workspace.members, administrator, member],
+    };
+    const current: Snapshot = { ...snapshot(), workspaces: [adminWorkspace], workspace_channels: [workspaceChannel], workspace_admin_requests: [], workspace_join_requests: [], workspace_invitations: [], workspace_drafts: [] };
+    api.runtimePlatform.mockResolvedValue("desktop");
+    api.initializeService.mockResolvedValue(current);
+    api.onInvitation.mockResolvedValue(() => undefined);
+    api.onServiceEvent.mockResolvedValue(() => undefined);
+    api.serviceCommand.mockImplementation(async (command: string) => {
+      if (command === "snapshot") return current;
+      if (command === "list_workspace_messages") return { messages: [], next_cursor: null, high_water: 0 } satisfies WorkspaceMessagePage;
+      return {};
+    });
+
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Workspace Lakewatcher" }));
+    expect(await screen.findByRole("textbox", { name: "Message general" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Create channel" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "People in Lakewatcher" }));
+    const dialog = screen.getByRole("dialog");
+    expect(within(dialog).getByRole("status").textContent).toMatch(/effective role is administrator/i);
+    fireEvent.click(within(dialog).getByRole("button", { name: "Request invitation" }));
+    await waitFor(() => expect(api.serviceCommand).toHaveBeenCalledWith("submit_workspace_admin_request", expect.objectContaining({ workspace_id: workspace.id, request_kind: "invitation", operation_id: expect.any(String) })));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Request promotion" }));
+    await waitFor(() => expect(api.serviceCommand).toHaveBeenCalledWith("submit_workspace_admin_request", expect.objectContaining({ workspace_id: workspace.id, request_kind: "role_change", target_member_id: member.id, requested_role: "admin", operation_id: expect.any(String) })));
+    fireEvent.click(within(dialog).getByRole("button", { name: /Request removal/ }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Submit request" }));
+    await waitFor(() => expect(api.serviceCommand).toHaveBeenCalledWith("submit_workspace_admin_request", expect.objectContaining({ workspace_id: workspace.id, request_kind: "member_removal", target_member_id: member.id, operation_id: expect.any(String) })));
+  });
+
+  it("presents current authority separately from a pending owner review", async () => {
+    const member = {
+      id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      display_name: "Bailey",
+      role: "member" as const,
+      status: "active" as const,
+      short_id: "aaaaaa",
+      device: { id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", destination_hash: "99".repeat(16), fingerprint: "BBBB CCCC DDDD EEEE" },
+    };
+    const request: WorkspaceAdminRequest = {
+      id: "request-one",
+      workspace_id: workspace.id,
+      direction: "incoming",
+      request_kind: "role_change",
+      state: "pending",
+      requester_display_name: "Bailey",
+      requester_role: "member",
+      target_member_id: member.id,
+      target_display_name: "Bailey",
+      effective_role: "member",
+      requested_role: "admin",
+      note: "",
+      created_at: 10,
+      expires_at: 20,
+      updated_at: 10,
+    };
+    const ownerWorkspace: Workspace = { ...workspace, pending_owner_review_count: 1, members: [...workspace.members, member] };
+    const current: Snapshot = { ...snapshot(), workspaces: [ownerWorkspace], workspace_channels: [workspaceChannel], workspace_admin_requests: [request], workspace_join_requests: [], workspace_invitations: [], workspace_drafts: [] };
+    api.runtimePlatform.mockResolvedValue("desktop");
+    api.initializeService.mockResolvedValue(current);
+    api.onInvitation.mockResolvedValue(() => undefined);
+    api.onServiceEvent.mockResolvedValue(() => undefined);
+    api.serviceCommand.mockImplementation(async (command: string) => {
+      if (command === "snapshot") return current;
+      if (command === "list_workspace_messages") return { messages: [], next_cursor: null, high_water: 0 } satisfies WorkspaceMessagePage;
+      return {};
+    });
+
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Workspace Lakewatcher" }));
+    expect((await screen.findByRole("status")).textContent).toContain("1 pending owner review");
+    fireEvent.click(await screen.findByRole("button", { name: "People in Lakewatcher" }));
+    const dialog = screen.getByRole("dialog");
+    expect(within(dialog).getByText(/Effective state is unchanged/i)).toBeTruthy();
+    expect(within(dialog).getByText(/Change Bailey from member to admin/)).toBeTruthy();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Approve" }));
+    await waitFor(() => expect(api.serviceCommand).toHaveBeenCalledWith("approve_workspace_admin_request", expect.objectContaining({ workspace_id: workspace.id, request_id: request.id, operation_id: expect.any(String) })));
+  });
+
   it("opens, sends, hides, and reopens a workspace DM without creating a Contact", async () => {
     const member = {
       id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
@@ -2453,6 +2554,7 @@ describe("desktop workspaces", () => {
     fireEvent.click(within(dialog).getByRole("button", { name: "Approve" }));
     await waitFor(() => expect(api.serviceCommand).toHaveBeenCalledWith("decide_workspace_display_name", expect.objectContaining({ workspace_id: workspace.id, request_id: "name-request", approve: true, operation_id: expect.any(String) })));
     fireEvent.click(within(dialog).getByRole("button", { name: /Remove/i }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Confirm removal" }));
     await waitFor(() => expect(api.serviceCommand).toHaveBeenCalledWith("remove_workspace_member", expect.objectContaining({ workspace_id: workspace.id, member_id: member.id, operation_id: expect.any(String) })));
     const ownName = within(dialog).getByRole("textbox", { name: "Your workspace display name" });
     fireEvent.change(ownName, { target: { value: "Alex North" } });
@@ -2641,7 +2743,7 @@ describe("desktop workspaces", () => {
 
     render(<App />);
     fireEvent.click(await screen.findByRole("button", { name: "Workspace Lakewatcher" }));
-    expect(await screen.findByText("Only the workspace owner can post under the current signed policy.")).toBeTruthy();
+    expect(await screen.findByText("Only workspace owners and administrators can post under the current signed policy.")).toBeTruthy();
     expect(screen.queryByRole("textbox", { name: "Message general" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Create channel" })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: /Browse channels/ }));
@@ -2649,7 +2751,7 @@ describe("desktop workspaces", () => {
     expect(within(browse).queryByRole("button", { name: "Create channel" })).toBeNull();
     fireEvent.click(within(browse).getAllByRole("button", { name: "Open" })[1]);
     const conversation = await screen.findByLabelText("Workspace channel field-reports");
-    expect(within(conversation).getByText("Only the workspace owner can post under the current signed policy.")).toBeTruthy();
+    expect(within(conversation).getByText("Only workspace owners and administrators can post under the current signed policy.")).toBeTruthy();
     fireEvent.click(within(conversation).getByRole("button", { name: "Manage field-reports channel" }));
     const manage = screen.getByRole("dialog", { name: "Manage #field-reports" });
     expect(within(manage).queryByRole("button", { name: "Publish channel update" })).toBeNull();

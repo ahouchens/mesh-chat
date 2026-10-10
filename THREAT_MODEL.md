@@ -13,6 +13,9 @@
 - Workspace membership, policy and closure cannot change without a valid,
   hash-linked authority manifest; events cannot escape the audience frozen by
   their referenced manifest and channel control.
+- An administrator request cannot become membership or role authority; one
+  exact owner-authority decision and its embedded canonical result are required
+  before an approved effect is presented as applied.
 - A workspace mention cannot name an inactive or out-of-audience member, arise
   from raw display-name text, or retain local inbox visibility after the reader
   loses workspace or private-channel access.
@@ -39,6 +42,9 @@
   heads, withholding ranges, replaying/swapping continuations or responses,
   substituting another workspace/conversation, amplifying a tiny request, or
   forwarding forged, noncanonical, stale, forked or unauthorized material.
+- A compromised or spammy administrator creating policy-permitted channels and
+  posts, abusing a legitimately managed channel, phishing owner review, or
+  flooding, replaying, substituting and conflicting administrative requests.
 - A compromised authorized endpoint legitimately retaining and later
   disclosing cooperative history. The protocol limits disclosure to current
   authority but cannot make an unlocked entitled endpoint forget plaintext.
@@ -88,6 +94,24 @@
   event is inner-signed and binds the exact authorization controls and immutable
   audience. Missing controls or predecessors enter a bounded encrypted inert
   queue; rollback, skipped authority, and sequence reuse fail closed.
+- Administrative requests bind the exact base manifest, requester device,
+  single target/effect, lifetime and replay key. Owner decisions bind the exact
+  request digest and embedded invitation/manifest result. Canonical byte limits,
+  per-source/workspace/profile caps, bounded inert decisions and sealed replay
+  records contain parsing work and spam. A conflicting result is a security
+  error; delivery or endpoint receipt is never approval.
+- Review presents requester, requested action, target and current-state warning.
+  Pending rows retain the effective role, removal needs confirmation, and only
+  the authority device can commit the one-member manifest transition. A stolen
+  administrator key can exercise existing policy and channel-manager powers but
+  cannot change metadata, retention, policy, closure, authority or ownership.
+  It gains no recovery or discovery of excluded private channels and no access
+  to another pair's DM or history.
+- Administrative state and bounded cursors are separately sealed behind opaque
+  HMAC identifiers. SQLite observation may reveal generic kinds, ciphertext
+  sizes/counts and timing, but not workspace/member names, targets, roles,
+  destinations, invitation secrets or canonical request content. Startup and
+  paging use the bounded sealed indexes rather than whole-kind scans.
 - Public-channel manager records, accepted transfers, and owner recoveries form
   independent signed chains. A valid same-version conflict suspends only that
   channel. Signed directory summaries are paged and bounded; signed fetches
@@ -250,6 +274,10 @@ Depending on configured interfaces, observers may learn local discovery presence
   authorized bodies still retained by reachable peers. A peer can withhold,
   prune, disappear, or lie about its head; the result is uncertainty or gaps,
   not a global completeness claim. Search queries remain strictly local.
+- Immediate administrator demotion or removal across a partition, prevention of
+  mistaken owner approval, or recovery after permanent owner-authority loss.
+  Peers enforce the newest verified state they have and converge when controls
+  arrive; authority continuity remains Increment 13.
 - NAT hole punching, mobile push, Bluetooth, LoRa, attachments, multi-device identity cloning, and cloud backup.
 
 ## Open security blockers

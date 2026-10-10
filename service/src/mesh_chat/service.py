@@ -154,6 +154,19 @@ class MeshChatService(ReactionServiceMixin, GroupServiceMixin, WorkspaceServiceM
         "cancel_workspace_history",
         "list_workspace_history_gaps",
         "remove_workspace_member",
+        "change_workspace_role",
+        "submit_workspace_admin_request",
+        "submit_workspace_invitation_request",
+        "submit_workspace_member_removal_request",
+        "submit_workspace_role_change_request",
+        "list_workspace_members",
+        "list_workspace_admin_requests",
+        "list_workspace_admin_history",
+        "get_workspace_admin_request",
+        "approve_workspace_admin_request",
+        "decline_workspace_admin_request",
+        "cancel_workspace_admin_request",
+        "dismiss_workspace_admin_request",
         "request_workspace_display_name",
         "decide_workspace_display_name",
         "create_workspace_channel",
@@ -180,6 +193,10 @@ class MeshChatService(ReactionServiceMixin, GroupServiceMixin, WorkspaceServiceM
         "list_workspace_thread_messages",
         "list_workspace_message_revisions",
         "list_workspace_tombstones",
+        "list_workspace_members",
+        "list_workspace_admin_requests",
+        "list_workspace_admin_history",
+        "get_workspace_admin_request",
         "get_workspace_history_status",
         "list_workspace_history_gaps",
         "mark_workspace_read",
@@ -1803,6 +1820,7 @@ class MeshChatService(ReactionServiceMixin, GroupServiceMixin, WorkspaceServiceM
                     "workspace_id",
                     "channel_creation",
                     "posting",
+                    "invitation_requests",
                 },
                 required={
                     "operation_id",
@@ -1816,6 +1834,7 @@ class MeshChatService(ReactionServiceMixin, GroupServiceMixin, WorkspaceServiceM
                 body["channel_creation"],
                 body["posting"],
                 body["operation_id"],
+                body.get("invitation_requests"),
             )
         if command == "update_workspace_retention":
             body = _payload(
@@ -1847,6 +1866,98 @@ class MeshChatService(ReactionServiceMixin, GroupServiceMixin, WorkspaceServiceM
             )
             return self.remove_workspace_member(
                 body["workspace_id"], body["member_id"], body["operation_id"]
+            )
+        if command == "change_workspace_role":
+            body = _payload(
+                value,
+                allowed={"operation_id", "workspace_id", "member_id", "role"},
+                required={"operation_id", "workspace_id", "member_id", "role"},
+            )
+            return self.change_workspace_role(
+                body["workspace_id"], body["member_id"], body["role"],
+                body["operation_id"],
+            )
+        if command in {
+            "submit_workspace_admin_request",
+            "submit_workspace_invitation_request",
+            "submit_workspace_member_removal_request",
+            "submit_workspace_role_change_request",
+        }:
+            body = _payload(
+                value,
+                allowed={
+                    "operation_id", "workspace_id", "request_kind",
+                    "target_member_id", "requested_role", "note",
+                },
+                required={"operation_id", "workspace_id"},
+            )
+            fixed_kind = {
+                "submit_workspace_invitation_request": "invitation",
+                "submit_workspace_member_removal_request": "member_removal",
+                "submit_workspace_role_change_request": "role_change",
+            }.get(command)
+            request_kind = fixed_kind or body.get("request_kind")
+            if request_kind is None:
+                raise ValidationError("Administrative request kind is required")
+            return self.submit_workspace_admin_request(
+                body["workspace_id"], request_kind, body["operation_id"],
+                body.get("target_member_id"), body.get("requested_role"),
+                body.get("note", ""),
+            )
+        if command == "list_workspace_members":
+            body = _payload(
+                value, allowed={"workspace_id"}, required={"workspace_id"}
+            )
+            workspace = self._require_workspace(body["workspace_id"])
+            return {"members": self._public_workspace(workspace)["members"]}
+        if command in {"list_workspace_admin_requests", "list_workspace_admin_history"}:
+            body = _payload(
+                value,
+                allowed={"workspace_id", "direction", "cursor", "limit"},
+                required={"workspace_id"},
+            )
+            direction = (
+                "history"
+                if command == "list_workspace_admin_history"
+                else body.get("direction", "outgoing")
+            )
+            return self.list_workspace_admin_requests(
+                body["workspace_id"], direction, body.get("cursor"),
+                body.get("limit", 50),
+            )
+        if command == "get_workspace_admin_request":
+            body = _payload(
+                value,
+                allowed={"workspace_id", "request_id"},
+                required={"workspace_id", "request_id"},
+            )
+            return self.get_workspace_admin_request(
+                body["workspace_id"], body["request_id"]
+            )
+        if command in {"approve_workspace_admin_request", "decline_workspace_admin_request"}:
+            body = _payload(
+                value,
+                allowed={"operation_id", "workspace_id", "request_id"},
+                required={"operation_id", "workspace_id", "request_id"},
+            )
+            return self.decide_workspace_admin_request(
+                body["workspace_id"], body["request_id"],
+                command == "approve_workspace_admin_request",
+                body["operation_id"],
+            )
+        if command in {"cancel_workspace_admin_request", "dismiss_workspace_admin_request"}:
+            body = _payload(
+                value,
+                allowed={"operation_id", "workspace_id", "request_id"},
+                required={"operation_id", "workspace_id", "request_id"},
+            )
+            method = (
+                self.cancel_workspace_admin_request
+                if command == "cancel_workspace_admin_request"
+                else self.dismiss_workspace_admin_request
+            )
+            return method(
+                body["workspace_id"], body["request_id"], body["operation_id"]
             )
         if command == "request_workspace_display_name":
             body = _payload(

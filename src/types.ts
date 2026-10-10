@@ -208,6 +208,7 @@ export interface Workspace {
   retention_generation: number;
   mention_unread_count: number;
   thread_unread_count: number;
+  pending_owner_review_count?: number;
   search_index?: {
     status: "ready" | "rebuilding" | "incomplete" | "indexing";
     indexed_events: number;
@@ -581,6 +582,44 @@ export interface WorkspaceDisplayNameRequest {
   created_at: number;
 }
 
+export type WorkspaceAdminRequestState =
+  | "pending"
+  | "approved"
+  | "declined"
+  | "stale"
+  | "superseded"
+  | "expired"
+  | "cancelled"
+  | "failed";
+
+export interface WorkspaceAdminRequest {
+  id: string;
+  workspace_id: string;
+  direction: "incoming" | "outgoing";
+  request_kind: "invitation" | "member_removal" | "role_change";
+  state: WorkspaceAdminRequestState;
+  requester_display_name: string;
+  requester_role?: WorkspaceRole;
+  target_member_id?: string | null;
+  target_display_name?: string | null;
+  effective_role?: WorkspaceRole | null;
+  requested_role?: "admin" | "member" | null;
+  note: string;
+  created_at: number;
+  expires_at: number;
+  updated_at: number;
+  delivery_state?: "waiting_for_route" | "delivered_to_owner" | "failed_retryable";
+  failure?: string | null;
+  dismissed?: boolean;
+  invitation?: WorkspaceInvitationFormats;
+}
+
+export interface WorkspaceAdminRequestPage {
+  requests: WorkspaceAdminRequest[];
+  next_cursor: string | null;
+  pending_count: number;
+}
+
 export interface WorkspaceSnapshot {
   workspaces: Workspace[];
   workspace_channels: WorkspaceChannel[];
@@ -588,6 +627,7 @@ export interface WorkspaceSnapshot {
   workspace_channel_transfers: WorkspaceChannelTransfer[];
   workspace_join_requests: WorkspaceJoinRequest[];
   workspace_display_name_requests: WorkspaceDisplayNameRequest[];
+  workspace_admin_requests: WorkspaceAdminRequest[];
   workspace_invitations: WorkspaceInvitation[];
   workspace_drafts: WorkspaceDraft[];
 }
@@ -635,6 +675,7 @@ export interface Snapshot {
   workspace_channel_transfers?: WorkspaceChannelTransfer[];
   workspace_join_requests?: WorkspaceJoinRequest[];
   workspace_display_name_requests?: WorkspaceDisplayNameRequest[];
+  workspace_admin_requests?: WorkspaceAdminRequest[];
   workspace_invitations?: WorkspaceInvitation[];
   workspace_drafts?: WorkspaceDraft[];
   settings: NetworkSettings;

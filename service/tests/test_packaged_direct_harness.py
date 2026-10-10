@@ -5,11 +5,19 @@ from pathlib import Path
 
 import pytest
 
-from tools.packaged_direct_harness import _message_with_reactions, run, run_mixed
+from tools.packaged_direct_harness import (
+    _message_with_reactions,
+    run,
+    run_mixed,
+    run_workspace_admin,
+)
 
 
 PACKAGED_BINARY = os.environ.get("MESH_CHAT_PACKAGED_SIDECAR")
 LEGACY_PACKAGED_BINARY = os.environ.get("MESH_CHAT_LEGACY_PACKAGED_SIDECAR")
+LEGACY_EXPANDED_MODE = os.environ.get(
+    "MESH_CHAT_LEGACY_EXPANDED_MODE", "either"
+)
 
 
 def test_message_with_reactions_requires_exact_aggregate_and_self_flag() -> None:
@@ -73,6 +81,22 @@ def test_exact_packaged_sidecar_phone_first_then_desktop_reply() -> None:
 
 
 @pytest.mark.skipif(
+    not PACKAGED_BINARY,
+    reason="Set MESH_CHAT_PACKAGED_SIDECAR to the exact release sidecar",
+)
+def test_exact_packaged_sidecar_workspace_administrator_flow() -> None:
+    result = run_workspace_admin(Path(PACKAGED_BINARY).resolve())
+
+    assert result["admin_channel_converged"] is True
+    assert result["admin_message_converged"] is True
+    assert result["decline_no_effect"] is True
+    assert result["approved_demotion_converged"] is True
+    assert result["demotion_request_audited"] is True
+    assert result["clean_shutdown"] is True
+    assert result["stderr_content_free"] is True
+
+
+@pytest.mark.skipif(
     not PACKAGED_BINARY or not LEGACY_PACKAGED_BINARY,
     reason=(
         "Set MESH_CHAT_PACKAGED_SIDECAR and "
@@ -94,7 +118,18 @@ def test_current_sidecar_interoperates_with_legacy_sidecar() -> None:
     assert result["current_quick_reaction_removal_converged"] is True
     assert result["expanded_reaction_command_preserved_target"] is True
     assert result["expanded_reaction_visible_on_current"] is True
-    assert result["legacy_safely_ignored_expanded_reaction"] is True
+    if LEGACY_EXPANDED_MODE == "ignore":
+        assert result["legacy_safely_ignored_expanded_reaction"] is True
+        assert result["legacy_expanded_reaction_converged"] is False
+    elif LEGACY_EXPANDED_MODE == "converge":
+        assert result["legacy_expanded_reaction_converged"] is True
+        assert result["legacy_safely_ignored_expanded_reaction"] is False
+    else:
+        assert LEGACY_EXPANDED_MODE == "either"
+        assert (
+            result["legacy_safely_ignored_expanded_reaction"]
+            or result["legacy_expanded_reaction_converged"]
+        )
     assert result["post_emoji_desktop_message_id_preserved"] is True
     assert result["post_emoji_desktop_message_delivered"] is True
     assert result["post_emoji_phone_message_id_preserved"] is True

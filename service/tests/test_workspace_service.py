@@ -13,13 +13,14 @@ import LXMF
 import pytest
 import RNS
 
-from mesh_chat.errors import ContactNotApproved, StaleCursor, ValidationError
+from mesh_chat.errors import ContactNotApproved, IdentityMismatch, StaleCursor, ValidationError
 from mesh_chat.invitations import readable_fingerprint
 from mesh_chat.models import DeliveryState
 from mesh_chat.service import MeshChatService
 from mesh_chat.vault import VaultStore
 from mesh_chat.workspace_protocol import (
     WorkspaceManifestMemberInput,
+    create_workspace_admin_decision,
     create_workspace_channel_manifest,
     create_workspace_channel_record,
     create_workspace_device_card,
@@ -27,6 +28,7 @@ from mesh_chat.workspace_protocol import (
     create_workspace_manifest,
     create_workspace_mutation_event,
     verify_workspace_genesis,
+    verify_workspace_admin_request,
 )
 from mesh_chat.workspace_wire import WorkspaceWirePayload, parse_workspace_payload
 from mesh_chat.workspace_service import (
@@ -3593,3 +3595,358 @@ def test_workspace_pruning_keeps_fresh_deletion_tombstone_for_live_window(
     assert retained[0]["deleted"] is True
     assert retained[0]["text"] == ""
     service.close()
+
+
+def test_administrator_offline_channels_and_owner_approved_invitation(
+    tmp_path: Path,
+) -> None:
+    (
+        owner,
+        owner_network,
+        owner_profile,
+        admin,
+        admin_network,
+        admin_profile,
+        workspace,
+        _admin_key,
+        _admin_identity,
+    ) = _joined_pair(tmp_path / "administrator", base=140_000)
+    workspace_id = workspace["id"]
+    admin_member_id = admin._require_workspace(workspace_id)["local_member_id"]
+
+    promoted = owner.change_workspace_role(
+        workspace_id, admin_member_id, "admin", _op(140_010)
+    )
+    assert next(
+        item for item in promoted["members"] if item["id"] == admin_member_id
+    )["role"] == "admin"
+    _deliver_all(
+        admin,
+        _flush(owner, owner_network),
+        source_profile=owner_profile,
+        recipient_profile=admin_profile,
+    )
+    assert admin._require_workspace(workspace_id)["local_role"] == "admin"
+
+    owner.update_workspace_policies(
+        workspace_id,
+        "owner_and_admins",
+        "owner_and_admins",
+        _op(140_011),
+        "owner_and_admins",
+    )
+    _deliver_all(
+        admin,
+        _flush(owner, owner_network),
+        source_profile=owner_profile,
+        recipient_profile=admin_profile,
+    )
+    # The owner does not participate in these local commands. The administrator
+    # signs and commits the channel plus message before any route is attempted.
+    channel = admin.create_workspace_channel(
+        workspace_id, "offline-ops", "Owner is offline", _op(140_012)
+    )
+    message = admin.send_workspace_message(
+        workspace_id,
+        channel["id"],
+        "Administrator-managed operations continue.",
+        _op(140_013),
+        _op(140_014),
+    )
+    assert message["text"].startswith("Administrator-managed")
+
+    before_invites = len(
+        [
+            item for item in owner.workspace_snapshot()["workspace_invitations"]
+            if item["workspace_id"] == workspace_id
+        ]
+    )
+    submitted = admin.submit_workspace_admin_request(
+        workspace_id, "invitation", _op(140_015), note="Field observer"
+    )
+    assert submitted["state"] == "pending"
+    request_packets = [
+        item
+        for item in _flush(admin, admin_network)
+        if parse_workspace_payload(
+            _native(item, source=b"\x00" * 16, destination=b"\x01" * 16)
+        ).kind
+        == "workspace_admin_request"
+    ]
+    assert len(request_packets) == 1
+    _deliver(
+        owner,
+        request_packets[0],
+        source_profile=admin_profile,
+        recipient_profile=owner_profile,
+    )
+    owner_snapshot = owner.workspace_snapshot()
+    pending = next(
+        item
+        for item in owner_snapshot["workspace_admin_requests"]
+        if item["workspace_id"] == workspace_id and item["state"] == "pending"
+    )
+    assert pending["effective_role"] is None
+    assert len(
+        [
+            item for item in owner_snapshot["workspace_invitations"]
+            if item["workspace_id"] == workspace_id
+        ]
+    ) == before_invites
+
+    approved = owner.decide_workspace_admin_request(
+        workspace_id, pending["id"], True, _op(140_016)
+    )
+    assert approved["state"] == "approved"
+    assert approved["invitation"]["text"].startswith("MESHWORKSPACE1:")
+    decision_packets = [
+        item
+        for item in _flush(owner, owner_network)
+        if parse_workspace_payload(
+            _native(item, source=b"\x00" * 16, destination=b"\x01" * 16)
+        ).kind
+        == "workspace_admin_request"
+    ]
+    assert len(decision_packets) == 1
+    _deliver(
+        admin,
+        decision_packets[0],
+        source_profile=owner_profile,
+        recipient_profile=admin_profile,
+    )
+    # Duplicate endpoint delivery is idempotent and never creates a second
+    # invitation or authority result.
+    _deliver(
+        admin,
+        decision_packets[0],
+        source_profile=owner_profile,
+        recipient_profile=admin_profile,
+    )
+    outgoing = admin.list_workspace_admin_requests(
+        workspace_id, "outgoing"
+    )["requests"]
+    completed = next(item for item in outgoing if item["id"] == submitted["id"])
+    assert completed["state"] == "approved"
+    assert completed["invitation"]["text"] == approved["invitation"]["text"]
+    assert len(admin.store.list("workspace_admin_decision")) == 1
+
+    owner.change_workspace_role(
+        workspace_id, admin_member_id, "member", _op(140_017)
+    )
+    _deliver_all(
+        admin,
+        _flush(owner, owner_network),
+        source_profile=owner_profile,
+        recipient_profile=admin_profile,
+    )
+    assert admin._require_workspace(workspace_id)["local_role"] == "member"
+    with pytest.raises(ContactNotApproved, match="owners and administrators"):
+        admin.create_workspace_channel(
+            workspace_id, "after-demotion", "", _op(140_018)
+        )
+    owner.close()
+    admin.close()
+
+
+def test_administrative_request_lifecycle_permissions_and_conflict_fail_closed(
+    tmp_path: Path,
+) -> None:
+    (
+        owner,
+        owner_network,
+        owner_profile,
+        admin,
+        admin_network,
+        admin_profile,
+        workspace,
+        _admin_key,
+        _admin_identity,
+    ) = _joined_pair(tmp_path / "admin-lifecycle", base=141_000)
+    workspace_id = workspace["id"]
+    admin_member_id = admin._require_workspace(workspace_id)["local_member_id"]
+    owner.change_workspace_role(
+        workspace_id, admin_member_id, "admin", _op(141_010)
+    )
+    _deliver_all(
+        admin,
+        _flush(owner, owner_network),
+        source_profile=owner_profile,
+        recipient_profile=admin_profile,
+    )
+
+    # The baseline policy remains exact: an administrator is not silently
+    # treated as the owner under owner_only.
+    with pytest.raises((ContactNotApproved, IdentityMismatch)):
+        admin.submit_workspace_admin_request(
+            workspace_id, "invitation", _op(141_011)
+        )
+    for callback in (
+        lambda: admin.update_workspace_metadata(
+            workspace_id, "Changed", "", _op(141_012)
+        ),
+        lambda: admin.update_workspace_retention(
+            workspace_id, 30, _op(141_013)
+        ),
+        lambda: admin.update_workspace_policies(
+            workspace_id, "all_members", "all_members", _op(141_014)
+        ),
+        lambda: admin.close_workspace(workspace_id, _op(141_015)),
+    ):
+        with pytest.raises(ContactNotApproved):
+            callback()
+
+    owner.update_workspace_policies(
+        workspace_id,
+        "owner_and_admins",
+        "owner_and_admins",
+        _op(141_016),
+        "owner_and_admins",
+    )
+    _deliver_all(
+        admin,
+        _flush(owner, owner_network),
+        source_profile=owner_profile,
+        recipient_profile=admin_profile,
+    )
+
+    cancelled = admin.submit_workspace_admin_request(
+        workspace_id, "invitation", _op(141_017), note="Not handed off"
+    )
+    cancelled = admin.cancel_workspace_admin_request(
+        workspace_id, cancelled["id"], _op(141_018)
+    )
+    assert cancelled["state"] == "cancelled"
+    assert _flush(admin, admin_network) == []
+
+    declined = admin.submit_workspace_admin_request(
+        workspace_id,
+        "member_removal",
+        _op(141_019),
+        target_member_id=admin_member_id,
+        note="Audit a declined removal",
+    )
+    request_packets = _flush(admin, admin_network)
+    assert len(request_packets) == 1
+    with pytest.raises(ValidationError, match="handed-off"):
+        admin.cancel_workspace_admin_request(
+            workspace_id, declined["id"], _op(141_020)
+        )
+    _deliver_all(
+        owner,
+        request_packets,
+        source_profile=admin_profile,
+        recipient_profile=owner_profile,
+    )
+    incoming = owner.list_workspace_admin_requests(
+        workspace_id, "incoming"
+    )["requests"]
+    pending_decline = next(
+        item for item in incoming if item["request_kind"] == "member_removal"
+    )
+    owner.decide_workspace_admin_request(
+        workspace_id, pending_decline["id"], False, _op(141_021)
+    )
+    decision_packets = _flush(owner, owner_network)
+    _deliver_all(
+        admin,
+        decision_packets,
+        source_profile=owner_profile,
+        recipient_profile=admin_profile,
+    )
+    declined_status = admin.get_workspace_admin_request(
+        workspace_id, declined["id"]
+    )
+    assert declined_status["state"] == "declined"
+    assert admin._require_workspace(workspace_id)["local_role"] == "admin"
+
+    approved = admin.submit_workspace_admin_request(
+        workspace_id, "invitation", _op(141_022), note="Conflict probe"
+    )
+    _deliver_all(
+        owner,
+        _flush(admin, admin_network),
+        source_profile=admin_profile,
+        recipient_profile=owner_profile,
+    )
+    owner_request = next(
+        item for item in owner.list_workspace_admin_requests(
+            workspace_id, "incoming"
+        )["requests"]
+        if item["request_kind"] == "invitation"
+    )
+    owner.decide_workspace_admin_request(
+        workspace_id, owner_request["id"], True, _op(141_023)
+    )
+    approved_packets = _flush(owner, owner_network)
+    _deliver_all(
+        admin,
+        approved_packets,
+        source_profile=owner_profile,
+        recipient_profile=admin_profile,
+    )
+    stored = admin.store.get("workspace_admin_request", approved["id"])
+    assert stored is not None
+    base = admin._workspace_manifest_by_digest(stored["base_manifest_digest"])
+    assert base is not None and owner._identity is not None
+    request = verify_workspace_admin_request(
+        stored["document"], manifest=base, allow_expired=True
+    )
+    conflicting_raw = create_workspace_admin_decision(
+        owner._identity,
+        authority_manifest=base,
+        request=request,
+        outcome="declined",
+        created_at=int(time.time()),
+    )
+    assert admin._receive_workspace_admin_request(WorkspaceWirePayload(
+        kind="workspace_admin_request",
+        logical_id=str(uuid.uuid4()),
+        workspace_id=workspace_id,
+        expires_at=int(time.time()) + 3600,
+        document=conflicting_raw,
+    )) is False
+    assert admin._require_workspace(workspace_id)["security_error"] == "admin_decision_conflict"
+    assert admin.get_workspace_admin_request(
+        workspace_id, approved["id"]
+    )["state"] == "failed"
+
+    # A direct owner authority transition wins. The related request is
+    # superseded and the delivered manifest removes admin access immediately.
+    role_request = admin.submit_workspace_admin_request(
+        workspace_id,
+        "role_change",
+        _op(141_024),
+        target_member_id=admin_member_id,
+        requested_role="member",
+    )
+    _deliver_all(
+        owner,
+        _flush(admin, admin_network),
+        source_profile=admin_profile,
+        recipient_profile=owner_profile,
+    )
+    owner_role_request = next(
+        item for item in owner.list_workspace_admin_requests(
+            workspace_id, "incoming"
+        )["requests"]
+        if item["request_kind"] == "role_change"
+    )
+    owner.change_workspace_role(
+        workspace_id, admin_member_id, "member", _op(141_025)
+    )
+    assert owner.get_workspace_admin_request(
+        workspace_id, owner_role_request["id"]
+    )["state"] == "superseded"
+    _deliver_all(
+        admin,
+        _flush(owner, owner_network),
+        source_profile=owner_profile,
+        recipient_profile=admin_profile,
+    )
+    assert admin._require_workspace(workspace_id)["local_role"] == "member"
+    with pytest.raises(ContactNotApproved, match="owners and administrators"):
+        admin.create_workspace_channel(
+            workspace_id, "demoted", "", _op(141_026)
+        )
+    owner.close()
+    admin.close()

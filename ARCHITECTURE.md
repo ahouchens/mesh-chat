@@ -45,7 +45,7 @@ ordering, removal, and owner-loss consequences.
 
 ## Desktop workspaces
 
-The eleventh workspace increment is an isolated desktop feature profile. It adds
+The twelfth workspace increment is an isolated desktop feature profile. It adds
 canonical workspace authority, device, invitation, channel and event documents
 under the `mesh-chat-workspace` custom type without changing Personal or private
 group bytes. The React shell can switch between Personal and workspace views,
@@ -60,6 +60,23 @@ The service is split into three workspace boundaries:
 - `workspace_wire.py` owns strict LXMF profile framing and dispatch isolation;
 - `workspace_service.py` owns authority transitions, bounded indexes, paging,
   scheduler work, derived state, and presentation models.
+
+Increment 12 separates operational administration from manifest authority.
+`owner`, `admin`, and `member` are effective only in the exact verified
+manifest. Administrators may create and post under `owner_and_admins` and may
+operate channels whose manager signing key they legitimately hold while the
+owner is offline. They do not gain global channel management, private-channel
+discovery/recovery, third-party DM access, or a manifest-signing key.
+
+Invitation, member-removal, and role-change proposals use the additive signed
+`workspace_admin_request` request/decision family. Requests bind the exact base
+manifest and remain non-authoritative; one owner-authority decision embeds the
+one resulting invitation or manifest, or an explicit no-change decline. Sealed
+HMAC-addressed workspace/profile indexes bound incoming review, outgoing status,
+replay, inert decisions, expiry and 90-day audit retention without scanning an
+administrative collection. Request/result legs and durable operation results
+commit with their canonical state, so restart and retry cannot mint a second
+invitation or manifest. See [ADR 0011](docs/adr/0011-workspace-administrators.md).
 
 An authority-signed, hash-linked manifest controls membership and policy;
 independent manager chains control every public and private channel; an
