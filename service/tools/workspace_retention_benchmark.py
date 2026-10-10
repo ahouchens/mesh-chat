@@ -242,7 +242,16 @@ def vault_stats(store: VaultStore, vault_path: Path) -> dict[str, int]:
 
 def working_set_bytes() -> int | None:
     if os.name != "nt":
-        return None
+        try:
+            import resource
+        except ImportError:
+            return None
+
+        try:
+            peak_rss = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+        except (OSError, ValueError):
+            return None
+        return _unix_max_rss_bytes(peak_rss, sys.platform)
 
     class Counters(ctypes.Structure):
         _fields_ = [
@@ -273,6 +282,14 @@ def working_set_bytes() -> int | None:
         counters.cb,
     )
     return int(counters.PeakWorkingSetSize) if ok else None
+
+
+def _unix_max_rss_bytes(max_rss: int | float, platform_name: str) -> int:
+    """Normalize getrusage().ru_maxrss to bytes across Unix platforms."""
+
+    # macOS reports bytes; Linux and the BSDs report kibibytes.
+    multiplier = 1 if platform_name == "darwin" else 1024
+    return int(max_rss) * multiplier
 
 
 def physical_memory_bytes() -> int | None:

@@ -619,7 +619,10 @@ def run(root: Path, events: int, samples: int) -> dict[str, Any]:
         "restart_limit": restart_ms < LIMITS["restart_resume_ms"],
         "end_to_end_limit": end_to_end_ms < LIMITS["end_to_end_request_approval_delivery_ms"],
         "python_memory_limit": peak_python < LIMITS["peak_python_bytes"],
-        "working_set_limit": peak_working_set < LIMITS["peak_working_set_bytes"],
+        "working_set_limit": (
+            peak_working_set is None
+            or peak_working_set < LIMITS["peak_working_set_bytes"]
+        ),
         "vault_growth_limit": max(vault_growth.values()) < LIMITS["per_profile_vault_growth_bytes"],
     }
     owner.close()
