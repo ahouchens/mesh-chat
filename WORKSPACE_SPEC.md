@@ -1034,6 +1034,11 @@ peer request, telemetry path, or canonical-event change. See
 
 ### Increment 11 adds peer history catch-up
 
+Implementation status: completed in the desktop 0.2.31 candidate. Canonical
+schemas, disclosure rules, checkpoints, limits, continuation/replay behavior,
+encrypted job state, honest coverage language and release-minimum benchmark
+gates are frozen in [ADR 0010](docs/adr/0010-peer-history-catch-up.md).
+
 1. Exchange signed stream heads and issue nonce-bound, expiring, byte- and
    event-bounded history requests over canonical events stored since increment
    one.

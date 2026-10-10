@@ -45,7 +45,7 @@ ordering, removal, and owner-loss consequences.
 
 ## Desktop workspaces
 
-The tenth workspace increment is an isolated desktop feature profile. It adds
+The eleventh workspace increment is an isolated desktop feature profile. It adds
 canonical workspace authority, device, invitation, channel and event documents
 under the `mesh-chat-workspace` custom type without changing Personal or private
 group bytes. The React shell can switch between Personal and workspace views,
@@ -126,6 +126,20 @@ authorization before entering a restart snapshot.
 The workspace summary persists the derived mention unread count after each
 workspace change, so ordinary startup snapshots do not decrypt message bodies;
 profiles from the superseded preview builds are re-derived once on migration.
+
+Peer history catch-up is a bounded scheduler layered over the same canonical
+event path. Signed requests bind requester, nonce, exact conversation scope,
+stream ranges, count/byte limits, expiry and a one-time continuation. A serving
+peer uses opaque stream/sequence lookups and rechecks disclosure per body; it
+does not enumerate event, message, delivery, or history collections. Signed
+responses carry exact stored event bytes, prerequisite controls, checkpoints,
+signed peer heads/floors/ranges/gaps, and a digest-linked page continuation.
+The receiver validates controls first and then invokes ordinary event
+acceptance, so derived messages, mutations, threads, mentions, search and
+coverage remain one security boundary. Independently sealed job, replay,
+continuation, response-cache and peer-coverage records make retries and restart
+idempotent. Two jobs per workspace and four per profile are the fixed scheduler
+ceilings. Completion is stated only relative to signed peer heads.
 
 One-level workspace threads reuse the canonical workspace event stream. An
 ordinary root retains the existing JSON-null `thread_root`, so its canonical
@@ -254,7 +268,8 @@ snapshot. See
 [ADR 0006](docs/adr/0006-workspace-events-and-history-safety.md),
 [ADR 0007](docs/adr/0007-sealed-workspace-paging-and-outbox.md),
 [ADR 0008](docs/adr/0008-cooperative-retention-and-local-history.md), and
-[ADR 0009](docs/adr/0009-encrypted-local-search.md).
+[ADR 0009](docs/adr/0009-encrypted-local-search.md), and
+[ADR 0010](docs/adr/0010-peer-history-catch-up.md).
 
 ## Message reactions
 
@@ -350,3 +365,5 @@ The service does not export private identities to ordinary files, enable crash u
 - [ADR 0006: canonical workspace events and history safety](docs/adr/0006-workspace-events-and-history-safety.md)
 - [ADR 0007: sealed workspace paging and asynchronous outbox](docs/adr/0007-sealed-workspace-paging-and-outbox.md)
 - [ADR 0008: cooperative retention and retained local history](docs/adr/0008-cooperative-retention-and-local-history.md)
+- [ADR 0009: encrypted bounded local workspace search](docs/adr/0009-encrypted-local-search.md)
+- [ADR 0010: bounded authenticated peer history catch-up](docs/adr/0010-peer-history-catch-up.md)

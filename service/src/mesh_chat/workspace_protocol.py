@@ -38,6 +38,14 @@ MAX_CHANNEL_SUMMARY_ENTRIES = 32
 MAX_CHANNEL_SUMMARY_PAGES = 32
 MAX_RETAINED_PUBLIC_CHANNELS = MAX_CHANNEL_SUMMARY_ENTRIES * MAX_CHANNEL_SUMMARY_PAGES
 MAX_CHANNEL_FETCH_CONTROLS = 64
+MAX_HISTORY_STREAMS = 32
+MAX_HISTORY_RANGES = 64
+MAX_HISTORY_EVENTS = 32
+MAX_HISTORY_CONTROLS = 32
+MAX_HISTORY_CHECKPOINTS = 32
+MAX_HISTORY_RESPONSE_BYTES = 128 * 1024
+MIN_HISTORY_RESPONSE_BYTES = 4 * 1024
+MAX_HISTORY_REQUEST_LIFETIME_SECONDS = 15 * 60
 # The text field itself is 16 KiB. The canonical event has a separate bounded
 # allowance for IDs and the author signature.
 MAX_MESSAGE_TEXT_BYTES = 16 * 1024
@@ -130,6 +138,7 @@ class VerifiedWorkspaceManifest:
     created_at: int
     digest: str
     serialized: str
+    removal_checkpoint_digests: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -187,6 +196,7 @@ class VerifiedWorkspaceChannel:
     digest: str
     serialized: str
     member_ids: tuple[str, ...] = ()
+    removal_checkpoint_digests: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -274,6 +284,69 @@ class VerifiedWorkspaceEvent:
     reaction_active: bool | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class VerifiedWorkspaceEventCheckpoint:
+    workspace_id: str
+    checkpoint_id: str
+    author_member_id: str
+    author_device_id: str
+    manifest_digest: str
+    streams: tuple[dict[str, Any], ...]
+    created_at: int
+    digest: str
+    serialized: str
+
+
+@dataclass(frozen=True, slots=True)
+class VerifiedWorkspaceHistoryRequest:
+    workspace_id: str
+    request_id: str
+    requester_member_id: str
+    requester_device_id: str
+    manifest_digest: str
+    nonce: bytes
+    replay_key: str
+    scope: dict[str, Any]
+    streams: tuple[dict[str, Any], ...]
+    event_limit: int
+    byte_limit: int
+    continuation: str | None
+    created_at: int
+    expires_at: int
+    digest: str
+    serialized: str
+
+
+@dataclass(frozen=True, slots=True)
+class VerifiedWorkspaceHistoryResponse:
+    workspace_id: str
+    response_id: str
+    request_id: str
+    request_digest: str
+    requester_member_id: str
+    requester_device_id: str
+    request_nonce: bytes
+    request_replay_key: str
+    responder_member_id: str
+    responder_device_id: str
+    scope: dict[str, Any]
+    event_limit: int
+    byte_limit: int
+    expires_at: int
+    page_index: int
+    previous_response_digest: str | None
+    streams: tuple[dict[str, Any], ...]
+    controls: tuple[tuple[str, str], ...]
+    checkpoints: tuple[str, ...]
+    events: tuple[str, ...]
+    continuation: str | None
+    complete: bool
+    document_bytes: int
+    created_at: int
+    digest: str
+    serialized: str
+
+
 def workspace_direct_conversation_id(
     workspace_id: str, member_ids: Iterable[str]
 ) -> str:
@@ -359,6 +432,8 @@ def _load_document(raw: str, document_type: str) -> dict[str, Any]:
     maximum = (
         MAX_WORKSPACE_EVENT_BYTES
         if document_type == "workspace_event"
+        else MAX_HISTORY_RESPONSE_BYTES
+        if document_type == "workspace_history_response"
         else MAX_WORKSPACE_DOCUMENT_BYTES
     )
     if (
@@ -796,6 +871,7 @@ def create_workspace_manifest(
     channel_creation: WorkspaceChannelCreationPolicy | str = WorkspaceChannelCreationPolicy.ALL_MEMBERS,
     posting: WorkspacePostingPolicy | str = WorkspacePostingPolicy.ALL_MEMBERS,
     invitation_requests: WorkspaceInvitationPolicy | str = WorkspaceInvitationPolicy.OWNER_ONLY,
+    removal_checkpoint_digests: Iterable[str] = (),
     now: int | None = None,
 ) -> str:
     workspace_id = _validate_uuid(workspace_id, "Workspace ID")
@@ -862,6 +938,12 @@ def create_workspace_manifest(
     if owner_count != 1 or authority_count != 1:
         raise ValidationError("Workspace must contain one owner authority device")
     encoded.sort(key=lambda item: item["member_id"])
+    checked_checkpoints = sorted({
+        _validate_digest(item, "Removal checkpoint digest")
+        for item in removal_checkpoint_digests
+    })
+    if len(checked_checkpoints) > MAX_HISTORY_CHECKPOINTS:
+        raise ValidationError("Workspace removal checkpoints are invalid")
     unsigned = {
         "v": WORKSPACE_PROTOCOL_VERSION,
         "type": "workspace_manifest_root",
@@ -887,6 +969,8 @@ def create_workspace_manifest(
         "members": encoded,
         "created_at": int(time.time()) if now is None else int(now),
     }
+    if checked_checkpoints:
+        unsigned["removal_checkpoint_digests"] = checked_checkpoints
     return _sign(authority_identity, unsigned)
 
 
@@ -900,25 +984,16 @@ def verify_workspace_manifest(
     now: int | None = None,
 ) -> VerifiedWorkspaceManifest:
     value = _load_document(raw, "workspace_manifest_root")
+    fields = {
+            "v", "type", "workspace_id", "epoch", "previous_manifest_hash",
+            "name", "description", "authority_device_id", "authority_destination",
+            "status", "retention_days", "policies", "members", "created_at", "signature",
+        }
+    if "removal_checkpoint_digests" in value:
+        fields.add("removal_checkpoint_digests")
     _require_fields(
         value,
-        {
-            "v",
-            "type",
-            "workspace_id",
-            "epoch",
-            "previous_manifest_hash",
-            "name",
-            "description",
-            "authority_device_id",
-            "authority_destination",
-            "status",
-            "retention_days",
-            "policies",
-            "members",
-            "created_at",
-            "signature",
-        },
+        fields,
     )
     if value["v"] != WORKSPACE_PROTOCOL_VERSION:
         raise ValidationError("Workspace document version is unsupported")
@@ -1026,6 +1101,15 @@ def verify_workspace_manifest(
     _verify_signature(authority_identity, value, "Workspace manifest")
     current = int(time.time()) if now is None else int(now)
     created_at = _validate_timestamp(value["created_at"], now=current)
+    raw_checkpoints = value.get("removal_checkpoint_digests", [])
+    if not isinstance(raw_checkpoints, list):
+        raise ValidationError("Workspace removal checkpoints are invalid")
+    removal_checkpoints = tuple(
+        _validate_digest(item, "Removal checkpoint digest")
+        for item in raw_checkpoints
+    )
+    if list(removal_checkpoints) != sorted(removal_checkpoints) or len(set(removal_checkpoints)) != len(removal_checkpoints) or len(removal_checkpoints) > MAX_HISTORY_CHECKPOINTS:
+        raise ValidationError("Workspace removal checkpoints are invalid")
     return VerifiedWorkspaceManifest(
         workspace_id=workspace_id,
         epoch=epoch,
@@ -1048,6 +1132,7 @@ def verify_workspace_manifest(
         created_at=created_at,
         digest=_digest(value),
         serialized=_canonical(value),
+        removal_checkpoint_digests=removal_checkpoints,
     )
 
 
@@ -1655,6 +1740,7 @@ def create_workspace_channel_manifest(
     version: int = 1,
     previous_hash: str | None = None,
     archived: bool = False,
+    removal_checkpoint_digests: Iterable[str] = (),
     now: int | None = None,
 ) -> str:
     """Create a private-channel control.
@@ -1680,6 +1766,12 @@ def create_workspace_channel_manifest(
         raise ValidationError("Private channel manager must be a channel member")
     if not isinstance(archived, bool):
         raise ValidationError("Workspace channel state is invalid")
+    checked_checkpoints = sorted({
+        _validate_digest(item, "Removal checkpoint digest")
+        for item in removal_checkpoint_digests
+    })
+    if len(checked_checkpoints) > MAX_HISTORY_CHECKPOINTS:
+        raise ValidationError("Private channel removal checkpoints are invalid")
     unsigned = {
         "v": WORKSPACE_PROTOCOL_VERSION,
         "type": "workspace_channel_manifest",
@@ -1702,6 +1794,8 @@ def create_workspace_channel_manifest(
         "archived": archived,
         "created_at": int(time.time()) if now is None else int(now),
     }
+    if checked_checkpoints:
+        unsigned["removal_checkpoint_digests"] = checked_checkpoints
     return _sign(manager_identity, unsigned)
 
 
@@ -1713,25 +1807,16 @@ def verify_workspace_channel_manifest(
     now: int | None = None,
 ) -> VerifiedWorkspaceChannel:
     value = _load_document(raw, "workspace_channel_manifest")
+    fields = {
+            "v", "type", "workspace_id", "channel_id", "version", "previous_hash",
+            "manifest_digest", "name", "topic", "manager_member_id",
+            "manager_device_id", "member_ids", "archived", "created_at", "signature",
+        }
+    if "removal_checkpoint_digests" in value:
+        fields.add("removal_checkpoint_digests")
     _require_fields(
         value,
-        {
-            "v",
-            "type",
-            "workspace_id",
-            "channel_id",
-            "version",
-            "previous_hash",
-            "manifest_digest",
-            "name",
-            "topic",
-            "manager_member_id",
-            "manager_device_id",
-            "member_ids",
-            "archived",
-            "created_at",
-            "signature",
-        },
+        fields,
     )
     if value["v"] != WORKSPACE_PROTOCOL_VERSION:
         raise ValidationError("Workspace document version is unsupported")
@@ -1787,6 +1872,15 @@ def verify_workspace_channel_manifest(
     if not isinstance(value["archived"], bool):
         raise ValidationError("Workspace channel state is invalid")
     current = int(time.time()) if now is None else int(now)
+    raw_checkpoints = value.get("removal_checkpoint_digests", [])
+    if not isinstance(raw_checkpoints, list):
+        raise ValidationError("Private channel removal checkpoints are invalid")
+    removal_checkpoints = tuple(
+        _validate_digest(item, "Removal checkpoint digest")
+        for item in raw_checkpoints
+    )
+    if list(removal_checkpoints) != sorted(removal_checkpoints) or len(set(removal_checkpoints)) != len(removal_checkpoints) or len(removal_checkpoints) > MAX_HISTORY_CHECKPOINTS:
+        raise ValidationError("Private channel removal checkpoints are invalid")
     return VerifiedWorkspaceChannel(
         workspace_id=workspace_id,
         channel_id=channel_id,
@@ -1805,6 +1899,7 @@ def verify_workspace_channel_manifest(
         digest=_digest(value),
         serialized=_canonical(value),
         member_ids=member_ids,
+        removal_checkpoint_digests=removal_checkpoints,
     )
 
 
@@ -3159,6 +3254,548 @@ def verify_workspace_display_name_decision(
         device_id=request.device_id,
         approved=value["approved"],
         created_at=_validate_timestamp(value["created_at"], now=current),
+        digest=_digest(value),
+        serialized=_canonical(value),
+    )
+
+
+def _history_ranges(value: Any, label: str) -> list[list[int]]:
+    if not isinstance(value, list) or len(value) > MAX_HISTORY_RANGES:
+        raise ValidationError(f"{label} are invalid")
+    checked: list[list[int]] = []
+    previous_end = 0
+    for item in value:
+        if (
+            not isinstance(item, list)
+            or len(item) != 2
+            or any(isinstance(part, bool) or not isinstance(part, int) for part in item)
+            or item[0] < 1
+            or item[1] < item[0]
+            or item[1] > MAX_SEQUENCE
+            or item[0] <= previous_end
+        ):
+            raise ValidationError(f"{label} are invalid")
+        checked.append([item[0], item[1]])
+        previous_end = item[1]
+    return checked
+
+
+def _history_scope(value: Any, *, workspace_id: str) -> dict[str, Any]:
+    if not isinstance(value, dict) or set(value) != {
+        "kind", "conversation_id", "channel_digest", "participant_member_ids"
+    }:
+        raise ValidationError("Workspace history scope is invalid")
+    kind = value["kind"]
+    if kind not in {"public", "private", "direct"}:
+        raise ValidationError("Workspace history scope is invalid")
+    conversation_id = _validate_uuid(value["conversation_id"], "Conversation ID")
+    channel_digest = value["channel_digest"]
+    participants = value["participant_member_ids"]
+    if kind == "direct":
+        if channel_digest is not None or not isinstance(participants, list):
+            raise ValidationError("Workspace direct history scope is invalid")
+        checked_participants = [
+            _validate_uuid(item, "Workspace direct-message participant ID")
+            for item in participants
+        ]
+        if (
+            len(checked_participants) != 2
+            or checked_participants != sorted(checked_participants)
+            or len(set(checked_participants)) != 2
+            or conversation_id
+            != workspace_direct_conversation_id(workspace_id, checked_participants)
+        ):
+            raise ValidationError("Workspace direct history scope is invalid")
+    else:
+        if not isinstance(channel_digest, str) or participants != []:
+            raise ValidationError("Workspace channel history scope is invalid")
+        channel_digest = _validate_digest(channel_digest, "Channel digest")
+        checked_participants = []
+    return {
+        "kind": kind,
+        "conversation_id": conversation_id,
+        "channel_digest": channel_digest,
+        "participant_member_ids": checked_participants,
+    }
+
+
+def _history_streams(value: Any) -> tuple[dict[str, Any], ...]:
+    if not isinstance(value, list) or not 1 <= len(value) <= MAX_HISTORY_STREAMS:
+        raise ValidationError("Workspace history streams are invalid")
+    checked: list[dict[str, Any]] = []
+    total_ranges = 0
+    for item in value:
+        if not isinstance(item, dict) or set(item) != {
+            "author_device_id", "known_high_water", "retained_floor", "head_digest",
+            "seen_ranges", "gaps", "request_ranges",
+        }:
+            raise ValidationError("Workspace history stream is invalid")
+        device_id = _validate_uuid(item["author_device_id"], "Author device ID")
+        high_water = item["known_high_water"]
+        retained_floor = item["retained_floor"]
+        if (
+            isinstance(high_water, bool)
+            or not isinstance(high_water, int)
+            or not 0 <= high_water <= MAX_SEQUENCE
+            or isinstance(retained_floor, bool)
+            or not isinstance(retained_floor, int)
+            or not 1 <= retained_floor <= MAX_SEQUENCE
+            or retained_floor > max(1, high_water + 1)
+        ):
+            raise ValidationError("Workspace history stream coverage is invalid")
+        head_digest = item["head_digest"]
+        if high_water == 0:
+            if head_digest is not None:
+                raise ValidationError("Workspace history stream head is invalid")
+        else:
+            head_digest = _validate_digest(head_digest, "Workspace history head digest")
+        seen = _history_ranges(item["seen_ranges"], "Workspace history seen ranges")
+        gaps = _history_ranges(item["gaps"], "Workspace history gaps")
+        requested = _history_ranges(item["request_ranges"], "Workspace history requested ranges")
+        if not requested:
+            raise ValidationError("Workspace history requested ranges are empty")
+        total_ranges += len(seen) + len(gaps) + len(requested)
+        checked.append({
+            "author_device_id": device_id,
+            "known_high_water": high_water,
+            "retained_floor": retained_floor,
+            "head_digest": head_digest,
+            "seen_ranges": seen,
+            "gaps": gaps,
+            "request_ranges": requested,
+        })
+    device_ids = [item["author_device_id"] for item in checked]
+    if total_ranges > MAX_HISTORY_RANGES:
+        raise ValidationError("Workspace history ranges are too fragmented")
+    if device_ids != sorted(device_ids) or len(set(device_ids)) != len(device_ids):
+        raise ValidationError("Workspace history streams are not canonical")
+    return tuple(checked)
+
+
+def create_workspace_event_checkpoint(
+    identity: RNS.Identity,
+    *,
+    workspace_id: str,
+    checkpoint_id: str,
+    author_member_id: str,
+    author_device_id: str,
+    manifest_digest: str,
+    streams: Sequence[dict[str, Any]],
+    created_at: int | None = None,
+) -> str:
+    encoded: list[dict[str, Any]] = []
+    if not isinstance(streams, Sequence) or not 1 <= len(streams) <= MAX_HISTORY_STREAMS:
+        raise ValidationError("Workspace checkpoint streams are invalid")
+    for item in streams:
+        if not isinstance(item, dict) or set(item) != {
+            "conversation_id", "channel_digest", "high_water", "head_digest"
+        }:
+            raise ValidationError("Workspace checkpoint stream is invalid")
+        high_water = item["high_water"]
+        if isinstance(high_water, bool) or not isinstance(high_water, int) or not 1 <= high_water <= MAX_SEQUENCE:
+            raise ValidationError("Workspace checkpoint high-water is invalid")
+        encoded.append({
+            "conversation_id": _validate_uuid(item["conversation_id"], "Conversation ID"),
+            "channel_digest": None if item["channel_digest"] is None else _validate_digest(item["channel_digest"], "Channel digest"),
+            "high_water": high_water,
+            "head_digest": _validate_digest(item["head_digest"], "Workspace checkpoint head digest"),
+        })
+    encoded.sort(key=lambda item: (item["conversation_id"], item["channel_digest"] or ""))
+    if len({(item["conversation_id"], item["channel_digest"]) for item in encoded}) != len(encoded):
+        raise ValidationError("Workspace checkpoint streams are duplicated")
+    return _sign(identity, {
+        "v": WORKSPACE_PROTOCOL_VERSION,
+        "type": "workspace_event_checkpoint",
+        "workspace_id": _validate_uuid(workspace_id, "Workspace ID"),
+        "checkpoint_id": _validate_uuid(checkpoint_id, "Checkpoint ID"),
+        "author_member_id": _validate_uuid(author_member_id, "Author member ID"),
+        "author_device_id": _validate_uuid(author_device_id, "Author device ID"),
+        "manifest_digest": _validate_digest(manifest_digest, "Manifest digest"),
+        "streams": encoded,
+        "created_at": int(time.time()) if created_at is None else int(created_at),
+    })
+
+
+def verify_workspace_event_checkpoint(
+    raw: str,
+    *,
+    manifest: VerifiedWorkspaceManifest,
+    now: int | None = None,
+) -> VerifiedWorkspaceEventCheckpoint:
+    value = _load_document(raw, "workspace_event_checkpoint")
+    _require_fields(value, {
+        "v", "type", "workspace_id", "checkpoint_id", "author_member_id",
+        "author_device_id", "manifest_digest", "streams", "created_at", "signature",
+    })
+    if value["v"] != WORKSPACE_PROTOCOL_VERSION or value["workspace_id"] != manifest.workspace_id or value["manifest_digest"] != manifest.digest:
+        raise ValidationError("Workspace checkpoint controls do not match")
+    author_member_id = _validate_uuid(value["author_member_id"], "Author member ID")
+    author_device_id = _validate_uuid(value["author_device_id"], "Author device ID")
+    found = find_device(manifest, author_device_id)
+    if found is None or found[0].member_id != author_member_id or found[0].status != "active":
+        raise IdentityMismatch("Workspace checkpoint author is not active")
+    raw_streams = value["streams"]
+    if not isinstance(raw_streams, list) or not 1 <= len(raw_streams) <= MAX_HISTORY_STREAMS:
+        raise ValidationError("Workspace checkpoint streams are invalid")
+    streams: list[dict[str, Any]] = []
+    for item in raw_streams:
+        if not isinstance(item, dict) or set(item) != {"conversation_id", "channel_digest", "high_water", "head_digest"}:
+            raise ValidationError("Workspace checkpoint stream is invalid")
+        high_water = item["high_water"]
+        if isinstance(high_water, bool) or not isinstance(high_water, int) or not 1 <= high_water <= MAX_SEQUENCE:
+            raise ValidationError("Workspace checkpoint high-water is invalid")
+        streams.append({
+            "conversation_id": _validate_uuid(item["conversation_id"], "Conversation ID"),
+            "channel_digest": None if item["channel_digest"] is None else _validate_digest(item["channel_digest"], "Channel digest"),
+            "high_water": high_water,
+            "head_digest": _validate_digest(item["head_digest"], "Workspace checkpoint head digest"),
+        })
+    if streams != sorted(streams, key=lambda item: (item["conversation_id"], item["channel_digest"] or "")) or len({(item["conversation_id"], item["channel_digest"]) for item in streams}) != len(streams):
+        raise ValidationError("Workspace checkpoint streams are not canonical")
+    _verify_signature(_identity_from_public_key(found[1].public_identity), value, "Workspace event checkpoint")
+    current = int(time.time()) if now is None else int(now)
+    return VerifiedWorkspaceEventCheckpoint(
+        workspace_id=manifest.workspace_id,
+        checkpoint_id=_validate_uuid(value["checkpoint_id"], "Checkpoint ID"),
+        author_member_id=author_member_id,
+        author_device_id=author_device_id,
+        manifest_digest=manifest.digest,
+        streams=tuple(streams),
+        created_at=_validate_timestamp(value["created_at"], now=current),
+        digest=_digest(value),
+        serialized=_canonical(value),
+    )
+
+
+def create_workspace_history_request(
+    identity: RNS.Identity,
+    *,
+    workspace_id: str,
+    request_id: str,
+    requester_member_id: str,
+    requester_device_id: str,
+    manifest_digest: str,
+    scope: dict[str, Any],
+    streams: Sequence[dict[str, Any]],
+    event_limit: int = MAX_HISTORY_EVENTS,
+    byte_limit: int = MAX_HISTORY_RESPONSE_BYTES,
+    continuation: str | None = None,
+    nonce: bytes | None = None,
+    replay_key: str | None = None,
+    created_at: int | None = None,
+    expires_at: int | None = None,
+) -> str:
+    created = int(time.time()) if created_at is None else int(created_at)
+    expires = created + MAX_HISTORY_REQUEST_LIFETIME_SECONDS if expires_at is None else int(expires_at)
+    if expires < created or expires > created + MAX_HISTORY_REQUEST_LIFETIME_SECONDS:
+        raise ValidationError("Workspace history request expiry is invalid")
+    if isinstance(event_limit, bool) or not isinstance(event_limit, int) or not 1 <= event_limit <= MAX_HISTORY_EVENTS:
+        raise ValidationError("Workspace history event limit is invalid")
+    if isinstance(byte_limit, bool) or not isinstance(byte_limit, int) or not MIN_HISTORY_RESPONSE_BYTES <= byte_limit <= MAX_HISTORY_RESPONSE_BYTES:
+        raise ValidationError("Workspace history byte limit is invalid")
+    checked_workspace_id = _validate_uuid(workspace_id, "Workspace ID")
+    checked_nonce = os.urandom(NONCE_BYTES) if nonce is None else nonce
+    if not isinstance(checked_nonce, bytes) or len(checked_nonce) != NONCE_BYTES:
+        raise ValidationError("Workspace history nonce is invalid")
+    return _sign(identity, {
+        "v": WORKSPACE_PROTOCOL_VERSION,
+        "type": "workspace_history_request",
+        "workspace_id": checked_workspace_id,
+        "request_id": _validate_uuid(request_id, "Request ID"),
+        "requester_member_id": _validate_uuid(requester_member_id, "Requester member ID"),
+        "requester_device_id": _validate_uuid(requester_device_id, "Requester device ID"),
+        "manifest_digest": _validate_digest(manifest_digest, "Manifest digest"),
+        "nonce": _b64encode(checked_nonce),
+        "replay_key": _validate_uuid(replay_key or str(uuid.uuid4()), "Replay key"),
+        "scope": _history_scope(scope, workspace_id=checked_workspace_id),
+        "streams": list(_history_streams(list(streams))),
+        "event_limit": event_limit,
+        "byte_limit": byte_limit,
+        "continuation": None if continuation is None else _validate_digest(continuation, "Workspace history continuation"),
+        "created_at": created,
+        "expires_at": expires,
+    })
+
+
+def verify_workspace_history_request(
+    raw: str,
+    *,
+    manifest: VerifiedWorkspaceManifest,
+    now: int | None = None,
+) -> VerifiedWorkspaceHistoryRequest:
+    value = _load_document(raw, "workspace_history_request")
+    _require_fields(value, {
+        "v", "type", "workspace_id", "request_id", "requester_member_id",
+        "requester_device_id", "manifest_digest", "nonce", "replay_key", "scope",
+        "streams", "event_limit", "byte_limit", "continuation", "created_at",
+        "expires_at", "signature",
+    })
+    if value["v"] != WORKSPACE_PROTOCOL_VERSION or value["workspace_id"] != manifest.workspace_id or value["manifest_digest"] != manifest.digest:
+        raise ValidationError("Workspace history request controls do not match")
+    member_id = _validate_uuid(value["requester_member_id"], "Requester member ID")
+    device_id = _validate_uuid(value["requester_device_id"], "Requester device ID")
+    found = find_device(manifest, device_id)
+    if found is None or found[0].member_id != member_id or found[0].status != "active" or manifest.status != "active":
+        raise IdentityMismatch("Workspace history requester is not active")
+    _verify_signature(_identity_from_public_key(found[1].public_identity), value, "Workspace history request")
+    current = int(time.time()) if now is None else int(now)
+    created = _validate_timestamp(value["created_at"], now=current)
+    expires = value["expires_at"]
+    if isinstance(expires, bool) or not isinstance(expires, int) or expires < current or expires < created or expires > created + MAX_HISTORY_REQUEST_LIFETIME_SECONDS:
+        raise InvitationExpired("Workspace history request has expired")
+    event_limit = value["event_limit"]
+    byte_limit = value["byte_limit"]
+    if isinstance(event_limit, bool) or not isinstance(event_limit, int) or not 1 <= event_limit <= MAX_HISTORY_EVENTS:
+        raise ValidationError("Workspace history event limit is invalid")
+    if isinstance(byte_limit, bool) or not isinstance(byte_limit, int) or not MIN_HISTORY_RESPONSE_BYTES <= byte_limit <= MAX_HISTORY_RESPONSE_BYTES:
+        raise ValidationError("Workspace history byte limit is invalid")
+    continuation = value["continuation"]
+    if continuation is not None:
+        continuation = _validate_digest(continuation, "Workspace history continuation")
+    return VerifiedWorkspaceHistoryRequest(
+        workspace_id=manifest.workspace_id,
+        request_id=_validate_uuid(value["request_id"], "Request ID"),
+        requester_member_id=member_id,
+        requester_device_id=device_id,
+        manifest_digest=manifest.digest,
+        nonce=_b64decode(value["nonce"], "Workspace history nonce", expected_length=NONCE_BYTES),
+        replay_key=_validate_uuid(value["replay_key"], "Replay key"),
+        scope=_history_scope(value["scope"], workspace_id=manifest.workspace_id),
+        streams=_history_streams(value["streams"]),
+        event_limit=event_limit,
+        byte_limit=byte_limit,
+        continuation=continuation,
+        created_at=created,
+        expires_at=expires,
+        digest=_digest(value),
+        serialized=_canonical(value),
+    )
+
+
+def _history_response_streams(value: Any) -> tuple[dict[str, Any], ...]:
+    if not isinstance(value, list) or len(value) > MAX_HISTORY_STREAMS:
+        raise ValidationError("Workspace history response streams are invalid")
+    checked: list[dict[str, Any]] = []
+    total_ranges = 0
+    for item in value:
+        if not isinstance(item, dict) or set(item) != {
+            "author_device_id", "high_water", "head_digest", "retained_floor",
+            "available_ranges", "gaps",
+        }:
+            raise ValidationError("Workspace history response stream is invalid")
+        high_water = item["high_water"]
+        retained_floor = item["retained_floor"]
+        if (
+            isinstance(high_water, bool) or not isinstance(high_water, int)
+            or not 0 <= high_water <= MAX_SEQUENCE
+            or isinstance(retained_floor, bool) or not isinstance(retained_floor, int)
+            or not 1 <= retained_floor <= max(1, high_water + 1)
+        ):
+            raise ValidationError("Workspace history response coverage is invalid")
+        head_digest = item["head_digest"]
+        if high_water == 0:
+            if head_digest is not None:
+                raise ValidationError("Workspace history response head is invalid")
+        else:
+            head_digest = _validate_digest(head_digest, "Workspace history response head")
+        available = _history_ranges(item["available_ranges"], "Workspace history available ranges")
+        gaps = _history_ranges(item["gaps"], "Workspace history response gaps")
+        total_ranges += len(available) + len(gaps)
+        checked.append({
+            "author_device_id": _validate_uuid(item["author_device_id"], "Author device ID"),
+            "high_water": high_water,
+            "head_digest": head_digest,
+            "retained_floor": retained_floor,
+            "available_ranges": available,
+            "gaps": gaps,
+        })
+    device_ids = [item["author_device_id"] for item in checked]
+    if total_ranges > MAX_HISTORY_RANGES or device_ids != sorted(device_ids) or len(set(device_ids)) != len(device_ids):
+        raise ValidationError("Workspace history response streams are not canonical")
+    return tuple(checked)
+
+
+def create_workspace_history_response(
+    identity: RNS.Identity,
+    *,
+    request: VerifiedWorkspaceHistoryRequest,
+    response_id: str,
+    responder_member_id: str,
+    responder_device_id: str,
+    page_index: int,
+    previous_response_digest: str | None,
+    streams: Sequence[dict[str, Any]] = (),
+    controls: Sequence[tuple[str, str]] = (),
+    checkpoints: Sequence[str] = (),
+    events: Sequence[str] = (),
+    continuation: str | None = None,
+    complete: bool = False,
+    created_at: int | None = None,
+) -> str:
+    if isinstance(page_index, bool) or not isinstance(page_index, int) or not 0 <= page_index <= MAX_SEQUENCE:
+        raise ValidationError("Workspace history response page is invalid")
+    if len(events) > request.event_limit or len(events) > MAX_HISTORY_EVENTS or len(controls) > MAX_HISTORY_CONTROLS or len(checkpoints) > MAX_HISTORY_CHECKPOINTS:
+        raise ValidationError("Workspace history response count limit exceeded")
+    encoded_controls = [{"kind": kind, "document": document} for kind, document in controls]
+    encoded_streams = _history_response_streams(list(streams))
+    document_bytes = sum(len(item["document"].encode("utf-8")) for item in encoded_controls) + sum(len(item.encode("utf-8")) for item in checkpoints) + sum(len(item.encode("utf-8")) for item in events)
+    unsigned = {
+        "v": WORKSPACE_PROTOCOL_VERSION,
+        "type": "workspace_history_response",
+        "workspace_id": request.workspace_id,
+        "response_id": _validate_uuid(response_id, "Response ID"),
+        "request_id": request.request_id,
+        "request_digest": request.digest,
+        "requester_member_id": request.requester_member_id,
+        "requester_device_id": request.requester_device_id,
+        "request_nonce": _b64encode(request.nonce),
+        "request_replay_key": request.replay_key,
+        "responder_member_id": _validate_uuid(responder_member_id, "Responder member ID"),
+        "responder_device_id": _validate_uuid(responder_device_id, "Responder device ID"),
+        "scope": request.scope,
+        "event_limit": request.event_limit,
+        "byte_limit": request.byte_limit,
+        "expires_at": request.expires_at,
+        "page_index": page_index,
+        "previous_response_digest": None if previous_response_digest is None else _validate_digest(previous_response_digest, "Previous response digest"),
+        "streams": list(encoded_streams),
+        "controls": encoded_controls,
+        "checkpoints": list(checkpoints),
+        "events": list(events),
+        "event_count": len(events),
+        "document_bytes": document_bytes,
+        "continuation": None if continuation is None else _validate_digest(continuation, "Workspace history continuation"),
+        "complete": bool(complete),
+        "created_at": int(time.time()) if created_at is None else int(created_at),
+    }
+    serialized = _sign(identity, unsigned, maximum=MAX_HISTORY_RESPONSE_BYTES)
+    if len(serialized.encode("utf-8")) > request.byte_limit:
+        raise ValidationError("Workspace history response byte limit exceeded")
+    return serialized
+
+
+def verify_workspace_history_response(
+    raw: str,
+    *,
+    manifest: VerifiedWorkspaceManifest,
+    request: VerifiedWorkspaceHistoryRequest,
+    now: int | None = None,
+) -> VerifiedWorkspaceHistoryResponse:
+    if len(raw.encode("utf-8")) > request.byte_limit:
+        raise ValidationError("Workspace history response byte limit exceeded")
+    value = _load_document(raw, "workspace_history_response")
+    _require_fields(value, {
+        "v", "type", "workspace_id", "response_id", "request_id", "request_digest",
+        "requester_member_id", "requester_device_id", "request_nonce", "request_replay_key",
+        "responder_member_id", "responder_device_id", "scope", "event_limit", "byte_limit",
+        "expires_at", "page_index", "previous_response_digest", "streams", "controls", "checkpoints",
+        "events", "event_count", "document_bytes", "continuation", "complete", "created_at",
+        "signature",
+    })
+    if (
+        value["v"] != WORKSPACE_PROTOCOL_VERSION
+        or value["workspace_id"] != request.workspace_id
+        or value["workspace_id"] != manifest.workspace_id
+        or value["request_id"] != request.request_id
+        or value["request_digest"] != request.digest
+        or value["requester_member_id"] != request.requester_member_id
+        or value["requester_device_id"] != request.requester_device_id
+        or value["request_nonce"] != _b64encode(request.nonce)
+        or value["request_replay_key"] != request.replay_key
+        or value["scope"] != request.scope
+        or value["event_limit"] != request.event_limit
+        or value["byte_limit"] != request.byte_limit
+        or value["expires_at"] != request.expires_at
+    ):
+        raise ValidationError("Workspace history response is not bound to its request")
+    member_id = _validate_uuid(value["responder_member_id"], "Responder member ID")
+    device_id = _validate_uuid(value["responder_device_id"], "Responder device ID")
+    found = find_device(manifest, device_id)
+    if found is None or found[0].member_id != member_id or found[0].status != "active" or manifest.status != "active":
+        raise IdentityMismatch("Workspace history responder is not active")
+    _verify_signature(_identity_from_public_key(found[1].public_identity), value, "Workspace history response")
+    current = int(time.time()) if now is None else int(now)
+    created = _validate_timestamp(value["created_at"], now=current)
+    if current > request.expires_at or created > request.expires_at:
+        raise InvitationExpired("Workspace history response has expired")
+    page_index = value["page_index"]
+    if isinstance(page_index, bool) or not isinstance(page_index, int) or not 0 <= page_index <= MAX_SEQUENCE:
+        raise ValidationError("Workspace history response page is invalid")
+    previous = value["previous_response_digest"]
+    if previous is not None:
+        previous = _validate_digest(previous, "Previous response digest")
+    raw_controls = value["controls"]
+    raw_checkpoints = value["checkpoints"]
+    raw_events = value["events"]
+    if (
+        not isinstance(raw_controls, list) or len(raw_controls) > MAX_HISTORY_CONTROLS
+        or not isinstance(raw_checkpoints, list) or len(raw_checkpoints) > MAX_HISTORY_CHECKPOINTS
+        or not isinstance(raw_events, list) or len(raw_events) > request.event_limit or len(raw_events) > MAX_HISTORY_EVENTS
+        or value["event_count"] != len(raw_events)
+        or not isinstance(value["complete"], bool)
+    ):
+        raise ValidationError("Workspace history response counts are invalid")
+    response_streams = _history_response_streams(value["streams"])
+    requested_devices = {item["author_device_id"] for item in request.streams}
+    if any(item["author_device_id"] not in requested_devices for item in response_streams):
+        raise ValidationError("Workspace history response stream is outside the request")
+    controls: list[tuple[str, str]] = []
+    allowed_controls = {"workspace_manifest_root", "workspace_channel_record", "workspace_channel_manifest", "workspace_channel_transfer", "workspace_channel_recovery"}
+    for item in raw_controls:
+        if not isinstance(item, dict) or set(item) != {"kind", "document"} or item["kind"] not in allowed_controls:
+            raise ValidationError("Workspace history control is invalid")
+        control = _load_document(item["document"], item["kind"])
+        if control.get("workspace_id") != request.workspace_id:
+            raise ValidationError("Workspace history control belongs to another workspace")
+        controls.append((item["kind"], item["document"]))
+    checkpoints: list[str] = []
+    for item in raw_checkpoints:
+        checkpoint = _load_document(item, "workspace_event_checkpoint")
+        if checkpoint.get("workspace_id") != request.workspace_id:
+            raise ValidationError("Workspace history checkpoint belongs to another workspace")
+        checkpoints.append(item)
+    events: list[str] = []
+    requested_by_device = {stream["author_device_id"]: stream["request_ranges"] for stream in request.streams}
+    for item in raw_events:
+        event = _load_document(item, "workspace_event")
+        if event.get("workspace_id") != request.workspace_id or event.get("conversation_id") != request.scope["conversation_id"]:
+            raise ValidationError("Workspace history event is outside the requested scope")
+        device_ranges = requested_by_device.get(event.get("author_device_id"))
+        sequence = event.get("sequence")
+        if not isinstance(sequence, int) or not device_ranges or not any(start <= sequence <= end for start, end in device_ranges):
+            raise ValidationError("Workspace history event is outside the requested range")
+        events.append(item)
+    document_bytes = sum(len(document.encode("utf-8")) for _, document in controls) + sum(len(item.encode("utf-8")) for item in checkpoints) + sum(len(item.encode("utf-8")) for item in events)
+    if value["document_bytes"] != document_bytes:
+        raise ValidationError("Workspace history response byte count is invalid")
+    continuation = value["continuation"]
+    if continuation is not None:
+        continuation = _validate_digest(continuation, "Workspace history continuation")
+    return VerifiedWorkspaceHistoryResponse(
+        workspace_id=request.workspace_id,
+        response_id=_validate_uuid(value["response_id"], "Response ID"),
+        request_id=request.request_id,
+        request_digest=request.digest,
+        requester_member_id=request.requester_member_id,
+        requester_device_id=request.requester_device_id,
+        request_nonce=request.nonce,
+        request_replay_key=request.replay_key,
+        responder_member_id=member_id,
+        responder_device_id=device_id,
+        scope=request.scope,
+        event_limit=request.event_limit,
+        byte_limit=request.byte_limit,
+        expires_at=request.expires_at,
+        page_index=page_index,
+        previous_response_digest=previous,
+        streams=response_streams,
+        controls=tuple(controls),
+        checkpoints=tuple(checkpoints),
+        events=tuple(events),
+        continuation=continuation,
+        complete=value["complete"],
+        document_bytes=document_bytes,
+        created_at=created,
         digest=_digest(value),
         serialized=_canonical(value),
     )

@@ -489,6 +489,44 @@ already retained and historically authorized may remain as a read-only local
 archive until pruning or confirmed local erasure. Owner or future admin status
 never grants access to another pair's workspace-DM history.
 
+### Authenticated peer history catch-up
+
+Increment 11 adds `workspace_event_checkpoint`, `workspace_history_request`,
+and `workspace_history_response` under the existing workspace custom type. A
+request signs a fresh 32-byte nonce, replay key, exact workspace/conversation
+scope, requester member/device, current manifest, per-author known head,
+retained floor, seen ranges, gaps and requested ranges, event/encoded-byte
+limits, optional one-time continuation and an expiry no more than 15 minutes
+away. A response repeats every binding, signs responder identity, page index,
+previous response digest, peer heads/floors/available ranges/gaps, exact
+prerequisite controls/checkpoints/events, explicit counts and bytes, optional
+continuation and completion claim.
+
+One response contains at most 32 events, 32 controls, 32 checkpoints and 128
+KiB, and construction performs at most 256 direct sequence probes. At most 32
+streams and 64 canonical ranges are accepted. Continuations bind the native
+source, requester, scope, streams, limits and preceding response and are
+single-use. Response IDs and request replay keys have sealed expiry records.
+There are at most two jobs per workspace and four per profile.
+
+Public bodies require a currently active workspace requester. Private bodies
+require current membership and an unbroken membership chain back through the
+event version, so removal and re-admission do not bridge eras. DM serving
+requires requester and responder to be the exact two signed participants.
+Controls validate before events; every event then follows the ordinary author
+signature, stream/predecessor, mutation/thread/audience, tombstone, retention,
+materialization and search-index path. A previously unseen inactive-author
+public/private event additionally needs a supplied checkpoint whose exact
+digest is committed by the applicable current removal control and whose event
+chain reaches its signed head. V1 defines no third-party DM anchor. Failure
+becomes a permanent gap, never forwarding-peer authority.
+
+Signed peer heads are evidence only of what that peer claimed during the job.
+They do not prove global existence, possession of every preceding body, or
+future availability. `complete_known` therefore means complete only within the
+heads actually signed by the exhausted peers. See
+[ADR 0010](docs/adr/0010-peer-history-catch-up.md).
+
 ### Encrypted local workspace search
 
 Increment 10 adds no wire document, packet kind, peer request, or canonical
@@ -558,6 +596,7 @@ Receipts are ordinary signed, end-to-end encrypted LXMF messages. They reference
 - Private group or announcement channel: at most eight people including the owner.
 - Desktop workspace: at most eight people, 32 active channels including `#general`, 32 entries per signed public-summary page, 32 pages per sync session, and 64 controls per signed public fetch response. Archived public channels are retained in the bounded 1,024-entry directory; private channels are never summarized publicly.
 - Workspace local search: at most 256 query characters, 1,024 UTF-8 bytes, 8 exact tokens, 8 keyed shard pages, 256 candidates, and 50 results; rebuilds advance at most 128 retained events per transaction.
+- Workspace history catch-up: 32 streams, 64 ranges, 32 events, 32 controls, 32 checkpoints, 128 KiB and 15 minutes per request; 256 sequence probes per response; 2 jobs per workspace and 4 per profile.
 - Pending reactions: at most 256 total and 32 per authenticated actor.
 - IPC frame: 4 MiB; renderer-originated payload: 32 KiB.
 - LXMF direct and propagated modes: enabled.

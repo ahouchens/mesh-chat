@@ -149,6 +149,10 @@ class MeshChatService(ReactionServiceMixin, GroupServiceMixin, WorkspaceServiceM
         "update_workspace_policies",
         "update_workspace_retention",
         "prune_workspace_history",
+        "get_workspace_history_status",
+        "start_workspace_history",
+        "cancel_workspace_history",
+        "list_workspace_history_gaps",
         "remove_workspace_member",
         "request_workspace_display_name",
         "decide_workspace_display_name",
@@ -176,6 +180,8 @@ class MeshChatService(ReactionServiceMixin, GroupServiceMixin, WorkspaceServiceM
         "list_workspace_thread_messages",
         "list_workspace_message_revisions",
         "list_workspace_tombstones",
+        "get_workspace_history_status",
+        "list_workspace_history_gaps",
         "mark_workspace_read",
         "mark_workspace_direct_read",
         "mark_workspace_mentions_read",
@@ -2175,6 +2181,43 @@ class MeshChatService(ReactionServiceMixin, GroupServiceMixin, WorkspaceServiceM
                 body["channel_id"],
                 body.get("cursor"),
                 body.get("limit", 50),
+            )
+        if command == "get_workspace_history_status":
+            body = _payload(
+                value,
+                allowed={"workspace_id", "conversation_id"},
+                required={"workspace_id", "conversation_id"},
+            )
+            return self.get_workspace_history_status(
+                body["workspace_id"], body["conversation_id"]
+            )
+        if command == "start_workspace_history":
+            body = _payload(
+                value,
+                allowed={"operation_id", "workspace_id", "conversation_id"},
+                required={"operation_id", "workspace_id", "conversation_id"},
+            )
+            return self.start_workspace_history(
+                body["workspace_id"], body["conversation_id"], body["operation_id"]
+            )
+        if command == "cancel_workspace_history":
+            body = _payload(
+                value,
+                allowed={"operation_id", "workspace_id", "conversation_id"},
+                required={"operation_id", "workspace_id", "conversation_id"},
+            )
+            return self.cancel_workspace_history(
+                body["workspace_id"], body["conversation_id"], body["operation_id"]
+            )
+        if command == "list_workspace_history_gaps":
+            body = _payload(
+                value,
+                allowed={"workspace_id", "conversation_id", "cursor", "limit"},
+                required={"workspace_id", "conversation_id"},
+            )
+            return self.list_workspace_history_gaps(
+                body["workspace_id"], body["conversation_id"],
+                body.get("cursor"), body.get("limit", 32),
             )
         if command == "search_workspace":
             body = _payload(

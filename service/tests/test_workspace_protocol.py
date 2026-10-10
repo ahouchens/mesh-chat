@@ -20,6 +20,7 @@ from mesh_chat.workspace_protocol import (
     MAX_CHANNEL_FETCH_CONTROLS,
     MAX_CHANNEL_SUMMARY_ENTRIES,
     MAX_CHANNEL_SUMMARY_PAGES,
+    MAX_HISTORY_RESPONSE_BYTES,
     MAX_WORKSPACE_DOCUMENT_BYTES,
     WorkspaceManifestMemberInput,
     create_workspace_device_card,
@@ -33,6 +34,9 @@ from mesh_chat.workspace_protocol import (
     create_workspace_channel_transfer,
     create_workspace_channel_transfer_offer,
     create_workspace_event,
+    create_workspace_event_checkpoint,
+    create_workspace_history_request,
+    create_workspace_history_response,
     create_workspace_mutation_event,
     create_workspace_genesis,
     create_workspace_invitation,
@@ -49,6 +53,9 @@ from mesh_chat.workspace_protocol import (
     verify_workspace_channel_transfer,
     verify_workspace_channel_transfer_offer,
     verify_workspace_event,
+    verify_workspace_event_checkpoint,
+    verify_workspace_history_request,
+    verify_workspace_history_response,
     verify_workspace_display_name_request,
     verify_workspace_display_name_decision,
     verify_workspace_genesis,
@@ -105,6 +112,192 @@ def _workspace() -> tuple[RNS.Identity, object, object, object]:
     )
     manifest = verify_workspace_manifest_transition(manifest_raw, genesis, now=NOW)
     return owner, created, genesis, manifest
+
+
+def _history_documents() -> tuple[object, object, object, object, str, object, str]:
+    owner, created, genesis, manifest = _workspace()
+    channel_raw = create_workspace_channel_record(
+        owner,
+        workspace_id=genesis.workspace_id,
+        channel_id=_id(),
+        manifest_digest=manifest.digest,
+        name="history",
+        topic="",
+        manager_member_id=genesis.owner_member_id,
+        manager_device_id=genesis.authority_device_id,
+        now=NOW,
+    )
+    channel = verify_workspace_channel_record(channel_raw, manifest=manifest, now=NOW)
+    event_raw = create_workspace_event(
+        owner,
+        workspace_id=genesis.workspace_id,
+        conversation_id=channel.channel_id,
+        event_id=_id(),
+        author_member_id=genesis.owner_member_id,
+        author_device_id=genesis.authority_device_id,
+        sequence=1,
+        previous_event_digest=None,
+        manifest_digest=manifest.digest,
+        channel_digest=channel.digest,
+        text="retained before catch-up",
+        created_at=NOW,
+    )
+    event = verify_workspace_event(event_raw, manifest=manifest, channel=channel, now=NOW)
+    request_raw = create_workspace_history_request(
+        owner,
+        workspace_id=genesis.workspace_id,
+        request_id=_id(),
+        requester_member_id=genesis.owner_member_id,
+        requester_device_id=genesis.authority_device_id,
+        manifest_digest=manifest.digest,
+        scope={
+            "kind": "public",
+            "conversation_id": channel.channel_id,
+            "channel_digest": channel.digest,
+            "participant_member_ids": [],
+        },
+        streams=[{
+            "author_device_id": genesis.authority_device_id,
+            "known_high_water": 0,
+            "retained_floor": 1,
+            "head_digest": None,
+            "seen_ranges": [],
+            "gaps": [],
+            "request_ranges": [[1, 10]],
+        }],
+        event_limit=8,
+        byte_limit=MAX_HISTORY_RESPONSE_BYTES,
+        nonce=b"h" * 32,
+        replay_key=_id(),
+        created_at=NOW,
+        expires_at=NOW + 600,
+    )
+    request = verify_workspace_history_request(request_raw, manifest=manifest, now=NOW)
+    return owner, genesis, manifest, channel, event_raw, request, channel_raw
+
+
+def test_history_checkpoint_request_and_response_are_canonical_and_bound() -> None:
+    owner, genesis, manifest, channel, event_raw, request, channel_raw = _history_documents()
+    event = verify_workspace_event(event_raw, manifest=manifest, channel=channel, now=NOW)
+    checkpoint_raw = create_workspace_event_checkpoint(
+        owner,
+        workspace_id=genesis.workspace_id,
+        checkpoint_id=_id(),
+        author_member_id=genesis.owner_member_id,
+        author_device_id=genesis.authority_device_id,
+        manifest_digest=manifest.digest,
+        streams=[{
+            "conversation_id": channel.channel_id,
+            "channel_digest": channel.digest,
+            "high_water": 1,
+            "head_digest": event.digest,
+        }],
+        created_at=NOW,
+    )
+    checkpoint = verify_workspace_event_checkpoint(checkpoint_raw, manifest=manifest, now=NOW)
+    assert checkpoint.streams[0]["head_digest"] == event.digest
+    response_raw = create_workspace_history_response(
+        owner,
+        request=request,
+        response_id=_id(),
+        responder_member_id=genesis.owner_member_id,
+        responder_device_id=genesis.authority_device_id,
+        page_index=0,
+        previous_response_digest=None,
+        controls=[("workspace_channel_record", channel_raw)],
+        checkpoints=[checkpoint_raw],
+        events=[event_raw],
+        complete=True,
+        created_at=NOW,
+    )
+    response = verify_workspace_history_response(
+        response_raw, manifest=manifest, request=request, now=NOW
+    )
+    assert response.events == (event_raw,)
+    assert response.controls == (("workspace_channel_record", channel_raw),)
+    assert response.complete is True
+
+
+@pytest.mark.parametrize(
+    "field",
+    [
+        "workspace_id", "request_id", "request_digest", "requester_member_id",
+        "requester_device_id", "request_nonce", "request_replay_key", "scope",
+        "event_limit", "byte_limit", "expires_at",
+    ],
+)
+def test_history_response_rejects_tampered_request_binding(field: str) -> None:
+    owner, genesis, manifest, _channel, event_raw, request, _channel_raw = _history_documents()
+    raw = create_workspace_history_response(
+        owner,
+        request=request,
+        response_id=_id(),
+        responder_member_id=genesis.owner_member_id,
+        responder_device_id=genesis.authority_device_id,
+        page_index=0,
+        previous_response_digest=None,
+        events=[event_raw],
+        complete=True,
+        created_at=NOW,
+    )
+    value = json.loads(raw)
+    if field in {"event_limit", "byte_limit", "expires_at"}:
+        value[field] += 1
+    elif field == "scope":
+        value[field] = {**value[field], "conversation_id": _id()}
+    elif field == "request_nonce":
+        value[field] = value[field][::-1]
+    elif field in {"request_digest"}:
+        value[field] = "0" * 64
+    else:
+        value[field] = _id()
+    tampered = json.dumps(value, sort_keys=True, separators=(",", ":"))
+    with pytest.raises((ValidationError, IdentityMismatch)):
+        verify_workspace_history_response(tampered, manifest=manifest, request=request, now=NOW)
+
+
+def test_history_response_rejects_event_outside_requested_range_and_oversize() -> None:
+    owner, genesis, manifest, channel, _event_raw, request, _channel_raw = _history_documents()
+    outside = create_workspace_event(
+        owner,
+        workspace_id=manifest.workspace_id,
+        conversation_id=channel.channel_id,
+        event_id=_id(),
+        author_member_id=genesis.owner_member_id,
+        author_device_id=genesis.authority_device_id,
+        sequence=11,
+        previous_event_digest="1" * 64,
+        manifest_digest=manifest.digest,
+        channel_digest=channel.digest,
+        text="outside",
+        created_at=NOW,
+    )
+    raw = create_workspace_history_response(
+        owner,
+        request=request,
+        response_id=_id(),
+        responder_member_id=genesis.owner_member_id,
+        responder_device_id=genesis.authority_device_id,
+        page_index=0,
+        previous_response_digest=None,
+        events=[outside],
+        complete=True,
+        created_at=NOW,
+    )
+    with pytest.raises(ValidationError, match="requested range"):
+        verify_workspace_history_response(raw, manifest=manifest, request=request, now=NOW)
+    with pytest.raises(ValidationError, match="count limit"):
+        create_workspace_history_response(
+            owner,
+            request=request,
+            response_id=_id(),
+            responder_member_id=genesis.owner_member_id,
+            responder_device_id=genesis.authority_device_id,
+            page_index=0,
+            previous_response_digest=None,
+            events=[outside] * 9,
+            created_at=NOW,
+        )
 
 
 @pytest.mark.parametrize(

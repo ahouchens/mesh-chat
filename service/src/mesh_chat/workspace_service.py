@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import os
 import time
 import unicodedata
 import uuid
@@ -29,6 +30,12 @@ from .workspace_protocol import (
     DEFAULT_INVITATION_LIFETIME_SECONDS,
     MAX_ACTIVE_MEMBERS,
     MAX_INVITATION_LIFETIME_SECONDS,
+    MAX_HISTORY_CHECKPOINTS,
+    MAX_HISTORY_EVENTS,
+    MAX_HISTORY_RANGES,
+    MAX_HISTORY_REQUEST_LIFETIME_SECONDS,
+    MAX_HISTORY_RESPONSE_BYTES,
+    MAX_HISTORY_STREAMS,
     MAX_MESSAGE_TEXT_BYTES,
     MAX_PUBLIC_CHANNELS,
     MAX_CHANNEL_FETCH_CONTROLS,
@@ -36,6 +43,7 @@ from .workspace_protocol import (
     MAX_RETAINED_PUBLIC_CHANNELS,
     VerifiedWorkspaceChannel,
     VerifiedWorkspaceEvent,
+    VerifiedWorkspaceHistoryRequest,
     VerifiedWorkspaceManifest,
     WorkspaceManifestMemberInput,
     active_members,
@@ -51,6 +59,9 @@ from .workspace_protocol import (
     create_workspace_display_name_request,
     create_workspace_display_name_decision,
     create_workspace_event,
+    create_workspace_event_checkpoint,
+    create_workspace_history_request,
+    create_workspace_history_response,
     create_workspace_mutation_event,
     create_workspace_genesis,
     create_workspace_invitation,
@@ -72,6 +83,9 @@ from .workspace_protocol import (
     verify_workspace_display_name_request,
     verify_workspace_display_name_decision,
     verify_workspace_event,
+    verify_workspace_event_checkpoint,
+    verify_workspace_history_request,
+    verify_workspace_history_response,
     verify_workspace_genesis,
     verify_workspace_invitation,
     verify_workspace_join,
@@ -118,6 +132,10 @@ MAX_FUTURE_MANIFESTS = 8
 MAX_PENDING_JOINS = 32
 MAX_PENDING_JOINS_PER_SOURCE = 4
 MAX_PENDING_CHANNEL_TRANSFERS = 32
+MAX_HISTORY_JOBS_PER_WORKSPACE = 2
+MAX_HISTORY_JOBS_PER_PROFILE = 4
+MAX_HISTORY_SEQUENCE_PROBES = 256
+MAX_HISTORY_GAP_PAGE = 64
 WORKSPACE_RETRY_BASE_SECONDS = 5
 WORKSPACE_RETRY_MAX_SECONDS = 5 * 60
 DUE_SHARDS = 64
@@ -792,6 +810,28 @@ class WorkspaceServiceMixin:
             device_id,
             str(sequence),
         )
+
+    def _workspace_history_job_id(self, workspace_id: str, conversation_id: str) -> str:
+        return self.store.opaque_id(
+            "workspace-history-job", workspace_id, conversation_id
+        )
+
+    def _workspace_history_request_id(self, request_id: str) -> str:
+        return self.store.opaque_id("workspace-history-request", request_id)
+
+    def _workspace_history_replay_id(self, workspace_id: str, replay_key: str) -> str:
+        return self.store.opaque_id(
+            "workspace-history-replay", workspace_id, replay_key
+        )
+
+    def _workspace_history_response_id(self, response_id: str) -> str:
+        return self.store.opaque_id("workspace-history-response", response_id)
+
+    def _workspace_history_continuation_id(self, continuation: str) -> str:
+        return self.store.opaque_id("workspace-history-continuation", continuation)
+
+    def _workspace_history_scheduler_id(self) -> str:
+        return self.store.opaque_id("workspace-history-scheduler", "profile")
 
     def _due_record_id(self, shard: int) -> str:
         return self.store.opaque_id("workspace-due-shard", str(shard))
@@ -4284,6 +4324,89 @@ class WorkspaceServiceMixin:
                 )
         return deliveries
 
+    def _workspace_checkpoint_records_and_deliveries(
+        self,
+        workspace: dict[str, Any],
+        event: VerifiedWorkspaceEvent,
+        event_deliveries: Iterable[dict[str, Any]],
+    ) -> tuple[list[tuple[str, str, dict[str, Any]]], list[dict[str, Any]]]:
+        identity = self._identity
+        if identity is None or event.author_device_id != workspace.get("local_device_id"):
+            return [], []
+        raw = create_workspace_event_checkpoint(
+            identity,
+            workspace_id=event.workspace_id,
+            checkpoint_id=_new_id(),
+            author_member_id=event.author_member_id,
+            author_device_id=event.author_device_id,
+            manifest_digest=event.manifest_digest,
+            streams=[{
+                "conversation_id": event.conversation_id,
+                "channel_digest": event.channel_digest,
+                "high_water": event.sequence,
+                "head_digest": event.digest,
+            }],
+        )
+        manifest = self._workspace_manifest_by_digest(event.manifest_digest)
+        if manifest is None:
+            return [], []
+        checkpoint = verify_workspace_event_checkpoint(raw, manifest=manifest)
+        checkpoint_record_id = self.store.opaque_id(
+            "workspace-event-checkpoint", checkpoint.digest
+        )
+        head_id = self.store.opaque_id(
+            "workspace-checkpoint-head", checkpoint.workspace_id,
+            checkpoint.author_device_id, event.conversation_id,
+        )
+        catalog_id = self.store.opaque_id(
+            "workspace-checkpoint-catalog",
+            checkpoint.workspace_id,
+            checkpoint.author_device_id,
+        )
+        catalog = self.store.get("workspace_checkpoint_catalog", catalog_id) or {
+            "workspace_id": checkpoint.workspace_id,
+            "author_device_id": checkpoint.author_device_id,
+            "entries": [],
+        }
+        entries = [
+            item for item in catalog.get("entries", ())
+            if item.get("conversation_id") != event.conversation_id
+        ]
+        entries.append({
+            "conversation_id": event.conversation_id,
+            "channel_digest": event.channel_digest,
+            "high_water": event.sequence,
+            "checkpoint_digest": checkpoint.digest,
+        })
+        entries.sort(key=lambda item: item["conversation_id"])
+        catalog["entries"] = entries[-MAX_HISTORY_STREAMS:]
+        # Checkpoints are durable local history controls and are returned only
+        # inside an explicitly authorised history response.  Sending a second
+        # live packet for every ordinary event would leak stream activity and
+        # double the normal delivery workload.
+        del event_deliveries
+        return ([
+            ("workspace_event_checkpoint", checkpoint_record_id, {
+                "workspace_id": checkpoint.workspace_id,
+                "checkpoint_id": checkpoint.checkpoint_id,
+                "author_member_id": checkpoint.author_member_id,
+                "author_device_id": checkpoint.author_device_id,
+                "manifest_digest": checkpoint.manifest_digest,
+                "streams": list(checkpoint.streams),
+                "digest": checkpoint.digest,
+                "serialized": checkpoint.serialized,
+                "created_at": checkpoint.created_at,
+            }),
+            ("workspace_checkpoint_head", head_id, {
+                "workspace_id": checkpoint.workspace_id,
+                "conversation_id": event.conversation_id,
+                "author_device_id": checkpoint.author_device_id,
+                "high_water": event.sequence,
+                "checkpoint_digest": checkpoint.digest,
+            }),
+            ("workspace_checkpoint_catalog", catalog_id, catalog),
+        ], [])
+
     def _send_workspace_mutation(
         self,
         command: str,
@@ -4451,8 +4574,15 @@ class WorkspaceServiceMixin:
             )
         )
         deliveries = self._workspace_mutation_deliveries(manifest, event)
-        records.extend(("workspace_delivery", item["id"], item) for item in deliveries)
-        records.extend(self._due_records(add=deliveries))
+        checkpoint_records, checkpoint_deliveries = (
+            self._workspace_checkpoint_records_and_deliveries(
+                workspace, event, deliveries
+            )
+        )
+        all_deliveries = [*deliveries, *checkpoint_deliveries]
+        records.extend(checkpoint_records)
+        records.extend(("workspace_delivery", item["id"], item) for item in all_deliveries)
+        records.extend(self._due_records(add=all_deliveries))
         self._annotate_workspace_event_retention(
             records, event.event_id, deliveries, operation_id
         )
@@ -4619,10 +4749,17 @@ class WorkspaceServiceMixin:
                         conversation_id=event.conversation_id,
                     )
                 )
-        records.extend(
-            ("workspace_delivery", item["id"], item) for item in deliveries
+        checkpoint_records, checkpoint_deliveries = (
+            self._workspace_checkpoint_records_and_deliveries(
+                workspace, event, deliveries
+            )
         )
-        records.extend(self._due_records(add=deliveries))
+        all_deliveries = [*deliveries, *checkpoint_deliveries]
+        records.extend(checkpoint_records)
+        records.extend(
+            ("workspace_delivery", item["id"], item) for item in all_deliveries
+        )
+        records.extend(self._due_records(add=all_deliveries))
         self._annotate_workspace_event_retention(
             records, event.event_id, deliveries, operation_id
         )
@@ -4912,10 +5049,17 @@ class WorkspaceServiceMixin:
                         conversation_id=conversation_id,
                     )
                 )
-        records.extend(
-            ("workspace_delivery", item["id"], item) for item in deliveries
+        checkpoint_records, checkpoint_deliveries = (
+            self._workspace_checkpoint_records_and_deliveries(
+                workspace, event, deliveries
+            )
         )
-        records.extend(self._due_records(add=deliveries))
+        all_deliveries = [*deliveries, *checkpoint_deliveries]
+        records.extend(checkpoint_records)
+        records.extend(
+            ("workspace_delivery", item["id"], item) for item in all_deliveries
+        )
+        records.extend(self._due_records(add=all_deliveries))
         self._annotate_workspace_event_retention(
             records, event.event_id, deliveries, operation_id
         )
@@ -5091,8 +5235,15 @@ class WorkspaceServiceMixin:
                         conversation_id=conversation_id,
                     )
                 )
-        records.extend(("workspace_delivery", item["id"], item) for item in deliveries)
-        records.extend(self._due_records(add=deliveries))
+        checkpoint_records, checkpoint_deliveries = (
+            self._workspace_checkpoint_records_and_deliveries(
+                workspace, event, deliveries
+            )
+        )
+        all_deliveries = [*deliveries, *checkpoint_deliveries]
+        records.extend(checkpoint_records)
+        records.extend(("workspace_delivery", item["id"], item) for item in all_deliveries)
+        records.extend(self._due_records(add=all_deliveries))
         self._annotate_workspace_event_retention(
             records, event.event_id, deliveries, operation_id
         )
@@ -5181,7 +5332,11 @@ class WorkspaceServiceMixin:
         self._set_workspace_sync_issue(wire.workspace_id, reason)
 
     def _accept_workspace_event(
-        self, wire: WorkspaceWirePayload, *, drain_pending: bool = True
+        self,
+        wire: WorkspaceWirePayload,
+        *,
+        drain_pending: bool = True,
+        history_checkpoint_digests: set[str] | None = None,
     ) -> bool:
         try:
             raw_value = json.loads(wire.document)
@@ -5343,7 +5498,38 @@ class WorkspaceServiceMixin:
             current = self._workspace_current_manifest(workspace)
             current_device = find_device(current, event.author_device_id)
             if current_device is None or current_device[0].status != "active":
-                return False
+                # A forwarder cannot revive an inactive signer.  History may
+                # cross the removal boundary only when the complete canonical
+                # chain supplied in this response terminates at a checkpoint
+                # explicitly committed by the applicable removal control.
+                if (
+                    event.channel_digest is None
+                    or history_checkpoint_digests is None
+                    or event.digest not in history_checkpoint_digests
+                ):
+                    head_id = self._workspace_stream_head_id(
+                        event.workspace_id,
+                        event.conversation_id,
+                        event.author_device_id,
+                    )
+                    head = self.store.get("workspace_stream_coverage", head_id) or {
+                        "workspace_id": event.workspace_id,
+                        "conversation_id": event.conversation_id,
+                        "device_id": event.author_device_id,
+                        "high_water": 0,
+                        "head_digest": None,
+                        "channel_version": 0,
+                        "retained_floor": 1,
+                        "gaps": [],
+                    }
+                    gaps = list(head.get("gaps", ()))
+                    gap = [event.sequence, event.sequence]
+                    if gap not in gaps and len(gaps) < MAX_HISTORY_RANGES:
+                        gaps.append(gap)
+                        gaps.sort()
+                        head["gaps"] = gaps
+                        self.store.put("workspace_stream_coverage", head_id, head)
+                    return False
             author = find_member(manifest, event.author_member_id)
             if (
                 author is None
@@ -9057,6 +9243,34 @@ class WorkspaceServiceMixin:
         )
         return committed
 
+    def _workspace_removal_checkpoint_digests(
+        self,
+        workspace_id: str,
+        member: Any,
+        *,
+        conversation_id: str | None = None,
+    ) -> list[str]:
+        digests: set[str] = set()
+        for device in member.devices:
+            catalog = self.store.get(
+                "workspace_checkpoint_catalog",
+                self.store.opaque_id(
+                    "workspace-checkpoint-catalog", workspace_id, device.device_id
+                ),
+            )
+            if catalog is None:
+                continue
+            for entry in catalog.get("entries", ())[:MAX_HISTORY_STREAMS]:
+                if (
+                    conversation_id is not None
+                    and entry.get("conversation_id") != conversation_id
+                ):
+                    continue
+                digest = entry.get("checkpoint_digest")
+                if isinstance(digest, str):
+                    digests.add(digest)
+        return sorted(digests)[:32]
+
     def update_workspace_private_channel_members(
         self,
         workspace_id: Any,
@@ -9113,6 +9327,17 @@ class WorkspaceServiceMixin:
         identity = self._identity
         if identity is None:
             raise ValidationError("Local identity is unavailable")
+        removed = set(previous.member_ids) - set(checked_members)
+        removal_checkpoints: list[str] = []
+        for removed_member_id in sorted(removed):
+            removed_member = find_member(manifest, removed_member_id)
+            if removed_member is None:
+                continue
+            removal_checkpoints.extend(
+                self._workspace_removal_checkpoint_digests(
+                    workspace_id, removed_member, conversation_id=channel_id
+                )
+            )
         raw = create_workspace_channel_manifest(
             identity,
             workspace_id=workspace_id,
@@ -9125,6 +9350,7 @@ class WorkspaceServiceMixin:
             member_ids=checked_members,
             version=previous.version + 1,
             previous_hash=previous.digest,
+            removal_checkpoint_digests=sorted(set(removal_checkpoints))[:32],
         )
         channel = verify_workspace_channel_manifest_transition(
             raw, previous, manifest=manifest
@@ -10412,6 +10638,9 @@ class WorkspaceServiceMixin:
             channel_creation=current.channel_creation,
             posting=current.posting,
             invitation_requests=current.invitation_requests,
+            removal_checkpoint_digests=self._workspace_removal_checkpoint_digests(
+                workspace_id, member
+            ),
         )
         next_manifest = verify_workspace_manifest_transition(raw, current)
         recipients = self._workspace_manifest_recipients(
@@ -11067,6 +11296,16 @@ class WorkspaceServiceMixin:
             "workspace_notification_preference",
             "workspace_read_state",
             "workspace_stream_coverage",
+            "workspace_event_checkpoint",
+            "workspace_checkpoint_head",
+            "workspace_checkpoint_catalog",
+            "workspace_history_job",
+            "workspace_history_request",
+            "workspace_history_replay",
+            "workspace_history_response_cache",
+            "workspace_history_response_replay",
+            "workspace_history_continuation",
+            "workspace_history_peer_coverage",
             "workspace_draft",
         }
         deletions: list[tuple[str, str]] = []
@@ -11102,12 +11341,27 @@ class WorkspaceServiceMixin:
                     ("workspace_operation", record_id, operation)
                 )
         due_records = self._due_records(remove=delivery_ids)
+        scheduler_id = self._workspace_history_scheduler_id()
+        scheduler = self.store.get("workspace_history_scheduler", scheduler_id)
+        scheduler_records: list[tuple[str, str, dict[str, Any]]] = []
+        if scheduler is not None:
+            deleted_ids = {
+                record_id for kind, record_id in deletions
+                if kind == "workspace_history_job"
+            }
+            scheduler["job_ids"] = [
+                item for item in scheduler.get("job_ids", ())
+                if item not in deleted_ids
+            ]
+            scheduler_records.append((
+                "workspace_history_scheduler", scheduler_id, scheduler
+            ))
         outcome = {"workspace_id": workspace_id, "removed": True}
         committed = self.store.commit_operation(
             operation_id,
             digest,
             outcome,
-            [*due_records, *operation_redactions],
+            [*due_records, *operation_redactions, *scheduler_records],
             deletions,
             redact_command_cache=True,
         )
@@ -11316,6 +11570,7 @@ class WorkspaceServiceMixin:
             self._attempt_workspace_delivery(delivery_id)
         self._advance_workspace_retention_jobs()
         self._advance_workspace_search_jobs()
+        self._advance_workspace_history_jobs()
 
     def _advance_workspace_search_jobs(self) -> None:
         """Advance one restart-safe 128-event search batch per scheduler tick."""
@@ -11360,6 +11615,1442 @@ class WorkspaceServiceMixin:
                 self._workspace_changed(
                     workspace["id"], resource_kind="retention_pruning"
                 )
+            break
+
+    def _workspace_history_scope(
+        self, workspace: dict[str, Any], conversation_id: str
+    ) -> tuple[dict[str, Any], VerifiedWorkspaceChannel | None]:
+        direct = self.store.get(
+            "workspace_direct", self._workspace_direct_record_id(conversation_id)
+        )
+        if direct is not None:
+            participants = sorted(
+                str(item) for item in direct.get("participant_member_ids", ())
+            )
+            if (
+                len(participants) != 2
+                or workspace.get("local_member_id") not in participants
+                or workspace_direct_conversation_id(workspace["id"], participants)
+                != conversation_id
+            ):
+                raise ContactNotApproved("Workspace direct history is not available")
+            return ({
+                "kind": "direct",
+                "conversation_id": conversation_id,
+                "channel_digest": None,
+                "participant_member_ids": participants,
+            }, None)
+        channel_record = self._require_workspace_channel(
+            workspace["id"], conversation_id
+        )
+        head = channel_record.get("head_hash")
+        channel = (
+            self._workspace_channel_by_digest(head) if isinstance(head, str) else None
+        )
+        if channel is None or channel_record.get("state") == "forked":
+            raise ValidationError("Workspace channel history is suspended")
+        if (
+            channel.visibility == "private"
+            and workspace.get("local_member_id") not in channel.member_ids
+        ):
+            raise ContactNotApproved("Workspace channel history is not available")
+        return ({
+            "kind": channel.visibility,
+            "conversation_id": conversation_id,
+            "channel_digest": channel.digest,
+            "participant_member_ids": [],
+        }, channel)
+
+    def _workspace_history_devices(
+        self,
+        workspace: dict[str, Any],
+        scope: dict[str, Any],
+        channel: VerifiedWorkspaceChannel | None,
+    ) -> list[tuple[Any, Any]]:
+        manifest = self._workspace_current_manifest(workspace)
+        if scope["kind"] == "direct":
+            allowed = set(scope["participant_member_ids"])
+        elif channel is not None and channel.visibility == "private":
+            allowed = set(channel.member_ids)
+        else:
+            allowed = {member.member_id for member in manifest.members}
+        devices = [
+            (member, device)
+            for member in manifest.members
+            if member.member_id in allowed
+            for device in member.devices
+        ]
+        devices.sort(key=lambda item: item[1].device_id)
+        return devices[:MAX_HISTORY_STREAMS]
+
+    def _workspace_history_streams(
+        self,
+        workspace: dict[str, Any],
+        scope: dict[str, Any],
+        channel: VerifiedWorkspaceChannel | None,
+    ) -> list[dict[str, Any]]:
+        streams: list[dict[str, Any]] = []
+        for _member, device in self._workspace_history_devices(
+            workspace, scope, channel
+        ):
+            head = self.store.get(
+                "workspace_stream_coverage",
+                self._workspace_stream_head_id(
+                    workspace["id"], scope["conversation_id"], device.device_id
+                ),
+            ) or {}
+            high_water = max(0, int(head.get("high_water", 0)))
+            if high_water >= (1 << 63) - 1:
+                continue
+            seen_ranges = [[1, high_water]] if high_water else []
+            gaps = [
+                [int(item[0]), int(item[1])]
+                for item in head.get("gaps", ())[:MAX_HISTORY_RANGES]
+                if isinstance(item, list)
+                and len(item) == 2
+                and all(isinstance(value, int) for value in item)
+            ]
+            streams.append({
+                "author_device_id": device.device_id,
+                "known_high_water": high_water,
+                "retained_floor": max(1, int(head.get("retained_floor", 1))),
+                "head_digest": head.get("head_digest") if high_water else None,
+                "seen_ranges": seen_ranges,
+                "gaps": gaps,
+                "request_ranges": [[high_water + 1, (1 << 63) - 1]],
+            })
+        if not streams:
+            raise ValidationError("No workspace history streams are eligible")
+        return streams
+
+    @staticmethod
+    def _public_workspace_history_job(job: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "workspace_id": job["workspace_id"],
+            "conversation_id": job["conversation_id"],
+            "conversation_kind": job["scope"]["kind"],
+            "status": job.get("status", "waiting_peer"),
+            "recovered_events": int(job.get("recovered_events", 0)),
+            "verified_pages": int(job.get("verified_pages", 0)),
+            "received_bytes": int(job.get("received_bytes", 0)),
+            "peer_count": len(job.get("peers", ())),
+            "peers_exhausted": int(job.get("peer_index", 0)),
+            "missing_prerequisites": int(job.get("missing_prerequisites", 0)),
+            "permanent_gaps": int(job.get("permanent_gaps", 0)),
+            "peer_limited": bool(job.get("peer_limited", False)),
+            "failure": job.get("failure"),
+            "updated_at": float(job.get("updated_at", 0)),
+            "known_complete": bool(job.get("known_complete", False)),
+            "notice": (
+                "Coverage is complete only within known signed stream heads. "
+                "Other eligible peers may retain additional history."
+            ),
+        }
+
+    def get_workspace_history_status(
+        self, workspace_id: Any, conversation_id: Any
+    ) -> dict[str, Any]:
+        workspace = self._require_workspace(str(workspace_id))
+        checked_conversation = str(uuid.UUID(str(conversation_id)))
+        scope, channel = self._workspace_history_scope(
+            workspace, checked_conversation
+        )
+        streams = self._workspace_history_streams(workspace, scope, channel)
+        job = self.store.get(
+            "workspace_history_job",
+            self._workspace_history_job_id(workspace["id"], checked_conversation),
+        )
+        return {
+            "workspace_id": workspace["id"],
+            "conversation_id": checked_conversation,
+            "conversation_kind": scope["kind"],
+            "eligible": workspace.get("state") in {"active", "incomplete_sync"},
+            "status": (
+                self._public_workspace_history_job(job)["status"]
+                if job is not None
+                else "available"
+            ),
+            "job": self._public_workspace_history_job(job) if job is not None else None,
+            "streams": [{
+                "known_high_water": item["known_high_water"],
+                "retained_floor": item["retained_floor"],
+                "seen_ranges": item["seen_ranges"],
+                "gaps": item["gaps"],
+            } for item in streams],
+            "known_complete": bool(job and job.get("known_complete")),
+            "notice": (
+                "Peers may have additional unknown retained history. Cooperative "
+                "retention cannot guarantee remote availability or deletion. "
+                "Locally pruned history and permanent gaps remain unavailable."
+            ),
+        }
+
+    def start_workspace_history(
+        self,
+        workspace_id: Any,
+        conversation_id: Any,
+        operation_id: Any,
+    ) -> dict[str, Any]:
+        payload = {
+            "workspace_id": workspace_id,
+            "conversation_id": conversation_id,
+        }
+        operation_id, digest, replay = self._workspace_operation(
+            "start_workspace_history", operation_id, payload
+        )
+        if replay is not None:
+            return replay
+        workspace = self._require_workspace(str(workspace_id))
+        if workspace.get("state") not in {"active", "incomplete_sync"}:
+            raise ContactNotApproved("Workspace history catch-up is unavailable")
+        checked_conversation = str(uuid.UUID(str(conversation_id)))
+        scope, channel = self._workspace_history_scope(
+            workspace, checked_conversation
+        )
+        job_id = self._workspace_history_job_id(
+            workspace["id"], checked_conversation
+        )
+        existing = self.store.get("workspace_history_job", job_id)
+        if existing is not None and existing.get("status") not in {
+            "cancelled", "dismissed", "failed", "peer_limited", "expired"
+        }:
+            outcome = self._public_workspace_history_job(existing)
+            return self.store.commit_operation(operation_id, digest, outcome, [])
+        scheduler_id = self._workspace_history_scheduler_id()
+        scheduler = self.store.get("workspace_history_scheduler", scheduler_id) or {
+            "job_ids": []
+        }
+        active_job_ids = [
+            item for item in scheduler.get("job_ids", ()) if isinstance(item, str)
+        ]
+        workspace_job_ids = [
+            item for item in workspace.get("history_job_ids", ()) if isinstance(item, str)
+        ]
+        if job_id not in active_job_ids and len(active_job_ids) >= MAX_HISTORY_JOBS_PER_PROFILE:
+            raise ValidationError("This profile already has four active history jobs")
+        if job_id not in workspace_job_ids and len(workspace_job_ids) >= MAX_HISTORY_JOBS_PER_WORKSPACE:
+            raise ValidationError("This workspace already has two active history jobs")
+        manifest = self._workspace_current_manifest(workspace)
+        local_member_id = str(workspace["local_member_id"])
+        local_device_id = str(workspace["local_device_id"])
+        peers = [
+            {
+                "member_id": member.member_id,
+                "device_id": device.device_id,
+                "destination": device.destination_hash.hex(),
+                "public_identity": _b64(device.public_identity),
+                "hints": [dict(item) for item in device.hints[:2]],
+            }
+            for member, device in self._workspace_history_devices(
+                workspace, scope, channel
+            )
+            if device.device_id != local_device_id and member.status == "active"
+        ]
+        streams = self._workspace_history_streams(workspace, scope, channel)
+        now = int(time.time())
+        job = {
+            "id": job_id,
+            "workspace_id": workspace["id"],
+            "conversation_id": checked_conversation,
+            "scope": scope,
+            "streams": streams,
+            "peers": peers,
+            "peer_index": 0,
+            "status": "waiting_peer" if not peers else "requesting",
+            "recovered_events": 0,
+            "verified_pages": 0,
+            "received_bytes": 0,
+            "missing_prerequisites": 0,
+            "permanent_gaps": 0,
+            "peer_limited": not peers,
+            "known_complete": bool(peers),
+            "expected_page": 0,
+            "previous_response_digest": None,
+            "created_at": time.time(),
+            "updated_at": time.time(),
+        }
+        records: list[tuple[str, str, dict[str, Any]]] = []
+        if peers:
+            identity = self._identity
+            if identity is None:
+                raise ValidationError("Local identity is unavailable")
+            request_id = _new_id()
+            request_raw = create_workspace_history_request(
+                identity,
+                workspace_id=workspace["id"],
+                request_id=request_id,
+                requester_member_id=local_member_id,
+                requester_device_id=local_device_id,
+                manifest_digest=manifest.digest,
+                scope=scope,
+                streams=streams,
+                event_limit=MAX_HISTORY_EVENTS,
+                byte_limit=MAX_HISTORY_RESPONSE_BYTES,
+                created_at=now,
+                expires_at=now + MAX_HISTORY_REQUEST_LIFETIME_SECONDS,
+            )
+            request = verify_workspace_history_request(
+                request_raw, manifest=manifest, now=now
+            )
+            peer = peers[0]
+            found = find_device(manifest, peer["device_id"])
+            if found is None:
+                raise ValidationError("History peer is unavailable")
+            delivery = self._workspace_delivery_record(
+                workspace_id=workspace["id"],
+                recipient_member_id=peer["member_id"],
+                recipient_device=found[1],
+                kind="workspace_history_request",
+                document=request_raw,
+                conversation_id=checked_conversation,
+                priority=1,
+            )
+            delivery["expires_at"] = request.expires_at
+            job.update({
+                "request_id": request.request_id,
+                "request_digest": request.digest,
+                "request_replay_key": request.replay_key,
+                "request_expires_at": request.expires_at,
+                "current_delivery_id": delivery["id"],
+            })
+            records.extend([
+                ("workspace_history_request", self._workspace_history_request_id(request.request_id), {
+                    "workspace_id": workspace["id"],
+                    "conversation_id": checked_conversation,
+                    "job_id": job_id,
+                    "peer_member_id": peer["member_id"],
+                    "peer_device_id": peer["device_id"],
+                    "serialized": request.serialized,
+                    "digest": request.digest,
+                    "expires_at": request.expires_at,
+                    "page_index": 0,
+                    "previous_response_digest": None,
+                }),
+                ("workspace_delivery", delivery["id"], delivery),
+                *self._due_records(add=[delivery]),
+            ])
+        active_job_ids = [item for item in active_job_ids if item != job_id] + [job_id]
+        workspace_job_ids = [item for item in workspace_job_ids if item != job_id] + [job_id]
+        scheduler["job_ids"] = active_job_ids
+        scheduler["updated_at"] = time.time()
+        workspace["history_job_ids"] = workspace_job_ids
+        workspace["updated_at"] = time.time()
+        outcome = self._public_workspace_history_job(job)
+        committed = self.store.commit_operation(
+            operation_id,
+            digest,
+            outcome,
+            [
+                ("workspace_history_job", job_id, job),
+                ("workspace_history_scheduler", scheduler_id, scheduler),
+                ("workspace", self._workspace_record_id(workspace["id"]), workspace),
+                *records,
+            ],
+        )
+        self._workspace_changed(
+            workspace["id"], conversation_id=checked_conversation,
+            resource_kind="history",
+        )
+        return committed
+
+    def cancel_workspace_history(
+        self,
+        workspace_id: Any,
+        conversation_id: Any,
+        operation_id: Any,
+    ) -> dict[str, Any]:
+        payload = {"workspace_id": workspace_id, "conversation_id": conversation_id}
+        operation_id, digest, replay = self._workspace_operation(
+            "cancel_workspace_history", operation_id, payload
+        )
+        if replay is not None:
+            return replay
+        workspace = self._require_workspace(str(workspace_id))
+        checked_conversation = str(uuid.UUID(str(conversation_id)))
+        job_id = self._workspace_history_job_id(workspace["id"], checked_conversation)
+        job = self.store.get("workspace_history_job", job_id)
+        if job is None:
+            raise ValidationError("Workspace history job is unavailable")
+        job["status"] = "cancelled"
+        job["updated_at"] = time.time()
+        scheduler_id = self._workspace_history_scheduler_id()
+        scheduler = self.store.get("workspace_history_scheduler", scheduler_id) or {"job_ids": []}
+        scheduler["job_ids"] = [item for item in scheduler.get("job_ids", ()) if item != job_id]
+        workspace["history_job_ids"] = [item for item in workspace.get("history_job_ids", ()) if item != job_id]
+        records: list[tuple[str, str, dict[str, Any]]] = [
+            ("workspace_history_job", job_id, job),
+            ("workspace_history_scheduler", scheduler_id, scheduler),
+            ("workspace", self._workspace_record_id(workspace["id"]), workspace),
+        ]
+        delivery_id = job.get("current_delivery_id")
+        if isinstance(delivery_id, str):
+            delivery = self.store.get("workspace_delivery", delivery_id)
+            if delivery is not None and delivery.get("state") not in FINAL_DELIVERY_STATES:
+                delivery["state"] = DeliveryState.CANCELLED.value
+                records.extend([
+                    ("workspace_delivery", delivery_id, delivery),
+                    *self._due_records(remove=[delivery_id]),
+                ])
+        outcome = self._public_workspace_history_job(job)
+        committed = self.store.commit_operation(operation_id, digest, outcome, records)
+        self._workspace_changed(workspace["id"], conversation_id=checked_conversation, resource_kind="history")
+        return committed
+
+    def list_workspace_history_gaps(
+        self,
+        workspace_id: Any,
+        conversation_id: Any,
+        cursor: Any = None,
+        limit: Any = 32,
+    ) -> dict[str, Any]:
+        workspace = self._require_workspace(str(workspace_id))
+        checked_conversation = str(uuid.UUID(str(conversation_id)))
+        scope, channel = self._workspace_history_scope(workspace, checked_conversation)
+        checked_limit = int(limit)
+        if not 1 <= checked_limit <= MAX_HISTORY_GAP_PAGE:
+            raise ValidationError("Workspace history gap limit is invalid")
+        streams = self._workspace_history_streams(workspace, scope, channel)
+        gaps = [
+            {"kind": "permanent", "start": start, "end": end}
+            for stream in streams
+            for start, end in stream["gaps"]
+        ] + [
+            {"kind": "locally_pruned", "start": start, "end": end}
+            for stream in streams
+            for start, end in (
+                self.store.get(
+                    "workspace_stream_coverage",
+                    self._workspace_stream_head_id(
+                        workspace["id"], checked_conversation,
+                        stream["author_device_id"],
+                    ),
+                ) or {}
+            ).get("pruned_ranges", ())
+        ]
+        gaps.sort(key=lambda item: (item["start"], item["end"], item["kind"]))
+        offset = 0
+        if cursor is not None:
+            opened = self.store.open_cursor(str(cursor))
+            if opened.get("kind") != "workspace_history_gaps" or opened.get("workspace_id") != workspace["id"] or opened.get("conversation_id") != checked_conversation or opened.get("authorization_generation") != int(workspace.get("authorization_generation", 1)) or opened.get("retention_generation") != int(workspace.get("retention_generation", 1)):
+                raise StaleCursor("Workspace history gap cursor is stale")
+            offset = int(opened.get("offset", 0))
+        page = gaps[offset:offset + checked_limit]
+        next_cursor = None
+        if offset + checked_limit < len(gaps):
+            next_cursor = self.store.seal_cursor({
+                "kind": "workspace_history_gaps",
+                "workspace_id": workspace["id"],
+                "conversation_id": checked_conversation,
+                "authorization_generation": int(workspace.get("authorization_generation", 1)),
+                "retention_generation": int(workspace.get("retention_generation", 1)),
+                "offset": offset + checked_limit,
+            })
+        return {"gaps": page, "next_cursor": next_cursor}
+
+    def _workspace_history_request_authorized(
+        self,
+        workspace: dict[str, Any],
+        request: VerifiedWorkspaceHistoryRequest,
+    ) -> tuple[VerifiedWorkspaceChannel | None, Any]:
+        manifest = self._workspace_current_manifest(workspace)
+        requester = find_device(manifest, request.requester_device_id)
+        if (
+            requester is None
+            or requester[0].member_id != request.requester_member_id
+            or requester[0].status != "active"
+            or workspace.get("state") not in {"active", "incomplete_sync"}
+        ):
+            raise ContactNotApproved("Workspace history request is not authorized")
+        scope = request.scope
+        if scope["kind"] == "direct":
+            participants = tuple(scope["participant_member_ids"])
+            if (
+                request.requester_member_id not in participants
+                or workspace.get("local_member_id") not in participants
+            ):
+                raise ContactNotApproved("Workspace direct history is not authorized")
+            return None, requester[1]
+        channel_record = self.store.get(
+            "workspace_channel",
+            self._workspace_channel_record_id(scope["conversation_id"]),
+        )
+        current = (
+            self._workspace_channel_by_digest(channel_record["head_hash"])
+            if channel_record is not None
+            and isinstance(channel_record.get("head_hash"), str)
+            else None
+        )
+        if (
+            current is None
+            or current.digest != scope["channel_digest"]
+            or current.visibility != scope["kind"]
+            or channel_record.get("state") == "forked"
+            or (
+                current.visibility == "private"
+                and request.requester_member_id not in current.member_ids
+            )
+        ):
+            raise ContactNotApproved("Workspace channel history is not authorized")
+        return current, requester[1]
+
+    def _workspace_history_private_era_allows(
+        self,
+        current: VerifiedWorkspaceChannel,
+        event_channel: VerifiedWorkspaceChannel,
+        requester_member_id: str,
+    ) -> bool:
+        if (
+            current.visibility != "private"
+            or event_channel.visibility != "private"
+            or current.channel_id != event_channel.channel_id
+            or requester_member_id not in current.member_ids
+            or requester_member_id not in event_channel.member_ids
+        ):
+            return False
+        cursor = current
+        for _ in range(MAX_CHANNEL_FETCH_CONTROLS):
+            if cursor.digest == event_channel.digest:
+                return True
+            if not isinstance(cursor.previous_hash, str):
+                return False
+            predecessor = self._workspace_channel_by_digest(cursor.previous_hash)
+            if (
+                predecessor is None
+                or requester_member_id not in predecessor.member_ids
+            ):
+                return False
+            cursor = predecessor
+        return False
+
+    def _workspace_history_event_disclosable(
+        self,
+        request: VerifiedWorkspaceHistoryRequest,
+        event: dict[str, Any],
+        current_channel: VerifiedWorkspaceChannel | None,
+    ) -> bool:
+        if (
+            event.get("workspace_id") != request.workspace_id
+            or event.get("conversation_id") != request.scope["conversation_id"]
+        ):
+            return False
+        if request.scope["kind"] == "direct":
+            return (
+                event.get("channel_digest") is None
+                and tuple(event.get("audience_member_ids", ()))
+                == tuple(request.scope["participant_member_ids"])
+                and request.requester_member_id
+                in request.scope["participant_member_ids"]
+            )
+        channel_digest = event.get("channel_digest")
+        event_channel = (
+            self._workspace_channel_by_digest(channel_digest)
+            if isinstance(channel_digest, str)
+            else None
+        )
+        if event_channel is None or current_channel is None:
+            return False
+        if request.scope["kind"] == "public":
+            return (
+                event_channel.visibility == "public"
+                and event_channel.channel_id == current_channel.channel_id
+            )
+        return self._workspace_history_private_era_allows(
+            current_channel, event_channel, request.requester_member_id
+        )
+
+    def _workspace_history_controls_for_events(
+        self, events: Iterable[str]
+    ) -> list[tuple[str, str]]:
+        manifest_controls: dict[str, tuple[str, str]] = {}
+        channel_controls: dict[str, tuple[str, str]] = {}
+        for raw in events:
+            try:
+                event = json.loads(raw)
+            except json.JSONDecodeError:
+                continue
+            manifest_digest = event.get("manifest_digest")
+            if isinstance(manifest_digest, str):
+                record = self.store.get(
+                    "workspace_manifest",
+                    self._workspace_manifest_record_id(manifest_digest),
+                )
+                if record is not None and isinstance(record.get("serialized"), str):
+                    manifest_controls[manifest_digest] = (
+                        "workspace_manifest_root", record["serialized"]
+                    )
+            channel_digest = event.get("channel_digest")
+            if isinstance(channel_digest, str):
+                record = self.store.get(
+                    "workspace_channel_control",
+                    self._workspace_channel_control_id(channel_digest),
+                )
+                if record is not None and isinstance(record.get("serialized"), str):
+                    kind = str(record.get("document_type", ""))
+                    if kind in {
+                        "workspace_channel_record", "workspace_channel_manifest",
+                        "workspace_channel_transfer", "workspace_channel_recovery",
+                    }:
+                        channel_controls[channel_digest] = (kind, record["serialized"])
+        return [
+            *[manifest_controls[key] for key in sorted(manifest_controls)],
+            *[channel_controls[key] for key in sorted(channel_controls)],
+        ][:32]
+
+    def _workspace_history_checkpoints_for_events(
+        self, workspace_id: str, conversation_id: str, events: Iterable[str]
+    ) -> list[str]:
+        """Resolve checkpoint heads by opaque direct lookup, never a kind scan."""
+        documents: dict[str, str] = {}
+        for raw in events:
+            try:
+                value = json.loads(raw)
+            except json.JSONDecodeError:
+                continue
+            device_id = value.get("author_device_id")
+            if not isinstance(device_id, str):
+                continue
+            head = self.store.get(
+                "workspace_checkpoint_head",
+                self.store.opaque_id(
+                    "workspace-checkpoint-head",
+                    workspace_id,
+                    device_id,
+                    conversation_id,
+                ),
+            )
+            digest = head.get("checkpoint_digest") if head else None
+            if not isinstance(digest, str):
+                continue
+            record = self.store.get(
+                "workspace_event_checkpoint",
+                self.store.opaque_id("workspace-event-checkpoint", digest),
+            )
+            if record is not None and isinstance(record.get("serialized"), str):
+                documents[digest] = record["serialized"]
+        return [documents[key] for key in sorted(documents)][:MAX_HISTORY_CHECKPOINTS]
+
+    def _receive_workspace_history_request(
+        self, wire: WorkspaceWirePayload, source_hash: Any
+    ) -> bool:
+        try:
+            workspace = self._require_workspace(wire.workspace_id)
+            current_manifest = self._workspace_current_manifest(workspace)
+            request = verify_workspace_history_request(
+                wire.document, manifest=current_manifest
+            )
+            current_channel, requester_device = (
+                self._workspace_history_request_authorized(workspace, request)
+            )
+            if (
+                not isinstance(source_hash, bytes)
+                or requester_device.destination_hash != source_hash
+            ):
+                return False
+            replay_id = self._workspace_history_replay_id(
+                request.workspace_id, request.replay_key
+            )
+            if self.store.get("workspace_history_replay", replay_id) is not None:
+                return False
+            cursor_stream = 0
+            cursor_range = 0
+            cursor_sequence: int | None = None
+            page_index = 0
+            previous_response_digest = None
+            continuation_record_id = None
+            if request.continuation is not None:
+                continuation_record_id = self._workspace_history_continuation_id(
+                    request.continuation
+                )
+                state = self.store.get(
+                    "workspace_history_continuation", continuation_record_id
+                )
+                if (
+                    state is None
+                    or state.get("consumed")
+                    or float(state.get("expires_at", 0)) < time.time()
+                    or state.get("requester_member_id") != request.requester_member_id
+                    or state.get("requester_device_id") != request.requester_device_id
+                    or state.get("source_hash") != source_hash.hex()
+                    or state.get("scope") != request.scope
+                    or state.get("streams") != list(request.streams)
+                    or state.get("event_limit") != request.event_limit
+                    or state.get("byte_limit") != request.byte_limit
+                ):
+                    return False
+                cursor_stream = int(state.get("cursor_stream", 0))
+                cursor_range = int(state.get("cursor_range", 0))
+                cursor_sequence = int(state.get("cursor_sequence", 1))
+                page_index = int(state.get("page_index", 0)) + 1
+                previous_response_digest = state.get("response_digest")
+            response_streams: list[dict[str, Any]] = []
+            peer_heads: dict[str, int] = {}
+            for stream in request.streams:
+                head = self.store.get(
+                    "workspace_stream_coverage",
+                    self._workspace_stream_head_id(
+                        request.workspace_id,
+                        request.scope["conversation_id"],
+                        stream["author_device_id"],
+                    ),
+                ) or {}
+                high_water = max(0, int(head.get("high_water", 0)))
+                floor = max(1, int(head.get("retained_floor", 1)))
+                peer_heads[stream["author_device_id"]] = high_water
+                available = [[floor, high_water]] if floor <= high_water else []
+                gaps = [
+                    [int(item[0]), int(item[1])]
+                    for item in [
+                        *head.get("gaps", ()), *head.get("pruned_ranges", ())
+                    ][:MAX_HISTORY_RANGES]
+                    if isinstance(item, list)
+                    and len(item) == 2
+                    and all(isinstance(value, int) for value in item)
+                ]
+                gaps.sort()
+                merged_gaps: list[list[int]] = []
+                for gap_start, gap_end in gaps:
+                    if merged_gaps and gap_start <= merged_gaps[-1][1] + 1:
+                        merged_gaps[-1][1] = max(merged_gaps[-1][1], gap_end)
+                    else:
+                        merged_gaps.append([gap_start, gap_end])
+                response_streams.append({
+                    "author_device_id": stream["author_device_id"],
+                    "high_water": high_water,
+                    "head_digest": head.get("head_digest") if high_water else None,
+                    "retained_floor": floor,
+                    "available_ranges": available,
+                    "gaps": merged_gaps[:MAX_HISTORY_RANGES],
+                })
+            selected: list[str] = []
+            selected_positions: list[tuple[int, int, int]] = []
+            probes = 0
+            stream_index = cursor_stream
+            range_index = cursor_range
+            sequence = cursor_sequence
+            exhausted = False
+            while probes < MAX_HISTORY_SEQUENCE_PROBES and len(selected) < request.event_limit:
+                if stream_index >= len(request.streams):
+                    exhausted = True
+                    break
+                stream = request.streams[stream_index]
+                ranges = stream["request_ranges"]
+                if range_index >= len(ranges):
+                    stream_index += 1
+                    range_index = 0
+                    sequence = None
+                    continue
+                start, requested_end = ranges[range_index]
+                peer_end = min(requested_end, peer_heads[stream["author_device_id"]])
+                current_sequence = start if sequence is None else max(start, sequence)
+                if current_sequence > peer_end:
+                    range_index += 1
+                    sequence = None
+                    continue
+                probes += 1
+                sequence = current_sequence + 1
+                coverage = self.store.get(
+                    "workspace_stream_coverage",
+                    self._workspace_stream_sequence_id(
+                        request.workspace_id,
+                        request.scope["conversation_id"],
+                        stream["author_device_id"],
+                        current_sequence,
+                    ),
+                )
+                if coverage is None or coverage.get("pruned"):
+                    continue
+                event_id = coverage.get("event_id")
+                event = (
+                    self.store.get(
+                        "workspace_event", self._workspace_event_record_id(event_id)
+                    )
+                    if isinstance(event_id, str)
+                    else None
+                )
+                if (
+                    event is None
+                    or not isinstance(event.get("serialized"), str)
+                    or not self._workspace_history_event_disclosable(
+                        request, event, current_channel
+                    )
+                ):
+                    continue
+                selected.append(event["serialized"])
+                selected_positions.append(
+                    (stream_index, range_index, current_sequence)
+                )
+            if stream_index >= len(request.streams):
+                exhausted = True
+            identity = self._identity
+            if identity is None:
+                return False
+            continuation = None if exhausted else hashlib.sha256(
+                os.urandom(32) + request.digest.encode("ascii")
+            ).hexdigest()
+            while True:
+                controls = self._workspace_history_controls_for_events(selected)
+                checkpoints = self._workspace_history_checkpoints_for_events(
+                    request.workspace_id,
+                    request.scope["conversation_id"],
+                    selected,
+                )
+                try:
+                    response_raw = create_workspace_history_response(
+                        identity,
+                        request=request,
+                        response_id=_new_id(),
+                        responder_member_id=str(workspace["local_member_id"]),
+                        responder_device_id=str(workspace["local_device_id"]),
+                        page_index=page_index,
+                        previous_response_digest=previous_response_digest,
+                        streams=response_streams,
+                        controls=controls,
+                        checkpoints=checkpoints,
+                        events=selected,
+                        continuation=continuation,
+                        complete=exhausted,
+                    )
+                    break
+                except ValidationError as exc:
+                    if "byte limit" not in str(exc) or not selected:
+                        raise
+                    popped_position = selected_positions.pop()
+                    selected.pop()
+                    stream_index, range_index, popped_sequence = popped_position
+                    sequence = popped_sequence
+                    exhausted = False
+                    continuation = hashlib.sha256(
+                        os.urandom(32) + request.digest.encode("ascii")
+                    ).hexdigest()
+            response = verify_workspace_history_response(
+                response_raw, manifest=current_manifest, request=request
+            )
+            local_member = find_member(
+                current_manifest, str(workspace["local_member_id"])
+            )
+            if local_member is None:
+                return False
+            delivery = self._workspace_delivery_record(
+                workspace_id=workspace["id"],
+                recipient_member_id=request.requester_member_id,
+                recipient_device=requester_device,
+                kind="workspace_history_response",
+                document=response.serialized,
+                conversation_id=request.scope["conversation_id"],
+                priority=1,
+            )
+            delivery["expires_at"] = request.expires_at
+            records: list[tuple[str, str, dict[str, Any]]] = [
+                ("workspace_history_replay", replay_id, {
+                    "workspace_id": request.workspace_id,
+                    "request_digest": request.digest,
+                    "expires_at": request.expires_at,
+                    "created_at": time.time(),
+                }),
+                ("workspace_history_response_cache", self._workspace_history_response_id(response.response_id), {
+                    "workspace_id": request.workspace_id,
+                    "request_digest": request.digest,
+                    "response_digest": response.digest,
+                    "serialized": response.serialized,
+                    "expires_at": request.expires_at,
+                }),
+                ("workspace_delivery", delivery["id"], delivery),
+                *self._due_records(add=[delivery]),
+            ]
+            if continuation_record_id is not None:
+                old_state = self.store.get(
+                    "workspace_history_continuation", continuation_record_id
+                )
+                if old_state is not None:
+                    old_state["consumed"] = True
+                    records.append((
+                        "workspace_history_continuation",
+                        continuation_record_id,
+                        old_state,
+                    ))
+            if continuation is not None:
+                records.append((
+                    "workspace_history_continuation",
+                    self._workspace_history_continuation_id(continuation),
+                    {
+                        "workspace_id": request.workspace_id,
+                        "requester_member_id": request.requester_member_id,
+                        "requester_device_id": request.requester_device_id,
+                        "source_hash": source_hash.hex(),
+                        "scope": request.scope,
+                        "streams": list(request.streams),
+                        "event_limit": request.event_limit,
+                        "byte_limit": request.byte_limit,
+                        "cursor_stream": stream_index,
+                        "cursor_range": range_index,
+                        "cursor_sequence": sequence or 1,
+                        "page_index": page_index,
+                        "response_digest": response.digest,
+                        "expires_at": request.expires_at,
+                        "consumed": False,
+                    },
+                ))
+            self.store.put_many(records)
+            return True
+        except (MeshChatError, json.JSONDecodeError, KeyError, TypeError, ValueError):
+            return False
+
+    def _receive_workspace_event_checkpoint(
+        self, wire: WorkspaceWirePayload, source_hash: Any
+    ) -> bool:
+        try:
+            value = json.loads(wire.document)
+            manifest = self._workspace_manifest_by_digest(
+                str(value.get("manifest_digest", ""))
+            )
+            if manifest is None:
+                return False
+            checkpoint = verify_workspace_event_checkpoint(
+                wire.document, manifest=manifest
+            )
+            found = find_device(manifest, checkpoint.author_device_id)
+            if (
+                found is None
+                or not isinstance(source_hash, bytes)
+                or found[1].destination_hash != source_hash
+            ):
+                return False
+            records: list[tuple[str, str, dict[str, Any]]] = [(
+                "workspace_event_checkpoint",
+                self.store.opaque_id(
+                    "workspace-event-checkpoint", checkpoint.digest
+                ),
+                {
+                    "workspace_id": checkpoint.workspace_id,
+                    "checkpoint_id": checkpoint.checkpoint_id,
+                    "author_member_id": checkpoint.author_member_id,
+                    "author_device_id": checkpoint.author_device_id,
+                    "manifest_digest": checkpoint.manifest_digest,
+                    "streams": list(checkpoint.streams),
+                    "digest": checkpoint.digest,
+                    "serialized": checkpoint.serialized,
+                    "created_at": checkpoint.created_at,
+                },
+            )]
+            for stream in checkpoint.streams:
+                records.append((
+                    "workspace_checkpoint_head",
+                    self.store.opaque_id(
+                        "workspace-checkpoint-head",
+                        checkpoint.workspace_id,
+                        checkpoint.author_device_id,
+                        stream["conversation_id"],
+                    ),
+                    {
+                        "workspace_id": checkpoint.workspace_id,
+                        "conversation_id": stream["conversation_id"],
+                        "author_device_id": checkpoint.author_device_id,
+                        "high_water": stream["high_water"],
+                        "checkpoint_digest": checkpoint.digest,
+                    },
+                ))
+            self.store.put_many(records)
+            return True
+        except (MeshChatError, json.JSONDecodeError, KeyError, TypeError, ValueError):
+            return False
+
+    def _accept_workspace_history_control(
+        self, workspace: dict[str, Any], kind: str, raw: str
+    ) -> bool:
+        value = json.loads(raw)
+        if kind == "workspace_manifest_root":
+            genesis = self._workspace_genesis(workspace)
+            manifest = verify_workspace_manifest(
+                raw,
+                expected_workspace_id=workspace["id"],
+                expected_authority_destination=genesis.owner_device.destination_hash,
+            )
+            current = self._workspace_current_manifest(workspace)
+            if manifest.epoch > current.epoch:
+                return False
+            epoch_record = self.store.get(
+                "workspace_manifest_epoch",
+                self._workspace_manifest_epoch_id(workspace["id"], manifest.epoch),
+            )
+            if epoch_record is not None and epoch_record.get("digest") != manifest.digest:
+                workspace["state"] = "forked"
+                workspace["security_error"] = "manifest_fork"
+                self.store.put(
+                    "workspace", self._workspace_record_id(workspace["id"]), workspace
+                )
+                return False
+            self.store.put_many([
+                ("workspace_manifest", self._workspace_manifest_record_id(manifest.digest), self._manifest_record(manifest)),
+                self._manifest_epoch_record(manifest),
+            ])
+            return True
+        manifest_digest = (
+            value.get("offer", {}).get("manifest_digest")
+            if kind == "workspace_channel_transfer"
+            and isinstance(value.get("offer"), dict)
+            else value.get("manifest_digest")
+        )
+        if not isinstance(manifest_digest, str):
+            return False
+        manifest = self._workspace_manifest_by_digest(manifest_digest)
+        if manifest is None:
+            return False
+        if kind == "workspace_channel_record":
+            channel = verify_workspace_channel_record(raw, manifest=manifest)
+        elif kind == "workspace_channel_manifest":
+            channel = verify_workspace_channel_manifest(raw, manifest=manifest)
+        elif kind in {"workspace_channel_transfer", "workspace_channel_recovery"}:
+            predecessor_digest = (
+                value.get("offer", {}).get("channel_head")
+                if kind == "workspace_channel_transfer"
+                else value.get("channel_head")
+            )
+            predecessor = (
+                self._workspace_channel_by_digest(predecessor_digest)
+                if isinstance(predecessor_digest, str)
+                else None
+            )
+            if predecessor is None:
+                return False
+            channel = (
+                verify_workspace_channel_transfer(
+                    raw, channel=predecessor, manifest=manifest
+                )
+                if kind == "workspace_channel_transfer"
+                else verify_workspace_channel_recovery(
+                    raw, channel=predecessor, manifest=manifest
+                )
+            )
+        else:
+            return False
+        version_id = self._workspace_channel_version_id(
+            channel.workspace_id, channel.channel_id, channel.version
+        )
+        existing = self.store.get("workspace_channel_version", version_id)
+        if existing is not None and existing.get("digest") != channel.digest:
+            channel_summary = self.store.get(
+                "workspace_channel",
+                self._workspace_channel_record_id(channel.channel_id),
+            )
+            if channel_summary is not None:
+                channel_summary["state"] = "forked"
+                channel_summary["security_error"] = "channel_control_conflict"
+                self.store.put(
+                    "workspace_channel",
+                    self._workspace_channel_record_id(channel.channel_id),
+                    channel_summary,
+                )
+            return False
+        self.store.put_many([
+            ("workspace_channel_control", self._workspace_channel_control_id(channel.digest), self._workspace_channel_control_record(channel, document_type=kind)),
+            self._workspace_channel_version_record(channel),
+        ])
+        return True
+
+    def _queue_workspace_history_continuation(
+        self,
+        workspace: dict[str, Any],
+        job: dict[str, Any],
+        continuation: str | None,
+        *,
+        next_peer: bool = False,
+    ) -> list[tuple[str, str, dict[str, Any]]]:
+        peer_index = int(job.get("peer_index", 0)) + (1 if next_peer else 0)
+        peers = job.get("peers", ())
+        if peer_index >= len(peers):
+            job["status"] = "complete_known" if job.get("known_complete") else "peer_limited"
+            job["peer_limited"] = not bool(job.get("known_complete"))
+            job["peer_index"] = peer_index
+            job["updated_at"] = time.time()
+            return [("workspace_history_job", job["id"], job)]
+        identity = self._identity
+        if identity is None:
+            job["status"] = "failed"
+            job["failure"] = "identity_unavailable"
+            return [("workspace_history_job", job["id"], job)]
+        manifest = self._workspace_current_manifest(workspace)
+        streams = (
+            self._workspace_history_streams(
+                workspace,
+                job["scope"],
+                self._workspace_channel_by_digest(job["scope"]["channel_digest"])
+                if isinstance(job["scope"].get("channel_digest"), str)
+                else None,
+            )
+            if next_peer else list(job["streams"])
+        )
+        now = int(time.time())
+        request_raw = create_workspace_history_request(
+            identity,
+            workspace_id=workspace["id"],
+            request_id=_new_id(),
+            requester_member_id=str(workspace["local_member_id"]),
+            requester_device_id=str(workspace["local_device_id"]),
+            manifest_digest=manifest.digest,
+            scope=job["scope"],
+            streams=streams,
+            event_limit=MAX_HISTORY_EVENTS,
+            byte_limit=MAX_HISTORY_RESPONSE_BYTES,
+            continuation=continuation,
+            created_at=now,
+            expires_at=now + MAX_HISTORY_REQUEST_LIFETIME_SECONDS,
+        )
+        request = verify_workspace_history_request(
+            request_raw, manifest=manifest, now=now
+        )
+        peer = peers[peer_index]
+        found = find_device(manifest, peer["device_id"])
+        if found is None or found[0].status != "active":
+            job["peer_index"] = peer_index
+            return self._queue_workspace_history_continuation(
+                workspace, job, None, next_peer=True
+            )
+        delivery = self._workspace_delivery_record(
+            workspace_id=workspace["id"],
+            recipient_member_id=peer["member_id"],
+            recipient_device=found[1],
+            kind="workspace_history_request",
+            document=request.serialized,
+            conversation_id=job["conversation_id"],
+            priority=1,
+        )
+        delivery["expires_at"] = request.expires_at
+        job.update({
+            "peer_index": peer_index,
+            "streams": streams,
+            "status": "requesting",
+            "request_id": request.request_id,
+            "request_digest": request.digest,
+            "request_replay_key": request.replay_key,
+            "request_expires_at": request.expires_at,
+            "current_delivery_id": delivery["id"],
+            "updated_at": time.time(),
+        })
+        return [
+            ("workspace_history_job", job["id"], job),
+            ("workspace_history_request", self._workspace_history_request_id(request.request_id), {
+                "workspace_id": workspace["id"],
+                "conversation_id": job["conversation_id"],
+                "job_id": job["id"],
+                "peer_member_id": peer["member_id"],
+                "peer_device_id": peer["device_id"],
+                "serialized": request.serialized,
+                "digest": request.digest,
+                "expires_at": request.expires_at,
+                "page_index": int(job.get("expected_page", 0)),
+                "previous_response_digest": job.get("previous_response_digest"),
+            }),
+            ("workspace_delivery", delivery["id"], delivery),
+            *self._due_records(add=[delivery]),
+        ]
+
+    def _receive_workspace_history_response(
+        self, wire: WorkspaceWirePayload, source_hash: Any
+    ) -> bool:
+        try:
+            value = json.loads(wire.document)
+            request_id = value.get("request_id")
+            if not isinstance(request_id, str):
+                return False
+            stored_request = self.store.get(
+                "workspace_history_request",
+                self._workspace_history_request_id(request_id),
+            )
+            if stored_request is None or float(stored_request.get("expires_at", 0)) < time.time():
+                return False
+            workspace = self._require_workspace(wire.workspace_id)
+            request_value = json.loads(stored_request["serialized"])
+            request_manifest = self._workspace_manifest_by_digest(
+                request_value.get("manifest_digest", "")
+            )
+            if request_manifest is None:
+                return False
+            request = verify_workspace_history_request(
+                stored_request["serialized"], manifest=request_manifest,
+                now=min(int(time.time()), int(stored_request["expires_at"])),
+            )
+            response = verify_workspace_history_response(
+                wire.document,
+                manifest=request_manifest,
+                request=request,
+            )
+            responder = find_device(request_manifest, response.responder_device_id)
+            if (
+                responder is None
+                or not isinstance(source_hash, bytes)
+                or responder[1].destination_hash != source_hash
+                or responder[0].member_id != stored_request.get("peer_member_id")
+                or response.responder_device_id != stored_request.get("peer_device_id")
+            ):
+                return False
+            replay_id = self._workspace_history_response_id(response.response_id)
+            if self.store.get("workspace_history_response_replay", replay_id) is not None:
+                return False
+            job = self.store.get("workspace_history_job", stored_request["job_id"])
+            if job is None or job.get("status") in {"cancelled", "dismissed"}:
+                return False
+            if (
+                response.page_index != int(stored_request.get("page_index", 0))
+                or response.previous_response_digest
+                != stored_request.get("previous_response_digest")
+            ):
+                return False
+            job["status"] = "verifying"
+            self.store.put("workspace_history_job", job["id"], job)
+            for kind, raw in response.controls:
+                if not self._accept_workspace_history_control(workspace, kind, raw):
+                    job["missing_prerequisites"] = int(job.get("missing_prerequisites", 0)) + 1
+            checkpoint_records: list[tuple[str, str, dict[str, Any]]] = []
+            anchored_heads: list[tuple[Any, dict[str, Any]]] = []
+            current_manifest = self._workspace_current_manifest(workspace)
+            current_channel = None
+            if request.scope["kind"] in {"public", "private"}:
+                channel_summary = self.store.get(
+                    "workspace_channel",
+                    self._workspace_channel_record_id(request.scope["conversation_id"]),
+                )
+                if channel_summary is not None:
+                    current_channel = self._workspace_channel_by_digest(
+                        str(channel_summary.get("head_hash", ""))
+                    )
+            permitted_checkpoint_digests = (
+                set()
+                if request.scope["kind"] == "direct"
+                else set(current_manifest.removal_checkpoint_digests)
+                if request.scope["kind"] == "public"
+                else set(current_channel.removal_checkpoint_digests)
+                if current_channel is not None
+                else set()
+            )
+            for checkpoint_raw in response.checkpoints:
+                checkpoint_value = json.loads(checkpoint_raw)
+                checkpoint_manifest = self._workspace_manifest_by_digest(
+                    str(checkpoint_value.get("manifest_digest", ""))
+                )
+                if checkpoint_manifest is None:
+                    job["missing_prerequisites"] = int(job.get("missing_prerequisites", 0)) + 1
+                    continue
+                checkpoint = verify_workspace_event_checkpoint(
+                    checkpoint_raw, manifest=checkpoint_manifest
+                )
+                matching_stream = next((
+                    stream for stream in checkpoint.streams
+                    if stream["conversation_id"] == request.scope["conversation_id"]
+                ), None)
+                if matching_stream is None:
+                    continue
+                checkpoint_record_id = self.store.opaque_id(
+                    "workspace-event-checkpoint", checkpoint.digest
+                )
+                checkpoint_records.append((
+                    "workspace_event_checkpoint",
+                    checkpoint_record_id,
+                    {
+                        "workspace_id": checkpoint.workspace_id,
+                        "checkpoint_id": checkpoint.checkpoint_id,
+                        "author_member_id": checkpoint.author_member_id,
+                        "author_device_id": checkpoint.author_device_id,
+                        "manifest_digest": checkpoint.manifest_digest,
+                        "streams": list(checkpoint.streams),
+                        "digest": checkpoint.digest,
+                        "serialized": checkpoint.serialized,
+                        "created_at": checkpoint.created_at,
+                    },
+                ))
+                checkpoint_records.append((
+                    "workspace_checkpoint_head",
+                    self.store.opaque_id(
+                        "workspace-checkpoint-head",
+                        checkpoint.workspace_id,
+                        checkpoint.author_device_id,
+                        matching_stream["conversation_id"],
+                    ),
+                    {
+                        "workspace_id": checkpoint.workspace_id,
+                        "conversation_id": matching_stream["conversation_id"],
+                        "author_device_id": checkpoint.author_device_id,
+                        "high_water": matching_stream["high_water"],
+                        "checkpoint_digest": checkpoint.digest,
+                    },
+                ))
+                catalog_id = self.store.opaque_id(
+                    "workspace-checkpoint-catalog",
+                    checkpoint.workspace_id,
+                    checkpoint.author_device_id,
+                )
+                catalog = self.store.get("workspace_checkpoint_catalog", catalog_id) or {
+                    "workspace_id": checkpoint.workspace_id,
+                    "author_device_id": checkpoint.author_device_id,
+                    "entries": [],
+                }
+                entries = [
+                    item for item in catalog.get("entries", ())
+                    if item.get("conversation_id") != matching_stream["conversation_id"]
+                ]
+                entries.append({
+                    "conversation_id": matching_stream["conversation_id"],
+                    "channel_digest": matching_stream["channel_digest"],
+                    "high_water": matching_stream["high_water"],
+                    "checkpoint_digest": checkpoint.digest,
+                })
+                entries.sort(key=lambda item: item["conversation_id"])
+                catalog["entries"] = entries[-MAX_HISTORY_STREAMS:]
+                checkpoint_records.append((
+                    "workspace_checkpoint_catalog", catalog_id, catalog
+                ))
+                if checkpoint.digest in permitted_checkpoint_digests:
+                    anchored_heads.append((checkpoint, matching_stream))
+            # Prove each supplied inactive-author chain backwards from a
+            # permitted checkpoint head.  Only events connected byte-for-byte
+            # by predecessor digests inherit the anchor.
+            response_events_by_digest: dict[str, dict[str, Any]] = {}
+            for raw in response.events:
+                value = json.loads(raw)
+                response_events_by_digest[
+                    hashlib.sha256(raw.encode("utf-8")).hexdigest()
+                ] = value
+            history_checkpoint_digests: set[str] = set()
+            for checkpoint, stream in anchored_heads:
+                digest_cursor: str | None = stream["head_digest"]
+                expected_sequence = int(stream["high_water"])
+                while digest_cursor is not None:
+                    candidate = response_events_by_digest.get(digest_cursor)
+                    if (
+                        candidate is None
+                        or candidate.get("author_device_id") != checkpoint.author_device_id
+                        or candidate.get("conversation_id") != request.scope["conversation_id"]
+                        or candidate.get("sequence") != expected_sequence
+                    ):
+                        break
+                    history_checkpoint_digests.add(digest_cursor)
+                    digest_cursor = candidate.get("previous_event_digest")
+                    expected_sequence -= 1
+                    if expected_sequence < 1:
+                        break
+            recovered = 0
+            pending_before = len([
+                item for item in self.store.list("workspace_pending_event")
+                if item.get("workspace_id") == workspace["id"]
+            ])
+            for raw in response.events:
+                event_value = json.loads(raw)
+                event_id = event_value.get("event_id")
+                if not isinstance(event_id, str):
+                    continue
+                accepted = self._accept_workspace_event(
+                    WorkspaceWirePayload(
+                        kind="workspace_event",
+                        logical_id=event_id,
+                        workspace_id=workspace["id"],
+                        expires_at=request.expires_at,
+                        document=raw,
+                    ),
+                    drain_pending=False,
+                    history_checkpoint_digests=history_checkpoint_digests,
+                )
+                if accepted:
+                    recovered += 1
+            self._drain_workspace_pending_controls(workspace["id"])
+            self._drain_workspace_pending_events(workspace["id"])
+            pending_after = len([
+                item for item in self.store.list("workspace_pending_event")
+                if item.get("workspace_id") == workspace["id"]
+            ])
+            job["missing_prerequisites"] = int(job.get("missing_prerequisites", 0)) + max(0, pending_after - pending_before)
+            peer_coverage_records = []
+            advertised_complete = True
+            for stream in response.streams:
+                local = self.store.get(
+                    "workspace_stream_coverage",
+                    self._workspace_stream_head_id(
+                        workspace["id"], job["conversation_id"],
+                        stream["author_device_id"],
+                    ),
+                ) or {}
+                advertised_complete = advertised_complete and int(local.get("high_water", 0)) >= int(stream["high_water"])
+                peer_coverage_records.append((
+                    "workspace_history_peer_coverage",
+                    self.store.opaque_id(
+                        "workspace-history-peer-coverage", workspace["id"],
+                        job["conversation_id"], response.responder_device_id,
+                        stream["author_device_id"],
+                    ),
+                    {
+                        "workspace_id": workspace["id"],
+                        "conversation_id": job["conversation_id"],
+                        "peer_device_id": response.responder_device_id,
+                        **stream,
+                        "response_digest": response.digest,
+                        "updated_at": time.time(),
+                    },
+                ))
+            job["recovered_events"] = int(job.get("recovered_events", 0)) + recovered
+            job["verified_pages"] = int(job.get("verified_pages", 0)) + 1
+            job["received_bytes"] = int(job.get("received_bytes", 0)) + len(response.serialized.encode("utf-8"))
+            job["expected_page"] = response.page_index + 1
+            job["previous_response_digest"] = response.digest
+            job["known_complete"] = bool(job.get("known_complete", True)) and advertised_complete
+            job["updated_at"] = time.time()
+            records: list[tuple[str, str, dict[str, Any]]] = [
+                ("workspace_history_response_replay", replay_id, {
+                    "workspace_id": workspace["id"],
+                    "request_digest": request.digest,
+                    "response_digest": response.digest,
+                    "expires_at": request.expires_at,
+                }),
+                *checkpoint_records,
+                *peer_coverage_records,
+            ]
+            if response.continuation is not None:
+                records.extend(self._queue_workspace_history_continuation(
+                    workspace, job, response.continuation
+                ))
+            else:
+                records.extend(self._queue_workspace_history_continuation(
+                    workspace, job, None, next_peer=True
+                ))
+            self.store.put_many(records)
+            self._workspace_changed(
+                workspace["id"], conversation_id=job["conversation_id"],
+                resource_kind="history",
+            )
+            return True
+        except (MeshChatError, json.JSONDecodeError, KeyError, TypeError, ValueError):
+            return False
+
+    def _advance_workspace_history_jobs(self) -> None:
+        scheduler = self.store.get(
+            "workspace_history_scheduler", self._workspace_history_scheduler_id()
+        )
+        if scheduler is None:
+            return
+        now = time.time()
+        for job_id in list(scheduler.get("job_ids", ()))[:MAX_HISTORY_JOBS_PER_PROFILE]:
+            job = self.store.get("workspace_history_job", job_id)
+            if job is None or job.get("status") in {
+                "cancelled", "dismissed", "complete_known", "peer_limited", "failed"
+            }:
+                continue
+            if float(job.get("request_expires_at", now + 1)) >= now:
+                continue
+            workspace = self.store.get(
+                "workspace", self._workspace_record_id(str(job.get("workspace_id", "")))
+            )
+            if workspace is None or workspace.get("state") not in {"active", "incomplete_sync"}:
+                job["status"] = "authorization_changed"
+                job["updated_at"] = now
+                self.store.put("workspace_history_job", job_id, job)
+                continue
+            job["status"] = "expired"
+            job["failure"] = "stale_request"
+            records = self._queue_workspace_history_continuation(
+                workspace, job, None, next_peer=True
+            )
+            self.store.put_many(records)
+            self._workspace_changed(
+                workspace["id"], conversation_id=job.get("conversation_id"),
+                resource_kind="history",
+            )
             break
 
     def _on_workspace_native_status(
@@ -11471,6 +13162,18 @@ class WorkspaceServiceMixin:
             self._receive_workspace_channel_fetch(wire)
         elif wire.kind == "workspace_event":
             self._accept_workspace_event(wire)
+        elif wire.kind == "workspace_event_checkpoint":
+            self._receive_workspace_event_checkpoint(
+                wire, getattr(native, "source_hash", None)
+            )
+        elif wire.kind == "workspace_history_request":
+            self._receive_workspace_history_request(
+                wire, getattr(native, "source_hash", None)
+            )
+        elif wire.kind == "workspace_history_response":
+            self._receive_workspace_history_response(
+                wire, getattr(native, "source_hash", None)
+            )
         elif wire.kind == "workspace_leave_request":
             self._receive_workspace_leave_request(wire)
         elif wire.kind == "workspace_display_name_request":

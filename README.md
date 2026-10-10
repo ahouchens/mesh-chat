@@ -126,6 +126,21 @@ receive no new traffic and can only keep their previously authorized local copy
 as a read-only archive until pruning or confirmed local erasure. Workspace
 owners do not gain access to other members' DMs.
 
+An active desktop member can now request bounded retained history from eligible
+workspace peers after being offline beyond the seven-day live-delivery window.
+Signed requests bind a fresh nonce, exact public/private/DM scope, stream
+ranges, event and byte limits, expiry, and continuation. Signed responses carry
+the exact stored canonical bytes plus prerequisite controls; every item passes
+the ordinary signature, sequence, predecessor, authorization, mutation,
+thread, retention, and search-materialization path. Private catch-up remains
+inside one uninterrupted admission era, and a workspace DM remains exclusive
+to its exact two participants. Previously unseen events from an inactive
+author require a removal-control-committed checkpoint; a missing anchor is an
+honest permanent gap. The History & retention dialog distinguishes requesting,
+verification, offline, prerequisite, prune, peer-limited, fork, authorization,
+expiry, cancellation, and known-head completion states. Cooperative peers may
+still have additional unknown history or may have pruned/withheld a body.
+
 Encrypted local search covers retained workspace message roots, thread replies,
 current permitted people names, and visible public/private channel names and
 topics. Queries use exact Unicode tokens and remain entirely on the device;
@@ -143,22 +158,21 @@ older view. Upgrading a retained 0.2.29 profile exposes a truthful indexing
 state and rebuilds at most 128 events per transaction without turning startup
 into a full history scan.
 
-This increment is deliberately desktop-only and capped at eight people
-with one device each. It has no attachments, history backfill,
-private or DM history catch-up, linked devices, or mobile UI
-yet; those remain the later increments in the spec.
+This increment is deliberately desktop-only and capped at eight people with
+one device each. It has no attachments, linked devices, or mobile workspace UI;
+those remain later increments in the spec.
 
 ## Install Mesh Chat
 
-**Current desktop workspace candidate: Mesh Chat 0.2.30.** Install it over the
+**Current desktop workspace candidate: Mesh Chat 0.2.31.** Install it over the
 existing app; do not uninstall Mesh Chat or clear its data first. The current
 paired desktop/mobile install record remains 0.2.12 until workspace support reaches
 the mobile UI and completes physical cross-device validation.
 
 Mesh Chat must be packaged for the operating system where it will run. This
 workspace contains Windows x64 and Android arm64 packaging flows. Check the
-workspace Increment 10 record in [TESTING.md](TESTING.md) for the exact desktop
-verification completed for 0.2.30, and the 0.2.12 record for current Android
+workspace Increment 11 record in [TESTING.md](TESTING.md) for the exact desktop
+verification completed for 0.2.31, and the 0.2.12 record for current Android
 artifacts. The macOS, Linux, and
 iOS packaging paths are implemented, but their packages still need to be built
 and tested on those operating systems.

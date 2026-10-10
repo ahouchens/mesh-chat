@@ -426,6 +426,10 @@ fn allowed_renderer_command(command: &str) -> bool {
             | "update_workspace_policies"
             | "update_workspace_retention"
             | "prune_workspace_history"
+            | "get_workspace_history_status"
+            | "start_workspace_history"
+            | "cancel_workspace_history"
+            | "list_workspace_history_gaps"
             | "remove_workspace_member"
             | "request_workspace_display_name"
             | "decide_workspace_display_name"
@@ -484,6 +488,10 @@ fn workspace_renderer_command(command: &str) -> bool {
             | "update_workspace_policies"
             | "update_workspace_retention"
             | "prune_workspace_history"
+            | "get_workspace_history_status"
+            | "start_workspace_history"
+            | "cancel_workspace_history"
+            | "list_workspace_history_gaps"
             | "remove_workspace_member"
             | "request_workspace_display_name"
             | "decide_workspace_display_name"
@@ -916,6 +924,10 @@ mod tests {
             "update_workspace_policies",
             "update_workspace_retention",
             "prune_workspace_history",
+            "get_workspace_history_status",
+            "start_workspace_history",
+            "cancel_workspace_history",
+            "list_workspace_history_gaps",
             "remove_workspace_member",
             "request_workspace_display_name",
             "decide_workspace_display_name",

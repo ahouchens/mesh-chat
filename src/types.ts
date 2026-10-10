@@ -387,6 +387,58 @@ export interface WorkspaceRetentionPruneResult {
   cutoff?: number | null;
 }
 
+export type WorkspaceHistoryJobState =
+  | "available"
+  | "requesting"
+  | "waiting_peer"
+  | "verifying"
+  | "paused_offline"
+  | "missing_prerequisites"
+  | "peer_limited"
+  | "complete_known"
+  | "cancelled"
+  | "dismissed"
+  | "authorization_changed"
+  | "fork_suspended"
+  | "expired"
+  | "failed";
+
+export interface WorkspaceHistoryJob {
+  workspace_id: string;
+  conversation_id: string;
+  conversation_kind: "public" | "private" | "direct";
+  status: WorkspaceHistoryJobState;
+  recovered_events: number;
+  verified_pages: number;
+  received_bytes: number;
+  peer_count: number;
+  peers_exhausted: number;
+  missing_prerequisites: number;
+  permanent_gaps: number;
+  peer_limited: boolean;
+  failure?: string | null;
+  updated_at: number;
+  known_complete: boolean;
+  notice: string;
+}
+
+export interface WorkspaceHistoryStatus {
+  workspace_id: string;
+  conversation_id: string;
+  conversation_kind: "public" | "private" | "direct";
+  eligible: boolean;
+  status: WorkspaceHistoryJobState;
+  job: WorkspaceHistoryJob | null;
+  streams: Array<{
+    known_high_water: number;
+    retained_floor: number;
+    seen_ranges: number[][];
+    gaps: number[][];
+  }>;
+  known_complete: boolean;
+  notice: string;
+}
+
 export interface WorkspaceMention {
   position: number;
   read: boolean;

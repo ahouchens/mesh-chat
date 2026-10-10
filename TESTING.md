@@ -1901,6 +1901,104 @@ Artifact hashes for this run:
   full-tree plaintext scanning, production signing, in-place installation, and
   Windows-to-Android validation remain release gates.
 
+## Workspace increment 11 verification — 2026-10-10
+
+- Increment 11 adds peer-to-peer workspace history catch-up without a server,
+  relay, or global archive. Canonical signed requests and bounded signed
+  responses are tied to opaque request IDs, requester/responder device IDs,
+  exact public/private-era/DM scope, request nonce, continuation, prior-page
+  digest, retention policy, and access state. Responses carry prerequisite
+  controls and signed author checkpoints before ordinary events, expose signed
+  heads and floors, and distinguish permanent/local-prune gaps from peer-limited
+  coverage. Requests are capped at 32 streams and 64 ranges; a response is
+  capped at 32 controls, 32 checkpoints, 32 events, and 128 KiB.
+- Protocol/service coverage verifies canonical bytes, signature and field
+  binding, nonce and page replay rejection, exact continuation chaining,
+  count/byte/range bounds, public/private-era/DM disclosure, inactive-author
+  checkpoint commitments at removal, direct indexed responder lookup, exact
+  canonical event recovery between two independently encrypted profiles,
+  durable restart, checkpoint-first validation, permanent-gap recording, honest
+  `complete_known`/`peer_limited` status, and erasure of jobs, caches, coverage,
+  nonces, and checkpoints. Scheduler state is sealed, allows at most two jobs
+  per workspace and four per profile, and caps a pass at 256 sequence probes.
+  Renderer and Rust coverage verify the History & retention sync status,
+  start/cancel/refresh controls, accessible live updates, exact desktop command
+  allowlisting, and explicit peer-unavailable, local-prune, and permanent-gap
+  states. Ordinary live delivery still emits one event packet; checkpoints are
+  retained for authenticated history disclosure rather than doubling traffic.
+- The complete maintained verification passed **337 Python tests with 6
+  intentional environment/package skips**, **88 frontend tests**, all **3**
+  package-artwork source tests, TypeScript compilation, and the Vite production
+  build. `cargo fmt --check`, the locked Rust release check, and all **6**
+  release-profile tests passed. The protected four-process/three-hop topology
+  and both direct-LAN scenarios passed. All **3** tests against the exact
+  immutable 0.2.31 sidecar passed, including frozen 0.2.9 interoperability;
+  all **7** desktop release tests passed with an isolated pytest base temp. The
+  final application matched all **12** bundled artwork files (1,947,195 source
+  bytes). The maintained verification report is
+  `dist/reports/0.2.31/20261010T140647Z-7a8673ff/report.json`.
+- The reproducible `service/tools/workspace_history_catchup_benchmark.py` ran
+  on Windows 10.0.19045 with Python 3.13.15, Node 24.19.0, Rust 1.99.0, a
+  12-logical-CPU Intel Family 6 Model 158 host, and 17,019,686,912 bytes of
+  physical memory. Its Increment 9-derived encrypted fixture retained **50,000**
+  events for 8 members and 32 channels: 42,000 roots, 3,000 replies, 2,000
+  edits, 2,000 reactions, 1,000 tombstones, 4,000 linked-device delivery legs,
+  and 2,000 pending items. The fixture vault was 532,119,552 bytes. A real
+  independently encrypted requester recovered 32 exact canonical events after
+  all 32 ordinary delivery legs were durably expired beyond the independent
+  live-delivery window. Recovery used two responses totaling 35,446 bytes,
+  including two prerequisite controls and checkpoint validation.
+- Across 30 samples, request sign/verify p95 was **2.045 ms**, bounded response
+  construction p95 **1.679 ms**, and response verification p95 **7.469 ms**.
+  First-response commit took **987.224 ms**, continuation processing
+  **80.008 ms**, total catch-up **1,288.147 ms**, duplicate rejection
+  **12.666 ms**, private-nonmember denial p95 **11.211 ms**, DM-nonparticipant
+  denial p95 **7.863 ms**, and restart/resume **8.560 ms**. Throughput was
+  24.842 useful events/s; peak working set was 225,460,224 bytes and Python
+  tracemalloc peak was 99,626,288 bytes. The requester vault grew 479,232 bytes
+  to 544,768 bytes, and the serving vault grew 1,171,456 bytes to 1,265,664
+  bytes. All boundary, authorization, canonical-byte, expired-live-leg, replay,
+  signed-head completion, restart, and full-size-fixture assertions passed in
+  **111.390 s**. The 2,665-byte evidence JSON hashes to
+  `15E1E687C73E26EC27D8885E27DE61E1AFA3A311E27D12739BC28D48A1C4B514`
+  at `dist/reports/0.2.31/increment11-history-benchmark.json`.
+- The maintained release driver immutably published desktop **0.2.31** without
+  changing 0.2.30 or earlier releases. The 22,347,776-byte MSI hashes to
+  `498418B04CFD9CE5DFAC8D56F5FD8DB3ECFE29C70AC7A017AE4BE4D7D4818A38`;
+  the 21,614,129-byte NSIS installer hashes to
+  `DB092CB491241ACD98CF405BA8B3D58CA3D1257703286BD2E7EBED1BF28CB1E8`.
+  The 6,728,704-byte portable application reports file/product version 0.2.31
+  and hashes to
+  `D397F3DE2C85D506C23A2E5E8C32888F18A368F63CEBFBA878236DB9CAEAF813`;
+  the 18,126,664-byte sidecar hashes to
+  `56CD521282D9FE87A626C94F1AE1C4E1882E2878F7DE656C537B8A825BE0568B`.
+  The immutable manifest hashes to
+  `FBAED26CF0A298F0132D3D3960D2A21927DFDC703E8BF93A78A5B8B45753B142`,
+  and `dist/desktop/current.json` selects it. The successful release report is
+  `dist/reports/0.2.31/20261010T141349Z-1aca514c/report.json`.
+- Failure evidence was retained while converging. Early checkpoint delivery
+  doubled live packets and broke seven workspace expectations; checkpoints were
+  moved to history disclosure and the full suite passed. One guessed pytest
+  filename selected no tests. The first final Python run found a renderer
+  wording mismatch, then passed after the status copy and assertion agreed.
+  Early frontend attempts hit the system Node 14 shim and one pnpm sandbox
+  `EPERM`; the pinned Node 24 runner passed. Benchmark smoke runs first found a
+  missing `local_pruned` metric and then the required empty terminal page; both
+  were corrected. A full benchmark rerun later reached reporting before a
+  mistyped working-set field failed; the corrected full rerun above passed.
+  Exact disposable benchmark-profile cleanup once required a scoped elevated
+  retry. A combined package/desktop pytest run passed the three package tests
+  but hit seven setup errors from an inaccessible stale global temp directory;
+  rerunning the seven desktop tests with a unique base temp passed. Three
+  artwork-verifier invocations used, in turn, a missing flag, a stale Node path,
+  and a wrong executable subdirectory; the final exact-binary run passed.
+- No installer or application executable was launched and no existing Mesh
+  Chat process or user profile was modified. Physical concurrent-device
+  catch-up across partition/removal/re-admission, hostile peer fault injection,
+  native-window keyboard/screen-reader review, packet capture,
+  protected-profile full-tree plaintext scanning, production signing, in-place
+  installation, and Windows-to-Android validation remain release gates.
+
 ## Acceptance matrix
 
 | Gate | Current evidence |
@@ -1926,7 +2024,7 @@ Artifact hashes for this run:
 | One-to-one approval | Always-on deterministic full flow and prior real bidirectional-hint Reticulum/LXMF runs passed; the phone-shaped harness covers phone-first delivery followed by the desktop reply on the same connection. Exact 0.2.12 physical Windows↔Android validation remains pending |
 | Contact management | Rename, verification toggling, block/unblock trust restoration, deletion cleanup, active-group identity retention, pending-group-invitation refusal, search, confirmations, mobile Back handling, and responsive dialog layout are covered. The shared UI was matched inside the exact Android APK; physical desktop/phone interaction remains pending |
 | Reconnection/interoperability | Upstream format preserved; bidirectional direct-LAN attachment, dirty-route retry, signed-client route replacement, deferred callback re-entry, and phone-shaped full-duplex return traffic are covered; reference-client and suspend/resume runs pending |
-| Platform packaging | Windows x64 0.2.30 MSI/NSIS and Android arm64 debug 0.2.12 packages were built, hashed, and inspected; the exact 0.2.30 Windows binary was verified but was not installed or launched. Versions, manifest, installer payloads, Android v2 signature/certificate, native architecture, embedded contact UI, and all 12 embedded artwork files were verified. The transactional publisher rejects mixed/stale output and records immutable release/current manifests. Physical Windows↔Android 0.2.12 validation, a 0.2.12 portable bundle, macOS/Linux/iOS native package runs, and production signing remain pending |
+| Platform packaging | Windows x64 0.2.31 MSI/NSIS and Android arm64 debug 0.2.12 packages were built, hashed, and inspected; the exact 0.2.31 Windows binary was verified but was not installed or launched. Versions, manifest, installer payloads, Android v2 signature/certificate, native architecture, embedded contact UI, and all 12 embedded artwork files were verified. The transactional publisher rejects mixed/stale output and records immutable release/current manifests. Physical Windows↔Android 0.2.12 validation, a 0.2.12 portable bundle, macOS/Linux/iOS native package runs, and production signing remain pending |
 | First-message usability | 0.2.12 retains desktop timeout guidance, exact draft preservation, callback/retry concurrency regressions, and the phone-first/desktop-reply harness together with durable-result, bounded-draft, duplicate-submit, IME, stale-refresh, delivery-state, and responsive-layout coverage. Exact 0.2.12 physical Windows↔Android validation and a broader human study remain open |
 | Invitation entry points | UI and validation implemented; installed-app OS matrix pending |
 | Common flow without technical setup | UI implemented; fresh/returning human run pending |
@@ -1939,5 +2037,6 @@ Artifact hashes for this run:
 | Workspace increment 8 | One-level signed-root replies, non-thread canonical-byte compatibility, exact public/private/DM authorization, nested-reply rejection, mutations/reactions/mentions/tombstones, deterministic out-of-order recovery, encrypted bounded paging/activity/read/draft/cursor state, metadata-only startup summaries, current-access and private re-admission filtering, desktop command allowlisting, mentioned-thread navigation, reply composition, and thread-specific unread behavior are automated. Protected topology, direct-LAN, immutable packaged-current, frozen 0.2.9 compatibility, and final artwork verification passed; physical concurrent-device thread partition/reconnect, native-window accessibility, packet capture, and protected-profile plaintext scanning remain release gates |
 | Workspace increment 9 | Signed cooperative 30/90/365-day or indefinite retention, bounded encrypted history/revision/tombstone indexes, stale-cursor invalidation, restart-safe pruning, seven-day live-delivery preservation, durable floors and gaps, replay-resistant retired event IDs, historical/current entitlement checks, former-member read-only archives, and desktop retention/history/prune states are automated. The reproducible 50,000-event benchmark, protected topology, direct-LAN, immutable packaged-current, frozen 0.2.9 compatibility, and final artwork verification passed; physical concurrent-device retention/prune partition/reconnect, native-window accessibility, packet capture, protected-profile plaintext scanning, production signing, and in-place installation remain release gates |
 | Workspace increment 10 | Encrypted workspace-keyed exact-token search, bounded shard/candidate/result execution, authenticated query/access/retention/search cursors, incremental atomic mutation updates, restart-safe migration, current plus historical authorization, private-era and DM isolation, honest indexing/pruned/incomplete states, desktop filters/navigation, and SQLite plaintext absence are automated. The reproducible 50,000-event benchmark, protected topology, direct-LAN, immutable 0.2.30 package, frozen 0.2.9 compatibility, and final artwork verification passed; physical concurrent-device access/retention partitions, native-window accessibility, packet capture, protected-profile plaintext scanning, production signing, and in-place installation remain release gates |
+| Workspace increment 11 | Canonical signed history requests/responses, bounded streams/ranges/pages/bytes, replay-safe continuation binding, prerequisite controls, signed author checkpoints, removal commitments, encrypted restart-safe jobs/caches/nonces/coverage, direct indexed disclosure, exact canonical-byte acceptance, public/private-era/DM authorization, honest complete/peer-limited/pruned/permanent-gap states, scheduling bounds, erasure, desktop status/actions, and command allowlisting are automated. The reproducible 50,000-event benchmark, protected topology, direct-LAN, immutable 0.2.31 package, frozen 0.2.9 compatibility, and final artwork verification passed; physical concurrent-device partition/removal/re-admission, hostile peer fault injection, native-window accessibility, packet capture, protected-profile plaintext scanning, production signing, and in-place installation remain release gates |
 
 Do not mark a release complete from unit tests alone. Store packet captures, topology configs, full-tree scans, package hashes, platform versions, human timing sheets, and failure notes with the release evidence.

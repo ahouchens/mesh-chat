@@ -171,6 +171,8 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus
 .workspace-search-result__meta { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
 .workspace-search-result__meta strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .workspace-search-result__meta small { margin-left: auto; flex: 0 0 auto; color: #738078; }
+.workspace-history-sync { display: grid; gap: 10px; padding: 14px; background: #f5f7f3; border: 1px solid #d5ddd7; border-radius: 12px; }
+.workspace-history-sync h3, .workspace-history-sync p { margin: 0; }
 .contacts-manager__list [role="listbox"] { min-height: 0; flex: 1; padding-top: 7px; overflow: auto; overscroll-behavior: contain; }
 .contacts-manager__list [role="option"] { display: flex; width: 100%; align-items: center; gap: 9px; padding: 8px; text-align: left; background: transparent; border: 0; border-radius: 10px; cursor: pointer; }
 .contacts-manager__list [role="option"]:hover { background: #e8ece7; }

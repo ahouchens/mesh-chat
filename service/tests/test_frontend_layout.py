@@ -6,6 +6,7 @@ from pathlib import Path
 
 
 STYLES = Path(__file__).resolve().parents[2] / "src" / "styles.css"
+APP = Path(__file__).resolve().parents[2] / "src" / "App.tsx"
 DESKTOP_HOST = Path(__file__).resolve().parents[2] / "src-tauri" / "src" / "lib.rs"
 TAURI_CONFIG = Path(__file__).resolve().parents[2] / "src-tauri" / "tauri.conf.json"
 ANDROID_ACTIVITY = (
@@ -117,3 +118,28 @@ def test_desktop_close_exits_and_second_launch_restores_main_window() -> None:
     assert 'if matches!(event, tauri::RunEvent::Exit)' in source
     assert 'retire_service_child(&state);' in source
     assert 'std::process::exit(0);' not in source
+
+
+def test_workspace_history_dialog_exposes_honest_accessible_states() -> None:
+    source = APP.read_text(encoding="utf-8")
+    for command in (
+        "get_workspace_history_status",
+        "start_workspace_history",
+        "cancel_workspace_history",
+    ):
+        assert command in source
+    for state in (
+        "Requesting history",
+        "Waiting for an eligible peer or route",
+        "Receiving and verifying bounded pages",
+        "Paused while offline",
+        "Missing prerequisite controls",
+        "Peer-limited or peer-pruned coverage",
+        "Authorization changed",
+        "Fork-suspended",
+        "Complete within known signed heads",
+    ):
+        assert state in source
+    assert 'aria-live="polite"' in source
+    assert "{history.notice}" in source
+    assert "Cancel local job" in source

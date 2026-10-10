@@ -35,6 +35,13 @@
 - A compromised workspace authority or device signing conflicting controls or
   event-stream entries. Valid equivocation is detected and suspends use; a
   valid stolen key cannot be made honest by protocol validation.
+- A malicious history peer probing protected scopes, advertising impossible
+  heads, withholding ranges, replaying/swapping continuations or responses,
+  substituting another workspace/conversation, amplifying a tiny request, or
+  forwarding forged, noncanonical, stale, forked or unauthorized material.
+- A compromised authorized endpoint legitimately retaining and later
+  disclosing cooperative history. The protocol limits disclosure to current
+  authority but cannot make an unlocked entitled endpoint forget plaintext.
 - Another unprivileged local process attempting profile reuse or control-channel access.
 - Accidental process or shell crashes during durable message transitions.
 
@@ -164,6 +171,23 @@
   plaintext queries, tokens, messages, person/channel names, or destinations
   in record IDs or cursor bodies without the local vault key. An unlocked
   endpoint holding that key remains outside this protection.
+- History requests authenticate requester identity and native source before a
+  scope-dependent lookup. Exact public/private/DM disclosure is checked again
+  for every retained body, suppressing existence-dependent responses to an
+  unauthorized probe. Fresh nonce/replay keys, a 15-minute maximum lifetime,
+  request digest binding, previous-page digests, one-use source-bound
+  continuations, count/byte/range ceilings, direct sequence probes and global
+  job caps limit replay, substitution and amplification.
+- A response is forwarding evidence, never authorship. Inner canonical
+  signatures, controls, sequences, predecessors, revisions, audiences and
+  ordinary derived-state checks remain authoritative. Inactive-author public
+  or private chains additionally require an exact checkpoint committed by the
+  applicable signed removal control; missing/conflicting/wrong-era anchors
+  become permanent gaps. V1 refuses third-party inactive-author DM recovery.
+- Sealed opaque job, replay, continuation, checkpoint, response-cache and peer
+  coverage records expose generic ciphertext size/count/timing to a local
+  SQLite observer, but not raw scope, names, event IDs, destinations or text.
+  A signed peer head is not treated as possession or global completeness.
 - A workspace mutation and its durable operation result commit together. A
   message and its complete recipient set commit before asynchronous handoff;
   native endpoint proof is not presented as human read evidence.
@@ -221,13 +245,11 @@ Depending on configured interfaces, observers may learn local discovery presence
   after permanent owner-key loss, a globally ordered group timeline, public or
   large channels, discoverable groups, anonymous membership, selective history
   sharing, or safe multi-owner membership editing.
-- Workspace peer history backfill, search exchange, private history catch-up,
-  direct message history catch-up, linked devices, authority transfer, and
-  mobile workspace use. Increment 10 searches only authorized history already
-  retained locally and never requests search or missing history from peers;
-  public discovery
-  does not imply complete historical messages, and newly admitted private
-  members receive future events only.
+- Guaranteed complete peer history, remote search, linked devices, authority
+  transfer, and mobile workspace use. Increment 11 can recover only exact
+  authorized bodies still retained by reachable peers. A peer can withhold,
+  prune, disappear, or lie about its head; the result is uncertainty or gaps,
+  not a global completeness claim. Search queries remain strictly local.
 - NAT hole punching, mobile push, Bluetooth, LoRa, attachments, multi-device identity cloning, and cloud backup.
 
 ## Open security blockers

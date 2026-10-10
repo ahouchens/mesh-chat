@@ -247,6 +247,84 @@ def _deliver_all(
         )
 
 
+def test_workspace_history_catch_up_recovers_exact_missed_canonical_event(
+    tmp_path: Path,
+) -> None:
+    (
+        owner,
+        owner_network,
+        owner_profile,
+        member,
+        member_network,
+        member_profile,
+        workspace,
+        _member_key,
+        _member_identity,
+    ) = _joined_pair(tmp_path, base=90_000)
+    general_id = workspace["general_channel_id"]
+    sent = owner.send_workspace_message(
+        workspace["id"], general_id, "retained while the peer was offline",
+        _op(90_010), _op(90_011),
+    )
+    original = owner.store.get(
+        "workspace_event", owner._workspace_event_record_id(sent["id"])
+    )
+    assert original is not None
+    # Do not deliver the ordinary seven-day live leg. Start a separately signed
+    # retained-history job from the offline peer instead.
+    outcome = member.start_workspace_history(
+        workspace["id"], general_id, _op(90_012)
+    )
+    assert outcome["status"] == "requesting"
+    requests = [
+        item for item in _flush(member, member_network)
+        if parse_workspace_payload(
+            _native(item, source=b"\x00" * 16, destination=b"\x01" * 16)
+        ).kind == "workspace_history_request"
+    ]
+    assert len(requests) == 1
+    _deliver(
+        owner,
+        requests[0],
+        source_profile=member_profile,
+        recipient_profile=owner_profile,
+    )
+    responses = [
+        item for item in _flush(owner, owner_network)
+        if parse_workspace_payload(
+            _native(item, source=b"\x00" * 16, destination=b"\x01" * 16)
+        ).kind == "workspace_history_response"
+    ]
+    assert len(responses) == 1
+    _deliver(
+        member,
+        responses[0],
+        source_profile=owner_profile,
+        recipient_profile=member_profile,
+    )
+    recovered = member.store.get(
+        "workspace_event", member._workspace_event_record_id(sent["id"])
+    )
+    assert recovered is not None
+    assert recovered["serialized"] == original["serialized"]
+    page = member.list_workspace_messages(workspace["id"], general_id)
+    assert [item["text"] for item in page["messages"]] == [
+        "retained while the peer was offline"
+    ]
+    status = member.get_workspace_history_status(workspace["id"], general_id)
+    assert status["job"]["recovered_events"] == 1
+    assert status["job"]["status"] == "complete_known"
+    _deliver(
+        member,
+        responses[0],
+        source_profile=owner_profile,
+        recipient_profile=member_profile,
+    )
+    replayed = member.get_workspace_history_status(workspace["id"], general_id)
+    assert replayed["job"]["recovered_events"] == 1
+    assert replayed["job"]["verified_pages"] == 1
+
+
 def test_two_member_workspace_create_join_chat_and_page(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
