@@ -2140,7 +2140,7 @@ Artifact hashes for this run:
   0.2.32 and 0.2.31 mixed runs converged, and frozen 0.2.9 safely ignored the
   expanded reaction while bidirectional traffic continued. The successful
   maintained report is
-  `dist/reports/0.2.33/20261011T183242Z-bcc346db/report.json`; the successful
+  `dist/reports/0.2.33/20261011T183531Z-eaaf8910/report.json`; the successful
   delivery report is
   `dist/reports/0.2.33/20261011T182603Z-a82d78b3/report.json`.
 - The reproducible authority-continuity benchmark ran on Windows 10.0.19045,
@@ -2208,6 +2208,10 @@ Artifact hashes for this run:
   rebuilt. Its first exact-package authority run then found a readiness race
   in the harness itself (`#general` had not arrived); the predicate was bounded
   to the channel checkpoint and the full 4-pass packaged rerun succeeded.
+  The first pushed CI run then failed before dependency installation because
+  its workflow still explicitly selected pnpm 11.19 while `package.json`
+  selected 11.25. All CI and release workflow setup blocks were synchronized
+  to 11.25 before the maintained verifier and replacement CI run.
 - No installer or application was launched and no existing Mesh Chat process
   or user profile was modified. Physical concurrent-device authority
   partitions and kill-point testing, hostile transition flood/fault injection,
