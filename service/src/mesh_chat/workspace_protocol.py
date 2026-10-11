@@ -50,11 +50,18 @@ MAX_ADMIN_REQUEST_BYTES = 4 * 1024
 MAX_ADMIN_DECISION_BYTES = 48 * 1024
 MAX_ADMIN_REQUEST_LIFETIME_SECONDS = 7 * 24 * 60 * 60
 MAX_ADMIN_REQUEST_NOTE_LENGTH = 250
+MAX_AUTHORITY_OFFER_BYTES = 8 * 1024
+MAX_AUTHORITY_ACCEPTANCE_BYTES = 16 * 1024
+MAX_AUTHORITY_TRANSITION_LIFETIME_SECONDS = 7 * 24 * 60 * 60
+MAX_AUTHORITY_TRANSITIONS = 8
+MAX_AUTHORITY_BOOTSTRAP_BYTES = 256 * 1024
 # The text field itself is 16 KiB. The canonical event has a separate bounded
 # allowance for IDs and the author signature.
 MAX_MESSAGE_TEXT_BYTES = 16 * 1024
 MAX_MEMBER_HINTS = 2
 MAX_ACTIVE_MEMBERS = 8
+MAX_DEVICES_PER_MEMBER = 8
+MAX_ACTIVE_DEVICES = 16
 MAX_INVITATION_LIFETIME_SECONDS = 30 * 24 * 60 * 60
 DEFAULT_INVITATION_LIFETIME_SECONDS = 7 * 24 * 60 * 60
 MAX_EPOCH = (1 << 63) - 1
@@ -143,6 +150,42 @@ class VerifiedWorkspaceManifest:
     digest: str
     serialized: str
     removal_checkpoint_digests: tuple[str, ...] = ()
+    authority_transition_digest: str | None = None
+    authority_signer_destination: bytes | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class VerifiedWorkspaceAuthorityOffer:
+    workspace_id: str
+    transition_id: str
+    transition_kind: str
+    base_manifest_epoch: int
+    base_manifest_digest: str
+    current_owner_member_id: str
+    current_authority_device_id: str
+    current_authority_destination: bytes
+    successor_member_id: str
+    successor_device_id: str
+    successor_destination: bytes
+    outgoing_owner_role: WorkspaceRole | None
+    general_channel_id: str | None
+    general_channel_head: str | None
+    general_disposition: str
+    nonce: bytes
+    replay_key: str
+    created_at: int
+    expires_at: int
+    digest: str
+    serialized: str
+
+
+@dataclass(frozen=True, slots=True)
+class VerifiedWorkspaceAuthorityAcceptance:
+    offer: VerifiedWorkspaceAuthorityOffer
+    replay_key: str
+    accepted_at: int
+    digest: str
+    serialized: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -155,6 +198,7 @@ class VerifiedWorkspaceInvitation:
     expires_at: int
     genesis: VerifiedWorkspaceGenesis
     offered_manifest: VerifiedWorkspaceManifest
+    authority_chain: tuple[dict[str, str | None], ...]
     serialized: str
 
     def preview(self) -> dict[str, Any]:
@@ -475,6 +519,10 @@ def _load_document(raw: str, document_type: str) -> dict[str, Any]:
     maximum = (
         MAX_WORKSPACE_EVENT_BYTES
         if document_type == "workspace_event"
+        else MAX_AUTHORITY_BOOTSTRAP_BYTES
+        if document_type == "workspace_invite"
+        else MAX_AUTHORITY_ACCEPTANCE_BYTES
+        if document_type == "workspace_authority_transition"
         else MAX_HISTORY_RESPONSE_BYTES
         if document_type == "workspace_history_response"
         else MAX_ADMIN_DECISION_BYTES
@@ -931,6 +979,7 @@ def create_workspace_manifest(
     posting: WorkspacePostingPolicy | str = WorkspacePostingPolicy.ALL_MEMBERS,
     invitation_requests: WorkspaceInvitationPolicy | str = WorkspaceInvitationPolicy.OWNER_ONLY,
     removal_checkpoint_digests: Iterable[str] = (),
+    authority_transition_digest: str | None = None,
     now: int | None = None,
 ) -> str:
     workspace_id = _validate_uuid(workspace_id, "Workspace ID")
@@ -947,6 +996,7 @@ def create_workspace_manifest(
     seen_devices: set[str] = set()
     owner_count = 0
     authority_count = 0
+    device_count = 0
     authority_destination = _destination_for(authority_identity)
     for item in members:
         if not isinstance(item, WorkspaceManifestMemberInput):
@@ -965,8 +1015,11 @@ def create_workspace_manifest(
             owner_count += 1
             if item.status != "active":
                 raise ValidationError("Workspace owner must remain active")
-        if not isinstance(item.device_cards, Sequence) or len(item.device_cards) != 1:
-            raise ValidationError("Workspace members require exactly one device in this increment")
+        if (
+            not isinstance(item.device_cards, Sequence)
+            or not 1 <= len(item.device_cards) <= MAX_DEVICES_PER_MEMBER
+        ):
+            raise ValidationError("Workspace member device count is invalid")
         cards: list[dict[str, Any]] = []
         for raw_card in item.device_cards:
             card = verify_workspace_device_card(
@@ -978,11 +1031,12 @@ def create_workspace_manifest(
             if card.device_id in seen_devices:
                 raise ValidationError("Workspace manifest has a duplicate device")
             seen_devices.add(card.device_id)
+            device_count += 1
             if card.display_name != display_name:
                 raise ValidationError("Member display name does not match its device card")
             if card.device_id == authority_device_id:
                 authority_count += 1
-                if role != WorkspaceRole.OWNER or card.destination_hash != authority_destination:
+                if role != WorkspaceRole.OWNER:
                     raise IdentityMismatch("Workspace authority is not the owner signer")
             cards.append(json.loads(card.serialized))
         encoded.append(
@@ -994,8 +1048,23 @@ def create_workspace_manifest(
                 "devices": cards,
             }
         )
+    if device_count > MAX_ACTIVE_DEVICES:
+        raise ValidationError("Workspace manifest has too many devices")
     if owner_count != 1 or authority_count != 1:
         raise ValidationError("Workspace must contain one owner authority device")
+    transition_digest = (
+        None
+        if authority_transition_digest is None
+        else _validate_digest(authority_transition_digest, "Authority transition digest")
+    )
+    authority_card = next(
+        card
+        for item in encoded
+        for card in item["devices"]
+        if card["device_id"] == authority_device_id
+    )
+    if transition_digest is None and authority_card["destination"] != authority_destination.hex():
+        raise IdentityMismatch("Workspace authority is not the owner signer")
     encoded.sort(key=lambda item: item["member_id"])
     checked_checkpoints = sorted({
         _validate_digest(item, "Removal checkpoint digest")
@@ -1017,7 +1086,7 @@ def create_workspace_manifest(
             allow_empty=True,
         ),
         "authority_device_id": authority_device_id,
-        "authority_destination": authority_destination.hex(),
+        "authority_destination": authority_card["destination"],
         "status": status,
         "retention_days": _validate_retention(retention_days),
         "policies": {
@@ -1030,6 +1099,9 @@ def create_workspace_manifest(
     }
     if checked_checkpoints:
         unsigned["removal_checkpoint_digests"] = checked_checkpoints
+    if transition_digest is not None:
+        unsigned["authority_transition_digest"] = transition_digest
+        unsigned["authority_signer_destination"] = authority_destination.hex()
     return _sign(authority_identity, unsigned)
 
 
@@ -1040,6 +1112,7 @@ def verify_workspace_manifest(
     expected_epoch: int | None = None,
     expected_previous_hash: str | None = None,
     expected_authority_destination: bytes | None = None,
+    expected_signing_destination: bytes | None = None,
     now: int | None = None,
 ) -> VerifiedWorkspaceManifest:
     value = _load_document(raw, "workspace_manifest_root")
@@ -1050,6 +1123,16 @@ def verify_workspace_manifest(
         }
     if "removal_checkpoint_digests" in value:
         fields.add("removal_checkpoint_digests")
+    transition_digest: str | None = None
+    authority_signer_destination: bytes | None = None
+    if "authority_transition_digest" in value or "authority_signer_destination" in value:
+        fields.update({"authority_transition_digest", "authority_signer_destination"})
+        transition_digest = _validate_digest(
+            value.get("authority_transition_digest"), "Authority transition digest"
+        )
+        authority_signer_destination = _validate_destination(
+            value.get("authority_signer_destination"), "Authority signer destination"
+        )
     _require_fields(
         value,
         fields,
@@ -1097,7 +1180,9 @@ def verify_workspace_manifest(
     device_ids: set[str] = set()
     owner_count = 0
     authority_identity: RNS.Identity | None = None
+    signer_identity: RNS.Identity | None = None
     authority_count = 0
+    device_count = 0
     for item in raw_members:
         if not isinstance(item, dict) or set(item) != {
             "member_id",
@@ -1118,8 +1203,11 @@ def verify_workspace_manifest(
             if status != "active":
                 raise ValidationError("Workspace owner must remain active")
         raw_devices = item["devices"]
-        if not isinstance(raw_devices, list) or len(raw_devices) != 1:
-            raise ValidationError("Workspace members require exactly one device in this increment")
+        if (
+            not isinstance(raw_devices, list)
+            or not 1 <= len(raw_devices) <= MAX_DEVICES_PER_MEMBER
+        ):
+            raise ValidationError("Workspace member device count is invalid")
         devices: list[VerifiedWorkspaceDeviceCard] = []
         display_name = _normalize_text(
             item["display_name"], "Member display name", MAX_MEMBER_NAME_LENGTH
@@ -1136,6 +1224,7 @@ def verify_workspace_manifest(
             if card.device_id in device_ids:
                 raise ValidationError("Workspace manifest has a duplicate device")
             device_ids.add(card.device_id)
+            device_count += 1
             if card.display_name != display_name:
                 raise ValidationError("Member display name does not match its device card")
             if card.device_id == authority_device_id:
@@ -1143,6 +1232,11 @@ def verify_workspace_manifest(
                 if role != WorkspaceRole.OWNER or card.destination_hash != authority_destination:
                     raise IdentityMismatch("Workspace authority is not the owner signer")
                 authority_identity = _identity_from_public_key(card.public_identity)
+            if (
+                authority_signer_destination is not None
+                and card.destination_hash == authority_signer_destination
+            ):
+                signer_identity = _identity_from_public_key(card.public_identity)
             devices.append(card)
         members.append(
             VerifiedWorkspaceMember(
@@ -1155,9 +1249,23 @@ def verify_workspace_manifest(
         )
     if member_ids != sorted(member_ids) or len(set(member_ids)) != len(member_ids):
         raise ValidationError("Workspace manifest members are not canonical")
+    if device_count > MAX_ACTIVE_DEVICES:
+        raise ValidationError("Workspace manifest has too many devices")
     if owner_count != 1 or authority_count != 1 or authority_identity is None:
         raise ValidationError("Workspace must contain one owner authority device")
-    _verify_signature(authority_identity, value, "Workspace manifest")
+    if transition_digest is None:
+        if authority_signer_destination is not None or expected_signing_destination is not None:
+            raise ValidationError("Workspace manifest signing boundary is invalid")
+        signer_identity = authority_identity
+    else:
+        if signer_identity is None:
+            raise IdentityMismatch("Workspace transition signer is not admitted")
+        if (
+            expected_signing_destination is not None
+            and authority_signer_destination != expected_signing_destination
+        ):
+            raise IdentityMismatch("Workspace transition signer is unexpected")
+    _verify_signature(signer_identity, value, "Workspace manifest")
     current = int(time.time()) if now is None else int(now)
     created_at = _validate_timestamp(value["created_at"], now=current)
     raw_checkpoints = value.get("removal_checkpoint_digests", [])
@@ -1192,6 +1300,8 @@ def verify_workspace_manifest(
         digest=_digest(value),
         serialized=_canonical(value),
         removal_checkpoint_digests=removal_checkpoints,
+        authority_transition_digest=transition_digest,
+        authority_signer_destination=authority_signer_destination,
     )
 
 
@@ -1257,6 +1367,9 @@ def verify_workspace_manifest_transition(
     # increments. Increment nine permits the exact validated cooperative
     # retention values in addition to the earlier metadata and policy changes.
     if (
+        manifest.authority_transition_digest is not None
+        or manifest.authority_signer_destination is not None
+        or
         manifest.authority_device_id != previous.authority_device_id
         or manifest.created_at < previous.created_at
     ):
@@ -1376,6 +1489,727 @@ def verify_workspace_manifest_transition(
     return manifest
 
 
+_AUTHORITY_TRANSITION_KINDS = {"same_owner_rotation", "ownership_transfer"}
+_AUTHORITY_GENERAL_DISPOSITIONS = {"unchanged", "recover"}
+
+
+def _authority_owner(manifest: VerifiedWorkspaceManifest) -> VerifiedWorkspaceMember:
+    owners = [
+        member
+        for member in manifest.members
+        if member.status == "active" and member.role == WorkspaceRole.OWNER
+    ]
+    if len(owners) != 1:
+        raise ValidationError("Workspace owner state is invalid")
+    return owners[0]
+
+
+def create_workspace_authority_offer(
+    authority_identity: RNS.Identity,
+    *,
+    manifest: VerifiedWorkspaceManifest,
+    transition_kind: str,
+    successor_member_id: str,
+    successor_device_id: str,
+    general_channel: VerifiedWorkspaceChannel | None = None,
+    outgoing_owner_role: WorkspaceRole | str | None = None,
+    general_disposition: str | None = None,
+    transition_id: str | None = None,
+    nonce: bytes | None = None,
+    replay_key: str | None = None,
+    lifetime_seconds: int = MAX_AUTHORITY_TRANSITION_LIFETIME_SECONDS,
+    now: int | None = None,
+) -> str:
+    """Create the current authority's inert, exact-successor offer."""
+
+    if manifest.status != "active" or transition_kind not in _AUTHORITY_TRANSITION_KINDS:
+        raise ValidationError("Workspace authority transition kind is invalid")
+    if (
+        isinstance(lifetime_seconds, bool)
+        or not isinstance(lifetime_seconds, int)
+        or not 1 <= lifetime_seconds <= MAX_AUTHORITY_TRANSITION_LIFETIME_SECONDS
+    ):
+        raise ValidationError("Workspace authority transition lifetime is invalid")
+    owner = _authority_owner(manifest)
+    authority = find_device(manifest, manifest.authority_device_id)
+    successor = find_device(
+        manifest, _validate_uuid(successor_device_id, "Successor device ID")
+    )
+    successor_member_id = _validate_uuid(successor_member_id, "Successor member ID")
+    if (
+        authority is None
+        or authority[0].member_id != owner.member_id
+        or _destination_for(authority_identity) != authority[1].destination_hash
+        or successor is None
+        or successor[0].member_id != successor_member_id
+        or successor[0].status != "active"
+        or successor[1].device_id == authority[1].device_id
+    ):
+        raise IdentityMismatch("Workspace authority transition participant is invalid")
+    role: WorkspaceRole | None
+    channel_id: str | None
+    channel_head: str | None
+    if transition_kind == "same_owner_rotation":
+        if successor_member_id != owner.member_id:
+            raise ValidationError("Same-owner rotation requires another owner device")
+        if outgoing_owner_role is not None or general_channel is not None:
+            raise ValidationError("Same-owner rotation cannot change ownership or channels")
+        role = None
+        channel_id = None
+        channel_head = None
+        disposition = general_disposition or "unchanged"
+        if disposition != "unchanged":
+            raise ValidationError("Same-owner rotation must leave #general unchanged")
+    else:
+        if successor_member_id == owner.member_id:
+            raise ValidationError("Ownership transfer requires a nonowner successor")
+        role = _coerce_role(outgoing_owner_role)
+        if role not in {WorkspaceRole.ADMIN, WorkspaceRole.MEMBER}:
+            raise ValidationError("Outgoing owner role is invalid")
+        if (
+            general_channel is None
+            or general_channel.workspace_id != manifest.workspace_id
+            or general_channel.visibility != "public"
+            or channel_name_key(general_channel.name) != "general"
+            or general_channel.archived
+        ):
+            raise ValidationError("Ownership transfer requires the exact active #general head")
+        channel_id = general_channel.channel_id
+        channel_head = general_channel.digest
+        disposition = general_disposition or "recover"
+        if disposition != "recover":
+            raise ValidationError("Ownership transfer must explicitly recover #general")
+    checked_nonce = os.urandom(NONCE_BYTES) if nonce is None else nonce
+    if not isinstance(checked_nonce, bytes) or len(checked_nonce) != NONCE_BYTES:
+        raise ValidationError("Workspace authority transition nonce is invalid")
+    current = int(time.time()) if now is None else int(now)
+    unsigned = {
+        "v": WORKSPACE_PROTOCOL_VERSION,
+        "type": "workspace_authority_transition",
+        "phase": "offer",
+        "workspace_id": manifest.workspace_id,
+        "transition_id": _validate_uuid(transition_id or str(uuid.uuid4()), "Transition ID"),
+        "transition_kind": transition_kind,
+        "base_manifest_epoch": manifest.epoch,
+        "base_manifest_digest": manifest.digest,
+        "current_owner_member_id": owner.member_id,
+        "current_authority_device_id": authority[1].device_id,
+        "current_authority_destination": authority[1].destination_hash.hex(),
+        "successor_member_id": successor_member_id,
+        "successor_device_id": successor[1].device_id,
+        "successor_destination": successor[1].destination_hash.hex(),
+        "outgoing_owner_role": None if role is None else role.value,
+        "general_channel_id": channel_id,
+        "general_channel_head": channel_head,
+        "general_disposition": disposition,
+        "nonce": _b64encode(checked_nonce),
+        "replay_key": _validate_uuid(replay_key or str(uuid.uuid4()), "Replay key"),
+        "created_at": current,
+        "expires_at": current + lifetime_seconds,
+    }
+    return _sign(authority_identity, unsigned, maximum=MAX_AUTHORITY_OFFER_BYTES)
+
+
+def verify_workspace_authority_offer(
+    raw: str,
+    *,
+    manifest: VerifiedWorkspaceManifest,
+    general_channel: VerifiedWorkspaceChannel | None = None,
+    now: int | None = None,
+    allow_expired: bool = False,
+) -> VerifiedWorkspaceAuthorityOffer:
+    if not isinstance(raw, str) or len(raw.encode("utf-8")) > MAX_AUTHORITY_OFFER_BYTES:
+        raise ValidationError("Workspace authority offer is too large")
+    value = _load_document(raw, "workspace_authority_transition")
+    _require_fields(
+        value,
+        {
+            "v", "type", "phase", "workspace_id", "transition_id",
+            "transition_kind", "base_manifest_epoch", "base_manifest_digest",
+            "current_owner_member_id", "current_authority_device_id",
+            "current_authority_destination", "successor_member_id",
+            "successor_device_id", "successor_destination", "outgoing_owner_role",
+            "general_channel_id", "general_channel_head", "general_disposition",
+            "nonce", "replay_key", "created_at", "expires_at", "signature",
+        },
+    )
+    if (
+        value["v"] != WORKSPACE_PROTOCOL_VERSION
+        or value["phase"] != "offer"
+        or value["workspace_id"] != manifest.workspace_id
+        or value["base_manifest_epoch"] != manifest.epoch
+        or value["base_manifest_digest"] != manifest.digest
+        or manifest.status != "active"
+    ):
+        raise ValidationError("Workspace authority offer base state is stale")
+    kind = value["transition_kind"]
+    if kind not in _AUTHORITY_TRANSITION_KINDS:
+        raise ValidationError("Workspace authority transition kind is invalid")
+    owner = _authority_owner(manifest)
+    owner_id = _validate_uuid(value["current_owner_member_id"], "Current owner member ID")
+    authority_device_id = _validate_uuid(
+        value["current_authority_device_id"], "Current authority device ID"
+    )
+    authority_destination = _validate_destination(
+        value["current_authority_destination"], "Current authority destination"
+    )
+    successor_member_id = _validate_uuid(value["successor_member_id"], "Successor member ID")
+    successor_device_id = _validate_uuid(value["successor_device_id"], "Successor device ID")
+    successor_destination = _validate_destination(
+        value["successor_destination"], "Successor destination"
+    )
+    authority = find_device(manifest, authority_device_id)
+    successor = find_device(manifest, successor_device_id)
+    if (
+        owner_id != owner.member_id
+        or authority_device_id != manifest.authority_device_id
+        or authority is None
+        or authority[0].member_id != owner_id
+        or authority[1].destination_hash != authority_destination
+        or successor is None
+        or successor[0].member_id != successor_member_id
+        or successor[0].status != "active"
+        or successor[1].destination_hash != successor_destination
+        or successor_device_id == authority_device_id
+    ):
+        raise IdentityMismatch("Workspace authority offer participant is invalid")
+    _verify_signature(
+        _identity_from_public_key(authority[1].public_identity),
+        value,
+        "Workspace authority offer",
+    )
+    role: WorkspaceRole | None = None
+    channel_id: str | None = None
+    channel_head: str | None = None
+    disposition = value["general_disposition"]
+    if kind == "same_owner_rotation":
+        if (
+            successor_member_id != owner_id
+            or value["outgoing_owner_role"] is not None
+            or value["general_channel_id"] is not None
+            or value["general_channel_head"] is not None
+            or disposition != "unchanged"
+        ):
+            raise ValidationError("Same-owner authority rotation is invalid")
+    else:
+        if successor_member_id == owner_id:
+            raise ValidationError("Ownership transfer successor is invalid")
+        role = _coerce_role(value["outgoing_owner_role"])
+        if role not in {WorkspaceRole.ADMIN, WorkspaceRole.MEMBER}:
+            raise ValidationError("Outgoing owner role is invalid")
+        channel_id = _validate_uuid(value["general_channel_id"], "#general channel ID")
+        channel_head = _validate_digest(value["general_channel_head"], "#general head")
+        if disposition != "recover":
+            raise ValidationError("Ownership transfer #general disposition is invalid")
+        if general_channel is not None and (
+            general_channel.workspace_id != manifest.workspace_id
+            or general_channel.channel_id != channel_id
+            or general_channel.digest != channel_head
+            or general_channel.visibility != "public"
+            or channel_name_key(general_channel.name) != "general"
+            or general_channel.archived
+        ):
+            raise ValidationError("Ownership transfer #general head is stale")
+    current = int(time.time()) if now is None else int(now)
+    created = _validate_timestamp(value["created_at"], now=current)
+    expires = value["expires_at"]
+    if (
+        isinstance(expires, bool)
+        or not isinstance(expires, int)
+        or expires <= created
+        or expires > created + MAX_AUTHORITY_TRANSITION_LIFETIME_SECONDS
+        or (not allow_expired and expires < current)
+    ):
+        raise InvitationExpired("Workspace authority offer has expired")
+    return VerifiedWorkspaceAuthorityOffer(
+        workspace_id=manifest.workspace_id,
+        transition_id=_validate_uuid(value["transition_id"], "Transition ID"),
+        transition_kind=kind,
+        base_manifest_epoch=manifest.epoch,
+        base_manifest_digest=manifest.digest,
+        current_owner_member_id=owner_id,
+        current_authority_device_id=authority_device_id,
+        current_authority_destination=authority_destination,
+        successor_member_id=successor_member_id,
+        successor_device_id=successor_device_id,
+        successor_destination=successor_destination,
+        outgoing_owner_role=role,
+        general_channel_id=channel_id,
+        general_channel_head=channel_head,
+        general_disposition=disposition,
+        nonce=_b64decode(value["nonce"], "Authority transition nonce", expected_length=NONCE_BYTES),
+        replay_key=_validate_uuid(value["replay_key"], "Replay key"),
+        created_at=created,
+        expires_at=expires,
+        digest=_digest(value),
+        serialized=_canonical(value),
+    )
+
+
+def create_workspace_authority_acceptance(
+    successor_identity: RNS.Identity,
+    *,
+    offer: VerifiedWorkspaceAuthorityOffer,
+    replay_key: str | None = None,
+    now: int | None = None,
+) -> str:
+    if _destination_for(successor_identity) != offer.successor_destination:
+        raise IdentityMismatch("Only the named successor can accept authority")
+    accepted_at = int(time.time()) if now is None else int(now)
+    if accepted_at < offer.created_at or accepted_at > offer.expires_at:
+        raise InvitationExpired("Workspace authority offer has expired")
+    unsigned = {
+        "v": WORKSPACE_PROTOCOL_VERSION,
+        "type": "workspace_authority_transition",
+        "phase": "acceptance",
+        "workspace_id": offer.workspace_id,
+        "transition_id": offer.transition_id,
+        "transition_kind": offer.transition_kind,
+        "base_manifest_epoch": offer.base_manifest_epoch,
+        "base_manifest_digest": offer.base_manifest_digest,
+        "offer_digest": offer.digest,
+        "offer": json.loads(offer.serialized),
+        "current_owner_member_id": offer.current_owner_member_id,
+        "current_authority_device_id": offer.current_authority_device_id,
+        "successor_member_id": offer.successor_member_id,
+        "successor_device_id": offer.successor_device_id,
+        "general_channel_id": offer.general_channel_id,
+        "general_channel_head": offer.general_channel_head,
+        "general_disposition": offer.general_disposition,
+        "replay_key": _validate_uuid(replay_key or str(uuid.uuid4()), "Replay key"),
+        "accepted_at": accepted_at,
+    }
+    return _sign(successor_identity, unsigned, maximum=MAX_AUTHORITY_ACCEPTANCE_BYTES)
+
+
+def verify_workspace_authority_acceptance(
+    raw: str,
+    *,
+    manifest: VerifiedWorkspaceManifest,
+    general_channel: VerifiedWorkspaceChannel | None = None,
+    now: int | None = None,
+    allow_expired: bool = False,
+) -> VerifiedWorkspaceAuthorityAcceptance:
+    if not isinstance(raw, str) or len(raw.encode("utf-8")) > MAX_AUTHORITY_ACCEPTANCE_BYTES:
+        raise ValidationError("Workspace authority acceptance is too large")
+    value = _load_document(raw, "workspace_authority_transition")
+    _require_fields(
+        value,
+        {
+            "v", "type", "phase", "workspace_id", "transition_id",
+            "transition_kind", "base_manifest_epoch", "base_manifest_digest",
+            "offer_digest", "offer", "current_owner_member_id",
+            "current_authority_device_id", "successor_member_id",
+            "successor_device_id", "general_channel_id", "general_channel_head",
+            "general_disposition", "replay_key", "accepted_at", "signature",
+        },
+    )
+    if value["v"] != WORKSPACE_PROTOCOL_VERSION or value["phase"] != "acceptance" or not isinstance(value["offer"], dict):
+        raise ValidationError("Workspace authority acceptance is invalid")
+    offer = verify_workspace_authority_offer(
+        _canonical(value["offer"]),
+        manifest=manifest,
+        general_channel=general_channel,
+        now=now,
+        allow_expired=allow_expired,
+    )
+    repeated = {
+        "workspace_id": offer.workspace_id,
+        "transition_id": offer.transition_id,
+        "transition_kind": offer.transition_kind,
+        "base_manifest_epoch": offer.base_manifest_epoch,
+        "base_manifest_digest": offer.base_manifest_digest,
+        "offer_digest": offer.digest,
+        "current_owner_member_id": offer.current_owner_member_id,
+        "current_authority_device_id": offer.current_authority_device_id,
+        "successor_member_id": offer.successor_member_id,
+        "successor_device_id": offer.successor_device_id,
+        "general_channel_id": offer.general_channel_id,
+        "general_channel_head": offer.general_channel_head,
+        "general_disposition": offer.general_disposition,
+    }
+    if any(value[key] != expected for key, expected in repeated.items()):
+        raise ValidationError("Workspace authority acceptance substituted its offer")
+    successor = find_device(manifest, offer.successor_device_id)
+    if successor is None or successor[0].member_id != offer.successor_member_id:
+        raise IdentityMismatch("Workspace authority successor is unavailable")
+    _verify_signature(
+        _identity_from_public_key(successor[1].public_identity),
+        value,
+        "Workspace authority acceptance",
+    )
+    current = int(time.time()) if now is None else int(now)
+    accepted = _validate_timestamp(value["accepted_at"], now=current)
+    if accepted < offer.created_at or accepted > offer.expires_at:
+        raise InvitationExpired("Workspace authority acceptance is outside the offer lifetime")
+    return VerifiedWorkspaceAuthorityAcceptance(
+        offer=offer,
+        replay_key=_validate_uuid(value["replay_key"], "Replay key"),
+        accepted_at=accepted,
+        digest=_digest(value),
+        serialized=_canonical(value),
+    )
+
+
+def _authority_transition_member_inputs(
+    previous: VerifiedWorkspaceManifest,
+    offer: VerifiedWorkspaceAuthorityOffer,
+) -> list[WorkspaceManifestMemberInput]:
+    result: list[WorkspaceManifestMemberInput] = []
+    for member in previous.members:
+        role: WorkspaceRole | str = member.role
+        if offer.transition_kind == "ownership_transfer":
+            if member.member_id == offer.current_owner_member_id:
+                role = offer.outgoing_owner_role or WorkspaceRole.MEMBER
+            elif member.member_id == offer.successor_member_id:
+                role = WorkspaceRole.OWNER
+        result.append(
+            WorkspaceManifestMemberInput(
+                member_id=member.member_id,
+                display_name=member.display_name,
+                role=role,
+                status=member.status,
+                device_cards=[device.serialized for device in member.devices],
+            )
+        )
+    return result
+
+
+def create_workspace_authority_manifest(
+    authority_identity: RNS.Identity,
+    *,
+    previous: VerifiedWorkspaceManifest,
+    acceptance: VerifiedWorkspaceAuthorityAcceptance,
+    now: int | None = None,
+) -> str:
+    offer = acceptance.offer
+    if offer.base_manifest_digest != previous.digest or offer.base_manifest_epoch != previous.epoch:
+        raise ValidationError("Workspace authority transition is stale")
+    if _destination_for(authority_identity) != previous.authority_destination:
+        raise IdentityMismatch("Only the current authority can finalize the transition")
+    created = int(time.time()) if now is None else int(now)
+    if created < acceptance.accepted_at or created > offer.expires_at:
+        raise InvitationExpired("Workspace authority transition cannot be finalized")
+    return create_workspace_manifest(
+        authority_identity,
+        workspace_id=previous.workspace_id,
+        epoch=previous.epoch + 1,
+        previous_manifest_hash=previous.digest,
+        name=previous.name,
+        description=previous.description,
+        authority_device_id=offer.successor_device_id,
+        members=_authority_transition_member_inputs(previous, offer),
+        status=previous.status,
+        retention_days=previous.retention_days,
+        channel_creation=previous.channel_creation,
+        posting=previous.posting,
+        invitation_requests=previous.invitation_requests,
+        removal_checkpoint_digests=previous.removal_checkpoint_digests,
+        authority_transition_digest=acceptance.digest,
+        now=created,
+    )
+
+
+def verify_workspace_authority_manifest_transition(
+    raw: str,
+    previous: VerifiedWorkspaceManifest,
+    *,
+    acceptance: str | VerifiedWorkspaceAuthorityAcceptance,
+    general_channel: VerifiedWorkspaceChannel | None = None,
+    general_result: str | VerifiedWorkspaceChannel | None = None,
+    now: int | None = None,
+    allow_expired: bool = False,
+) -> VerifiedWorkspaceManifest:
+    checked_acceptance = (
+        acceptance
+        if isinstance(acceptance, VerifiedWorkspaceAuthorityAcceptance)
+        else verify_workspace_authority_acceptance(
+            acceptance,
+            manifest=previous,
+            general_channel=general_channel,
+            now=now,
+            allow_expired=allow_expired,
+        )
+    )
+    offer = checked_acceptance.offer
+    if offer.base_manifest_digest != previous.digest or offer.base_manifest_epoch != previous.epoch:
+        raise ValidationError("Workspace authority transition is stale")
+    manifest = verify_workspace_manifest(
+        raw,
+        expected_workspace_id=previous.workspace_id,
+        expected_epoch=previous.epoch + 1,
+        expected_previous_hash=previous.digest,
+        expected_signing_destination=previous.authority_destination,
+        now=now,
+    )
+    if (
+        manifest.authority_transition_digest != checked_acceptance.digest
+        or manifest.authority_signer_destination != previous.authority_destination
+        or manifest.authority_device_id != offer.successor_device_id
+        or manifest.authority_destination != offer.successor_destination
+        or manifest.created_at < checked_acceptance.accepted_at
+        or manifest.created_at > offer.expires_at
+        or manifest.status != previous.status
+        or manifest.name != previous.name
+        or manifest.description != previous.description
+        or manifest.retention_days != previous.retention_days
+        or manifest.channel_creation != previous.channel_creation
+        or manifest.posting != previous.posting
+        or manifest.invitation_requests != previous.invitation_requests
+        or manifest.removal_checkpoint_digests != previous.removal_checkpoint_digests
+    ):
+        raise ValidationError("Workspace authority manifest is not bound to its acceptance")
+    before = {member.member_id: member for member in previous.members}
+    after = {member.member_id: member for member in manifest.members}
+    if before.keys() != after.keys():
+        raise ValidationError("Workspace authority transition changed membership")
+    for member_id, old in before.items():
+        new = after[member_id]
+        if (
+            old.status != new.status
+            or old.display_name != new.display_name
+            or tuple(card.serialized for card in old.devices)
+            != tuple(card.serialized for card in new.devices)
+        ):
+            raise ValidationError("Workspace authority transition changed a device or member")
+        expected_role = old.role
+        if offer.transition_kind == "ownership_transfer":
+            if member_id == offer.current_owner_member_id:
+                expected_role = offer.outgoing_owner_role or WorkspaceRole.MEMBER
+            elif member_id == offer.successor_member_id:
+                expected_role = WorkspaceRole.OWNER
+        if new.role != expected_role:
+            raise ValidationError("Workspace authority transition changed the wrong role")
+    if offer.transition_kind == "same_owner_rotation":
+        if general_result is not None:
+            raise ValidationError("Same-owner rotation changed #general")
+    else:
+        if general_channel is None or general_result is None:
+            raise ValidationError("Ownership transfer requires atomic #general recovery")
+        recovered = (
+            general_result
+            if isinstance(general_result, VerifiedWorkspaceChannel)
+            else verify_workspace_channel_recovery(
+                general_result,
+                channel=general_channel,
+                manifest=previous,
+                now=now,
+            )
+        )
+        if (
+            recovered.previous_hash != offer.general_channel_head
+            or recovered.channel_id != offer.general_channel_id
+            or recovered.manager_member_id != offer.successor_member_id
+            or recovered.manager_device_id != offer.successor_device_id
+        ):
+            raise ValidationError("Ownership transfer #general recovery is invalid")
+    return manifest
+
+
+def _encoded_authority_chain(
+    authority_chain: Sequence[dict[str, str | None]],
+) -> list[dict[str, Any]]:
+    if not isinstance(authority_chain, Sequence) or isinstance(authority_chain, (str, bytes)):
+        raise ValidationError("Workspace authority chain is invalid")
+    if len(authority_chain) > MAX_AUTHORITY_TRANSITIONS:
+        raise ValidationError("Workspace authority chain limit is reached")
+    encoded: list[dict[str, Any]] = []
+    expected = {"base_manifest", "offer", "acceptance", "final_manifest", "general_result"}
+    for step in authority_chain:
+        if not isinstance(step, dict) or set(step) != expected:
+            raise ValidationError("Workspace authority certificate step is invalid")
+        item: dict[str, Any] = {}
+        for key in ("base_manifest", "offer", "acceptance", "final_manifest"):
+            raw = step[key]
+            if not isinstance(raw, str):
+                raise ValidationError("Workspace authority certificate document is invalid")
+            try:
+                parsed = json.loads(raw)
+            except json.JSONDecodeError as exc:
+                raise ValidationError("Workspace authority certificate document is invalid") from exc
+            if not isinstance(parsed, dict) or raw != _canonical(parsed):
+                raise ValidationError("Workspace authority certificate document is not canonical")
+            item[key] = parsed
+        general = step["general_result"]
+        if general is None:
+            item["general_result"] = None
+        else:
+            if not isinstance(general, str):
+                raise ValidationError("Workspace authority #general result is invalid")
+            try:
+                parsed_general = json.loads(general)
+            except json.JSONDecodeError as exc:
+                raise ValidationError("Workspace authority #general result is invalid") from exc
+            if not isinstance(parsed_general, dict) or general != _canonical(parsed_general):
+                raise ValidationError("Workspace authority #general result is not canonical")
+            item["general_result"] = parsed_general
+        encoded.append(item)
+    return encoded
+
+
+def verify_workspace_authority_chain(
+    genesis: VerifiedWorkspaceGenesis,
+    authority_chain: Sequence[dict[str, Any]],
+    offered_manifest: str,
+    *,
+    now: int | None = None,
+) -> tuple[VerifiedWorkspaceManifest, tuple[dict[str, str | None], ...]]:
+    """Verify a bounded genesis-to-current authority certificate chain."""
+
+    if not isinstance(authority_chain, Sequence) or isinstance(authority_chain, (str, bytes)):
+        raise ValidationError("Workspace authority chain is invalid")
+    if len(authority_chain) > MAX_AUTHORITY_TRANSITIONS:
+        raise ValidationError("Workspace authority chain limit is reached")
+    current_authority = genesis.owner_device.destination_hash
+    current_manifest: VerifiedWorkspaceManifest | None = None
+    decoded: list[dict[str, str | None]] = []
+    seen_transitions: set[str] = set()
+    seen_results: set[str] = set()
+    expected = {"base_manifest", "offer", "acceptance", "final_manifest", "general_result"}
+    for step in authority_chain:
+        if not isinstance(step, dict) or set(step) != expected:
+            raise ValidationError("Workspace authority certificate step is invalid")
+        if any(not isinstance(step[key], dict) for key in ("base_manifest", "offer", "acceptance", "final_manifest")):
+            raise ValidationError("Workspace authority certificate document is invalid")
+        base_raw = _canonical(step["base_manifest"])
+        base = verify_workspace_manifest(
+            base_raw,
+            expected_workspace_id=genesis.workspace_id,
+            expected_authority_destination=current_authority,
+            now=now,
+        )
+        if current_manifest is not None:
+            if base.digest == current_manifest.digest:
+                base = current_manifest
+            elif (
+                base.epoch <= current_manifest.epoch
+                or base.created_at < current_manifest.created_at
+                or base.authority_device_id != current_manifest.authority_device_id
+            ):
+                raise ValidationError("Workspace authority chain is reordered or stale")
+        else:
+            if base.authority_transition_digest is not None:
+                raise ValidationError("Authority certificate must start at an ordinary checkpoint")
+            if base.created_at < genesis.created_at:
+                raise ValidationError("Workspace authority chain predates genesis")
+        offer_raw = _canonical(step["offer"])
+        offer = verify_workspace_authority_offer(
+            offer_raw, manifest=base, now=now, allow_expired=True
+        )
+        if offer.transition_id in seen_transitions:
+            raise ValidationError("Workspace authority chain duplicates a transition")
+        acceptance_raw = _canonical(step["acceptance"])
+        acceptance = verify_workspace_authority_acceptance(
+            acceptance_raw, manifest=base, now=now, allow_expired=True
+        )
+        general_raw: str | None = None
+        general_before: VerifiedWorkspaceChannel | None = None
+        general_result: VerifiedWorkspaceChannel | None = None
+        if offer.transition_kind == "ownership_transfer":
+            raw_general = step["general_result"]
+            if not isinstance(raw_general, dict):
+                raise ValidationError("Ownership certificate is missing #general recovery")
+            general_raw = _canonical(raw_general)
+            # The canonical recovery verifier also needs the exact predecessor
+            # channel body. It is intentionally not reconstructed from names or
+            # local presentation state, so invitation steps carry a recovery
+            # whose predecessor fields are checked below and whose authority
+            # signature is checked directly here.
+            recovery_value = _load_document(general_raw, "workspace_channel_recovery")
+            _require_fields(
+                recovery_value,
+                {
+                    "v", "type", "workspace_id", "channel_id", "channel_head",
+                    "manifest_digest", "manager_member_id", "manager_device_id",
+                    "created_at", "signature",
+                },
+            )
+            authority = find_device(base, base.authority_device_id)
+            if authority is None:
+                raise IdentityMismatch("Authority certificate signer is unavailable")
+            _verify_signature(
+                _identity_from_public_key(authority[1].public_identity),
+                recovery_value,
+                "Workspace channel recovery",
+            )
+            if (
+                recovery_value["workspace_id"] != base.workspace_id
+                or recovery_value["manifest_digest"] != base.digest
+                or recovery_value["channel_id"] != offer.general_channel_id
+                or recovery_value["channel_head"] != offer.general_channel_head
+                or recovery_value["manager_member_id"] != offer.successor_member_id
+                or recovery_value["manager_device_id"] != offer.successor_device_id
+            ):
+                raise ValidationError("Authority certificate #general recovery is substituted")
+            general_before = VerifiedWorkspaceChannel(
+                workspace_id=base.workspace_id,
+                channel_id=offer.general_channel_id or "",
+                version=1,
+                previous_hash=None,
+                manifest_digest=base.digest,
+                name="general",
+                topic="",
+                visibility="public",
+                manager_member_id=offer.current_owner_member_id,
+                manager_device_id=offer.current_authority_device_id,
+                archived=False,
+                created_at=0,
+                digest=offer.general_channel_head or "",
+                serialized="",
+            )
+            general_result = verify_workspace_channel_recovery(
+                general_raw,
+                channel=general_before,
+                manifest=base,
+                now=now,
+            )
+        elif step["general_result"] is not None:
+            raise ValidationError("Same-owner certificate changed #general")
+        final_raw = _canonical(step["final_manifest"])
+        # Full #general predecessor validation is performed by members that
+        # already hold the channel head. A fresh joiner verifies the exact
+        # signed head binding above without learning any private channel.
+        final = verify_workspace_authority_manifest_transition(
+            final_raw,
+            base,
+            acceptance=acceptance,
+            general_channel=general_before,
+            general_result=general_result,
+            now=now,
+            allow_expired=True,
+        )
+        if final.digest in seen_results:
+            raise ValidationError("Workspace authority chain duplicates a result")
+        seen_transitions.add(offer.transition_id)
+        seen_results.add(final.digest)
+        current_authority = final.authority_destination
+        current_manifest = final
+        decoded.append(
+            {
+                "base_manifest": base_raw,
+                "offer": offer_raw,
+                "acceptance": acceptance_raw,
+                "final_manifest": final_raw,
+                "general_result": general_raw,
+            }
+        )
+    if current_manifest is None:
+        offered = _verify_workspace_manifest_checkpoint(offered_manifest, genesis, now=now)
+    else:
+        offered = verify_workspace_manifest(
+            offered_manifest,
+            expected_workspace_id=genesis.workspace_id,
+            expected_authority_destination=current_authority,
+            now=now,
+        )
+        if offered.authority_transition_digest is not None:
+            if offered.digest != current_manifest.digest:
+                raise ValidationError("Offered manifest omits an authority certificate")
+        elif offered.epoch < current_manifest.epoch or offered.created_at < current_manifest.created_at:
+            raise ValidationError("Offered manifest predates the authority chain")
+    return offered, tuple(decoded)
+
+
 def create_workspace_invitation(
     authority_identity: RNS.Identity,
     *,
@@ -1384,6 +2218,7 @@ def create_workspace_invitation(
     now: int | None = None,
     lifetime_seconds: int = DEFAULT_INVITATION_LIFETIME_SECONDS,
     nonce: bytes | None = None,
+    authority_chain: Sequence[dict[str, str | None]] = (),
 ) -> str:
     current = int(time.time()) if now is None else int(now)
     if (
@@ -1393,8 +2228,9 @@ def create_workspace_invitation(
     ):
         raise ValidationError("Workspace invitation lifetime is invalid")
     checked_genesis = verify_workspace_genesis(genesis, now=current)
-    checked_manifest = _verify_workspace_manifest_checkpoint(
-        manifest, checked_genesis, now=current
+    encoded_chain = _encoded_authority_chain(authority_chain)
+    checked_manifest, _ = verify_workspace_authority_chain(
+        checked_genesis, encoded_chain, manifest, now=current
     )
     if checked_manifest.status != "active":
         raise ValidationError("Closed workspaces cannot create invitations")
@@ -1411,13 +2247,13 @@ def create_workspace_invitation(
         "offered_manifest_digest": checked_manifest.digest,
         "genesis": json.loads(checked_genesis.serialized),
         "offered_manifest": json.loads(checked_manifest.serialized),
-        "authority_chain": [],
+        "authority_chain": encoded_chain,
         "nonce": _b64encode(invitation_nonce),
         "created_at": current,
         "expires_at": current + lifetime_seconds,
         "use_limit": 1,
     }
-    return _sign(authority_identity, unsigned)
+    return _sign(authority_identity, unsigned, maximum=MAX_AUTHORITY_BOOTSTRAP_BYTES)
 
 
 def verify_workspace_invitation(
@@ -1445,16 +2281,22 @@ def verify_workspace_invitation(
     )
     if value["v"] != WORKSPACE_PROTOCOL_VERSION or value["use_limit"] != 1:
         raise ValidationError("Workspace invitation version or use limit is invalid")
-    if value["authority_chain"] != []:
-        raise ValidationError("Authority transitions are not supported in increment one")
+    if (
+        not isinstance(value["authority_chain"], list)
+        or len(value["authority_chain"]) > MAX_AUTHORITY_TRANSITIONS
+    ):
+        raise ValidationError("Workspace authority chain is invalid")
     if not isinstance(value["genesis"], dict) or not isinstance(
         value["offered_manifest"], dict
     ):
         raise ValidationError("Workspace invitation controls are invalid")
     current = int(time.time()) if now is None else int(now)
     genesis = verify_workspace_genesis(_canonical(value["genesis"]), now=current)
-    manifest = _verify_workspace_manifest_checkpoint(
-        _canonical(value["offered_manifest"]), genesis, now=current
+    manifest, authority_chain = verify_workspace_authority_chain(
+        genesis,
+        value["authority_chain"],
+        _canonical(value["offered_manifest"]),
+        now=current,
     )
     workspace_id = _validate_uuid(value["workspace_id"], "Workspace ID")
     if workspace_id != genesis.workspace_id or workspace_id != manifest.workspace_id:
@@ -1494,6 +2336,7 @@ def verify_workspace_invitation(
         expires_at=expires_at,
         genesis=genesis,
         offered_manifest=manifest,
+        authority_chain=authority_chain,
         serialized=_canonical(value),
     )
 
@@ -1515,7 +2358,7 @@ def extract_workspace_invitation(raw: str) -> str:
     if not isinstance(raw, str):
         raise ValidationError("Workspace invitation is invalid")
     value = raw.translate(_INVISIBLE).strip()
-    if not value or len(value.encode("utf-8")) > MAX_WORKSPACE_DOCUMENT_BYTES * 2:
+    if not value or len(value.encode("utf-8")) > MAX_AUTHORITY_BOOTSTRAP_BYTES * 2:
         raise ValidationError("Workspace invitation is empty or too large")
     lower = value.lower()
     if lower.startswith("meshchat://workspace/"):

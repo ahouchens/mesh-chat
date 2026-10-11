@@ -444,6 +444,11 @@ fn allowed_renderer_command(command: &str) -> bool {
             | "decline_workspace_admin_request"
             | "cancel_workspace_admin_request"
             | "dismiss_workspace_admin_request"
+            | "offer_workspace_authority_transition"
+            | "accept_workspace_authority_transition"
+            | "finalize_workspace_authority_transition"
+            | "list_workspace_authority_transitions"
+            | "report_workspace_authority_loss"
             | "request_workspace_display_name"
             | "decide_workspace_display_name"
             | "create_workspace_channel"
@@ -519,6 +524,11 @@ fn workspace_renderer_command(command: &str) -> bool {
             | "decline_workspace_admin_request"
             | "cancel_workspace_admin_request"
             | "dismiss_workspace_admin_request"
+            | "offer_workspace_authority_transition"
+            | "accept_workspace_authority_transition"
+            | "finalize_workspace_authority_transition"
+            | "list_workspace_authority_transitions"
+            | "report_workspace_authority_loss"
             | "request_workspace_display_name"
             | "decide_workspace_display_name"
             | "create_workspace_channel"
@@ -941,6 +951,11 @@ mod tests {
             "workspace_snapshot",
             "create_workspace",
             "create_workspace_invitation",
+            "offer_workspace_authority_transition",
+            "accept_workspace_authority_transition",
+            "finalize_workspace_authority_transition",
+            "list_workspace_authority_transitions",
+            "report_workspace_authority_loss",
             "preview_workspace_invitation",
             "revoke_workspace_invitation",
             "submit_workspace_join",

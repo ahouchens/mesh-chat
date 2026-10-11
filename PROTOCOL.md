@@ -243,7 +243,8 @@ document types are:
 | `workspace_device_card` | A device binds workspace, member and device UUIDs, display name, complete public identity, derived destination, up to two route hints, and creation time. |
 | `workspace_genesis` | The creator binds the workspace nonce, name, description, owner and initial authority device. |
 | `workspace_manifest_root` | The authority binds an epoch, predecessor, policies, status, retention, members and devices. |
-| `workspace_invite` | The authority offers a complete genesis/manifest checkpoint, empty authority chain, nonce, expiry, and single-use limit. |
+| `workspace_invite` | The authority offers a complete genesis/manifest checkpoint, bounded authority certificate chain, nonce, expiry, and single-use limit. An empty chain remains valid before the first authority change. |
+| `workspace_authority_transition` | The current authority signs an exact-successor rotation/transfer offer; that successor signs an acceptance. The final manifest binds the acceptance digest. |
 | `workspace_join` | A joining device binds its signed card to the invitation and offered checkpoint. |
 | `workspace_channel_record` | The manager binds a versioned channel, predecessor, manifest, visibility, policy context, and archived state. |
 | `workspace_channel_manifest` | A private-channel manager binds the version, predecessor, exact workspace manifest, metadata, sorted member roster, and terminal archive state. |
@@ -262,8 +263,10 @@ Invitation entry points are `meshchat://workspace/<base64url>` and
 `MESHWORKSPACE1:<base64url>`. Invitations are single-use and expire within 30
 days. The offered checkpoint must retain the exact genesis owner member and
 authority device card; a self-consistent manifest signed by another identity is
-not a valid checkpoint. Increment 7 supports eight people, one device per
-member, and up to 32 active public or private channels including `#general`.
+not a valid checkpoint. Increment 13 supports eight people and up to 32 active
+public or private channels including `#general`. Normal admission still creates
+one device per member; a seeded already admitted second owner device may be a
+rotation successor, without adding Increment 14 enrollment.
 It rejects attachments and does not exchange old message history. The authority is not a
 message relay: each event is copied directly to every other authorized device
 through its individual ratchet-enforced LXMF destination, regardless of that
@@ -527,6 +530,37 @@ future availability. `complete_known` therefore means complete only within the
 heads actually signed by the exhausted peers. See
 [ADR 0010](docs/adr/0010-peer-history-catch-up.md).
 
+### Workspace authority continuity
+
+An authority offer binds the exact workspace, transition UUID and kind, base
+epoch/digest, current owner/authority member-device-destination tuple, successor
+member-device-destination tuple, outgoing-owner role, `#general` head and
+disposition, 32-byte nonce, replay UUID and a lifetime of at most seven days.
+The acceptance embeds the canonical offer and repeats every identity, base and
+`#general` consequence before the named successor signs it. Offers and
+acceptances are inert. They are capped at 8 KiB and 16 KiB respectively.
+
+An authority-changing manifest advances exactly one epoch, preserves the hash
+chain, names the resulting authority, references the acceptance digest, and is
+signed by the predecessor authority. Its additive signer-destination field is
+invalid on an ordinary manifest. Rotation changes only the authority device.
+Ownership transfer changes exactly the outgoing owner to its offered `admin` or
+`member` role and the successor to `owner`; it also requires an old-authority
+public-channel recovery at the exact `#general` head. Other membership, devices,
+policies, metadata, retention, closure, public/private channels and DMs cannot
+change in the same epoch.
+
+Invitation `authority_chain` entries contain the exact base manifest, offer,
+acceptance, final manifest and optional `#general` recovery. Verification begins
+at genesis and rejects missing, reordered, duplicated, truncated, substituted
+or wrong-signer steps. The final authority must sign the offered checkpoint and
+invitation. Chains contain at most eight transitions and decoded bootstrap JSON
+is capped at 256 KiB; reaching either limit requires a replacement workspace,
+never proof truncation. Ownership transfer supersedes unused invitations;
+same-owner rotation preserves their admission semantics only when the presented
+invitation proves the current signer. See
+[ADR 0012](docs/adr/0012-authority-continuity.md).
+
 ### Workspace administrators and authority requests
 
 Increment 12 makes `owner`, `admin`, and `member` effective roles. There is
@@ -627,6 +661,7 @@ Receipts are ordinary signed, end-to-end encrypted LXMF messages. They reference
 - Workspace local search: at most 256 query characters, 1,024 UTF-8 bytes, 8 exact tokens, 8 keyed shard pages, 256 candidates, and 50 results; rebuilds advance at most 128 retained events per transaction.
 - Workspace history catch-up: 32 streams, 64 ranges, 32 events, 32 controls, 32 checkpoints, 128 KiB and 15 minutes per request; 256 sequence probes per response; 2 jobs per workspace and 4 per profile.
 - Workspace administration: 4 KiB requests, 48 KiB decisions, 250-character notes, seven-day maximum lifetime, 128 pending requests per workspace, 512 administrative requests per profile, 32 pending per requester/source, 100 rows per page, 64 inert decisions, and 90-day replay/audit retention.
+- Workspace authority continuity: 8 KiB offers, 16 KiB acceptances, seven-day maximum lifetime, 32 pending transitions per workspace, eight certificate steps, 256 KiB decoded invitation bootstrap, and 90-day replay/audit retention.
 - Pending reactions: at most 256 total and 32 per authenticated actor.
 - IPC frame: 4 MiB; renderer-originated payload: 32 KiB.
 - LXMF direct and propagated modes: enabled.

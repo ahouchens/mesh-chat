@@ -1,6 +1,6 @@
 {
   "name": "mesh-chat",
-  "version": "0.2.32",
+  "version": "0.2.33",
   "private": true,
   "type": "module",
   "scripts": {
@@ -45,5 +45,5 @@
   "engines": {
     "node": ">=20.0.0"
   },
-  "packageManager": "pnpm@11.19.0"
+  "packageManager": "pnpm@11.25.0"
 }

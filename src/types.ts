@@ -180,6 +180,11 @@ export interface WorkspaceMember {
     destination_hash: string;
     fingerprint: string;
   };
+  devices?: Array<{
+    id: string;
+    destination_hash: string;
+    fingerprint: string;
+  }>;
 }
 
 export interface Workspace {
@@ -219,6 +224,9 @@ export interface Workspace {
   retention_pruning_updated_at?: number;
   security_error?: string;
   sync_issue?: "missing_controls" | "missing_predecessor" | "missing_manifest" | "missing_manifest_predecessor" | "queue_pressure" | string;
+  authority_loss?: boolean;
+  authority_administration_state?: "permanently_frozen";
+  authority_loss_guidance?: string;
   created_at: number;
   updated_at: number;
 }
@@ -620,6 +628,38 @@ export interface WorkspaceAdminRequestPage {
   pending_count: number;
 }
 
+export type WorkspaceAuthorityTransitionState =
+  | "waiting_for_delivery"
+  | "waiting_for_acceptance"
+  | "accepted_waiting_finalization"
+  | "finalizing"
+  | "applied"
+  | "expired"
+  | "stale"
+  | "superseded"
+  | "cancelled"
+  | "incomplete_control_state"
+  | "forked";
+
+export interface WorkspaceAuthorityTransition {
+  id: string;
+  workspace_id: string;
+  direction: "incoming" | "outgoing";
+  transition_kind: "same_owner_rotation" | "ownership_transfer";
+  state: WorkspaceAuthorityTransitionState;
+  current_owner_display_name: string;
+  successor_member_id: string;
+  successor_display_name: string;
+  successor_fingerprint: string;
+  outgoing_owner_role: "admin" | "member" | null;
+  general_disposition: "unchanged" | "recover";
+  created_at: number;
+  expires_at: number;
+  updated_at: number;
+  delivery_state?: string;
+  failure?: string | null;
+}
+
 export interface WorkspaceSnapshot {
   workspaces: Workspace[];
   workspace_channels: WorkspaceChannel[];
@@ -628,6 +668,7 @@ export interface WorkspaceSnapshot {
   workspace_join_requests: WorkspaceJoinRequest[];
   workspace_display_name_requests: WorkspaceDisplayNameRequest[];
   workspace_admin_requests: WorkspaceAdminRequest[];
+  workspace_authority_transitions?: WorkspaceAuthorityTransition[];
   workspace_invitations: WorkspaceInvitation[];
   workspace_drafts: WorkspaceDraft[];
 }
@@ -676,6 +717,7 @@ export interface Snapshot {
   workspace_join_requests?: WorkspaceJoinRequest[];
   workspace_display_name_requests?: WorkspaceDisplayNameRequest[];
   workspace_admin_requests?: WorkspaceAdminRequest[];
+  workspace_authority_transitions?: WorkspaceAuthorityTransition[];
   workspace_invitations?: WorkspaceInvitation[];
   workspace_drafts?: WorkspaceDraft[];
   settings: NetworkSettings;

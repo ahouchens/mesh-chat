@@ -1,0 +1,139 @@
+{
+  "assertions": {
+    "acceptance_p95": true,
+    "bootstrap_size_bounded": true,
+    "chain_construct_p95": true,
+    "chain_verify_p95": true,
+    "duplicate_p95": true,
+    "eight_members": true,
+    "end_to_end_limit": true,
+    "final_p95": true,
+    "full_size_fixture": true,
+    "general_manageable": true,
+    "maximum_authority_chain": true,
+    "offer_p95": true,
+    "old_authority_rejected": true,
+    "ordinary_member_converged": true,
+    "pending_chat_continued": true,
+    "private_and_dm_not_disclosed": true,
+    "python_memory_limit": true,
+    "restart_limit": true,
+    "successor_action_converged": true,
+    "successor_is_owner": true,
+    "thirty_two_control_chains": true,
+    "three_encrypted_profiles": true,
+    "vault_growth_limit": true,
+    "working_set_limit": true
+  },
+  "bytes": {
+    "canonical_acceptance_max": 2211,
+    "canonical_final_manifest_max": 2602,
+    "canonical_general_result_max": 559,
+    "canonical_offer_max": 1174,
+    "maximum_invitation": 76904,
+    "route_transfer": 10162
+  },
+  "duration_seconds": 113.8351440999977,
+  "fixture": {
+    "archived_channel": "c6644b4b-de64-488d-aaa0-b774263e34f5",
+    "archived_control_chains": 4,
+    "channels": 32,
+    "edits": 2000,
+    "events": 50000,
+    "linked_device_delivery_legs": 4000,
+    "members": 8,
+    "pending_queue_depth": 2000,
+    "private_control_chains": 4,
+    "public_control_chains": 24,
+    "reactions": 2000,
+    "revision_target": "e5c68d8a-200d-51ff-ae8d-6afa048e26af",
+    "roots": 42000,
+    "thread_replies": 3000,
+    "thread_root": "e5c68d8a-200d-51ff-ae8d-6afa048e26af",
+    "tombstones": 1000,
+    "vault_bytes": 531804160
+  },
+  "host": {
+    "cpu": "Intel64 Family 6 Model 158 Stepping 10, GenuineIntel",
+    "node": "v24.19.0",
+    "os": "Windows-10-10.0.19045-SP0",
+    "physical_memory_bytes": 17019686912,
+    "python": "3.13.15",
+    "rust": "rustc 1.99.0 (b940084d7 2026-09-28)"
+  },
+  "limits": {
+    "acceptance_construct_validate_p95_ms": 100.0,
+    "acceptance_encoded_bytes": 16384,
+    "authority_chain_construct_p95_ms": 2000.0,
+    "authority_chain_verify_p95_ms": 2000.0,
+    "authority_transitions": 8,
+    "bootstrap_encoded_bytes": 262144,
+    "duplicate_replay_p95_ms": 100.0,
+    "end_to_end_ms": 5000.0,
+    "final_construct_apply_p95_ms": 500.0,
+    "general_recovery_p95_ms": 250.0,
+    "lifetime_seconds": 604800,
+    "offer_construct_validate_p95_ms": 100.0,
+    "offer_encoded_bytes": 8192,
+    "peak_python_bytes": 536870912,
+    "peak_working_set_bytes": 1610612736,
+    "per_profile_vault_growth_bytes": 67108864,
+    "restart_resume_ms": 2000.0,
+    "samples": 30
+  },
+  "memory": {
+    "peak_python_bytes": 99661990,
+    "peak_working_set_bytes": 232132608,
+    "python_current_bytes": 1441330
+  },
+  "timings_ms": {
+    "acceptance_construct_validate_p50": 2.254099992569536,
+    "acceptance_construct_validate_p95": 2.4757000064710155,
+    "authority_chain_construct_p50": 88.51950000098441,
+    "authority_chain_construct_p95": 88.51950000098441,
+    "authority_chain_verify_p50": 122.87160000414588,
+    "authority_chain_verify_p95": 135.65650000236928,
+    "duplicate_replay_p50": 1.8034999957308173,
+    "duplicate_replay_p95": 2.017500009969808,
+    "effective_authority_transition": 435.4230000026291,
+    "end_to_end": 460.0583999999799,
+    "final_construct_apply_p50": 6.2830999959260225,
+    "final_construct_apply_p95": 6.545399999595247,
+    "final_durable_commit": 30.595799995353445,
+    "first_successor_visible_offer": 14.514399998006411,
+    "offer_construct_validate_p50": 1.1910000030184165,
+    "offer_construct_validate_p95": 1.4854000037303194,
+    "restart_resume": 8.721599995624274,
+    "successor_owner_action": 24.63539999735076,
+    "visible_acceptance": 131.83919999573845
+  },
+  "vault": {
+    "after_bytes": {
+      "current_authority": 262144,
+      "ordinary_member": 147456,
+      "successor": 196608
+    },
+    "before_bytes": {
+      "current_authority": 151552,
+      "ordinary_member": 81920,
+      "successor": 73728
+    },
+    "growth_bytes": {
+      "current_authority": 110592,
+      "ordinary_member": 65536,
+      "successor": 122880
+    }
+  },
+  "work": {
+    "conflicting": 1,
+    "duplicate_rejected": 30,
+    "expired": 1,
+    "forked": 1,
+    "queue_depth": 6,
+    "replayed": 30,
+    "route_attempts": 52,
+    "stale": 1,
+    "transaction_count": 164,
+    "transition_count": 9
+  }
+}

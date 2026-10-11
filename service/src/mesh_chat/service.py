@@ -167,6 +167,11 @@ class MeshChatService(ReactionServiceMixin, GroupServiceMixin, WorkspaceServiceM
         "decline_workspace_admin_request",
         "cancel_workspace_admin_request",
         "dismiss_workspace_admin_request",
+        "offer_workspace_authority_transition",
+        "accept_workspace_authority_transition",
+        "finalize_workspace_authority_transition",
+        "list_workspace_authority_transitions",
+        "report_workspace_authority_loss",
         "request_workspace_display_name",
         "decide_workspace_display_name",
         "create_workspace_channel",
@@ -193,6 +198,7 @@ class MeshChatService(ReactionServiceMixin, GroupServiceMixin, WorkspaceServiceM
         "list_workspace_thread_messages",
         "list_workspace_message_revisions",
         "list_workspace_tombstones",
+        "list_workspace_authority_transitions",
         "list_workspace_members",
         "list_workspace_admin_requests",
         "list_workspace_admin_history",
@@ -1958,6 +1964,58 @@ class MeshChatService(ReactionServiceMixin, GroupServiceMixin, WorkspaceServiceM
             )
             return method(
                 body["workspace_id"], body["request_id"], body["operation_id"]
+            )
+        if command == "offer_workspace_authority_transition":
+            body = _payload(
+                value,
+                allowed={
+                    "operation_id", "workspace_id", "transition_kind",
+                    "successor_member_id", "successor_device_id",
+                    "outgoing_owner_role",
+                },
+                required={
+                    "operation_id", "workspace_id", "transition_kind",
+                    "successor_member_id", "successor_device_id",
+                },
+            )
+            return self.offer_workspace_authority_transition(
+                body["workspace_id"],
+                body["transition_kind"],
+                body["successor_member_id"],
+                body["successor_device_id"],
+                body.get("outgoing_owner_role"),
+                body["operation_id"],
+            )
+        if command in {
+            "accept_workspace_authority_transition",
+            "finalize_workspace_authority_transition",
+        }:
+            body = _payload(
+                value,
+                allowed={"operation_id", "workspace_id", "transition_id"},
+                required={"operation_id", "workspace_id", "transition_id"},
+            )
+            method = (
+                self.accept_workspace_authority_transition
+                if command == "accept_workspace_authority_transition"
+                else self.finalize_workspace_authority_transition
+            )
+            return method(
+                body["workspace_id"], body["transition_id"], body["operation_id"]
+            )
+        if command == "list_workspace_authority_transitions":
+            body = _payload(
+                value, allowed={"workspace_id"}, required={"workspace_id"}
+            )
+            return self.list_workspace_authority_transitions(body["workspace_id"])
+        if command == "report_workspace_authority_loss":
+            body = _payload(
+                value,
+                allowed={"operation_id", "workspace_id"},
+                required={"operation_id", "workspace_id"},
+            )
+            return self.report_workspace_authority_loss(
+                body["workspace_id"], body["operation_id"]
             )
         if command == "request_workspace_display_name":
             body = _payload(

@@ -45,7 +45,7 @@ ordering, removal, and owner-loss consequences.
 
 ## Desktop workspaces
 
-The twelfth workspace increment is an isolated desktop feature profile. It adds
+The thirteenth workspace increment is an isolated desktop feature profile. It adds
 canonical workspace authority, device, invitation, channel and event documents
 under the `mesh-chat-workspace` custom type without changing Personal or private
 group bytes. The React shell can switch between Personal and workspace views,
@@ -77,6 +77,18 @@ replay, inert decisions, expiry and 90-day audit retention without scanning an
 administrative collection. Request/result legs and durable operation results
 commit with their canonical state, so restart and retry cannot mint a second
 invitation or manifest. See [ADR 0011](docs/adr/0011-workspace-administrators.md).
+
+Increment 13 keeps one owner and one authority device while allowing the
+current authority to offer either rotation to an already admitted device of
+that owner or ownership transfer to one exact active member/device. The named
+successor countersigns the complete offer. Only the old-authority-signed final
+manifest changes effective ownership or signing authority; transfer atomically
+recovers the exact `#general` head to the successor and leaves other public,
+private and DM state unchanged. Sealed transition/replay records survive
+restart, and invitation bootstrap carries at most eight ordered certificate
+steps from genesis to its signer. Equivocation suspends the workspace; permanent
+authority-key loss freezes administration without stopping ordinary authorized
+chat. See [ADR 0012](docs/adr/0012-authority-continuity.md).
 
 An authority-signed, hash-linked manifest controls membership and policy;
 independent manager chains control every public and private channel; an
@@ -384,3 +396,5 @@ The service does not export private identities to ordinary files, enable crash u
 - [ADR 0008: cooperative retention and retained local history](docs/adr/0008-cooperative-retention-and-local-history.md)
 - [ADR 0009: encrypted bounded local workspace search](docs/adr/0009-encrypted-local-search.md)
 - [ADR 0010: bounded authenticated peer history catch-up](docs/adr/0010-peer-history-catch-up.md)
+- [ADR 0011: workspace administrators and owner-approved requests](docs/adr/0011-workspace-administrators.md)
+- [ADR 0012: workspace authority continuity](docs/adr/0012-authority-continuity.md)

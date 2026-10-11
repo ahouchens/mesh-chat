@@ -2107,6 +2107,115 @@ Artifact hashes for this run:
   remain manual/physical release gates. Permanent owner-authority loss remains
   intentionally unresolved until Increment 13.
 
+## Workspace increment 13 verification — 2026-10-11
+
+- Increment 13 adds canonical current-authority offers, exact named-successor
+  acceptances, and predecessor-authority-signed final manifests for same-owner
+  authority rotation and ownership transfer. Offers and acceptances remain
+  inert. Ownership transfer freezes the outgoing owner's exact `admin` or
+  `member` role in the offer and commits the final manifest with the exact
+  signed `#general` recovery result. Remote peers stage that recovery until the
+  final manifest validates. The old authority is rejected immediately after
+  cutover; the successor signs later ordinary manifests.
+- ADR 0012 freezes 8 KiB offers, 16 KiB acceptances, a seven-day lifetime, 32
+  pending transitions, eight authority-certificate steps, and a 256 KiB total
+  invitation bootstrap bound. Existing empty chains and historical manifest
+  bytes remain valid. Complete invitation proofs validate every base manifest,
+  offer, acceptance, optional `#general` result, final manifest, owner change,
+  and signer change from genesis to the offered checkpoint. Permanent authority
+  loss freezes authority-dependent administration and presents only the honest
+  replacement-workspace path; ordinary authorized chat remains available.
+- The maintained release verification passed **355 Python tests with 9
+  intentional environment/package skips**, **91 frontend tests**, all **3**
+  standalone package-artwork tests, TypeScript compilation, and the Vite
+  production build. `cargo fmt --check`, locked Cargo release check, and all
+  **6 release-profile Rust tests** passed. The protected four-process topology
+  and all three direct-LAN scenarios passed (**4/4**). The exact immutable
+  0.2.33 sidecar passed its phone-first/direct/reaction/delete/reopen,
+  administrator, and complete ownership-transfer workflows (**4 passed, 1
+  intentional legacy skip**). The packaged authority run proved inert offer and
+  acceptance states, chat during the pending transition, final owner/role
+  cutover, old-authority rejection, successor manifest publication, and
+  `#general` manager continuity. Exact
+  0.2.32 and 0.2.31 mixed runs converged, and frozen 0.2.9 safely ignored the
+  expanded reaction while bidirectional traffic continued. The successful
+  maintained report is
+  `dist/reports/0.2.33/20261011T183242Z-bcc346db/report.json`; the successful
+  delivery report is
+  `dist/reports/0.2.33/20261011T182603Z-a82d78b3/report.json`.
+- The reproducible authority-continuity benchmark ran on Windows 10.0.19045,
+  Intel64 Family 6 Model 158, Python 3.13.15, Rust 1.99.0, Node 24.19.0, and
+  17,019,686,912 bytes physical memory. Its encrypted fixture held 50,000
+  events, 8 members, 24 public/4 private/4 archived control chains, 42,000
+  roots, 3,000 replies, 2,000 edits, 2,000 reactions, 1,000 tombstones, 4,000
+  linked-device legs, and 2,000 pending items. It used three independently
+  encrypted authority/successor/member profiles and built the maximum
+  eight-step certificate plus one live ownership transfer.
+- Across 30 samples, offer construction/validation p50/p95 was
+  **1.191/1.485 ms**, acceptance **2.254/2.476 ms**, final-manifest
+  construction/validation **6.283/6.545 ms**, duplicate validation
+  **1.803/2.018 ms**, and full eight-step invitation-chain verification
+  **122.872/135.657 ms**. Chain construction was **88.520 ms**, durable final
+  commit **30.596 ms**, first successor-visible offer **14.514 ms**, visible
+  acceptance **131.839 ms**, effective three-peer cutover **435.423 ms**,
+  successor owner action **24.635 ms**, end-to-end **460.058 ms**, and restart
+  **8.722 ms**. All limits passed.
+- Maximum canonical sizes were 1,174-byte offer, 2,211-byte acceptance,
+  2,602-byte final manifest, 559-byte `#general` result, and 76,904-byte
+  maximum-depth invitation. The live route used 52 attempts, 10,162 bytes for
+  final controls, queue depth 6, and 164 modeled transactions. Peak Python
+  allocation was 99,661,990 bytes and process working set 232,132,608 bytes.
+  Vault growth was 110,592 bytes for the current authority, 122,880 for the
+  successor, and 65,536 for the ordinary member. Every correctness,
+  confidentiality, convergence, old-authority rejection, pending-chat,
+  resource, and timing assertion passed in 113.835 seconds. The 4,542-byte
+  evidence file is `docs/benchmarks/increment-13-authority-continuity.json`,
+  SHA-256
+  `E0B901776A1D16419F022B64C4A1AAC69AC6916C0F815A24B3EC3AF96C9CD036`.
+- The release driver immutably published desktop **0.2.33** without modifying
+  an earlier release. The 23,437,312-byte MSI hashes to
+  `3D9B389B0BA7964B57E662FDF949D42172A1400D486073AF69F820A7615B7F8A`;
+  the 22,712,141-byte NSIS installer hashes to
+  `2AF90B7B68BC59870552F76D25692E1C0B24E98A0A7A1C2C205FE5882DACAF4F`.
+  The 6,732,800-byte portable application reports file/product 0.2.33 and
+  hashes to
+  `C4A24E1B101F5CCD9AA1CFF0DB922AD19AE4FB6AD92F15ED747BF7A03F4F4176`;
+  the 19,217,540-byte sidecar hashes to
+  `37AA24AD6488E5B65E708FBC85D6702D7ECB75D92C830E29DB45D1D6B66D870D`.
+  The 1,345-byte immutable manifest hashes to
+  `1039BFC791DF4227ABBA8FAE5015A67CD9A7BE86DF34211EBE2FB3D013422980`
+  and is selected by `dist/desktop/current.json`.
+- Transient failures were preserved honestly. A system-Node `pnpm build` used
+  Node 14 and failed on modern syntax; the pinned Node 24 runner passed. One
+  sandboxed Vite build could not read the repository root; the identical
+  approved build passed. The first benchmark smoke used too few fixture events,
+  then exposed and fixed the valid successive-transition chain rule; later
+  smoke runs exposed and fixed successor acceptance fan-out and the ordinary
+  member's prerequisite history catch-up. The first release preflight found
+  pnpm 11.25 while metadata still pinned 11.19; metadata and documented
+  prerequisites were synchronized. An interrupted sandbox package attempt
+  removed frontend links while pnpm could not reach its metadata endpoint; the
+  exact frozen-lockfile set was restored from the local content-addressed store
+  and the deterministic build passed. The first packaged-sidecar run inside
+  the filesystem sandbox failed closed with `protected_storage_unavailable`;
+  the EFS-capable exact-binary rerun passed.
+  A first task-generated 0.2.33 candidate exposed an incomplete
+  permanent-authority-loss freeze during final review. A second exposed that
+  same-owner acceptance fan-out excluded the entire owner member instead of
+  only the sending device. Both were rejected before commit or distribution;
+  the centralized authority-operation gate, exact-device fan-out, and seeded
+  multi-device regression were added before the immutable candidate was
+  rebuilt. Its first exact-package authority run then found a readiness race
+  in the harness itself (`#general` had not arrived); the predicate was bounded
+  to the channel checkpoint and the full 4-pass packaged rerun succeeded.
+- No installer or application was launched and no existing Mesh Chat process
+  or user profile was modified. Physical concurrent-device authority
+  partitions and kill-point testing, hostile transition flood/fault injection,
+  native-window keyboard/screen-reader review, packet capture,
+  protected-profile full-tree plaintext scanning, production signing,
+  in-place installation, and Windows-to-Android validation remain manual or
+  physical release gates.
+
 ## Acceptance matrix
 
 | Gate | Current evidence |
@@ -2132,7 +2241,7 @@ Artifact hashes for this run:
 | One-to-one approval | Always-on deterministic full flow and prior real bidirectional-hint Reticulum/LXMF runs passed; the phone-shaped harness covers phone-first delivery followed by the desktop reply on the same connection. Exact 0.2.12 physical Windows↔Android validation remains pending |
 | Contact management | Rename, verification toggling, block/unblock trust restoration, deletion cleanup, active-group identity retention, pending-group-invitation refusal, search, confirmations, mobile Back handling, and responsive dialog layout are covered. The shared UI was matched inside the exact Android APK; physical desktop/phone interaction remains pending |
 | Reconnection/interoperability | Upstream format preserved; bidirectional direct-LAN attachment, dirty-route retry, signed-client route replacement, deferred callback re-entry, and phone-shaped full-duplex return traffic are covered; reference-client and suspend/resume runs pending |
-| Platform packaging | Windows x64 0.2.32 MSI/NSIS and Android arm64 debug 0.2.12 packages were built, hashed, and inspected; the exact 0.2.32 Windows binary and sidecar were verified but the app/installer was not launched. Versions, manifest, installer payloads, Android v2 signature/certificate, native architecture, embedded contact UI, and all 12 embedded artwork files were verified. The transactional publisher rejects mixed/stale output and records immutable release/current manifests. Physical Windows↔Android 0.2.12 validation, a 0.2.12 portable bundle, macOS/Linux/iOS native package runs, and production signing remain pending |
+| Platform packaging | Windows x64 0.2.33 MSI/NSIS and Android arm64 debug 0.2.12 packages were built, hashed, and inspected; the exact 0.2.33 Windows binary and sidecar were verified but the app/installer was not launched. Versions, manifest, installer payloads, Android v2 signature/certificate, native architecture, embedded contact UI, and all 12 embedded artwork files were verified. The transactional publisher rejects mixed/stale output and records immutable release/current manifests. Physical Windows↔Android 0.2.12 validation, a 0.2.12 portable bundle, macOS/Linux/iOS native package runs, and production signing remain pending |
 | First-message usability | 0.2.12 retains desktop timeout guidance, exact draft preservation, callback/retry concurrency regressions, and the phone-first/desktop-reply harness together with durable-result, bounded-draft, duplicate-submit, IME, stale-refresh, delivery-state, and responsive-layout coverage. Exact 0.2.12 physical Windows↔Android validation and a broader human study remain open |
 | Invitation entry points | UI and validation implemented; installed-app OS matrix pending |
 | Common flow without technical setup | UI implemented; fresh/returning human run pending |
@@ -2147,5 +2256,6 @@ Artifact hashes for this run:
 | Workspace increment 10 | Encrypted workspace-keyed exact-token search, bounded shard/candidate/result execution, authenticated query/access/retention/search cursors, incremental atomic mutation updates, restart-safe migration, current plus historical authorization, private-era and DM isolation, honest indexing/pruned/incomplete states, desktop filters/navigation, and SQLite plaintext absence are automated. The reproducible 50,000-event benchmark, protected topology, direct-LAN, immutable 0.2.30 package, frozen 0.2.9 compatibility, and final artwork verification passed; physical concurrent-device access/retention partitions, native-window accessibility, packet capture, protected-profile plaintext scanning, production signing, and in-place installation remain release gates |
 | Workspace increment 11 | Canonical signed history requests/responses, bounded streams/ranges/pages/bytes, replay-safe continuation binding, prerequisite controls, signed author checkpoints, removal commitments, encrypted restart-safe jobs/caches/nonces/coverage, direct indexed disclosure, exact canonical-byte acceptance, public/private-era/DM authorization, honest complete/peer-limited/pruned/permanent-gap states, scheduling bounds, erasure, desktop status/actions, and command allowlisting are automated. The reproducible 50,000-event benchmark, protected topology, direct-LAN, immutable 0.2.31 package, frozen 0.2.9 compatibility, and final artwork verification passed; physical concurrent-device partition/removal/re-admission, hostile peer fault injection, native-window accessibility, packet capture, protected-profile plaintext scanning, production signing, and in-place installation remain release gates |
 | Workspace increment 12 | Effective owner/admin/member roles, exact role-aware channel/posting/invitation-request policies, signed bounded owner-approved invitation/removal/role requests, exact one-member manifest transitions, sealed indexed lifecycle/replay/audit state, owner-offline channel operation, private/DM isolation, accessible owner review/outgoing history, demotion enforcement, and command allowlisting are automated. The reproducible 50,000-event benchmark, protected topology, all direct-LAN scenarios, immutable 0.2.32 package administrator flow, exact 0.2.31 and frozen 0.2.9 compatibility, and final artwork verification passed; physical concurrent-device admin partitions, hostile request floods/fault injection, native-window accessibility, packet capture, protected-profile plaintext scanning, production signing, and in-place installation remain release gates |
+| Workspace increment 13 | Canonical authority offers, exact successor acceptances, final predecessor-authority manifests, same-owner rotation fixtures, exact ownership/role cutover, atomic local and staged remote #general recovery, old-authority rejection, successor manifest authority, bounded eight-step invitation proofs, fork suspension, permanent-loss freeze diagnostics, encrypted lifecycle state, desktop confirmation/review, and command allowlisting are automated. The reproducible 50,000-event benchmark, protected topology, all direct-LAN scenarios, immutable 0.2.33 package workflows, exact 0.2.32/0.2.31 and frozen 0.2.9 compatibility, and artwork verification passed; physical concurrent-device authority partitions and kill points, hostile transition floods/fault injection, native-window accessibility, packet capture, protected-profile plaintext scanning, production signing, and in-place installation remain release gates |
 
 Do not mark a release complete from unit tests alone. Store packet captures, topology configs, full-tree scans, package hashes, platform versions, human timing sheets, and failure notes with the release evidence.

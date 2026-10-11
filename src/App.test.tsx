@@ -1773,6 +1773,64 @@ describe("small private groups", () => {
 });
 
 describe("desktop workspaces", () => {
+  it("requires explicit ownership-transfer confirmation and binds the exact successor device", async () => {
+    const successor = {
+      id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      display_name: "Bailey",
+      role: "member" as const,
+      status: "active" as const,
+      short_id: "aaaaaa",
+      device: { id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", destination_hash: "99".repeat(16), fingerprint: "BBBB CCCC DDDD EEEE" },
+      devices: [{ id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", destination_hash: "99".repeat(16), fingerprint: "BBBB CCCC DDDD EEEE" }],
+    };
+    const owner = workspace.members[0];
+    const authorityWorkspace: Workspace = {
+      ...workspace,
+      members: [{ ...owner, devices: [owner.device] }, successor],
+    };
+    const current: Snapshot = {
+      ...snapshot(),
+      workspaces: [authorityWorkspace],
+      workspace_channels: [workspaceChannel],
+      workspace_authority_transitions: [],
+      workspace_join_requests: [],
+      workspace_invitations: [],
+      workspace_drafts: [],
+    };
+    api.runtimePlatform.mockResolvedValue("desktop");
+    api.initializeService.mockResolvedValue(current);
+    api.onInvitation.mockResolvedValue(() => undefined);
+    api.onServiceEvent.mockResolvedValue(() => undefined);
+    api.serviceCommand.mockImplementation(async (command: string) => {
+      if (command === "snapshot" || command === "workspace_snapshot") return current;
+      if (command === "list_workspace_messages") return { messages: [], next_cursor: null, high_water: 0 } satisfies WorkspaceMessagePage;
+      return {};
+    });
+
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Workspace Lakewatcher" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Authority continuity" }));
+    const dialog = screen.getByRole("dialog", { name: "Authority continuity · Lakewatcher" });
+    const submit = within(dialog).getByRole("button", { name: "Offer ownership transfer" });
+    fireEvent.change(within(dialog).getByRole("combobox", { name: "Authority successor device" }), {
+      target: { value: `${successor.id}:${successor.device.id}` },
+    });
+    expect(submit.hasAttribute("disabled")).toBe(true);
+    fireEvent.click(within(dialog).getByRole("checkbox"));
+    fireEvent.click(submit);
+    await waitFor(() => expect(api.serviceCommand).toHaveBeenCalledWith(
+      "offer_workspace_authority_transition",
+      expect.objectContaining({
+        workspace_id: workspace.id,
+        transition_kind: "ownership_transfer",
+        successor_member_id: successor.id,
+        successor_device_id: successor.device.id,
+        outgoing_owner_role: "admin",
+        operation_id: expect.any(String),
+      }),
+    ));
+  });
+
   it("shows effective administrator authority and submits owner-reviewed requests", async () => {
     const administrator = {
       id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",

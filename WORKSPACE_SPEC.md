@@ -1077,6 +1077,10 @@ authority-approved result.
 
 ### Increment 13 adds authority continuity
 
+Implemented by desktop release 0.2.33. The frozen protocol and tradeoffs are in
+[ADR 0012](docs/adr/0012-authority-continuity.md); Increment 14 remains the hard
+cutoff for device enrollment, replacement and linked-device fan-out.
+
 1. Rotate authority between admitted devices of the same owner.
 2. Transfer ownership through a current-authority offer, one named successor
    device's acceptance, and the final manifest; transfer or recover `#general`

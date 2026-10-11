@@ -32,6 +32,7 @@ from .workspace_protocol import (
     MAX_ACTIVE_MEMBERS,
     MAX_INVITATION_LIFETIME_SECONDS,
     MAX_ADMIN_REQUEST_LIFETIME_SECONDS,
+    MAX_AUTHORITY_TRANSITIONS,
     MAX_HISTORY_CHECKPOINTS,
     MAX_HISTORY_EVENTS,
     MAX_HISTORY_RANGES,
@@ -45,6 +46,7 @@ from .workspace_protocol import (
     MAX_RETAINED_PUBLIC_CHANNELS,
     VerifiedWorkspaceChannel,
     VerifiedWorkspaceAdminRequest,
+    VerifiedWorkspaceAuthorityAcceptance,
     VerifiedWorkspaceEvent,
     VerifiedWorkspaceHistoryRequest,
     VerifiedWorkspaceManifest,
@@ -54,6 +56,9 @@ from .workspace_protocol import (
     create_workspace_channel_fetch,
     create_workspace_admin_decision,
     create_workspace_admin_request,
+    create_workspace_authority_acceptance,
+    create_workspace_authority_manifest,
+    create_workspace_authority_offer,
     create_workspace_channel_leave_request,
     create_workspace_channel_manifest,
     create_workspace_channel_recovery,
@@ -78,6 +83,9 @@ from .workspace_protocol import (
     verify_workspace_channel_record,
     verify_workspace_admin_decision,
     verify_workspace_admin_request,
+    verify_workspace_authority_acceptance,
+    verify_workspace_authority_manifest_transition,
+    verify_workspace_authority_offer,
     verify_workspace_channel_record_transition,
     verify_workspace_channel_fetch,
     verify_workspace_channel_leave_request,
@@ -147,6 +155,24 @@ MAX_ADMIN_REQUEST_PAGE = 100
 DEFAULT_ADMIN_REQUEST_PAGE = 50
 MAX_INERT_ADMIN_DECISIONS = 64
 ADMIN_REPLAY_RETENTION_SECONDS = 90 * 24 * 60 * 60
+MAX_PENDING_AUTHORITY_TRANSITIONS = 32
+AUTHORITY_FROZEN_OPERATIONS = {
+    "approve_workspace_join",
+    "change_workspace_role",
+    "close_workspace",
+    "create_workspace_invitation",
+    "decide_workspace_admin_request",
+    "decide_workspace_display_name",
+    "decline_workspace_join",
+    "finalize_workspace_authority_transition",
+    "offer_workspace_authority_transition",
+    "recover_workspace_channel",
+    "remove_workspace_member",
+    "revoke_workspace_invitation",
+    "update_workspace_metadata",
+    "update_workspace_policies",
+    "update_workspace_retention",
+}
 MAX_HISTORY_JOBS_PER_WORKSPACE = 2
 MAX_HISTORY_JOBS_PER_PROFILE = 4
 MAX_HISTORY_SEQUENCE_PROBES = 256
@@ -310,7 +336,21 @@ class WorkspaceServiceMixin:
         except (ValueError, AttributeError) as exc:
             raise ValidationError("Operation ID is invalid") from exc
         digest = _canonical_digest(command, payload)
-        return operation_id, digest, self.store.operation_result(operation_id, digest)
+        replay = self.store.operation_result(operation_id, digest)
+        workspace_id = payload.get("workspace_id")
+        if (
+            replay is None
+            and command in AUTHORITY_FROZEN_OPERATIONS
+            and isinstance(workspace_id, str)
+        ):
+            workspace = self.store.get(
+                "workspace", self._workspace_record_id(workspace_id)
+            )
+            if workspace is not None and workspace.get("authority_loss"):
+                raise ContactNotApproved(
+                    "Authority-dependent administration is permanently frozen"
+                )
+        return operation_id, digest, replay
 
     def _workspace_record_id(self, workspace_id: str) -> str:
         return self.store.opaque_id("workspace", workspace_id)
@@ -863,6 +903,18 @@ class WorkspaceServiceMixin:
             "workspace-admin-decision", workspace_id, digest
         )
 
+    def _workspace_authority_transition_id(
+        self, workspace_id: str, transition_id: str
+    ) -> str:
+        return self.store.opaque_id(
+            "workspace-authority-transition", workspace_id, transition_id
+        )
+
+    def _workspace_authority_replay_id(self, workspace_id: str, replay_key: str) -> str:
+        return self.store.opaque_id(
+            "workspace-authority-replay", workspace_id, replay_key
+        )
+
     def _workspace_admin_profile_index_id(self) -> str:
         return self.store.opaque_id("workspace-admin-profile-index", "v1")
 
@@ -1094,8 +1146,11 @@ class WorkspaceServiceMixin:
         # missing control without opening the path to an unrelated contact.
         return any(
             member.get("status") == "active"
-            and member.get("device", {}).get("destination_hash")
-            == source_hash.hex()
+            and any(
+                device.get("destination_hash") == source_hash.hex()
+                for device in member.get("devices", [member.get("device", {})])
+                if isinstance(device, dict)
+            )
             for member in workspace.get("members", [])
         )
 
@@ -1423,17 +1478,22 @@ class WorkspaceServiceMixin:
     @staticmethod
     def _member_summary(member: Any) -> dict[str, Any]:
         device = member.devices[0]
+        devices = [
+            {
+                "id": item.device_id,
+                "destination_hash": item.destination_hash.hex(),
+                "fingerprint": item.fingerprint,
+            }
+            for item in member.devices
+        ]
         return {
             "id": member.member_id,
             "display_name": member.display_name,
             "role": member.role.value,
             "status": member.status,
             "short_id": _short_id(member.member_id),
-            "device": {
-                "id": device.device_id,
-                "destination_hash": device.destination_hash.hex(),
-                "fingerprint": device.fingerprint,
-            },
+            "device": devices[0],
+            "devices": devices,
         }
 
     def _apply_manifest_to_workspace(
@@ -1447,6 +1507,11 @@ class WorkspaceServiceMixin:
         workspace["epoch"] = manifest.epoch
         workspace["manifest_hash"] = manifest.digest
         workspace["authority_device_id"] = manifest.authority_device_id
+        workspace["owner_member_id"] = next(
+            member.member_id
+            for member in manifest.members
+            if member.status == "active" and member.role == WorkspaceRole.OWNER
+        )
         workspace["retention_days"] = manifest.retention_days
         workspace["policies"] = {
             "channel_creation": manifest.channel_creation.value,
@@ -1582,8 +1647,20 @@ class WorkspaceServiceMixin:
         for member in workspace["members"]:
             verified = find_member(manifest, member["id"])
             if verified is not None:
-                member["device"]["public_identity"] = _b64(
-                    verified.devices[0].public_identity
+                by_id = {device.device_id: device for device in verified.devices}
+                summaries = member.get("devices", [member.get("device", {})])
+                for summary in summaries:
+                    device = by_id.get(summary.get("id")) if isinstance(summary, dict) else None
+                    if device is not None:
+                        summary["public_identity"] = _b64(device.public_identity)
+                member["devices"] = summaries
+                member["device"] = next(
+                    (
+                        item
+                        for item in summaries
+                        if item.get("id") == member.get("device", {}).get("id")
+                    ),
+                    summaries[0],
                 )
 
     @staticmethod
@@ -2132,12 +2209,25 @@ class WorkspaceServiceMixin:
         }
         public["members"] = [
             {
-                **{key: value for key, value in member.items() if key != "device"},
+                **{
+                    key: value
+                    for key, value in member.items()
+                    if key not in {"device", "devices"}
+                },
                 "device": {
                     key: value
                     for key, value in member.get("device", {}).items()
                     if key != "public_identity"
                 },
+                "devices": [
+                    {
+                        key: value
+                        for key, value in device.items()
+                        if key != "public_identity"
+                    }
+                    for device in member.get("devices", [member.get("device", {})])
+                    if isinstance(device, dict)
+                ],
             }
             for member in workspace.get("members", [])
         ]
@@ -2781,6 +2871,10 @@ class WorkspaceServiceMixin:
         workspace["members"][0]["device"]["public_identity"] = _b64(
             genesis.owner_device.public_identity
         )
+        workspace["members"][0]["devices"][0]["public_identity"] = _b64(
+            genesis.owner_device.public_identity
+        )
+        workspace["authority_chain"] = []
         channel_record = self._channel_record(channel)
         index_id = self._workspace_index_record_id(workspace["id"], channel.channel_id)
         index = {
@@ -2903,6 +2997,7 @@ class WorkspaceServiceMixin:
             lifetime_seconds=min(
                 lifetime_days * 24 * 60 * 60, MAX_INVITATION_LIFETIME_SECONDS
             ),
+            authority_chain=workspace.get("authority_chain", []),
         )
         invite = verify_workspace_invitation(raw)
         invitation_id = self._workspace_invitation_record_id(invite.nonce)
@@ -3201,6 +3296,7 @@ class WorkspaceServiceMixin:
             "manifest_hash": invite.offered_manifest.digest,
             "genesis_digest": invite.genesis.digest,
             "genesis": invite.genesis.serialized,
+            "authority_chain": [dict(item) for item in invite.authority_chain],
             "general_channel_id": None,
             "channel_discovery": "incomplete",
             "retention_days": invite.offered_manifest.retention_days,
@@ -3225,6 +3321,12 @@ class WorkspaceServiceMixin:
                         "fingerprint": join.device.fingerprint,
                         "public_identity": _b64(join.device.public_identity),
                     },
+                    "devices": [{
+                        "id": join.device.device_id,
+                        "destination_hash": join.device.destination_hash.hex(),
+                        "fingerprint": join.device.fingerprint,
+                        "public_identity": _b64(join.device.public_identity),
+                    }],
                 }
             ],
             "authorization_generation": 1,
@@ -3237,6 +3339,10 @@ class WorkspaceServiceMixin:
         for member in workspace["members"]:
             if member["id"] == owner[0].member_id:
                 member["device"]["public_identity"] = _b64(owner[1].public_identity)
+                for summary in member.get("devices", []):
+                    verified = find_device(invite.offered_manifest, summary.get("id", ""))
+                    if verified is not None:
+                        summary["public_identity"] = _b64(verified[1].public_identity)
         local_invitation_id = self._workspace_invitation_record_id(invite.nonce)
         invitation_record = {
             "id": local_invitation_id,
@@ -5970,9 +6076,66 @@ class WorkspaceServiceMixin:
                 # validate against the already pinned predecessor. A merely
                 # self-consistent outsider manifest must not be able to force a
                 # workspace-wide denial of service.
-                checked_same_epoch = verify_workspace_manifest_transition(
-                    wire.document, predecessor
-                )
+                if incoming.authority_transition_digest is None:
+                    checked_same_epoch = verify_workspace_manifest_transition(
+                        wire.document, predecessor
+                    )
+                else:
+                    same_epoch_authority = next(
+                        (
+                            item
+                            for item in self._workspace_authority_records(
+                                wire.workspace_id
+                            )
+                            if item.get("acceptance_digest")
+                            == incoming.authority_transition_digest
+                            and isinstance(item.get("acceptance"), str)
+                        ),
+                        None,
+                    )
+                    if same_epoch_authority is None:
+                        return False
+                    same_epoch_offer = json.loads(same_epoch_authority["offer"])
+                    same_epoch_general_before = None
+                    same_epoch_general_result = None
+                    if (
+                        same_epoch_offer.get("transition_kind")
+                        == "ownership_transfer"
+                    ):
+                        same_epoch_general_before = (
+                            self._workspace_channel_by_digest(
+                                str(
+                                    same_epoch_offer.get(
+                                        "general_channel_head", ""
+                                    )
+                                )
+                            )
+                        )
+                        same_epoch_general_raw = same_epoch_authority.get(
+                            "general_result"
+                        )
+                        if (
+                            same_epoch_general_before is None
+                            or not isinstance(same_epoch_general_raw, str)
+                        ):
+                            return False
+                        same_epoch_general_result = (
+                            verify_workspace_channel_recovery(
+                                same_epoch_general_raw,
+                                channel=same_epoch_general_before,
+                                manifest=predecessor,
+                            )
+                        )
+                    checked_same_epoch = (
+                        verify_workspace_authority_manifest_transition(
+                            wire.document,
+                            predecessor,
+                            acceptance=same_epoch_authority["acceptance"],
+                            general_channel=same_epoch_general_before,
+                            general_result=same_epoch_general_result,
+                            allow_expired=True,
+                        )
+                    )
                 if existing_same_epoch.get("digest") != incoming.digest:
                     workspace["state"] = "forked"
                     workspace["security_error"] = "manifest_fork"
@@ -5988,7 +6151,54 @@ class WorkspaceServiceMixin:
                 return False
             if incoming.epoch <= current.epoch:
                 return False
-            checked = verify_workspace_manifest_transition(wire.document, current)
+            authority_record: dict[str, Any] | None = None
+            if incoming.authority_transition_digest is None:
+                checked = verify_workspace_manifest_transition(wire.document, current)
+            else:
+                authority_record = next(
+                    (
+                        dict(item)
+                        for item in self._workspace_authority_records(wire.workspace_id)
+                        if item.get("acceptance_digest")
+                        == incoming.authority_transition_digest
+                    ),
+                    None,
+                )
+                if authority_record is None or not isinstance(
+                    authority_record.get("acceptance"), str
+                ):
+                    self._store_pending_workspace_control(
+                        wire, "missing_authority_transition"
+                    )
+                    return False
+                offer_value = json.loads(authority_record["offer"])
+                general_before = None
+                general_result = None
+                if offer_value.get("transition_kind") == "ownership_transfer":
+                    general_before = self._workspace_channel_by_digest(
+                        str(offer_value.get("general_channel_head", ""))
+                    )
+                    staged_general = authority_record.get("general_result")
+                    if general_before is not None and isinstance(staged_general, str):
+                        general_result = verify_workspace_channel_recovery(
+                            staged_general,
+                            channel=general_before,
+                            manifest=current,
+                            now=int(time.time()),
+                        )
+                    if general_before is None or general_result is None:
+                        self._store_pending_workspace_control(
+                            wire, "missing_general_authority_result"
+                        )
+                        return False
+                checked = verify_workspace_authority_manifest_transition(
+                    wire.document,
+                    current,
+                    acceptance=authority_record["acceptance"],
+                    general_channel=general_before,
+                    general_result=general_result,
+                    allow_expired=True,
+                )
             newly_inactive_member_ids = {
                 member.member_id
                 for member in current.members
@@ -6000,6 +6210,97 @@ class WorkspaceServiceMixin:
             }
             self._apply_manifest_to_workspace(workspace, checked)
             self._apply_manifest_public_identities(workspace, checked)
+            authority_records: list[tuple[str, str, dict[str, Any]]] = []
+            if authority_record is not None:
+                chain = list(workspace.get("authority_chain", []))
+                if len(chain) >= MAX_AUTHORITY_TRANSITIONS:
+                    workspace["state"] = "forked"
+                    workspace["security_error"] = "authority_chain_limit"
+                    self.store.put(
+                        "workspace", self._workspace_record_id(workspace["id"]), workspace
+                    )
+                    return False
+                general_document = None
+                if general_result is not None:
+                    general_document = authority_record.get("general_result")
+                    if not isinstance(general_document, str):
+                        raise ValidationError(
+                            "Authority transition #general result is unavailable"
+                        )
+                    current_general = self.store.get(
+                        "workspace_channel",
+                        self._workspace_channel_record_id(general_result.channel_id),
+                    )
+                    if current_general is None:
+                        raise ValidationError(
+                            "Authority transition #general channel is unavailable"
+                        )
+                    updated_general = self._channel_record(general_result)
+                    updated_general["unread_count"] = int(
+                        current_general.get("unread_count", 0)
+                    )
+                    updated_general["created_at"] = float(
+                        current_general.get("created_at", general_result.created_at)
+                    )
+                    updated_general["updated_at"] = time.time()
+                    authority_records.extend([
+                        (
+                            "workspace_channel",
+                            self._workspace_channel_record_id(
+                                general_result.channel_id
+                            ),
+                            updated_general,
+                        ),
+                        (
+                            "workspace_channel_control",
+                            self._workspace_channel_control_id(
+                                general_result.digest
+                            ),
+                            self._workspace_channel_control_record(
+                                general_result,
+                                document_type="workspace_channel_recovery",
+                            ),
+                        ),
+                        self._workspace_channel_version_record(general_result),
+                    ])
+                chain.append({
+                    "base_manifest": current.serialized,
+                    "offer": authority_record["offer"],
+                    "acceptance": authority_record["acceptance"],
+                    "final_manifest": checked.serialized,
+                    "general_result": general_document,
+                })
+                workspace["authority_chain"] = chain
+                authority_record.update({
+                    "state": "applied",
+                    "final_manifest": checked.serialized,
+                    "final_manifest_digest": checked.digest,
+                    "general_result": general_document,
+                    "updated_at": time.time(),
+                })
+                authority_records.append((
+                    "workspace_authority_transition",
+                    authority_record["id"],
+                    authority_record,
+                ))
+                if offer_value.get("transition_kind") == "ownership_transfer":
+                    for invitation_id, invitation in self.store.items(
+                        "workspace_invitation"
+                    ):
+                        if (
+                            invitation.get("workspace_id") == workspace["id"]
+                            and invitation.get("state") == "active"
+                        ):
+                            changed_invitation = dict(invitation)
+                            changed_invitation["state"] = "superseded"
+                            changed_invitation["updated_at"] = time.time()
+                            authority_records.append(
+                                (
+                                    "workspace_invitation",
+                                    invitation_id,
+                                    changed_invitation,
+                                )
+                            )
             resolved_name_requests: list[
                 tuple[str, str, dict[str, Any]]
             ] = []
@@ -6061,6 +6362,7 @@ class WorkspaceServiceMixin:
                     self._manifest_epoch_record(checked),
                     *resolved_name_requests,
                     *admin_request_updates,
+                    *authority_records,
                     *cancelled_records,
                     *self._due_records(remove=cancelled_ids),
                 ]
@@ -6837,7 +7139,7 @@ class WorkspaceServiceMixin:
             return False
 
     def _receive_workspace_channel_head_transition(
-        self, wire: WorkspaceWirePayload
+        self, wire: WorkspaceWirePayload, *, drain_pending: bool = True
     ) -> bool:
         try:
             value = json.loads(wire.document)
@@ -6886,6 +7188,53 @@ class WorkspaceServiceMixin:
                     wire.document, channel=previous, manifest=manifest
                 )
             )
+            if (
+                wire.kind == "workspace_channel_recovery"
+                and channel_id == workspace.get("general_channel_id")
+            ):
+                authority_record = next(
+                    (
+                        dict(item)
+                        for item in self._workspace_authority_records(wire.workspace_id)
+                        if item.get("state") == "accepted_waiting_finalization"
+                        and item.get("base_manifest_digest") == manifest.digest
+                        and item.get("general_channel_id") == channel_id
+                        and item.get("general_channel_head") == previous_hash
+                        and item.get("successor_member_id")
+                        == incoming.manager_member_id
+                        and item.get("successor_device_id")
+                        == incoming.manager_device_id
+                    ),
+                    None,
+                )
+                if authority_record is not None:
+                    existing_result = authority_record.get("general_result")
+                    if existing_result not in {None, wire.document}:
+                        workspace["state"] = "forked"
+                        workspace["security_error"] = "authority_general_conflict"
+                        self.store.put(
+                            "workspace",
+                            self._workspace_record_id(wire.workspace_id),
+                            workspace,
+                        )
+                        self._workspace_changed(
+                            wire.workspace_id, resource_kind="security"
+                        )
+                        return False
+                    authority_record["general_result"] = wire.document
+                    authority_record["general_result_digest"] = incoming.digest
+                    authority_record["updated_at"] = time.time()
+                    self.store.put(
+                        "workspace_authority_transition",
+                        authority_record["id"],
+                        authority_record,
+                    )
+                    if drain_pending:
+                        self._drain_workspace_pending_controls(wire.workspace_id)
+                    self._workspace_changed(
+                        wire.workspace_id, resource_kind="authority"
+                    )
+                    return True
             if (
                 incoming.visibility == "private"
                 and workspace.get("local_member_id") not in incoming.member_ids
@@ -7247,7 +7596,9 @@ class WorkspaceServiceMixin:
                     "workspace_channel_transfer",
                     "workspace_channel_recovery",
                 }:
-                    applied = self._receive_workspace_channel_head_transition(wire)
+                    applied = self._receive_workspace_channel_head_transition(
+                        wire, drain_pending=False
+                    )
                 elif wire.kind == "workspace_admin_request":
                     applied = self._receive_workspace_admin_request(wire)
                 else:
@@ -10951,6 +11302,452 @@ class WorkspaceServiceMixin:
         self._workspace_changed(workspace_id, resource_kind="role")
         return committed
 
+    def _authority_general_channel(
+        self, workspace: dict[str, Any]
+    ) -> tuple[dict[str, Any], VerifiedWorkspaceChannel]:
+        channel_id = workspace.get("general_channel_id")
+        if not isinstance(channel_id, str):
+            raise ValidationError("The #general channel is unavailable")
+        record = self._require_workspace_channel(workspace["id"], channel_id)
+        head = self._workspace_channel_by_digest(str(record.get("head_hash", "")))
+        if (
+            head is None
+            or head.visibility != "public"
+            or channel_name_key(head.name) != "general"
+            or head.archived
+        ):
+            raise ValidationError("The #general channel head is unavailable")
+        return record, head
+
+    def _public_workspace_authority_transition(
+        self, record: dict[str, Any], workspace: dict[str, Any]
+    ) -> dict[str, Any]:
+        members = {
+            item.get("id"): item
+            for item in workspace.get("members", [])
+            if isinstance(item.get("id"), str)
+        }
+        successor = members.get(record.get("successor_member_id"), {})
+        owner = members.get(record.get("current_owner_member_id"), {})
+        public = {
+            "id": record["transition_id"],
+            "workspace_id": record["workspace_id"],
+            "direction": record.get("direction", "outgoing"),
+            "transition_kind": record["transition_kind"],
+            "state": record["state"],
+            "current_owner_display_name": owner.get("display_name", "Owner"),
+            "successor_member_id": record["successor_member_id"],
+            "successor_display_name": successor.get("display_name", "Successor"),
+            "successor_fingerprint": record.get("successor_fingerprint", ""),
+            "outgoing_owner_role": record.get("outgoing_owner_role"),
+            "general_disposition": record.get("general_disposition"),
+            "created_at": record.get("created_at", 0),
+            "expires_at": record.get("expires_at", 0),
+            "updated_at": record.get("updated_at", record.get("created_at", 0)),
+            "failure": record.get("failure"),
+        }
+        delivery_id = record.get("delivery_id")
+        delivery = (
+            self.store.get("workspace_delivery", delivery_id)
+            if isinstance(delivery_id, str)
+            else None
+        )
+        if delivery is not None:
+            public["delivery_state"] = delivery.get("state")
+        return public
+
+    def _workspace_authority_records(self, workspace_id: str) -> list[dict[str, Any]]:
+        return [
+            record
+            for record in self.store.list("workspace_authority_transition")
+            if record.get("workspace_id") == workspace_id
+        ]
+
+    def offer_workspace_authority_transition(
+        self,
+        workspace_id: Any,
+        transition_kind: Any,
+        successor_member_id: Any,
+        successor_device_id: Any,
+        outgoing_owner_role: Any,
+        operation_id: Any,
+    ) -> dict[str, Any]:
+        payload = {
+            "workspace_id": workspace_id,
+            "transition_kind": transition_kind,
+            "successor_member_id": successor_member_id,
+            "successor_device_id": successor_device_id,
+            "outgoing_owner_role": outgoing_owner_role,
+        }
+        operation_id, operation_digest, replay = self._workspace_operation(
+            "offer_workspace_authority_transition", operation_id, payload
+        )
+        if replay is not None:
+            return replay
+        workspace = self._require_workspace(workspace_id)
+        if (
+            workspace.get("state") != "active"
+            or workspace.get("local_role") != WorkspaceRole.OWNER.value
+            or workspace.get("local_device_id") != workspace.get("authority_device_id")
+        ):
+            raise ContactNotApproved("Only the current authority device can offer a transition")
+        if sum(
+            item.get("state") in {"waiting_for_delivery", "waiting_for_acceptance", "accepted_waiting_finalization", "finalizing"}
+            for item in self._workspace_authority_records(workspace_id)
+        ) >= MAX_PENDING_AUTHORITY_TRANSITIONS:
+            raise ValidationError("The authority transition limit is reached")
+        current = self._workspace_current_manifest(workspace)
+        successor = find_device(current, successor_device_id) if isinstance(successor_device_id, str) else None
+        if successor is None:
+            raise ValidationError("The named successor device is not admitted")
+        general = None
+        if transition_kind == "ownership_transfer":
+            _, general = self._authority_general_channel(workspace)
+        identity = self._identity
+        if identity is None:
+            raise ValidationError("Local identity is unavailable")
+        offer_raw = create_workspace_authority_offer(
+            identity,
+            manifest=current,
+            transition_kind=transition_kind,
+            successor_member_id=successor_member_id,
+            successor_device_id=successor_device_id,
+            general_channel=general,
+            outgoing_owner_role=outgoing_owner_role,
+        )
+        offer = verify_workspace_authority_offer(
+            offer_raw, manifest=current, general_channel=general
+        )
+        delivery = self._workspace_delivery_record(
+            workspace_id=workspace_id,
+            recipient_member_id=offer.successor_member_id,
+            recipient_device=successor[1],
+            kind="workspace_authority_transition",
+            document=offer.serialized,
+            priority=0,
+        )
+        now = time.time()
+        record = {
+            "id": self._workspace_authority_transition_id(workspace_id, offer.transition_id),
+            "workspace_id": workspace_id,
+            "transition_id": offer.transition_id,
+            "transition_kind": offer.transition_kind,
+            "direction": "outgoing",
+            "state": "waiting_for_acceptance",
+            "base_manifest_epoch": offer.base_manifest_epoch,
+            "base_manifest_digest": offer.base_manifest_digest,
+            "current_owner_member_id": offer.current_owner_member_id,
+            "successor_member_id": offer.successor_member_id,
+            "successor_device_id": offer.successor_device_id,
+            "successor_fingerprint": successor[1].fingerprint,
+            "outgoing_owner_role": None if offer.outgoing_owner_role is None else offer.outgoing_owner_role.value,
+            "general_disposition": offer.general_disposition,
+            "general_channel_id": offer.general_channel_id,
+            "general_channel_head": offer.general_channel_head,
+            "offer": offer.serialized,
+            "offer_digest": offer.digest,
+            "offer_replay_key": offer.replay_key,
+            "delivery_id": delivery["id"],
+            "created_at": float(offer.created_at),
+            "expires_at": float(offer.expires_at),
+            "updated_at": now,
+        }
+        outcome = self._public_workspace_authority_transition(record, workspace)
+        committed = self.store.commit_operation(
+            operation_id,
+            operation_digest,
+            outcome,
+            [
+                ("workspace_authority_transition", record["id"], record),
+                (
+                    "workspace_authority_replay",
+                    self._workspace_authority_replay_id(workspace_id, offer.replay_key),
+                    {"workspace_id": workspace_id, "digest": offer.digest, "expires_at": offer.expires_at},
+                ),
+                ("workspace_delivery", delivery["id"], delivery),
+                *self._due_records(add=[delivery]),
+            ],
+        )
+        self._workspace_changed(workspace_id, resource_kind="authority")
+        return committed
+
+    def accept_workspace_authority_transition(
+        self, workspace_id: Any, transition_id: Any, operation_id: Any
+    ) -> dict[str, Any]:
+        payload = {"workspace_id": workspace_id, "transition_id": transition_id}
+        operation_id, operation_digest, replay = self._workspace_operation(
+            "accept_workspace_authority_transition", operation_id, payload
+        )
+        if replay is not None:
+            return replay
+        workspace = self._require_workspace(workspace_id)
+        record_id = self._workspace_authority_transition_id(workspace_id, transition_id)
+        record = self.store.get("workspace_authority_transition", record_id)
+        if record is None or record.get("state") != "waiting_for_acceptance":
+            raise ValidationError("Authority transition is not waiting for acceptance")
+        current = self._workspace_current_manifest(workspace)
+        general = self._authority_general_channel(workspace)[1] if record.get("transition_kind") == "ownership_transfer" else None
+        offer = verify_workspace_authority_offer(
+            record["offer"], manifest=current, general_channel=general
+        )
+        if workspace.get("local_device_id") != offer.successor_device_id:
+            raise ContactNotApproved("Only the exact named successor device can accept")
+        identity = self._identity
+        if identity is None:
+            raise ValidationError("Local identity is unavailable")
+        acceptance_raw = create_workspace_authority_acceptance(identity, offer=offer)
+        acceptance = verify_workspace_authority_acceptance(
+            acceptance_raw, manifest=current, general_channel=general
+        )
+        local_device_id = workspace.get("local_device_id")
+        recipients = [
+            (member_id, device)
+            for member_id, device in self._workspace_manifest_recipients(
+                current, excluding_member_id=None
+            )
+            if device.device_id != local_device_id
+        ]
+        deliveries = [
+            self._workspace_delivery_record(
+                workspace_id=workspace_id,
+                recipient_member_id=member_id,
+                recipient_device=device,
+                kind="workspace_authority_transition",
+                document=acceptance.serialized,
+                priority=0,
+            )
+            for member_id, device in recipients
+        ]
+        if not any(
+            device.device_id == current.authority_device_id
+            for _member_id, device in recipients
+        ):
+            raise ValidationError("Workspace authority is unavailable")
+        record = dict(record)
+        record.update({
+            "state": "accepted_waiting_finalization",
+            "acceptance": acceptance.serialized,
+            "acceptance_digest": acceptance.digest,
+            "acceptance_replay_key": acceptance.replay_key,
+            "acceptance_delivery_ids": [delivery["id"] for delivery in deliveries],
+            "updated_at": time.time(),
+        })
+        outcome = self._public_workspace_authority_transition(record, workspace)
+        committed = self.store.commit_operation(
+            operation_id,
+            operation_digest,
+            outcome,
+            [
+                ("workspace_authority_transition", record_id, record),
+                (
+                    "workspace_authority_replay",
+                    self._workspace_authority_replay_id(workspace_id, acceptance.replay_key),
+                    {"workspace_id": workspace_id, "digest": acceptance.digest, "expires_at": offer.expires_at},
+                ),
+                *[
+                    ("workspace_delivery", delivery["id"], delivery)
+                    for delivery in deliveries
+                ],
+                *self._due_records(add=deliveries),
+            ],
+        )
+        self._workspace_changed(workspace_id, resource_kind="authority")
+        return committed
+
+    def finalize_workspace_authority_transition(
+        self, workspace_id: Any, transition_id: Any, operation_id: Any
+    ) -> dict[str, Any]:
+        payload = {"workspace_id": workspace_id, "transition_id": transition_id}
+        operation_id, operation_digest, replay = self._workspace_operation(
+            "finalize_workspace_authority_transition", operation_id, payload
+        )
+        if replay is not None:
+            return replay
+        workspace = self._require_workspace(workspace_id)
+        if workspace.get("local_device_id") != workspace.get("authority_device_id"):
+            raise ContactNotApproved("Only the current authority device can finalize")
+        record_id = self._workspace_authority_transition_id(workspace_id, transition_id)
+        stored = self.store.get("workspace_authority_transition", record_id)
+        if stored is None or stored.get("state") != "accepted_waiting_finalization":
+            raise ValidationError("Authority transition is not ready to finalize")
+        record = dict(stored)
+        current = self._workspace_current_manifest(workspace)
+        general_record: dict[str, Any] | None = None
+        general = None
+        if record["transition_kind"] == "ownership_transfer":
+            general_record, general = self._authority_general_channel(workspace)
+        acceptance = verify_workspace_authority_acceptance(
+            record["acceptance"], manifest=current, general_channel=general
+        )
+        identity = self._identity
+        if identity is None:
+            raise ValidationError("Local identity is unavailable")
+        general_raw: str | None = None
+        recovered: VerifiedWorkspaceChannel | None = None
+        if general is not None:
+            general_raw = create_workspace_channel_recovery(
+                identity,
+                channel=general,
+                manifest=current,
+                manager_member_id=acceptance.offer.successor_member_id,
+                manager_device_id=acceptance.offer.successor_device_id,
+            )
+            recovered = verify_workspace_channel_recovery(
+                general_raw, channel=general, manifest=current
+            )
+        manifest_raw = create_workspace_authority_manifest(
+            identity, previous=current, acceptance=acceptance
+        )
+        final = verify_workspace_authority_manifest_transition(
+            manifest_raw,
+            current,
+            acceptance=acceptance,
+            general_channel=general,
+            general_result=recovered,
+        )
+        chain = list(workspace.get("authority_chain", []))
+        if len(chain) >= MAX_AUTHORITY_TRANSITIONS:
+            raise ValidationError(
+                "The authority proof limit is reached; create a replacement workspace"
+            )
+        chain.append({
+            "base_manifest": current.serialized,
+            "offer": acceptance.offer.serialized,
+            "acceptance": acceptance.serialized,
+            "final_manifest": final.serialized,
+            "general_result": general_raw,
+        })
+        workspace["authority_chain"] = chain
+        self._apply_manifest_to_workspace(workspace, final)
+        self._apply_manifest_public_identities(workspace, final)
+        records: list[tuple[str, str, dict[str, Any]]] = [
+            ("workspace", self._workspace_record_id(workspace_id), workspace),
+            ("workspace_manifest", self._workspace_manifest_record_id(final.digest), self._manifest_record(final)),
+            self._manifest_epoch_record(final),
+        ]
+        if recovered is not None and general_record is not None and general_raw is not None:
+            updated_general = dict(general_record)
+            updated_general.update({
+                "manager_member_id": recovered.manager_member_id,
+                "manager_device_id": recovered.manager_device_id,
+                "version": recovered.version,
+                "head_hash": recovered.digest,
+                "updated_at": float(recovered.created_at),
+            })
+            records.extend([
+                ("workspace_channel", self._workspace_channel_record_id(recovered.channel_id), updated_general),
+                ("workspace_channel_control", self._workspace_channel_control_id(recovered.digest), self._workspace_channel_control_record(recovered, document_type="workspace_channel_recovery")),
+                self._workspace_channel_version_record(recovered),
+            ])
+        record.update({
+            "state": "applied",
+            "final_manifest": final.serialized,
+            "final_manifest_digest": final.digest,
+            "general_result": general_raw,
+            "updated_at": time.time(),
+        })
+        records.append(("workspace_authority_transition", record_id, record))
+        if acceptance.offer.transition_kind == "ownership_transfer":
+            for invitation_id, invitation in self.store.items("workspace_invitation"):
+                if invitation.get("workspace_id") == workspace_id and invitation.get("state") == "active":
+                    changed = dict(invitation)
+                    changed["state"] = "superseded"
+                    changed["updated_at"] = time.time()
+                    records.append(("workspace_invitation", invitation_id, changed))
+        local_device_id = workspace.get("local_device_id")
+        recipients = [
+            (member_id, device)
+            for member_id, device in self._workspace_manifest_recipients(
+                current, excluding_member_id=None
+            )
+            if device.device_id != local_device_id
+        ]
+        deliveries: list[dict[str, Any]] = []
+        for member_id, device in recipients:
+            deliveries.append(self._workspace_delivery_record(
+                workspace_id=workspace_id,
+                recipient_member_id=member_id,
+                recipient_device=device,
+                kind="workspace_authority_transition",
+                document=acceptance.offer.serialized,
+                priority=0,
+            ))
+            if general_raw is not None:
+                deliveries.append(self._workspace_delivery_record(
+                    workspace_id=workspace_id,
+                    recipient_member_id=member_id,
+                    recipient_device=device,
+                    kind="workspace_channel_recovery",
+                    document=general_raw,
+                    priority=0,
+                ))
+            deliveries.append(self._workspace_delivery_record(
+                workspace_id=workspace_id,
+                recipient_member_id=member_id,
+                recipient_device=device,
+                kind="workspace_manifest_root",
+                document=final.serialized,
+                priority=0,
+            ))
+        records.extend(("workspace_delivery", item["id"], item) for item in deliveries)
+        records.extend(self._due_records(add=deliveries))
+        outcome = self._public_workspace_authority_transition(record, workspace)
+        committed = self.store.commit_operation(
+            operation_id, operation_digest, outcome, records
+        )
+        self._workspace_changed(workspace_id, resource_kind="authority")
+        return committed
+
+    def list_workspace_authority_transitions(self, workspace_id: Any) -> dict[str, Any]:
+        workspace = self._require_workspace(workspace_id)
+        transitions = []
+        now = time.time()
+        for stored in self._workspace_authority_records(workspace_id):
+            record = dict(stored)
+            if (
+                record.get("state") in {"waiting_for_delivery", "waiting_for_acceptance", "accepted_waiting_finalization"}
+                and float(record.get("expires_at", 0)) < now
+            ):
+                record["state"] = "expired"
+                record["updated_at"] = now
+                self.store.put("workspace_authority_transition", record["id"], record)
+            transitions.append(self._public_workspace_authority_transition(record, workspace))
+        transitions.sort(key=lambda item: (item.get("created_at", 0), item["id"]), reverse=True)
+        return {"transitions": transitions}
+
+    def report_workspace_authority_loss(
+        self, workspace_id: Any, operation_id: Any
+    ) -> dict[str, Any]:
+        payload = {"workspace_id": workspace_id}
+        operation_id, operation_digest, replay = self._workspace_operation(
+            "report_workspace_authority_loss", operation_id, payload
+        )
+        if replay is not None:
+            return replay
+        workspace = dict(self._require_workspace(workspace_id))
+        if (
+            workspace.get("local_role") != WorkspaceRole.OWNER.value
+            or workspace.get("local_device_id")
+            != workspace.get("authority_device_id")
+        ):
+            raise ContactNotApproved(
+                "Only the current authority device can report its key unavailable"
+            )
+        workspace["authority_loss"] = True
+        workspace["authority_administration_state"] = "permanently_frozen"
+        workspace["authority_loss_guidance"] = (
+            "Ordinary authorized chat remains available. Create a replacement workspace "
+            "and re-invite members; authority keys cannot be recovered automatically."
+        )
+        workspace["updated_at"] = time.time()
+        outcome = self._public_workspace(workspace)
+        return self.store.commit_operation(
+            operation_id,
+            operation_digest,
+            outcome,
+            [("workspace", self._workspace_record_id(workspace_id), workspace)],
+        )
+
     @staticmethod
     def _admin_request_terminal(state: Any) -> bool:
         return state in {
@@ -11580,6 +12377,150 @@ class WorkspaceServiceMixin:
             outcome,
             [("workspace_admin_request", request_id, record)],
         )
+
+    def _receive_workspace_authority_transition(
+        self, wire: WorkspaceWirePayload, source_hash: Any
+    ) -> bool:
+        try:
+            value = json.loads(wire.document)
+            if not isinstance(value, dict) or value.get("type") != "workspace_authority_transition":
+                return False
+            workspace = self._require_workspace(wire.workspace_id)
+            if workspace.get("state") in {"closed", "forked", "removed", "left"}:
+                return False
+            current = self._workspace_current_manifest(workspace)
+            phase = value.get("phase")
+            raw_offer = wire.document if phase == "offer" else _canonical_transfer_offer(value.get("offer", {}))
+            general = self._authority_general_channel(workspace)[1] if value.get("transition_kind") == "ownership_transfer" else None
+            offer = verify_workspace_authority_offer(
+                raw_offer, manifest=current, general_channel=general
+            )
+            record_id = self._workspace_authority_transition_id(
+                wire.workspace_id, offer.transition_id
+            )
+            existing = self.store.get("workspace_authority_transition", record_id)
+            if phase == "offer":
+                if source_hash != offer.current_authority_destination:
+                    return False
+                if existing is not None:
+                    if existing.get("offer_digest") != offer.digest:
+                        workspace["state"] = "forked"
+                        workspace["security_error"] = "authority_offer_conflict"
+                        self.store.put("workspace", self._workspace_record_id(wire.workspace_id), workspace)
+                        self._workspace_changed(wire.workspace_id, resource_kind="security")
+                        return False
+                    return True
+                successor = find_device(current, offer.successor_device_id)
+                if successor is None:
+                    return False
+                record = {
+                    "id": record_id,
+                    "workspace_id": wire.workspace_id,
+                    "transition_id": offer.transition_id,
+                    "transition_kind": offer.transition_kind,
+                    "direction": "incoming",
+                    "state": "waiting_for_acceptance",
+                    "base_manifest_epoch": offer.base_manifest_epoch,
+                    "base_manifest_digest": offer.base_manifest_digest,
+                    "current_owner_member_id": offer.current_owner_member_id,
+                    "successor_member_id": offer.successor_member_id,
+                    "successor_device_id": offer.successor_device_id,
+                    "successor_fingerprint": successor[1].fingerprint,
+                    "outgoing_owner_role": None if offer.outgoing_owner_role is None else offer.outgoing_owner_role.value,
+                    "general_disposition": offer.general_disposition,
+                    "general_channel_id": offer.general_channel_id,
+                    "general_channel_head": offer.general_channel_head,
+                    "offer": offer.serialized,
+                    "offer_digest": offer.digest,
+                    "offer_replay_key": offer.replay_key,
+                    "created_at": float(offer.created_at),
+                    "expires_at": float(offer.expires_at),
+                    "updated_at": time.time(),
+                }
+                replay_id = self._workspace_authority_replay_id(
+                    wire.workspace_id, offer.replay_key
+                )
+                replay = self.store.get("workspace_authority_replay", replay_id)
+                if replay is not None and replay.get("digest") != offer.digest:
+                    workspace["state"] = "forked"
+                    workspace["security_error"] = "authority_replay_conflict"
+                    self.store.put("workspace", self._workspace_record_id(wire.workspace_id), workspace)
+                    return False
+                self.store.put_many([
+                    ("workspace_authority_transition", record_id, record),
+                    ("workspace_authority_replay", replay_id, {"workspace_id": wire.workspace_id, "digest": offer.digest, "expires_at": offer.expires_at}),
+                ])
+                self._workspace_changed(wire.workspace_id, resource_kind="authority")
+                return True
+            if phase != "acceptance":
+                return False
+            acceptance = verify_workspace_authority_acceptance(
+                wire.document, manifest=current, general_channel=general
+            )
+            if source_hash != acceptance.offer.successor_destination:
+                return False
+            if existing is None:
+                successor = find_device(current, offer.successor_device_id)
+                if successor is None:
+                    return False
+                record = {
+                    "id": record_id,
+                    "workspace_id": wire.workspace_id,
+                    "transition_id": offer.transition_id,
+                    "transition_kind": offer.transition_kind,
+                    "direction": "incoming",
+                    "base_manifest_epoch": offer.base_manifest_epoch,
+                    "base_manifest_digest": offer.base_manifest_digest,
+                    "current_owner_member_id": offer.current_owner_member_id,
+                    "successor_member_id": offer.successor_member_id,
+                    "successor_device_id": offer.successor_device_id,
+                    "successor_fingerprint": successor[1].fingerprint,
+                    "outgoing_owner_role": None if offer.outgoing_owner_role is None else offer.outgoing_owner_role.value,
+                    "general_disposition": offer.general_disposition,
+                    "general_channel_id": offer.general_channel_id,
+                    "general_channel_head": offer.general_channel_head,
+                    "offer": offer.serialized,
+                    "offer_digest": offer.digest,
+                    "offer_replay_key": offer.replay_key,
+                    "created_at": float(offer.created_at),
+                    "expires_at": float(offer.expires_at),
+                }
+            else:
+                record = dict(existing)
+                if record.get("offer_digest") != offer.digest:
+                    workspace["state"] = "forked"
+                    workspace["security_error"] = "authority_acceptance_conflict"
+                    self.store.put("workspace", self._workspace_record_id(wire.workspace_id), workspace)
+                    return False
+            if record.get("acceptance_digest") not in {None, acceptance.digest}:
+                workspace["state"] = "forked"
+                workspace["security_error"] = "authority_acceptance_conflict"
+                self.store.put("workspace", self._workspace_record_id(wire.workspace_id), workspace)
+                return False
+            record.update({
+                "state": "accepted_waiting_finalization",
+                "acceptance": acceptance.serialized,
+                "acceptance_digest": acceptance.digest,
+                "acceptance_replay_key": acceptance.replay_key,
+                "updated_at": time.time(),
+            })
+            replay_id = self._workspace_authority_replay_id(
+                wire.workspace_id, acceptance.replay_key
+            )
+            replay = self.store.get("workspace_authority_replay", replay_id)
+            if replay is not None and replay.get("digest") != acceptance.digest:
+                workspace["state"] = "forked"
+                workspace["security_error"] = "authority_replay_conflict"
+                self.store.put("workspace", self._workspace_record_id(wire.workspace_id), workspace)
+                return False
+            self.store.put_many([
+                ("workspace_authority_transition", record_id, record),
+                ("workspace_authority_replay", replay_id, {"workspace_id": wire.workspace_id, "digest": acceptance.digest, "expires_at": offer.expires_at}),
+            ])
+            self._workspace_changed(wire.workspace_id, resource_kind="authority")
+            return True
+        except (MeshChatError, json.JSONDecodeError, TypeError):
+            return False
 
     def _receive_workspace_admin_request(self, wire: WorkspaceWirePayload) -> bool:
         workspace = self.store.get("workspace", self._workspace_record_id(wire.workspace_id))
@@ -14441,6 +15382,10 @@ class WorkspaceServiceMixin:
             )
         elif wire.kind == "workspace_admin_request":
             self._receive_workspace_admin_request(wire)
+        elif wire.kind == "workspace_authority_transition":
+            self._receive_workspace_authority_transition(
+                wire, getattr(native, "source_hash", None)
+            )
         elif wire.kind == "workspace_leave_request":
             self._receive_workspace_leave_request(wire)
         elif wire.kind == "workspace_display_name_request":
@@ -14625,6 +15570,21 @@ class WorkspaceServiceMixin:
             "workspace_join_requests": requests,
             "workspace_display_name_requests": name_requests,
             "workspace_admin_requests": admin_requests,
+            "workspace_authority_transitions": [
+                self._public_workspace_authority_transition(record, workspace_by_id)
+                for record in self.store.list("workspace_authority_transition")
+                if (
+                    (workspace_by_id := next(
+                        (
+                            stored
+                            for stored in stored_workspaces
+                            if stored.get("id") == record.get("workspace_id")
+                        ),
+                        None,
+                    ))
+                    is not None
+                )
+            ],
             "workspace_invitations": invitations,
             "workspace_drafts": [
                 visible

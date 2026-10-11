@@ -788,6 +788,263 @@ def run_workspace_admin(binary: Path) -> dict[str, Any]:
         return result
 
 
+def run_workspace_authority(binary: Path) -> dict[str, Any]:
+    """Exercise Increment 13 through two exact packaged sidecars."""
+
+    with tempfile.TemporaryDirectory(prefix="mesh-chat-packaged-authority-") as temporary:
+        root = Path(temporary)
+        owner = PackagedPeer(binary, root / "owner", "Authority Owner")
+        successor = PackagedPeer(binary, root / "successor", "Authority Successor")
+        close_results: list[dict[str, Any]] = []
+        result: dict[str, Any] = {}
+
+        def op() -> str:
+            return str(uuid.uuid4())
+
+        try:
+            invitation, _ = owner.call("create_invitation")
+            successor_contact, _ = successor.call(
+                "accept_invitation", {"invitation": invitation["file"]}
+            )
+            owner_contact = owner.wait_for(
+                lambda snap: _contact(snap, {"pending_request"}),
+                description="packaged authority route request",
+            )
+            owner.call("approve_request", {"contact_id": owner_contact["id"]})
+            successor.wait_for(
+                lambda snap: next(
+                    (
+                        item
+                        for item in snap.get("contacts", [])
+                        if item.get("id") == successor_contact["id"]
+                        and item.get("trust") in {"approved", "verified"}
+                    ),
+                    None,
+                ),
+                description="packaged authority route approval",
+            )
+
+            workspace, _ = owner.call(
+                "create_workspace",
+                {
+                    "name": "Packaged authority",
+                    "description": "Exact 0.2.33 authority flow",
+                    "operation_id": op(),
+                },
+            )
+            workspace_id = workspace["id"]
+            workspace_invitation, _ = owner.call(
+                "create_workspace_invitation",
+                {"workspace_id": workspace_id, "operation_id": op()},
+            )
+            successor.call(
+                "submit_workspace_join",
+                {"invitation": workspace_invitation["text"], "operation_id": op()},
+            )
+            join_request = owner.wait_for(
+                lambda snap: next(
+                    (
+                        item
+                        for item in snap.get("workspace_join_requests", [])
+                        if item.get("workspace_id") == workspace_id
+                        and item.get("state") == "pending"
+                    ),
+                    None,
+                ),
+                description="packaged authority join request",
+            )
+            owner.call(
+                "approve_workspace_join",
+                {
+                    "workspace_id": workspace_id,
+                    "request_id": join_request["id"],
+                    "operation_id": op(),
+                },
+            )
+            joined = successor.wait_for(
+                lambda snap: next(
+                    (
+                        item
+                        for item in snap.get("workspaces", [])
+                        if item.get("id") == workspace_id
+                        and item.get("state") == "active"
+                        and isinstance(item.get("general_channel_id"), str)
+                    ),
+                    None,
+                ),
+                description="packaged authority active workspace",
+            )
+            offered, _ = owner.call(
+                "offer_workspace_authority_transition",
+                {
+                    "workspace_id": workspace_id,
+                    "transition_kind": "ownership_transfer",
+                    "successor_member_id": joined["local_member_id"],
+                    "successor_device_id": joined["local_device_id"],
+                    "outgoing_owner_role": "admin",
+                    "operation_id": op(),
+                },
+            )
+            incoming = successor.wait_for(
+                lambda snap: next(
+                    (
+                        item
+                        for item in snap.get("workspace_authority_transitions", [])
+                        if item.get("id") == offered["id"]
+                        and item.get("state") == "waiting_for_acceptance"
+                    ),
+                    None,
+                ),
+                description="packaged successor-visible authority offer",
+            )
+            successor.call(
+                "accept_workspace_authority_transition",
+                {
+                    "workspace_id": workspace_id,
+                    "transition_id": offered["id"],
+                    "operation_id": op(),
+                },
+            )
+            accepted = owner.wait_for(
+                lambda snap: next(
+                    (
+                        item
+                        for item in snap.get("workspace_authority_transitions", [])
+                        if item.get("id") == offered["id"]
+                        and item.get("state") == "accepted_waiting_finalization"
+                    ),
+                    None,
+                ),
+                description="packaged accepted authority offer",
+            )
+
+            pending_text = f"authority-pending-{uuid.uuid4().hex}"
+            successor.call(
+                "send_workspace_message",
+                {
+                    "workspace_id": workspace_id,
+                    "channel_id": joined["general_channel_id"],
+                    "text": pending_text,
+                    "event_id": op(),
+                    "operation_id": op(),
+                },
+            )
+            pending_chat = owner.wait_for(
+                lambda _snap: next(
+                    (
+                        item
+                        for item in owner.call(
+                            "list_workspace_messages",
+                            {
+                                "workspace_id": workspace_id,
+                                "channel_id": joined["general_channel_id"],
+                                "limit": 50,
+                            },
+                        )[0].get("messages", [])
+                        if item.get("text") == pending_text
+                    ),
+                    None,
+                ),
+                description="packaged chat while authority is pending",
+            )
+            owner.call(
+                "finalize_workspace_authority_transition",
+                {
+                    "workspace_id": workspace_id,
+                    "transition_id": offered["id"],
+                    "operation_id": op(),
+                },
+            )
+            successor_workspace = successor.wait_for(
+                lambda snap: next(
+                    (
+                        item
+                        for item in snap.get("workspaces", [])
+                        if item.get("id") == workspace_id
+                        and item.get("local_role") == "owner"
+                        and item.get("authority_device_id")
+                        == item.get("local_device_id")
+                    ),
+                    None,
+                ),
+                description="packaged successor authority cutover",
+            )
+            former_owner = owner.wait_for(
+                lambda snap: next(
+                    (
+                        item
+                        for item in snap.get("workspaces", [])
+                        if item.get("id") == workspace_id
+                        and item.get("local_role") == "admin"
+                    ),
+                    None,
+                ),
+                description="packaged former-owner demotion",
+            )
+            old_authority_rejected = False
+            try:
+                owner.call(
+                    "update_workspace_metadata",
+                    {
+                        "workspace_id": workspace_id,
+                        "name": "Old authority must fail",
+                        "description": "",
+                        "operation_id": op(),
+                    },
+                )
+            except RuntimeError:
+                old_authority_rejected = True
+            successor.call(
+                "update_workspace_metadata",
+                {
+                    "workspace_id": workspace_id,
+                    "name": "Packaged successor active",
+                    "description": "Post-cutover authority action",
+                    "operation_id": op(),
+                },
+            )
+            converged = owner.wait_for(
+                lambda snap: next(
+                    (
+                        item
+                        for item in snap.get("workspaces", [])
+                        if item.get("id") == workspace_id
+                        and item.get("name") == "Packaged successor active"
+                    ),
+                    None,
+                ),
+                description="packaged successor manifest convergence",
+            )
+            successor_snapshot, _ = successor.call("snapshot")
+            general = next(
+                item
+                for item in successor_snapshot.get("workspace_channels", [])
+                if item.get("id") == successor_workspace["general_channel_id"]
+            )
+            result = {
+                "offer_visible_and_inert": incoming["state"]
+                == "waiting_for_acceptance",
+                "acceptance_visible_and_inert": accepted["state"]
+                == "accepted_waiting_finalization",
+                "pending_chat_converged": pending_chat["text"] == pending_text,
+                "successor_became_owner": successor_workspace["local_role"]
+                == "owner",
+                "former_owner_became_admin": former_owner["local_role"] == "admin",
+                "old_authority_rejected": old_authority_rejected,
+                "successor_manifest_converged": converged["name"]
+                == "Packaged successor active",
+                "general_manageable_by_successor": general["manager_device_id"]
+                == successor_workspace["local_device_id"],
+            }
+        finally:
+            close_results.extend([successor.close(), owner.close()])
+        result["clean_shutdown"] = all(item["clean"] for item in close_results)
+        result["stderr_content_free"] = all(
+            item["stderr_content_free"] for item in close_results
+        )
+        return result
+
+
 def run_mixed(current_binary: Path, legacy_binary: Path) -> dict[str, Any]:
     """Exercise the 0.2.10/0.2.9 direct-chat compatibility boundary.
 

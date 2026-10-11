@@ -10,6 +10,7 @@ from tools.packaged_direct_harness import (
     run,
     run_mixed,
     run_workspace_admin,
+    run_workspace_authority,
 )
 
 
@@ -94,6 +95,16 @@ def test_exact_packaged_sidecar_workspace_administrator_flow() -> None:
     assert result["demotion_request_audited"] is True
     assert result["clean_shutdown"] is True
     assert result["stderr_content_free"] is True
+
+
+@pytest.mark.skipif(
+    not PACKAGED_BINARY,
+    reason="Set MESH_CHAT_PACKAGED_SIDECAR to the exact release sidecar",
+)
+def test_exact_packaged_sidecar_workspace_authority_flow() -> None:
+    result = run_workspace_authority(Path(PACKAGED_BINARY).resolve())
+
+    assert all(result.values())
 
 
 @pytest.mark.skipif(

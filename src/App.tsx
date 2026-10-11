@@ -73,6 +73,7 @@ import type {
   Snapshot,
   Workspace,
   WorkspaceAdminRequest,
+  WorkspaceAuthorityTransition,
   WorkspaceChannel,
   WorkspaceChannelTransfer,
   WorkspaceDisplayNameRequest,
@@ -1878,6 +1879,42 @@ function WorkspacePeopleDialog({ workspace, requests, adminRequests, busy, error
   </div></Dialog>;
 }
 
+function WorkspaceAuthorityPanel({ workspace, transitions, busy, onOffer, onAccept, onFinalize, onReportLoss }: { workspace: Workspace; transitions: WorkspaceAuthorityTransition[]; busy: boolean; onOffer: (kind: "same_owner_rotation" | "ownership_transfer", memberId: string, deviceId: string, outgoingRole: "admin" | "member" | null) => void; onAccept: (transitionId: string) => void; onFinalize: (transitionId: string) => void; onReportLoss: () => void }) {
+  const [kind, setKind] = useState<"same_owner_rotation" | "ownership_transfer">("ownership_transfer");
+  const [successorKey, setSuccessorKey] = useState("");
+  const [outgoingRole, setOutgoingRole] = useState<"admin" | "member">("admin");
+  const [confirmed, setConfirmed] = useState(false);
+  const [lossConfirm, setLossConfirm] = useState(false);
+  const [reviewingTransition, setReviewingTransition] = useState<WorkspaceAuthorityTransition | null>(null);
+  const owner = workspace.members.find((member) => member.id === workspace.owner_member_id);
+  const candidates = workspace.members.flatMap((member) => (member.devices ?? [member.device]).filter((device) => device.id !== workspace.authority_device_id && member.status === "active" && (kind === "same_owner_rotation" ? member.id === workspace.owner_member_id : member.id !== workspace.owner_member_id)).map((device) => ({ member, device, key: `${member.id}:${device.id}` })));
+  const selected = candidates.find((candidate) => candidate.key === successorKey);
+  const stateLabel = (transition: WorkspaceAuthorityTransition) => ({
+    waiting_for_delivery: "Offer saved · waiting for successor delivery",
+    waiting_for_acceptance: transition.delivery_state === "received_by_endpoint" ? "Delivered · not yet accepted" : "Waiting for the named successor's acceptance",
+    accepted_waiting_finalization: "Accepted · current authority must finalize",
+    finalizing: "Final manifest and #general control are committing",
+    applied: "Applied",
+    expired: "Expired without changing authority",
+    stale: "Stale because the base manifest changed",
+    superseded: "Superseded",
+    cancelled: "Cancelled before handoff",
+    incomplete_control_state: "Incomplete control state · no authority change applied",
+    forked: "Security conflict · workspace suspended",
+  })[transition.state];
+  return <section className="workspace-name-requests" aria-labelledby="workspace-authority-heading"><h3 id="workspace-authority-heading">Authority continuity</h3><p className="muted">Workspace owner: <strong>{owner?.display_name ?? "Owner"}</strong>. Current authority device: <strong>{owner?.devices?.find((device) => device.id === workspace.authority_device_id)?.fingerprint ?? owner?.device.fingerprint ?? "Unavailable"}</strong>. Offers and acceptances do not change effective authority; only the final manifest does.</p>
+    {workspace.authority_loss && <p className="form-error" role="alert">Authority-dependent administration is permanently frozen on this workspace. Authorized chat remains usable. Create a replacement workspace and re-invite members; Mesh Chat cannot recover or clone the lost key.</p>}
+    {workspace.state === "active" && workspace.local_role === "owner" && workspace.local_device_id === workspace.authority_device_id && !workspace.authority_loss && <form className="form-stack" onSubmit={(event) => { event.preventDefault(); if (selected && (kind === "same_owner_rotation" || confirmed)) onOffer(kind, selected.member.id, selected.device.id, kind === "ownership_transfer" ? outgoingRole : null); }}><label>Transition type<select value={kind} onChange={(event) => { setKind(event.target.value as typeof kind); setSuccessorKey(""); setConfirmed(false); }}><option value="ownership_transfer">Transfer workspace ownership</option><option value="same_owner_rotation">Rotate to another admitted owner device</option></select></label><label>Exact successor member and device<select aria-label="Authority successor device" value={successorKey} onChange={(event) => setSuccessorKey(event.target.value)}><option value="">Choose an active admitted device</option>{candidates.map((candidate) => <option key={candidate.key} value={candidate.key}>{candidate.member.display_name} · {candidate.device.fingerprint}</option>)}</select></label>{kind === "ownership_transfer" && <><label>Outgoing owner's resulting role<select value={outgoingRole} onChange={(event) => setOutgoingRole(event.target.value as typeof outgoingRole)}><option value="admin">Administrator</option><option value="member">Member</option></select></label><label className="checkbox-line"><input type="checkbox" checked={confirmed} onChange={(event) => setConfirmed(event.target.checked)} /> I understand this changes the sole workspace owner and manifest authority, explicitly recovers #general management to the successor, and requires this authority device to remain available through finalization.</label></>}<Button variant={kind === "ownership_transfer" ? "danger" : "secondary"} disabled={busy || !selected || (kind === "ownership_transfer" && !confirmed)}>{kind === "ownership_transfer" ? "Offer ownership transfer" : "Offer authority rotation"}</Button>{candidates.length === 0 && <p className="muted">No eligible already admitted device exists. Device linking and replacement are not part of this release.</p>}</form>}
+    {transitions.length > 0 && <div aria-live="polite">{transitions.map((transition) => <div className="workspace-invitation-row" key={transition.id}><span><strong>{transition.transition_kind === "ownership_transfer" ? "Ownership transfer" : "Authority rotation"} · {transition.successor_display_name}</strong><small>{stateLabel(transition)}</small>{transition.transition_kind === "ownership_transfer" && <small>Outgoing owner becomes {transition.outgoing_owner_role}. #general: explicit authority recovery.</small>}</span><span>{transition.direction === "incoming" && transition.state === "waiting_for_acceptance" && workspace.local_device_id === workspace.members.find((member) => member.id === transition.successor_member_id)?.devices?.find((device) => device.fingerprint === transition.successor_fingerprint)?.id && <Button disabled={busy} onClick={() => setReviewingTransition(transition)}>Review and accept</Button>}{transition.direction === "outgoing" && transition.state === "accepted_waiting_finalization" && workspace.local_device_id === workspace.authority_device_id && <Button variant="danger" disabled={busy} onClick={() => onFinalize(transition.id)}>Finalize authority change</Button>}</span></div>)}</div>}
+    {reviewingTransition && <div className="group-confirm" role="alertdialog" aria-label="Accept authority transition"><p><strong>Accept {reviewingTransition.transition_kind === "ownership_transfer" ? "workspace ownership" : "authority rotation"}?</strong><span>Workspace: {workspace.name}. Current owner: {owner?.display_name ?? "Owner"}. Named successor: {reviewingTransition.successor_display_name} · {reviewingTransition.successor_fingerprint}. Acceptance records consent but changes no effective owner or authority until the current authority publishes the final manifest.</span>{reviewingTransition.transition_kind === "ownership_transfer" && <span>You will become the sole owner and authority only after finalization; the outgoing owner becomes {reviewingTransition.outgoing_owner_role}, and #general management is recovered to this device.</span>}<span>Confirm the current workspace state and fingerprint before accepting.</span></p><div><Button variant="ghost" disabled={busy} onClick={() => setReviewingTransition(null)}>Cancel</Button><Button variant="danger" disabled={busy} onClick={() => { onAccept(reviewingTransition.id); setReviewingTransition(null); }}>Accept exact offer</Button></div></div>}
+    {!workspace.authority_loss && workspace.local_role === "owner" && workspace.local_device_id === workspace.authority_device_id && <div className="danger-zone"><h3>Current authority key unavailable</h3><p>Reporting permanent loss does not recover authority. It freezes authority-dependent administration while ordinary authorized chat can continue.</p>{lossConfirm ? <div className="dialog-actions"><Button variant="ghost" onClick={() => setLossConfirm(false)}>Cancel</Button><Button variant="danger" disabled={busy} onClick={onReportLoss}>Confirm permanent authority loss</Button></div> : <Button variant="ghost" onClick={() => setLossConfirm(true)}>Report authority loss…</Button>}</div>}
+  </section>;
+}
+
+function WorkspaceAuthorityDialog({ workspace, transitions, busy, error, onClose, onOffer, onAccept, onFinalize, onReportLoss }: { workspace: Workspace; transitions: WorkspaceAuthorityTransition[]; busy: boolean; error: string; onClose: () => void; onOffer: (kind: "same_owner_rotation" | "ownership_transfer", memberId: string, deviceId: string, outgoingRole: "admin" | "member" | null) => void; onAccept: (transitionId: string) => void; onFinalize: (transitionId: string) => void; onReportLoss: () => void }) {
+  return <Dialog title={`Authority continuity · ${workspace.name}`} onClose={onClose}><div className="form-stack"><WorkspaceAuthorityPanel workspace={workspace} transitions={transitions} busy={busy} onOffer={onOffer} onAccept={onAccept} onFinalize={onFinalize} onReportLoss={onReportLoss} />{error && <p className="form-error" role="alert">{error}</p>}</div></Dialog>;
+}
+
 function WorkspaceSettingsDialog({ workspace, networkSettings, busy, error, onClose, onUpdateMetadata, onUpdatePolicies, onApprovePropagationNode, onCloseWorkspace, onLeave, onRemove }: { workspace: Workspace; networkSettings: NetworkSettings; busy: boolean; error: string; onClose: () => void; onUpdateMetadata: (name: string, description: string) => void; onUpdatePolicies: (channelCreation: "all_members" | "owner_and_admins", posting: "all_members" | "owner_and_admins") => void; onApprovePropagationNode: (node: string) => void; onCloseWorkspace: () => void; onLeave: () => void; onRemove: (confirmation: string) => void }) {
   const [confirmingClose, setConfirmingClose] = useState(false);
   const [confirmingRemove, setConfirmingRemove] = useState(false);
@@ -2322,6 +2359,7 @@ function Messenger({ snapshot, refresh, workspaceChannelInvalidation, onLock, in
   const workspaceJoinRequests = snapshot.workspace_join_requests ?? [];
   const workspaceDisplayNameRequests = snapshot.workspace_display_name_requests ?? [];
   const workspaceAdminRequests = snapshot.workspace_admin_requests ?? [];
+  const workspaceAuthorityTransitions = snapshot.workspace_authority_transitions ?? [];
   const workspaceInvitations = snapshot.workspace_invitations ?? [];
   const hiddenConversationKeys = new Set((snapshot.hidden_conversations ?? []).map((item) => `${item.kind}:${item.id}`));
   const [selection, setSelection] = useState<ConversationSelection>(() => {
@@ -2344,6 +2382,7 @@ function Messenger({ snapshot, refresh, workspaceChannelInvalidation, onLock, in
   const [joinWorkspaceOpen, setJoinWorkspaceOpen] = useState(false);
   const [inviteWorkspaceOpen, setInviteWorkspaceOpen] = useState(false);
   const [workspacePeopleOpen, setWorkspacePeopleOpen] = useState(false);
+  const [workspaceAuthorityOpen, setWorkspaceAuthorityOpen] = useState(false);
   const [workspaceSettingsOpen, setWorkspaceSettingsOpen] = useState(false);
   const [workspaceRetentionOpen, setWorkspaceRetentionOpen] = useState(false);
   const [workspaceBrowseOpen, setWorkspaceBrowseOpen] = useState(false);
@@ -3060,6 +3099,10 @@ function Messenger({ snapshot, refresh, workspaceChannelInvalidation, onLock, in
       | "decline_workspace_admin_request"
       | "cancel_workspace_admin_request"
       | "dismiss_workspace_admin_request"
+      | "offer_workspace_authority_transition"
+      | "accept_workspace_authority_transition"
+      | "finalize_workspace_authority_transition"
+      | "report_workspace_authority_loss"
       | "request_workspace_display_name"
       | "decide_workspace_display_name",
     payload: Record<string, unknown>,
@@ -3612,6 +3655,7 @@ function Messenger({ snapshot, refresh, workspaceChannelInvalidation, onLock, in
             {selectedWorkspaceDirects.length === 0 && <p className="workspace-direct-empty">Start a private workspace chat from People.</p>}
             <p className="workspace-nav__label">Workspace</p>
             <button className="workspace-nav-action" onClick={() => setWorkspacePeopleOpen(true)} aria-label={`People and administration${selectedWorkspace.pending_owner_review_count ? `, ${selectedWorkspace.pending_owner_review_count} requests waiting` : ""}`}><Users size={17} />People <span>{selectedWorkspace.pending_owner_review_count || selectedWorkspace.members.filter((member) => member.status === "active").length}</span></button>
+            <button className="workspace-nav-action" onClick={() => setWorkspaceAuthorityOpen(true)} aria-label="Authority continuity"><ShieldCheck size={17} />Authority <span>{workspaceAuthorityTransitions.filter((item) => item.workspace_id === selectedWorkspace.id && !["applied", "expired", "stale", "superseded", "cancelled"].includes(item.state)).length || ""}</span></button>
             {selectedWorkspace.local_role === "owner" && selectedWorkspace.state === "active" && selectedWorkspace.members.filter((member) => member.status === "active").length < 8 && <button className="workspace-nav-action" onClick={() => setInviteWorkspaceOpen(true)}><UserRoundPlus size={17} />Invite people</button>}
             <button className="workspace-nav-action" onClick={() => setWorkspaceRetentionOpen(true)}><Clock3 size={17} />History &amp; retention</button>
             <button className="workspace-nav-action" onClick={() => setWorkspaceSettingsOpen(true)}><Settings size={17} />Workspace settings</button>
@@ -3810,6 +3854,7 @@ function Messenger({ snapshot, refresh, workspaceChannelInvalidation, onLock, in
         onDismissAdminRequest={(requestId) => void runWorkspaceAdministration("dismiss_workspace_admin_request", { request_id: requestId })}
         onMessage={(memberId) => void openWorkspaceDirect(memberId)}
       />}
+      {selectedWorkspace && workspaceAuthorityOpen && <WorkspaceAuthorityDialog workspace={selectedWorkspace} transitions={workspaceAuthorityTransitions.filter((item) => item.workspace_id === selectedWorkspace.id)} busy={workspaceActionBusy} error={workspaceActionError} onClose={() => setWorkspaceAuthorityOpen(false)} onOffer={(transitionKind, successorMemberId, successorDeviceId, outgoingOwnerRole) => void runWorkspaceAdministration("offer_workspace_authority_transition", { transition_kind: transitionKind, successor_member_id: successorMemberId, successor_device_id: successorDeviceId, outgoing_owner_role: outgoingOwnerRole })} onAccept={(transitionId) => void runWorkspaceAdministration("accept_workspace_authority_transition", { transition_id: transitionId })} onFinalize={(transitionId) => void runWorkspaceAdministration("finalize_workspace_authority_transition", { transition_id: transitionId })} onReportLoss={() => void runWorkspaceAdministration("report_workspace_authority_loss", {})} />}
       {selectedWorkspace && workspaceSettingsOpen && <WorkspaceSettingsDialog workspace={selectedWorkspace} networkSettings={snapshot.settings} busy={workspaceActionBusy} error={workspaceActionError} onClose={() => setWorkspaceSettingsOpen(false)} onUpdateMetadata={(name, description) => void runWorkspaceAdministration("update_workspace_metadata", { name, description })} onUpdatePolicies={(channelCreation, posting) => void runWorkspaceAdministration("update_workspace_policies", { channel_creation: channelCreation, posting })} onApprovePropagationNode={(node) => void approveWorkspacePropagationNode(node)} onCloseWorkspace={() => void runWorkspaceLifecycle("close_workspace")} onLeave={() => void runWorkspaceLifecycle("leave_workspace")} onRemove={(confirmation) => void runWorkspaceLifecycle("remove_workspace_data", confirmation)} />}
       {selectedWorkspace && workspaceRetentionOpen && <WorkspaceRetentionDialog workspace={selectedWorkspace} conversationId={selectedWorkspaceConversation?.id} conversationName={selectedWorkspaceDirect?.peer_display_name ?? selectedWorkspaceChannel?.display_name ?? selectedWorkspaceChannel?.name} busy={workspaceActionBusy} error={workspaceActionError} onClose={() => setWorkspaceRetentionOpen(false)} onUpdate={(retentionDays) => void runWorkspaceAdministration("update_workspace_retention", { retention_days: retentionDays })} onPrune={pruneWorkspaceHistory} />}
       {newChat && <div className={hasForegroundRequest ? "dialog-suspended" : ""} aria-hidden={hasForegroundRequest ? true : undefined}><NewChatDialog initialInvitation={initialInvitation} onClose={() => { setNewChat(false); onInvitationHandled(); }} onChanged={async () => { await refresh(true); }} /></div>}

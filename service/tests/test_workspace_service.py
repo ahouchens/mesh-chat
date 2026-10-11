@@ -29,6 +29,7 @@ from mesh_chat.workspace_protocol import (
     create_workspace_mutation_event,
     verify_workspace_genesis,
     verify_workspace_admin_request,
+    verify_workspace_manifest,
 )
 from mesh_chat.workspace_wire import WorkspaceWirePayload, parse_workspace_payload
 from mesh_chat.workspace_service import (
@@ -3746,6 +3747,239 @@ def test_administrator_offline_channels_and_owner_approved_invitation(
         )
     owner.close()
     admin.close()
+
+
+def test_workspace_ownership_transfer_requires_acceptance_and_converges(
+    tmp_path: Path,
+) -> None:
+    (
+        owner,
+        owner_network,
+        owner_profile,
+        successor,
+        successor_network,
+        successor_profile,
+        created,
+        _successor_key,
+        _successor_identity,
+    ) = _joined_pair(tmp_path / "authority-transfer", base=150_000)
+    workspace_id = created["id"]
+    successor_workspace = successor._require_workspace(workspace_id)
+    successor_member_id = successor_workspace["local_member_id"]
+    successor_device_id = successor_workspace["local_device_id"]
+
+    offered = owner.offer_workspace_authority_transition(
+        workspace_id,
+        "ownership_transfer",
+        successor_member_id,
+        successor_device_id,
+        "admin",
+        _op(150_010),
+    )
+    assert owner._require_workspace(workspace_id)["local_role"] == "owner"
+    _deliver_all(
+        successor,
+        _flush(owner, owner_network),
+        source_profile=owner_profile,
+        recipient_profile=successor_profile,
+    )
+    incoming = successor.list_workspace_authority_transitions(workspace_id)[
+        "transitions"
+    ][0]
+    assert incoming["state"] == "waiting_for_acceptance"
+    successor.accept_workspace_authority_transition(
+        workspace_id, offered["id"], _op(150_011)
+    )
+    assert successor._require_workspace(workspace_id)["local_role"] == "member"
+    _deliver_all(
+        owner,
+        _flush(successor, successor_network),
+        source_profile=successor_profile,
+        recipient_profile=owner_profile,
+    )
+    accepted = owner.list_workspace_authority_transitions(workspace_id)[
+        "transitions"
+    ][0]
+    assert accepted["state"] == "accepted_waiting_finalization"
+
+    owner.finalize_workspace_authority_transition(
+        workspace_id, offered["id"], _op(150_012)
+    )
+    owner_state = owner._require_workspace(workspace_id)
+    assert owner_state["local_role"] == "admin"
+    assert owner_state["authority_device_id"] == successor_device_id
+    packets = _flush(owner, owner_network)
+    _deliver_all(
+        successor,
+        packets,
+        source_profile=owner_profile,
+        recipient_profile=successor_profile,
+    )
+    successor_state = successor._require_workspace(workspace_id)
+    assert successor_state["local_role"] == "owner"
+    assert successor_state["authority_device_id"] == successor_device_id
+    general = successor._require_workspace_channel(
+        workspace_id, successor_state["general_channel_id"]
+    )
+    assert general["manager_device_id"] == successor_device_id
+    assert len(successor_state["authority_chain"]) == 1
+    owner.close()
+    successor.close()
+
+
+def test_workspace_same_owner_rotation_uses_exact_admitted_device(
+    tmp_path: Path,
+) -> None:
+    original_identity = RNS.Identity()
+    successor_identity = RNS.Identity()
+    service, _network = _service(
+        tmp_path / "same-owner-rotation", original_identity, "Alex"
+    )
+    created = service.create_workspace(_op(150_050), "Rotating authority", "")
+    workspace_id = created["id"]
+    workspace = dict(service._require_workspace(workspace_id))
+    current = service._workspace_current_manifest(workspace)
+    owner = next(member for member in current.members if member.role.value == "owner")
+    successor_device_id = _op(150_051)
+    successor_card = create_workspace_device_card(
+        successor_identity,
+        workspace_id=workspace_id,
+        member_id=owner.member_id,
+        device_id=successor_device_id,
+        display_name=owner.display_name,
+    )
+    seeded_raw = create_workspace_manifest(
+        original_identity,
+        workspace_id=workspace_id,
+        epoch=current.epoch + 1,
+        previous_manifest_hash=current.digest,
+        name=current.name,
+        description=current.description,
+        authority_device_id=current.authority_device_id,
+        members=[
+            WorkspaceManifestMemberInput(
+                member.member_id,
+                member.display_name,
+                member.role,
+                [device.serialized for device in member.devices]
+                + ([successor_card] if member.member_id == owner.member_id else []),
+                member.status,
+            )
+            for member in current.members
+        ],
+        status=current.status,
+        retention_days=current.retention_days,
+        channel_creation=current.channel_creation,
+        posting=current.posting,
+        invitation_requests=current.invitation_requests,
+        removal_checkpoint_digests=current.removal_checkpoint_digests,
+    )
+    seeded = verify_workspace_manifest(
+        seeded_raw,
+        expected_workspace_id=workspace_id,
+        expected_epoch=current.epoch + 1,
+        expected_previous_hash=current.digest,
+        expected_authority_destination=current.authority_destination,
+    )
+    service._apply_manifest_to_workspace(workspace, seeded)
+    service._apply_manifest_public_identities(workspace, seeded)
+    service.store.put_many(
+        [
+            ("workspace", service._workspace_record_id(workspace_id), workspace),
+            (
+                "workspace_manifest",
+                service._workspace_manifest_record_id(seeded.digest),
+                service._manifest_record(seeded),
+            ),
+            service._manifest_epoch_record(seeded),
+        ]
+    )
+
+    offered = service.offer_workspace_authority_transition(
+        workspace_id,
+        "same_owner_rotation",
+        owner.member_id,
+        successor_device_id,
+        None,
+        _op(150_052),
+    )
+    assert service._require_workspace(workspace_id)["authority_device_id"] == (
+        current.authority_device_id
+    )
+
+    successor_workspace = dict(service._require_workspace(workspace_id))
+    successor_workspace["local_device_id"] = successor_device_id
+    service.store.put(
+        "workspace", service._workspace_record_id(workspace_id), successor_workspace
+    )
+    service._identity = successor_identity
+    accepted = service.accept_workspace_authority_transition(
+        workspace_id, offered["id"], _op(150_053)
+    )
+    assert accepted["state"] == "accepted_waiting_finalization"
+    assert service._require_workspace(workspace_id)["authority_device_id"] == (
+        current.authority_device_id
+    )
+
+    authority_workspace = dict(service._require_workspace(workspace_id))
+    authority_workspace["local_device_id"] = current.authority_device_id
+    service.store.put(
+        "workspace", service._workspace_record_id(workspace_id), authority_workspace
+    )
+    service._identity = original_identity
+    finalized = service.finalize_workspace_authority_transition(
+        workspace_id, offered["id"], _op(150_054)
+    )
+    assert finalized["state"] == "applied"
+    assert service._require_workspace(workspace_id)["authority_device_id"] == (
+        successor_device_id
+    )
+    with pytest.raises((ContactNotApproved, IdentityMismatch)):
+        service.update_workspace_metadata(
+            workspace_id, "Old authority rejected", "", _op(150_055)
+        )
+
+    successor_workspace = dict(service._require_workspace(workspace_id))
+    successor_workspace["local_device_id"] = successor_device_id
+    service.store.put(
+        "workspace", service._workspace_record_id(workspace_id), successor_workspace
+    )
+    service._identity = successor_identity
+    updated = service.update_workspace_metadata(
+        workspace_id, "Successor authority", "", _op(150_056)
+    )
+    assert updated["name"] == "Successor authority"
+    assert service._workspace_current_manifest(
+        service._require_workspace(workspace_id)
+    ).authority_device_id == successor_device_id
+    service.close()
+
+
+def test_permanent_authority_loss_freezes_administration_but_not_chat(
+    tmp_path: Path,
+) -> None:
+    service, _network = _service(tmp_path / "authority-loss", RNS.Identity(), "Alex")
+    created = service.create_workspace(_op(150_100), "Frozen authority", "")
+    workspace_id = created["id"]
+
+    frozen = service.report_workspace_authority_loss(workspace_id, _op(150_101))
+    assert frozen["authority_loss"] is True
+    assert frozen["authority_administration_state"] == "permanently_frozen"
+    message = service.send_workspace_message(
+        workspace_id,
+        created["general_channel_id"],
+        "Ordinary authorized chat still works.",
+        _op(150_102),
+        _op(150_103),
+    )
+    assert message["text"] == "Ordinary authorized chat still works."
+    with pytest.raises(ContactNotApproved, match="permanently frozen"):
+        service.update_workspace_metadata(
+            workspace_id, "Must not change", "", _op(150_104)
+        )
+    with pytest.raises(ContactNotApproved, match="permanently frozen"):
+        service.create_workspace_invitation_command(workspace_id, _op(150_105))
+    service.close()
 
 
 def test_administrative_request_lifecycle_permissions_and_conflict_fail_closed(

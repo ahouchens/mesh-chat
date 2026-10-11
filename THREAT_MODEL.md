@@ -239,6 +239,39 @@
   jobs. Thus older payload-v1 peers may reject reaction kinds without causing
   ordinary chats to fail or seven days of reaction retries.
 
+## Authority-continuity threats
+
+- Compromise of the current authority permits valid malicious offers and other
+  owner actions. It does not permit silent transfer: the exact successor must
+  countersign, and the final manifest remains auditable. A coerced successor or
+  compromised named successor can accept; out-of-band fingerprint review and
+  the explicit destructive confirmation reduce phishing but cannot prove free
+  consent.
+- Offers, acceptances and results bind workspace, transition, base manifest,
+  both identities/destinations, consequences, nonce, replay key and expiry.
+  Cross-workspace grafts, successor substitution, replay and a successor-only
+  premature manifest fail closed. Native direct sender and inner signer must
+  agree; an authorized forwarder never becomes an author.
+- A certificate chain starts at pinned genesis and validates each old-authority
+  offer, successor acceptance, final cutover and required `#general` result.
+  Missing, reordered, duplicated, truncated or conflicting steps are rejected.
+  The verifier never obtains private-channel or third-party DM data as part of
+  bootstrap.
+- After cutover, the old device remains only an admitted ordinary device of the
+  outgoing member and cannot sign a later manifest. Partition-delayed peers may
+  continue under the last verified epoch, but converge only through the complete
+  proof. Two valid manifests for one epoch or authority equivocation suspend the
+  workspace; timestamps, first arrival, routes, majorities and local preference
+  never select a branch.
+- Sealed HMAC-addressed transition, replay, delivery and certificate records
+  limit SQLite leakage to generic kinds, ciphertext sizes/counts and timing.
+  An unlocked compromised endpoint can read everything that endpoint is
+  authorized to read and can correlate its own operations.
+- Permanent loss of the current authority key is different from continuity.
+  It freezes authority-dependent administration while ordinary authorized chat
+  can continue. Replacement-workspace guidance does not clone keys, vote,
+  recover automatically, select a fork, or import unverified state.
+
 ## Metadata that remains observable
 
 Depending on configured interfaces, observers may learn local discovery presence, destination identifiers, IP endpoints, packet size/timing, and route activity. Propagation nodes necessarily retain encrypted objects plus routing/queue metadata. Pairwise group fan-out creates correlated timing and volume that may approximate group activity or size. Signed member cards may disclose up to two validated direct TCP hints to authorized group participants; they are transported inside recipient-encrypted group controls, not published in announces. Mesh Chat does not claim anonymity.
@@ -269,15 +302,15 @@ Depending on configured interfaces, observers may learn local discovery presence
   after permanent owner-key loss, a globally ordered group timeline, public or
   large channels, discoverable groups, anonymous membership, selective history
   sharing, or safe multi-owner membership editing.
-- Guaranteed complete peer history, remote search, linked devices, authority
-  transfer, and mobile workspace use. Increment 11 can recover only exact
+- Guaranteed complete peer history, remote search, linked-device enrollment,
+  automatic authority recovery, and mobile workspace use. Increment 11 can recover only exact
   authorized bodies still retained by reachable peers. A peer can withhold,
   prune, disappear, or lie about its head; the result is uncertainty or gaps,
   not a global completeness claim. Search queries remain strictly local.
 - Immediate administrator demotion or removal across a partition, prevention of
-  mistaken owner approval, or recovery after permanent owner-authority loss.
-  Peers enforce the newest verified state they have and converge when controls
-  arrive; authority continuity remains Increment 13.
+  mistaken owner/successor approval, or recovery after permanent
+  owner-authority loss. Peers enforce the newest complete verified state they
+  have and suspend rather than choosing an authority fork.
 - NAT hole punching, mobile push, Bluetooth, LoRa, attachments, multi-device identity cloning, and cloud backup.
 
 ## Open security blockers
