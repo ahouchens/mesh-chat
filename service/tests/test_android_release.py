@@ -124,3 +124,32 @@ def test_checked_in_release_configuration_requires_external_secrets() -> None:
     assert "publish_android_release" in builder
     assert not list(root.glob("**/*.jks"))
     assert not list(root.glob("**/*.keystore"))
+
+
+def test_android_build_template_preserves_the_native_theme_bootstrap() -> None:
+    root = Path(__file__).resolve().parents[2]
+    builder = (root / "scripts" / "build_android.py").read_text(encoding="utf-8")
+    activity = (
+        root
+        / "src-tauri"
+        / "gen"
+        / "android"
+        / "app"
+        / "src"
+        / "main"
+        / "java"
+        / "com"
+        / "meshchat"
+        / "mobile"
+        / "MainActivity.kt"
+    ).read_text(encoding="utf-8")
+
+    for snippet in (
+        'private const val THEME_PREFERENCES = "mesh-chat-vault"',
+        'private const val UI_THEME = "ui-theme"',
+        'getString(UI_THEME, "dark")',
+        "R.style.Theme_mesh_chat_Light",
+        "applyStoredTheme()",
+    ):
+        assert snippet in builder
+        assert snippet in activity
