@@ -35,6 +35,20 @@ impl<R: Runtime> MeshRuntime<R> {
         Ok(self.0.run_mobile_plugin("drainEvents", ())?)
     }
 
+    pub fn notification_capability(&self) -> Result<NativeResponse> {
+        Ok(self.0.run_mobile_plugin("notificationCapability", ())?)
+    }
+
+    pub fn request_notification_permission(&self) -> Result<NativeResponse> {
+        Ok(self
+            .0
+            .run_mobile_plugin("requestNotificationPermission", ())?)
+    }
+
+    pub fn open_notification_settings(&self) -> Result<NativeResponse> {
+        Ok(self.0.run_mobile_plugin("openNotificationSettings", ())?)
+    }
+
     pub fn shutdown(&self) -> Result<NativeResponse> {
         Ok(self.0.run_mobile_plugin("shutdown", ())?)
     }

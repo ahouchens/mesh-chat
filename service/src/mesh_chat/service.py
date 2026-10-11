@@ -219,6 +219,17 @@ class MeshChatService(ReactionServiceMixin, GroupServiceMixin, WorkspaceServiceM
         "mark_workspace_mentions_read",
         "mark_workspace_thread_read",
         "set_workspace_channel_mentions_muted",
+        "get_notification_state",
+        "set_hide_notification_previews",
+        "set_workspace_notification_preference",
+        "open_notification_target",
+        "reconcile_mobile_lifecycle",
+        # Native-only mobile bridge commands. Rust never exposes these names
+        # through the renderer allowlist.
+        "native_notification_state",
+        "mobile_lifecycle_transition",
+        "drain_native_notification_work",
+        "acknowledge_native_notification",
         "hide_workspace_message",
         "save_workspace_draft",
         "save_workspace_direct_draft",
@@ -246,6 +257,13 @@ class MeshChatService(ReactionServiceMixin, GroupServiceMixin, WorkspaceServiceM
         "list_workspace_thread_messages",
         "list_workspace_message_revisions",
         "list_workspace_tombstones",
+        "get_notification_state",
+        "open_notification_target",
+        "reconcile_mobile_lifecycle",
+        "native_notification_state",
+        "mobile_lifecycle_transition",
+        "drain_native_notification_work",
+        "acknowledge_native_notification",
     }
 
     def __init__(self, store: VaultStore, profile_dir: Path, emit: EventCallback):
@@ -2624,6 +2642,77 @@ class MeshChatService(ReactionServiceMixin, GroupServiceMixin, WorkspaceServiceM
                 body["channel_id"],
                 body["muted"],
                 body["operation_id"],
+            )
+        if command == "get_notification_state":
+            _payload(value, allowed=set())
+            return self.notification_state()
+        if command == "set_hide_notification_previews":
+            body = _payload(
+                value,
+                allowed={"operation_id", "hidden"},
+                required={"operation_id", "hidden"},
+            )
+            return self.set_hide_notification_previews(
+                body["hidden"], body["operation_id"]
+            )
+        if command == "set_workspace_notification_preference":
+            body = _payload(
+                value,
+                allowed={
+                    "operation_id",
+                    "workspace_id",
+                    "conversation_id",
+                    "mode",
+                },
+                required={"operation_id", "workspace_id", "mode"},
+            )
+            return self.set_workspace_notification_preference(
+                body["workspace_id"],
+                body.get("conversation_id"),
+                body["mode"],
+                body["operation_id"],
+            )
+        if command == "open_notification_target":
+            body = _payload(
+                value,
+                allowed={"notification_id"},
+                required={"notification_id"},
+            )
+            return self.open_notification_target(body["notification_id"])
+        if command == "reconcile_mobile_lifecycle":
+            _payload(value, allowed=set())
+            return self.mobile_lifecycle_transition(
+                "foreground", "renderer_recovery"
+            )
+        if command == "native_notification_state":
+            body = _payload(
+                value,
+                allowed={"platform", "supported", "permission_state"},
+                required={"platform", "supported", "permission_state"},
+            )
+            return self.set_native_notification_state(
+                body["platform"], body["supported"], body["permission_state"]
+            )
+        if command == "mobile_lifecycle_transition":
+            body = _payload(
+                value,
+                allowed={"state", "reason"},
+                required={"state"},
+            )
+            return self.mobile_lifecycle_transition(
+                body["state"], body.get("reason")
+            )
+        if command == "drain_native_notification_work":
+            body = _payload(value, allowed={"limit"})
+            return self.drain_native_notification_work(body.get("limit", 16))
+        if command == "acknowledge_native_notification":
+            body = _payload(
+                value,
+                allowed={"notification_id", "outcome"},
+                required={"notification_id", "outcome"},
+            )
+            return self.acknowledge_native_notification(
+                body["notification_id"], body["outcome"]
             )
         if command == "hide_workspace_message":
             body = _payload(

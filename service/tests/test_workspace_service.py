@@ -34,6 +34,7 @@ from mesh_chat.workspace_protocol import (
 from mesh_chat.workspace_wire import WorkspaceWirePayload, parse_workspace_payload
 from mesh_chat.workspace_service import (
     normalize_workspace_search_text,
+    sanitize_notification_text,
     tokenize_workspace_search_text,
 )
 
@@ -326,6 +327,274 @@ def test_workspace_history_catch_up_recovers_exact_missed_canonical_event(
     replayed = member.get_workspace_history_status(workspace["id"], general_id)
     assert replayed["job"]["recovered_events"] == 1
     assert replayed["job"]["verified_pages"] == 1
+
+
+def test_mobile_notification_queue_is_durable_private_bounded_and_deduplicated(
+    tmp_path: Path,
+) -> None:
+    (
+        owner,
+        owner_network,
+        owner_profile,
+        member,
+        _member_network,
+        member_profile,
+        workspace,
+        member_key,
+        member_identity,
+    ) = _joined_pair(tmp_path / "notifications", base=91_000)
+    workspace_id = workspace["id"]
+    channel_id = workspace["general_channel_id"]
+    member.set_native_notification_state("android", True, "allowed")
+    member.mobile_lifecycle_transition("background", "activity_paused")
+    member.set_hide_notification_previews(True, _op(91_010))
+
+    message = owner.send_workspace_message(
+        workspace_id,
+        channel_id,
+        "hostile\npreview\u202e text",
+        _op(91_011),
+        _op(91_012),
+    )
+    packets = _flush(owner, owner_network)
+    event_packet = next(
+        item
+        for item in packets
+        if parse_workspace_payload(
+            _native(item, source=b"\x00" * 16, destination=b"\x01" * 16)
+        ).kind
+        == "workspace_event"
+    )
+    _deliver(
+        member,
+        event_packet,
+        source_profile=owner_profile,
+        recipient_profile=member_profile,
+    )
+
+    state = member.notification_state()
+    assert state["pending_native_count"] == 1
+    work = member.drain_native_notification_work(16)["items"]
+    assert len(work) == 1
+    assert work[0]["title"] == "Mesh Chat"
+    assert work[0]["body"] == "New message"
+    assert len(json.dumps(work[0]).encode("utf-8")) <= 1024
+    assert workspace_id not in json.dumps(work[0])
+    assert channel_id not in json.dumps(work[0])
+    assert message["id"] not in json.dumps(work[0])
+
+    # A replay cannot mint a second logical notification.
+    _deliver(
+        member,
+        event_packet,
+        source_profile=owner_profile,
+        recipient_profile=member_profile,
+    )
+    assert member.notification_state()["pending_native_count"] == 1
+    assert member.drain_native_notification_work(16)["items"] == work
+
+    # Routing re-authorizes without changing the existing unread state.
+    before = member.workspace_snapshot()["workspace_channels"][0]["unread_count"]
+    target = member.open_notification_target(work[0]["notification_id"])
+    after = member.workspace_snapshot()["workspace_channels"][0]["unread_count"]
+    assert target == {
+        "available": True,
+        "workspace_id": workspace_id,
+        "conversation_id": channel_id,
+        "conversation_kind": "channel",
+        "thread_root_id": None,
+        "event_id": message["id"],
+    }
+    assert before == after == 1
+
+    # Pending native work survives a service restart and an accepted native
+    # acknowledgment only records platform API acceptance.
+    member.close()
+    restarted, _network = _service(
+        tmp_path / "notifications" / "member",
+        member_identity,
+        "Bailey",
+        vault_key=member_key,
+    )
+    assert restarted.drain_native_notification_work(16)["items"] == work
+    assert restarted.acknowledge_native_notification(
+        work[0]["notification_id"], "retry"
+    ) == {"acknowledged": True, "outcome": "retry"}
+    assert restarted.drain_native_notification_work(16)["items"] == work
+    assert restarted.acknowledge_native_notification(
+        work[0]["notification_id"], "accepted"
+    ) == {"acknowledged": True, "outcome": "accepted"}
+    assert restarted.drain_native_notification_work(16)["items"] == []
+    assert restarted.acknowledge_native_notification(
+        work[0]["notification_id"], "accepted"
+    ) == {"acknowledged": False}
+    with pytest.raises(ValidationError, match="acknowledgment"):
+        restarted.acknowledge_native_notification("../route", "accepted")
+    with pytest.raises(ValidationError, match="acknowledgment"):
+        restarted.acknowledge_native_notification(work[0]["notification_id"], "read")
+    with pytest.raises(ValidationError, match="batch limit"):
+        restarted.drain_native_notification_work(17)
+
+    restarted.hide_workspace_message(workspace_id, message["id"], _op(91_015))
+    unavailable = restarted.open_notification_target(work[0]["notification_id"])
+    assert unavailable["available"] is False
+    assert unavailable["reason"] == "authorization_changed"
+
+    owner.send_workspace_message(
+        workspace_id,
+        channel_id,
+        "committed while the activity is backgrounded",
+        _op(91_013),
+        _op(91_014),
+    )
+    _deliver_all(
+        restarted,
+        _flush(owner, owner_network),
+        source_profile=owner_profile,
+        recipient_profile=member_profile,
+    )
+    assert restarted.notification_state()["pending_native_count"] == 1
+    restarted.mobile_lifecycle_transition("foreground", "activity_resumed")
+    assert restarted.notification_state()["pending_native_count"] == 0
+    assert restarted.drain_native_notification_work(16)["items"] == []
+
+
+def test_notification_text_sanitization_removes_hostile_controls_and_bounds() -> None:
+    hostile = "  hello\n\tworld\u202e\u200b\x00  " + ("🙂" * 200)
+    sanitized = sanitize_notification_text(hostile, 24)
+
+    assert sanitized.startswith("hello world")
+    assert len(sanitized) == 24
+    assert all(not value in sanitized for value in ("\n", "\t", "\u202e", "\u200b", "\x00"))
+
+
+def test_notification_precedence_uses_structured_mentions_and_never_catches_up(
+    tmp_path: Path,
+) -> None:
+    (
+        owner,
+        owner_network,
+        owner_profile,
+        member,
+        member_network,
+        member_profile,
+        workspace,
+        _member_key,
+        _member_identity,
+    ) = _joined_pair(tmp_path / "notification-policy", base=92_000)
+    workspace_id = workspace["id"]
+    member_id = member.workspace_snapshot()["workspaces"][0]["local_member_id"]
+    member.set_native_notification_state("android", True, "allowed")
+    member.mobile_lifecycle_transition("background", "activity_paused")
+    member.set_workspace_notification_preference(
+        workspace_id, None, "mentions_only", _op(92_010)
+    )
+    channel = owner.create_workspace_channel(
+        workspace_id, "alerts", "Unsubscribed public alerts", _op(92_011)
+    )
+    _deliver_all(
+        member,
+        _flush(owner, owner_network),
+        source_profile=owner_profile,
+        recipient_profile=member_profile,
+    )
+
+    owner.send_workspace_message(
+        workspace_id,
+        channel["id"],
+        "@Bailey text alone is not a mention",
+        _op(92_012),
+        _op(92_013),
+    )
+    _deliver_all(
+        member,
+        _flush(owner, owner_network),
+        source_profile=owner_profile,
+        recipient_profile=member_profile,
+    )
+    assert member.drain_native_notification_work(16)["items"] == []
+
+    owner.send_workspace_message(
+        workspace_id,
+        channel["id"],
+        "Structured mention",
+        _op(92_014),
+        _op(92_015),
+        [member_id],
+    )
+    _deliver_all(
+        member,
+        _flush(owner, owner_network),
+        source_profile=owner_profile,
+        recipient_profile=member_profile,
+    )
+    work = member.drain_native_notification_work(16)["items"]
+    assert len(work) == 1
+    assert work[0]["category"] == "mention"
+    member.acknowledge_native_notification(work[0]["notification_id"], "accepted")
+
+    member.set_workspace_channel_mentions_muted(
+        workspace_id, channel["id"], True, _op(92_016)
+    )
+    owner.send_workspace_message(
+        workspace_id,
+        channel["id"],
+        "Muted structured mention",
+        _op(92_017),
+        _op(92_018),
+        [member_id],
+    )
+    _deliver_all(
+        member,
+        _flush(owner, owner_network),
+        source_profile=owner_profile,
+        recipient_profile=member_profile,
+    )
+    assert member.drain_native_notification_work(16)["items"] == []
+
+    # Historical recovery materializes the canonical event but cannot create
+    # notification work, even while the mobile runtime is backgrounded.
+    missed = owner.send_workspace_message(
+        workspace_id,
+        workspace["general_channel_id"],
+        "old event recovered later",
+        _op(92_019),
+        _op(92_020),
+        [member_id],
+    )
+    assert missed
+    member.start_workspace_history(
+        workspace_id, workspace["general_channel_id"], _op(92_021)
+    )
+    requests = [
+        item
+        for item in _flush(member, member_network)
+        if parse_workspace_payload(
+            _native(item, source=b"\x00" * 16, destination=b"\x01" * 16)
+        ).kind
+        == "workspace_history_request"
+    ]
+    _deliver(
+        owner,
+        requests[0],
+        source_profile=member_profile,
+        recipient_profile=owner_profile,
+    )
+    responses = [
+        item
+        for item in _flush(owner, owner_network)
+        if parse_workspace_payload(
+            _native(item, source=b"\x00" * 16, destination=b"\x01" * 16)
+        ).kind
+        == "workspace_history_response"
+    ]
+    _deliver(
+        member,
+        responses[0],
+        source_profile=owner_profile,
+        recipient_profile=member_profile,
+    )
+    assert member.drain_native_notification_work(16)["items"] == []
 
 
 def test_two_member_workspace_create_join_chat_and_page(

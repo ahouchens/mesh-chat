@@ -341,10 +341,47 @@ Depending on configured interfaces, observers may learn local discovery presence
   have and suspend rather than choosing an authority fork.
 - NAT hole punching, mobile push, Bluetooth, LoRa, attachments, multi-device identity cloning, and cloud backup.
 
+## Mobile notification and lifecycle threats
+
+- Lock screens and OS history may retain previews. The sealed hide-preview
+  option replaces all names/text before native handoff, but cannot recall an
+  already displayed item or control OS history, screenshots, backups,
+  accessibility services, or a compromised endpoint.
+- Message text is hostile preview input. Service and native layers bound it and
+  reject controls, bidi/format/surrogate abuse, newlines, HTML, and executable
+  links. Native logs contain only stage and exception class.
+- Permission phishing is limited by explicit user action and a persistent
+  requested-state hint. Denial does not re-prompt; settings recovery is a
+  separate action and the OS remains authoritative.
+- Android substitution is constrained to exact
+  `meshchat://notification/<64 lowercase hex>` routes. The opaque ID loads a
+  sealed scope and current authorization; raw routing IDs never enter intents.
+- Opaque IDs reduce structural leakage but remain locally correlatable by the
+  OS or a compromised endpoint. No telemetry exports them.
+- OS background limits and process death can delay work indefinitely. Mesh Chat
+  makes no prompt-delivery claim and requests no foreground-service or battery
+  exemption.
+- A crash after durable event commit leaves one deduped work item. Retry and
+  restart reuse it; the ledger prevents amplification.
+- Catch-up, rebuild, duplicate, replay, malformed, forked, hidden,
+  unauthorized, and removed-device events cannot enqueue. This prevents
+  history/resume storms and forwarding-peer preview injection before canonical
+  validation.
+- Suspend/resume races fail closed: controls precede dependent events, opens
+  re-authorize, due work is idempotent, overflow reconciles, and a fork is
+  never auto-selected.
+- FCM, APNs remote delivery, hosted notification servers, background relays,
+  and telemetry remain excluded because they add metadata authorities.
+
 ## Open security blockers
 
 - Windows EFS has passed a native protected-workspace and packaged-sidecar run. The macOS FileVault and Linux fscrypt/dm-crypt adapters are implemented and fail closed, but still require native package, encrypted-volume, suspend/resume, and full-tree release-gate runs before those platform packages are labeled verified.
 - Offline propagation, propagation-node redundancy, crash points inside upstream ratchet persistence, abuse limits, suspend/resume, and hostile-input fuzzing require release-gate runs described in [TESTING.md](TESTING.md).
+- Increment 15 automation and APK inspection do not replace an authorized
+  disposable-device permission, suspension, process-death, upgrade,
+  lock-screen/history, memory, battery, intent/log/SQLite leakage, and
+  removal-during-suspension run. iOS also needs macOS/Xcode, signing, and
+  equivalent physical evidence.
 - Private groups and announcement channels require the group-specific release
   gates in [TESTING.md](TESTING.md), including physical multi-device fan-out,
   membership partition/removal, crash recovery, manifest-fork, and plaintext

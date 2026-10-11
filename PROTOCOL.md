@@ -687,12 +687,13 @@ Receipts are ordinary signed, end-to-end encrypted LXMF messages. They reference
 - Group title and member display name: 1–64 normalized characters each.
 - Signed connection hints per group member card: at most two validated TCP hints.
 - Private group or announcement channel: at most eight people including the owner.
-- Desktop workspace: at most eight people, 32 active channels including `#general`, 32 entries per signed public-summary page, 32 pages per sync session, and 64 controls per signed public fetch response. Archived public channels are retained in the bounded 1,024-entry directory; private channels are never summarized publicly.
+- Workspace: at most eight people, 32 active channels including `#general`, 32 entries per signed public-summary page, 32 pages per sync session, and 64 controls per signed public fetch response. Archived public channels are retained in the bounded 1,024-entry directory; private channels are never summarized publicly.
 - Workspace local search: at most 256 query characters, 1,024 UTF-8 bytes, 8 exact tokens, 8 keyed shard pages, 256 candidates, and 50 results; rebuilds advance at most 128 retained events per transaction.
 - Workspace history catch-up: 32 streams, 64 ranges, 32 events, 32 controls, 32 checkpoints, 128 KiB and 15 minutes per request; 256 sequence probes per response; 2 jobs per workspace and 4 per profile.
 - Workspace administration: 4 KiB requests, 48 KiB decisions, 250-character notes, seven-day maximum lifetime, 128 pending requests per workspace, 512 administrative requests per profile, 32 pending per requester/source, 100 rows per page, 64 inert decisions, and 90-day replay/audit retention.
 - Workspace authority continuity: 8 KiB offers, 16 KiB acceptances, seven-day maximum lifetime, 32 pending transitions per workspace, eight certificate steps, 256 KiB decoded invitation bootstrap, and 90-day replay/audit retention.
 - Linked desktop devices: three admitted devices per member, 24 active workspace destinations, 15-minute one-use links, 320 KiB link/acceptance documents including at most 64 historical manifest checkpoints, 32 pending transitions per workspace, and four pending requests per source fingerprint.
+- Mobile local notifications: no canonical protocol change; 128 sealed pending native IDs, 16 items per drain, 1,024 UTF-8 bytes per native item, 80-character title, 160-character body, a 64-hex opaque notification ID, and a 32-hex opaque grouping key.
 - Pending reactions: at most 256 total and 32 per authenticated actor.
 - IPC frame: 4 MiB; renderer-originated payload: 32 KiB, except the two desktop device-link preview/submission commands which accept at most 700 KiB of encoded bootstrap input.
 - LXMF direct and propagated modes: enabled.
@@ -701,3 +702,18 @@ Receipts are ordinary signed, end-to-end encrypted LXMF messages. They reference
 - Automatic propagation peering: disabled.
 
 RNS/LXMF versions are pinned in `service/requirements.lock`. Propagated packing is refused unless RNS has a current recipient ratchet, preventing the upstream base-identity-key fallback.
+
+## Local notification and lifecycle messages
+
+Notification decisions, OS permission hints, lifecycle transitions, and native
+acknowledgments are device-local sealed state, not signed wire documents.
+`native_notification_state`, `mobile_lifecycle_transition`,
+`drain_native_notification_work`, and `acknowledge_native_notification` are
+native-only commands excluded from the renderer allowlist. Renderer commands
+may read state, change preferences, reconcile, and resolve an opaque target
+through current authorization.
+
+Mobile linking continues to serialize the exact Increment 14 offer,
+acceptance, and authority manifest transition. No platform field or
+notification preference enters canonical bytes, and 0.2.34 peers require no
+compatibility branch.

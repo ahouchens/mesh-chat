@@ -6,9 +6,9 @@ Messages use native individual LXMF delivery destinations. Reticulum owns paths 
 
 > This repository is not independently audited and is not yet suitable for sensitive operational use. See [TESTING.md](TESTING.md) for verified and unverified release gates.
 
-## Desktop workspace increment 14
+## Workspace increment 15: mobile lifecycle and local notifications
 
-This source tree now implements the fourteenth bounded desktop workspace increment from
+This source tree now implements the fifteenth bounded workspace increment from
 [WORKSPACE_SPEC.md](WORKSPACE_SPEC.md): create and switch up to 16 workspaces,
 invite and approve up to seven additional people, and use up to 32 active public or private
 channels including canonical `#general`. Workspace creation explains that the creating device is the authority,
@@ -16,7 +16,9 @@ messages are separately encrypted to member devices, and there is no hosted
 workspace server. Multiple single-use invitations can remain pending,
 expire, be revoked, or be approved independently. Later joiners receive the
 complete missing signed-manifest chain while existing members receive only the
-new epoch.
+new epoch. Android now uses that same workspace UI and linked-device protocol,
+with native local notifications and bounded lifecycle reconciliation that do
+not depend on the React renderer.
 
 The People view exposes the complete eight-person directory. Members can
 request a workspace display-name change or leave; owners can approve or decline
@@ -51,12 +53,12 @@ Permanent authority-key loss still has no automatic recovery: administration
 freezes, ordinary authorized chat remains usable, and the app explains how to
 create a replacement workspace.
 
-An existing member can now link up to three desktops without copying an
+An existing member can now link up to three devices without copying an
 identity or creating another member. One admitted device creates a short-lived
-single-use link, the new desktop generates and signs with a fresh identity, and
+single-use link, the new device generates and signs with a fresh identity, and
 the owner authority approves the exact device card into the next manifest.
 Channels and workspace DMs fan out to every recipient device, including the
-sender's other desktops, while delivery detail preserves each device leg. The
+sender's other devices, while delivery detail preserves each device leg. The
 new endpoint receives its authorized controls and can recover canonical
 history through the existing bounded peer catch-up flow.
 
@@ -167,7 +169,7 @@ receive no new traffic and can only keep their previously authorized local copy
 as a read-only archive until pruning or confirmed local erasure. Workspace
 owners do not gain access to other members' DMs.
 
-An active desktop member can now request bounded retained history from eligible
+An active member can now request bounded retained history from eligible
 workspace peers after being offline beyond the seven-day live-delivery window.
 Signed requests bind a fresh nonce, exact public/private/DM scope, stream
 ranges, event and byte limits, expiry, and continuation. Signed responses carry
@@ -199,22 +201,24 @@ older view. Upgrading a retained 0.2.29 profile exposes a truthful indexing
 state and rebuilds at most 128 events per transaction without turning startup
 into a full history scan.
 
-This increment is deliberately desktop-only and capped at eight people, three
-devices per person, and 24 active destinations. It has no attachments or
-mobile workspace UI; those remain later increments in the spec.
+This increment remains capped at eight people, three devices per person, and
+24 active destinations. Android workspaces and local notifications are
+automated and package-verified, but physical-device lifecycle completion is a
+separate release gate. It has no hosted push, remote notification service, or
+attachments. The iOS source boundary remains unadvertised until it is built,
+signed, and exercised on a physical device.
 
 ## Install Mesh Chat
 
-**Current desktop workspace candidate: Mesh Chat 0.2.34.** Install it over the
-existing app; do not uninstall Mesh Chat or clear its data first. The current
-paired desktop/mobile install record remains 0.2.12 until workspace support reaches
-the mobile UI and completes physical cross-device validation.
+**Current desktop and Android workspace candidate: Mesh Chat 0.2.35.** Install
+it over the existing app; do not uninstall Mesh Chat or clear its data first.
+The Android package is an arm64 development candidate and still requires the
+physical-device lifecycle matrix recorded in [TESTING.md](TESTING.md).
 
 Mesh Chat must be packaged for the operating system where it will run. This
 workspace contains Windows x64 and Android arm64 packaging flows. Check the
-workspace Increment 13 record in [TESTING.md](TESTING.md) for the exact desktop
-verification completed for 0.2.34, and the 0.2.12 record for current Android
-artifacts. The macOS, Linux, and
+workspace Increment 15 record in [TESTING.md](TESTING.md) for the exact desktop
+and Android package verification completed for 0.2.35. The macOS, Linux, and
 iOS packaging paths are implemented, but their packages still need to be built
 and tested on those operating systems.
 
@@ -223,7 +227,7 @@ and tested on those operating systems.
 The current Android target supports arm64 phones and tablets running Android 7
 (API 24) or newer. The verified installable development APK is:
 
-`dist/mobile/mesh-chat-0.2.12-android-arm64-debug.apk`
+`dist/mobile/mesh-chat-0.2.35-android-arm64-debug.apk`
 
 Version 0.2.0 introduced small private groups and private announcement
 channels. Each group message remains inside Reticulum/LXMF and is sent as an
@@ -308,7 +312,7 @@ contacts, rename them locally, mark or remove fingerprint verification, block
 and unblock messaging, open the conversation, or permanently delete the local
 contact and direct-chat history. Deletion refuses contacts still referenced by
 a pending group invitation, while existing group membership remains intact.
-Install 0.2.12 on both participating devices to exchange and display expanded
+Install 0.2.35 on both participating devices to exchange and display expanded
 reactions with the bundled presentation.
 An older peer can continue ordinary chat but ignores the additive reaction
 records it does not understand. The current release
@@ -318,11 +322,11 @@ cross between the phone and computer, and the earlier connection-request,
 Android runtime, scanner, and clipboard fixes.
 
 If 0.1.3 returns to the Android home screen after submitting a display name,
-do **not** clear app data. Install 0.2.12 directly over it. The package identity
+do **not** clear app data. Install 0.2.35 directly over it. The package identity
 and signing certificate are unchanged, so the saved profile is retained and
 the corrected runtime can recover it.
 
-> **Install 0.2.12 over 0.2.11 or an earlier release on every participating
+> **Install 0.2.35 over an earlier release on every participating
 > computer and phone. Do not uninstall
 > either app or clear its data. Existing profiles, contacts, invitation
 > relationships, direct chats, groups, and saved messages are retained. Group
@@ -335,7 +339,7 @@ the corrected runtime can recover it.
 > hint.**
 
 After upgrading, open **Settings** on every participating device and check the
-version shown at the bottom. It must say **Mesh Chat 0.2.12** before accepting a
+version shown at the bottom. It must say **Mesh Chat 0.2.35** before accepting a
 new one-to-one request or creating or retrying a group invitation. If one
 device still shows 0.2.8 or an earlier
 version, close Mesh Chat,
@@ -355,15 +359,15 @@ To install it without a computer:
 For an attached phone with USB debugging enabled, install or replace it with:
 
 ```text
-adb install -r dist/mobile/mesh-chat-0.2.12-android-arm64-debug.apk
+adb install -r dist/mobile/mesh-chat-0.2.35-android-arm64-debug.apk
 ```
 
-Use the adjacent `.sha256` file to verify the 0.2.12 APK before transferring
-it. The Android packaging metadata uses version name 0.2.12 and
-version code 2012,
+Use the adjacent `.sha256` file to verify the 0.2.35 APK before transferring
+it. The Android packaging metadata uses version name 0.2.35 and
+version code 2035,
 with minimum API 24, target API 36, and only the `arm64-v8a` native
 architecture. Its verified size, hash, signature, embedded artwork, and package
-inspection are recorded in the 0.2.12 table in [TESTING.md](TESTING.md); do not
+inspection are recorded in the 0.2.35 section in [TESTING.md](TESTING.md); do not
 substitute a hash from an older release. The development APK
 uses an Android debug certificate for direct testing; it
 is not a Play Store release. A published build needs a private release keystore
@@ -373,7 +377,7 @@ The 0.2.7 source adds regressions for callback lock inversion, per-record retry
 yielding, bounded command-journal retention, actionable desktop timeout errors,
 and the complete phone-first/desktop-reply exchange. See [TESTING.md](TESTING.md)
 for the recorded results. No automated result substitutes for a physical
-Windows-to-Android retest of the exact 0.2.12 installer and APK, which remains a
+Windows-to-Android retest of the exact 0.2.35 installer and APK, which remains a
 release gate for sensitive use.
 
 After first launch, create a display name. On the inviting device choose
@@ -391,7 +395,7 @@ does not open on both devices until the inviter chooses **Accept**.
 An invitation exchanges identity information; it does not itself provide an
 Internet route. Version 0.1.6 introduced Reticulum nearby discovery plus the
 signed direct local connection from a newly generated invitation; version
-0.2.12 retains that connection behavior, keeps reverse-route attachment
+0.2.35 retains that connection behavior, keeps reverse-route attachment
 non-blocking during approval, and prefers the authenticated path learned over
 the signed invitation client before handing a direct message to LXMF.
 The direct fallback is enabled by default and can be changed under **Settings**
@@ -428,17 +432,17 @@ Before installing, confirm that:
   code-signed.
 
 Choose one verified installer from the immutable release directory
-`dist\desktop\releases\0.2.34\x86_64-pc-windows-msvc\bundle`:
+`dist\desktop\releases\0.2.35\x86_64-pc-windows-msvc\bundle`:
 
-- `nsis\Mesh Chat_0.2.34_x64-setup.exe` — normal interactive setup.
-- `msi\Mesh Chat_0.2.34_x64_en-US.msi` — MSI package for Windows deployment
+- `nsis\Mesh Chat_0.2.35_x64-setup.exe` — normal interactive setup.
+- `msi\Mesh Chat_0.2.35_x64_en-US.msi` — MSI package for Windows deployment
   tools or manual installation.
 
 For a portable test without installing, run `mesh-chat.exe` with its sibling
 `mesh-chat-service.exe` from
-`dist\desktop\releases\0.2.34\x86_64-pc-windows-msvc`. Close every
+`dist\desktop\releases\0.2.35\x86_64-pc-windows-msvc`. Close every
 older Mesh Chat process first because the single-instance guard will otherwise
-return to the older window. Confirm **Mesh Chat 0.2.34** in Settings before
+return to the older window. Confirm **Mesh Chat 0.2.35** in Settings before
 testing.
 
 Do not use an older unversioned developer output merely because it is still at
@@ -447,16 +451,16 @@ its sidecar locked while a newer release is packaged elsewhere. The immutable
 versioned `dist\desktop\releases` directory and its `manifest.json` are the
 release authority; `dist\desktop\current.json` identifies the current set.
 
-Verify a 0.2.34 installer against the SHA-256 value in the sibling
-`manifest.json` and the 0.2.34 release record in [TESTING.md](TESTING.md).
+Verify a 0.2.35 installer against the SHA-256 value in the sibling
+`manifest.json` and the 0.2.35 release record in [TESTING.md](TESTING.md).
 `dist\desktop\current.json` records the current manifest hash. The recorded
-older hashes do not apply to 0.2.34. These development packages are not
+older hashes do not apply to 0.2.35. These development packages are not
 Authenticode-signed.
 
 If an earlier Mesh Chat version is installed, close the running app and run the
-0.2.34 desktop installer over the existing release. The current Android
-companion remains 0.2.12 until workspace support reaches the mobile UI and completes
-physical cross-device validation.
+0.2.35 desktop installer over the existing release. Install the Android 0.2.35
+debug APK over 0.2.12 only on an explicitly authorized disposable test device;
+do not clear its protected profile.
 The package identities are unchanged, so existing profiles, contacts,
 invitation relationships, and messages are retained; do not uninstall either
 old app or clear its data first. Devices that were already connected on 0.1.6
@@ -472,10 +476,10 @@ Versions before 0.2.3 could leave a PyInstaller supervisor or worker running
 after the window closed. That stale process could keep a valid EFS-encrypted
 profile lock and was incorrectly shown as **Protected storage is unavailable**.
 This condition did not remove encryption, write private data in plaintext, or
-damage the profile. If the first 0.2.34 launch appears to do nothing, or an
+damage the profile. If the first 0.2.35 launch appears to do nothing, or an
 older build shows that storage screen, restart Windows or use Task Manager to
 end **Mesh Chat** and every `mesh-chat-service.exe` process, then install or
-launch 0.2.34. Do not uninstall Mesh Chat or clear its data.
+launch 0.2.35. Do not uninstall Mesh Chat or clear its data.
 
 Version 0.2.3 gives profile-lock contention its own **profile is still in use**
 message. On close, the desktop uses an independent deadline and terminates only
@@ -576,7 +580,7 @@ Readers of an announcement channel may react even though only the owner can
 post messages. Like the messages themselves, reaction updates are sent as
 authenticated, individually encrypted Reticulum/LXMF traffic. They do not use
 a central service, an analytics endpoint, or a fallback messaging protocol.
-Both peers should run Mesh Chat 0.2.12 for the expanded set and the same local
+Both peers should run Mesh Chat 0.2.35 for the expanded set and the same local
 artwork. Version 0.2.10 understands the expanded Unicode reactions but depends
 on operating-system emoji fonts; version 0.2.9 interoperates for the original
 six reactions but ignores other Emoji 18 choices; versions before 0.2.9 ignore
@@ -603,7 +607,7 @@ source and license details in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 Version 0.2.0 introduced the group controls described here. Version 0.2.1 introduced
 confirmed invitation delivery, Retry, and mobile reliability improvements. A
 previously downloaded installer or APK does not update itself; install the
-0.2.12 artifact on every participating device before testing direct chats or
+0.2.35 artifact on every participating device before testing direct chats or
 groups.
 
 Use the same current Mesh Chat version on the owner device and every invited
@@ -743,10 +747,10 @@ service unless the complete RNS/LXMF workspace has verified at-rest protection:
 
 | Platform | Required protected storage | Packaging status |
 | --- | --- | --- |
-| Windows | NTFS EFS; Mesh Chat enables and verifies inheritance on its profile directory | 0.2.34 x64 EXE, NSIS, and MSI built, hashed, and immutably published; packaged linked-device testing is recorded in TESTING.md, while a host-window walkthrough, in-place installation, and physical Windows↔Android testing remain pending |
+| Windows | NTFS EFS; Mesh Chat enables and verifies inheritance on its profile directory | 0.2.35 x64 EXE, NSIS, and MSI built, hashed, and immutably published; packaged lifecycle/notification testing is recorded in TESTING.md, while a host-window walkthrough, in-place installation, and physical Windows↔Android testing remain pending |
 | macOS | Active FileVault on the local user-data volume containing the app profile | Native build path implemented; macOS package test pending |
 | Linux | fscrypt on the profile, dm-crypt/LUKS beneath its filesystem, or a recognized eCryptfs/gocryptfs/CryFS mount | Native build path implemented; distribution package tests pending |
-| Android | App-private internal storage, Android Keystore-wrapped vault key, backups disabled | 0.2.12 arm64 debug APK built, hashed, v2-signature-verified, and inspected; physical installation and Windows↔Android testing remain pending because no device was attached |
+| Android | App-private internal storage, Android Keystore-wrapped vault key, backups disabled | 0.2.35 arm64 debug APK built, hashed, v2-signature-verified, and inspected; physical lifecycle, notification, upgrade, and Windows↔Android testing remain pending because no authorized disposable device was attached |
 | iOS/iPadOS | Complete file protection in the app container and a ThisDeviceOnly Keychain key | Native plugin and signed build path implemented; Mac/Xcode build and device test pending |
 
 The app fails closed with actionable storage guidance when these conditions or
@@ -786,7 +790,7 @@ Use the deterministic release driver for routine versioning and delivery:
 ```text
 python scripts/release.py check
 python scripts/release.py verify
-python scripts/release.py version 0.2.34
+python scripts/release.py version 0.2.35
 python scripts/release.py build --platform all
 ```
 
@@ -945,3 +949,26 @@ storage rather than weakening the requirement.
 - [WORKSPACE_SPEC.md](WORKSPACE_SPEC.md) — proposed multi-channel workspace product and implementation specification
 
 No external runtime service is needed or contacted. Installation downloads and package distribution are outside the messaging path.
+
+## Mobile notifications and lifecycle
+
+Mobile workspaces link through the same countersigned, owner-approved device
+workflow as desktop linked devices. Every phone keeps a fresh private identity
+and protected vault; no desktop key or profile is copied.
+
+Android can show local message and structured-mention notifications while the
+embedded runtime is executing. Permission is requested only from **Enable
+notifications**, with an **Open system settings** recovery path. Workspace and
+conversation settings offer **All**, **Mentions only**, and **Muted**. The
+device-wide **Hide notification previews** option uses only “Mesh Chat” / “New
+message”.
+
+These are not cloud push notifications. Android or iOS may suspend or terminate
+Mesh Chat, so notifications can be delayed until the app can execute again.
+Open Mesh Chat to reconcile. Presentation and taps do not themselves mark a
+message read or prove delivery. See [ADR 0014](docs/adr/0014-mobile-lifecycle-and-notifications.md).
+
+Android retains API 24 minimum and API 36 target/compile levels. iOS has a
+structurally compatible local-notification source path but is not complete
+without macOS/Xcode, signing, and physical-device evidence. Neither platform
+registers FCM or APNs remote push.

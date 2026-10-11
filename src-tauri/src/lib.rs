@@ -48,7 +48,6 @@ const IPC_VERSION: u64 = 1;
 // invalid sidecar length prefix from causing an unbounded allocation.
 const MAX_FRAME_BYTES: usize = 4 * 1024 * 1024;
 const MAX_RENDERER_PAYLOAD_BYTES: usize = 32 * 1024;
-#[cfg(desktop)]
 const MAX_WORKSPACE_DEVICE_LINK_PAYLOAD_BYTES: usize = 700 * 1024;
 
 type PendingResult = Result<Value, String>;
@@ -499,95 +498,11 @@ fn allowed_renderer_command(command: &str) -> bool {
             | "leave_workspace"
             | "close_workspace"
             | "remove_workspace_data"
-    )
-}
-
-fn workspace_renderer_command(command: &str) -> bool {
-    matches!(
-        command,
-        "workspace_snapshot"
-            | "create_workspace"
-            | "create_workspace_invitation"
-            | "preview_workspace_invitation"
-            | "revoke_workspace_invitation"
-            | "submit_workspace_join"
-            | "approve_workspace_join"
-            | "decline_workspace_join"
-            | "create_workspace_device_link"
-            | "preview_workspace_device_link"
-            | "submit_workspace_device_link"
-            | "approve_workspace_device_link"
-            | "decline_workspace_device_link"
-            | "request_workspace_device_removal"
-            | "approve_workspace_device_removal"
-            | "decline_workspace_device_removal"
-            | "update_workspace_metadata"
-            | "update_workspace_policies"
-            | "update_workspace_retention"
-            | "prune_workspace_history"
-            | "get_workspace_history_status"
-            | "start_workspace_history"
-            | "cancel_workspace_history"
-            | "list_workspace_history_gaps"
-            | "remove_workspace_member"
-            | "change_workspace_role"
-            | "submit_workspace_admin_request"
-            | "submit_workspace_invitation_request"
-            | "submit_workspace_member_removal_request"
-            | "submit_workspace_role_change_request"
-            | "list_workspace_members"
-            | "list_workspace_admin_requests"
-            | "list_workspace_admin_history"
-            | "get_workspace_admin_request"
-            | "approve_workspace_admin_request"
-            | "decline_workspace_admin_request"
-            | "cancel_workspace_admin_request"
-            | "dismiss_workspace_admin_request"
-            | "offer_workspace_authority_transition"
-            | "accept_workspace_authority_transition"
-            | "finalize_workspace_authority_transition"
-            | "list_workspace_authority_transitions"
-            | "report_workspace_authority_loss"
-            | "request_workspace_display_name"
-            | "decide_workspace_display_name"
-            | "create_workspace_channel"
-            | "update_workspace_channel"
-            | "update_workspace_private_channel_members"
-            | "leave_workspace_private_channel"
-            | "set_workspace_channel_subscription"
-            | "offer_workspace_channel_transfer"
-            | "accept_workspace_channel_transfer"
-            | "recover_workspace_channel"
-            | "sync_workspace_channels"
-            | "send_workspace_message"
-            | "open_workspace_direct"
-            | "hide_workspace_direct"
-            | "send_workspace_direct_message"
-            | "send_workspace_thread_reply"
-            | "edit_workspace_message"
-            | "delete_workspace_message"
-            | "set_workspace_reaction"
-            | "search_workspace"
-            | "list_workspace_messages"
-            | "list_workspace_direct_messages"
-            | "mark_workspace_read"
-            | "set_workspace_read_hint_sync"
-            | "mark_workspace_direct_read"
-            | "list_workspace_mentions"
-            | "list_workspace_threads"
-            | "list_workspace_thread_messages"
-            | "list_workspace_message_revisions"
-            | "list_workspace_tombstones"
-            | "mark_workspace_mentions_read"
-            | "mark_workspace_thread_read"
-            | "set_workspace_channel_mentions_muted"
-            | "hide_workspace_message"
-            | "save_workspace_draft"
-            | "save_workspace_direct_draft"
-            | "save_workspace_thread_draft"
-            | "leave_workspace"
-            | "close_workspace"
-            | "remove_workspace_data"
+            | "get_notification_state"
+            | "set_hide_notification_previews"
+            | "set_workspace_notification_preference"
+            | "open_notification_target"
+            | "reconcile_mobile_lifecycle"
     )
 }
 
@@ -770,13 +685,18 @@ async fn service_command(app: AppHandle, command: String, payload: Value) -> Pen
     if !allowed_renderer_command(&command) {
         return Err("command_not_allowed".into());
     }
-    if workspace_renderer_command(&command) {
-        return Err("workspace_desktop_only".into());
-    }
     let size = serde_json::to_vec(&payload)
         .map_err(|_| "invalid_request".to_string())?
         .len();
-    if size > MAX_RENDERER_PAYLOAD_BYTES || contains_forbidden_key(&payload) {
+    let maximum = if matches!(
+        command.as_str(),
+        "preview_workspace_device_link" | "submit_workspace_device_link"
+    ) {
+        MAX_WORKSPACE_DEVICE_LINK_PAYLOAD_BYTES
+    } else {
+        MAX_RENDERER_PAYLOAD_BYTES
+    };
+    if size > maximum || contains_forbidden_key(&payload) {
         return Err("invalid_request".into());
     }
     let response = app
@@ -827,6 +747,58 @@ fn runtime_platform() -> &'static str {
     return "ios";
     #[cfg(desktop)]
     return "desktop";
+}
+
+#[cfg(desktop)]
+#[tauri::command]
+fn notification_capability() -> PendingResult {
+    Ok(serde_json::json!({
+        "supported": false,
+        "platform": "desktop",
+        "permission_state": "unsupported"
+    }))
+}
+
+#[cfg(mobile)]
+#[tauri::command]
+fn notification_capability(app: AppHandle) -> PendingResult {
+    mobile_result(
+        app.mesh_runtime()
+            .notification_capability()
+            .map_err(|_| "notification_unavailable".to_string())?,
+    )
+}
+
+#[cfg(desktop)]
+#[tauri::command]
+fn request_notification_permission() -> PendingResult {
+    notification_capability()
+}
+
+#[cfg(mobile)]
+#[tauri::command]
+fn request_notification_permission(app: AppHandle) -> PendingResult {
+    mobile_result(
+        app.mesh_runtime()
+            .request_notification_permission()
+            .map_err(|_| "notification_unavailable".to_string())?,
+    )
+}
+
+#[cfg(desktop)]
+#[tauri::command]
+fn open_notification_settings() -> PendingResult {
+    notification_capability()
+}
+
+#[cfg(mobile)]
+#[tauri::command]
+fn open_notification_settings(app: AppHandle) -> PendingResult {
+    mobile_result(
+        app.mesh_runtime()
+            .open_notification_settings()
+            .map_err(|_| "notification_unavailable".to_string())?,
+    )
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -909,7 +881,10 @@ pub fn run() {
             lock_service,
             take_pending_invitation,
             poll_mobile_events,
-            runtime_platform
+            runtime_platform,
+            notification_capability,
+            request_notification_permission,
+            open_notification_settings
         ])
         .setup(|_app| {
             #[cfg(any(target_os = "linux", all(debug_assertions, windows)))]
@@ -976,7 +951,7 @@ mod tests {
     }
 
     #[test]
-    fn renderer_workspace_commands_are_desktop_scoped() {
+    fn renderer_workspace_commands_are_cross_platform_and_native_work_is_private() {
         let commands = [
             "workspace_snapshot",
             "create_workspace",
@@ -1061,12 +1036,19 @@ mod tests {
             "leave_workspace",
             "close_workspace",
             "remove_workspace_data",
+            "get_notification_state",
+            "set_hide_notification_previews",
+            "set_workspace_notification_preference",
+            "open_notification_target",
+            "reconcile_mobile_lifecycle",
         ];
         for command in commands {
             assert!(allowed_renderer_command(command));
-            assert!(workspace_renderer_command(command));
         }
-        assert!(!workspace_renderer_command("send_message"));
+        assert!(!allowed_renderer_command("native_notification_state"));
+        assert!(!allowed_renderer_command("mobile_lifecycle_transition"));
+        assert!(!allowed_renderer_command("drain_native_notification_work"));
+        assert!(!allowed_renderer_command("acknowledge_native_notification"));
     }
 
     #[test]

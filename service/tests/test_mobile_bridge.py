@@ -69,6 +69,31 @@ def test_mobile_bridge_command_does_not_block_worker_event(
     ]
 
 
+def test_mobile_bridge_persists_invalidation_overflow(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class OverflowService:
+        def __init__(self) -> None:
+            self.overflows = 0
+
+        def _mark_workspace_invalidation_overflow(self) -> None:
+            self.overflows += 1
+
+    service = OverflowService()
+    monkeypatch.setattr(mobile_bridge, "_service", service)
+    monkeypatch.setattr(mobile_bridge, "_events", mobile_bridge.deque(maxlen=2))
+
+    mobile_bridge._emit({"event": "first"})
+    mobile_bridge._emit({"event": "second"})
+    mobile_bridge._emit({"event": "third"})
+
+    assert service.overflows == 1
+    assert json.loads(mobile_bridge.drain_events())["result"] == [
+        {"event": "second"},
+        {"event": "third"},
+    ]
+
+
 def test_mobile_bridge_preserves_direct_send_payload(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

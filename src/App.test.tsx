@@ -7,9 +7,13 @@ import type { ChatMessage, Contact, Group, GroupInvitation, GroupMessage, Snapsh
 const api = vi.hoisted(() => ({
   initializeService: vi.fn(),
   lockService: vi.fn(),
+  notificationCapability: vi.fn(async () => ({ supported: false, platform: "desktop", permission_state: "unsupported" })),
   onInvitation: vi.fn(),
   onMobileBackButton: vi.fn(),
+  onNotificationOpen: vi.fn<(callback: (notificationId: string) => void) => Promise<() => void>>(async () => () => undefined),
   onServiceEvent: vi.fn(),
+  openNotificationSettings: vi.fn(async () => ({ supported: false, platform: "desktop", permission_state: "unsupported" })),
+  requestNotificationPermission: vi.fn(async () => ({ supported: false, platform: "desktop", permission_state: "unsupported" })),
   runtimePlatform: vi.fn(),
   serviceCommand: vi.fn(),
 }));
@@ -448,6 +452,49 @@ describe("network settings", () => {
       });
     });
     expect(await screen.findByText("Saved. Restart Mesh Chat to apply networking-role changes.")).toBeTruthy();
+  });
+
+  it("requests notification permission explicitly and hides private previews", async () => {
+    const notificationState = {
+      supported: true,
+      platform: "android" as const,
+      permission_state: "not_requested" as const,
+      hide_previews: false,
+      lifecycle_state: "foreground" as const,
+      reconciling: false,
+      caught_up: true,
+      invalidation_overflow: false,
+      pending_native_count: 0,
+      guidance: "Local notifications are best effort.",
+    };
+    const current: Snapshot = { ...snapshot(), workspace_notification_state: notificationState };
+    api.runtimePlatform.mockResolvedValue("android");
+    api.initializeService.mockResolvedValue(current);
+    api.onInvitation.mockResolvedValue(() => undefined);
+    api.onServiceEvent.mockResolvedValue(() => undefined);
+    api.onMobileBackButton.mockResolvedValue(() => undefined);
+    api.notificationCapability.mockResolvedValue({ supported: true, platform: "android", permission_state: "not_requested" });
+    api.requestNotificationPermission.mockResolvedValue({ supported: true, platform: "android", permission_state: "allowed" });
+    api.serviceCommand.mockImplementation(async (command: string) => {
+      if (command === "snapshot") return current;
+      if (command === "get_notification_state") return notificationState;
+      if (command === "set_hide_notification_previews") return { ...notificationState, hide_previews: true };
+      return {};
+    });
+
+    render(<App />);
+    await screen.findByRole("heading", { name: "Your private conversations" });
+    fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+    const dialog = await screen.findByRole("dialog", { name: "Settings" });
+    expect(within(dialog).getByText(/There is no cloud push/i)).toBeTruthy();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Enable notifications" }));
+    await waitFor(() => expect(api.requestNotificationPermission).toHaveBeenCalledTimes(1));
+    const previews = within(dialog).getByRole("checkbox", { name: /Hide notification previews/ });
+    fireEvent.click(previews);
+    await waitFor(() => expect(api.serviceCommand).toHaveBeenCalledWith(
+      "set_hide_notification_previews",
+      expect.objectContaining({ hidden: true }),
+    ));
   });
 });
 
@@ -3132,5 +3179,56 @@ describe("desktop workspaces", () => {
     dialog = await screen.findByRole("dialog", { name: "Deleted-message history" });
     expect(within(dialog).getByText(/Message deleted by its author/i)).toBeTruthy();
     expect(within(dialog).getByText(/Older tombstones were safely pruned/i)).toBeTruthy();
+  });
+});
+
+describe("notification routing", () => {
+  it("re-authorizes an opaque target and opens the exact workspace conversation", async () => {
+    const current: Snapshot = {
+      ...snapshot(),
+      workspaces: [workspace],
+      workspace_channels: [workspaceChannel],
+      workspace_directs: [],
+    };
+    let openNotification: ((notificationId: string) => void) | undefined;
+    api.runtimePlatform.mockResolvedValue("android");
+    api.initializeService.mockResolvedValue(current);
+    api.onInvitation.mockResolvedValue(() => undefined);
+    api.onServiceEvent.mockResolvedValue(() => undefined);
+    api.onMobileBackButton.mockResolvedValue(() => undefined);
+    api.onNotificationOpen.mockImplementation(async (callback) => {
+      openNotification = callback;
+      return () => undefined;
+    });
+    api.serviceCommand.mockImplementation(async (command: string) => {
+      if (command === "snapshot") return current;
+      if (command === "workspace_snapshot") return {
+        workspaces: current.workspaces,
+        workspace_channels: current.workspace_channels,
+        workspace_directs: [],
+      };
+      if (command === "open_notification_target") return {
+        available: true,
+        workspace_id: workspace.id,
+        conversation_id: workspaceChannel.id,
+        conversation_kind: "channel",
+        thread_root_id: null,
+        event_id: "authorized-event",
+      };
+      if (command === "list_workspace_messages") return {
+        messages: [], next_cursor: null, high_water: 0, history_status: "complete",
+      };
+      return {};
+    });
+
+    render(<App />);
+    await screen.findByRole("heading", { name: "Your private conversations" });
+    await waitFor(() => expect(openNotification).toBeTypeOf("function"));
+    await act(async () => openNotification?.("ab".repeat(32)));
+
+    expect(await screen.findByLabelText("Workspace channel general")).toBeTruthy();
+    expect(api.serviceCommand).toHaveBeenCalledWith("open_notification_target", {
+      notification_id: "ab".repeat(32),
+    });
   });
 });

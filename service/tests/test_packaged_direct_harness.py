@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import os
+import tempfile
+import uuid
 from pathlib import Path
 
 import pytest
 
 from tools.packaged_direct_harness import (
+    PackagedPeer,
     _message_with_reactions,
     run,
     run_mixed,
@@ -80,6 +83,47 @@ def test_exact_packaged_sidecar_phone_first_then_desktop_reply() -> None:
     assert result["fresh_inbound_id_preserved"] is True
     assert result["clean_shutdown"] is True
     assert result["stderr_content_free"] is True
+
+
+@pytest.mark.skipif(
+    not PACKAGED_BINARY,
+    reason="Set MESH_CHAT_PACKAGED_SIDECAR to the exact release sidecar",
+)
+def test_exact_packaged_sidecar_exposes_bounded_native_notification_commands() -> None:
+    with tempfile.TemporaryDirectory(prefix="mesh-chat-packaged-notification-") as temporary:
+        peer = PackagedPeer(
+            Path(PACKAGED_BINARY).resolve(),
+            Path(temporary) / "profile",
+            "Packaging Notification",
+        )
+        try:
+            initial, _ = peer.call("get_notification_state")
+            assert initial["supported"] is False
+            hidden, _ = peer.call(
+                "set_hide_notification_previews",
+                {"hidden": True, "operation_id": str(uuid.uuid4())},
+            )
+            assert hidden["hide_previews"] is True
+            native, _ = peer.call(
+                "native_notification_state",
+                {
+                    "platform": "android",
+                    "supported": True,
+                    "permission_state": "allowed",
+                },
+            )
+            assert native["supported"] is True
+            background, _ = peer.call(
+                "mobile_lifecycle_transition",
+                {"state": "background", "reason": "packaged_probe"},
+            )
+            assert background["lifecycle_state"] == "background"
+            drained, _ = peer.call("drain_native_notification_work", {"limit": 16})
+            assert drained == {"items": []}
+        finally:
+            closed = peer.close()
+        assert closed["clean"] is True
+        assert closed["stderr_content_free"] is True
 
 
 @pytest.mark.skipif(

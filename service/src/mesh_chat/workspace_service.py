@@ -197,6 +197,26 @@ MAX_HISTORY_JOBS_PER_WORKSPACE = 2
 MAX_HISTORY_JOBS_PER_PROFILE = 4
 MAX_HISTORY_SEQUENCE_PROBES = 256
 MAX_HISTORY_GAP_PAGE = 64
+MAX_NOTIFICATION_QUEUE = 128
+MAX_NOTIFICATION_BATCH = 16
+MAX_NOTIFICATION_TITLE_CHARS = 80
+MAX_NOTIFICATION_BODY_CHARS = 160
+MAX_NOTIFICATION_NATIVE_BYTES = 1024
+NOTIFICATION_MODES = {"all", "mentions_only", "muted"}
+NOTIFICATION_PERMISSION_STATES = {
+    "unsupported",
+    "not_requested",
+    "allowed",
+    "denied",
+    "settings_required",
+}
+MOBILE_LIFECYCLE_STATES = {
+    "foreground",
+    "background",
+    "suspended",
+    "reconciling",
+    "caught_up",
+}
 WORKSPACE_RETRY_BASE_SECONDS = 5
 WORKSPACE_RETRY_MAX_SECONDS = 5 * 60
 DUE_SHARDS = 64
@@ -236,6 +256,27 @@ def _canonical_transfer_offer(value: dict[str, Any]) -> str:
 
 def _short_id(value: str) -> str:
     return value.replace("-", "")[:6]
+
+
+def sanitize_notification_text(value: Any, limit: int) -> str:
+    """Create bounded plain text safe for an operating-system notification."""
+
+    if not isinstance(value, str) or not isinstance(limit, int) or limit < 1:
+        raise ValidationError("Notification text is invalid")
+    normalized = unicodedata.normalize("NFC", value)
+    checked: list[str] = []
+    for character in normalized:
+        category = unicodedata.category(character)
+        # Drop controls, bidi overrides/isolates, zero-width format characters,
+        # surrogates and other invisible formatting. Whitespace is reintroduced
+        # below as a single ordinary space.
+        if category in {"Cc", "Cf", "Cs"}:
+            if character in {"\t", "\n", "\r"}:
+                checked.append(" ")
+            continue
+        checked.append(character)
+    compact = " ".join("".join(checked).split())
+    return compact[:limit]
 
 
 def normalize_workspace_search_text(value: str) -> str:
@@ -334,6 +375,13 @@ class WorkspaceServiceMixin:
                 is not None
             ]
             self._sync_workspace_search_directory(workspace, search_channels)
+        lifecycle = dict(self._workspace_lifecycle_state())
+        generation = int(lifecycle.get("invalidation_generation", 0)) + 1
+        lifecycle["invalidation_generation"] = generation
+        lifecycle["updated_at"] = time.time()
+        self.store.put(
+            "workspace_lifecycle_state", self._workspace_lifecycle_id(), lifecycle
+        )
         self.emit(
             {
                 "type": "event",
@@ -341,7 +389,7 @@ class WorkspaceServiceMixin:
                 "workspace_id": workspace_id,
                 "conversation_id": conversation_id,
                 "resource_kind": resource_kind,
-                "generation": time.monotonic_ns(),
+                "generation": generation,
             }
         )
 
@@ -863,6 +911,687 @@ class WorkspaceServiceMixin:
         return self.store.opaque_id(
             "workspace-notification-preference", workspace_id, conversation_id
         )
+
+    def _workspace_notification_settings_id(self) -> str:
+        return self.store.opaque_id("workspace-notification-settings", "device")
+
+    def _workspace_notification_queue_id(self) -> str:
+        return self.store.opaque_id("workspace-notification-queue", "native")
+
+    def _workspace_notification_id(self, workspace_id: str, event_id: str) -> str:
+        return self.store.opaque_id(
+            "workspace-native-notification", workspace_id, event_id
+        )
+
+    def _workspace_notification_group_id(
+        self, workspace_id: str, conversation_id: str
+    ) -> str:
+        return self.store.opaque_id(
+            "workspace-notification-group", workspace_id, conversation_id
+        )[:32]
+
+    def _workspace_lifecycle_id(self) -> str:
+        return self.store.opaque_id("workspace-mobile-lifecycle", "device")
+
+    def _workspace_notification_settings(self) -> dict[str, Any]:
+        return self.store.get(
+            "workspace_notification_settings",
+            self._workspace_notification_settings_id(),
+        ) or {
+            "hide_previews": False,
+            "native_supported": False,
+            "permission_state": "unsupported",
+            "platform": "desktop",
+            "notification_sequence": 0,
+            "updated_at": 0.0,
+        }
+
+    def _workspace_lifecycle_state(self) -> dict[str, Any]:
+        return self.store.get(
+            "workspace_lifecycle_state", self._workspace_lifecycle_id()
+        ) or {
+            "state": "foreground",
+            "generation": 0,
+            "reconciled_generation": 0,
+            "invalidation_generation": 0,
+            "invalidation_overflow": False,
+            "last_reason": "startup",
+            "updated_at": 0.0,
+        }
+
+    def _workspace_notification_preference(
+        self, workspace_id: str, conversation_id: str
+    ) -> dict[str, Any]:
+        conversation = self.store.get(
+            "workspace_notification_preference",
+            self._workspace_notification_preference_id(
+                workspace_id, conversation_id
+            ),
+        ) or {}
+        workspace = self.store.get(
+            "workspace_notification_preference",
+            self._workspace_notification_preference_id(workspace_id, "*"),
+        ) or {}
+        mode = conversation.get("mode", workspace.get("mode", "all"))
+        if mode not in NOTIFICATION_MODES:
+            mode = "all"
+        return {
+            "mode": mode,
+            "mentions_muted": bool(conversation.get("mentions_muted", False)),
+        }
+
+    def _workspace_notification_records(
+        self,
+        workspace: dict[str, Any],
+        event: VerifiedWorkspaceEvent,
+        message: dict[str, Any] | None,
+        *,
+        historical: bool,
+    ) -> list[tuple[str, str, dict[str, Any]]]:
+        """Decide and durably queue one live local notification.
+
+        This runs while the event transaction is being assembled. The native
+        signal carries only opaque identifiers and already-sanitized preview
+        text; canonical authorization remains in the sealed event records.
+        """
+
+        if event.event_type != "message" or message is None or historical:
+            return []
+        notification_id = self._workspace_notification_id(
+            event.workspace_id, event.event_id
+        )
+        if self.store.get("workspace_notification_ledger", notification_id) is not None:
+            return []
+        settings = self._workspace_notification_settings()
+        lifecycle = self._workspace_lifecycle_state()
+        preference = self._workspace_notification_preference(
+            event.workspace_id, event.conversation_id
+        )
+        local_member_id = str(workspace.get("local_member_id", ""))
+        mentioned = (
+            local_member_id in event.mentions
+            and not preference["mentions_muted"]
+        )
+        reason: str | None = None
+        should_notify = True
+        channel_record: dict[str, Any] | None = None
+        direct_record: dict[str, Any] | None = None
+        if workspace.get("state") not in {"active", "incomplete_sync"}:
+            should_notify, reason = False, "workspace_inactive"
+        elif event.author_member_id == local_member_id:
+            # The same person's other linked device is deliberately quiet.
+            should_notify, reason = False, "same_member"
+        elif not settings.get("native_supported"):
+            should_notify, reason = False, "unsupported"
+        elif settings.get("permission_state") != "allowed":
+            should_notify, reason = False, "permission_not_allowed"
+        elif lifecycle.get("state") not in {"background", "suspended"}:
+            should_notify, reason = False, "foreground"
+        elif preference["mode"] == "muted":
+            should_notify, reason = False, "muted"
+        elif preference["mode"] == "mentions_only" and not mentioned:
+            should_notify, reason = False, "not_mentioned"
+        elif event.channel_digest is None:
+            direct_record = self.store.get(
+                "workspace_direct",
+                self._workspace_direct_record_id(event.conversation_id),
+            )
+            if direct_record is not None and direct_record.get("hidden"):
+                should_notify, reason = False, "hidden"
+        else:
+            channel_record = self.store.get(
+                "workspace_channel",
+                self._workspace_channel_record_id(event.conversation_id),
+            )
+            if channel_record is None or channel_record.get("state") != "active":
+                should_notify, reason = False, "channel_inactive"
+            elif channel_record.get("visibility") == "public":
+                subscription = self.store.get(
+                    "workspace_subscription",
+                    self.store.opaque_id(
+                        "workspace-subscription",
+                        event.workspace_id,
+                        event.conversation_id,
+                    ),
+                )
+                subscribed = event.conversation_id == workspace.get(
+                    "general_channel_id"
+                ) or bool(subscription and subscription.get("subscribed"))
+                if not subscribed and not mentioned:
+                    should_notify, reason = False, "unsubscribed"
+
+        now = time.time()
+        ledger = {
+            "workspace_id": event.workspace_id,
+            "conversation_id": event.conversation_id,
+            "event_id": event.event_id,
+            "event_digest": event.digest,
+            "status": "pending" if should_notify else "suppressed",
+            "reason": reason,
+            "created_at": now,
+            "updated_at": now,
+        }
+        records: list[tuple[str, str, dict[str, Any]]] = [
+            ("workspace_notification_ledger", notification_id, ledger)
+        ]
+        if not should_notify:
+            return records
+
+        queue_id = self._workspace_notification_queue_id()
+        queue = self.store.get("workspace_notification_queue", queue_id) or {
+            "entries": [],
+            "overflow_count": 0,
+        }
+        entries = [
+            item for item in queue.get("entries", ()) if isinstance(item, str)
+        ]
+        if len(entries) >= MAX_NOTIFICATION_QUEUE:
+            ledger["status"] = "suppressed"
+            ledger["reason"] = "queue_full"
+            queue["overflow_count"] = int(queue.get("overflow_count", 0)) + 1
+            queue["updated_at"] = now
+            records.append(("workspace_notification_queue", queue_id, queue))
+            return records
+
+        settings = dict(settings)
+        sequence = int(settings.get("notification_sequence", 0)) + 1
+        settings["notification_sequence"] = sequence
+        settings["updated_at"] = now
+        hide_previews = bool(settings.get("hide_previews", False))
+        category = (
+            "mention"
+            if mentioned
+            else "thread_reply"
+            if event.thread_root is not None
+            else "direct_message"
+            if event.channel_digest is None
+            else "channel_message"
+        )
+        if hide_previews:
+            title = "Mesh Chat"
+            body = "New message"
+        else:
+            workspace_name = sanitize_notification_text(
+                workspace.get("name", "Workspace"), MAX_NOTIFICATION_TITLE_CHARS
+            ) or "Workspace"
+            author = sanitize_notification_text(
+                message.get("author_display_name", "Member"),
+                MAX_NOTIFICATION_TITLE_CHARS,
+            ) or "Member"
+            if event.channel_digest is None:
+                title = author
+            else:
+                if channel_record is None:
+                    channel_record = self.store.get(
+                        "workspace_channel",
+                        self._workspace_channel_record_id(event.conversation_id),
+                    )
+                channel_name = sanitize_notification_text(
+                    (channel_record or {}).get("name", "channel"),
+                    MAX_NOTIFICATION_TITLE_CHARS,
+                ) or "channel"
+                title = f"{workspace_name} · #{channel_name}"
+            body = sanitize_notification_text(
+                message.get("text", ""), MAX_NOTIFICATION_BODY_CHARS
+            ) or "New message"
+        title = sanitize_notification_text(title, MAX_NOTIFICATION_TITLE_CHARS)
+        body = sanitize_notification_text(body, MAX_NOTIFICATION_BODY_CHARS)
+        signal = {
+            "notification_id": notification_id,
+            "category": category,
+            "title": title,
+            "body": body,
+            "sequence": sequence,
+            "created_at": now,
+            "grouping_key": self._workspace_notification_group_id(
+                event.workspace_id, event.conversation_id
+            ),
+        }
+        if len(json.dumps(signal, ensure_ascii=False).encode("utf-8")) > MAX_NOTIFICATION_NATIVE_BYTES:
+            signal["title"] = "Mesh Chat"
+            signal["body"] = "New message"
+        work = {
+            **signal,
+            "workspace_id": event.workspace_id,
+            "conversation_id": event.conversation_id,
+            "conversation_kind": "direct" if event.channel_digest is None else "channel",
+            "thread_root_id": event.thread_root,
+            "event_id": event.event_id,
+            "event_digest": event.digest,
+            "authorization_generation": int(
+                workspace.get("authorization_generation", 1)
+            ),
+            "attempt_count": 0,
+        }
+        route = {
+            "workspace_id": event.workspace_id,
+            "conversation_id": event.conversation_id,
+            "conversation_kind": "direct" if event.channel_digest is None else "channel",
+            "thread_root_id": event.thread_root,
+            "event_id": event.event_id,
+            "event_digest": event.digest,
+            "authorization_generation": int(
+                workspace.get("authorization_generation", 1)
+            ),
+            "created_at": now,
+        }
+        queue["entries"] = [*entries, notification_id]
+        queue["updated_at"] = now
+        records.extend(
+            [
+                (
+                    "workspace_notification_settings",
+                    self._workspace_notification_settings_id(),
+                    settings,
+                ),
+                ("workspace_notification_route", notification_id, route),
+                ("workspace_notification_work", notification_id, work),
+                ("workspace_notification_queue", queue_id, queue),
+            ]
+        )
+        return records
+
+    def _workspace_notification_route_is_authorized(
+        self, route: dict[str, Any]
+    ) -> tuple[bool, dict[str, Any] | None]:
+        workspace_id = route.get("workspace_id")
+        event_id = route.get("event_id")
+        if not isinstance(workspace_id, str) or not isinstance(event_id, str):
+            return False, None
+        workspace = self.store.get(
+            "workspace", self._workspace_record_id(workspace_id)
+        )
+        if workspace is None or workspace.get("state") not in {
+            "active",
+            "incomplete_sync",
+        }:
+            return False, workspace
+        message = self.store.get(
+            "workspace_message_state", self._workspace_message_record_id(event_id)
+        )
+        if (
+            message is None
+            or message.get("conversation_id") != route.get("conversation_id")
+            or message.get("event_digest") != route.get("event_digest")
+            or self.store.get(
+                "workspace_message_hidden",
+                self.store.opaque_id(
+                    "workspace-message-hidden", workspace_id, event_id
+                ),
+            )
+            is not None
+            or not self._workspace_message_is_visible(workspace, message)
+        ):
+            return False, workspace
+        return True, workspace
+
+    def notification_state(self) -> dict[str, Any]:
+        settings = self._workspace_notification_settings()
+        lifecycle = self._workspace_lifecycle_state()
+        queue = self.store.get(
+            "workspace_notification_queue", self._workspace_notification_queue_id()
+        ) or {}
+        return {
+            "supported": bool(settings.get("native_supported", False)),
+            "platform": settings.get("platform", "desktop"),
+            "permission_state": settings.get("permission_state", "unsupported"),
+            "hide_previews": bool(settings.get("hide_previews", False)),
+            "lifecycle_state": lifecycle.get("state", "foreground"),
+            "reconciling": lifecycle.get("state") == "reconciling",
+            "caught_up": int(lifecycle.get("reconciled_generation", 0))
+            >= int(lifecycle.get("generation", 0)),
+            "invalidation_overflow": bool(
+                lifecycle.get("invalidation_overflow", False)
+            ),
+            "pending_native_count": min(
+                len(queue.get("entries", ())), MAX_NOTIFICATION_QUEUE
+            ),
+            "guidance": (
+                "Local notifications are best effort while Mesh Chat can execute. "
+                "After suspension or process termination, open Mesh Chat to reconcile."
+            ),
+        }
+
+    def set_native_notification_state(
+        self, platform: Any, supported: Any, permission_state: Any
+    ) -> dict[str, Any]:
+        if (
+            platform not in {"android", "ios", "desktop"}
+            or not isinstance(supported, bool)
+            or permission_state not in NOTIFICATION_PERMISSION_STATES
+        ):
+            raise ValidationError("Native notification state is invalid")
+        settings = dict(self._workspace_notification_settings())
+        settings.update(
+            {
+                "platform": platform,
+                "native_supported": supported,
+                "permission_state": permission_state,
+                "updated_at": time.time(),
+            }
+        )
+        records: list[tuple[str, str, dict[str, Any]]] = [
+            (
+                "workspace_notification_settings",
+                self._workspace_notification_settings_id(),
+                settings,
+            )
+        ]
+        deletions: list[tuple[str, str]] = []
+        if permission_state != "allowed":
+            queue_id = self._workspace_notification_queue_id()
+            queue = self.store.get("workspace_notification_queue", queue_id) or {
+                "entries": []
+            }
+            for notification_id in list(queue.get("entries", ()))[:MAX_NOTIFICATION_QUEUE]:
+                if not isinstance(notification_id, str):
+                    continue
+                ledger = self.store.get(
+                    "workspace_notification_ledger", notification_id
+                )
+                if ledger is not None:
+                    ledger["status"] = "suppressed"
+                    ledger["reason"] = "permission_not_allowed"
+                    ledger["updated_at"] = time.time()
+                    records.append(
+                        ("workspace_notification_ledger", notification_id, ledger)
+                    )
+                deletions.append(("workspace_notification_work", notification_id))
+            queue["entries"] = []
+            queue["updated_at"] = time.time()
+            records.append(("workspace_notification_queue", queue_id, queue))
+        self.store.put_and_delete(records, deletions)
+        return self.notification_state()
+
+    def set_hide_notification_previews(
+        self, hidden: Any, operation_id: Any
+    ) -> dict[str, Any]:
+        payload = {"hidden": hidden}
+        operation_id, digest, replay = self._workspace_operation(
+            "set_hide_notification_previews", operation_id, payload
+        )
+        if replay is not None:
+            return replay
+        if not isinstance(hidden, bool):
+            raise ValidationError("Notification preview preference is invalid")
+        settings = dict(self._workspace_notification_settings())
+        settings["hide_previews"] = hidden
+        settings["updated_at"] = time.time()
+        outcome = self.notification_state()
+        outcome["hide_previews"] = hidden
+        return self.store.commit_operation(
+            operation_id,
+            digest,
+            outcome,
+            [
+                (
+                    "workspace_notification_settings",
+                    self._workspace_notification_settings_id(),
+                    settings,
+                )
+            ],
+        )
+
+    def set_workspace_notification_preference(
+        self,
+        workspace_id: Any,
+        conversation_id: Any,
+        mode: Any,
+        operation_id: Any,
+    ) -> dict[str, Any]:
+        payload = {
+            "workspace_id": workspace_id,
+            "conversation_id": conversation_id,
+            "mode": mode,
+        }
+        operation_id, digest, replay = self._workspace_operation(
+            "set_workspace_notification_preference", operation_id, payload
+        )
+        if replay is not None:
+            return replay
+        workspace = self._require_workspace(workspace_id)
+        if workspace.get("state") not in {"active", "incomplete_sync"}:
+            raise ContactNotApproved("Workspace notification preferences cannot change now")
+        if mode not in NOTIFICATION_MODES:
+            raise ValidationError("Workspace notification preference is invalid")
+        if conversation_id is not None:
+            if not isinstance(conversation_id, str):
+                raise ValidationError("Workspace conversation is invalid")
+            self._require_workspace_conversation(workspace_id, conversation_id)
+        scope = conversation_id if isinstance(conversation_id, str) else "*"
+        preference_id = self._workspace_notification_preference_id(
+            workspace_id, scope
+        )
+        previous = self.store.get(
+            "workspace_notification_preference", preference_id
+        ) or {}
+        record = {
+            "workspace_id": workspace_id,
+            "conversation_id": conversation_id,
+            "mode": mode,
+            "mentions_muted": bool(previous.get("mentions_muted", False)),
+            "updated_at": time.time(),
+        }
+        outcome = {
+            "workspace_id": workspace_id,
+            "conversation_id": conversation_id,
+            "mode": mode,
+        }
+        committed = self.store.commit_operation(
+            operation_id,
+            digest,
+            outcome,
+            [("workspace_notification_preference", preference_id, record)],
+        )
+        self._workspace_changed(
+            workspace_id,
+            conversation_id=conversation_id,
+            resource_kind="notification_preference",
+        )
+        return committed
+
+    def _mark_workspace_invalidation_overflow(self) -> None:
+        lifecycle = dict(self._workspace_lifecycle_state())
+        lifecycle["invalidation_overflow"] = True
+        lifecycle["updated_at"] = time.time()
+        self.store.put(
+            "workspace_lifecycle_state", self._workspace_lifecycle_id(), lifecycle
+        )
+
+    def _suppress_foreground_notification_work(self) -> None:
+        """Prevent delayed background work from becoming a later notification storm."""
+
+        queue_id = self._workspace_notification_queue_id()
+        queue = self.store.get("workspace_notification_queue", queue_id)
+        if queue is None:
+            return
+        records: list[tuple[str, str, dict[str, Any]]] = []
+        deletions: list[tuple[str, str]] = []
+        now = time.time()
+        for notification_id in list(queue.get("entries", ()))[:MAX_NOTIFICATION_QUEUE]:
+            if not isinstance(notification_id, str):
+                continue
+            ledger = self.store.get("workspace_notification_ledger", notification_id)
+            if ledger is not None:
+                ledger["status"] = "suppressed"
+                ledger["reason"] = "foreground_reconciled"
+                ledger["updated_at"] = now
+                records.append(("workspace_notification_ledger", notification_id, ledger))
+            deletions.append(("workspace_notification_work", notification_id))
+        queue["entries"] = []
+        queue["updated_at"] = now
+        records.append(("workspace_notification_queue", queue_id, queue))
+        self.store.put_and_delete(records, deletions)
+
+    def mobile_lifecycle_transition(self, state: Any, reason: Any = None) -> dict[str, Any]:
+        if state not in {"foreground", "background", "suspended"} or not (
+            reason is None or isinstance(reason, str) and len(reason) <= 64
+        ):
+            raise ValidationError("Mobile lifecycle transition is invalid")
+        lifecycle = dict(self._workspace_lifecycle_state())
+        lifecycle["generation"] = int(lifecycle.get("generation", 0)) + 1
+        lifecycle["state"] = state
+        lifecycle["last_reason"] = reason or state
+        lifecycle["updated_at"] = time.time()
+        self.store.put(
+            "workspace_lifecycle_state", self._workspace_lifecycle_id(), lifecycle
+        )
+        if state == "foreground":
+            lifecycle["state"] = "reconciling"
+            self.store.put(
+                "workspace_lifecycle_state", self._workspace_lifecycle_id(), lifecycle
+            )
+            # This touches only bounded summaries, pending queues and sharded
+            # due-work indexes. It never scans the event or delivery kinds.
+            for workspace in self.store.list("workspace")[:MAX_WORKSPACES]:
+                workspace_id = workspace.get("id")
+                if not isinstance(workspace_id, str):
+                    continue
+                if workspace.get("state") == "forked":
+                    continue
+                self._drain_workspace_pending_controls(workspace_id)
+                self._drain_workspace_pending_events(workspace_id)
+            self._retry_workspace_outbox()
+            self._suppress_foreground_notification_work()
+            lifecycle = dict(self._workspace_lifecycle_state())
+            lifecycle["state"] = "caught_up"
+            lifecycle["reconciled_generation"] = int(
+                lifecycle.get("generation", 0)
+            )
+            lifecycle["invalidation_overflow"] = False
+            lifecycle["updated_at"] = time.time()
+            self.store.put(
+                "workspace_lifecycle_state", self._workspace_lifecycle_id(), lifecycle
+            )
+        return self.notification_state()
+
+    def drain_native_notification_work(self, limit: Any = MAX_NOTIFICATION_BATCH) -> dict[str, Any]:
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= MAX_NOTIFICATION_BATCH:
+            raise ValidationError("Native notification batch limit is invalid")
+        settings = self._workspace_notification_settings()
+        lifecycle = self._workspace_lifecycle_state()
+        if (
+            not settings.get("native_supported")
+            or settings.get("permission_state") != "allowed"
+            or lifecycle.get("state") not in {"background", "suspended"}
+        ):
+            return {"items": []}
+        queue_id = self._workspace_notification_queue_id()
+        queue = self.store.get("workspace_notification_queue", queue_id) or {
+            "entries": []
+        }
+        retained: list[str] = []
+        items: list[dict[str, Any]] = []
+        records: list[tuple[str, str, dict[str, Any]]] = []
+        deletions: list[tuple[str, str]] = []
+        for notification_id in list(queue.get("entries", ()))[:MAX_NOTIFICATION_QUEUE]:
+            if not isinstance(notification_id, str):
+                continue
+            work = self.store.get("workspace_notification_work", notification_id)
+            route = self.store.get("workspace_notification_route", notification_id)
+            if work is None or route is None:
+                deletions.append(("workspace_notification_work", notification_id))
+                continue
+            authorized, _workspace = self._workspace_notification_route_is_authorized(route)
+            if not authorized:
+                ledger = self.store.get("workspace_notification_ledger", notification_id)
+                if ledger is not None:
+                    ledger["status"] = "suppressed"
+                    ledger["reason"] = "authorization_changed"
+                    ledger["updated_at"] = time.time()
+                    records.append(("workspace_notification_ledger", notification_id, ledger))
+                deletions.append(("workspace_notification_work", notification_id))
+                continue
+            retained.append(notification_id)
+            if len(items) < limit:
+                items.append(
+                    {
+                        key: work[key]
+                        for key in (
+                            "notification_id",
+                            "category",
+                            "title",
+                            "body",
+                            "sequence",
+                            "created_at",
+                            "grouping_key",
+                        )
+                    }
+                )
+        queue["entries"] = retained
+        queue["updated_at"] = time.time()
+        records.append(("workspace_notification_queue", queue_id, queue))
+        self.store.put_and_delete(records, deletions)
+        return {"items": items}
+
+    def acknowledge_native_notification(
+        self, notification_id: Any, outcome: Any
+    ) -> dict[str, Any]:
+        if (
+            not isinstance(notification_id, str)
+            or len(notification_id) != 64
+            or any(character not in "0123456789abcdef" for character in notification_id)
+            or outcome not in {"accepted", "denied", "retry"}
+        ):
+            raise ValidationError("Native notification acknowledgment is invalid")
+        work = self.store.get("workspace_notification_work", notification_id)
+        if work is None:
+            return {"acknowledged": False}
+        ledger = self.store.get("workspace_notification_ledger", notification_id)
+        queue_id = self._workspace_notification_queue_id()
+        queue = self.store.get("workspace_notification_queue", queue_id) or {
+            "entries": []
+        }
+        records: list[tuple[str, str, dict[str, Any]]] = []
+        deletions: list[tuple[str, str]] = []
+        if outcome == "retry" and int(work.get("attempt_count", 0)) < 3:
+            work["attempt_count"] = int(work.get("attempt_count", 0)) + 1
+            records.append(("workspace_notification_work", notification_id, work))
+        else:
+            queue["entries"] = [
+                item for item in queue.get("entries", ()) if item != notification_id
+            ]
+            deletions.append(("workspace_notification_work", notification_id))
+            if ledger is not None:
+                ledger["status"] = "native_accepted" if outcome == "accepted" else "suppressed"
+                ledger["reason"] = None if outcome == "accepted" else "permission_denied"
+                ledger["updated_at"] = time.time()
+                records.append(("workspace_notification_ledger", notification_id, ledger))
+        queue["updated_at"] = time.time()
+        records.append(("workspace_notification_queue", queue_id, queue))
+        self.store.put_and_delete(records, deletions)
+        return {"acknowledged": True, "outcome": outcome}
+
+    def open_notification_target(self, notification_id: Any) -> dict[str, Any]:
+        if (
+            not isinstance(notification_id, str)
+            or len(notification_id) != 64
+            or any(character not in "0123456789abcdef" for character in notification_id)
+        ):
+            raise ValidationError("Notification target is invalid")
+        route = self.store.get("workspace_notification_route", notification_id)
+        if route is None:
+            return {
+                "available": False,
+                "reason": "unavailable",
+                "message": "This notification is no longer available on this device.",
+            }
+        authorized, _workspace = self._workspace_notification_route_is_authorized(route)
+        if not authorized:
+            return {
+                "available": False,
+                "reason": "authorization_changed",
+                "message": "This message is no longer available or authorized.",
+            }
+        # Routing never marks the conversation, thread, mention, or event read.
+        return {
+            "available": True,
+            "workspace_id": route["workspace_id"],
+            "conversation_id": route["conversation_id"],
+            "conversation_kind": route.get("conversation_kind", "channel"),
+            "thread_root_id": route.get("thread_root_id"),
+            "event_id": route["event_id"],
+        }
 
     def _workspace_stream_head_id(
         self, workspace_id: str, conversation_id: str, device_id: str
@@ -2333,6 +3062,9 @@ class WorkspaceServiceMixin:
         public["thread_unread_count"] = int(
             workspace.get("thread_unread_count", 0)
         )
+        public["notification_preference"] = self._workspace_notification_preference(
+            str(workspace.get("id", "")), "*"
+        )["mode"]
         search_state = self.store.get(
             "workspace_search_state",
             self._workspace_search_state_id(str(workspace.get("id", ""))),
@@ -2385,6 +3117,9 @@ class WorkspaceServiceMixin:
         public["mentions_muted"] = self._workspace_mentions_muted(
             workspace_id, channel_id
         )
+        public["notification_preference"] = self._workspace_notification_preference(
+            workspace_id, channel_id
+        )["mode"]
         public["duplicate_name"] = duplicate_name
         public["display_name"] = (
             f"{channel.get('name', '')} · {channel.get('short_id', _short_id(channel_id))}"
@@ -2428,6 +3163,9 @@ class WorkspaceServiceMixin:
             "peer_short_id": _short_id(peer_member_id) if peer_member_id else "",
             "state": "open" if active else "read_only",
             "unread_count": int(direct.get("unread_count", 0)),
+            "notification_preference": self._workspace_notification_preference(
+                str(direct.get("workspace_id", "")), str(direct.get("id", ""))
+            )["mode"],
             "created_at": float(direct.get("created_at", 0)),
             "updated_at": float(direct.get("updated_at", 0)),
         }
@@ -6393,7 +7131,7 @@ class WorkspaceServiceMixin:
         return committed
 
     def _store_pending_workspace_event(
-        self, wire: WorkspaceWirePayload, reason: str
+        self, wire: WorkspaceWirePayload, reason: str, *, historical: bool = False
     ) -> None:
         pending_id = self.store.opaque_id(
             "workspace-pending-event", wire.workspace_id, wire.logical_id
@@ -6441,6 +7179,7 @@ class WorkspaceServiceMixin:
                 "document": wire.document,
                 "expires_at": wire.expires_at,
                 "reason": reason,
+                "historical": historical,
                 "author_device_id": author_device_id,
                 "encoded_bytes": encoded_bytes,
                 "created_at": time.time(),
@@ -6454,6 +7193,7 @@ class WorkspaceServiceMixin:
         *,
         drain_pending: bool = True,
         history_checkpoint_digests: set[str] | None = None,
+        historical: bool = False,
     ) -> bool:
         try:
             raw_value = json.loads(wire.document)
@@ -6484,7 +7224,9 @@ class WorkspaceServiceMixin:
             if manifest is None or (
                 isinstance(channel_digest, str) and channel is None
             ):
-                self._store_pending_workspace_event(wire, "missing_controls")
+                self._store_pending_workspace_event(
+                    wire, "missing_controls", historical=historical
+                )
                 return False
             direct_member_ids = (
                 untrusted_audience
@@ -6557,7 +7299,9 @@ class WorkspaceServiceMixin:
                     "workspace_event", self._workspace_event_record_id(event.thread_root)
                 )
                 if root_message is None or root_event is None:
-                    self._store_pending_workspace_event(wire, "missing_thread_root")
+                    self._store_pending_workspace_event(
+                        wire, "missing_thread_root", historical=historical
+                    )
                     return False
                 if (
                     root_event.get("event_type", "message") != "message"
@@ -6688,7 +7432,9 @@ class WorkspaceServiceMixin:
             expected_previous = stream_head.get("head_digest") if stream_head else None
             if event.sequence != expected_sequence or event.previous_event_digest != expected_previous:
                 if channel is None:
-                    self._store_pending_workspace_event(wire, "missing_predecessor")
+                    self._store_pending_workspace_event(
+                        wire, "missing_predecessor", historical=historical
+                    )
                     return False
                 admission_version = self._private_channel_admission_version(
                     channel, str(workspace.get("local_member_id"))
@@ -6701,7 +7447,9 @@ class WorkspaceServiceMixin:
                     or admission_version <= 1
                     or stream_channel_version >= admission_version
                 ):
-                    self._store_pending_workspace_event(wire, "missing_predecessor")
+                    self._store_pending_workspace_event(
+                        wire, "missing_predecessor", historical=historical
+                    )
                     return False
             target_message: dict[str, Any] | None = None
             if event.event_type != "message":
@@ -6713,7 +7461,9 @@ class WorkspaceServiceMixin:
                     "workspace_event", self._workspace_event_record_id(event.target_event_id)
                 )
                 if target_message is None or target_event is None:
-                    self._store_pending_workspace_event(wire, "missing_mutation_target")
+                    self._store_pending_workspace_event(
+                        wire, "missing_mutation_target", historical=historical
+                    )
                     return False
                 if (
                     target_message.get("workspace_id") != event.workspace_id
@@ -6795,7 +7545,9 @@ class WorkspaceServiceMixin:
                     current_revision = int(target_message.get("revision", 0))
                 assert event.base_revision is not None
                 if event.base_revision > current_revision:
-                    self._store_pending_workspace_event(wire, "missing_mutation_base")
+                    self._store_pending_workspace_event(
+                        wire, "missing_mutation_base", historical=historical
+                    )
                     return False
             records, _message = self._append_workspace_event_records(
                 workspace,
@@ -6882,6 +7634,14 @@ class WorkspaceServiceMixin:
                         channel_record,
                     )
                 )
+            records.extend(
+                self._workspace_notification_records(
+                    workspace,
+                    event,
+                    _message,
+                    historical=historical,
+                )
+            )
             self.store.put_many(records)
             if drain_pending:
                 self._drain_workspace_pending_events(event.workspace_id)
@@ -8614,7 +9374,11 @@ class WorkspaceServiceMixin:
                 expires_at=int(pending["expires_at"]),
                 document=pending["document"],
             )
-            if self._accept_workspace_event(wire, drain_pending=False):
+            if self._accept_workspace_event(
+                wire,
+                drain_pending=False,
+                historical=bool(pending.get("historical", False)),
+            ):
                 self.store.delete("workspace_pending_event", pending["id"])
         self._clear_workspace_sync_issue_if_resolved(workspace_id)
 
@@ -10339,11 +11103,22 @@ class WorkspaceServiceMixin:
         preference_id = self._workspace_notification_preference_id(
             workspace_id, channel_id
         )
+        previous = self.store.get(
+            "workspace_notification_preference", preference_id
+        ) or {}
         outcome = {
             "workspace_id": workspace_id,
             "channel_id": channel_id,
             "mentions_muted": muted,
         }
+        preference_record = {
+            "workspace_id": workspace_id,
+            "conversation_id": channel_id,
+            "mentions_muted": muted,
+            "updated_at": time.time(),
+        }
+        if previous.get("mode") in NOTIFICATION_MODES:
+            preference_record["mode"] = previous["mode"]
         committed = self.store.commit_operation(
             operation_id,
             digest,
@@ -10352,11 +11127,7 @@ class WorkspaceServiceMixin:
                 (
                     "workspace_notification_preference",
                     preference_id,
-                    {
-                        "workspace_id": workspace_id,
-                        "conversation_id": channel_id,
-                        "mentions_muted": muted,
-                    },
+                    preference_record,
                 )
             ],
         )
@@ -11820,6 +12591,31 @@ class WorkspaceServiceMixin:
         ):
             return False
         deletions.add(("workspace_event", self._workspace_event_record_id(event_id)))
+        notification_id = self._workspace_notification_id(workspace["id"], event_id)
+        deletions.update(
+            {
+                ("workspace_notification_ledger", notification_id),
+                ("workspace_notification_route", notification_id),
+                ("workspace_notification_work", notification_id),
+            }
+        )
+        notification_queue_id = self._workspace_notification_queue_id()
+        notification_queue_key = (
+            "workspace_notification_queue",
+            notification_queue_id,
+        )
+        notification_queue = staged.get(notification_queue_key) or self.store.get(
+            "workspace_notification_queue", notification_queue_id
+        )
+        if notification_queue is not None:
+            notification_queue = dict(notification_queue)
+            notification_queue["entries"] = [
+                item
+                for item in notification_queue.get("entries", ())
+                if item != notification_id
+            ]
+            notification_queue["updated_at"] = now
+            staged[notification_queue_key] = notification_queue
         operation_record_id = event.get("operation_record_id")
         if isinstance(operation_record_id, str):
             deletions.add(("workspace_operation", operation_record_id))
@@ -14534,6 +15330,9 @@ class WorkspaceServiceMixin:
             "workspace_thread_activity_index",
             "workspace_subscription",
             "workspace_notification_preference",
+            "workspace_notification_ledger",
+            "workspace_notification_route",
+            "workspace_notification_work",
             "workspace_read_state",
             "workspace_stream_coverage",
             "workspace_event_checkpoint",
@@ -14611,6 +15410,30 @@ class WorkspaceServiceMixin:
                     deletions.append((kind, record_id))
                     if kind == "workspace_delivery" and isinstance(value.get("id"), str):
                         delivery_ids.append(value["id"])
+        removed_notification_ids = {
+            record_id
+            for kind, record_id in deletions
+            if kind in {"workspace_notification_route", "workspace_notification_work"}
+        }
+        notification_queue_records: list[tuple[str, str, dict[str, Any]]] = []
+        notification_queue_id = self._workspace_notification_queue_id()
+        notification_queue = self.store.get(
+            "workspace_notification_queue", notification_queue_id
+        )
+        if notification_queue is not None and removed_notification_ids:
+            notification_queue["entries"] = [
+                item
+                for item in notification_queue.get("entries", ())
+                if item not in removed_notification_ids
+            ]
+            notification_queue["updated_at"] = time.time()
+            notification_queue_records.append(
+                (
+                    "workspace_notification_queue",
+                    notification_queue_id,
+                    notification_queue,
+                )
+            )
         operation_redactions: list[tuple[str, str, dict[str, Any]]] = []
         for record_id, operation in self.store.items("workspace_operation"):
             stored_outcome = operation.get("outcome")
@@ -14659,6 +15482,7 @@ class WorkspaceServiceMixin:
                 *operation_redactions,
                 *scheduler_records,
                 *admin_index_records,
+                *notification_queue_records,
             ],
             deletions,
             redact_command_cache=True,
@@ -16325,6 +17149,7 @@ class WorkspaceServiceMixin:
                     ),
                     drain_pending=False,
                     history_checkpoint_digests=history_checkpoint_digests,
+                    historical=True,
                 )
                 if accepted:
                     recovered += 1
@@ -16790,4 +17615,5 @@ class WorkspaceServiceMixin:
                 )
                 is not None
             ],
+            "workspace_notification_state": self.notification_state(),
         }

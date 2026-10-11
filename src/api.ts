@@ -2,7 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { onBackButtonPress } from "@tauri-apps/api/app";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { getCurrent, onOpenUrl } from "@tauri-apps/plugin-deep-link";
-import type { Snapshot } from "./types";
+import type { NotificationCapability, Snapshot } from "./types";
 
 export interface ServiceEvent {
   type: "event";
@@ -35,6 +35,18 @@ export async function serviceCommand<T>(
 
 export async function lockService(): Promise<void> {
   return invoke<void>("lock_service");
+}
+
+export function notificationCapability(): Promise<NotificationCapability> {
+  return invoke<NotificationCapability>("notification_capability");
+}
+
+export function requestNotificationPermission(): Promise<NotificationCapability> {
+  return invoke<NotificationCapability>("request_notification_permission");
+}
+
+export function openNotificationSettings(): Promise<NotificationCapability> {
+  return invoke<NotificationCapability>("open_notification_settings");
 }
 
 /**
@@ -97,4 +109,17 @@ export function onInvitation(callback: (invitation: string) => void): Promise<Un
   ]).then(([unlistenFile, unlistenLink]) => {
     return () => { unlistenFile(); unlistenLink(); };
   });
+}
+
+export function onNotificationOpen(callback: (notificationId: string) => void): Promise<UnlistenFn> {
+  const accept = (urls: string[] | null) => {
+    for (const value of urls ?? []) {
+      const match = /^meshchat:\/\/notification\/([0-9a-f]{64})$/.exec(value);
+      if (match) callback(match[1]);
+    }
+  };
+  return Promise.all([
+    onOpenUrl(accept),
+    getCurrent().then(accept),
+  ]).then(([unlisten]) => () => unlisten());
 }

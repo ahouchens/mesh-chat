@@ -2318,6 +2318,125 @@ Artifact hashes for this run:
   packet capture, protected-profile full-tree plaintext scanning, production
   signing and in-place installation remain manual release gates.
 
+## Increment 15 mobile lifecycle and local-notification verification — 2026-10-11
+
+- Source metadata was advanced transactionally to **0.2.35** (Android version
+  code **2035**). The pre-release 0.2.34 desktop manifest still hashes to
+  `E1C3C268FB789C64561249EC3DE347B44EF12B2D43952E43562B982248ABB429`,
+  and the Android 0.2.12 manifest still hashes to
+  `DE1B606E17FB64F46243C4676A69488B40433661E92A0C896B15A9B745416574`.
+- Increment 15 reuses the exact Increment 14 sponsor/new-device/owner-authority
+  exchange. Mobile keeps a fresh private identity and vault; no identity,
+  private key, counter, or sealed profile is copied. The renderer workspace
+  command allowlist is now cross-platform, while notification drain,
+  acknowledgment, permission-state, and native lifecycle commands remain
+  native-only.
+- Live authorized message acceptance atomically records the derived message,
+  unread/delivery state, sealed notification decision ledger, opaque route,
+  bounded native work, and queue reference. The native Android/iOS worker
+  drains this service queue directly without React polling. Same-member sends,
+  edits, reactions, deletions, controls, duplicates, replays, historical
+  catch-up, hidden or unauthorized content, inactive/forked state, foreground
+  presentation, muted scopes, and unstructured `@name` text remain quiet.
+  Structured mentions can pass an unsubscribed public channel under the frozen
+  preference precedence. Notification taps re-authorize current state and do
+  not mark read or change delivery state.
+- Android implements API-33 `POST_NOTIFICATIONS`, pre-33 notification settings
+  state, an explicit one-time permission request, settings recovery, stable
+  default/high-importance channels, opaque tags/groups/intents, 80/160
+  character and 1,024-byte native bounds, and a 750 ms direct native pump. The
+  global sealed hide-preview setting emits only **Mesh Chat / New message**.
+  Lifecycle callbacks persist foreground/background/suspended generations;
+  foreground reconciliation drains bounded prerequisite and due-work indexes,
+  suppresses stale pending presentation, clears overflow only after refresh,
+  and never enumerates the event or delivery collections.
+- The final maintained source run passed **367 Python tests**, with **11**
+  intentional opt-in/platform/package skips after adding the packaged native
+  notification probe. All **93 frontend tests**, TypeScript compilation, the
+  Vite production build, **3** packaged-artwork verifier tests, Cargo formatting,
+  the locked release check, and all **6** release-profile Rust/Tauri tests
+  passed. The isolated protected topology and all three direct-LAN scenarios
+  passed **4/4**. Android `assembleArm64Debug` succeeded; the exact arm Gradle
+  unit-test variant also succeeded after compiling the app/plugin sources and
+  reported `NO-SOURCE` for JVM unit classes.
+- The exact immutable 0.2.35 sidecar passed direct/reaction/delete/reopen,
+  administrator, authority-continuity, linked-device, and packaged
+  notification/lifecycle IPC workflows, plus the 0.2.34 mixed-binary flow
+  (**7 passed** across the maintained packaged file and focused native-command
+  probe). Exact mixed runs with 0.2.33, 0.2.32, and 0.2.31 each converged;
+  frozen 0.2.9 safely ignored the expanded additive reaction while ordinary
+  bidirectional traffic continued.
+- The final 50,000-event encrypted benchmark used Windows 10.0.19045, Intel64
+  Family 6 Model 158, 12 logical CPUs, 17,019,686,912 bytes physical memory,
+  Python 3.13.15, Rust 1.99.0, Node 24.19.0, Java 25.0.3, Gradle 9.6.1, Android
+  SDK API 36, eight members, 32 public/private/archived channel chains, three
+  independent protected profiles, and the 24-destination linked-device bound.
+  All **29** assertions passed. Startup and resume recorded no whole-event or
+  whole-delivery scan; 50,000 historical policy probes produced no notification
+  storm; queue depth stopped at 128; hidden previews, denial purge, duplicate
+  suppression, removed-device/fork failure, and no-notification-as-read or
+  delivery semantics all passed.
+- Across 30 samples, p50/p95 milliseconds were: notification policy
+  **2.252/3.936**, durable enqueue **7.393/9.426**, authorized 16-item native
+  dispatch **352.521/436.448**, duplicate suppression **0.220/0.374**,
+  background transition **3.077/4.562**, no-change resume **33.945/36.621**,
+  overflow resume **35.413/50.374**, network restoration **34.983/40.360**,
+  notification-open authorization **11.339/12.590**, preference update
+  **180.246/195.387**, pending-work restart **21.644/24.492**, and accepted
+  live event to native request **20.597/23.619**. Peak Python allocation was
+  99,399,669 bytes, peak working set 234,172,416 bytes, seeded vault growth
+  531,374,080 bytes, notification-probe growth 2,293,760 bytes, and final vault
+  size 534,274,048 bytes. The 9,361-byte evidence file is
+  `docs/benchmarks/increment-15-mobile-lifecycle-notifications.json`, SHA-256
+  `A90AE80C845D04ADD3BD74955102DE8C5CAD1AB4A714F3C32840F1F14ED54DF8`.
+- Android package inspection found package `com.meshchat.mobile`, version
+  0.2.35/2035, minimum API 24, target/compile API 36, arm64-v8a only,
+  `POST_NOTIFICATIONS`, backup disabled, cleartext disabled, the embedded
+  Python notification/lifecycle commands, both native channel identifiers,
+  and the opaque notification deep-link marker. APK Signature Scheme v2
+  verifies with the retained Android Debug certificate SHA-256
+  `D6DBFF63834666BACE3D75B49234726E97CCCE26D2B9E9516309682E0A33143F`.
+  The first signature invocation omitted `JAVA_HOME` and failed before reading
+  the APK; the exact rerun with Android Studio's JBR passed.
+- The immutable Android APK is 46,812,020 bytes with SHA-256
+  `8D440768DBE40A633CD9A5BC35CF31F2B342E038C2A53545D5F80A8CA9ED6951`;
+  its 473-byte manifest hashes to
+  `C3B9BB31430C3F9B8298A2937B3088E77E8363ACF61A09C696224981BA6FF94E`.
+  The Windows MSI is 23,486,464 bytes / `5B141C28785C5197314D60D92C6882D54C0BB76FF023960EA6E1F8D9C18EFDA3`;
+  NSIS is 22,761,094 bytes / `B91A257D9181E52C21F0D07D6C0D8A974877A2DD32D2C8DFB98065C47D2E3BE9`;
+  application is 6,739,456 bytes / `BE60E29078398F89D2AE27F78529B23BAC8A387A56AF94055874FCD176FF41EA`;
+  sidecar is 19,261,868 bytes / `33E790488D15F3EE008684A7C855D8FF64AF4E796114BBF0C41F188DDFACA185`.
+  The 1,345-byte desktop manifest hashes to
+  `DBAB5A574DBE711E3840F129E117A615BCE1244B9FC39BAD3DDBD1AD166D4494`.
+  All 12 desktop artwork/license files (1,947,195 source bytes) and all 15
+  Android launcher foreground/standard/round density assets verified byte-for-byte.
+  Delivery and final verification reports are
+  `dist/reports/0.2.35/20261011T203714Z-1953882f/report.json` and
+  `dist/reports/0.2.35/20261011T204438Z-82ebad0c/report.json`.
+- Transient candidate failures were retained honestly: a system Node 14 build
+  could not parse modern Vite syntax; the pinned Node 24 path passed. A first
+  plain `python -m pytest` selected a system interpreter without pytest; the
+  maintained virtual environment passed. The first notification mock had an
+  incompatible generic and then lacked the native-open export; both were fixed
+  before all 93 frontend tests passed. Direct Gradle initially lacked
+  `tauri.settings.gradle`, then Tauri
+  generated it. Windows rejected Tauri's convenience symlink after Cargo
+  succeeded; the maintained content-verified copy/direct-Gradle fallback built
+  the APK. The generic Gradle unit-test task was ambiguous and an invocation
+  lacked `JAVA_HOME`; the exact arm variant with the configured JBR passed. A
+  provisional 250 ms full-batch dispatch limit measured 439.960 ms p95; the ADR
+  now distinguishes the 16-item authorized batch (750 ms limit) from the
+  user-visible single live-event path (250 ms), and the complete benchmark was
+  rerun successfully. An earlier benchmark was intentionally stopped before
+  evidence publication when foreground suppression semantics changed.
+- `adb devices -l` reported no attached device. Therefore no APK was installed,
+  no existing profile was opened, Android battery/memory/lock-screen evidence
+  was fabricated, or physical allow/deny/settings, background/screen-off,
+  suspension/process-death, 0.2.12 in-place upgrade, link/removal, and tap-route
+  matrix was claimed. Windows cannot build/sign iOS; macOS/Xcode/signing and a
+  physical iOS device remain mandatory. Increment 15 is automated/package
+  complete but **not physically complete on an advertised mobile platform**.
+
 ## Acceptance matrix
 
 | Gate | Current evidence |
@@ -2343,7 +2462,7 @@ Artifact hashes for this run:
 | One-to-one approval | Always-on deterministic full flow and prior real bidirectional-hint Reticulum/LXMF runs passed; the phone-shaped harness covers phone-first delivery followed by the desktop reply on the same connection. Exact 0.2.12 physical Windows↔Android validation remains pending |
 | Contact management | Rename, verification toggling, block/unblock trust restoration, deletion cleanup, active-group identity retention, pending-group-invitation refusal, search, confirmations, mobile Back handling, and responsive dialog layout are covered. The shared UI was matched inside the exact Android APK; physical desktop/phone interaction remains pending |
 | Reconnection/interoperability | Upstream format preserved; bidirectional direct-LAN attachment, dirty-route retry, signed-client route replacement, deferred callback re-entry, and phone-shaped full-duplex return traffic are covered; reference-client and suspend/resume runs pending |
-| Platform packaging | Windows x64 0.2.34 MSI/NSIS and Android arm64 debug 0.2.12 packages were built, hashed, and inspected; the exact 0.2.34 Windows binary and sidecar were verified but the app/installer was not launched. Versions, manifest, installer payloads, Android v2 signature/certificate, native architecture, embedded contact UI, and all 12 embedded artwork files were verified. The transactional publisher rejects mixed/stale output and records immutable release/current manifests. Physical Windows↔Android 0.2.12 validation, a 0.2.12 portable bundle, macOS/Linux/iOS native package runs, and production signing remain pending |
+| Platform packaging | Windows x64 0.2.35 MSI/NSIS and Android arm64 debug 0.2.35 packages were built, hashed, and inspected; exact application/sidecar workflows, API 24/36, arm64-only native code, `POST_NOTIFICATIONS`, backup/cleartext policy, APK v2 signature/certificate, embedded notification markers, and all 12 desktop artwork files verified. Neither app nor installer was launched. Physical Windows↔Android lifecycle/notification validation, macOS/Linux/iOS native package runs, and production signing remain pending |
 | First-message usability | 0.2.12 retains desktop timeout guidance, exact draft preservation, callback/retry concurrency regressions, and the phone-first/desktop-reply harness together with durable-result, bounded-draft, duplicate-submit, IME, stale-refresh, delivery-state, and responsive-layout coverage. Exact 0.2.12 physical Windows↔Android validation and a broader human study remain open |
 | Invitation entry points | UI and validation implemented; installed-app OS matrix pending |
 | Common flow without technical setup | UI implemented; fresh/returning human run pending |
@@ -2360,5 +2479,6 @@ Artifact hashes for this run:
 | Workspace increment 12 | Effective owner/admin/member roles, exact role-aware channel/posting/invitation-request policies, signed bounded owner-approved invitation/removal/role requests, exact one-member manifest transitions, sealed indexed lifecycle/replay/audit state, owner-offline channel operation, private/DM isolation, accessible owner review/outgoing history, demotion enforcement, and command allowlisting are automated. The reproducible 50,000-event benchmark, protected topology, all direct-LAN scenarios, immutable 0.2.32 package administrator flow, exact 0.2.31 and frozen 0.2.9 compatibility, and final artwork verification passed; physical concurrent-device admin partitions, hostile request floods/fault injection, native-window accessibility, packet capture, protected-profile plaintext scanning, production signing, and in-place installation remain release gates |
 | Workspace increment 13 | Canonical authority offers, exact successor acceptances, final predecessor-authority manifests, same-owner rotation fixtures, exact ownership/role cutover, atomic local and staged remote #general recovery, old-authority rejection, successor manifest authority, bounded eight-step invitation proofs, fork suspension, permanent-loss freeze diagnostics, encrypted lifecycle state, desktop confirmation/review, and command allowlisting are automated. The reproducible 50,000-event benchmark, protected topology, all direct-LAN scenarios, immutable 0.2.33 package workflows, exact 0.2.32/0.2.31 and frozen 0.2.9 compatibility, and artwork verification passed; physical concurrent-device authority partitions and kill points, hostile transition floods/fault injection, native-window accessibility, packet capture, protected-profile plaintext scanning, production signing, and in-place installation remain release gates |
 | Workspace increment 14 | Fresh per-device identities, sponsor/new-device countersignatures, exact authority admission, three-device/24-destination caps, authority-endorsed historical channel checkpoints, sender-other-device fan-out, per-person/per-device delivery detail, bounded canonical history recovery, optional exact-head same-member read hints, nonauthority lost-device removal, terminal revocation state, desktop review/removal UI, deep links, and command allowlisting are automated. The reproducible 50,000-event benchmark, protected topology, all direct-LAN scenarios, exact immutable 0.2.34 package workflow, exact 0.2.33/0.2.32/0.2.31 and frozen 0.2.9 compatibility, and artwork verification passed; physical concurrent-device partitions/replacement, hostile link floods/fault injection, native-window accessibility, packet capture, protected-profile plaintext scanning, production signing, and in-place installation remain release gates |
+| Workspace increment 15 | Increment 14 linking is unchanged and now available through the mobile UI. Atomic durable local-notification decisions, bounded service-to-native work, permission/denial/settings recovery, sealed preview and conversation preferences, structured mention/thread precedence, opaque re-authorized routes, lifecycle generations, bounded overflow/resume reconciliation, restart deduplication, and historical-storm suppression are automated. The final 50,000-event benchmark, protected topology/direct-LAN matrix, exact immutable 0.2.35 desktop/Android packages, 0.2.34/0.2.33/0.2.32/0.2.31 and frozen 0.2.9 compatibility, APK/source markers, and artwork checks passed. No authorized Android device or macOS/iOS environment was available, so physical lifecycle/permission/lock-screen/upgrade evidence remains a blocking completion gate |
 
 Do not mark a release complete from unit tests alone. Store packet captures, topology configs, full-tree scans, package hashes, platform versions, human timing sheets, and failure notes with the release evidence.

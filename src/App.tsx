@@ -41,9 +41,13 @@ import { QRCodeSVG } from "qrcode.react";
 import {
   initializeService,
   lockService,
+  notificationCapability,
   onInvitation,
   onMobileBackButton,
+  onNotificationOpen,
   onServiceEvent,
+  openNotificationSettings,
+  requestNotificationPermission,
   runtimePlatform,
   serviceCommand,
 } from "./api";
@@ -70,6 +74,8 @@ import type {
   InvitationPreview,
   MessageReaction,
   NetworkSettings,
+  NotificationCapability,
+  NotificationOpenTarget,
   Snapshot,
   Workspace,
   WorkspaceAdminRequest,
@@ -85,6 +91,8 @@ import type {
   WorkspaceInvitationFormats,
   WorkspaceInvitationPreview,
   WorkspaceMessage,
+  WorkspaceNotificationPreference,
+  WorkspaceNotificationState,
   WorkspaceMessagePage,
   WorkspaceHistoryStatus,
   WorkspaceMentionPage,
@@ -1074,7 +1082,40 @@ function ContactsDialog({
 function SettingsDialog({ snapshot, onClose, onSaved }: { snapshot: Snapshot; onClose: () => void; onSaved: () => Promise<void> }) {
   const [settings, setSettings] = useState<NetworkSettings>(snapshot.settings);
   const [saved, setSaved] = useState(false);
+  const [notification, setNotification] = useState(snapshot.workspace_notification_state ?? null);
+  const [capability, setCapability] = useState<NotificationCapability | null>(null);
+  const [notificationBusy, setNotificationBusy] = useState(false);
+  const [notificationError, setNotificationError] = useState("");
   const toggle = (key: "nearby_discovery" | "lan_fallback" | "help_route" | "store_for_offline") => setSettings((current) => ({ ...current, [key]: !current[key] }));
+  const refreshNotification = useCallback(async () => {
+    const native = await notificationCapability();
+    setCapability(native);
+    setNotification(await serviceCommand<WorkspaceNotificationState>("get_notification_state"));
+  }, []);
+  useEffect(() => { void refreshNotification().catch(() => undefined); }, [refreshNotification]);
+  const requestPermission = async () => {
+    setNotificationBusy(true); setNotificationError("");
+    try { setCapability(await requestNotificationPermission()); await refreshNotification(); }
+    catch (reason) { setNotificationError(errorMessage(reason)); }
+    finally { setNotificationBusy(false); }
+  };
+  const openSettings = async () => {
+    setNotificationBusy(true); setNotificationError("");
+    try { setCapability(await openNotificationSettings()); }
+    catch (reason) { setNotificationError(errorMessage(reason)); }
+    finally { setNotificationBusy(false); }
+  };
+  const setPrivatePreviews = async () => {
+    if (!notification) return;
+    setNotificationBusy(true); setNotificationError("");
+    try {
+      setNotification(await serviceCommand<WorkspaceNotificationState>("set_hide_notification_previews", {
+        operation_id: newOperationId(), hidden: !notification.hide_previews,
+      }));
+      await onSaved();
+    } catch (reason) { setNotificationError(errorMessage(reason)); }
+    finally { setNotificationBusy(false); }
+  };
   const save = async () => {
     await serviceCommand("update_settings", { settings });
     setSaved(true); await onSaved();
@@ -1087,7 +1128,17 @@ function SettingsDialog({ snapshot, onClose, onSaved }: { snapshot: Snapshot; on
         <Toggle title="Help route messages" description="Allow this device to forward encrypted Reticulum traffic for others." checked={settings.help_route} onChange={() => toggle("help_route")} />
         <Toggle title="Store encrypted messages" description="Act as an LXMF propagation node with a 100 MiB cache. This is separate from routing." checked={settings.store_for_offline} onChange={() => toggle("store_for_offline")} />
       </div>
-      <details className="advanced-settings"><summary>Advanced</summary><p>TCP listeners, approved propagation peers, interface restrictions, and diagnostics are intentionally outside the normal joining flow.</p><p className="technical">Destination: {snapshot.profile?.destination_hash}</p></details>
+      <section className="notification-settings" aria-labelledby="notification-settings-title">
+        <h3 id="notification-settings-title"><Bell size={18} /> Local notifications</h3>
+        <p role="status" aria-live="polite"><strong>{!capability?.supported ? "Not supported on this platform" : capability.permission_state === "allowed" ? "Allowed" : capability.permission_state === "not_requested" ? "Permission not requested" : "Permission denied or settings required"}</strong></p>
+        {capability?.supported && capability.permission_state === "not_requested" && <Button disabled={notificationBusy} onClick={() => void requestPermission()}>Enable notifications</Button>}
+        {capability?.supported && ["denied", "settings_required"].includes(capability.permission_state) && <Button variant="secondary" disabled={notificationBusy} onClick={() => void openSettings()}>Open system settings</Button>}
+        {notification && <Toggle title="Hide notification previews" description="Use generic text without workspace, channel, person, thread, participant, or message details." checked={notification.hide_previews} onChange={() => void setPrivatePreviews()} />}
+        <p className="muted">Notifications are local and best effort only while Mesh Chat can execute. They may be delayed after operating-system suspension or process termination; open Mesh Chat to reconcile. There is no cloud push.</p>
+        {notification && <p className="muted" role="status">Runtime: {notification.reconciling ? "reconciling" : notification.lifecycle_state === "caught_up" || notification.caught_up ? "caught up" : notification.lifecycle_state === "foreground" ? "active" : "suspended or limited"}{notification.pending_native_count ? ` · ${notification.pending_native_count} pending local ${notification.pending_native_count === 1 ? "notification" : "notifications"}` : ""}</p>}
+        {notificationError && <p className="form-error" role="alert">{notificationError}</p>}
+      </section>
+      <details className="advanced-settings"><summary>Advanced</summary><p>TCP listeners, approved propagation peers, interface restrictions, and sensitive diagnostics are intentionally outside the normal joining flow.</p></details>
       <p className="app-version">Mesh Chat {packageInfo.version}<span>Emoji artwork: Twemoji (CC BY 4.0)</span></p>
       {saved && <p className="restart-note" role="status">Saved. Restart Mesh Chat to apply networking-role changes.</p>}
       <div className="dialog__actions"><Button variant="secondary" onClick={onClose}>Cancel</Button><Button onClick={() => void save()}>Save settings</Button></div>
@@ -1955,7 +2006,7 @@ function WorkspaceAuthorityDialog({ workspace, transitions, busy, error, onClose
   return <Dialog title={`Authority continuity · ${workspace.name}`} onClose={onClose}><div className="form-stack"><WorkspaceAuthorityPanel workspace={workspace} transitions={transitions} busy={busy} onOffer={onOffer} onAccept={onAccept} onFinalize={onFinalize} onReportLoss={onReportLoss} />{error && <p className="form-error" role="alert">{error}</p>}</div></Dialog>;
 }
 
-function WorkspaceSettingsDialog({ workspace, networkSettings, busy, error, onClose, onUpdateMetadata, onUpdatePolicies, onApprovePropagationNode, onCloseWorkspace, onLeave, onRemove }: { workspace: Workspace; networkSettings: NetworkSettings; busy: boolean; error: string; onClose: () => void; onUpdateMetadata: (name: string, description: string) => void; onUpdatePolicies: (channelCreation: "all_members" | "owner_and_admins", posting: "all_members" | "owner_and_admins") => void; onApprovePropagationNode: (node: string) => void; onCloseWorkspace: () => void; onLeave: () => void; onRemove: (confirmation: string) => void }) {
+function WorkspaceSettingsDialog({ workspace, conversation, networkSettings, busy, error, onClose, onUpdateMetadata, onUpdatePolicies, onSetNotificationPreference, onApprovePropagationNode, onCloseWorkspace, onLeave, onRemove }: { workspace: Workspace; conversation: WorkspaceChannel | WorkspaceDirect | null; networkSettings: NetworkSettings; busy: boolean; error: string; onClose: () => void; onUpdateMetadata: (name: string, description: string) => void; onUpdatePolicies: (channelCreation: "all_members" | "owner_and_admins", posting: "all_members" | "owner_and_admins") => void; onSetNotificationPreference: (conversationId: string | null, mode: WorkspaceNotificationPreference) => void; onApprovePropagationNode: (node: string) => void; onCloseWorkspace: () => void; onLeave: () => void; onRemove: (confirmation: string) => void }) {
   const [confirmingClose, setConfirmingClose] = useState(false);
   const [confirmingRemove, setConfirmingRemove] = useState(false);
   const [confirmation, setConfirmation] = useState("");
@@ -1967,7 +2018,7 @@ function WorkspaceSettingsDialog({ workspace, networkSettings, busy, error, onCl
   const [propagationConsent, setPropagationConsent] = useState(false);
   const terminal = ["left", "removed", "device_removed", "closed"].includes(workspace.state);
   const active = workspace.state === "active";
-  return <Dialog title="Workspace settings" onClose={onClose}><div className="form-stack workspace-settings"><div><h3>{workspace.name}</h3><p>{workspace.description || "No description"}</p><span className={`workspace-state workspace-state--${workspace.state}`}>{workspaceStateLabel(workspace)}</span></div>{active && workspace.local_role === "owner" && <form className="form-stack" onSubmit={(event) => { event.preventDefault(); onUpdateMetadata(name, description); }}><label>Workspace name<input value={name} maxLength={64} onChange={(event) => setName(event.target.value)} /></label><label>Description<textarea value={description} maxLength={280} rows={3} onChange={(event) => setDescription(event.target.value)} /></label><Button disabled={busy || (name.trim() === workspace.name && description.trim() === workspace.description)}>Publish metadata update</Button></form>}{active && workspace.local_role === "owner" && <form className="form-stack" onSubmit={(event) => { event.preventDefault(); onUpdatePolicies(channelCreation, posting); }}><h3>Public-channel policies</h3><label>Who can create channels<select value={channelCreation} onChange={(event) => setChannelCreation(event.target.value as typeof channelCreation)}><option value="all_members">All members</option><option value="owner_and_admins">Owner and administrators</option></select></label><label>Who can post<select value={posting} onChange={(event) => setPosting(event.target.value as typeof posting)}><option value="all_members">All members</option><option value="owner_and_admins">Owner and administrators</option></select></label><Button disabled={busy || (channelCreation === workspace.policies.channel_creation && posting === workspace.policies.posting)}>Publish policy update</Button></form>}<dl className="security-list"><div><dt>Workspace ID</dt><dd>{workspace.id}</dd></div><div><dt>Manifest epoch</dt><dd>{workspace.epoch}</dd></div><div><dt>Retention preference</dt><dd>{workspace.retention_days === null ? "Indefinite" : `${workspace.retention_days} days`}</dd></div></dl><p className="muted">This cooperative preference does not guarantee remote deletion. A member device may retain plaintext it already received.</p>{active && <div className="propagation-consent"><h3>Offline delivery node</h3><p className="muted">A workspace may recommend a Reticulum propagation node, but joining never enables it. Approve its 32-character address explicitly on this device.</p><label>Propagation-node address<input value={propagationNode} spellCheck={false} maxLength={32} onChange={(event) => setPropagationNode(event.target.value.toLowerCase())} /></label><label className="checkbox-line"><input type="checkbox" checked={propagationConsent} onChange={(event) => setPropagationConsent(event.target.checked)} /> I approve this node for encrypted store-and-forward delivery.</label><Button variant="secondary" disabled={busy || !propagationConsent || !/^[0-9a-f]{32}$/.test(propagationNode) || networkSettings.approved_propagation_nodes.includes(propagationNode)} onClick={() => onApprovePropagationNode(propagationNode)}>Approve node</Button></div>}{workspace.state === "forked" && <p className="form-error" role="alert">Workspace activity is paused. Mesh Chat will not choose between conflicting signed histories.</p>}{workspace.state === "incomplete_sync" && <p className="form-error" role="alert">Some signed controls or events are missing. Messaging stays paused while Mesh Chat retains the history it can validate.</p>}{error && <p className="form-error" role="alert">{error}</p>}{active && workspace.local_role === "owner" && <div className="danger-zone"><h3>Close workspace</h3><p>This signs a terminal manifest. No later joins or messages are accepted.</p>{confirmingClose ? <><p role="alert"><strong>Close {workspace.name} permanently?</strong> Cached history remains until each member removes it locally.</p><div className="dialog-actions"><Button variant="ghost" disabled={busy} onClick={() => setConfirmingClose(false)}>Cancel</Button><Button variant="danger" disabled={busy} onClick={onCloseWorkspace}>Confirm close workspace</Button></div></> : <Button variant="danger" disabled={busy} onClick={() => setConfirmingClose(true)}>Close workspace…</Button>}</div>}{active && workspace.local_role !== "owner" && <div className="danger-zone"><h3>Leave workspace</h3><p>Your signed request waits for the owner to publish the membership change.</p><Button variant="danger" disabled={busy} onClick={onLeave}>Leave workspace</Button></div>}{terminal && <div className="danger-zone"><h3>Remove local workspace data</h3><p>This permanently erases this device’s encrypted workspace records. Re-entry needs a new invitation.</p>{confirmingRemove ? <><label>Type the workspace ID to confirm<input value={confirmation} onChange={(event) => setConfirmation(event.target.value)} aria-label="Workspace removal confirmation" /></label><Button variant="danger" disabled={busy || confirmation !== workspace.id} onClick={() => onRemove(confirmation)}>Remove local data</Button></> : <Button variant="danger" onClick={() => setConfirmingRemove(true)}>Remove local data…</Button>}</div>}</div></Dialog>;
+  return <Dialog title="Workspace settings" onClose={onClose}><div className="form-stack workspace-settings"><div><h3>{workspace.name}</h3><p>{workspace.description || "No description"}</p><span className={`workspace-state workspace-state--${workspace.state}`}>{workspaceStateLabel(workspace)}</span></div>{active && workspace.local_role === "owner" && <form className="form-stack" onSubmit={(event) => { event.preventDefault(); onUpdateMetadata(name, description); }}><label>Workspace name<input value={name} maxLength={64} onChange={(event) => setName(event.target.value)} /></label><label>Description<textarea value={description} maxLength={280} rows={3} onChange={(event) => setDescription(event.target.value)} /></label><Button disabled={busy || (name.trim() === workspace.name && description.trim() === workspace.description)}>Publish metadata update</Button></form>}{active && workspace.local_role === "owner" && <form className="form-stack" onSubmit={(event) => { event.preventDefault(); onUpdatePolicies(channelCreation, posting); }}><h3>Public-channel policies</h3><label>Who can create channels<select value={channelCreation} onChange={(event) => setChannelCreation(event.target.value as typeof channelCreation)}><option value="all_members">All members</option><option value="owner_and_admins">Owner and administrators</option></select></label><label>Who can post<select value={posting} onChange={(event) => setPosting(event.target.value as typeof posting)}><option value="all_members">All members</option><option value="owner_and_admins">Owner and administrators</option></select></label><Button disabled={busy || (channelCreation === workspace.policies.channel_creation && posting === workspace.policies.posting)}>Publish policy update</Button></form>}<section className="notification-settings" aria-labelledby="workspace-notification-heading"><h3 id="workspace-notification-heading"><Bell size={18} /> Notification preference</h3><label>For this workspace<select value={workspace.notification_preference ?? "all"} disabled={!active || busy} onChange={(event) => onSetNotificationPreference(null, event.target.value as WorkspaceNotificationPreference)}><option value="all">All messages</option><option value="mentions_only">Mentions only</option><option value="muted">Muted</option></select></label>{conversation && <label>For {"name" in conversation ? `#${conversation.display_name || conversation.name}` : conversation.peer_display_name}<select value={conversation.notification_preference ?? workspace.notification_preference ?? "all"} disabled={!active || busy} onChange={(event) => onSetNotificationPreference(conversation.id, event.target.value as WorkspaceNotificationPreference)}><option value="all">All messages</option><option value="mentions_only">Mentions only</option><option value="muted">Muted</option></select></label>}<p className="muted">Structured mentions can notify in an unsubscribed public channel unless mentions are muted. Replies follow the selected conversation preference. Notifications never mark a message read.</p></section><dl className="security-list"><div><dt>Retention preference</dt><dd>{workspace.retention_days === null ? "Indefinite" : `${workspace.retention_days} days`}</dd></div></dl><p className="muted">This cooperative preference does not guarantee remote deletion. A member device may retain plaintext it already received.</p>{active && <div className="propagation-consent"><h3>Offline delivery node</h3><p className="muted">A workspace may recommend a Reticulum propagation node, but joining never enables it. Approve its 32-character address explicitly on this device.</p><label>Propagation-node address<input value={propagationNode} spellCheck={false} maxLength={32} onChange={(event) => setPropagationNode(event.target.value.toLowerCase())} /></label><label className="checkbox-line"><input type="checkbox" checked={propagationConsent} onChange={(event) => setPropagationConsent(event.target.checked)} /> I approve this node for encrypted store-and-forward delivery.</label><Button variant="secondary" disabled={busy || !propagationConsent || !/^[0-9a-f]{32}$/.test(propagationNode) || networkSettings.approved_propagation_nodes.includes(propagationNode)} onClick={() => onApprovePropagationNode(propagationNode)}>Approve node</Button></div>}{workspace.state === "forked" && <p className="form-error" role="alert">Workspace activity is paused. Mesh Chat will not choose between conflicting signed histories.</p>}{workspace.state === "incomplete_sync" && <p className="form-error" role="alert">Some signed controls or events are missing. Messaging stays paused while Mesh Chat retains the history it can validate.</p>}{error && <p className="form-error" role="alert">{error}</p>}{active && workspace.local_role === "owner" && <div className="danger-zone"><h3>Close workspace</h3><p>This signs a terminal manifest. No later joins or messages are accepted.</p>{confirmingClose ? <><p role="alert"><strong>Close {workspace.name} permanently?</strong> Cached history remains until each member removes it locally.</p><div className="dialog-actions"><Button variant="ghost" disabled={busy} onClick={() => setConfirmingClose(false)}>Cancel</Button><Button variant="danger" disabled={busy} onClick={onCloseWorkspace}>Confirm close workspace</Button></div></> : <Button variant="danger" disabled={busy} onClick={() => setConfirmingClose(true)}>Close workspace…</Button>}</div>}{active && workspace.local_role !== "owner" && <div className="danger-zone"><h3>Leave workspace</h3><p>Your signed request waits for the owner to publish the membership change.</p><Button variant="danger" disabled={busy} onClick={onLeave}>Leave workspace</Button></div>}{terminal && <div className="danger-zone"><h3>Remove local workspace data</h3><p>This permanently erases this device’s encrypted workspace records. Re-entry needs a new invitation.</p>{confirmingRemove ? <><label>Type the workspace name to confirm<input value={confirmation} onChange={(event) => setConfirmation(event.target.value)} aria-label="Workspace removal confirmation" /></label><Button variant="danger" disabled={busy || confirmation !== workspace.name} onClick={() => onRemove(workspace.id)}>Remove local data</Button></> : <Button variant="danger" onClick={() => setConfirmingRemove(true)}>Remove local data…</Button>}</div>}</div></Dialog>;
 }
 
 function workspaceHistoryStateLabel(status: WorkspaceHistoryStatus["status"]): string {
@@ -2014,7 +2065,7 @@ function WorkspaceRetentionDialog({ workspace, conversationId, conversationName,
     } catch (reason) { setHistoryError(errorMessage(reason)); }
     finally { setHistoryBusy(false); }
   };
-  return <Dialog title="History & retention" onClose={onClose}><div className="form-stack workspace-history-view"><div><h3>Retained local history</h3><p>{workspace.retention_days === null ? "Indefinite retention" : `${workspace.retention_days}-day retention`} · generation {workspace.retention_generation}</p></div>{conversationId && <section className="workspace-history-sync" aria-labelledby="workspace-history-sync-title"><h3 id="workspace-history-sync-title">Synchronize {conversationName ?? "this conversation"}</h3>{history ? <><div className="workspace-directory-status" role="status" aria-live="polite"><RefreshCw size={16} /><span><strong>{workspaceHistoryStateLabel(history.status)}</strong>{history.job ? ` · ${history.job.recovered_events} events in ${history.job.verified_pages} verified pages` : ""}</span></div><p className="muted">{history.notice}</p><div className="dialog-actions">{!["requesting", "verifying", "waiting_peer", "paused_offline"].includes(history.status) && <Button disabled={historyBusy || !history.eligible} onClick={() => void changeHistory("start_workspace_history")}>Request available history</Button>}{["requesting", "verifying", "waiting_peer", "paused_offline"].includes(history.status) && <Button variant="ghost" disabled={historyBusy} onClick={() => void changeHistory("cancel_workspace_history")}>Cancel local job</Button>}<Button variant="secondary" disabled={historyBusy} onClick={() => void loadHistory()}>Refresh status</Button></div></> : <div className="workspace-directory-status" role="status"><span className="spinner" /> Checking known coverage…</div>}{historyError && <p className="form-error" role="alert">{historyError}</p>}</section>}{owner && <form className="form-stack" onSubmit={(event) => { event.preventDefault(); onUpdate(selected); }}><label>Cooperative retention<select value={retention} onChange={(event) => setRetention(event.target.value as typeof retention)}><option value="30">30 days</option><option value="90">90 days (default)</option><option value="365">365 days</option><option value="indefinite">Indefinite</option></select></label><Button disabled={busy || selected === workspace.retention_days}>Publish signed retention update</Button></form>}<p className="muted">This is a cooperative preference for encrypted history on each member device. It cannot remotely delete plaintext, exports, or backups another device already holds.</p><div className="workspace-directory-status" role="status">Pruning is bounded and restart-safe. It preserves signed high-water marks, retained floors, permanent gaps, controls still referenced by retained events, and the independent seven-day live-delivery window.</div><Button variant="secondary" disabled={busy || workspace.retention_days === null} onClick={() => void onPrune().then(setResult)}>{workspace.retention_days === null ? "Pruning disabled for indefinite retention" : workspace.retention_pruning_state === "running" ? "Continue local pruning" : "Prune local history now"}</Button>{result && <p role="status">{result.status === "complete" ? `Pruning complete · ${result.pruned} canonical events removed.` : `${result.pruned} events removed · ${result.scanned} checked. Continue to process the next bounded batch.`}</p>}{workspace.retention_pruning_state === "restart_required" && <p className="form-error" role="alert">The interrupted pruning cursor was invalidated. Start a fresh bounded pruning pass.</p>}{workspace.state !== "active" && <p className="muted">This retained archive is read-only. It remains only until local retention pruning or confirmed local erasure.</p>}{error && <p className="form-error" role="alert">{error}</p>}</div></Dialog>;
+  return <Dialog title="History & retention" onClose={onClose}><div className="form-stack workspace-history-view"><div><h3>Retained local history</h3><p>{workspace.retention_days === null ? "Indefinite retention" : `${workspace.retention_days}-day retention`}</p></div>{conversationId && <section className="workspace-history-sync" aria-labelledby="workspace-history-sync-title"><h3 id="workspace-history-sync-title">Synchronize {conversationName ?? "this conversation"}</h3>{history ? <><div className="workspace-directory-status" role="status" aria-live="polite"><RefreshCw size={16} /><span><strong>{workspaceHistoryStateLabel(history.status)}</strong>{history.job ? ` · ${history.job.recovered_events} events in ${history.job.verified_pages} verified pages` : ""}</span></div><p className="muted">{history.notice}</p><div className="dialog-actions">{!["requesting", "verifying", "waiting_peer", "paused_offline"].includes(history.status) && <Button disabled={historyBusy || !history.eligible} onClick={() => void changeHistory("start_workspace_history")}>Request available history</Button>}{["requesting", "verifying", "waiting_peer", "paused_offline"].includes(history.status) && <Button variant="ghost" disabled={historyBusy} onClick={() => void changeHistory("cancel_workspace_history")}>Cancel local job</Button>}<Button variant="secondary" disabled={historyBusy} onClick={() => void loadHistory()}>Refresh status</Button></div></> : <div className="workspace-directory-status" role="status"><span className="spinner" /> Checking known coverage…</div>}{historyError && <p className="form-error" role="alert">{historyError}</p>}</section>}{owner && <form className="form-stack" onSubmit={(event) => { event.preventDefault(); onUpdate(selected); }}><label>Cooperative retention<select value={retention} onChange={(event) => setRetention(event.target.value as typeof retention)}><option value="30">30 days</option><option value="90">90 days (default)</option><option value="365">365 days</option><option value="indefinite">Indefinite</option></select></label><Button disabled={busy || selected === workspace.retention_days}>Publish signed retention update</Button></form>}<p className="muted">This is a cooperative preference for encrypted history on each member device. It cannot remotely delete plaintext, exports, or backups another device already holds.</p><div className="workspace-directory-status" role="status">Pruning is bounded and restart-safe. It preserves signed high-water marks, retained floors, permanent gaps, controls still referenced by retained events, and the independent seven-day live-delivery window.</div><Button variant="secondary" disabled={busy || workspace.retention_days === null} onClick={() => void onPrune().then(setResult)}>{workspace.retention_days === null ? "Pruning disabled for indefinite retention" : workspace.retention_pruning_state === "running" ? "Continue local pruning" : "Prune local history now"}</Button>{result && <p role="status">{result.status === "complete" ? `Pruning complete · ${result.pruned} canonical events removed.` : `${result.pruned} events removed · ${result.scanned} checked. Continue to process the next bounded batch.`}</p>}{workspace.retention_pruning_state === "restart_required" && <p className="form-error" role="alert">The interrupted pruning cursor was invalidated. Start a fresh bounded pruning pass.</p>}{workspace.state !== "active" && <p className="muted">This retained archive is read-only. It remains only until local retention pruning or confirmed local erasure.</p>}{error && <p className="form-error" role="alert">{error}</p>}</div></Dialog>;
 }
 
 function CreateWorkspaceChannelDialog({ workspace, busy, error, onClose, onCreate }: { workspace: Workspace; busy: boolean; error: string; onClose: () => void; onCreate: (name: string, topic: string, visibility: "public" | "private", memberIds: string[]) => void }) {
@@ -2388,7 +2439,7 @@ type WorkspaceDraftValue = {
 
 const DRAFT_SAVE_DELAY_MS = 200;
 
-function Messenger({ snapshot, refresh, workspaceChannelInvalidation, onLock, initialInvitation, onInvitationHandled }: { snapshot: Snapshot; refresh: (afterCurrent?: boolean) => Promise<Snapshot>; workspaceChannelInvalidation: ServiceEvent | null; onLock: () => Promise<void>; initialInvitation: string; onInvitationHandled: () => void }) {
+function Messenger({ snapshot, refresh, workspaceChannelInvalidation, notificationTarget, onNotificationHandled, onLock, initialInvitation, onInvitationHandled }: { snapshot: Snapshot; refresh: (afterCurrent?: boolean) => Promise<Snapshot>; workspaceChannelInvalidation: ServiceEvent | null; notificationTarget: NotificationOpenTarget | null; onNotificationHandled: () => void; onLock: () => Promise<void>; initialInvitation: string; onInvitationHandled: () => void }) {
   const groups = snapshot.groups ?? [];
   const groupMessages = snapshot.group_messages ?? [];
   const groupInvitations = snapshot.group_invitations ?? [];
@@ -2511,7 +2562,7 @@ function Messenger({ snapshot, refresh, workspaceChannelInvalidation, onLock, in
   const [reactionTarget, setReactionTarget] = useState<ReactionTarget>(null);
   const [reactionBusy, setReactionBusy] = useState<{ kind: "direct" | "group" | "workspace"; messageId: string; emoji: string } | null>(null);
   const [reactionError, setReactionError] = useState("");
-  useEffect(() => { void runtimePlatform().then((platform) => setWorkspacesEnabled(platform === "desktop")); }, []);
+  useEffect(() => { void runtimePlatform().then(() => setWorkspacesEnabled(true)); }, []);
   useEffect(() => {
     if (!initialInvitation) return;
     const workspaceInvitation = initialInvitation.startsWith("meshchat://workspace/") || initialInvitation.startsWith("meshchat://workspace-device/") || initialInvitation.trim().startsWith("MESHWORKSPACE1:") || initialInvitation.trim().startsWith("MESHWORKSPACEDEVICE1:") || initialInvitation.includes('"type":"workspace_invite"') || initialInvitation.includes('"type":"workspace_device_link_offer"');
@@ -2606,6 +2657,35 @@ function Messenger({ snapshot, refresh, workspaceChannelInvalidation, onLock, in
     setWorkspaceManageChannelOpen(false);
     setWorkspaceRetentionOpen(false);
   }, [activeSpaceId]);
+
+  useEffect(() => {
+    if (!notificationTarget) return;
+    if (!notificationTarget.available || !notificationTarget.workspace_id || !notificationTarget.conversation_id) {
+      setWorkspaceError(notificationTarget.message ?? "This notification is no longer available on this device.");
+      return;
+    }
+    if (!workspaces.some((workspace) => workspace.id === notificationTarget.workspace_id)) {
+      setWorkspaceError("This notification is no longer available on this device.");
+      return;
+    }
+    if (activeSpaceId !== notificationTarget.workspace_id) {
+      setActiveSpaceId(notificationTarget.workspace_id);
+      return;
+    }
+    setWorkspaceSearchOpen(false);
+    setWorkspaceMentionsOpen(false);
+    setWorkspaceThreadsOpen(false);
+    setWorkspaceError("");
+    if (notificationTarget.conversation_kind === "direct") {
+      setWorkspaceSelectedDirectId(notificationTarget.conversation_id);
+      setWorkspaceSelectedChannelId(null);
+    } else {
+      setWorkspaceSelectedChannelId(notificationTarget.conversation_id);
+      setWorkspaceSelectedDirectId(null);
+    }
+    setWorkspaceThreadRootId(notificationTarget.thread_root_id ?? null);
+    onNotificationHandled();
+  }, [activeSpaceId, notificationTarget, onNotificationHandled, workspaces]);
 
   const loadWorkspaceMessages = useCallback(async (append = false) => {
     if (!selectedWorkspace || !selectedWorkspaceConversation || workspacePageInFlight.current) return;
@@ -3240,6 +3320,23 @@ function Messenger({ snapshot, refresh, workspaceChannelInvalidation, onLock, in
       if (command === "update_workspace_channel" && "id" in result && result.state === "archived") {
         setWorkspaceManageChannelOpen(false);
       }
+      await refresh(true);
+    } catch (reason) { setWorkspaceActionError(errorMessage(reason)); }
+    finally { setWorkspaceActionBusy(false); }
+  };
+  const runWorkspaceNotificationPreference = async (
+    conversationId: string | null,
+    mode: WorkspaceNotificationPreference,
+  ) => {
+    if (!selectedWorkspace || workspaceActionBusy) return;
+    setWorkspaceActionBusy(true); setWorkspaceActionError("");
+    try {
+      await serviceCommand("set_workspace_notification_preference", {
+        operation_id: newOperationId(),
+        workspace_id: selectedWorkspace.id,
+        conversation_id: conversationId,
+        mode,
+      });
       await refresh(true);
     } catch (reason) { setWorkspaceActionError(errorMessage(reason)); }
     finally { setWorkspaceActionBusy(false); }
@@ -3920,12 +4017,13 @@ function Messenger({ snapshot, refresh, workspaceChannelInvalidation, onLock, in
       />}
       {selectedWorkspace && workspaceAuthorityOpen && <WorkspaceAuthorityDialog workspace={selectedWorkspace} transitions={workspaceAuthorityTransitions.filter((item) => item.workspace_id === selectedWorkspace.id)} busy={workspaceActionBusy} error={workspaceActionError} onClose={() => setWorkspaceAuthorityOpen(false)} onOffer={(transitionKind, successorMemberId, successorDeviceId, outgoingOwnerRole) => void runWorkspaceAdministration("offer_workspace_authority_transition", { transition_kind: transitionKind, successor_member_id: successorMemberId, successor_device_id: successorDeviceId, outgoing_owner_role: outgoingOwnerRole })} onAccept={(transitionId) => void runWorkspaceAdministration("accept_workspace_authority_transition", { transition_id: transitionId })} onFinalize={(transitionId) => void runWorkspaceAdministration("finalize_workspace_authority_transition", { transition_id: transitionId })} onReportLoss={() => void runWorkspaceAdministration("report_workspace_authority_loss", {})} />}
       {selectedWorkspace && workspaceDevicesOpen && <WorkspaceDevicesDialog workspace={selectedWorkspace} transitions={workspaceDeviceTransitions.filter((item) => item.workspace_id === selectedWorkspace.id)} busy={workspaceActionBusy} error={workspaceActionError} onClose={() => setWorkspaceDevicesOpen(false)} onCreate={createWorkspaceDeviceLink} onDecide={(transition, approve) => void runWorkspaceAdministration(transition.transition_kind === "link" ? (approve ? "approve_workspace_device_link" : "decline_workspace_device_link") : (approve ? "approve_workspace_device_removal" : "decline_workspace_device_removal"), transition.transition_kind === "link" ? { link_id: transition.id } : { removal_id: transition.id })} onRemove={(deviceId) => void runWorkspaceAdministration("request_workspace_device_removal", { target_device_id: deviceId })} onReadSync={(enabled) => void runWorkspaceAdministration("set_workspace_read_hint_sync", { enabled })} />}
-      {selectedWorkspace && workspaceSettingsOpen && <WorkspaceSettingsDialog workspace={selectedWorkspace} networkSettings={snapshot.settings} busy={workspaceActionBusy} error={workspaceActionError} onClose={() => setWorkspaceSettingsOpen(false)} onUpdateMetadata={(name, description) => void runWorkspaceAdministration("update_workspace_metadata", { name, description })} onUpdatePolicies={(channelCreation, posting) => void runWorkspaceAdministration("update_workspace_policies", { channel_creation: channelCreation, posting })} onApprovePropagationNode={(node) => void approveWorkspacePropagationNode(node)} onCloseWorkspace={() => void runWorkspaceLifecycle("close_workspace")} onLeave={() => void runWorkspaceLifecycle("leave_workspace")} onRemove={(confirmation) => void runWorkspaceLifecycle("remove_workspace_data", confirmation)} />}
+      {selectedWorkspace && workspaceSettingsOpen && <WorkspaceSettingsDialog workspace={selectedWorkspace} conversation={selectedWorkspaceConversation} networkSettings={snapshot.settings} busy={workspaceActionBusy} error={workspaceActionError} onClose={() => setWorkspaceSettingsOpen(false)} onUpdateMetadata={(name, description) => void runWorkspaceAdministration("update_workspace_metadata", { name, description })} onUpdatePolicies={(channelCreation, posting) => void runWorkspaceAdministration("update_workspace_policies", { channel_creation: channelCreation, posting })} onSetNotificationPreference={(conversationId, mode) => void runWorkspaceNotificationPreference(conversationId, mode)} onApprovePropagationNode={(node) => void approveWorkspacePropagationNode(node)} onCloseWorkspace={() => void runWorkspaceLifecycle("close_workspace")} onLeave={() => void runWorkspaceLifecycle("leave_workspace")} onRemove={(confirmation) => void runWorkspaceLifecycle("remove_workspace_data", confirmation)} />}
       {selectedWorkspace && workspaceRetentionOpen && <WorkspaceRetentionDialog workspace={selectedWorkspace} conversationId={selectedWorkspaceConversation?.id} conversationName={selectedWorkspaceDirect?.peer_display_name ?? selectedWorkspaceChannel?.display_name ?? selectedWorkspaceChannel?.name} busy={workspaceActionBusy} error={workspaceActionError} onClose={() => setWorkspaceRetentionOpen(false)} onUpdate={(retentionDays) => void runWorkspaceAdministration("update_workspace_retention", { retention_days: retentionDays })} onPrune={pruneWorkspaceHistory} />}
       {newChat && <div className={hasForegroundRequest ? "dialog-suspended" : ""} aria-hidden={hasForegroundRequest ? true : undefined}><NewChatDialog initialInvitation={initialInvitation} onClose={() => { setNewChat(false); onInvitationHandled(); }} onChanged={async () => { await refresh(true); }} /></div>}
       {newGroup && <div className={hasForegroundRequest ? "dialog-suspended" : ""} aria-hidden={hasForegroundRequest ? true : undefined}><CreateGroupDialog contacts={snapshot.contacts} onClose={() => setNewGroup(false)} onCreated={async (group) => { await refresh(true); selectConversation({ kind: "group", id: group.id }); setNewGroup(false); }} /></div>}
       {contactsOpen && <div className={hasForegroundRequest ? "dialog-suspended" : ""} aria-hidden={hasForegroundRequest ? true : undefined}><ContactsDialog contacts={snapshot.contacts.filter((contact) => contact.trust !== "pending_request")} onClose={() => setContactsOpen(false)} onChanged={async () => { await refresh(true); }} onOpenConversation={async (contact) => { const hidden = hiddenConversationKeys.has(`direct:${contact.id}`); setContactsOpen(false); await restoreAndSelect({ kind: "contact", id: contact.id }, hidden); }} onDeleted={async (contactId) => { if (selection?.kind === "contact" && selection.id === contactId) setSelection(null); setDrafts((current) => { const next = { ...current }; delete next[contactId]; return next; }); setLocallySavedMessages((current) => Object.fromEntries(Object.entries(current).filter(([, message]) => message.contact_id !== contactId))); await refresh(true); }} /></div>}
       {settings && <div className={hasForegroundRequest ? "dialog-suspended" : ""} aria-hidden={hasForegroundRequest ? true : undefined}><SettingsDialog snapshot={snapshot} onClose={() => setSettings(false)} onSaved={async () => { await refresh(true); }} /></div>}
+      {notificationTarget && !notificationTarget.available && <Dialog title="Notification unavailable" onClose={onNotificationHandled}><div className="form-stack"><p>{notificationTarget.message ?? "This notification is no longer available or authorized on this device."}</p><p className="muted">Mesh Chat did not open stale content or change any read state.</p><Button onClick={onNotificationHandled}>Done</Button></div></Dialog>}
       {deleteTarget && <div className={hasForegroundRequest ? "dialog-suspended" : ""} aria-hidden={hasForegroundRequest ? true : undefined}><DeleteConversationDialog kind={deleteTarget.kind === "contact" ? "direct" : "group"} name={deleteTargetName} busy={deleteBusy} error={deleteError} onCancel={() => { if (!deleteBusy) { setDeleteError(""); setDeleteTarget(null); } }} onConfirm={() => void deleteConversation()} /></div>}
       {help && <div className={hasForegroundRequest ? "dialog-suspended" : ""} aria-hidden={hasForegroundRequest ? true : undefined}><Dialog title="Connection help" onClose={() => setHelp(null)}><div className="help-content">{help.code === "service_unavailable" ? <><WifiOff size={28} /><h3>Networking is unavailable</h3><p>Connect this device to the same local network as {selectedContact?.display_name}, make sure local-network access is allowed, then reopen Mesh Chat.</p></> : help.code === "waiting_for_keys" ? <><WifiOff size={28} /><h3>Trying to find {selectedContact?.display_name}</h3><p>Keep Mesh Chat open on both devices and connect them to the same local network. We’ll continue trying automatically.</p></> : help.code === "no_route" ? <><WifiOff size={28} /><h3>We can’t reach them yet</h3><p>Your message is saved. Try the same local network, check local-network permission, or request a fresh invitation with a usable connection hint.</p></> : <><Check size={28} /><h3>The secure path is ready</h3><p>Mesh Chat is continuing the connection automatically.</p></>}<Button onClick={() => setHelp(null)}>Done</Button></div></Dialog></div>}
       {incomingRequest && <IncomingRequestDialog contact={incomingRequest} busy={requestBusy === incomingRequest.id} error={requestError} onAccept={() => void respondToRequest(incomingRequest, true)} onDecline={() => void respondToRequest(incomingRequest, false)} onClose={() => { setRequestError(""); setDismissedRequests((current) => [...new Set([...current, incomingRequest.id])]); }} />}
@@ -3938,6 +4036,7 @@ export default function App() {
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
   const [initialInvitation, setInitialInvitation] = useState("");
   const [workspaceChannelInvalidation, setWorkspaceChannelInvalidation] = useState<ServiceEvent | null>(null);
+  const [notificationTarget, setNotificationTarget] = useState<NotificationOpenTarget | null>(null);
   const [fatal, setFatal] = useState("");
   const [locked, setLocked] = useState(false);
   const refreshInFlight = useRef<Promise<Snapshot> | null>(null);
@@ -4021,19 +4120,38 @@ export default function App() {
       }
     })();
     void onInvitation((value) => setInitialInvitation(value)).then(keepCleanup).catch(() => undefined);
+    void onNotificationOpen(async (notificationId) => {
+      try {
+        const target = await serviceCommand<NotificationOpenTarget>("open_notification_target", { notification_id: notificationId });
+        if (active) {
+          await refreshWorkspace(true);
+          if (active) setNotificationTarget({ ...target });
+        }
+      } catch (reason) {
+        if (active) setNotificationTarget({ available: false, reason: "unavailable", message: errorMessage(reason) });
+      }
+    }).then(keepCleanup).catch(() => undefined);
     return () => { active = false; cleanups.forEach((cleanup) => cleanup()); };
   }, [refresh, refreshWorkspace]);
   useEffect(() => {
     let active = true;
     let timer: number | undefined;
+    let mobile = false;
     const refreshVisible = () => {
-      if (active && document.visibilityState === "visible") void refresh().catch(() => undefined);
+      if (!active || document.visibilityState !== "visible") return;
+      if (mobile) {
+        void serviceCommand("reconcile_mobile_lifecycle").then(() => refresh(true)).catch(() => refresh().catch(() => undefined));
+      } else {
+        void refresh().catch(() => undefined);
+      }
     };
     const onVisibility = () => refreshVisible();
     window.addEventListener("focus", refreshVisible);
     document.addEventListener("visibilitychange", onVisibility);
     void runtimePlatform().then((platform) => {
-      if (active && platform === "desktop") timer = window.setInterval(refreshVisible, 3000);
+      if (!active) return;
+      mobile = platform !== "desktop";
+      if (!mobile) timer = window.setInterval(refreshVisible, 3000);
     }).catch(() => undefined);
     return () => {
       active = false;
@@ -4046,5 +4164,5 @@ export default function App() {
   if (fatal) return <main className="fatal-screen"><LockKeyhole size={36} /><h1>Mesh Chat stopped safely</h1><p>{fatal}</p><p className="muted">No plaintext fallback was used.</p></main>;
   if (!snapshot) return <main className="loading-screen"><Brand /><span className="spinner" /><p>Opening your private profile…</p></main>;
   if (!snapshot.profile) return <Onboarding initialInvitation={initialInvitation} onReady={setSnapshot} />;
-  return <Messenger snapshot={snapshot} refresh={refresh} workspaceChannelInvalidation={workspaceChannelInvalidation} initialInvitation={initialInvitation} onInvitationHandled={() => setInitialInvitation("")} onLock={async () => { await lockService(); setSnapshot(null); setLocked(true); }} />;
+  return <Messenger snapshot={snapshot} refresh={refresh} workspaceChannelInvalidation={workspaceChannelInvalidation} notificationTarget={notificationTarget} onNotificationHandled={() => setNotificationTarget(null)} initialInvitation={initialInvitation} onInvitationHandled={() => setInitialInvitation("")} onLock={async () => { await lockService(); setSnapshot(null); setLocked(true); }} />;
 }

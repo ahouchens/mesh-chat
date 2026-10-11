@@ -159,6 +159,38 @@ export interface GroupInvitation {
 }
 
 export type WorkspaceRole = "owner" | "admin" | "member";
+export type WorkspaceNotificationPreference = "all" | "mentions_only" | "muted";
+export type NotificationPermissionState = "unsupported" | "not_requested" | "allowed" | "denied" | "settings_required";
+
+export interface WorkspaceNotificationState {
+  supported: boolean;
+  platform: "desktop" | "android" | "ios";
+  permission_state: NotificationPermissionState;
+  hide_previews: boolean;
+  lifecycle_state: "foreground" | "background" | "suspended" | "reconciling" | "caught_up";
+  reconciling: boolean;
+  caught_up: boolean;
+  invalidation_overflow: boolean;
+  pending_native_count: number;
+  guidance: string;
+}
+
+export interface NotificationCapability {
+  supported: boolean;
+  platform: "desktop" | "android" | "ios";
+  permission_state: NotificationPermissionState;
+}
+
+export interface NotificationOpenTarget {
+  available: boolean;
+  reason?: "unavailable" | "authorization_changed";
+  message?: string;
+  workspace_id?: string;
+  conversation_id?: string;
+  conversation_kind?: "channel" | "direct";
+  thread_root_id?: string | null;
+  event_id?: string;
+}
 export type WorkspaceState =
   | "joining"
   | "linking"
@@ -230,6 +262,7 @@ export interface Workspace {
   authority_administration_state?: "permanently_frozen";
   authority_loss_guidance?: string;
   read_hint_sync?: boolean;
+  notification_preference?: WorkspaceNotificationPreference;
   created_at: number;
   updated_at: number;
 }
@@ -253,6 +286,7 @@ export interface WorkspaceChannel {
   unread_count: number;
   subscribed: boolean;
   mentions_muted: boolean;
+  notification_preference?: WorkspaceNotificationPreference;
   is_general: boolean;
   duplicate_name: boolean;
   created_at: number;
@@ -268,6 +302,7 @@ export interface WorkspaceDirect {
   peer_short_id: string;
   state: "open" | "read_only";
   unread_count: number;
+  notification_preference?: WorkspaceNotificationPreference;
   created_at: number;
   updated_at: number;
 }
@@ -708,6 +743,7 @@ export interface WorkspaceSnapshot {
   workspace_device_transitions?: WorkspaceDeviceTransition[];
   workspace_invitations: WorkspaceInvitation[];
   workspace_drafts: WorkspaceDraft[];
+  workspace_notification_state?: WorkspaceNotificationState;
 }
 
 export interface NetworkSettings {
@@ -758,6 +794,7 @@ export interface Snapshot {
   workspace_device_transitions?: WorkspaceDeviceTransition[];
   workspace_invitations?: WorkspaceInvitation[];
   workspace_drafts?: WorkspaceDraft[];
+  workspace_notification_state?: WorkspaceNotificationState;
   settings: NetworkSettings;
   network: {
     transport_enabled: boolean;

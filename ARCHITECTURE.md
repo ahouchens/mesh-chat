@@ -43,16 +43,17 @@ history by default. See
 [ADR 0004](docs/adr/0004-private-groups-over-individual-lxmf.md) for the scale,
 ordering, removal, and owner-loss consequences.
 
-## Desktop workspaces
+## Workspaces
 
-The thirteenth workspace increment is an isolated desktop feature profile. It adds
+The workspace feature profile adds
 canonical workspace authority, device, invitation, channel and event documents
 under the `mesh-chat-workspace` custom type without changing Personal or private
 group bytes. The React shell can switch between Personal and workspace views,
 but all trust, manifest, paging, unread and delivery decisions remain inside
-the Python service. Rust exposes only the named workspace commands on desktop
-and returns `workspace_desktop_only` through the mobile bridge until the mobile
-increment is implemented.
+the Python service. Rust exposes the same explicit named workspace command
+allowlist on desktop and mobile. Native-only notification drain,
+acknowledgment, permission-state, and lifecycle commands are excluded from the
+renderer allowlist.
 
 The service is split into three workspace boundaries:
 
@@ -386,7 +387,7 @@ The service does not export private identities to ordinary files, enable crash u
 
 ## Linked-device authority path
 
-A linked desktop is a new cryptographic endpoint under an existing member, not
+A linked device is a new cryptographic endpoint under an existing member, not
 an identity clone. The sponsor and new endpoint countersign an expiring link;
 the sole workspace authority then commits the exact card delta in a manifest.
 Until that manifest is durable, the endpoint remains in `linking` state and
@@ -405,7 +406,7 @@ commit freezes the current manifest's full device set, including the author's
 other devices. Removal cancels only the lost destination's unfinished children
 and recomputes the message summary from device detail. Authorized history is
 recovered through the existing bounded signed catch-up path; neither vault nor
-private identity bytes move between desktops. Optional read hints are encrypted
+private identity bytes move between devices. Optional read hints are encrypted
 same-member controls and are applied only against an identical local event
 head.
 
@@ -424,3 +425,24 @@ head.
 - [ADR 0011: workspace administrators and owner-approved requests](docs/adr/0011-workspace-administrators.md)
 - [ADR 0012: workspace authority continuity](docs/adr/0012-authority-continuity.md)
 - [ADR 0013: linked desktop devices](docs/adr/0013-linked-desktop-devices.md)
+- [ADR 0014: mobile lifecycle and local notifications](docs/adr/0014-mobile-lifecycle-and-notifications.md)
+
+## Mobile lifecycle and local notification path
+
+Android and the maintained iOS source embed the same Python workspace service
+behind a native plugin. Mobile installations keep fresh identities and use the
+Increment 14 device-link exchange unchanged. A canonical live-message commit
+may atomically add a sealed notification ledger, opaque route, bounded native
+work item, and queue reference. A native 750 ms worker drains at most 16 items
+directly from the service; React is not in this path.
+
+Native signals contain only an opaque notification ID/group key, a category,
+sanitized bounded presentation strings, sequence, and creation time. The
+sealed service route retains raw scope and rechecks authorization on a tap.
+Native acknowledgment means only local platform API acceptance.
+
+The sealed lifecycle summary carries transition/reconciliation and
+invalidation generations. Resume processes bounded controls, pending events,
+and due-work indexes, never full event or delivery collections. Bridge overflow
+forces this bounded authoritative path. Suspended or terminated processes have
+no availability guarantee; reopening reconciles.

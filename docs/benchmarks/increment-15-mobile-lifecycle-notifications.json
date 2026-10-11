@@ -1,0 +1,304 @@
+{
+  "assertions": {
+    "accepted_to_native_p95": true,
+    "background_p95": true,
+    "duplicate_p95": true,
+    "durable_enqueue_p95": true,
+    "eight_members": true,
+    "fork_fails_closed": true,
+    "full_size_fixture": true,
+    "historical_catch_up_no_storm": true,
+    "native_dispatch_p95": true,
+    "native_payload_bounded": true,
+    "network_restore_p95": true,
+    "no_whole_event_or_delivery_scan": true,
+    "notification_open_p95": true,
+    "notification_policy_p95": true,
+    "overflow_p95": true,
+    "permission_denied_is_stable": true,
+    "permission_denied_queue_empty": true,
+    "preference_p95": true,
+    "preference_precedence": true,
+    "preview_hidden": true,
+    "public_private_archived_chains": true,
+    "queue_is_bounded": true,
+    "removed_device_open_fails_closed": true,
+    "restart_p95": true,
+    "resume_p95": true,
+    "thirty_two_channels": true,
+    "three_devices_per_selected_member": true,
+    "three_independent_profiles": true,
+    "twenty_four_destination_cap": true
+  },
+  "correctness": {
+    "no_false_read_receipt": true,
+    "no_historical_notification_storm": true,
+    "no_notification_as_delivery": true,
+    "no_preview_leakage": true,
+    "preference_precedence": {
+      "mention_mute_wins": true,
+      "plain_text_does_not_mention": true,
+      "structured_unsubscribed_notifies": true
+    },
+    "private_identity_copies": 0
+  },
+  "duration_seconds": 146.12,
+  "fixture": {
+    "archived_channel": "65a8991a-3077-4a64-a3c3-cdf1967fea18",
+    "archived_channels": 4,
+    "channels": 32,
+    "edits": 2000,
+    "events": 50000,
+    "linked_device_delivery_legs": 4000,
+    "members": 8,
+    "pending_queue_depth": 2000,
+    "private_channels": 7,
+    "profiles": 3,
+    "public_channels": 25,
+    "reactions": 2000,
+    "revision_target": "e5c68d8a-200d-51ff-ae8d-6afa048e26af",
+    "roots": 42000,
+    "thread_replies": 3000,
+    "thread_root": "e5c68d8a-200d-51ff-ae8d-6afa048e26af",
+    "tombstones": 1000
+  },
+  "generated_at_utc": "2026-10-11T20:37:07Z",
+  "host": {
+    "android_api_levels": [
+      "android-36"
+    ],
+    "android_devices": "List of devices attached",
+    "android_sdk": "C:\\Users\\webte\\AppData\\Local\\Android\\Sdk",
+    "architecture": "AMD64",
+    "cargo": "cargo 1.99.0 (5f94df478 2026-08-27)",
+    "gradle": "Gradle 9.6.1",
+    "java": "openjdk version \"25.0.3\" 2026-04-21",
+    "logical_cpu_count": 12,
+    "node": "v24.19.0",
+    "os": "Windows-10-10.0.19045-SP0",
+    "physical_android_battery": null,
+    "physical_android_battery_reason": "No authorized disposable physical device was attached.",
+    "physical_memory_bytes": 17019686912,
+    "processor": "Intel64 Family 6 Model 158 Stepping 10, GenuineIntel",
+    "python": "3.13.15",
+    "rust": "rustc 1.99.0 (b940084d7 2026-09-28)",
+    "vault": "SQLite DELETE/FULL + per-record AES-256-GCM"
+  },
+  "limits": {
+    "accepted_to_native_request_p95_ms": 250.0,
+    "background_transition_p95_ms": 100.0,
+    "body_characters": 160,
+    "duplicate_suppression_p95_ms": 25.0,
+    "durable_enqueue_p95_ms": 100.0,
+    "native_dispatch_p95_ms": 750.0,
+    "native_signal_bytes": 1024,
+    "network_restore_p95_ms": 750.0,
+    "notification_batch": 16,
+    "notification_open_p95_ms": 100.0,
+    "notification_policy_p95_ms": 25.0,
+    "notification_queue": 128,
+    "preference_update_p95_ms": 250.0,
+    "restart_pending_work_p95_ms": 2000.0,
+    "resume_no_change_p95_ms": 500.0,
+    "resume_overflow_p95_ms": 750.0,
+    "samples": 30,
+    "title_characters": 80
+  },
+  "linked_device_protocol": {
+    "bytes": {
+      "acceptance_max": 4016,
+      "maximum_manifest": 13978
+    },
+    "timings_ms": {
+      "link_construct_validate": {
+        "max": 9.859700003289618,
+        "p50": 7.792999997036532,
+        "p95": 9.747299991431646
+      },
+      "maximum_fanout_verify": {
+        "max": 18.972599995322526,
+        "p50": 8.014899998670444,
+        "p95": 16.82650001021102
+      },
+      "removal_construct_validate": {
+        "max": 2.9166000022087246,
+        "p50": 1.3098000054014847,
+        "p95": 2.3098000092431903
+      }
+    },
+    "work": {
+      "devices": 24,
+      "members": 8,
+      "private_identity_copies": 0,
+      "remote_fanout_legs": 23,
+      "samples": 30
+    }
+  },
+  "resources": {
+    "battery": "not measured: no authorized disposable physical Android device",
+    "process_peak_working_set_bytes": 234172416,
+    "python_tracemalloc_peak_bytes": 99399669,
+    "record_counts": {
+      "identity": 1,
+      "profile": 1,
+      "workspace": 1,
+      "workspace_channel": 32,
+      "workspace_channel_control": 32,
+      "workspace_channel_version": 32,
+      "workspace_conversation_index": 480,
+      "workspace_delivery": 4000,
+      "workspace_due_work_index": 64,
+      "workspace_event": 50195,
+      "workspace_lifecycle_state": 1,
+      "workspace_manifest": 1,
+      "workspace_manifest_epoch": 1,
+      "workspace_message_state": 45195,
+      "workspace_notification_ledger": 195,
+      "workspace_notification_preference": 30,
+      "workspace_notification_queue": 1,
+      "workspace_notification_route": 190,
+      "workspace_notification_settings": 1,
+      "workspace_operation": 68,
+      "workspace_reaction_state": 2000,
+      "workspace_read_state": 32,
+      "workspace_retention_index": 501,
+      "workspace_retention_state": 1,
+      "workspace_revision_index": 6000,
+      "workspace_search_catalog": 1,
+      "workspace_search_document": 40,
+      "workspace_search_index": 76,
+      "workspace_search_state": 1,
+      "workspace_stream_coverage": 50064,
+      "workspace_subscription": 32,
+      "workspace_thread": 100,
+      "workspace_thread_activity_index": 1,
+      "workspace_thread_index": 200,
+      "workspace_tombstone_index": 64
+    },
+    "vault": {
+      "before": {
+        "bytes": 606208,
+        "free_pages": 1,
+        "page_count": 148
+      },
+      "final": {
+        "bytes": 534274048,
+        "free_pages": 32,
+        "page_count": 130438
+      },
+      "notification_growth_bytes": 2293760,
+      "seed_growth_bytes": 531374080,
+      "seeded": {
+        "bytes": 531980288,
+        "free_pages": 0,
+        "page_count": 129878
+      }
+    }
+  },
+  "schema": "mesh-chat-increment-15-mobile-lifecycle-v1",
+  "timings_ms": {
+    "accepted_to_native_request": {
+      "max": 24.208,
+      "p50": 20.597,
+      "p95": 23.619
+    },
+    "duplicate_suppression": {
+      "max": 0.397,
+      "p50": 0.22,
+      "p95": 0.374
+    },
+    "durable_enqueue": {
+      "max": 9.463,
+      "p50": 7.393,
+      "p95": 9.426
+    },
+    "foreground_to_background": {
+      "max": 4.616,
+      "p50": 3.077,
+      "p95": 4.562
+    },
+    "network_restoration": {
+      "max": 44.959,
+      "p50": 34.983,
+      "p95": 40.36
+    },
+    "notification_open": {
+      "max": 13.312,
+      "p50": 11.339,
+      "p95": 12.59
+    },
+    "notification_policy": {
+      "max": 4.46,
+      "p50": 2.252,
+      "p95": 3.936
+    },
+    "preference_update": {
+      "max": 198.344,
+      "p50": 180.246,
+      "p95": 195.387
+    },
+    "process_restart_pending_work": {
+      "max": 25.192,
+      "p50": 21.644,
+      "p95": 24.492
+    },
+    "resume_after_overflow": {
+      "max": 67.26,
+      "p50": 35.413,
+      "p95": 50.374
+    },
+    "resume_no_change": {
+      "max": 42.547,
+      "p50": 33.945,
+      "p95": 36.621
+    },
+    "service_to_native_dispatch": {
+      "max": 461.88,
+      "p50": 352.521,
+      "p95": 436.448
+    }
+  },
+  "work": {
+    "duplicate_probes": 30,
+    "historical_suppressed": 50000,
+    "invalidation_overflow_probes": 30,
+    "native_dispatch_attempts": 511,
+    "permission_denied": 1,
+    "queue_depth_after_restart": 1,
+    "queue_depth_before_restart": 1,
+    "queue_depth_peak": 128,
+    "resume_record_access": {
+      "items:workspace_invitation": 90,
+      "list:workspace": 270,
+      "list:workspace_pending_control": 90,
+      "list:workspace_pending_event": 90
+    },
+    "samples": 30,
+    "startup_record_access": {
+      "get:workspace": 32,
+      "get:workspace_admin_profile_index": 1,
+      "get:workspace_admin_workspace_index": 1,
+      "get:workspace_lifecycle_state": 1,
+      "get:workspace_notification_preference": 100,
+      "get:workspace_notification_queue": 1,
+      "get:workspace_notification_settings": 1,
+      "get:workspace_search_catalog": 1,
+      "get:workspace_search_document": 40,
+      "get:workspace_search_index": 1,
+      "get:workspace_search_state": 4,
+      "get:workspace_subscription": 32,
+      "list:workspace": 2,
+      "list:workspace_authority_transition": 1,
+      "list:workspace_channel": 1,
+      "list:workspace_channel_transfer": 1,
+      "list:workspace_device_transition": 1,
+      "list:workspace_direct": 1,
+      "list:workspace_display_name_request": 1,
+      "list:workspace_draft": 1,
+      "list:workspace_invitation": 1,
+      "list:workspace_join_request": 1
+    },
+    "transaction_model": "event + derived message + decision + ledger + native work + queue in one put_many transaction",
+    "whole_collection_scans": {}
+  }
+}

@@ -53,8 +53,17 @@ def _emit(value: dict[str, Any]) -> None:
     # Network callbacks can emit from an RNS worker while a renderer command is
     # executing.  Keep event delivery independent from the service lifecycle
     # lock so a command waiting for that worker cannot deadlock the bridge.
+    overflow = False
     with _events_lock:
+        overflow = len(_events) == _events.maxlen
         _events.append(value)
+    if overflow:
+        # Persist the gap after releasing the event lock. A renderer refresh
+        # can then request bounded authoritative reconciliation instead of
+        # treating a coalesced/dequeued event stream as complete.
+        service = _service
+        if service is not None:
+            service._mark_workspace_invalidation_overflow()
 
 
 def initialize(raw: str) -> str:

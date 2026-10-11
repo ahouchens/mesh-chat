@@ -1129,6 +1129,14 @@ This increment is complete only on each advertised mobile platform after
 physical suspend, resume, offline, reconnect, permission denial, private
 preview, and restart tests produce correct notifications and delivery state.
 
+Implementation status for 0.2.35: the shared protocol, sealed service state,
+native Android path, maintained iOS source boundary, renderer controls,
+authorization-checked routing, bounded resume reconciliation, automated tests,
+and 50,000-event benchmark are implemented under ADR 0014. Android still
+requires the authorized-disposable-device matrix before Increment 15 is called
+physically complete. iOS additionally requires macOS/Xcode, signing, and
+physical evidence. Automated/package results do not replace those gates.
+
 ### Release phase validates supported scale
 
 This is a release decision, not another functional increment.
