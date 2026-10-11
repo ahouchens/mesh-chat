@@ -57,6 +57,29 @@ def test_shell_bounds_independent_conversation_and_message_scrollers() -> None:
     assert "max-height: 100dvh" in css
 
 
+def test_dark_theme_defines_an_explicit_dark_surface_palette() -> None:
+    css = STYLES.read_text(encoding="utf-8")
+    dark = _rule(css, 'html[data-theme="dark"]')
+
+    assert "color-scheme: dark" in dark
+    for token in (
+        "--ink:",
+        "--muted:",
+        "--cream:",
+        "--paper:",
+        "--line:",
+        "--app-bg:",
+        "--sidebar-bg:",
+        "--surface-raised:",
+        "--surface-muted:",
+        "--message-canvas:",
+        "--input-bg:",
+        "--header-bg:",
+        "--backdrop:",
+    ):
+        assert token in dark
+
+
 def test_android_webview_stays_inside_system_bars() -> None:
     source = ANDROID_ACTIVITY.read_text(encoding="utf-8")
 

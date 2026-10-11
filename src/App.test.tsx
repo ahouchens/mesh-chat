@@ -15,6 +15,7 @@ const api = vi.hoisted(() => ({
   openNotificationSettings: vi.fn(async () => ({ supported: false, platform: "desktop", permission_state: "unsupported" })),
   requestNotificationPermission: vi.fn(async () => ({ supported: false, platform: "desktop", permission_state: "unsupported" })),
   runtimePlatform: vi.fn(),
+  setNativeTheme: vi.fn(async () => undefined),
   serviceCommand: vi.fn(),
 }));
 
@@ -231,6 +232,9 @@ function deferred<T>() {
 afterEach(() => {
   cleanup();
   vi.clearAllMocks();
+  vi.unstubAllGlobals();
+  window.localStorage.clear();
+  document.documentElement.removeAttribute("data-theme");
 });
 
 describe("startup storage errors", () => {
@@ -258,6 +262,104 @@ describe("startup storage errors", () => {
 
     await screen.findByRole("heading", { name: "Mesh Chat stopped safely" });
     expect(screen.getByText(/Turn on FileVault.*EFS-capable NTFS.*fscrypt\/LUKS/i)).toBeTruthy();
+  });
+});
+
+describe("appearance theme", () => {
+  it("defaults to dark when no saved preference exists", async () => {
+    const current = snapshot();
+    window.localStorage.removeItem("mesh-chat-theme");
+    document.documentElement.removeAttribute("data-theme");
+    api.runtimePlatform.mockResolvedValue("desktop");
+    api.initializeService.mockResolvedValue(current);
+    api.onInvitation.mockResolvedValue(() => undefined);
+    api.onServiceEvent.mockResolvedValue(() => undefined);
+    api.serviceCommand.mockImplementation(async (command: string) => command === "snapshot" ? current : null);
+
+    render(<App />);
+
+    await screen.findByRole("heading", { name: "Your private conversations" });
+    expect(document.documentElement.dataset.theme).toBe("dark");
+  });
+
+  it("persists a light choice and restores it on remount", async () => {
+    const current = snapshot();
+    window.localStorage.removeItem("mesh-chat-theme");
+    document.documentElement.removeAttribute("data-theme");
+    api.runtimePlatform.mockResolvedValue("desktop");
+    api.initializeService.mockResolvedValue(current);
+    api.onInvitation.mockResolvedValue(() => undefined);
+    api.onServiceEvent.mockResolvedValue(() => undefined);
+    api.serviceCommand.mockImplementation(async (command: string) => command === "snapshot" ? current : null);
+
+    const firstMount = render(<App />);
+    await screen.findByRole("heading", { name: "Your private conversations" });
+    fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+
+    const themeGroup = await screen.findByRole("radiogroup", { name: "Theme" });
+    const darkOption = within(themeGroup).getByRole("radio", { name: /^Dark\b/ });
+    const lightOption = within(themeGroup).getByRole("radio", { name: /^Light\b/ });
+    expect(darkOption.getAttribute("aria-checked")).toBe("true");
+
+    fireEvent.click(lightOption);
+
+    await waitFor(() => expect(document.documentElement.dataset.theme).toBe("light"));
+    expect(window.localStorage.getItem("mesh-chat-theme")).toBe("light");
+    expect(lightOption.getAttribute("aria-checked")).toBe("true");
+
+    firstMount.unmount();
+    document.documentElement.dataset.theme = "dark";
+    render(<App />);
+
+    await screen.findByRole("heading", { name: "Your private conversations" });
+    expect(document.documentElement.dataset.theme).toBe("light");
+    fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+    const restoredGroup = await screen.findByRole("radiogroup", { name: "Theme" });
+    expect(within(restoredGroup).getByRole("radio", { name: /^Light\b/ }).getAttribute("aria-checked")).toBe("true");
+  });
+
+  it("uses roving focus and arrow keys in the theme radiogroup", async () => {
+    const current = snapshot();
+    api.runtimePlatform.mockResolvedValue("desktop");
+    api.initializeService.mockResolvedValue(current);
+    api.onInvitation.mockResolvedValue(() => undefined);
+    api.onServiceEvent.mockResolvedValue(() => undefined);
+    api.serviceCommand.mockImplementation(async (command: string) => command === "snapshot" ? current : null);
+
+    render(<App />);
+    await screen.findByRole("heading", { name: "Your private conversations" });
+    fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+
+    const themeGroup = await screen.findByRole("radiogroup", { name: "Theme" });
+    const darkOption = within(themeGroup).getByRole("radio", { name: /^Dark\b/ });
+    const lightOption = within(themeGroup).getByRole("radio", { name: /^Light\b/ });
+    expect(darkOption.tabIndex).toBe(0);
+    expect(lightOption.tabIndex).toBe(-1);
+
+    darkOption.focus();
+    fireEvent.keyDown(darkOption, { key: "ArrowRight" });
+
+    await waitFor(() => expect(lightOption.getAttribute("aria-checked")).toBe("true"));
+    expect(lightOption).toBe(document.activeElement);
+    expect(darkOption.tabIndex).toBe(-1);
+    expect(lightOption.tabIndex).toBe(0);
+
+    fireEvent.keyDown(lightOption, { key: "ArrowRight" });
+
+    await waitFor(() => expect(darkOption.getAttribute("aria-checked")).toBe("true"));
+    expect(darkOption).toBe(document.activeElement);
+    expect(darkOption.tabIndex).toBe(0);
+    expect(lightOption.tabIndex).toBe(-1);
+
+    fireEvent.keyDown(darkOption, { key: "ArrowLeft" });
+
+    await waitFor(() => expect(lightOption.getAttribute("aria-checked")).toBe("true"));
+    expect(lightOption).toBe(document.activeElement);
+
+    fireEvent.keyDown(lightOption, { key: "Home" });
+    await waitFor(() => expect(darkOption.getAttribute("aria-checked")).toBe("true"));
+    fireEvent.keyDown(darkOption, { key: "End" });
+    await waitFor(() => expect(lightOption.getAttribute("aria-checked")).toBe("true"));
   });
 });
 
@@ -592,8 +694,13 @@ describe("dialog keyboard behavior", () => {
     trigger.focus();
     fireEvent.click(trigger);
     await screen.findByRole("heading", { name: "Settings" });
-    expect(screen.getByRole("button", { name: "Close" })).toBe(document.activeElement);
+    const closeButton = screen.getByRole("button", { name: "Close" });
+    expect(closeButton).toBe(document.activeElement);
     expect(screen.getByText("Emoji artwork: Twemoji (CC BY 4.0)")).toBeTruthy();
+
+    closeButton.blur();
+    fireEvent.keyDown(document, { key: "Tab" });
+    expect(closeButton).toBe(document.activeElement);
 
     fireEvent.keyDown(document, { key: "Escape" });
 
@@ -907,6 +1014,150 @@ describe("message reactions", () => {
 });
 
 describe("Android system Back navigation", () => {
+  it("closes the compact workspace More menu before returning to the list and does not restore it stale", async () => {
+    vi.stubGlobal("innerWidth", 360);
+    const current: Snapshot = {
+      ...snapshot(),
+      workspaces: [workspace],
+      workspace_channels: [workspaceChannel],
+      workspace_directs: [],
+      workspace_join_requests: [],
+      workspace_invitations: [],
+      workspace_drafts: [],
+    };
+    let back: (() => void) | undefined;
+    api.runtimePlatform.mockResolvedValue("android");
+    api.initializeService.mockResolvedValue(current);
+    api.onInvitation.mockResolvedValue(() => undefined);
+    api.onServiceEvent.mockResolvedValue(() => undefined);
+    api.onMobileBackButton.mockImplementation(async (callback: () => void) => {
+      back = callback;
+      return () => undefined;
+    });
+    api.serviceCommand.mockImplementation(async (command: string) => {
+      if (command === "snapshot" || command === "workspace_snapshot") return current;
+      if (command === "list_workspace_messages") return { messages: [], next_cursor: null, high_water: 0 } satisfies WorkspaceMessagePage;
+      return {};
+    });
+
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Workspace Lakewatcher" }));
+    const workspaceNavigation = await screen.findByRole("navigation", { name: "Lakewatcher conversations" });
+    fireEvent.click(within(workspaceNavigation).getByRole("button", { name: /^general\b/i }));
+    const conversation = await screen.findByLabelText("Workspace channel general");
+    const more = within(conversation).getByLabelText("More actions for general");
+    fireEvent.click(more);
+    expect(more.getAttribute("aria-expanded")).toBe("true");
+    expect(within(conversation).getByRole("menu")).toBeTruthy();
+    await waitFor(() => expect(back).toBeTypeOf("function"));
+
+    act(() => back?.());
+
+    await waitFor(() => expect(more.getAttribute("aria-expanded")).toBe("false"));
+    expect(within(conversation).queryByRole("menu")).toBeNull();
+    expect(document.querySelector(".app-shell")?.classList.contains("app-shell--thread")).toBe(true);
+    expect(screen.getByLabelText("Workspace channel general")).toBeTruthy();
+
+    act(() => back?.());
+    await waitFor(() => expect(document.querySelector(".app-shell")?.classList.contains("app-shell--list")).toBe(true));
+    fireEvent.click(within(workspaceNavigation).getByRole("button", { name: /^general\b/i }));
+
+    const reopened = await screen.findByLabelText("Workspace channel general");
+    expect(within(reopened).getByLabelText("More actions for general").getAttribute("aria-expanded")).toBe("false");
+  });
+
+  it("backs out of wide-layout workspace subviews before leaving the workspace", async () => {
+    vi.stubGlobal("innerWidth", 900);
+    const current: Snapshot = {
+      ...snapshot(),
+      workspaces: [workspace],
+      workspace_channels: [workspaceChannel],
+      workspace_directs: [],
+      workspace_join_requests: [],
+      workspace_invitations: [],
+      workspace_drafts: [],
+    };
+    const threadActivity: WorkspaceThreadActivityPage = { threads: [], next_cursor: null, high_water: 0, unread_count: 0 };
+    const mentions: WorkspaceMentionPage = { mentions: [], next_cursor: null, high_water: 0, unread_count: 0 };
+    let back: (() => void) | undefined;
+    api.runtimePlatform.mockResolvedValue("android");
+    api.initializeService.mockResolvedValue(current);
+    api.onInvitation.mockResolvedValue(() => undefined);
+    api.onServiceEvent.mockResolvedValue(() => undefined);
+    api.onMobileBackButton.mockImplementation(async (callback: () => void) => {
+      back = callback;
+      return () => undefined;
+    });
+    api.serviceCommand.mockImplementation(async (command: string) => {
+      if (command === "snapshot" || command === "workspace_snapshot") return current;
+      if (command === "list_workspace_messages") return { messages: [], next_cursor: null, high_water: 0 } satisfies WorkspaceMessagePage;
+      if (command === "list_workspace_threads") return threadActivity;
+      if (command === "list_workspace_mentions") return mentions;
+      return {};
+    });
+
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Workspace Lakewatcher" }));
+    const workspaceNavigation = await screen.findByRole("navigation", { name: "Lakewatcher conversations" });
+    await waitFor(() => expect(back).toBeTypeOf("function"));
+
+    for (const view of ["Search", "Threads", "Mentions"]) {
+      fireEvent.click(within(workspaceNavigation).getByRole("button", { name: new RegExp(`^${view}\\b`, "i") }));
+      await screen.findByRole("heading", { name: view });
+
+      act(() => back?.());
+
+      expect(await screen.findByLabelText("Workspace channel general")).toBeTruthy();
+      expect(screen.getByRole("button", { name: "Workspace Lakewatcher" }).getAttribute("aria-current")).toBe("page");
+    }
+  });
+
+  it("returns from a workspace channel to its sidebar before releasing the app", async () => {
+    vi.stubGlobal("innerWidth", 360);
+    const current: Snapshot = {
+      ...snapshot(),
+      workspaces: [workspace],
+      workspace_channels: [workspaceChannel],
+      workspace_directs: [],
+      workspace_join_requests: [],
+      workspace_invitations: [],
+      workspace_drafts: [],
+    };
+    let back: (() => void) | undefined;
+    const unregister = vi.fn();
+    api.runtimePlatform.mockResolvedValue("android");
+    api.initializeService.mockResolvedValue(current);
+    api.onInvitation.mockResolvedValue(() => undefined);
+    api.onServiceEvent.mockResolvedValue(() => undefined);
+    api.onMobileBackButton.mockImplementation(async (callback: () => void) => {
+      back = callback;
+      return unregister;
+    });
+    api.serviceCommand.mockImplementation(async (command: string) => {
+      if (command === "snapshot" || command === "workspace_snapshot") return current;
+      if (command === "list_workspace_messages") return { messages: [], next_cursor: null, high_water: 0 } satisfies WorkspaceMessagePage;
+      return {};
+    });
+
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Workspace Lakewatcher" }));
+    const workspaceNavigation = await screen.findByRole("navigation", { name: "Lakewatcher conversations" });
+    fireEvent.click(within(workspaceNavigation).getByRole("button", { name: /^general\b/i }));
+
+    const conversation = await screen.findByLabelText("Workspace channel general");
+    expect(within(conversation).getByRole("button", { name: "Back to Lakewatcher" })).toBeTruthy();
+    await waitFor(() => expect(document.querySelector(".app-shell")?.classList.contains("app-shell--thread")).toBe(true));
+    await waitFor(() => expect(back).toBeTypeOf("function"));
+
+    act(() => back?.());
+
+    await waitFor(() => expect(document.querySelector(".app-shell")?.classList.contains("app-shell--list")).toBe(true));
+    expect(screen.getByRole("navigation", { name: "Lakewatcher conversations" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Workspace Lakewatcher" }).getAttribute("aria-current")).toBe("page");
+    expect(api.onMobileBackButton).toHaveBeenCalledTimes(1);
+    expect(unregister).not.toHaveBeenCalled();
+  });
+
   it("returns from a direct conversation to the conversation list and releases Back at the root", async () => {
     const current = snapshot([approved]);
     let back: (() => void) | undefined;
@@ -925,12 +1176,14 @@ describe("Android system Back navigation", () => {
     });
 
     render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: /^Taylor\b/ }));
     await screen.findByLabelText("Conversation with Taylor");
     await waitFor(() => expect(back).toBeTypeOf("function"));
 
     act(() => back?.());
 
-    await screen.findByRole("heading", { name: "Your private conversations" });
+    await waitFor(() => expect(document.querySelector(".app-shell")?.classList.contains("app-shell--list")).toBe(true));
+    expect(screen.getByRole("navigation", { name: "Conversations" })).toBeTruthy();
     await waitFor(() => expect(unregister).toHaveBeenCalledTimes(1));
     expect(api.onMobileBackButton).toHaveBeenCalledTimes(1);
   });
@@ -952,6 +1205,7 @@ describe("Android system Back navigation", () => {
     });
 
     render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: /^Taylor\b/ }));
     await screen.findByLabelText("Conversation with Taylor");
     await waitFor(() => expect(back).toBeTypeOf("function"));
     fireEvent.click(screen.getByRole("button", { name: "Settings" }));
@@ -965,7 +1219,8 @@ describe("Android system Back navigation", () => {
     expect(api.onMobileBackButton).toHaveBeenCalledTimes(1);
 
     act(() => back?.());
-    await screen.findByRole("heading", { name: "Your private conversations" });
+    await waitFor(() => expect(document.querySelector(".app-shell")?.classList.contains("app-shell--list")).toBe(true));
+    expect(screen.getByRole("navigation", { name: "Conversations" })).toBeTruthy();
   });
 
   it("dismisses delete confirmation before leaving the conversation", async () => {
@@ -982,6 +1237,7 @@ describe("Android system Back navigation", () => {
     api.serviceCommand.mockImplementation(async (command: string) => command === "snapshot" ? current : {});
 
     render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: /^Taylor\b/ }));
     await screen.findByLabelText("Conversation with Taylor");
     fireEvent.click(screen.getByRole("button", { name: "Delete conversation with Taylor" }));
     await screen.findByRole("heading", { name: "Delete conversation?" });
@@ -1013,6 +1269,7 @@ describe("Android system Back navigation", () => {
     api.serviceCommand.mockImplementation(async (command: string) => command === "snapshot" ? current : {});
 
     render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: /^Taylor\b/ }));
     await screen.findByLabelText("Conversation with Taylor");
     await waitFor(() => expect(back).toBeTypeOf("function"));
 
@@ -1054,6 +1311,7 @@ describe("Android system Back navigation", () => {
     api.serviceCommand.mockImplementation(async (command: string) => command === "snapshot" ? current : {});
 
     render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: /^Taylor\b/ }));
     await screen.findByLabelText("Conversation with Taylor");
     fireEvent.click(screen.getByRole("button", { name: "Delete conversation with Taylor" }));
     await screen.findByRole("heading", { name: "Delete conversation?" });
@@ -1074,6 +1332,39 @@ describe("Android system Back navigation", () => {
     expect(api.onMobileBackButton).toHaveBeenCalledTimes(1);
   });
 
+  it("registers Back for overlays in an auto-selected wide conversation", async () => {
+    vi.stubGlobal("innerWidth", 900);
+    const current: Snapshot = { ...snapshot([approved]), messages: [firstMessage] };
+    let back: (() => void) | undefined;
+    api.runtimePlatform.mockResolvedValue("android");
+    api.initializeService.mockResolvedValue(current);
+    api.onInvitation.mockResolvedValue(() => undefined);
+    api.onServiceEvent.mockResolvedValue(() => undefined);
+    api.onMobileBackButton.mockImplementation(async (callback: () => void) => {
+      back = callback;
+      return () => undefined;
+    });
+    api.serviceCommand.mockImplementation(async (command: string) => command === "snapshot" ? current : {});
+
+    render(<App />);
+    const conversation = await screen.findByLabelText("Conversation with Taylor");
+    expect(api.onMobileBackButton).not.toHaveBeenCalled();
+
+    const securitySummary = within(conversation).getByText("Security details");
+    const securityDetails = securitySummary.closest("details") as HTMLDetailsElement;
+    fireEvent.click(securitySummary);
+    await waitFor(() => expect(back).toBeTypeOf("function"));
+    act(() => back?.());
+    await waitFor(() => expect(securityDetails.open).toBe(false));
+
+    fireEvent.click(within(conversation).getByRole("button", { name: "Add a reaction" }));
+    await screen.findByRole("dialog", { name: "Choose a reaction" });
+    await waitFor(() => expect(api.onMobileBackButton).toHaveBeenCalledTimes(2));
+    act(() => back?.());
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Choose a reaction" })).toBeNull());
+    expect(screen.getByLabelText("Conversation with Taylor")).toBeTruthy();
+  });
+
   it("closes conversation details before returning to the list", async () => {
     const current = snapshot([approved]);
     let back: (() => void) | undefined;
@@ -1088,6 +1379,7 @@ describe("Android system Back navigation", () => {
     api.serviceCommand.mockImplementation(async (command: string) => command === "snapshot" ? current : {});
 
     render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: /^Taylor\b/ }));
     const conversation = await screen.findByLabelText("Conversation with Taylor");
     const summary = within(conversation).getByText("Security details");
     const details = summary.closest("details") as HTMLDetailsElement;
@@ -1099,7 +1391,8 @@ describe("Android system Back navigation", () => {
     expect(screen.getByLabelText("Conversation with Taylor")).toBeTruthy();
 
     act(() => back?.());
-    await screen.findByRole("heading", { name: "Your private conversations" });
+    await waitFor(() => expect(document.querySelector(".app-shell")?.classList.contains("app-shell--list")).toBe(true));
+    expect(screen.getByRole("navigation", { name: "Conversations" })).toBeTruthy();
   });
 
   it("backs out of the emoji catalog, then the picker, before returning to the conversation list", async () => {
@@ -1116,6 +1409,7 @@ describe("Android system Back navigation", () => {
     api.serviceCommand.mockImplementation(async (command: string) => command === "snapshot" ? current : {});
 
     render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: /^Taylor\b/ }));
     const conversation = await screen.findByLabelText("Conversation with Taylor");
     fireEvent.click(within(conversation).getByRole("button", { name: "Add a reaction" }));
     const picker = await screen.findByRole("dialog", { name: "Choose a reaction" });
@@ -1136,7 +1430,8 @@ describe("Android system Back navigation", () => {
     expect(api.onMobileBackButton).toHaveBeenCalledTimes(1);
 
     act(() => back?.());
-    await screen.findByRole("heading", { name: "Your private conversations" });
+    await waitFor(() => expect(document.querySelector(".app-shell")?.classList.contains("app-shell--list")).toBe(true));
+    expect(screen.getByRole("navigation", { name: "Conversations" })).toBeTruthy();
   });
 
   it("clears a group confirmation when Back closes member details", async () => {
@@ -1159,7 +1454,9 @@ describe("Android system Back navigation", () => {
     api.serviceCommand.mockImplementation(async (command: string) => command === "snapshot" ? current : {});
 
     render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: /^Farm Operations\b/ }));
     const conversation = await screen.findByLabelText(`Group conversation ${group.title}`);
+    await waitFor(() => expect(back).toBeTypeOf("function"));
     const summary = within(conversation).getByText("Members & security");
     const details = summary.closest("details") as HTMLDetailsElement;
     fireEvent.click(summary);
@@ -1597,7 +1894,7 @@ describe("local conversation deletion", () => {
     fireEvent.click(screen.getByRole("button", { name: "Hide deleted conversations" }));
     await waitFor(() => expect(screen.queryByRole("button", { name: "Restore conversation with Taylor" })).toBeNull());
 
-    fireEvent.change(screen.getByRole("textbox", { name: "Search conversations" }), { target: { value: "Taylor" } });
+    fireEvent.change(screen.getByRole("textbox", { name: "Filter conversations" }), { target: { value: "Taylor" } });
     const restore = await screen.findByRole("button", { name: "Restore conversation with Taylor" });
     expect(within(restore).getByText("Deleted locally · open to restore")).toBeTruthy();
     fireEvent.click(restore);
@@ -1656,7 +1953,7 @@ describe("local conversation deletion", () => {
     expect(current.groups).toEqual([group]);
     expect(screen.queryByText(groupMessage.text)).toBeNull();
 
-    fireEvent.change(screen.getByRole("textbox", { name: "Search conversations" }), { target: { value: "Farm" } });
+    fireEvent.change(screen.getByRole("textbox", { name: "Filter conversations" }), { target: { value: "Farm" } });
     const restore = await screen.findByRole("button", { name: `Restore conversation ${group.title}` });
     fireEvent.click(restore);
 
@@ -3257,6 +3554,44 @@ describe("desktop workspaces", () => {
 });
 
 describe("notification routing", () => {
+  it("closes an unavailable notification dialog with Android Back", async () => {
+    const current = snapshot();
+    let openNotification: ((notificationId: string) => void) | undefined;
+    let back: (() => void) | undefined;
+    api.runtimePlatform.mockResolvedValue("android");
+    api.initializeService.mockResolvedValue(current);
+    api.onInvitation.mockResolvedValue(() => undefined);
+    api.onServiceEvent.mockResolvedValue(() => undefined);
+    api.onNotificationOpen.mockImplementation(async (callback) => {
+      openNotification = callback;
+      return () => undefined;
+    });
+    api.onMobileBackButton.mockImplementation(async (callback: () => void) => {
+      back = callback;
+      return () => undefined;
+    });
+    api.serviceCommand.mockImplementation(async (command: string) => {
+      if (command === "snapshot") return current;
+      if (command === "open_notification_target") return {
+        available: false,
+        reason: "unavailable",
+        message: "This notification expired.",
+      };
+      return {};
+    });
+
+    render(<App />);
+    await screen.findByRole("heading", { name: "Your private conversations" });
+    await waitFor(() => expect(openNotification).toBeTypeOf("function"));
+    await act(async () => openNotification?.("ef".repeat(32)));
+    expect(await screen.findByRole("dialog", { name: "Notification unavailable" })).toBeTruthy();
+    await waitFor(() => expect(back).toBeTypeOf("function"));
+
+    act(() => back?.());
+
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Notification unavailable" })).toBeNull());
+  });
+
   it("re-authorizes and opens a Personal direct notification without marking it read", async () => {
     const current = snapshot([approved]);
     current.messages = [firstMessage];

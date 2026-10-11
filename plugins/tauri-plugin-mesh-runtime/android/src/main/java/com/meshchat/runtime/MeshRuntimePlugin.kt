@@ -11,6 +11,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.net.wifi.WifiManager
+import android.graphics.Color
 import android.os.Build
 import android.os.Bundle
 import android.security.keystore.KeyGenParameterSpec
@@ -23,6 +24,7 @@ import androidx.core.app.ActivityCompat
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import app.tauri.annotation.Command
 import app.tauri.annotation.InvokeArg
 import app.tauri.annotation.Permission
@@ -49,6 +51,11 @@ class InitializeArgs {
     var displayName: String? = null
 }
 
+@InvokeArg
+class ThemeArgs {
+    var theme: String? = null
+}
+
 @TauriPlugin(
     permissions = [
         Permission(strings = [Manifest.permission.POST_NOTIFICATIONS], alias = "postNotification"),
@@ -61,6 +68,7 @@ class MeshRuntimePlugin(private val activity: Activity) : Plugin(activity) {
         private const val MENTION_CHANNEL = "mesh_chat_mentions_v1"
         private const val LAUNCH_PREFERENCES = "mesh-chat-launch-v1"
         private const val PENDING_INVITATION = "pending-invitation"
+        private const val UI_THEME = "ui-theme"
     }
 
     private val preferences by lazy {
@@ -204,8 +212,32 @@ class MeshRuntimePlugin(private val activity: Activity) : Plugin(activity) {
         }
     }
 
+    private fun applyTheme(theme: String) {
+        val light = theme == "light"
+        val background = Color.parseColor(if (light) "#F7F4EB" else "#0F1714")
+        val lightNavigationIconsSupported = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
+        val navigation = Color.parseColor(if (light && lightNavigationIconsSupported) "#F8F8F3" else "#141D19")
+        val nativeTheme = activity.resources.getIdentifier(
+            if (light) "Theme.mesh_chat.Light" else "Theme.mesh_chat",
+            "style",
+            activity.packageName,
+        )
+        if (nativeTheme != 0) activity.setTheme(nativeTheme)
+        activity.window.statusBarColor = background
+        activity.window.navigationBarColor = navigation
+        activity.window.decorView.setBackgroundColor(background)
+        WindowInsetsControllerCompat(activity.window, activity.window.decorView).apply {
+            isAppearanceLightStatusBars = light
+            isAppearanceLightNavigationBars = light && lightNavigationIconsSupported
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            activity.window.navigationBarDividerColor = navigation
+        }
+    }
+
     override fun load(webView: WebView) {
         super.load(webView)
+        applyTheme(preferences.getString(UI_THEME, "dark") ?: "dark")
         if (lifecycleRegistered) return
         lifecycleRegistered = true
         activity.application.registerActivityLifecycleCallbacks(
@@ -225,6 +257,24 @@ class MeshRuntimePlugin(private val activity: Activity) : Plugin(activity) {
                 }
             },
         )
+    }
+
+    @Command
+    fun setTheme(invoke: Invoke) {
+        val theme = invoke.parseArgs(ThemeArgs::class.java).theme
+        if (theme != "dark" && theme != "light") {
+            invoke.reject("invalid_theme")
+            return
+        }
+        activity.runOnUiThread {
+            try {
+                applyTheme(theme)
+                preferences.edit().putString(UI_THEME, theme).apply()
+                resolve(invoke, successful(JSONObject().put("theme", theme)))
+            } catch (error: Throwable) {
+                reject(invoke, "set_theme", error)
+            }
+        }
     }
 
     private fun createNotificationChannels() {

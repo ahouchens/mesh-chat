@@ -36,7 +36,7 @@ use tokio::sync::{oneshot, Mutex as AsyncMutex};
 
 #[cfg(mobile)]
 use tauri_plugin_mesh_runtime::{
-    CommandRequest, InitializeRequest, MeshRuntimeExt, NativeResponse,
+    CommandRequest, InitializeRequest, MeshRuntimeExt, NativeResponse, ThemeRequest,
 };
 
 #[cfg(desktop)]
@@ -833,6 +833,40 @@ fn runtime_platform() -> &'static str {
     return "desktop";
 }
 
+#[tauri::command]
+fn set_native_theme(app: AppHandle, theme: String) -> Result<(), String> {
+    if theme != "dark" && theme != "light" {
+        return Err("invalid_theme".to_string());
+    }
+    #[cfg(desktop)]
+    {
+        let window = app
+            .get_webview_window("main")
+            .ok_or_else(|| "window_unavailable".to_string())?;
+        let native_theme = if theme == "light" {
+            tauri::Theme::Light
+        } else {
+            tauri::Theme::Dark
+        };
+        window
+            .set_theme(Some(native_theme))
+            .map_err(|_| "theme_unavailable".to_string())
+    }
+    #[cfg(target_os = "android")]
+    {
+        let response = app
+            .mesh_runtime()
+            .set_theme(ThemeRequest { theme })
+            .map_err(|_| "theme_unavailable".to_string())?;
+        mobile_result(response).map(|_| ())
+    }
+    #[cfg(target_os = "ios")]
+    {
+        let _ = (app, theme);
+        Ok(())
+    }
+}
+
 #[cfg(desktop)]
 #[tauri::command]
 fn notification_capability() -> PendingResult {
@@ -966,6 +1000,7 @@ pub fn run() {
             take_pending_invitation,
             poll_mobile_events,
             runtime_platform,
+            set_native_theme,
             notification_capability,
             request_notification_permission,
             open_notification_settings

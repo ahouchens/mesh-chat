@@ -1,6 +1,23 @@
 <resources xmlns:tools="http://schemas.android.com/tools">
-    <!-- Base application theme. -->
-    <style name="Theme.mesh_chat" parent="Theme.Material3.DayNight.NoActionBar">
-        <!-- Customize your theme here. -->
+    <style name="Theme.mesh_chat" parent="Theme.Material3.Dark.NoActionBar">
+        <item name="android:fontFamily">sans</item>
+        <item name="android:windowBackground">@color/mesh_window_dark</item>
+        <item name="android:statusBarColor">@color/mesh_window_dark</item>
+        <item name="android:navigationBarColor">@color/mesh_surface_dark</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowLightNavigationBar">false</item>
+        <item name="android:windowActionModeOverlay">true</item>
+        <item name="android:forceDarkAllowed">false</item>
+    </style>
+    <style name="Theme.mesh_chat.Light" parent="Theme.Material3.Light.NoActionBar">
+        <item name="android:fontFamily">sans</item>
+        <item name="android:windowBackground">@color/mesh_window_light</item>
+        <item name="android:statusBarColor">@color/mesh_window_light</item>
+        <!-- API 24–25 cannot render dark navigation icons, so keep this bar dark. -->
+        <item name="android:navigationBarColor">@color/mesh_surface_dark</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:windowLightNavigationBar">false</item>
+        <item name="android:windowActionModeOverlay">true</item>
+        <item name="android:forceDarkAllowed">false</item>
     </style>
 </resources>

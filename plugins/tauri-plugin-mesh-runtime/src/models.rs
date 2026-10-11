@@ -14,6 +14,12 @@ pub struct CommandRequest {
     pub payload: Value,
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ThemeRequest {
+    pub theme: String,
+}
+
 #[derive(Debug, Default, Deserialize)]
 pub struct NativeResponse {
     pub json: String,

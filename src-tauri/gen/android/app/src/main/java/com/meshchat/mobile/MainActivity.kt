@@ -8,6 +8,17 @@ import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 
 class MainActivity : TauriActivity() {
+  companion object {
+    private const val THEME_PREFERENCES = "mesh-chat-vault"
+    private const val UI_THEME = "ui-theme"
+  }
+
+  private fun applyStoredTheme() {
+    val theme = getSharedPreferences(THEME_PREFERENCES, MODE_PRIVATE)
+      .getString(UI_THEME, "dark")
+    setTheme(if (theme == "light") R.style.Theme_mesh_chat_Light else R.style.Theme_mesh_chat)
+  }
+
   private fun captureLaunch(intent: Intent?) {
     if (PendingInvitation.isNotification(intent)) return
     if (PendingInvitation.capture(this, intent)) {
@@ -19,6 +30,9 @@ class MainActivity : TauriActivity() {
 
   override fun onCreate(savedInstanceState: Bundle?) {
     captureLaunch(intent)
+    // Select the persisted native palette before Android inflates the activity
+    // so the launch window and native surfaces match the WebView from frame one.
+    applyStoredTheme()
     super.onCreate(savedInstanceState)
 
     // Android 15+ forces edge-to-edge for our target SDK. Some supported
