@@ -304,6 +304,119 @@ def _joined_pair(root: Path, posting_policy: str = "members") -> JoinedPair:
     )
 
 
+@pytest.mark.parametrize(
+    ("posting_policy", "expected_category"),
+    [("members", "group_message"), ("owner_admins", "announcement_message")],
+)
+def test_android_personal_notifications_cover_direct_groups_and_announcements(
+    tmp_path: Path, posting_policy: str, expected_category: str
+) -> None:
+    pair = _joined_pair(tmp_path / posting_policy, posting_policy=posting_policy)
+    try:
+        pair.member.set_native_notification_state("android", True, "allowed")
+        pair.member.mobile_lifecycle_transition("background", "activity_paused")
+
+        direct_id = str(uuid.uuid4())
+        direct_wire = LXMF.LXMessage(
+            None,
+            None,
+            content="Private arrival",
+            fields=build_fields(
+                kind=MessageKind.CHAT,
+                logical_id=direct_id,
+                conversation=conversation_id(
+                    bytes.fromhex(pair.owner_profile["destination_hash"]),
+                    bytes.fromhex(pair.member_profile["destination_hash"]),
+                ),
+                expires_at=int(time.time()) + 60,
+            ),
+            desired_method=LXMF.LXMessage.DIRECT,
+            destination_hash=bytes.fromhex(pair.member_profile["destination_hash"]),
+            source_hash=bytes.fromhex(pair.owner_profile["destination_hash"]),
+        )
+        pair.member._on_inbound(direct_wire)
+        direct_work = pair.member.drain_native_notification_work(16)["items"]
+        assert len(direct_work) == 1
+        assert direct_work[0]["category"] == "direct_message"
+        assert direct_id not in str(direct_work[0])
+        target = pair.member.open_notification_target(
+            direct_work[0]["notification_id"]
+        )
+        assert target == {
+            "available": True,
+            "scope": "personal_direct",
+            "target_id": "alex",
+            "conversation_kind": "direct",
+            "event_id": direct_id,
+        }
+        # The authenticated duplicate is acknowledged by the messaging core,
+        # but cannot mint a second native notification.
+        pair.member._on_inbound(direct_wire)
+        assert pair.member.drain_native_notification_work(16)["items"] == direct_work
+        pair.member.acknowledge_native_notification(
+            direct_work[0]["notification_id"], "accepted"
+        )
+
+        pair.member.mobile_lifecycle_transition("foreground", "activity_resumed")
+        foreground_wire = LXMF.LXMessage(
+            None,
+            None,
+            content="Visible while foregrounded",
+            fields=build_fields(
+                kind=MessageKind.CHAT,
+                logical_id=str(uuid.uuid4()),
+                conversation=conversation_id(
+                    bytes.fromhex(pair.owner_profile["destination_hash"]),
+                    bytes.fromhex(pair.member_profile["destination_hash"]),
+                ),
+                expires_at=int(time.time()) + 60,
+            ),
+            desired_method=LXMF.LXMessage.DIRECT,
+            destination_hash=bytes.fromhex(pair.member_profile["destination_hash"]),
+            source_hash=bytes.fromhex(pair.owner_profile["destination_hash"]),
+        )
+        pair.member._on_inbound(foreground_wire)
+        assert pair.member.drain_native_notification_work(16)["items"] == []
+        pair.member.mobile_lifecycle_transition("background", "activity_paused")
+
+        group_message = pair.owner.send_group_message(pair.group_id, "Group arrival")
+        group_wire = _sent_values(
+            pair.owner_network,
+            "group_chat",
+            recipient=bytes.fromhex(pair.member_profile["destination_hash"]),
+        )[-1]
+        _deliver(
+            pair.member,
+            group_wire,
+            source_profile=pair.owner_profile,
+            destination_profile=pair.member_profile,
+        )
+        group_work = pair.member.drain_native_notification_work(16)["items"]
+        assert len(group_work) == 1
+        assert group_work[0]["category"] == expected_category
+        assert group_message["id"] not in str(group_work[0])
+        assert pair.member.open_notification_target(
+            group_work[0]["notification_id"]
+        )["scope"] == "personal_group"
+
+        pair.member.delete_conversation("group", pair.group_id)
+        assert pair.member.drain_native_notification_work(16)["items"] == []
+        unavailable = pair.member.open_notification_target(
+            group_work[0]["notification_id"]
+        )
+        assert unavailable["available"] is False
+        assert unavailable["reason"] == "unavailable"
+
+        pair.member.delete_conversation("direct", "alex")
+        direct_unavailable = pair.member.open_notification_target(
+            direct_work[0]["notification_id"]
+        )
+        assert direct_unavailable["available"] is False
+        assert direct_unavailable["reason"] == "unavailable"
+    finally:
+        pair.close()
+
+
 def test_group_invite_join_fanout_and_per_member_receipt(tmp_path: Path) -> None:
     owner_identity = RNS.Identity()
     member_identity = RNS.Identity()

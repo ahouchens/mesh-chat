@@ -1803,6 +1803,9 @@ class GroupServiceMixin:
                     },
                 ),
                 ("group_delivery", receipt["id"], receipt),
+                *self._personal_notification_records(
+                    "group", group["id"], group, message
+                ),
                 *reaction_writes,
             ],
             [

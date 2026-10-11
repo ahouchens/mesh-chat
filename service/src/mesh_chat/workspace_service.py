@@ -930,6 +930,36 @@ class WorkspaceServiceMixin:
             "workspace-notification-group", workspace_id, conversation_id
         )[:32]
 
+    def _personal_notification_id(
+        self, conversation_kind: str, target_id: str, message_id: str
+    ) -> str:
+        return self.store.opaque_id(
+            "personal-native-notification", conversation_kind, target_id, message_id
+        )
+
+    def _personal_notification_group_id(
+        self, conversation_kind: str, target_id: str
+    ) -> str:
+        return self.store.opaque_id(
+            "personal-notification-group", conversation_kind, target_id
+        )[:32]
+
+    @staticmethod
+    def _personal_notification_message_digest(message: dict[str, Any]) -> str:
+        fields = {
+            "id": message.get("id"),
+            "direction": message.get("direction"),
+            "text": message.get("text"),
+            "created_at": message.get("created_at"),
+            "sender_destination": message.get("sender_destination"),
+            "contact_id": message.get("contact_id"),
+            "group_id": message.get("group_id"),
+            "group_epoch": message.get("group_epoch"),
+            "group_manifest_hash": message.get("group_manifest_hash"),
+            "sender_sequence": message.get("sender_sequence"),
+        }
+        return hashlib.sha256(canonical_bytes(fields)).hexdigest()
+
     def _workspace_lifecycle_id(self) -> str:
         return self.store.opaque_id("workspace-mobile-lifecycle", "device")
 
@@ -1164,6 +1194,7 @@ class WorkspaceServiceMixin:
             "attempt_count": 0,
         }
         route = {
+            "scope": "workspace",
             "workspace_id": event.workspace_id,
             "conversation_id": event.conversation_id,
             "conversation_kind": "direct" if event.channel_digest is None else "channel",
@@ -1191,9 +1222,182 @@ class WorkspaceServiceMixin:
         )
         return records
 
-    def _workspace_notification_route_is_authorized(
+    def _personal_notification_records(
+        self,
+        conversation_kind: str,
+        target_id: str,
+        conversation: dict[str, Any],
+        message: dict[str, Any],
+    ) -> list[tuple[str, str, dict[str, Any]]]:
+        """Queue one live, authenticated Personal direct/group notification."""
+
+        if conversation_kind not in {"direct", "group"} or message.get("direction") != "inbound":
+            return []
+        message_id = message.get("id")
+        if not isinstance(message_id, str):
+            return []
+        notification_id = self._personal_notification_id(
+            conversation_kind, target_id, message_id
+        )
+        if self.store.get("workspace_notification_ledger", notification_id) is not None:
+            return []
+        settings = self._workspace_notification_settings()
+        lifecycle = self._workspace_lifecycle_state()
+        reason: str | None = None
+        should_notify = True
+        if conversation_kind == "direct" and conversation.get("trust") not in {
+            "approved",
+            "verified",
+        }:
+            should_notify, reason = False, "contact_not_authorized"
+        elif conversation_kind == "group" and conversation.get("status") != "active":
+            should_notify, reason = False, "group_inactive"
+        elif not settings.get("native_supported"):
+            should_notify, reason = False, "unsupported"
+        elif settings.get("permission_state") != "allowed":
+            should_notify, reason = False, "permission_not_allowed"
+        elif lifecycle.get("state") not in {"background", "suspended"}:
+            should_notify, reason = False, "foreground"
+        elif self.store.get(
+            "conversation_hidden", self._conversation_marker_id(conversation_kind, target_id)
+        ) is not None:
+            should_notify, reason = False, "hidden"
+
+        now = time.time()
+        digest = self._personal_notification_message_digest(message)
+        ledger = {
+            "scope": f"personal_{conversation_kind}",
+            "target_id": target_id,
+            "event_id": message_id,
+            "event_digest": digest,
+            "status": "pending" if should_notify else "suppressed",
+            "reason": reason,
+            "created_at": now,
+            "updated_at": now,
+        }
+        records: list[tuple[str, str, dict[str, Any]]] = [
+            ("workspace_notification_ledger", notification_id, ledger)
+        ]
+        if not should_notify:
+            return records
+
+        queue_id = self._workspace_notification_queue_id()
+        queue = self.store.get("workspace_notification_queue", queue_id) or {
+            "entries": [],
+            "overflow_count": 0,
+        }
+        entries = [item for item in queue.get("entries", ()) if isinstance(item, str)]
+        if len(entries) >= MAX_NOTIFICATION_QUEUE:
+            ledger["status"] = "suppressed"
+            ledger["reason"] = "queue_full"
+            queue["overflow_count"] = int(queue.get("overflow_count", 0)) + 1
+            queue["updated_at"] = now
+            records.append(("workspace_notification_queue", queue_id, queue))
+            return records
+
+        settings = dict(settings)
+        sequence = int(settings.get("notification_sequence", 0)) + 1
+        settings["notification_sequence"] = sequence
+        settings["updated_at"] = now
+        if conversation_kind == "direct":
+            category = "direct_message"
+            fallback_title = conversation.get("display_name", "Contact")
+        else:
+            category = (
+                "announcement_message"
+                if conversation.get("posting_policy") == "owner_admins"
+                else "group_message"
+            )
+            fallback_title = conversation.get("title", "Group")
+        if settings.get("hide_previews"):
+            title, body = "Mesh Chat", "New message"
+        else:
+            title = sanitize_notification_text(
+                fallback_title, MAX_NOTIFICATION_TITLE_CHARS
+            ) or ("Contact" if conversation_kind == "direct" else "Group")
+            body = sanitize_notification_text(
+                message.get("text", ""), MAX_NOTIFICATION_BODY_CHARS
+            ) or "New message"
+        signal = {
+            "notification_id": notification_id,
+            "category": category,
+            "title": sanitize_notification_text(title, MAX_NOTIFICATION_TITLE_CHARS),
+            "body": sanitize_notification_text(body, MAX_NOTIFICATION_BODY_CHARS),
+            "sequence": sequence,
+            "created_at": now,
+            "grouping_key": self._personal_notification_group_id(
+                conversation_kind, target_id
+            ),
+        }
+        if len(json.dumps(signal, ensure_ascii=False).encode("utf-8")) > MAX_NOTIFICATION_NATIVE_BYTES:
+            signal["title"], signal["body"] = "Mesh Chat", "New message"
+        route = {
+            "scope": f"personal_{conversation_kind}",
+            "target_id": target_id,
+            "conversation_kind": conversation_kind,
+            "event_id": message_id,
+            "event_digest": digest,
+            "created_at": now,
+        }
+        work = {**signal, **route, "attempt_count": 0}
+        queue["entries"] = [*entries, notification_id]
+        queue["updated_at"] = now
+        records.extend(
+            [
+                (
+                    "workspace_notification_settings",
+                    self._workspace_notification_settings_id(),
+                    settings,
+                ),
+                ("workspace_notification_route", notification_id, route),
+                ("workspace_notification_work", notification_id, work),
+                ("workspace_notification_queue", queue_id, queue),
+            ]
+        )
+        return records
+
+    def _notification_route_is_authorized(
         self, route: dict[str, Any]
     ) -> tuple[bool, dict[str, Any] | None]:
+        scope = route.get("scope")
+        if scope in {"personal_direct", "personal_group"}:
+            target_id = route.get("target_id")
+            event_id = route.get("event_id")
+            if not isinstance(target_id, str) or not isinstance(event_id, str):
+                return False, None
+            kind = "direct" if scope == "personal_direct" else "group"
+            conversation = self.store.get("contact" if kind == "direct" else "group", target_id)
+            if conversation is None:
+                return False, None
+            if kind == "direct" and conversation.get("trust") not in {"approved", "verified"}:
+                return False, conversation
+            if kind == "group" and conversation.get("status") != "active":
+                return False, conversation
+            if self.store.get(
+                "conversation_hidden", self._conversation_marker_id(kind, target_id)
+            ) is not None:
+                return False, conversation
+            message = self.store.get(
+                "message" if kind == "direct" else "group_message", event_id
+            )
+            if (
+                message is None
+                or message.get("direction") != "inbound"
+                or message.get("contact_id" if kind == "direct" else "group_id") != target_id
+                or self._personal_notification_message_digest(message)
+                != route.get("event_digest")
+            ):
+                return False, conversation
+            if kind == "group":
+                sender = message.get("sender_destination")
+                if not any(
+                    member.get("destination_hash") == sender
+                    and member.get("status") == "active"
+                    for member in conversation.get("members", ())
+                ):
+                    return False, conversation
+            return True, conversation
+
         workspace_id = route.get("workspace_id")
         event_id = route.get("event_id")
         if not isinstance(workspace_id, str) or not isinstance(event_id, str):
@@ -1492,7 +1696,7 @@ class WorkspaceServiceMixin:
             if work is None or route is None:
                 deletions.append(("workspace_notification_work", notification_id))
                 continue
-            authorized, _workspace = self._workspace_notification_route_is_authorized(route)
+            authorized, _workspace = self._notification_route_is_authorized(route)
             if not authorized:
                 ledger = self.store.get("workspace_notification_ledger", notification_id)
                 if ledger is not None:
@@ -1576,7 +1780,7 @@ class WorkspaceServiceMixin:
                 "reason": "unavailable",
                 "message": "This notification is no longer available on this device.",
             }
-        authorized, _workspace = self._workspace_notification_route_is_authorized(route)
+        authorized, _workspace = self._notification_route_is_authorized(route)
         if not authorized:
             return {
                 "available": False,
@@ -1584,6 +1788,14 @@ class WorkspaceServiceMixin:
                 "message": "This message is no longer available or authorized.",
             }
         # Routing never marks the conversation, thread, mention, or event read.
+        if route.get("scope") in {"personal_direct", "personal_group"}:
+            return {
+                "available": True,
+                "scope": route["scope"],
+                "target_id": route["target_id"],
+                "conversation_kind": route["conversation_kind"],
+                "event_id": route["event_id"],
+            }
         return {
             "available": True,
             "workspace_id": route["workspace_id"],

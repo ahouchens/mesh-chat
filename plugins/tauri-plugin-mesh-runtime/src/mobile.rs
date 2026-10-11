@@ -35,6 +35,10 @@ impl<R: Runtime> MeshRuntime<R> {
         Ok(self.0.run_mobile_plugin("drainEvents", ())?)
     }
 
+    pub fn take_pending_invitation(&self) -> Result<NativeResponse> {
+        Ok(self.0.run_mobile_plugin("takePendingInvitation", ())?)
+    }
+
     pub fn notification_capability(&self) -> Result<NativeResponse> {
         Ok(self.0.run_mobile_plugin("notificationCapability", ())?)
     }

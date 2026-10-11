@@ -81,3 +81,46 @@ def test_generated_android_version_must_match_source(tmp_path: Path) -> None:
 
     with pytest.raises(AndroidReleaseError, match="versionName"):
         publish_android_release(apk, repository=tmp_path)
+
+
+def test_release_aab_is_immutable_and_declares_external_signing(tmp_path: Path) -> None:
+    aab = _write_repository(tmp_path).with_suffix(".aab")
+    aab.write_bytes(b"externally-signed-aab-fixture")
+
+    manifest_path = publish_android_release(
+        aab,
+        repository=tmp_path,
+        variant="release",
+        artifact_format="aab",
+    )
+
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert manifest["signing"] == "release"
+    assert manifest["artifacts"][0]["role"] == "android-release-aab"
+    assert manifest_path.parent.name == "android-arm64-release-aab"
+    alias = tmp_path / "dist" / "mobile" / f"mesh-chat-{VERSION}-android-arm64-release.aab"
+    assert alias.read_bytes() == b"externally-signed-aab-fixture"
+
+
+def test_checked_in_release_configuration_requires_external_secrets() -> None:
+    root = Path(__file__).resolve().parents[2]
+    gradle = (root / "src-tauri" / "gen" / "android" / "app" / "build.gradle.kts").read_text(
+        encoding="utf-8"
+    )
+    builder = (root / "scripts" / "build_android.py").read_text(encoding="utf-8")
+
+    for variable in (
+        "MESH_CHAT_ANDROID_KEYSTORE_PATH",
+        "MESH_CHAT_ANDROID_KEYSTORE_PASSWORD",
+        "MESH_CHAT_ANDROID_KEY_ALIAS",
+        "MESH_CHAT_ANDROID_KEY_PASSWORD",
+    ):
+        assert variable in gradle
+    assert "release signing is not configured" in gradle
+    assert "validateReleaseSigning" in gradle
+    assert "dependsOn(validateReleaseSigning)" in gradle
+    assert 'signingConfig = signingConfigs.getByName("meshChatRelease")' in gradle
+    assert '"--aab"' in builder
+    assert "publish_android_release" in builder
+    assert not list(root.glob("**/*.jks"))
+    assert not list(root.glob("**/*.keystore"))

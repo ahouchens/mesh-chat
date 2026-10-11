@@ -2437,6 +2437,71 @@ Artifact hashes for this run:
   physical iOS device remain mandatory. Increment 15 is automated/package
   complete but **not physically complete on an advertised mobile platform**.
 
+## Android parity increment verification — 2026-10-11
+
+- The source audit and strict five-state matrix are recorded in
+  `docs/ANDROID_PARITY.md`. Shared renderer/service code is classified as
+  implemented but hardware-unverified unless Android-native evidence exists.
+  The matrix explicitly records Personal, groups/announcements, every workspace
+  family, OS ingress, lifecycle, notifications, protected storage, packaging,
+  upgrades, accessibility, and the physical test backlog.
+- The maintained Python run completed **374 passed, 11 skipped** in 51.74 s.
+  Skips were the opt-in direct-LAN/topology/package harnesses and one Windows
+  `/sys` storage-model test. A final focused source/release/mobile-bridge run
+  completed **20 passed**. Personal direct, private-group, announcement,
+  workspace channel/DM/thread/mention, mutation suppression, duplicate,
+  foreground, open-time reauthorization, and local-erasure notification cases
+  are included in those service tests.
+- Final renderer verification completed **98 passed** across seven files,
+  including Android device-neutral wording, cold/warm/delayed invitation
+  handoff, foreground reconciliation overlap, trailing refresh, and Personal
+  notification routing. TypeScript project compilation passed. The production
+  Vite build completed 1,820 transformed modules. All **3** packaged emoji
+  artwork tests passed.
+- Rust/Tauri library tests completed **7 passed**, including strict desktop
+  invitation validation and payload limits. Android Gradle
+  `:app:testArm64DebugUnitTest` completed **2 passed** for supported and
+  malformed/oversized native launch values. Gradle's no-secret
+  `:app:validateReleaseSigning` task failed as required and named the absent
+  keystore path, keystore password, alias, and key password. The release-AAB
+  immutable publisher is covered with non-secret fixture bytes; no signing
+  credential or certificate was created or committed.
+- A current ARM64 debug APK compiled successfully through Rust, Kotlin,
+  Chaquopy, and Gradle at
+  `src-tauri/gen/android/app/build/outputs/apk/arm64/debug/app-arm64-debug.apk`.
+  It is **61,210,794 bytes**, SHA-256
+  `2919890141445E1E726DE3418BA6F2D96D923A0789D5AB61F538679AACB1D3B0`.
+  `aapt2` reports package `com.meshchat.mobile`, version 0.2.35/2035,
+  minimum API 24, target/compile API 36, and only `arm64-v8a` native code. The
+  merged manifest retains backup disabled and cleartext disabled, declares
+  `singleTask`, the three `meshchat:` launch families, and a VIEW-only bounded
+  `.meshchat` content association. The APK contains the embedded Python runtime,
+  `libmesh_chat_lib.so`, third-party notice, and launcher density assets.
+  `apksigner` verifies APK Signature Scheme v2 with the existing Android Debug
+  certificate SHA-256
+  `D6DBFF63834666BACE3D75B49234726E97CCCE26D2B9E9516309682E0A33143F`.
+- The current APK was deliberately **not published** over
+  `dist/mobile/releases/0.2.35/android-arm64-debug`: the immutable publisher
+  detected that version 0.2.35 already contains different bytes and required a
+  version bump. The retained published 0.2.35 APK remains 46,812,020 bytes with
+  SHA-256 `8D440768DBE40A633CD9A5BC35CF31F2B342E038C2A53545D5F80A8CA9ED6951`.
+  The newly built Gradle output is therefore an unpublished verification
+  candidate, not a replacement release. No APK/AAB release build was attempted
+  with invented credentials and no AAB is claimed.
+- Transient failures are retained: the first maintained frontend run found two
+  new tests waiting on an empty-state heading despite fixtures that auto-opened
+  a contact; the assertions were corrected and all 98 tests passed. The first
+  Android Rust attempt encountered stale generated Tauri API cache directories;
+  only the two verified generated cache copies were removed. A sandboxed retry
+  could not recreate them outside the workspace, while the approved build did.
+  Tauri then reached the known Windows developer-mode symlink restriction and
+  the maintained content-verified copy/direct-Gradle fallback built the APK.
+- `adb devices -l` reported no attached device. No APK was installed and no
+  physical deep-link/file-provider, QR/camera/clipboard/share, lifecycle,
+  notification permission/lock-screen/tap, process-death, linked-device,
+  storage, accessibility, battery/memory, or upgrade result is claimed. The
+  exact required physical matrix remains in `docs/ANDROID_PARITY.md`.
+
 ## Acceptance matrix
 
 | Gate | Current evidence |

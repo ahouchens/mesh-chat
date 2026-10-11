@@ -59,6 +59,8 @@ class MeshRuntimePlugin(private val activity: Activity) : Plugin(activity) {
         private const val TAG = "MeshChatRuntime"
         private const val MESSAGE_CHANNEL = "mesh_chat_messages_v1"
         private const val MENTION_CHANNEL = "mesh_chat_mentions_v1"
+        private const val LAUNCH_PREFERENCES = "mesh-chat-launch-v1"
+        private const val PENDING_INVITATION = "pending-invitation"
     }
 
     private val preferences by lazy {
@@ -271,7 +273,14 @@ class MeshRuntimePlugin(private val activity: Activity) : Plugin(activity) {
         if (
             !notificationId.matches(Regex("^[0-9a-f]{64}$")) ||
             !groupingKey.matches(Regex("^[0-9a-f]{32}$")) ||
-            category !in setOf("mention", "thread_reply", "direct_message", "channel_message") ||
+            category !in setOf(
+                "mention",
+                "thread_reply",
+                "direct_message",
+                "group_message",
+                "announcement_message",
+                "channel_message",
+            ) ||
             !validPlainText(title, 80) ||
             !validPlainText(body, 160) ||
             item.toString().toByteArray(Charsets.UTF_8).size > 1024
@@ -411,6 +420,25 @@ class MeshRuntimePlugin(private val activity: Activity) : Plugin(activity) {
                 resolve(invoke, bridge("drain_events"))
             } catch (error: Throwable) {
                 reject(invoke, "drain_events", error)
+            }
+        }
+    }
+
+    @Command
+    fun takePendingInvitation(invoke: Invoke) {
+        pythonExecutor.execute {
+            try {
+                val launch = activity.getSharedPreferences(LAUNCH_PREFERENCES, Context.MODE_PRIVATE)
+                val value = launch.getString(PENDING_INVITATION, null)
+                if (value != null && !launch.edit().remove(PENDING_INVITATION).commit()) {
+                    throw IllegalStateException("pending invitation could not be cleared")
+                }
+                resolve(
+                    invoke,
+                    JSONObject().put("ok", true).put("result", value ?: JSONObject.NULL).toString(),
+                )
+            } catch (error: Throwable) {
+                reject(invoke, "take_pending_invitation", error)
             }
         }
     }

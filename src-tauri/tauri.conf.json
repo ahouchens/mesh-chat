@@ -51,6 +51,10 @@
         "ext": [
           "meshchat"
         ],
+        "mimeType": "*/*",
+        "androidIntentActionFilters": [
+          "view"
+        ],
         "name": "Mesh Chat Invitation",
         "description": "A signed Mesh Chat invitation",
         "role": "Editor"

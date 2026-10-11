@@ -899,6 +899,37 @@ class MeshChatService(ReactionServiceMixin, GroupServiceMixin, WorkspaceServiceM
             deletions.append(("group_draft", target_id))
             deletions.extend(self._reaction_deletions(kind, target_id))
 
+        notification_ids = {
+            self._personal_notification_id(kind, target_id, message_id)
+            for message_id in removed_ids
+        }
+        for notification_id in notification_ids:
+            deletions.extend(
+                [
+                    ("workspace_notification_ledger", notification_id),
+                    ("workspace_notification_route", notification_id),
+                    ("workspace_notification_work", notification_id),
+                ]
+            )
+        notification_queue_id = self._workspace_notification_queue_id()
+        notification_queue = self.store.get(
+            "workspace_notification_queue", notification_queue_id
+        )
+        if notification_queue is not None and notification_ids:
+            notification_queue["entries"] = [
+                item
+                for item in notification_queue.get("entries", ())
+                if item not in notification_ids
+            ]
+            notification_queue["updated_at"] = now
+            writes.append(
+                (
+                    "workspace_notification_queue",
+                    notification_queue_id,
+                    notification_queue,
+                )
+            )
+
         hidden_id = self._conversation_marker_id(kind, target_id)
         writes.append(
             (
@@ -1360,6 +1391,9 @@ class MeshChatService(ReactionServiceMixin, GroupServiceMixin, WorkspaceServiceM
             [
                 ("message", inbound["id"], inbound),
                 ("message", receipt["id"], receipt),
+                *self._personal_notification_records(
+                    "direct", contact["id"], contact, inbound
+                ),
                 *reaction_writes,
             ],
             [

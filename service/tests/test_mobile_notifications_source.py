@@ -93,3 +93,57 @@ def test_renderer_cannot_invoke_native_notification_work_commands() -> None:
     api = (ROOT / "src" / "api.ts").read_text(encoding="utf-8")
     assert "notification\\/([0-9a-f]{64})" in api
     assert "onOpenUrl" in api
+
+
+def test_android_launch_ingress_is_bounded_durable_and_single_task_safe() -> None:
+    android_root = ROOT / "src-tauri" / "gen" / "android" / "app" / "src"
+    activity = (
+        android_root / "main" / "java" / "com" / "meshchat" / "mobile" / "MainActivity.kt"
+    ).read_text(encoding="utf-8")
+    pending = (
+        android_root
+        / "main"
+        / "java"
+        / "com"
+        / "meshchat"
+        / "mobile"
+        / "PendingInvitation.kt"
+    ).read_text(encoding="utf-8")
+    plugin = ANDROID_PLUGIN.read_text(encoding="utf-8")
+    manifest = (android_root / "main" / "AndroidManifest.xml").read_text(
+        encoding="utf-8"
+    )
+    rust = (ROOT / "src-tauri" / "src" / "lib.rs").read_text(encoding="utf-8")
+
+    assert 'android:launchMode="singleTask"' in manifest
+    assert 'android:mimeType="*/*"' in manifest
+    assert 'android:pathPattern=".*\\\\.meshchat"' in manifest
+    assert 'android.intent.action.SEND"' not in manifest
+    assert "override fun onCreate" in activity
+    assert "override fun onNewIntent" in activity
+    assert "PendingInvitation.capture" in activity
+    assert "Intent(Intent.ACTION_MAIN)" in activity
+    assert 'MAX_STANDARD_BYTES = 32 * 1024' in pending
+    assert 'MAX_DEVICE_LINK_BYTES = 700 * 1024' in pending
+    assert 'uri.scheme != "meshchat"' in pending
+    assert 'uri.scheme != "content"' in pending
+    assert 'lowercase().endsWith(".meshchat")' in pending
+    assert "CodingErrorAction.REPORT" in pending
+    assert "canonicalPath" not in pending
+    assert "takePendingInvitation" in plugin
+    assert '.remove(PENDING_INVITATION).commit()' in plugin
+    assert "take_pending_invitation" in rust
+    assert "validated_invitation_value" in rust
+
+
+def test_android_native_accepts_every_live_message_notification_family() -> None:
+    source = ANDROID_PLUGIN.read_text(encoding="utf-8")
+    for category in (
+        "direct_message",
+        "group_message",
+        "announcement_message",
+        "channel_message",
+        "thread_reply",
+        "mention",
+    ):
+        assert f'"{category}"' in source

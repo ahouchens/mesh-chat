@@ -1,4 +1,4 @@
-"""Build a signed, sideloadable Android APK on Windows, macOS, or Linux.
+"""Build the maintained debug APK or an externally signed Android release.
 
 The default artifact targets current physical Android phones (arm64-v8a). The
 APK uses Android's standard debug signing key and is intended for direct device
@@ -143,7 +143,7 @@ def write_if_changed(path: Path, value: str) -> None:
     path.write_text(value, encoding="utf-8", newline="\n")
 
 
-def build_android_frontend(pnpm: str, env: dict[str, str]) -> int:
+def build_android_frontend(pnpm: str, env: dict[str, str], *, debug: bool = True) -> int:
     """Refresh WebView assets with the same platform hints Tauri supplies."""
     frontend_env = env.copy()
     frontend_env.update(
@@ -152,7 +152,7 @@ def build_android_frontend(pnpm: str, env: dict[str, str]) -> int:
             "TAURI_ENV_ARCH": "aarch64",
             "TAURI_ENV_FAMILY": "unix",
             "TAURI_ENV_TARGET_TRIPLE": "aarch64-linux-android",
-            "TAURI_ENV_DEBUG": "true",
+            "TAURI_ENV_DEBUG": "true" if debug else "false",
         }
     )
     return run([pnpm, "build"], env=frontend_env)
@@ -329,6 +329,7 @@ def patch_generated_project() -> None:
         activity,
         """package com.meshchat.mobile
 
+import android.content.Intent
 import android.os.Build
 import android.os.Bundle
 import androidx.core.graphics.Insets
@@ -336,7 +337,17 @@ import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 
 class MainActivity : TauriActivity() {
+  private fun captureLaunch(intent: Intent?) {
+    if (PendingInvitation.isNotification(intent)) return
+    if (PendingInvitation.capture(this, intent)) {
+      // Do not let activity recreation or the deep-link plugin replay a value
+      // which is now durably owned by the bounded pending slot.
+      setIntent(Intent(Intent.ACTION_MAIN).setPackage(packageName))
+    }
+  }
+
   override fun onCreate(savedInstanceState: Bundle?) {
+    captureLaunch(intent)
     super.onCreate(savedInstanceState)
 
     // Android 15+ forces edge-to-edge for our target SDK. Some supported
@@ -355,6 +366,18 @@ class MainActivity : TauriActivity() {
       ViewCompat.requestApplyInsets(window.decorView)
     }
   }
+
+  override fun onNewIntent(intent: Intent) {
+    if (PendingInvitation.isNotification(intent)) {
+      super.onNewIntent(intent)
+      setIntent(intent)
+      return
+    }
+    PendingInvitation.capture(this, intent)
+    val sanitized = Intent(Intent.ACTION_MAIN).setPackage(packageName)
+    super.onNewIntent(sanitized)
+    setIntent(sanitized)
+  }
 }
 """,
     )
@@ -371,6 +394,24 @@ class MainActivity : TauriActivity() {
 
 
 def main() -> int:
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        description="Build Mesh Chat's Android debug APK or externally signed release artifact"
+    )
+    parser.add_argument(
+        "--release",
+        action="store_true",
+        help="build a release variant; all external signing inputs are required",
+    )
+    parser.add_argument(
+        "--aab",
+        action="store_true",
+        help="build an Android App Bundle (implies --release)",
+    )
+    args = parser.parse_args()
+    release = args.release or args.aab
+    artifact_format = "aab" if args.aab else "apk"
     pnpm = os.environ.get("MESH_CHAT_PNPM") or shutil.which("pnpm")
     if pnpm is None:
         raise SystemExit("pnpm is required. Install pnpm 11 and run pnpm install first.")
@@ -408,31 +449,24 @@ def main() -> int:
 
     force_native = os.environ.get("MESH_CHAT_FORCE_ANDROID_NATIVE") == "1"
     requested_reuse = os.environ.get("MESH_CHAT_REUSE_ANDROID_NATIVE") == "1"
-    reuse_native = not force_native and native_library_is_current() and (
+    reuse_native = not release and not force_native and native_library_is_current() and (
         requested_reuse or not symlinks_available()
     )
     result = 1
     if not reuse_native:
         build_started = time.time()
-        result = run(
-            [
-                pnpm,
-                "tauri",
-                "android",
-                "build",
-                "--debug",
-                "--apk",
-                "--target",
-                "aarch64",
-                "--split-per-abi",
-                "--ci",
-            ],
-            env=env,
-        )
+        command = [pnpm, "tauri", "android", "build"]
+        if not release:
+            command.append("--debug")
+        command.extend([f"--{artifact_format}", "--target", "aarch64"])
+        if artifact_format == "apk":
+            command.append("--split-per-abi")
+        command.append("--ci")
+        result = run(command, env=env)
         # On Windows Tauri may finish Cargo and then fail while creating its
         # convenience symlink. Capture that freshly built library so the direct
         # Gradle fallback and later builds can safely reuse it.
-        if NATIVE_LIBRARY.is_file() and (
+        if not release and NATIVE_LIBRARY.is_file() and (
             result == 0
             or NATIVE_LIBRARY.stat().st_mtime >= build_started
             or _native_library_newer_than_inputs()
@@ -440,7 +474,7 @@ def main() -> int:
             record_native_library()
     else:
         print("Reusing the content-verified Android Rust library.")
-    if result != 0:
+    if result != 0 and not release:
         # Windows requires Developer Mode for Tauri's convenience symlink. Keep
         # the build portable by copying the completed library and invoking the
         # equivalent Gradle packaging task when symlinks are unavailable.
@@ -462,17 +496,30 @@ def main() -> int:
             cwd=ANDROID,
             env=env,
         )
-    if result != 0 or not APK.is_file():
+    if release:
+        pattern = (
+            "app-arm64-release.aab" if artifact_format == "aab" else "app-arm64-release.apk"
+        )
+        candidates = sorted((ANDROID / "app" / "build" / "outputs").rglob(pattern))
+        built_artifact = candidates[-1] if candidates else None
+    else:
+        built_artifact = APK
+    if result != 0 or built_artifact is None or not built_artifact.is_file():
         return result or 1
 
     try:
-        manifest = publish_android_release(APK)
+        manifest = publish_android_release(
+            built_artifact,
+            variant="release" if release else "debug",
+            artifact_format=artifact_format,
+        )
     except (OSError, ValueError, AndroidReleaseError) as exc:
         print(f"Android release verification failed: {exc}", file=sys.stderr)
         return 1
     version = json.loads((ROOT / "package.json").read_text(encoding="utf-8"))["version"]
-    output = ROOT / "dist" / "mobile" / f"mesh-chat-{version}-android-arm64-debug.apk"
-    print(f"APK: {output}")
+    variant = "release" if release else "debug"
+    output = ROOT / "dist" / "mobile" / f"mesh-chat-{version}-android-arm64-{variant}.{artifact_format}"
+    print(f"{artifact_format.upper()}: {output}")
     print(f"Manifest: {manifest}")
     print(f"SHA-256: {hashlib.sha256(output.read_bytes()).hexdigest()}")
     return 0

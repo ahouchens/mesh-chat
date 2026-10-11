@@ -514,6 +514,7 @@ def test_notification_precedence_uses_structured_mentions_and_never_catches_up(
     )
     assert member.drain_native_notification_work(16)["items"] == []
 
+
     owner.send_workspace_message(
         workspace_id,
         channel["id"],
@@ -595,6 +596,113 @@ def test_notification_precedence_uses_structured_mentions_and_never_catches_up(
         recipient_profile=member_profile,
     )
     assert member.drain_native_notification_work(16)["items"] == []
+
+
+def test_workspace_notification_families_cover_channel_dm_thread_and_skip_mutations(
+    tmp_path: Path,
+) -> None:
+    (
+        owner,
+        owner_network,
+        owner_profile,
+        member,
+        _member_network,
+        member_profile,
+        workspace,
+        _member_key,
+        _member_identity,
+    ) = _joined_pair(tmp_path / "notification-families", base=93_000)
+    workspace_id = workspace["id"]
+    channel_id = workspace["general_channel_id"]
+    owner_view = owner.workspace_snapshot()["workspaces"][0]
+    member_id = next(
+        item["id"]
+        for item in owner_view["members"]
+        if item["id"] != owner_view["local_member_id"]
+    )
+    member.set_native_notification_state("android", True, "allowed")
+    member.mobile_lifecycle_transition("background", "activity_paused")
+
+    root = owner.send_workspace_message(
+        workspace_id, channel_id, "Channel arrival", _op(93_010), _op(93_011)
+    )
+    _deliver_all(
+        member,
+        _flush(owner, owner_network),
+        source_profile=owner_profile,
+        recipient_profile=member_profile,
+    )
+    work = member.drain_native_notification_work(16)["items"]
+    assert [item["category"] for item in work] == ["channel_message"]
+    member.acknowledge_native_notification(work[0]["notification_id"], "accepted")
+
+    direct = owner.open_workspace_direct(workspace_id, member_id, _op(93_012))
+    owner.send_workspace_direct_message(
+        workspace_id,
+        direct["id"],
+        "Workspace DM arrival",
+        _op(93_013),
+        _op(93_014),
+    )
+    _deliver_all(
+        member,
+        _flush(owner, owner_network),
+        source_profile=owner_profile,
+        recipient_profile=member_profile,
+    )
+    work = member.drain_native_notification_work(16)["items"]
+    assert [item["category"] for item in work] == ["direct_message"]
+    member.acknowledge_native_notification(work[0]["notification_id"], "accepted")
+
+    owner.send_workspace_thread_reply(
+        workspace_id,
+        channel_id,
+        root["id"],
+        "Thread reply arrival",
+        _op(93_015),
+        _op(93_016),
+    )
+    _deliver_all(
+        member,
+        _flush(owner, owner_network),
+        source_profile=owner_profile,
+        recipient_profile=member_profile,
+    )
+    work = member.drain_native_notification_work(16)["items"]
+    assert [item["category"] for item in work] == ["thread_reply"]
+    member.acknowledge_native_notification(work[0]["notification_id"], "accepted")
+
+    owner.edit_workspace_message(
+        workspace_id,
+        root["id"],
+        "Edited channel arrival",
+        _op(93_017),
+        _op(93_018),
+    )
+    _deliver_all(
+        member,
+        _flush(owner, owner_network),
+        source_profile=owner_profile,
+        recipient_profile=member_profile,
+    )
+    assert member.drain_native_notification_work(16)["items"] == []
+
+    owner.send_workspace_message(
+        workspace_id,
+        channel_id,
+        "Structured mention arrival",
+        _op(93_019),
+        _op(93_020),
+        [member_id],
+    )
+    _deliver_all(
+        member,
+        _flush(owner, owner_network),
+        source_profile=owner_profile,
+        recipient_profile=member_profile,
+    )
+    work = member.drain_native_notification_work(16)["items"]
+    assert [item["category"] for item in work] == ["mention"]
 
 
 def test_two_member_workspace_create_join_chat_and_page(

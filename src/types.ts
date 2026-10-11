@@ -185,9 +185,11 @@ export interface NotificationOpenTarget {
   available: boolean;
   reason?: "unavailable" | "authorization_changed";
   message?: string;
+  scope?: "workspace" | "personal_direct" | "personal_group";
+  target_id?: string;
   workspace_id?: string;
   conversation_id?: string;
-  conversation_kind?: "channel" | "direct";
+  conversation_kind?: "channel" | "direct" | "group";
   thread_root_id?: string | null;
   event_id?: string;
 }

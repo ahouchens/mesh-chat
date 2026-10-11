@@ -6,6 +6,10 @@ Messages use native individual LXMF delivery destinations. Reticulum owns paths 
 
 > This repository is not independently audited and is not yet suitable for sensitive operational use. See [TESTING.md](TESTING.md) for verified and unverified release gates.
 
+Android capability status, hardware gaps, and the exact physical test matrix are
+tracked separately in [docs/ANDROID_PARITY.md](docs/ANDROID_PARITY.md). Shared
+React/Python code is not treated as physical Android verification.
+
 ## Workspace increment 15: mobile lifecycle and local notifications
 
 This source tree now implements the fifteenth bounded workspace increment from
@@ -871,6 +875,24 @@ enabled, and writes the APK plus checksum to `dist/mobile`. The source of truth
 is the immutable `dist/mobile/releases/<version>/android-arm64-debug` directory;
 the top-level APK is a verified convenience alias recorded by `current.json`.
 
+Release APKs and Android App Bundles use external signing inputs only. Supply
+all four values as Gradle properties—`meshChatReleaseStoreFile`,
+`meshChatReleaseStorePassword`, `meshChatReleaseKeyAlias`, and
+`meshChatReleaseKeyPassword`—or as the corresponding environment variables
+`MESH_CHAT_ANDROID_KEYSTORE_PATH`, `MESH_CHAT_ANDROID_KEYSTORE_PASSWORD`,
+`MESH_CHAT_ANDROID_KEY_ALIAS`, and `MESH_CHAT_ANDROID_KEY_PASSWORD`. Then run:
+
+```text
+python scripts/build_android.py --release
+python scripts/build_android.py --aab
+```
+
+The build fails closed when any signing input is absent or the keystore path is
+not a file. Never place keystores, aliases, passwords, or signing certificates
+in this repository. `--aab` implies a release build and publishes through the
+same immutable, hashed manifest layout. A production-signed package has not
+been built or hardware-verified in this workspace.
+
 ### iOS build
 
 Use a Mac with the latest stable full Xcode installation, Node.js 20+, pnpm 11,
@@ -956,12 +978,15 @@ Mobile workspaces link through the same countersigned, owner-approved device
 workflow as desktop linked devices. Every phone keeps a fresh private identity
 and protected vault; no desktop key or profile is copied.
 
-Android can show local message and structured-mention notifications while the
-embedded runtime is executing. Permission is requested only from **Enable
-notifications**, with an **Open system settings** recovery path. Workspace and
-conversation settings offer **All**, **Mentions only**, and **Muted**. The
-device-wide **Hide notification previews** option uses only “Mesh Chat” / “New
-message”.
+Android can show local notifications for live Personal direct messages,
+private-group messages, announcement messages, workspace channels and DMs,
+thread replies, and structured mentions while the embedded runtime is
+executing. Permission is requested only from **Enable notifications**, with an
+**Open system settings** recovery path. Workspace and conversation settings
+offer **All**, **Mentions only**, and **Muted**. Personal conversations currently
+use the device permission and foreground/hidden-conversation policy rather than
+a new per-conversation setting. The device-wide **Hide notification previews**
+option uses only “Mesh Chat” / “New message”.
 
 These are not cloud push notifications. Android or iOS may suspend or terminate
 Mesh Chat, so notifications can be delayed until the app can execute again.

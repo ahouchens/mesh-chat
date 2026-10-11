@@ -19,7 +19,7 @@ SCHEMA_VERSION = 1
 
 
 class AndroidReleaseError(RuntimeError):
-    """The APK is not one coherent, immutable Android release."""
+    """The artifact is not one coherent, immutable Android release."""
 
 
 def _sha256(path: Path) -> str:
@@ -47,31 +47,37 @@ def _atomic_write(path: Path, contents: bytes) -> None:
 def _verify_release(release_dir: Path, manifest: dict[str, Any]) -> None:
     artifacts = manifest.get("artifacts")
     if not isinstance(artifacts, list) or len(artifacts) != 1:
-        raise AndroidReleaseError("Android manifest must contain exactly one APK")
+        raise AndroidReleaseError("Android manifest must contain exactly one artifact")
     artifact = artifacts[0]
     if not isinstance(artifact, dict) or not isinstance(artifact.get("path"), str):
         raise AndroidReleaseError("Android manifest contains an invalid artifact")
     relative = Path(artifact["path"])
     if relative.is_absolute() or ".." in relative.parts:
         raise AndroidReleaseError("Android manifest contains an unsafe path")
-    apk = release_dir / relative
+    artifact_path = release_dir / relative
     if (
-        not apk.is_file()
-        or apk.stat().st_size != artifact.get("size")
-        or _sha256(apk) != artifact.get("sha256")
+        not artifact_path.is_file()
+        or artifact_path.stat().st_size != artifact.get("size")
+        or _sha256(artifact_path) != artifact.get("sha256")
     ):
-        raise AndroidReleaseError("published Android APK was modified")
+        raise AndroidReleaseError("published Android artifact was modified")
 
 
 def publish_android_release(
-    apk: Path,
+    artifact: Path,
     *,
     repository: Path = REPOSITORY,
+    variant: str = "debug",
+    artifact_format: str = "apk",
 ) -> Path:
     repository = repository.resolve()
-    apk = apk.resolve()
-    if not apk.is_file():
-        raise AndroidReleaseError(f"Android APK is missing: {apk}")
+    artifact = artifact.resolve()
+    if variant not in {"debug", "release"} or artifact_format not in {"apk", "aab"}:
+        raise AndroidReleaseError("Android artifact variant or format is invalid")
+    if variant == "debug" and artifact_format != "apk":
+        raise AndroidReleaseError("Debug publication is limited to the maintained APK flow")
+    if artifact.suffix.lower() != f".{artifact_format}" or not artifact.is_file():
+        raise AndroidReleaseError(f"Android {artifact_format.upper()} is missing: {artifact}")
     try:
         state = check_versions(repository)
     except VersionError as exc:
@@ -88,11 +94,12 @@ def publish_android_release(
     if f"tauri.android.versionCode={state.android_version_code}" not in properties:
         raise AndroidReleaseError("generated Android versionCode does not match source metadata")
 
-    filename = f"mesh-chat-{state.version}-android-arm64-debug.apk"
+    filename = f"mesh-chat-{state.version}-android-arm64-{variant}.{artifact_format}"
     mobile_root = repository / "dist" / "mobile"
-    relative_release = Path("releases") / state.version / "android-arm64-debug"
+    release_label = f"android-arm64-{variant}" + ("" if artifact_format == "apk" else f"-{artifact_format}")
+    relative_release = Path("releases") / state.version / release_label
     release_dir = mobile_root / relative_release
-    apk_digest = _sha256(apk)
+    artifact_digest = _sha256(artifact)
     manifest: dict[str, Any] = {
         "schema_version": SCHEMA_VERSION,
         "product": "Mesh Chat",
@@ -100,14 +107,14 @@ def publish_android_release(
         "version_code": state.android_version_code,
         "platform": "android",
         "architecture": "arm64-v8a",
-        "signing": "debug",
+        "signing": variant,
         "release_directory": relative_release.as_posix(),
         "artifacts": [
             {
                 "path": filename,
-                "role": "android-debug-apk",
-                "sha256": apk_digest,
-                "size": apk.stat().st_size,
+                "role": f"android-{variant}-{artifact_format}",
+                "sha256": artifact_digest,
+                "size": artifact.stat().st_size,
             }
         ],
     }
@@ -116,11 +123,11 @@ def publish_android_release(
     temporary.mkdir(parents=True, exist_ok=False)
     try:
         destination = temporary / filename
-        shutil.copy2(apk, destination)
-        if _sha256(destination) != apk_digest:
-            raise AndroidReleaseError("copied Android APK failed verification")
+        shutil.copy2(artifact, destination)
+        if _sha256(destination) != artifact_digest:
+            raise AndroidReleaseError("copied Android artifact failed verification")
         (temporary / f"{filename}.sha256").write_text(
-            f"{apk_digest.lower()}  {filename}\n", encoding="ascii", newline="\n"
+            f"{artifact_digest.lower()}  {filename}\n", encoding="ascii", newline="\n"
         )
         (temporary / "manifest.json").write_bytes(manifest_bytes)
         if release_dir.exists():
@@ -144,7 +151,7 @@ def publish_android_release(
         os.replace(alias_temporary, alias)
         _atomic_write(
             alias_checksum,
-            f"{apk_digest.lower()}  {filename}\n".encode("ascii"),
+            f"{artifact_digest.lower()}  {filename}\n".encode("ascii"),
         )
         current = {
             "schema_version": SCHEMA_VERSION,
@@ -165,11 +172,15 @@ def publish_android_release(
 def main() -> int:
     import argparse
 
-    parser = argparse.ArgumentParser(description="Immutably publish a verified Android APK")
-    parser.add_argument("apk", type=Path)
+    parser = argparse.ArgumentParser(description="Immutably publish a verified Android artifact")
+    parser.add_argument("artifact", type=Path)
+    parser.add_argument("--variant", choices=("debug", "release"), default="debug")
+    parser.add_argument("--format", choices=("apk", "aab"), default="apk")
     args = parser.parse_args()
     try:
-        manifest = publish_android_release(args.apk)
+        manifest = publish_android_release(
+            args.artifact, variant=args.variant, artifact_format=args.format
+        )
     except (OSError, ValueError, AndroidReleaseError) as exc:
         print(f"Android release verification failed: {exc}", file=sys.stderr)
         return 1

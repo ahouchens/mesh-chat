@@ -13,6 +13,7 @@ export interface ServiceEvent {
   conversation_id?: string | null;
   resource_kind?: string;
   generation?: number;
+  overflow?: boolean;
 }
 
 let platformPromise: Promise<"desktop" | "android" | "ios"> | null = null;
@@ -95,18 +96,49 @@ export function onServiceEvent(callback: (event: ServiceEvent) => void): Promise
 }
 
 export function onInvitation(callback: (invitation: string) => void): Promise<UnlistenFn> {
+  const delivered = new Set<string>();
+  const deliver = (invitation: string | null | undefined) => {
+    if (!invitation || delivered.has(invitation)) return;
+    callback(invitation);
+    delivered.add(invitation);
+  };
   const accept = (urls: string[] | null) => {
     const invitation = urls?.find((value) =>
       value.startsWith("meshchat://invite/") || value.startsWith("meshchat://workspace/") || value.startsWith("meshchat://workspace-device/"),
     );
-    if (invitation) callback(invitation);
+    deliver(invitation);
   };
-  return Promise.all([
-    listen<string>("mesh-chat://invitation", (event) => callback(event.payload)),
-    onOpenUrl(accept),
-    getCurrent().then(accept),
-    invoke<string | null>("take_pending_invitation").then((value) => value && callback(value)),
-  ]).then(([unlistenFile, unlistenLink]) => {
+  return runtimePlatform().then(async (platform) => {
+    if (platform === "android") {
+      let active = true;
+      let polling = false;
+      const poll = async () => {
+        if (!active || polling || document.visibilityState === "hidden") return;
+        polling = true;
+        try { deliver(await invoke<string | null>("take_pending_invitation")); }
+        catch { /* A delayed native runtime or lock transition is retried. */ }
+        finally { polling = false; }
+      };
+      await poll();
+      const timer = window.setInterval(() => void poll(), 750);
+      const visible = () => { if (document.visibilityState === "visible") void poll(); };
+      const focused = () => void poll();
+      document.addEventListener("visibilitychange", visible);
+      window.addEventListener("focus", focused);
+      return () => {
+        active = false;
+        window.clearInterval(timer);
+        document.removeEventListener("visibilitychange", visible);
+        window.removeEventListener("focus", focused);
+      };
+    }
+
+    const [unlistenFile, unlistenLink] = await Promise.all([
+      listen<string>("mesh-chat://invitation", (event) => deliver(event.payload)),
+      onOpenUrl(accept),
+      getCurrent().then(accept),
+      invoke<string | null>("take_pending_invitation").then(deliver),
+    ]);
     return () => { unlistenFile(); unlistenLink(); };
   });
 }

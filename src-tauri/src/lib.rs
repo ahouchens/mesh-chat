@@ -507,28 +507,107 @@ fn allowed_renderer_command(command: &str) -> bool {
 }
 
 #[cfg(desktop)]
-fn invitation_from_argument(argument: &str) -> Option<String> {
-    if (argument.starts_with("meshchat://invite/")
-        || argument.starts_with("meshchat://workspace/")
-        || argument.starts_with("meshchat://workspace-device/"))
-        && argument.len() <= 700 * 1024
+fn validated_invitation_value(raw: &str) -> Option<String> {
+    let value = raw.trim();
+    if value.is_empty() || value.contains('\0') {
+        return None;
+    }
+    let compact: String = value
+        .chars()
+        .filter(|character| !character.is_whitespace())
+        .collect();
+    let (prefix, maximum) = if compact.starts_with("meshchat://invite/") {
+        ("meshchat://invite/", MAX_RENDERER_PAYLOAD_BYTES)
+    } else if compact.starts_with("meshchat://workspace/") {
+        ("meshchat://workspace/", MAX_RENDERER_PAYLOAD_BYTES)
+    } else if compact.starts_with("meshchat://workspace-device/") {
+        (
+            "meshchat://workspace-device/",
+            MAX_WORKSPACE_DEVICE_LINK_PAYLOAD_BYTES,
+        )
+    } else if compact.starts_with("MESHCHAT1:") {
+        ("MESHCHAT1:", MAX_RENDERER_PAYLOAD_BYTES)
+    } else if compact.starts_with("MESHWORKSPACE1:") {
+        ("MESHWORKSPACE1:", MAX_RENDERER_PAYLOAD_BYTES)
+    } else if compact.starts_with("MESHWORKSPACEDEVICE1:") {
+        (
+            "MESHWORKSPACEDEVICE1:",
+            MAX_WORKSPACE_DEVICE_LINK_PAYLOAD_BYTES,
+        )
+    } else {
+        // The personal .meshchat export is canonical signed JSON. Its full
+        // cryptographic, expiry, and key validation remains in the Python
+        // service, but unrelated JSON never crosses into the renderer.
+        if value.len() > MAX_RENDERER_PAYLOAD_BYTES {
+            return None;
+        }
+        let document = serde_json::from_str::<Value>(value).ok()?;
+        let fields = document.as_object()?;
+        let expected = [
+            "v",
+            "label",
+            "public_identity",
+            "destination",
+            "created_at",
+            "expires_at",
+            "hints",
+            "signature",
+        ];
+        if fields.len() == expected.len()
+            && expected.iter().all(|field| fields.contains_key(*field))
+            && fields.get("v").and_then(Value::as_i64) == Some(1)
+            && ["label", "public_identity", "destination", "signature"]
+                .iter()
+                .all(|field| {
+                    fields
+                        .get(*field)
+                        .and_then(Value::as_str)
+                        .is_some_and(|item| !item.is_empty())
+                })
+            && fields.get("created_at").and_then(Value::as_i64).is_some()
+            && fields.get("expires_at").and_then(Value::as_i64).is_some()
+            && fields.get("hints").is_some_and(Value::is_array)
+        {
+            return Some(value.to_string());
+        }
+        return None;
+    };
+    let token = compact.strip_prefix(prefix)?;
+    if compact.len() <= maximum
+        && !token.is_empty()
+        && token
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-')
     {
-        return Some(argument.to_string());
-    }
-    let path = Path::new(argument);
-    if path.extension().and_then(|value| value.to_str()) != Some("meshchat") {
-        return None;
-    }
-    let metadata = fs::metadata(path).ok()?;
-    if !metadata.is_file() || metadata.len() > 16 * 1024 {
-        return None;
-    }
-    let contents = fs::read_to_string(path).ok()?;
-    if contents.len() <= 16 * 1024 {
-        Some(contents)
+        Some(if prefix.starts_with("meshchat://") {
+            compact
+        } else {
+            value.to_string()
+        })
     } else {
         None
     }
+}
+
+#[cfg(desktop)]
+fn invitation_from_argument(argument: &str) -> Option<String> {
+    if argument.starts_with("meshchat://") {
+        return validated_invitation_value(argument);
+    }
+    let path = Path::new(argument);
+    if !path
+        .extension()
+        .and_then(|value| value.to_str())
+        .is_some_and(|value| value.eq_ignore_ascii_case("meshchat"))
+    {
+        return None;
+    }
+    let metadata = fs::metadata(path).ok()?;
+    if !metadata.is_file() || metadata.len() > MAX_RENDERER_PAYLOAD_BYTES as u64 {
+        return None;
+    }
+    let contents = fs::read_to_string(path).ok()?;
+    validated_invitation_value(&contents)
 }
 
 #[cfg(desktop)]
@@ -718,8 +797,13 @@ async fn lock_service(app: AppHandle) -> Result<(), String> {
 
 #[cfg(mobile)]
 #[tauri::command]
-fn take_pending_invitation() -> Result<Option<String>, String> {
-    Ok(None)
+fn take_pending_invitation(app: AppHandle) -> Result<Option<String>, String> {
+    let response = app
+        .mesh_runtime()
+        .take_pending_invitation()
+        .map_err(|_| "service_stopped".to_string())?;
+    let value = mobile_result(response)?;
+    serde_json::from_value(value).map_err(|_| "service_protocol_error".to_string())
 }
 
 #[cfg(mobile)]
@@ -1057,5 +1141,33 @@ mod tests {
         assert_eq!(invitation_from_argument(link), Some(link.to_string()));
         let device = "meshchat://workspace-device/fixture-token";
         assert_eq!(invitation_from_argument(device), Some(device.to_string()));
+    }
+
+    #[test]
+    fn desktop_rejects_malformed_unrelated_and_oversized_launch_values() {
+        assert_eq!(
+            invitation_from_argument("meshchat://notification/abc"),
+            None
+        );
+        assert_eq!(
+            invitation_from_argument("meshchat://invite/abc?leak=1"),
+            None
+        );
+        assert_eq!(
+            invitation_from_argument("meshchat://invite/abc/extra"),
+            None
+        );
+        let oversized = format!(
+            "meshchat://invite/{}",
+            "a".repeat(MAX_RENDERER_PAYLOAD_BYTES)
+        );
+        assert_eq!(invitation_from_argument(&oversized), None);
+        assert_eq!(validated_invitation_value("{\"v\":1}"), None);
+        assert_eq!(
+            validated_invitation_value(
+                "{\"v\":1,\"label\":\"Peer\",\"public_identity\":\"a\",\"destination\":\"b\",\"created_at\":1,\"expires_at\":2,\"hints\":[],\"signature\":\"c\",\"path\":\"private\"}"
+            ),
+            None
+        );
     }
 }

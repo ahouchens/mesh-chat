@@ -26,6 +26,7 @@ _service_lock = threading.RLock()
 _events_lock = threading.Lock()
 _service: MeshChatService | None = None
 _events: deque[dict[str, Any]] = deque(maxlen=256)
+_event_overflow = False
 
 
 def _loads(raw: str) -> dict[str, Any]:
@@ -53,10 +54,13 @@ def _emit(value: dict[str, Any]) -> None:
     # Network callbacks can emit from an RNS worker while a renderer command is
     # executing.  Keep event delivery independent from the service lifecycle
     # lock so a command waiting for that worker cannot deadlock the bridge.
+    global _event_overflow
     overflow = False
     with _events_lock:
         overflow = len(_events) == _events.maxlen
         _events.append(value)
+        if overflow:
+            _event_overflow = True
     if overflow:
         # Persist the gap after releasing the event lock. A renderer refresh
         # can then request bounded authoritative reconciliation instead of
@@ -141,14 +145,24 @@ def command(raw: str) -> str:
 
 
 def drain_events() -> str:
+    global _event_overflow
     with _events_lock:
         values = list(_events)
         _events.clear()
+        if _event_overflow:
+            marker = {
+                "type": "event",
+                "event": "state_changed",
+                "resource_kind": "event_overflow",
+                "overflow": True,
+            }
+            values = [marker, *values[1:]] if values else [marker]
+            _event_overflow = False
     return _dumps({"ok": True, "result": values})
 
 
 def shutdown() -> str:
-    global _service
+    global _service, _event_overflow
     try:
         with _service_lock:
             if _service is not None:
@@ -156,6 +170,7 @@ def shutdown() -> str:
                 _service = None
         with _events_lock:
             _events.clear()
+            _event_overflow = False
         return _dumps({"ok": True, "result": None})
     except Exception as exc:
         return _error(exc)

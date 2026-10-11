@@ -82,6 +82,7 @@ def test_mobile_bridge_persists_invalidation_overflow(
     service = OverflowService()
     monkeypatch.setattr(mobile_bridge, "_service", service)
     monkeypatch.setattr(mobile_bridge, "_events", mobile_bridge.deque(maxlen=2))
+    monkeypatch.setattr(mobile_bridge, "_event_overflow", False)
 
     mobile_bridge._emit({"event": "first"})
     mobile_bridge._emit({"event": "second"})
@@ -89,9 +90,15 @@ def test_mobile_bridge_persists_invalidation_overflow(
 
     assert service.overflows == 1
     assert json.loads(mobile_bridge.drain_events())["result"] == [
-        {"event": "second"},
+        {
+            "type": "event",
+            "event": "state_changed",
+            "resource_kind": "event_overflow",
+            "overflow": True,
+        },
         {"event": "third"},
     ]
+    assert json.loads(mobile_bridge.drain_events())["result"] == []
 
 
 def test_mobile_bridge_preserves_direct_send_payload(

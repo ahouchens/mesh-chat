@@ -1,0 +1,163 @@
+# Android feature parity
+
+This document compares the Android client with the Windows desktop 0.2.35
+implementation. It is a source-and-evidence audit, not a claim that shared code
+automatically behaves the same on a phone. The Android client shares the React
+renderer, Python messaging core, protocol, encrypted record model, and renderer
+command allowlist with desktop, while its lifecycle, storage key, notifications,
+camera, deep links, and packaging are native Android integrations.
+
+Status labels are deliberately strict:
+
+1. **Parity confirmed** — the relevant behavior was exercised on both sides or
+   the platform-independent boundary has direct, current automated evidence.
+2. **Implemented but unverified on hardware** — the source and automated tests
+   cover the Android path, but no current physical-device result exists.
+3. **Partial** — a useful subset exists, with a named gap.
+4. **Missing** — no adequate Android implementation or evidence exists.
+5. **Intentionally different** — Android cannot or should not mirror desktop;
+   the justification is recorded.
+
+## Matrix
+
+| Capability | Status | Android evidence and remaining gap |
+| --- | ---: | --- |
+| Personal direct chat, receipts, retries, drafts, deletion, and reactions | 2 | Shared service/UI and service, renderer, direct-LAN, and packaged-sidecar regressions cover the behavior. The embedded Android runtime uses the same command boundary. A physical Android↔Windows send/receive/retry/relaunch run is still required. |
+| Contacts: approve, decline, rename, verify, block, unblock, delete, and search | 2 | Shared service and renderer regressions cover authorization and local erasure. Android Back and compact layout paths are automated. No current TalkBack or physical touch-flow result exists. |
+| Personal invitations: create, paste, QR, file, approve, decline, expiry, and retry | 2 | Canonical invitation validation remains in Python. Android camera/plugin and file/paste UI paths exist; this increment adds bounded durable OS launch ingress. Camera permission, Files-provider variation, and end-to-end approval remain unverified on hardware. |
+| Private groups | 2 | Signed membership epochs, fan-out, receipts, retries, removal/leave/close, reactions, and renderer flows have automated coverage. Physical 3/5/8-device Android runs remain open. |
+| Announcement channels | 2 | Owner/admin posting policy and authorization are shared and automated. This increment adds the distinct native `announcement_message` notification category. Physical notification and multi-device behavior remain open. |
+| Workspace creation/join/switching and public/private channels | 2 | Shared canonical service and UI have extensive source tests, bounded pages, signed controls, and direct-LAN evidence. Android uses device-neutral linked-device text. Physical multi-install operation remains open. |
+| Workspace DMs | 2 | Deterministic pair authorization, isolation from Personal contacts, paging, hiding, erasure, delivery, renderer, and local notification tests exist. Physical Android partition/reconnect is open. |
+| Workspace threads and mentions | 2 | One-level signed threads, structured mentions, independent reads, mutations, paging, and notification precedence are automated. Android notification tap/permission and accessibility behavior remain unverified on hardware. |
+| Workspace search, history recovery, and retention | 2 | Encrypted bounded indexes, authenticated cursors, pruning, gaps, peer-limited recovery, and renderer states are automated. Physical suspension, storage pressure, and long-running recovery are open. |
+| Workspace administration and authority transitions | 2 | Signed owner/admin requests, rotation/transfer, fork suspension, loss diagnostics, and renderer confirmation are automated. Concurrent physical Android partitions and kill points are open. |
+| Linked devices | 2 | Fresh per-device identities, countersigned admission, caps, fan-out, recovery, read hints, and revocation are automated. The UI now says “device” on Android-visible surfaces. No identity or vault is copied. Physical link/revoke/replace remains open. |
+| `meshchat://invite/`, `workspace/`, and `workspace-device/` links | 2 | A native `singleTask` ingress validates a strict token grammar and per-family byte bounds, stores one minimum pending value in app-private preferences, sanitizes the Activity intent, and atomically takes it for the renderer. Cold, delayed-renderer, warm, recreation/deduplication, malformed, unrelated, and oversized cases have source/JVM/frontend/Rust coverage. OEM/browser dispatch remains unverified. |
+| `.meshchat` files | 2 | Android accepts only `content:` URIs named `.meshchat`, reads a bounded stream with strict UTF-8 decoding, validates supported signed content before renderer handoff, and never forwards a filesystem path. Desktop now applies equivalent validation and bounds. Physical Files/Drive/provider matrices remain open. |
+| QR scanning | 2 | Android uses the native barcode-scanner plugin; image decoding and a desktop camera fallback remain in the shared UI. Runtime camera permission/denial, rotation, and low-light behavior need physical verification. |
+| Clipboard invitation copy/paste | 2 | Shared UI uses the WebView Clipboard API with established error handling and prior source regressions. Android version/keyboard/permission behavior needs a physical matrix. |
+| Outgoing invitation sharing | 2 | Shared UI uses `navigator.share` when available and provides copy/save fallbacks. Android Sharesheet destinations and cancellation remain unverified. |
+| Generic inbound Android `ACTION_SEND` shares | 4 | Only registered deep links and `.meshchat` `ACTION_VIEW` documents are accepted. Arbitrary shared text is intentionally not ingested by this increment. |
+| Cold launch, warm `singleTask` launch, Activity recreation, delayed renderer | 2 | The native pending slot owns accepted launch input until one renderer command handoff; the Activity intent is replaced with `ACTION_MAIN`, and visible polling retries every 750 ms. Automated tests pass; process/OEM hardware testing remains open. |
+| Visible event polling and duplicate delivery | 2 | The native bridge drains only while visible at a bounded 750 ms cadence. Invitation and event paths serialize polling; service identifiers remain idempotent. Hardware timing remains open. |
+| Event overflow and authoritative reconciliation | 2 | The 256-item native queue now emits one explicit overflow marker, persists the service-side gap, clears the marker after drain, and triggers bounded reconciliation/snapshot refresh. Overflow and drain regressions pass. |
+| Resume, renderer recreation, and refresh overlap | 2 | Foreground reconciliation is coalesced; a completed reconciliation always refreshes, while an event arriving during refresh schedules the existing trailing refresh. Foreground/background, overflow, and overlap regressions pass. OS process-death timing remains unverified. |
+| Continuous execution while backgrounded or suspended | 5 | Unlike desktop, Android may suspend or terminate the embedded runtime. Mesh Chat intentionally uses neither cloud push nor a permanent foreground service or battery-optimization exemption. Durable state is reconciled when execution resumes; live receipt/notification timing is therefore best effort. |
+| Local notifications: Personal direct, group, announcement, workspace channel/DM, thread, and mention | 2 | All live inbound families now share the durable authorization-first queue, opaque ID, sealed route, foreground suppression, preview hiding, native acknowledgement, and open-time reauthorization path. Mutation, replay/duplicate, historical, erasure, and category tests exist. Physical permission, lock-screen, tap, and suspension results remain open. |
+| Per-conversation notification preferences | 3 | Workspace conversation preferences remain supported. Personal direct/group notifications honor device permission, foreground state, hidden conversations, and global preview hiding, but do not add a new per-conversation preference model in this increment. This avoids silently weakening established workspace semantics. |
+| Notification as delivery/read evidence | 5 | Native presentation and taps intentionally never change message delivery or read state. Delivery remains application-level authenticated evidence; reading remains an explicit in-app action. |
+| Protected profile storage | 2 | The profile is in app-private internal storage, records are authenticated/encrypted, the vault key is Android-Keystore-wrapped, backup is disabled in the merged manifest, and cleartext traffic is disabled. JVM/Python round trips exist; a physical full-tree plaintext scan and lock/reboot test remain open. |
+| Reproducible ARM64 debug APK | 1 | The maintained build, checksum/manifest boundary, version-code derivation, API 24/36 policy, and package inspection have current evidence. This increment built and inspected a new Gradle candidate, but immutable publication correctly rejected replacing the existing 0.2.35 bytes; a version transaction is required before release. Installation is a separate hardware gate. |
+| External release signing | 2 | Gradle accepts only externally supplied properties/environment values, creates no release signing config when incomplete, validates the keystore path, and fails clearly without inputs. No key, alias, password, or certificate is committed. A real release key was not available or invented. |
+| Android App Bundle | 2 | `scripts/build_android.py --aab` selects a release AAB and the immutable publisher records a release-AAB artifact. Publication tests use non-secret fixtures. No signed production AAB has been built. |
+| Upgrade preservation | 3 | Package ID/version-code continuity and prior debug-certificate package inspection are recorded, and migrations are automated. The exact current APK has not been installed over an older profile on a disposable Android device. Release-key continuity also remains a release-operator responsibility. |
+| Accessibility and compact layout | 3 | Labels, live regions, keyboard/IME guards, native Back handling, safe-area treatment, and compact renderer tests exist. TalkBack order, focus restoration, font scaling, contrast, switch access, and touch targets require physical review. |
+| Physical Android validation | 4 | No authorized device was attached during this increment. No install, battery, memory, camera, notification, lock-screen, process-death, upgrade, or cross-device result is claimed. |
+
+## First bounded parity increment
+
+The increment implements five connected changes without adding infrastructure:
+
+1. Android-visible linked-device surfaces use device-neutral wording, backed by
+   a renderer regression that opens both creation and linked-device dialogs.
+2. Android launch invitations pass through a bounded native validator and a
+   durable app-private one-value handoff. Cold/warm launches, recreation, and a
+   delayed renderer cannot replay the Activity intent. Desktop launch arguments
+   and `.meshchat` files now use equivalent strict validation and size limits.
+3. Native queue overflow is explicit, resume reconciliation cannot overlap
+   itself, and every completed reconciliation is followed by a fresh bounded
+   snapshot. The existing trailing-refresh mechanism covers an event arriving
+   during a refresh.
+4. Personal direct, private-group, and announcement messages now enter the same
+   secure local-notification architecture as workspace live messages. Routes
+   are reauthorized on drain and open, duplicate/foreground/hidden traffic is
+   suppressed, previews are bounded, and conversation erasure removes records.
+5. Release APK/AAB builds use external signing configuration and fail closed if
+   it is absent. Debug APK publication remains unchanged and both artifact forms
+   retain immutable manifests and hashes.
+
+The implementation preserves the server-free/account-free model, protocol
+bytes, payload limits, renderer sandbox, protected-storage failure behavior,
+and per-device identities. It adds no FCM, APNs, analytics, cloud storage,
+hosted relay, foreground service, or battery exemption.
+
+## Increment acceptance criteria
+
+- Android linked-device dialogs contain no incorrect “desktop” wording.
+- Supported invitation families and `.meshchat` content are bounded and
+  validated before renderer exposure; malformed/unrelated launches reveal
+  neither filesystem paths nor unvalidated content.
+- One accepted Android launch value survives delayed renderer initialization,
+  is removed on native command handoff, and is not replayed by Activity
+  recreation or the deep-link plugin.
+- Overflow, resume, duplicate, and overlapping-refresh paths converge through
+  bounded authoritative state rather than history scans.
+- Every live inbound message family either produces one authorized local
+  notification or a durable suppression decision; mutations, duplicate/replay,
+  foreground, hidden, historical, and erased content do not produce stale work.
+- Notification presentation/open never marks a message delivered or read, and
+  every open rechecks current local authorization.
+- Debug APK behavior remains reproducible; release APK/AAB requests require all
+  external signing inputs and publish through the immutable artifact layout.
+- Automated evidence and hardware evidence are reported separately.
+
+## Remaining work
+
+- Run the physical-device matrix below on an authorized disposable ARM64 phone
+  before calling Android parity complete.
+- Design Personal per-conversation notification controls only if they can share
+  the established sealed preference and reauthorization semantics.
+- Decide whether intentionally unsupported generic `ACTION_SEND` text ingestion
+  is desirable; any implementation must use the same strict bounds and must not
+  expose unrelated shared content.
+- Exercise a real externally signed release APK/AAB with release-key continuity,
+  Play pre-launch checks, and upgrade/rollback policy. Secrets must remain
+  outside the repository.
+- Complete TalkBack, large-font, switch-access, rotation, split-screen, and
+  low-memory review.
+
+## Exact physical-device tests still required
+
+Use only an explicitly authorized disposable device and retain OS/build/package
+hashes with the results:
+
+1. Install the exact debug APK without clearing data; repeat as an in-place
+   upgrade from the supported older candidate and verify profile continuity.
+2. Open each supported deep link and a `.meshchat` file from Files and at least
+   one document provider during cold launch, warm `singleTask`, Activity
+   recreation, renderer delay, rotation, background/resume, and process kill.
+   Verify exactly one dialog and no unrelated intent/path disclosure.
+3. Run paste, copy, QR image, native camera scan, and Android Sharesheet flows,
+   including permission denial, later grant, cancellation, invalid/oversized
+   input, and screen rotation.
+4. Exchange Personal direct, private-group, announcement, workspace channel,
+   workspace DM, thread, and structured-mention messages with Windows 0.2.35.
+   Cover offline/reconnect, duplicate delivery, mutation, replay, history catchup,
+   linked-device fan-out/revocation, and foreground/background transitions.
+5. For each live family, test notification permission allow/deny/settings,
+   preview hiding, grouping, foreground suppression, background/screen-off,
+   lock screen, tap routing, authorization removal, local erasure, duplicate and
+   historical suppression. Confirm taps create no read or delivery receipt.
+6. Force native-event overflow, renderer recreation, Activity recreation,
+   Android process death, network restoration, and rapid focus changes while a
+   refresh is running; verify the visible state converges without duplicates or
+   unbounded work.
+7. Reboot and unlock, then inspect the app-private tree for known plaintext
+   markers and confirm fail-closed vault behavior. Verify Android backup/restore
+   does not export the profile and cleartext network policy remains disabled.
+8. Record battery/memory behavior during an extended foreground session and
+   confirm no permanent foreground service, cloud push registration, or battery
+   exemption appears.
+9. Complete TalkBack navigation/focus announcements, 200% font scaling, touch
+   target, contrast, IME composition, hardware/software Back, rotation,
+   split-screen, and system-bar inset checks.
+10. With release-operator credentials supplied out of tree, build and verify a
+    signed APK and AAB, signature schemes/certificate continuity, Play bundle
+    inspection, and release-to-release upgrade. No credentials belong in logs
+    or repository artifacts.
+
+Introducing a permanent foreground service or requesting a battery-optimization
+exemption requires explicit product/security approval. Cloud push, hosted
+relays, analytics, telemetry, cloud storage, identity/vault copying, or protocol
+byte changes are outside this parity plan.

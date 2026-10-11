@@ -1469,6 +1469,43 @@ describe("connected conversation", () => {
     expect(snapshotCalls).toBe(2);
   });
 
+  it("coalesces overlapping Android foreground reconciliation and refreshes afterward", async () => {
+    const stale = snapshot([approved]);
+    const latest = { ...stale, messages: [firstMessage] };
+    const reconciliation = deferred<unknown>();
+    let reconcileCalls = 0;
+    let snapshotCalls = 0;
+    api.runtimePlatform.mockResolvedValue("android");
+    api.initializeService.mockResolvedValue(stale);
+    api.onInvitation.mockResolvedValue(() => undefined);
+    api.onServiceEvent.mockResolvedValue(() => undefined);
+    api.onMobileBackButton.mockResolvedValue(() => undefined);
+    api.serviceCommand.mockImplementation(async (command: string) => {
+      if (command === "reconcile_mobile_lifecycle") {
+        reconcileCalls += 1;
+        return reconciliation.promise;
+      }
+      if (command === "snapshot") {
+        snapshotCalls += 1;
+        return latest;
+      }
+      return {};
+    });
+
+    render(<App />);
+    await screen.findByRole("heading", { name: "Taylor" });
+    await act(async () => {
+      window.dispatchEvent(new Event("focus"));
+      window.dispatchEvent(new Event("focus"));
+    });
+    expect(reconcileCalls).toBe(1);
+    expect(snapshotCalls).toBe(0);
+
+    await act(async () => reconciliation.resolve({}));
+    expect((await screen.findAllByText("The first message is visible")).length).toBeGreaterThan(0);
+    expect(snapshotCalls).toBe(1);
+  });
+
   it("does not call an already-saved message unsent when draft cleanup fails", async () => {
     let current = snapshot([approved]);
     const outbound: ChatMessage = {
@@ -1820,6 +1857,43 @@ describe("small private groups", () => {
 });
 
 describe("desktop workspaces", () => {
+  it("uses device-neutral linked-device terminology on Android", async () => {
+    const current: Snapshot = {
+      ...snapshot(),
+      workspaces: [workspace],
+      workspace_channels: [workspaceChannel],
+      workspace_directs: [],
+      workspace_join_requests: [],
+      workspace_invitations: [],
+      workspace_drafts: [],
+    };
+    api.runtimePlatform.mockResolvedValue("android");
+    api.initializeService.mockResolvedValue(current);
+    api.onInvitation.mockResolvedValue(() => undefined);
+    api.onServiceEvent.mockResolvedValue(() => undefined);
+    api.onMobileBackButton.mockResolvedValue(() => undefined);
+    api.serviceCommand.mockImplementation(async (command: string) => {
+      if (command === "snapshot" || command === "workspace_snapshot") return current;
+      if (command === "list_workspace_messages") return { messages: [], next_cursor: null, high_water: 0 };
+      return {};
+    });
+
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Create workspace" }));
+    let dialog = await screen.findByRole("dialog", { name: "Create a workspace" });
+    expect(within(dialog).getByText(/Link another device/i)).toBeTruthy();
+    expect(dialog.textContent?.toLowerCase()).not.toContain("desktop");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+
+    fireEvent.click(await screen.findByRole("button", { name: "Workspace Lakewatcher" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Linked devices" }));
+    dialog = await screen.findByRole("dialog", { name: "Linked devices · Lakewatcher" });
+    expect(within(dialog).getByText(/Each device has its own private identity/i)).toBeTruthy();
+    expect(within(dialog).getByText(/Your admitted devices/i)).toBeTruthy();
+    expect(within(dialog).getByRole("button", { name: "Link another device" })).toBeTruthy();
+    expect(dialog.textContent?.toLowerCase()).not.toContain("desktop");
+  });
+
   it("requires explicit ownership-transfer confirmation and binds the exact successor device", async () => {
     const successor = {
       id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
@@ -3183,6 +3257,41 @@ describe("desktop workspaces", () => {
 });
 
 describe("notification routing", () => {
+  it("re-authorizes and opens a Personal direct notification without marking it read", async () => {
+    const current = snapshot([approved]);
+    current.messages = [firstMessage];
+    let openNotification: ((notificationId: string) => void) | undefined;
+    api.runtimePlatform.mockResolvedValue("android");
+    api.initializeService.mockResolvedValue(current);
+    api.onInvitation.mockResolvedValue(() => undefined);
+    api.onServiceEvent.mockResolvedValue(() => undefined);
+    api.onMobileBackButton.mockResolvedValue(() => undefined);
+    api.onNotificationOpen.mockImplementation(async (callback) => {
+      openNotification = callback;
+      return () => undefined;
+    });
+    api.serviceCommand.mockImplementation(async (command: string) => {
+      if (command === "snapshot") return current;
+      if (command === "open_notification_target") return {
+        available: true,
+        scope: "personal_direct",
+        target_id: approved.id,
+        conversation_kind: "direct",
+        event_id: firstMessage.id,
+      };
+      return {};
+    });
+
+    render(<App />);
+    await screen.findByRole("heading", { name: "Taylor" });
+    await waitFor(() => expect(openNotification).toBeTypeOf("function"));
+    await act(async () => openNotification?.("cd".repeat(32)));
+
+    expect(await screen.findByRole("heading", { name: "Taylor" })).toBeTruthy();
+    expect(screen.getAllByText("The first message is visible").length).toBeGreaterThan(0);
+    expect(api.serviceCommand).not.toHaveBeenCalledWith("mark_workspace_read", expect.anything());
+  });
+
   it("re-authorizes an opaque target and opens the exact workspace conversation", async () => {
     const current: Snapshot = {
       ...snapshot(),
