@@ -145,6 +145,14 @@ class MeshChatService(ReactionServiceMixin, GroupServiceMixin, WorkspaceServiceM
         "submit_workspace_join",
         "approve_workspace_join",
         "decline_workspace_join",
+        "create_workspace_device_link",
+        "preview_workspace_device_link",
+        "submit_workspace_device_link",
+        "approve_workspace_device_link",
+        "decline_workspace_device_link",
+        "request_workspace_device_removal",
+        "approve_workspace_device_removal",
+        "decline_workspace_device_removal",
         "update_workspace_metadata",
         "update_workspace_policies",
         "update_workspace_retention",
@@ -206,6 +214,7 @@ class MeshChatService(ReactionServiceMixin, GroupServiceMixin, WorkspaceServiceM
         "get_workspace_history_status",
         "list_workspace_history_gaps",
         "mark_workspace_read",
+        "set_workspace_read_hint_sync",
         "mark_workspace_direct_read",
         "mark_workspace_mentions_read",
         "mark_workspace_thread_read",
@@ -229,6 +238,7 @@ class MeshChatService(ReactionServiceMixin, GroupServiceMixin, WorkspaceServiceM
         "search",
         "connection_help",
         "preview_workspace_invitation",
+        "preview_workspace_device_link",
         "list_workspace_messages",
         "list_workspace_direct_messages",
         "list_workspace_mentions",
@@ -1801,6 +1811,74 @@ class MeshChatService(ReactionServiceMixin, GroupServiceMixin, WorkspaceServiceM
                     body["workspace_id"], body["request_id"], body["operation_id"]
                 )
             )
+        if command == "create_workspace_device_link":
+            body = _payload(
+                value,
+                allowed={"operation_id", "workspace_id"},
+                required={"operation_id", "workspace_id"},
+            )
+            return self.create_workspace_device_link(
+                body["workspace_id"], body["operation_id"]
+            )
+        if command == "preview_workspace_device_link":
+            body = _payload(
+                value, allowed={"device_link"}, required={"device_link"}
+            )
+            return self.preview_workspace_device_link(body["device_link"])
+        if command == "submit_workspace_device_link":
+            body = _payload(
+                value,
+                allowed={"operation_id", "device_link"},
+                required={"operation_id", "device_link"},
+            )
+            return self.submit_workspace_device_link(
+                body["device_link"], body["operation_id"]
+            )
+        if command in {
+            "approve_workspace_device_link",
+            "decline_workspace_device_link",
+        }:
+            body = _payload(
+                value,
+                allowed={"operation_id", "workspace_id", "link_id"},
+                required={"operation_id", "workspace_id", "link_id"},
+            )
+            method = (
+                self.approve_workspace_device_link
+                if command == "approve_workspace_device_link"
+                else self.decline_workspace_device_link
+            )
+            return method(
+                body["workspace_id"], body["link_id"], body["operation_id"]
+            )
+        if command == "request_workspace_device_removal":
+            body = _payload(
+                value,
+                allowed={"operation_id", "workspace_id", "target_device_id"},
+                required={"operation_id", "workspace_id", "target_device_id"},
+            )
+            return self.request_workspace_device_removal(
+                body["workspace_id"],
+                body["target_device_id"],
+                body["operation_id"],
+            )
+        if command in {
+            "approve_workspace_device_removal",
+            "decline_workspace_device_removal",
+        }:
+            body = _payload(
+                value,
+                allowed={"operation_id", "workspace_id", "removal_id"},
+                required={"operation_id", "workspace_id", "removal_id"},
+            )
+            method = (
+                self.approve_workspace_device_removal
+                if command == "approve_workspace_device_removal"
+                else self.decline_workspace_device_removal
+            )
+            return method(
+                body["workspace_id"], body["removal_id"], body["operation_id"]
+            )
         if command == "update_workspace_metadata":
             body = _payload(
                 value,
@@ -2412,6 +2490,15 @@ class MeshChatService(ReactionServiceMixin, GroupServiceMixin, WorkspaceServiceM
                 body["conversation_id"],
                 body.get("cursor"),
                 body.get("limit", 50),
+            )
+        if command == "set_workspace_read_hint_sync":
+            body = _payload(
+                value,
+                allowed={"operation_id", "workspace_id", "enabled"},
+                required={"operation_id", "workspace_id", "enabled"},
+            )
+            return self.set_workspace_read_hint_sync(
+                body["workspace_id"], body["enabled"], body["operation_id"]
             )
         if command == "mark_workspace_read":
             body = _payload(

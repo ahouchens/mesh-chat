@@ -1095,6 +1095,10 @@ fork suspends safely instead of selecting a branch.
 
 ### Increment 14 adds linked desktop devices
 
+Implemented by desktop release 0.2.34. The frozen enrollment, fan-out,
+recovery, removal and read-hint boundaries are in
+[ADR 0013](docs/adr/0013-linked-desktop-devices.md).
+
 1. Generate a new identity, countersigned one-time link document, and device
    card; admit it through a manifest without claiming the workspace invite as
    proof of an existing member ID.

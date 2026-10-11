@@ -11,6 +11,7 @@ from tools.packaged_direct_harness import (
     run_mixed,
     run_workspace_admin,
     run_workspace_authority,
+    run_workspace_linked_device,
 )
 
 
@@ -103,6 +104,16 @@ def test_exact_packaged_sidecar_workspace_administrator_flow() -> None:
 )
 def test_exact_packaged_sidecar_workspace_authority_flow() -> None:
     result = run_workspace_authority(Path(PACKAGED_BINARY).resolve())
+
+    assert all(result.values())
+
+
+@pytest.mark.skipif(
+    not PACKAGED_BINARY,
+    reason="Set MESH_CHAT_PACKAGED_SIDECAR to the exact release sidecar",
+)
+def test_exact_packaged_sidecar_workspace_linked_device_flow() -> None:
+    result = run_workspace_linked_device(Path(PACKAGED_BINARY).resolve())
 
     assert all(result.values())
 

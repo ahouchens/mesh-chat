@@ -33,6 +33,8 @@ from .workspace_protocol import (
     MAX_INVITATION_LIFETIME_SECONDS,
     MAX_ADMIN_REQUEST_LIFETIME_SECONDS,
     MAX_AUTHORITY_TRANSITIONS,
+    MAX_ACTIVE_DEVICES,
+    MAX_LINKED_DEVICES_PER_MEMBER,
     MAX_HISTORY_CHECKPOINTS,
     MAX_HISTORY_EVENTS,
     MAX_HISTORY_RANGES,
@@ -47,6 +49,8 @@ from .workspace_protocol import (
     VerifiedWorkspaceChannel,
     VerifiedWorkspaceAdminRequest,
     VerifiedWorkspaceAuthorityAcceptance,
+    VerifiedWorkspaceDeviceLinkAcceptance,
+    VerifiedWorkspaceDeviceRemoval,
     VerifiedWorkspaceEvent,
     VerifiedWorkspaceHistoryRequest,
     VerifiedWorkspaceManifest,
@@ -68,6 +72,9 @@ from .workspace_protocol import (
     create_workspace_channel_transfer_offer,
     create_workspace_display_name_request,
     create_workspace_display_name_decision,
+    create_workspace_device_link_acceptance,
+    create_workspace_device_link_offer,
+    create_workspace_device_removal,
     create_workspace_event,
     create_workspace_event_checkpoint,
     create_workspace_history_request,
@@ -77,6 +84,7 @@ from .workspace_protocol import (
     create_workspace_invitation,
     create_workspace_join,
     create_workspace_leave_request,
+    create_workspace_read_hint,
     create_workspace_manifest,
     find_device,
     find_member,
@@ -97,6 +105,10 @@ from .workspace_protocol import (
     verify_workspace_channel_transfer_offer,
     verify_workspace_display_name_request,
     verify_workspace_display_name_decision,
+    verify_workspace_device_link_acceptance,
+    verify_workspace_device_link_offer,
+    verify_workspace_device_manifest_transition,
+    verify_workspace_device_removal,
     verify_workspace_event,
     verify_workspace_event_checkpoint,
     verify_workspace_history_request,
@@ -107,8 +119,10 @@ from .workspace_protocol import (
     verify_workspace_leave_request,
     verify_workspace_manifest,
     verify_workspace_manifest_transition,
+    verify_workspace_read_hint,
     workspace_direct_conversation_id,
     workspace_invitation_formats,
+    workspace_device_link_formats,
     workspace_document_digest,
 )
 from .workspace_wire import (
@@ -147,6 +161,8 @@ MAX_PENDING_CONTROLS = 32
 MAX_FUTURE_MANIFESTS = 8
 MAX_PENDING_JOINS = 32
 MAX_PENDING_JOINS_PER_SOURCE = 4
+MAX_PENDING_DEVICE_LINKS = 32
+MAX_PENDING_DEVICE_LINKS_PER_SOURCE = 4
 MAX_PENDING_CHANNEL_TRANSFERS = 32
 MAX_PENDING_ADMIN_REQUESTS_PER_WORKSPACE = 128
 MAX_ADMIN_REQUESTS_PER_PROFILE = 512
@@ -157,6 +173,8 @@ MAX_INERT_ADMIN_DECISIONS = 64
 ADMIN_REPLAY_RETENTION_SECONDS = 90 * 24 * 60 * 60
 MAX_PENDING_AUTHORITY_TRANSITIONS = 32
 AUTHORITY_FROZEN_OPERATIONS = {
+    "approve_workspace_device_link",
+    "approve_workspace_device_removal",
     "approve_workspace_join",
     "change_workspace_role",
     "close_workspace",
@@ -164,6 +182,8 @@ AUTHORITY_FROZEN_OPERATIONS = {
     "decide_workspace_admin_request",
     "decide_workspace_display_name",
     "decline_workspace_join",
+    "decline_workspace_device_link",
+    "decline_workspace_device_removal",
     "finalize_workspace_authority_transition",
     "offer_workspace_authority_transition",
     "recover_workspace_channel",
@@ -696,7 +716,7 @@ class WorkspaceServiceMixin:
             item for item in channels if item.get("workspace_id") == workspace_id
         ]
         local_member_id = str(workspace.get("local_member_id", ""))
-        former_archive = workspace.get("state") in {"left", "removed", "closed", "forked"}
+        former_archive = workspace.get("state") in {"left", "removed", "device_removed", "closed", "forked"}
         people = [
             item
             for item in workspace.get("members", ())
@@ -913,6 +933,34 @@ class WorkspaceServiceMixin:
     def _workspace_authority_replay_id(self, workspace_id: str, replay_key: str) -> str:
         return self.store.opaque_id(
             "workspace-authority-replay", workspace_id, replay_key
+        )
+
+    def _workspace_device_transition_id(
+        self, workspace_id: str, transition_id: str
+    ) -> str:
+        return self.store.opaque_id(
+            "workspace-device-transition", workspace_id, transition_id
+        )
+
+    def _workspace_device_replay_id(
+        self, workspace_id: str, replay_key: str
+    ) -> str:
+        return self.store.opaque_id(
+            "workspace-device-replay", workspace_id, replay_key
+        )
+
+    def _workspace_device_transition_by_digest(
+        self, workspace_id: str, digest: str
+    ) -> dict[str, Any] | None:
+        return next(
+            (
+                dict(item)
+                for item in self.store.list("workspace_device_transition")
+                if item.get("workspace_id") == workspace_id
+                and item.get("transition_digest") == digest
+                and isinstance(item.get("document"), str)
+            ),
+            None,
         )
 
     def _workspace_admin_profile_index_id(self) -> str:
@@ -1164,6 +1212,7 @@ class WorkspaceServiceMixin:
             "active",
             "incomplete_sync",
             "joining",
+            "linking",
         }:
             return
         workspace["sync_issue"] = reason
@@ -1428,6 +1477,23 @@ class WorkspaceServiceMixin:
         controls.reverse()
         return controls
 
+    def _workspace_channel_admission_chain(
+        self, workspace: dict[str, Any], channel: dict[str, Any]
+    ) -> list[dict[str, Any]]:
+        """Return the smallest control suffix that can admit a linked device."""
+
+        controls = self._workspace_channel_control_chain(channel)
+        if channel.get("id") == workspace.get("general_channel_id"):
+            return controls
+        start = 0
+        for index, control in enumerate(controls):
+            if control.get("document_type") in {
+                "workspace_channel_record",
+                "workspace_channel_manifest",
+            }:
+                start = index
+        return controls[start:]
+
     def _mark_workspace_channel_discovery_incomplete(self, workspace_id: str) -> None:
         workspace = self.store.get(
             "workspace", self._workspace_record_id(workspace_id)
@@ -1502,6 +1568,7 @@ class WorkspaceServiceMixin:
         previous_state = workspace.get("state")
         previous_retention = workspace.get("retention_days", 90)
         local_member = find_member(manifest, workspace["local_member_id"])
+        local_device = find_device(manifest, workspace["local_device_id"])
         workspace["name"] = manifest.name
         workspace["description"] = manifest.description
         workspace["epoch"] = manifest.epoch
@@ -1540,6 +1607,9 @@ class WorkspaceServiceMixin:
             workspace["state"] = "removed"
         elif local_member.status == "left":
             workspace["state"] = "left"
+        elif local_device is None or local_device[0].member_id != local_member.member_id:
+            workspace["state"] = "device_removed"
+            workspace["local_role"] = local_member.role.value
         elif previous_state == "incomplete_sync":
             workspace["state"] = "incomplete_sync"
             workspace["local_role"] = local_member.role.value
@@ -1604,6 +1674,22 @@ class WorkspaceServiceMixin:
                 continue
             recipients.extend((member.member_id, device) for device in member.devices)
         return recipients
+
+    @staticmethod
+    def _workspace_device_recipients(
+        manifest: VerifiedWorkspaceManifest,
+        *,
+        excluding_device_id: str | None = None,
+        include_inactive_device_ids: set[str] | None = None,
+    ) -> list[tuple[str, Any]]:
+        included = include_inactive_device_ids or set()
+        return [
+            (member.member_id, device)
+            for member in manifest.members
+            for device in member.devices
+            if device.device_id != excluding_device_id
+            and (member.status == "active" or device.device_id in included)
+        ]
 
     def _workspace_manifest_deliveries(
         self,
@@ -2512,7 +2598,7 @@ class WorkspaceServiceMixin:
         if historical_member is None or historical_member.status != "active":
             return False
         workspace_state = str(workspace.get("state", ""))
-        former_archive = workspace_state in {"left", "removed", "closed", "forked"}
+        former_archive = workspace_state in {"left", "removed", "device_removed", "closed", "forked"}
         if event.get("channel_digest") is None:
             audience = tuple(event.get("audience_member_ids", ()))
             if local_member_id not in audience or len(audience) != 2:
@@ -3187,6 +3273,60 @@ class WorkspaceServiceMixin:
         )
         return records, outbound_ids
 
+    def _cancel_workspace_device_deliveries(
+        self, workspace_id: str, device_id: str
+    ) -> tuple[list[tuple[str, str, dict[str, Any]]], set[str]]:
+        """Cancel only the lost endpoint legs while preserving person-level detail."""
+
+        now = time.time()
+        records: list[tuple[str, str, dict[str, Any]]] = []
+        cancelled_ids: set[str] = set()
+        changed_messages: dict[str, dict[str, Any]] = {}
+        for delivery_id, stored in self.store.items("workspace_delivery"):
+            if (
+                stored.get("workspace_id") != workspace_id
+                or stored.get("recipient_device_id") != device_id
+                or stored.get("state") in FINAL_DELIVERY_STATES
+            ):
+                continue
+            delivery = dict(stored)
+            delivery["state"] = DeliveryState.CANCELLED.value
+            delivery["cancelled_at"] = now
+            records.append(("workspace_delivery", delivery_id, delivery))
+            cancelled_ids.add(delivery_id)
+            event_id = delivery.get("event_id")
+            if not isinstance(event_id, str):
+                continue
+            message_id = self._workspace_message_record_id(event_id)
+            message = changed_messages.get(message_id)
+            if message is None:
+                stored_message = self.store.get("workspace_message_state", message_id)
+                if stored_message is None:
+                    continue
+                message = dict(stored_message)
+            devices = dict(message.get("delivery_devices", {}))
+            detail = dict(devices.get(device_id, {}))
+            detail.update(
+                {
+                    "member_id": delivery.get("recipient_member_id"),
+                    "member_display_name": delivery.get(
+                        "recipient_display_name", "Member"
+                    ),
+                    "state": DeliveryState.CANCELLED.value,
+                }
+            )
+            devices[device_id] = detail
+            message["delivery_devices"] = devices
+            message["delivery_summary"] = self._workspace_delivery_summary_from_devices(
+                devices
+            )
+            changed_messages[message_id] = message
+        records.extend(
+            ("workspace_message_state", message_id, message)
+            for message_id, message in changed_messages.items()
+        )
+        return records, cancelled_ids
+
     def _cancel_private_channel_member_deliveries(
         self, workspace_id: str, channel_id: str, member_ids: set[str]
     ) -> tuple[list[tuple[str, str, dict[str, Any]]], set[str]]:
@@ -3622,6 +3762,757 @@ class WorkspaceServiceMixin:
             [("workspace_join_request", request_id, request)],
         )
         self._workspace_changed(workspace_id, resource_kind="join_request")
+        return committed
+
+    def create_workspace_device_link(
+        self, workspace_id: Any, operation_id: Any
+    ) -> dict[str, Any]:
+        payload = {"workspace_id": workspace_id}
+        operation_id, digest, replay = self._workspace_operation(
+            "create_workspace_device_link", operation_id, payload
+        )
+        if replay is not None:
+            return replay
+        workspace = self._require_workspace(workspace_id)
+        if workspace.get("state") != "active":
+            raise ContactNotApproved("Only an active member device can create a link")
+        identity = self._identity
+        if identity is None:
+            raise ValidationError("Local identity is unavailable")
+        current = self._workspace_current_manifest(workspace)
+        member = find_member(current, workspace["local_member_id"])
+        local = find_device(current, workspace["local_device_id"])
+        if member is None or member.status != "active" or local is None:
+            raise ContactNotApproved("Local workspace device is not admitted")
+        if len(member.devices) >= MAX_LINKED_DEVICES_PER_MEMBER:
+            raise ValidationError("This member already has three linked devices")
+        if sum(len(item.devices) for item in current.members) >= MAX_ACTIVE_DEVICES:
+            raise ValidationError("This workspace already has 24 active destinations")
+        bootstrap_by_epoch: dict[int, VerifiedWorkspaceManifest] = {}
+        if current.epoch > 1:
+            initial = self._workspace_manifest_at_epoch(workspace_id, 1)
+            if initial is None:
+                raise ValidationError("Workspace initial manifest is unavailable")
+            bootstrap_by_epoch[initial.epoch] = initial
+        for channel in self.store.list("workspace_channel"):
+            if (
+                channel.get("workspace_id") != workspace_id
+                or channel.get("state") == "forked"
+                or (
+                    channel.get("visibility") == "private"
+                    and member.member_id not in channel.get("member_ids", [])
+                )
+            ):
+                continue
+            for control in self._workspace_channel_admission_chain(workspace, channel):
+                manifest_digest = control.get("manifest_digest")
+                if not isinstance(manifest_digest, str):
+                    raise ValidationError("Workspace channel manifest reference is invalid")
+                referenced = self._workspace_manifest_by_digest(manifest_digest)
+                if referenced is None:
+                    raise ValidationError("Workspace channel manifest is unavailable")
+                if referenced.digest != current.digest:
+                    existing = bootstrap_by_epoch.get(referenced.epoch)
+                    if existing is not None and existing.digest != referenced.digest:
+                        raise ValidationError("Workspace channel manifest history is forked")
+                    bootstrap_by_epoch[referenced.epoch] = referenced
+        raw = create_workspace_device_link_offer(
+            identity,
+            genesis=workspace["genesis"],
+            manifest=current.serialized,
+            member_id=member.member_id,
+            sponsor_device_id=local[1].device_id,
+            authority_chain=workspace.get("authority_chain", []),
+            bootstrap_manifests=[
+                item.serialized
+                for item in sorted(
+                    bootstrap_by_epoch.values(), key=lambda value: value.epoch
+                )
+            ],
+        )
+        offer = verify_workspace_device_link_offer(raw)
+        formats = workspace_device_link_formats(raw)
+        record = {
+            "id": offer.link_id,
+            "workspace_id": workspace_id,
+            "direction": "outgoing",
+            "transition_kind": "link",
+            "state": "offered",
+            "member_id": offer.member_id,
+            "sponsor_device_id": offer.sponsor_device_id,
+            "transition_digest": None,
+            "document": offer.serialized,
+            "created_at": float(offer.created_at),
+            "expires_at": float(offer.expires_at),
+            "updated_at": time.time(),
+        }
+        outcome = {"id": offer.link_id, "workspace_id": workspace_id, **formats}
+        committed = self.store.commit_operation(
+            operation_id,
+            digest,
+            outcome,
+            [
+                (
+                    "workspace_device_transition",
+                    self._workspace_device_transition_id(workspace_id, offer.link_id),
+                    record,
+                ),
+                (
+                    "workspace_device_replay",
+                    self._workspace_device_replay_id(workspace_id, offer.replay_key),
+                    {
+                        "workspace_id": workspace_id,
+                        "transition_id": offer.link_id,
+                        "digest": offer.digest,
+                        "created_at": time.time(),
+                    },
+                ),
+            ],
+        )
+        self._workspace_changed(workspace_id, resource_kind="device_transition")
+        return committed
+
+    def preview_workspace_device_link(self, value: Any) -> dict[str, Any]:
+        if not isinstance(value, str):
+            raise ValidationError("Workspace device link must be text")
+        offer = verify_workspace_device_link_offer(value)
+        member = find_member(offer.offered_manifest, offer.member_id)
+        if member is None:
+            raise ValidationError("Workspace device-link member is unavailable")
+        return {
+            "workspace_id": offer.workspace_id,
+            "name": offer.offered_manifest.name,
+            "member_display_name": member.display_name,
+            "sponsor_fingerprint": find_device(
+                offer.offered_manifest, offer.sponsor_device_id
+            )[1].fingerprint,
+            "device_count": len(member.devices),
+            "expires_at": offer.expires_at,
+        }
+
+    def submit_workspace_device_link(
+        self, value: Any, operation_id: Any
+    ) -> dict[str, Any]:
+        payload = {"device_link": value}
+        operation_id, digest, replay = self._workspace_operation(
+            "submit_workspace_device_link", operation_id, payload
+        )
+        if replay is not None:
+            return replay
+        if not isinstance(value, str):
+            raise ValidationError("Workspace device link must be text")
+        offer = verify_workspace_device_link_offer(value)
+        if self.store.get("workspace", self._workspace_record_id(offer.workspace_id)) is not None:
+            raise ValidationError("This workspace is already known on this device")
+        if len(self.store.list("workspace")) >= MAX_WORKSPACES:
+            raise ValidationError("This profile already has 16 workspaces")
+        identity = self._identity
+        if identity is None:
+            raise ValidationError("Local identity is unavailable")
+        acceptance_raw = create_workspace_device_link_acceptance(
+            identity, offer, hints=self._workspace_hints()
+        )
+        acceptance = verify_workspace_device_link_acceptance(
+            acceptance_raw, offer=offer
+        )
+        authority = find_device(
+            offer.offered_manifest, offer.offered_manifest.authority_device_id
+        )
+        member = find_member(offer.offered_manifest, offer.member_id)
+        if authority is None or member is None:
+            raise ValidationError("Workspace device-link authority is unavailable")
+        delivery = self._workspace_delivery_record(
+            workspace_id=offer.workspace_id,
+            recipient_member_id=authority[0].member_id,
+            recipient_device=authority[1],
+            kind="workspace_device_link",
+            document=acceptance.serialized,
+            priority=0,
+        )
+        now = time.time()
+        workspace = {
+            "id": offer.workspace_id,
+            "name": offer.offered_manifest.name,
+            "description": offer.offered_manifest.description,
+            "state": "linking",
+            "local_role": member.role.value,
+            "local_member_id": member.member_id,
+            "local_device_id": acceptance.device.device_id,
+            "owner_member_id": next(
+                item.member_id
+                for item in offer.offered_manifest.members
+                if item.role == WorkspaceRole.OWNER and item.status == "active"
+            ),
+            "authority_device_id": offer.offered_manifest.authority_device_id,
+            "epoch": offer.offered_manifest.epoch,
+            "manifest_hash": offer.offered_manifest.digest,
+            "genesis_digest": offer.genesis.digest,
+            "genesis": offer.genesis.serialized,
+            "authority_chain": [dict(item) for item in offer.authority_chain],
+            "general_channel_id": None,
+            "channel_discovery": "incomplete",
+            "retention_days": offer.offered_manifest.retention_days,
+            "policies": {
+                "channel_creation": offer.offered_manifest.channel_creation.value,
+                "posting": offer.offered_manifest.posting.value,
+                "invitation_requests": offer.offered_manifest.invitation_requests.value,
+            },
+            "members": [
+                self._member_summary(item) for item in offer.offered_manifest.members
+            ],
+            "authorization_generation": 1,
+            "retention_generation": 1,
+            "mention_unread_count": 0,
+            "thread_unread_count": 0,
+            "created_at": now,
+            "updated_at": now,
+        }
+        local_summary = next(
+            item for item in workspace["members"] if item["id"] == member.member_id
+        )
+        new_summary = {
+            "id": acceptance.device.device_id,
+            "destination_hash": acceptance.device.destination_hash.hex(),
+            "fingerprint": acceptance.device.fingerprint,
+            "public_identity": _b64(acceptance.device.public_identity),
+        }
+        local_summary["devices"].append(new_summary)
+        local_summary["device"] = new_summary
+        for summary_member in workspace["members"]:
+            verified_member = find_member(
+                offer.offered_manifest, summary_member["id"]
+            )
+            if verified_member is None:
+                continue
+            by_id = {item.device_id: item for item in verified_member.devices}
+            for summary in summary_member.get("devices", []):
+                card = by_id.get(summary.get("id"))
+                if card is not None:
+                    summary["public_identity"] = _b64(card.public_identity)
+        record = {
+            "id": offer.link_id,
+            "workspace_id": offer.workspace_id,
+            "direction": "outgoing",
+            "transition_kind": "link",
+            "state": "waiting_for_approval",
+            "member_id": offer.member_id,
+            "sponsor_device_id": offer.sponsor_device_id,
+            "device_id": acceptance.device.device_id,
+            "fingerprint": acceptance.device.fingerprint,
+            "transition_digest": acceptance.digest,
+            "document": acceptance.serialized,
+            "created_at": float(offer.created_at),
+            "expires_at": float(offer.expires_at),
+            "updated_at": now,
+        }
+        outcome = self._public_workspace(workspace)
+        records = [
+            ("workspace", self._workspace_record_id(workspace["id"]), workspace),
+            (
+                "workspace_manifest",
+                self._workspace_manifest_record_id(offer.offered_manifest.digest),
+                self._manifest_record(offer.offered_manifest),
+            ),
+            self._manifest_epoch_record(offer.offered_manifest),
+            (
+                "workspace_device_transition",
+                self._workspace_device_transition_id(offer.workspace_id, offer.link_id),
+                record,
+            ),
+            (
+                "workspace_device_replay",
+                self._workspace_device_replay_id(offer.workspace_id, acceptance.replay_key),
+                {
+                    "workspace_id": offer.workspace_id,
+                    "transition_id": offer.link_id,
+                    "digest": acceptance.digest,
+                    "created_at": now,
+                },
+            ),
+            ("workspace_delivery", delivery["id"], delivery),
+            *self._due_records(add=[delivery]),
+        ]
+        committed = self.store.commit_operation(operation_id, digest, outcome, records)
+        network = getattr(self, "network", None)
+        if network is not None:
+            network.remember_contact(
+                authority[1].public_identity, authority[1].destination_hash
+            )
+        self._workspace_changed(offer.workspace_id, resource_kind="device_transition")
+        return committed
+
+    def _receive_workspace_device_transition(
+        self, wire: WorkspaceWirePayload, source_hash: Any = None
+    ) -> bool:
+        try:
+            value = json.loads(wire.document)
+            if not isinstance(value, dict):
+                return False
+            workspace = self.store.get(
+                "workspace", self._workspace_record_id(wire.workspace_id)
+            )
+            if workspace is None or workspace.get("state") in {
+                "closed", "forked", "removed", "left", "device_removed"
+            }:
+                return False
+            current = self._workspace_current_manifest(workspace)
+            if value.get("type") == "workspace_device_link":
+                transition = verify_workspace_device_link_acceptance(wire.document)
+                transition_id = transition.offer.link_id
+                if transition.offer.workspace_id != wire.workspace_id:
+                    return False
+                source_is_new_device = (
+                    isinstance(source_hash, bytes)
+                    and source_hash == transition.device.destination_hash
+                )
+                if not source_is_new_device and not self._workspace_source_is_active(
+                    wire.workspace_id, source_hash
+                ):
+                    return False
+                if (
+                    transition.offer.base_manifest_digest != current.digest
+                    or transition.offer.base_manifest_epoch != current.epoch
+                ):
+                    return False
+                pending_owner = (
+                    workspace.get("local_role") == WorkspaceRole.OWNER.value
+                    and workspace.get("state") == "active"
+                    and source_is_new_device
+                )
+                kind = "link"
+                member_id = transition.offer.member_id
+                device_id = transition.device.device_id
+                fingerprint = transition.device.fingerprint
+                created_at = transition.offer.created_at
+                expires_at = transition.offer.expires_at
+                replay_key = transition.replay_key
+            elif value.get("type") == "workspace_device_removal":
+                if not self._workspace_source_is_active(
+                    wire.workspace_id, source_hash
+                ):
+                    return False
+                transition = verify_workspace_device_removal(
+                    wire.document, manifest=current
+                )
+                transition_id = transition.removal_id
+                pending_owner = (
+                    workspace.get("local_role") == WorkspaceRole.OWNER.value
+                    and workspace.get("state") == "active"
+                )
+                kind = "removal"
+                member_id = transition.member_id
+                device_id = transition.target_device_id
+                target = find_device(current, transition.target_device_id)
+                fingerprint = target[1].fingerprint if target else ""
+                created_at = transition.created_at
+                expires_at = transition.expires_at
+                replay_key = transition.replay_key
+            else:
+                return False
+            transition_record_id = self._workspace_device_transition_id(
+                wire.workspace_id, transition_id
+            )
+            existing_transition = self.store.get(
+                "workspace_device_transition", transition_record_id
+            )
+            if (
+                existing_transition is not None
+                and existing_transition.get("transition_digest") not in {
+                    None,
+                    transition.digest,
+                }
+            ):
+                return False
+            replay_id = self._workspace_device_replay_id(
+                wire.workspace_id, replay_key
+            )
+            existing_replay = self.store.get("workspace_device_replay", replay_id)
+            if existing_replay is not None:
+                return existing_replay.get("digest") == transition.digest
+            pending = [
+                item
+                for item in self.store.list("workspace_device_transition")
+                if item.get("workspace_id") == wire.workspace_id
+                and item.get("state") == "pending"
+            ]
+            if pending_owner and (
+                len(pending) >= MAX_PENDING_DEVICE_LINKS
+                or sum(item.get("fingerprint") == fingerprint for item in pending)
+                >= MAX_PENDING_DEVICE_LINKS_PER_SOURCE
+            ):
+                return False
+            record = {
+                "id": transition_id,
+                "workspace_id": wire.workspace_id,
+                "direction": "incoming",
+                "transition_kind": kind,
+                "state": "pending" if pending_owner else "evidence",
+                "member_id": member_id,
+                "device_id": device_id,
+                "fingerprint": fingerprint,
+                "transition_digest": transition.digest,
+                "document": transition.serialized,
+                "created_at": float(created_at),
+                "expires_at": float(expires_at),
+                "updated_at": time.time(),
+            }
+            self.store.put_many(
+                [
+                    (
+                        "workspace_device_transition",
+                        transition_record_id,
+                        record,
+                    ),
+                    (
+                        "workspace_device_replay",
+                        replay_id,
+                        {
+                            "workspace_id": wire.workspace_id,
+                            "transition_id": transition_id,
+                            "digest": transition.digest,
+                            "created_at": time.time(),
+                        },
+                    ),
+                ]
+            )
+            self._drain_workspace_pending_controls(wire.workspace_id)
+            self._workspace_changed(
+                wire.workspace_id, resource_kind="device_transition"
+            )
+            return True
+        except (MeshChatError, json.JSONDecodeError):
+            return False
+
+    def approve_workspace_device_link(
+        self, workspace_id: Any, link_id: Any, operation_id: Any
+    ) -> dict[str, Any]:
+        return self._decide_workspace_device_transition(
+            workspace_id, link_id, True, operation_id, expected_kind="link"
+        )
+
+    def decline_workspace_device_link(
+        self, workspace_id: Any, link_id: Any, operation_id: Any
+    ) -> dict[str, Any]:
+        return self._decide_workspace_device_transition(
+            workspace_id, link_id, False, operation_id, expected_kind="link"
+        )
+
+    def request_workspace_device_removal(
+        self, workspace_id: Any, target_device_id: Any, operation_id: Any
+    ) -> dict[str, Any]:
+        payload = {
+            "workspace_id": workspace_id,
+            "target_device_id": target_device_id,
+        }
+        operation_id, digest, replay = self._workspace_operation(
+            "request_workspace_device_removal", operation_id, payload
+        )
+        if replay is not None:
+            return replay
+        workspace = self._require_workspace(workspace_id)
+        if workspace.get("state") != "active" or not isinstance(
+            target_device_id, str
+        ):
+            raise ContactNotApproved("Only an active member can remove a linked device")
+        identity = self._identity
+        if identity is None:
+            raise ValidationError("Local identity is unavailable")
+        current = self._workspace_current_manifest(workspace)
+        raw = create_workspace_device_removal(
+            identity,
+            manifest=current,
+            member_id=workspace["local_member_id"],
+            actor_device_id=workspace["local_device_id"],
+            target_device_id=target_device_id,
+        )
+        removal = verify_workspace_device_removal(raw, manifest=current)
+        authority = find_device(current, current.authority_device_id)
+        if authority is None:
+            raise ValidationError("Workspace authority is unavailable")
+        local_authority = current.authority_device_id == workspace["local_device_id"]
+        delivery = None
+        if not local_authority:
+            delivery = self._workspace_delivery_record(
+                workspace_id=workspace_id,
+                recipient_member_id=authority[0].member_id,
+                recipient_device=authority[1],
+                kind="workspace_device_removal",
+                document=removal.serialized,
+                priority=0,
+            )
+        target = find_device(current, removal.target_device_id)
+        record = {
+            "id": removal.removal_id,
+            "workspace_id": workspace_id,
+            "direction": "incoming" if local_authority else "outgoing",
+            "transition_kind": "removal",
+            "state": "pending" if local_authority else "waiting_for_approval",
+            "member_id": removal.member_id,
+            "device_id": removal.target_device_id,
+            "fingerprint": target[1].fingerprint if target else "",
+            "transition_digest": removal.digest,
+            "document": removal.serialized,
+            "created_at": float(removal.created_at),
+            "expires_at": float(removal.expires_at),
+            "updated_at": time.time(),
+        }
+        outcome = {key: value for key, value in record.items() if key != "document"}
+        records = [
+            (
+                "workspace_device_transition",
+                self._workspace_device_transition_id(workspace_id, removal.removal_id),
+                record,
+            ),
+            (
+                "workspace_device_replay",
+                self._workspace_device_replay_id(workspace_id, removal.replay_key),
+                {
+                    "workspace_id": workspace_id,
+                    "transition_id": removal.removal_id,
+                    "digest": removal.digest,
+                    "created_at": time.time(),
+                },
+            ),
+        ]
+        if delivery is not None:
+            records.extend(
+                [
+                    ("workspace_delivery", delivery["id"], delivery),
+                    *self._due_records(add=[delivery]),
+                ]
+            )
+        committed = self.store.commit_operation(operation_id, digest, outcome, records)
+        self._workspace_changed(workspace_id, resource_kind="device_transition")
+        return committed
+
+    def approve_workspace_device_removal(
+        self, workspace_id: Any, removal_id: Any, operation_id: Any
+    ) -> dict[str, Any]:
+        return self._decide_workspace_device_transition(
+            workspace_id, removal_id, True, operation_id, expected_kind="removal"
+        )
+
+    def decline_workspace_device_removal(
+        self, workspace_id: Any, removal_id: Any, operation_id: Any
+    ) -> dict[str, Any]:
+        return self._decide_workspace_device_transition(
+            workspace_id, removal_id, False, operation_id, expected_kind="removal"
+        )
+
+    def _decide_workspace_device_transition(
+        self,
+        workspace_id: Any,
+        transition_id: Any,
+        approve: bool,
+        operation_id: Any,
+        *,
+        expected_kind: str,
+    ) -> dict[str, Any]:
+        command = f"{'approve' if approve else 'decline'}_workspace_device_{expected_kind}"
+        payload = {"workspace_id": workspace_id, "transition_id": transition_id}
+        operation_id, digest, replay = self._workspace_operation(
+            command, operation_id, payload
+        )
+        if replay is not None:
+            return replay
+        workspace = self._require_workspace(workspace_id)
+        if workspace.get("state") != "active" or workspace.get("local_role") != "owner":
+            raise ContactNotApproved("Only the active workspace owner can decide device changes")
+        if not isinstance(transition_id, str):
+            raise ValidationError("Workspace device transition ID is invalid")
+        record_id = self._workspace_device_transition_id(
+            workspace_id, transition_id
+        )
+        record = self.store.get("workspace_device_transition", record_id)
+        if (
+            record is None
+            or record.get("transition_kind") != expected_kind
+            or record.get("state") != "pending"
+            or not isinstance(record.get("document"), str)
+        ):
+            raise ValidationError("Workspace device transition is no longer pending")
+        if not approve:
+            record["state"] = "declined"
+            record["updated_at"] = time.time()
+            outcome = {"id": transition_id, "state": "declined"}
+            committed = self.store.commit_operation(
+                operation_id,
+                digest,
+                outcome,
+                [("workspace_device_transition", record_id, record)],
+            )
+            self._workspace_changed(workspace_id, resource_kind="device_transition")
+            return committed
+        identity = self._identity
+        if identity is None:
+            raise ValidationError("Local identity is unavailable")
+        current = self._workspace_current_manifest(workspace)
+        if expected_kind == "link":
+            transition: VerifiedWorkspaceDeviceLinkAcceptance | VerifiedWorkspaceDeviceRemoval = (
+                verify_workspace_device_link_acceptance(record["document"])
+            )
+            member_id = transition.offer.member_id
+            replacement_cards = [
+                *[
+                    device.serialized
+                    for device in find_member(current, member_id).devices
+                ],
+                transition.device.serialized,
+            ]
+            target_device_id = None
+        else:
+            transition = verify_workspace_device_removal(
+                record["document"], manifest=current
+            )
+            member_id = transition.member_id
+            replacement_cards = [
+                device.serialized
+                for device in find_member(current, member_id).devices
+                if device.device_id != transition.target_device_id
+            ]
+            target_device_id = transition.target_device_id
+        inputs = [
+            WorkspaceManifestMemberInput(
+                member.member_id,
+                member.display_name,
+                member.role,
+                replacement_cards
+                if member.member_id == member_id
+                else [device.serialized for device in member.devices],
+                member.status,
+            )
+            for member in current.members
+        ]
+        raw_manifest = create_workspace_manifest(
+            identity,
+            workspace_id=workspace_id,
+            epoch=current.epoch + 1,
+            previous_manifest_hash=current.digest,
+            name=current.name,
+            description=current.description,
+            authority_device_id=current.authority_device_id,
+            members=inputs,
+            status=current.status,
+            retention_days=current.retention_days,
+            channel_creation=current.channel_creation,
+            posting=current.posting,
+            invitation_requests=current.invitation_requests,
+            removal_checkpoint_digests=current.removal_checkpoint_digests,
+            device_transition_digest=transition.digest,
+        )
+        next_manifest = verify_workspace_device_manifest_transition(
+            raw_manifest, current, transition=transition
+        )
+        cancelled_records: list[tuple[str, str, dict[str, Any]]] = []
+        cancelled_ids: set[str] = set()
+        if target_device_id is not None:
+            cancelled_records, cancelled_ids = self._cancel_workspace_device_deliveries(
+                workspace_id, target_device_id
+            )
+        recipients = self._workspace_device_recipients(
+            next_manifest,
+            excluding_device_id=workspace["local_device_id"],
+        )
+        if target_device_id is not None:
+            removed = find_device(current, target_device_id)
+            if removed is not None:
+                recipients.append((removed[0].member_id, removed[1]))
+        evidence_deliveries = [
+            self._workspace_delivery_record(
+                workspace_id=workspace_id,
+                recipient_member_id=member_id_value,
+                recipient_device=device,
+                kind=(
+                    "workspace_device_link"
+                    if expected_kind == "link"
+                    else "workspace_device_removal"
+                ),
+                document=transition.serialized,
+                priority=0,
+            )
+            for member_id_value, device in recipients
+        ]
+        manifest_deliveries = self._workspace_manifest_deliveries(
+            workspace_id, [next_manifest], recipients
+        )
+        control_deliveries: list[dict[str, Any]] = []
+        if expected_kind == "link":
+            bootstrap_manifest_digests = {
+                transition.offer.offered_manifest.digest,
+                *(item.digest for item in transition.offer.bootstrap_manifests),
+            }
+            for channel in self.store.list("workspace_channel"):
+                if (
+                    channel.get("workspace_id") != workspace_id
+                    or channel.get("state") == "forked"
+                    or (
+                        channel.get("visibility") == "private"
+                        and member_id not in channel.get("member_ids", [])
+                    )
+                ):
+                    continue
+                for control in self._workspace_channel_admission_chain(
+                    workspace, channel
+                ):
+                    if control.get("manifest_digest") not in bootstrap_manifest_digests:
+                        raise ValidationError(
+                            "Workspace channel changed beyond the device-link bootstrap"
+                        )
+                    control_deliveries.append(
+                        self._workspace_delivery_record(
+                            workspace_id=workspace_id,
+                            recipient_member_id=member_id,
+                            recipient_device=transition.device,
+                            kind=control.get(
+                                "document_type", "workspace_channel_record"
+                            ),
+                            document=control["serialized"],
+                            priority=1,
+                        )
+                    )
+        self._apply_manifest_to_workspace(workspace, next_manifest)
+        self._apply_manifest_public_identities(workspace, next_manifest)
+        record.update(
+            {
+                "state": "approved",
+                "final_manifest_digest": next_manifest.digest,
+                "updated_at": time.time(),
+            }
+        )
+        deliveries = [
+            *evidence_deliveries,
+            *manifest_deliveries,
+            *control_deliveries,
+        ]
+        outcome = {
+            "id": transition_id,
+            "state": "approved",
+            "workspace": self._public_workspace(workspace),
+        }
+        records = [
+            ("workspace", self._workspace_record_id(workspace_id), workspace),
+            (
+                "workspace_manifest",
+                self._workspace_manifest_record_id(next_manifest.digest),
+                self._manifest_record(next_manifest),
+            ),
+            self._manifest_epoch_record(next_manifest),
+            ("workspace_device_transition", record_id, record),
+            *cancelled_records,
+            *[("workspace_delivery", item["id"], item) for item in deliveries],
+            *self._due_records(add=deliveries, remove=cancelled_ids),
+        ]
+        committed = self.store.commit_operation(operation_id, digest, outcome, records)
+        network = getattr(self, "network", None)
+        if network is not None:
+            if cancelled_ids:
+                network.cancel_outbound(cancelled_ids)
+            if expected_kind == "link":
+                network.remember_contact(
+                    transition.device.public_identity,
+                    transition.device.destination_hash,
+                )
+        self._workspace_changed(workspace_id, resource_kind="device_transition")
         return committed
 
     def _workspace_mention_index_records(
@@ -6076,7 +6967,19 @@ class WorkspaceServiceMixin:
                 # validate against the already pinned predecessor. A merely
                 # self-consistent outsider manifest must not be able to force a
                 # workspace-wide denial of service.
-                if incoming.authority_transition_digest is None:
+                if incoming.device_transition_digest is not None:
+                    same_epoch_device = self._workspace_device_transition_by_digest(
+                        wire.workspace_id, incoming.device_transition_digest
+                    )
+                    if same_epoch_device is None:
+                        return False
+                    checked_same_epoch = verify_workspace_device_manifest_transition(
+                        wire.document,
+                        predecessor,
+                        transition=same_epoch_device["document"],
+                        allow_expired=True,
+                    )
+                elif incoming.authority_transition_digest is None:
                     checked_same_epoch = verify_workspace_manifest_transition(
                         wire.document, predecessor
                     )
@@ -6152,7 +7055,23 @@ class WorkspaceServiceMixin:
             if incoming.epoch <= current.epoch:
                 return False
             authority_record: dict[str, Any] | None = None
-            if incoming.authority_transition_digest is None:
+            device_record: dict[str, Any] | None = None
+            if incoming.device_transition_digest is not None:
+                device_record = self._workspace_device_transition_by_digest(
+                    wire.workspace_id, incoming.device_transition_digest
+                )
+                if device_record is None:
+                    self._store_pending_workspace_control(
+                        wire, "missing_device_transition"
+                    )
+                    return False
+                checked = verify_workspace_device_manifest_transition(
+                    wire.document,
+                    current,
+                    transition=device_record["document"],
+                    allow_expired=True,
+                )
+            elif incoming.authority_transition_digest is None:
                 checked = verify_workspace_manifest_transition(wire.document, current)
             else:
                 authority_record = next(
@@ -6210,6 +7129,67 @@ class WorkspaceServiceMixin:
             }
             self._apply_manifest_to_workspace(workspace, checked)
             self._apply_manifest_public_identities(workspace, checked)
+            device_records: list[tuple[str, str, dict[str, Any]]] = []
+            removed_device_ids: set[str] = set()
+            if device_record is not None:
+                device_record["state"] = "approved"
+                device_record["final_manifest_digest"] = checked.digest
+                device_record["updated_at"] = time.time()
+                device_records.append(
+                    (
+                        "workspace_device_transition",
+                        self._workspace_device_transition_id(
+                            workspace["id"], device_record["id"]
+                        ),
+                        device_record,
+                    )
+                )
+                try:
+                    transition_value = json.loads(device_record["document"])
+                    if transition_value.get("type") == "workspace_device_link":
+                        linked = verify_workspace_device_link_acceptance(
+                            device_record["document"], allow_expired=True
+                        )
+                        for historical in linked.offer.bootstrap_manifests:
+                            existing_epoch = self.store.get(
+                                "workspace_manifest_epoch",
+                                self._workspace_manifest_epoch_id(
+                                    workspace["id"], historical.epoch
+                                ),
+                            )
+                            if (
+                                existing_epoch is not None
+                                and existing_epoch.get("digest") != historical.digest
+                            ):
+                                workspace["state"] = "forked"
+                                workspace["security_error"] = "manifest_fork"
+                                self.store.put(
+                                    "workspace",
+                                    self._workspace_record_id(workspace["id"]),
+                                    workspace,
+                                )
+                                self._workspace_changed(
+                                    workspace["id"], resource_kind="security"
+                                )
+                                return False
+                            device_records.extend(
+                                [
+                                    (
+                                        "workspace_manifest",
+                                        self._workspace_manifest_record_id(
+                                            historical.digest
+                                        ),
+                                        self._manifest_record(historical),
+                                    ),
+                                    self._manifest_epoch_record(historical),
+                                ]
+                            )
+                    if transition_value.get("type") == "workspace_device_removal":
+                        target_id = transition_value.get("target_device_id")
+                        if isinstance(target_id, str):
+                            removed_device_ids.add(target_id)
+                except json.JSONDecodeError:
+                    return False
             authority_records: list[tuple[str, str, dict[str, Any]]] = []
             if authority_record is not None:
                 chain = list(workspace.get("authority_chain", []))
@@ -6351,6 +7331,14 @@ class WorkspaceServiceMixin:
                 )
                 cancelled_records.extend(member_records)
                 cancelled_ids.update(member_cancelled_ids)
+            for device_id in removed_device_ids:
+                device_cancelled_records, device_cancelled_ids = (
+                    self._cancel_workspace_device_deliveries(
+                        workspace["id"], device_id
+                    )
+                )
+                cancelled_records.extend(device_cancelled_records)
+                cancelled_ids.update(device_cancelled_ids)
             self.store.put_many(
                 [
                     ("workspace", self._workspace_record_id(workspace["id"]), workspace),
@@ -6360,6 +7348,7 @@ class WorkspaceServiceMixin:
                         self._manifest_record(checked),
                     ),
                     self._manifest_epoch_record(checked),
+                    *device_records,
                     *resolved_name_requests,
                     *admin_request_updates,
                     *authority_records,
@@ -6392,7 +7381,7 @@ class WorkspaceServiceMixin:
             if channel.workspace_id != wire.workspace_id:
                 return False
             workspace = self._require_workspace(wire.workspace_id)
-            if workspace.get("state") in {"closed", "forked", "removed", "left"}:
+            if workspace.get("state") in {"closed", "forked", "removed", "left", "device_removed"}:
                 return False
             existing_channel = self.store.get(
                 "workspace_channel", self._workspace_channel_record_id(channel.channel_id)
@@ -6858,7 +7847,7 @@ class WorkspaceServiceMixin:
             )
             if incoming.workspace_id != wire.workspace_id:
                 return False
-            if workspace.get("state") in {"closed", "forked", "removed", "left"}:
+            if workspace.get("state") in {"closed", "forked", "removed", "left", "device_removed"}:
                 return False
             current_manifest = self._workspace_current_manifest(workspace)
             local_current = find_member(current_manifest, local_member_id)
@@ -7866,7 +8855,7 @@ class WorkspaceServiceMixin:
             "workspace_channel", self._workspace_channel_record_id(entity_id)
         )
         local_member_id = str(workspace.get("local_member_id", ""))
-        former_archive = workspace.get("state") in {"left", "removed", "closed", "forked"}
+        former_archive = workspace.get("state") in {"left", "removed", "device_removed", "closed", "forked"}
         if (
             channel is None
             or channel.get("workspace_id") != workspace.get("id")
@@ -7920,7 +8909,7 @@ class WorkspaceServiceMixin:
     ) -> dict[str, Any]:
         workspace = self._require_workspace(workspace_id)
         if workspace.get("state") not in {
-            "active", "incomplete_sync", "leaving", "left", "removed", "closed", "forked"
+            "active", "incomplete_sync", "leaving", "left", "removed", "device_removed", "closed", "forked"
         }:
             raise ContactNotApproved("Workspace search is unavailable in this state")
         if (
@@ -8502,6 +9491,94 @@ class WorkspaceServiceMixin:
             "permanent_gaps": list(index.get("permanent_gaps", ()))[:32],
         }
 
+    def set_workspace_read_hint_sync(
+        self, workspace_id: Any, enabled: Any, operation_id: Any
+    ) -> dict[str, Any]:
+        payload = {"workspace_id": workspace_id, "enabled": enabled}
+        operation_id, digest, replay = self._workspace_operation(
+            "set_workspace_read_hint_sync", operation_id, payload
+        )
+        if replay is not None:
+            return replay
+        if not isinstance(enabled, bool):
+            raise ValidationError("Workspace read-hint setting is invalid")
+        workspace = self._require_workspace(workspace_id)
+        if workspace.get("state") != "active":
+            raise ContactNotApproved("Workspace read-hint sync requires an active device")
+        workspace["read_hint_sync"] = enabled
+        workspace["updated_at"] = time.time()
+        outcome = {"workspace_id": workspace_id, "enabled": enabled}
+        committed = self.store.commit_operation(
+            operation_id,
+            digest,
+            outcome,
+            [("workspace", self._workspace_record_id(workspace_id), workspace)],
+        )
+        self._workspace_changed(workspace_id, resource_kind="read_state")
+        return committed
+
+    def _workspace_read_hint_deliveries(
+        self,
+        workspace: dict[str, Any],
+        conversation_id: str,
+        index: dict[str, Any] | None,
+        high_water: int,
+    ) -> list[dict[str, Any]]:
+        if (
+            not workspace.get("read_hint_sync")
+            or index is None
+            or high_water <= 0
+            or high_water != int(index.get("high_water", 0))
+        ):
+            return []
+        page_id = index.get("head_page")
+        page = (
+            self.store.get("workspace_conversation_index", page_id)
+            if isinstance(page_id, str)
+            else None
+        )
+        entries = page.get("entries", []) if page else []
+        if not entries or not isinstance(entries[-1], dict):
+            return []
+        event_id = entries[-1].get("event_id")
+        message = (
+            self.store.get(
+                "workspace_message_state", self._workspace_message_record_id(event_id)
+            )
+            if isinstance(event_id, str)
+            else None
+        )
+        if message is None or not isinstance(message.get("event_digest"), str):
+            return []
+        identity = self._identity
+        if identity is None:
+            return []
+        manifest = self._workspace_current_manifest(workspace)
+        member = find_member(manifest, workspace["local_member_id"])
+        if member is None or member.status != "active":
+            return []
+        raw = create_workspace_read_hint(
+            identity,
+            manifest=manifest,
+            member_id=member.member_id,
+            device_id=workspace["local_device_id"],
+            conversation_id=conversation_id,
+            through_event_id=event_id,
+            event_digest=message["event_digest"],
+        )
+        return [
+            self._workspace_delivery_record(
+                workspace_id=workspace["id"],
+                recipient_member_id=member.member_id,
+                recipient_device=device,
+                kind="workspace_read_hint",
+                document=raw,
+                priority=2,
+            )
+            for device in member.devices
+            if device.device_id != workspace["local_device_id"]
+        ]
+
     def mark_workspace_read(
         self,
         workspace_id: Any,
@@ -8545,6 +9622,9 @@ class WorkspaceServiceMixin:
         }
         if conversation_kind == "channel":
             outcome["channel_id"] = channel_id
+        hint_deliveries = self._workspace_read_hint_deliveries(
+            workspace, channel_id, index, high_water
+        )
         committed = self.store.commit_operation(
             operation_id,
             digest,
@@ -8572,12 +9652,102 @@ class WorkspaceServiceMixin:
                         "high_water": high_water,
                     },
                 ),
+                *[
+                    ("workspace_delivery", item["id"], item)
+                    for item in hint_deliveries
+                ],
+                *self._due_records(add=hint_deliveries),
             ],
         )
         self._workspace_changed(
             workspace_id, conversation_id=channel_id, resource_kind="read_state"
         )
         return committed
+
+    def _receive_workspace_read_hint(self, wire: WorkspaceWirePayload) -> bool:
+        try:
+            workspace = self._require_workspace(wire.workspace_id)
+            if workspace.get("state") != "active" or not workspace.get(
+                "read_hint_sync"
+            ):
+                return False
+            manifest = self._workspace_current_manifest(workspace)
+            hint = verify_workspace_read_hint(wire.document, manifest=manifest)
+            if (
+                hint.member_id != workspace["local_member_id"]
+                or hint.device_id == workspace["local_device_id"]
+            ):
+                return False
+            message = self.store.get(
+                "workspace_message_state",
+                self._workspace_message_record_id(hint.through_event_id),
+            )
+            if (
+                message is None
+                or message.get("conversation_id") != hint.conversation_id
+                or message.get("event_digest") != hint.event_digest
+            ):
+                return False
+            kind, conversation = self._require_workspace_conversation(
+                hint.workspace_id, hint.conversation_id
+            )
+            index = self.store.get(
+                "workspace_conversation_index",
+                self._workspace_index_record_id(
+                    hint.workspace_id, hint.conversation_id
+                ),
+            )
+            if index is None:
+                return False
+            page_id = index.get("head_page")
+            page = (
+                self.store.get("workspace_conversation_index", page_id)
+                if isinstance(page_id, str)
+                else None
+            )
+            entries = page.get("entries", []) if page else []
+            if not entries or entries[-1].get("event_id") != hint.through_event_id:
+                # Hints never infer positions across a partial history. A later
+                # local mark or hint can converge after canonical catch-up.
+                return False
+            maximum = int(index.get("high_water", 0))
+            read_id = self.store.opaque_id(
+                "workspace-read-state", hint.workspace_id, hint.conversation_id
+            )
+            previous = self.store.get("workspace_read_state", read_id) or {}
+            if maximum <= int(previous.get("high_water", 0)):
+                return True
+            conversation["unread_count"] = 0
+            conversation["updated_at"] = time.time()
+            self.store.put_many(
+                [
+                    (
+                        "workspace_channel" if kind == "channel" else "workspace_direct",
+                        self._workspace_channel_record_id(hint.conversation_id)
+                        if kind == "channel"
+                        else self._workspace_direct_record_id(hint.conversation_id),
+                        conversation,
+                    ),
+                    (
+                        "workspace_read_state",
+                        read_id,
+                        {
+                            "workspace_id": hint.workspace_id,
+                            "conversation_id": hint.conversation_id,
+                            "high_water": maximum,
+                            "source": "linked_device_hint",
+                        },
+                    ),
+                ]
+            )
+            self._workspace_changed(
+                hint.workspace_id,
+                conversation_id=hint.conversation_id,
+                resource_kind="read_state",
+            )
+            return True
+        except (MeshChatError, json.JSONDecodeError):
+            return False
 
     def list_workspace_message_revisions(
         self,
@@ -12386,7 +13556,7 @@ class WorkspaceServiceMixin:
             if not isinstance(value, dict) or value.get("type") != "workspace_authority_transition":
                 return False
             workspace = self._require_workspace(wire.workspace_id)
-            if workspace.get("state") in {"closed", "forked", "removed", "left"}:
+            if workspace.get("state") in {"closed", "forked", "removed", "left", "device_removed"}:
                 return False
             current = self._workspace_current_manifest(workspace)
             phase = value.get("phase")
@@ -13322,7 +14492,7 @@ class WorkspaceServiceMixin:
         if replay is not None:
             return replay
         workspace = self._require_workspace(workspace_id)
-        if workspace.get("state") not in {"left", "removed", "closed"}:
+        if workspace.get("state") not in {"left", "removed", "device_removed", "closed"}:
             raise ValidationError("Leave or close the workspace before removing its data")
         if confirmation != workspace_id:
             raise ValidationError("Workspace removal confirmation does not match")
@@ -13332,6 +14502,8 @@ class WorkspaceServiceMixin:
             "workspace_manifest_epoch",
             "workspace_invitation",
             "workspace_join_request",
+            "workspace_device_transition",
+            "workspace_device_replay",
             "workspace_display_name_request",
             "workspace_channel",
             "workspace_direct",
@@ -15343,6 +16515,11 @@ class WorkspaceServiceMixin:
         if wire.kind == "workspace_join":
             self._receive_workspace_join(wire, getattr(native, "source_hash", None))
             return
+        if wire.kind == "workspace_device_link":
+            self._receive_workspace_device_transition(
+                wire, getattr(native, "source_hash", None)
+            )
+            return
         if not self._workspace_source_is_active(
             wire.workspace_id, getattr(native, "source_hash", None)
         ):
@@ -15386,6 +16563,12 @@ class WorkspaceServiceMixin:
             self._receive_workspace_authority_transition(
                 wire, getattr(native, "source_hash", None)
             )
+        elif wire.kind == "workspace_device_removal":
+            self._receive_workspace_device_transition(
+                wire, getattr(native, "source_hash", None)
+            )
+        elif wire.kind == "workspace_read_hint":
+            self._receive_workspace_read_hint(wire)
         elif wire.kind == "workspace_leave_request":
             self._receive_workspace_leave_request(wire)
         elif wire.kind == "workspace_display_name_request":
@@ -15533,6 +16716,16 @@ class WorkspaceServiceMixin:
         name_requests.sort(
             key=lambda item: (item.get("created_at", 0), item["id"])
         )
+        device_transitions = [
+            {key: value for key, value in item.items() if key != "document"}
+            for item in self.store.list("workspace_device_transition")
+            if item.get("state")
+            in {"offered", "waiting_for_approval", "pending"}
+        ]
+        device_transitions.sort(
+            key=lambda item: (float(item.get("created_at", 0)), item["id"]),
+            reverse=True,
+        )
         admin_requests: list[dict[str, Any]] = []
         owner_review_counts: dict[str, int] = defaultdict(int)
         for stored_workspace in stored_workspaces:
@@ -15585,6 +16778,7 @@ class WorkspaceServiceMixin:
                     is not None
                 )
             ],
+            "workspace_device_transitions": device_transitions,
             "workspace_invitations": invitations,
             "workspace_drafts": [
                 visible

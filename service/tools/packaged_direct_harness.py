@@ -1045,6 +1045,198 @@ def run_workspace_authority(binary: Path) -> dict[str, Any]:
         return result
 
 
+def run_workspace_linked_device(binary: Path) -> dict[str, Any]:
+    """Exercise Increment 14 through two exact packaged sidecars."""
+
+    with tempfile.TemporaryDirectory(prefix="mesh-chat-packaged-linked-") as temporary:
+        root = Path(temporary)
+        owner = PackagedPeer(binary, root / "owner", "Linked Owner")
+        linked = PackagedPeer(binary, root / "linked", "Linked Owner")
+        close_results: list[dict[str, Any]] = []
+        result: dict[str, Any] = {}
+
+        def op() -> str:
+            return str(uuid.uuid4())
+
+        try:
+            workspace, _ = owner.call(
+                "create_workspace",
+                {
+                    "name": "Packaged linked devices",
+                    "description": "Exact 0.2.34 linked-device flow",
+                    "operation_id": op(),
+                },
+            )
+            workspace_id = workspace["id"]
+            channel_id = workspace["general_channel_id"]
+            historical_text = f"before-link-{uuid.uuid4().hex}"
+            owner.call(
+                "send_workspace_message",
+                {
+                    "workspace_id": workspace_id,
+                    "channel_id": channel_id,
+                    "text": historical_text,
+                    "event_id": op(),
+                    "operation_id": op(),
+                },
+            )
+            owner.call(
+                "update_workspace_metadata",
+                {
+                    "workspace_id": workspace_id,
+                    "name": "Packaged linked devices",
+                    "description": "Link after epoch one",
+                    "operation_id": op(),
+                },
+            )
+            offer, _ = owner.call(
+                "create_workspace_device_link",
+                {"workspace_id": workspace_id, "operation_id": op()},
+            )
+            linking, _ = linked.call(
+                "submit_workspace_device_link",
+                {"device_link": offer["text"], "operation_id": op()},
+            )
+            request = owner.wait_for(
+                lambda snap: next(
+                    (
+                        item
+                        for item in snap.get("workspace_device_transitions", [])
+                        if item.get("workspace_id") == workspace_id
+                        and item.get("transition_kind") == "link"
+                        and item.get("state") == "pending"
+                    ),
+                    None,
+                ),
+                description="packaged linked-device approval request",
+            )
+            owner.call(
+                "approve_workspace_device_link",
+                {
+                    "workspace_id": workspace_id,
+                    "link_id": request["id"],
+                    "operation_id": op(),
+                },
+            )
+            linked_workspace = linked.wait_for(
+                lambda snap: next(
+                    (
+                        item
+                        for item in snap.get("workspaces", [])
+                        if item.get("id") == workspace_id
+                        and item.get("state") == "active"
+                        and item.get("general_channel_id") == channel_id
+                    ),
+                    None,
+                ),
+                description="packaged linked-device manifest and #general",
+            )
+            linked.call(
+                "start_workspace_history",
+                {
+                    "workspace_id": workspace_id,
+                    "conversation_id": channel_id,
+                    "operation_id": op(),
+                },
+            )
+            recovered = linked.wait_for(
+                lambda _snap: next(
+                    (
+                        item
+                        for item in linked.call(
+                            "list_workspace_messages",
+                            {
+                                "workspace_id": workspace_id,
+                                "channel_id": channel_id,
+                                "limit": 50,
+                            },
+                        )[0].get("messages", [])
+                        if item.get("text") == historical_text
+                    ),
+                    None,
+                ),
+                description="packaged linked-device history recovery",
+            )
+            live_text = f"after-link-{uuid.uuid4().hex}"
+            owner.call(
+                "send_workspace_message",
+                {
+                    "workspace_id": workspace_id,
+                    "channel_id": channel_id,
+                    "text": live_text,
+                    "event_id": op(),
+                    "operation_id": op(),
+                },
+            )
+            converged = linked.wait_for(
+                lambda _snap: next(
+                    (
+                        item
+                        for item in linked.call(
+                            "list_workspace_messages",
+                            {
+                                "workspace_id": workspace_id,
+                                "channel_id": channel_id,
+                                "limit": 50,
+                            },
+                        )[0].get("messages", [])
+                        if item.get("text") == live_text
+                    ),
+                    None,
+                ),
+                description="packaged linked-device live fan-out",
+            )
+            removal, _ = owner.call(
+                "request_workspace_device_removal",
+                {
+                    "workspace_id": workspace_id,
+                    "target_device_id": linked_workspace["local_device_id"],
+                    "operation_id": op(),
+                },
+            )
+            owner.call(
+                "approve_workspace_device_removal",
+                {
+                    "workspace_id": workspace_id,
+                    "removal_id": removal["id"],
+                    "operation_id": op(),
+                },
+            )
+            removed = linked.wait_for(
+                lambda snap: next(
+                    (
+                        item
+                        for item in snap.get("workspaces", [])
+                        if item.get("id") == workspace_id
+                        and item.get("state") == "device_removed"
+                    ),
+                    None,
+                ),
+                description="packaged linked-device removal",
+            )
+            result = {
+                "fresh_identity": linking["local_device_id"]
+                != workspace["local_device_id"],
+                "linking_was_inert": linking["state"] == "linking",
+                "owner_approved_exact_link": request["id"] == offer["id"],
+                "late_link_general_converged": linked_workspace[
+                    "general_channel_id"
+                ]
+                == channel_id,
+                "historical_event_recovered": recovered["text"]
+                == historical_text,
+                "live_fanout_converged": converged["text"] == live_text,
+                "removed_device_terminal": removed["state"] == "device_removed",
+            }
+        finally:
+            close_results.extend([linked.close(), owner.close()])
+        result["clean_shutdown"] = all(item["clean"] for item in close_results)
+        result["stderr_content_free"] = all(
+            item["stderr_content_free"] for item in close_results
+        )
+        return result
+
+
 def run_mixed(current_binary: Path, legacy_binary: Path) -> dict[str, Any]:
     """Exercise the 0.2.10/0.2.9 direct-chat compatibility boundary.
 

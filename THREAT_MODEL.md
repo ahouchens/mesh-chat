@@ -272,6 +272,34 @@
   can continue. Replacement-workspace guidance does not clone keys, vote,
   recover automatically, select a fork, or import unverified state.
 
+## Linked-device threats
+
+- A device link is a bearer bootstrap, but possession alone is insufficient.
+  The offer is signed by an exact active device, the fresh endpoint
+  countersigns with a new identity, and the owner authority must publish the
+  exact one-card manifest delta. Expiry, one-use identifiers and sealed replay
+  records bound interception and reuse; a user can still mistakenly hand a
+  valid link to the wrong physical desktop.
+- Private identity bytes never cross the link. Compromise of one desktop does
+  not reveal another desktop's key, but every admitted endpoint receives the
+  member's future authorized channel and DM traffic. A compromised sponsor can
+  propose a device and a compromised authority can approve it; fingerprint
+  review and visible owner approval cannot repair two already compromised
+  endpoints.
+- Removal is learned state, not instantaneous global revocation. Until a
+  partitioned peer receives the signed manifest it may accept traffic under the
+  prior epoch. Once learned, both native-source admission and event validation
+  reject newly seen traffic from the removed device. Previously received
+  plaintext and signed history cannot be remotely erased.
+- The sole authority device cannot be removed through the device-removal path.
+  It must first complete the countersigned authority rotation. Permanent loss
+  remains unrecoverable and never enables a vote, copied key or administrator
+  override.
+- Optional read hints are sent only to other devices of the same member and are
+  applied only when the exact canonical event head and digest match. They are
+  local convenience metadata, not social read receipts. Packet timing may
+  still reveal that encrypted same-member control traffic occurred.
+
 ## Metadata that remains observable
 
 Depending on configured interfaces, observers may learn local discovery presence, destination identifiers, IP endpoints, packet size/timing, and route activity. Propagation nodes necessarily retain encrypted objects plus routing/queue metadata. Pairwise group fan-out creates correlated timing and volume that may approximate group activity or size. Signed member cards may disclose up to two validated direct TCP hints to authorized group participants; they are transported inside recipient-encrypted group controls, not published in announces. Mesh Chat does not claim anonymity.
@@ -302,8 +330,8 @@ Depending on configured interfaces, observers may learn local discovery presence
   after permanent owner-key loss, a globally ordered group timeline, public or
   large channels, discoverable groups, anonymous membership, selective history
   sharing, or safe multi-owner membership editing.
-- Guaranteed complete peer history, remote search, linked-device enrollment,
-  automatic authority recovery, and mobile workspace use. Increment 11 can recover only exact
+- Guaranteed complete peer history on a newly linked device, remote search,
+  automatic authority recovery, and mobile workspace use. Catch-up can recover only exact
   authorized bodies still retained by reachable peers. A peer can withhold,
   prune, disappear, or lie about its head; the result is uncertainty or gaps,
   not a global completeness claim. Search queries remain strictly local.

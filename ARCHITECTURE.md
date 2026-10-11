@@ -384,6 +384,31 @@ The service does not export private identities to ordinary files, enable crash u
 
 `Help route messages` maps only to Reticulum `enable_transport`. `Store encrypted messages for offline contacts` maps only to LXMF propagation enablement and a 100 MiB cache. Both default off and require a service restart. Propagation auto-peering is disabled; only explicit static approved peers are configured for synchronization.
 
+## Linked-device authority path
+
+A linked desktop is a new cryptographic endpoint under an existing member, not
+an identity clone. The sponsor and new endpoint countersign an expiring link;
+the sole workspace authority then commits the exact card delta in a manifest.
+Until that manifest is durable, the endpoint remains in `linking` state and
+cannot authorize workspace traffic. The same transition-evidence-before-state
+pattern is used for removal, and the authority endpoint must rotate before it
+can be removed.
+
+The signed offer carries only the bounded historical manifest checkpoints
+needed to validate each authorized channel's smallest admission-control suffix.
+They are installed only after the final authority manifest endorses the exact
+offer. This lets a late-linked device validate epoch-one `#general` and recover
+history without treating a sponsor's bearer document as membership authority.
+
+The outbox continues to store one sealed child delivery per destination. Event
+commit freezes the current manifest's full device set, including the author's
+other devices. Removal cancels only the lost destination's unfinished children
+and recomputes the message summary from device detail. Authorized history is
+recovered through the existing bounded signed catch-up path; neither vault nor
+private identity bytes move between desktops. Optional read hints are encrypted
+same-member controls and are applied only against an identical local event
+head.
+
 ## Decisions
 
 - [ADR 0001: reference Reticulum and LXMF](docs/adr/0001-reference-stack.md)
@@ -398,3 +423,4 @@ The service does not export private identities to ordinary files, enable crash u
 - [ADR 0010: bounded authenticated peer history catch-up](docs/adr/0010-peer-history-catch-up.md)
 - [ADR 0011: workspace administrators and owner-approved requests](docs/adr/0011-workspace-administrators.md)
 - [ADR 0012: workspace authority continuity](docs/adr/0012-authority-continuity.md)
+- [ADR 0013: linked desktop devices](docs/adr/0013-linked-desktop-devices.md)

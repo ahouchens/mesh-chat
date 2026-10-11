@@ -10,6 +10,7 @@ import LXMF
 from .errors import ValidationError
 from .workspace_protocol import (
     MAX_AUTHORITY_ACCEPTANCE_BYTES,
+    MAX_DEVICE_LINK_BYTES,
     MAX_HISTORY_RESPONSE_BYTES,
     MAX_ADMIN_DECISION_BYTES,
     MAX_WORKSPACE_DOCUMENT_BYTES,
@@ -31,6 +32,9 @@ W_DOCUMENT = 6
 WORKSPACE_WIRE_KINDS = frozenset(
     {
         "workspace_join",
+        "workspace_device_link",
+        "workspace_device_removal",
+        "workspace_read_hint",
         "workspace_manifest_root",
         "workspace_channel_record",
         "workspace_channel_manifest",
@@ -105,6 +109,8 @@ def build_workspace_fields(
         if kind == "workspace_admin_request"
         else MAX_AUTHORITY_ACCEPTANCE_BYTES
         if kind == "workspace_authority_transition"
+        else MAX_DEVICE_LINK_BYTES
+        if kind == "workspace_device_link"
         else MAX_WORKSPACE_DOCUMENT_BYTES
     )
     if (
@@ -168,6 +174,8 @@ def parse_workspace_payload(
         if kind == "workspace_admin_request"
         else MAX_AUTHORITY_ACCEPTANCE_BYTES
         if kind == "workspace_authority_transition"
+        else MAX_DEVICE_LINK_BYTES
+        if kind == "workspace_device_link"
         else MAX_WORKSPACE_DOCUMENT_BYTES
     )
     if (

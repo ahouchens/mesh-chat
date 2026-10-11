@@ -17,7 +17,10 @@ from .errors import NetworkUnavailable, RecipientKeysUnavailable, ValidationErro
 from .invitations import verify_invitation
 from .models import DeliveryState, MessageKind
 from .reticulum_config import NetworkSettings, write_config
-from .workspace_protocol import verify_workspace_join
+from .workspace_protocol import (
+    verify_workspace_device_link_acceptance,
+    verify_workspace_join,
+)
 from .workspace_wire import is_workspace_payload, parse_workspace_payload
 
 InboundCallback = Callable[[LXMF.LXMessage], None]
@@ -801,16 +804,28 @@ class ReticulumNetwork:
             try:
                 if is_workspace_payload(message):
                     wire = parse_workspace_payload(message)
-                    if wire.kind != "workspace_join":
+                    if wire.kind == "workspace_join":
+                        join = verify_workspace_join(wire.document)
+                        public_identity = join.device.public_identity
+                        destination_hash = join.device.destination_hash
+                    elif wire.kind == "workspace_device_link":
+                        link = verify_workspace_device_link_acceptance(wire.document)
+                        public_identity = link.device.public_identity
+                        destination_hash = link.device.destination_hash
+                    else:
                         return
-                    join = verify_workspace_join(wire.document)
                     if (
-                        join.workspace_id != wire.workspace_id
-                        or join.device.destination_hash != message.source_hash
+                        (
+                            join.workspace_id
+                            if wire.kind == "workspace_join"
+                            else link.offer.workspace_id
+                        )
+                        != wire.workspace_id
+                        or destination_hash != message.source_hash
                     ):
                         return
                     if not validate_unknown_source_signature(
-                        message, join.device.public_identity
+                        message, public_identity
                     ):
                         return
                 else:

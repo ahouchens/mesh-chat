@@ -48,6 +48,8 @@ const IPC_VERSION: u64 = 1;
 // invalid sidecar length prefix from causing an unbounded allocation.
 const MAX_FRAME_BYTES: usize = 4 * 1024 * 1024;
 const MAX_RENDERER_PAYLOAD_BYTES: usize = 32 * 1024;
+#[cfg(desktop)]
+const MAX_WORKSPACE_DEVICE_LINK_PAYLOAD_BYTES: usize = 700 * 1024;
 
 type PendingResult = Result<Value, String>;
 
@@ -422,6 +424,14 @@ fn allowed_renderer_command(command: &str) -> bool {
             | "submit_workspace_join"
             | "approve_workspace_join"
             | "decline_workspace_join"
+            | "create_workspace_device_link"
+            | "preview_workspace_device_link"
+            | "submit_workspace_device_link"
+            | "approve_workspace_device_link"
+            | "decline_workspace_device_link"
+            | "request_workspace_device_removal"
+            | "approve_workspace_device_removal"
+            | "decline_workspace_device_removal"
             | "update_workspace_metadata"
             | "update_workspace_policies"
             | "update_workspace_retention"
@@ -472,6 +482,7 @@ fn allowed_renderer_command(command: &str) -> bool {
             | "list_workspace_messages"
             | "list_workspace_direct_messages"
             | "mark_workspace_read"
+            | "set_workspace_read_hint_sync"
             | "mark_workspace_direct_read"
             | "list_workspace_mentions"
             | "list_workspace_threads"
@@ -502,6 +513,14 @@ fn workspace_renderer_command(command: &str) -> bool {
             | "submit_workspace_join"
             | "approve_workspace_join"
             | "decline_workspace_join"
+            | "create_workspace_device_link"
+            | "preview_workspace_device_link"
+            | "submit_workspace_device_link"
+            | "approve_workspace_device_link"
+            | "decline_workspace_device_link"
+            | "request_workspace_device_removal"
+            | "approve_workspace_device_removal"
+            | "decline_workspace_device_removal"
             | "update_workspace_metadata"
             | "update_workspace_policies"
             | "update_workspace_retention"
@@ -552,6 +571,7 @@ fn workspace_renderer_command(command: &str) -> bool {
             | "list_workspace_messages"
             | "list_workspace_direct_messages"
             | "mark_workspace_read"
+            | "set_workspace_read_hint_sync"
             | "mark_workspace_direct_read"
             | "list_workspace_mentions"
             | "list_workspace_threads"
@@ -573,8 +593,10 @@ fn workspace_renderer_command(command: &str) -> bool {
 
 #[cfg(desktop)]
 fn invitation_from_argument(argument: &str) -> Option<String> {
-    if (argument.starts_with("meshchat://invite/") || argument.starts_with("meshchat://workspace/"))
-        && argument.len() <= 24 * 1024
+    if (argument.starts_with("meshchat://invite/")
+        || argument.starts_with("meshchat://workspace/")
+        || argument.starts_with("meshchat://workspace-device/"))
+        && argument.len() <= 700 * 1024
     {
         return Some(argument.to_string());
     }
@@ -684,7 +706,15 @@ async fn service_command(
     let size = serde_json::to_vec(&payload)
         .map_err(|_| "invalid_request".to_string())?
         .len();
-    if size > MAX_RENDERER_PAYLOAD_BYTES || contains_forbidden_key(&payload) {
+    let maximum = if matches!(
+        command.as_str(),
+        "preview_workspace_device_link" | "submit_workspace_device_link"
+    ) {
+        MAX_WORKSPACE_DEVICE_LINK_PAYLOAD_BYTES
+    } else {
+        MAX_RENDERER_PAYLOAD_BYTES
+    };
+    if size > maximum || contains_forbidden_key(&payload) {
         return Err("invalid_request".into());
     }
     request(&state, &command, payload, Duration::from_secs(20)).await
@@ -961,6 +991,14 @@ mod tests {
             "submit_workspace_join",
             "approve_workspace_join",
             "decline_workspace_join",
+            "create_workspace_device_link",
+            "preview_workspace_device_link",
+            "submit_workspace_device_link",
+            "approve_workspace_device_link",
+            "decline_workspace_device_link",
+            "request_workspace_device_removal",
+            "approve_workspace_device_removal",
+            "decline_workspace_device_removal",
             "update_workspace_metadata",
             "update_workspace_policies",
             "update_workspace_retention",
@@ -1006,6 +1044,7 @@ mod tests {
             "list_workspace_messages",
             "list_workspace_direct_messages",
             "mark_workspace_read",
+            "set_workspace_read_hint_sync",
             "mark_workspace_direct_read",
             "list_workspace_mentions",
             "list_workspace_threads",
@@ -1034,5 +1073,7 @@ mod tests {
     fn desktop_accepts_workspace_deep_links() {
         let link = "meshchat://workspace/fixture-token";
         assert_eq!(invitation_from_argument(link), Some(link.to_string()));
+        let device = "meshchat://workspace-device/fixture-token";
+        assert_eq!(invitation_from_argument(device), Some(device.to_string()));
     }
 }

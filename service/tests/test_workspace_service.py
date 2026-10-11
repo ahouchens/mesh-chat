@@ -3749,6 +3749,155 @@ def test_administrator_offline_channels_and_owner_approved_invitation(
     admin.close()
 
 
+def test_linked_desktop_recovers_history_and_removal_revokes_only_that_device(
+    tmp_path: Path,
+) -> None:
+    owner_identity = RNS.Identity()
+    linked_identity = RNS.Identity()
+    owner, owner_network = _service(tmp_path / "owner-device", owner_identity, "Alex")
+    linked, linked_network = _service(tmp_path / "linked-device", linked_identity, "Alex")
+    owner_profile = owner._require_profile()
+    linked_profile = linked._require_profile()
+    workspace = owner.create_workspace(_op(160_000), "Device lab", "Increment 14")
+    earlier = owner.send_workspace_message(
+        workspace["id"],
+        workspace["general_channel_id"],
+        "canonical history from before this device existed",
+        _op(160_001),
+        _op(160_002),
+    )
+    advanced = owner.update_workspace_metadata(
+        workspace["id"], "Device lab", "Increment 14 after epoch one", _op(160_100)
+    )
+    assert advanced["epoch"] == 2
+    link = owner.create_workspace_device_link(workspace["id"], _op(160_003))
+    linking = linked.submit_workspace_device_link(link["text"], _op(160_004))
+    assert linking["state"] == "linking"
+    _deliver_all(
+        owner,
+        _flush(linked, linked_network),
+        source_profile=linked_profile,
+        recipient_profile=owner_profile,
+    )
+    pending = next(
+        item
+        for item in owner.workspace_snapshot()["workspace_device_transitions"]
+        if item["transition_kind"] == "link" and item["state"] == "pending"
+    )
+    owner.approve_workspace_device_link(
+        workspace["id"], pending["id"], _op(160_005)
+    )
+    _deliver_all(
+        linked,
+        _flush(owner, owner_network),
+        source_profile=owner_profile,
+        recipient_profile=linked_profile,
+    )
+    linked_workspace = linked._require_workspace(workspace["id"])
+    assert linked_workspace["state"] == "active"
+    assert linked_workspace["local_member_id"] == workspace["local_member_id"]
+    assert linked_workspace["local_device_id"] != workspace["local_device_id"]
+    assert len(linked_workspace["members"][0]["devices"]) == 2
+    assert linked._require_workspace_channel(
+        workspace["id"], workspace["general_channel_id"]
+    )["state"] == "active"
+
+    history = linked.start_workspace_history(
+        workspace["id"], workspace["general_channel_id"], _op(160_006)
+    )
+    assert history["status"] == "requesting"
+    requests = [
+        packet
+        for packet in _flush(linked, linked_network)
+        if parse_workspace_payload(
+            _native(packet, source=b"\x00" * 16, destination=b"\x01" * 16)
+        ).kind
+        == "workspace_history_request"
+    ]
+    assert requests
+    _deliver_all(
+        owner,
+        requests,
+        source_profile=linked_profile,
+        recipient_profile=owner_profile,
+    )
+    responses = [
+        packet
+        for packet in _flush(owner, owner_network)
+        if parse_workspace_payload(
+            _native(packet, source=b"\x00" * 16, destination=b"\x01" * 16)
+        ).kind
+        == "workspace_history_response"
+    ]
+    assert responses
+    _deliver_all(
+        linked,
+        responses,
+        source_profile=owner_profile,
+        recipient_profile=linked_profile,
+    )
+    assert linked.store.get(
+        "workspace_event", linked._workspace_event_record_id(earlier["id"])
+    ) is not None
+
+    owner.set_workspace_read_hint_sync(workspace["id"], True, _op(160_010))
+    linked.set_workspace_read_hint_sync(workspace["id"], True, _op(160_011))
+    owner_page = owner.list_workspace_messages(
+        workspace["id"], workspace["general_channel_id"]
+    )
+    owner.mark_workspace_read(
+        workspace["id"],
+        workspace["general_channel_id"],
+        owner_page["high_water"],
+        _op(160_012),
+    )
+    read_hints = [
+        packet
+        for packet in _flush(owner, owner_network)
+        if parse_workspace_payload(
+            _native(packet, source=b"\x00" * 16, destination=b"\x01" * 16)
+        ).kind
+        == "workspace_read_hint"
+    ]
+    assert read_hints
+    _deliver_all(
+        linked,
+        read_hints,
+        source_profile=owner_profile,
+        recipient_profile=linked_profile,
+    )
+    linked_read = linked.store.get(
+        "workspace_read_state",
+        linked.store.opaque_id(
+            "workspace-read-state",
+            workspace["id"],
+            workspace["general_channel_id"],
+        ),
+    )
+    assert linked_read["source"] == "linked_device_hint"
+
+    with pytest.raises(ValidationError, match="Rotate workspace authority"):
+        linked.request_workspace_device_removal(
+            workspace["id"], workspace["local_device_id"], _op(160_013)
+        )
+    requested = owner.request_workspace_device_removal(
+        workspace["id"], linked_workspace["local_device_id"], _op(160_014)
+    )
+    assert requested["state"] == "pending"
+    owner.approve_workspace_device_removal(
+        workspace["id"], requested["id"], _op(160_015)
+    )
+    _deliver_all(
+        linked,
+        _flush(owner, owner_network),
+        source_profile=owner_profile,
+        recipient_profile=linked_profile,
+    )
+    assert linked._require_workspace(workspace["id"])["state"] == "device_removed"
+    owner.close()
+    linked.close()
+
+
 def test_workspace_ownership_transfer_requires_acceptance_and_converges(
     tmp_path: Path,
 ) -> None:

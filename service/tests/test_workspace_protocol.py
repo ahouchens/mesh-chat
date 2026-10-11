@@ -31,6 +31,9 @@ from mesh_chat.workspace_protocol import (
     MAX_WORKSPACE_DOCUMENT_BYTES,
     WorkspaceManifestMemberInput,
     create_workspace_device_card,
+    create_workspace_device_link_acceptance,
+    create_workspace_device_link_offer,
+    create_workspace_device_removal,
     create_workspace_admin_decision,
     create_workspace_admin_request,
     create_workspace_display_name_request,
@@ -69,12 +72,17 @@ from mesh_chat.workspace_protocol import (
     verify_workspace_history_response,
     verify_workspace_display_name_request,
     verify_workspace_display_name_decision,
+    verify_workspace_device_link_acceptance,
+    verify_workspace_device_link_offer,
+    verify_workspace_device_manifest_transition,
+    verify_workspace_device_removal,
     verify_workspace_genesis,
     verify_workspace_invitation,
     verify_workspace_join,
     verify_workspace_manifest_transition,
     workspace_direct_conversation_id,
     workspace_invitation_formats,
+    workspace_device_link_formats,
 )
 from mesh_chat.workspace_wire import (
     WORKSPACE_CUSTOM_TYPE,
@@ -2187,3 +2195,112 @@ def test_private_channel_chain_binds_roster_audience_transfer_and_recovery() -> 
             member_ids=[genesis.owner_member_id, *[_id() for _ in range(8)]],
             now=NOW,
         )
+
+
+def test_linked_device_certificate_admits_and_removes_exactly_one_fresh_identity() -> None:
+    owner, created, genesis, manifest = _workspace()
+    offer_raw = create_workspace_device_link_offer(
+        owner,
+        genesis=created.serialized,
+        manifest=manifest.serialized,
+        member_id=genesis.owner_member_id,
+        sponsor_device_id=genesis.authority_device_id,
+        now=NOW,
+        nonce=b"l" * 32,
+        link_id=_id(),
+        replay_key=_id(),
+    )
+    formats = workspace_device_link_formats(offer_raw, now=NOW)
+    offer = verify_workspace_device_link_offer(formats["text"], now=NOW)
+    linked_identity = RNS.Identity()
+    acceptance_raw = create_workspace_device_link_acceptance(
+        linked_identity,
+        offer,
+        device_id=_id(),
+        replay_key=_id(),
+        now=NOW + 1,
+    )
+    acceptance = verify_workspace_device_link_acceptance(
+        acceptance_raw, offer=offer, now=NOW + 1
+    )
+    linked_manifest_raw = create_workspace_manifest(
+        owner,
+        workspace_id=manifest.workspace_id,
+        epoch=2,
+        previous_manifest_hash=manifest.digest,
+        name=manifest.name,
+        description=manifest.description,
+        authority_device_id=manifest.authority_device_id,
+        members=[
+            WorkspaceManifestMemberInput(
+                genesis.owner_member_id,
+                genesis.owner_device.display_name,
+                WorkspaceRole.OWNER,
+                [created.device_card, acceptance.device.serialized],
+            )
+        ],
+        device_transition_digest=acceptance.digest,
+        now=NOW + 2,
+    )
+    linked_manifest = verify_workspace_device_manifest_transition(
+        linked_manifest_raw,
+        manifest,
+        transition=acceptance,
+        now=NOW + 2,
+    )
+    assert len(linked_manifest.members[0].devices) == 2
+    with pytest.raises(ValidationError, match="not enabled"):
+        verify_workspace_manifest_transition(
+            linked_manifest_raw, manifest, now=NOW + 2
+        )
+
+    with pytest.raises(ValidationError, match="Rotate workspace authority"):
+        create_workspace_device_removal(
+            linked_identity,
+            manifest=linked_manifest,
+            member_id=genesis.owner_member_id,
+            actor_device_id=acceptance.device.device_id,
+            target_device_id=genesis.authority_device_id,
+            now=NOW + 3,
+        )
+    removal_raw = create_workspace_device_removal(
+        owner,
+        manifest=linked_manifest,
+        member_id=genesis.owner_member_id,
+        actor_device_id=genesis.authority_device_id,
+        target_device_id=acceptance.device.device_id,
+        removal_id=_id(),
+        replay_key=_id(),
+        now=NOW + 3,
+    )
+    removal = verify_workspace_device_removal(
+        removal_raw, manifest=linked_manifest, now=NOW + 3
+    )
+    removed_manifest_raw = create_workspace_manifest(
+        owner,
+        workspace_id=manifest.workspace_id,
+        epoch=3,
+        previous_manifest_hash=linked_manifest.digest,
+        name=manifest.name,
+        description=manifest.description,
+        authority_device_id=manifest.authority_device_id,
+        members=[
+            WorkspaceManifestMemberInput(
+                genesis.owner_member_id,
+                genesis.owner_device.display_name,
+                WorkspaceRole.OWNER,
+                [created.device_card],
+            )
+        ],
+        device_transition_digest=removal.digest,
+        now=NOW + 4,
+    )
+    removed = verify_workspace_device_manifest_transition(
+        removed_manifest_raw,
+        linked_manifest,
+        transition=removal,
+        now=NOW + 4,
+    )
+    assert [item.device_id for item in removed.members[0].devices] == [
+        genesis.authority_device_id
+    ]

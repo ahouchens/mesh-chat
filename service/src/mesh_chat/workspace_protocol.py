@@ -55,13 +55,20 @@ MAX_AUTHORITY_ACCEPTANCE_BYTES = 16 * 1024
 MAX_AUTHORITY_TRANSITION_LIFETIME_SECONDS = 7 * 24 * 60 * 60
 MAX_AUTHORITY_TRANSITIONS = 8
 MAX_AUTHORITY_BOOTSTRAP_BYTES = 256 * 1024
+MAX_DEVICE_LINK_BYTES = 320 * 1024
+MAX_DEVICE_LINK_LIFETIME_SECONDS = 15 * 60
+MAX_DEVICE_BOOTSTRAP_MANIFESTS = 64
 # The text field itself is 16 KiB. The canonical event has a separate bounded
 # allowance for IDs and the author signature.
 MAX_MESSAGE_TEXT_BYTES = 16 * 1024
 MAX_MEMBER_HINTS = 2
 MAX_ACTIVE_MEMBERS = 8
+# Historical manifests prepared the device array with a wider parser bound.
+# Linked-device enrollment is deliberately capped at three active devices per
+# member while retaining read compatibility with those canonical manifests.
 MAX_DEVICES_PER_MEMBER = 8
-MAX_ACTIVE_DEVICES = 16
+MAX_LINKED_DEVICES_PER_MEMBER = 3
+MAX_ACTIVE_DEVICES = 24
 MAX_INVITATION_LIFETIME_SECONDS = 30 * 24 * 60 * 60
 DEFAULT_INVITATION_LIFETIME_SECONDS = 7 * 24 * 60 * 60
 MAX_EPOCH = (1 << 63) - 1
@@ -152,6 +159,68 @@ class VerifiedWorkspaceManifest:
     removal_checkpoint_digests: tuple[str, ...] = ()
     authority_transition_digest: str | None = None
     authority_signer_destination: bytes | None = None
+    device_transition_digest: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class VerifiedWorkspaceDeviceLinkOffer:
+    workspace_id: str
+    link_id: str
+    base_manifest_epoch: int
+    base_manifest_digest: str
+    member_id: str
+    sponsor_device_id: str
+    sponsor_destination: bytes
+    nonce: bytes
+    replay_key: str
+    created_at: int
+    expires_at: int
+    genesis: VerifiedWorkspaceGenesis
+    offered_manifest: VerifiedWorkspaceManifest
+    authority_chain: tuple[dict[str, str | None], ...]
+    bootstrap_manifests: tuple[VerifiedWorkspaceManifest, ...]
+    digest: str
+    serialized: str
+
+
+@dataclass(frozen=True, slots=True)
+class VerifiedWorkspaceDeviceLinkAcceptance:
+    offer: VerifiedWorkspaceDeviceLinkOffer
+    device: VerifiedWorkspaceDeviceCard
+    replay_key: str
+    accepted_at: int
+    digest: str
+    serialized: str
+
+
+@dataclass(frozen=True, slots=True)
+class VerifiedWorkspaceDeviceRemoval:
+    workspace_id: str
+    removal_id: str
+    base_manifest_epoch: int
+    base_manifest_digest: str
+    member_id: str
+    actor_device_id: str
+    target_device_id: str
+    replay_key: str
+    created_at: int
+    expires_at: int
+    digest: str
+    serialized: str
+
+
+@dataclass(frozen=True, slots=True)
+class VerifiedWorkspaceReadHint:
+    workspace_id: str
+    manifest_digest: str
+    member_id: str
+    device_id: str
+    conversation_id: str
+    through_event_id: str
+    event_digest: str
+    created_at: int
+    digest: str
+    serialized: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -519,6 +588,8 @@ def _load_document(raw: str, document_type: str) -> dict[str, Any]:
     maximum = (
         MAX_WORKSPACE_EVENT_BYTES
         if document_type == "workspace_event"
+        else MAX_DEVICE_LINK_BYTES
+        if document_type in {"workspace_device_link_offer", "workspace_device_link"}
         else MAX_AUTHORITY_BOOTSTRAP_BYTES
         if document_type == "workspace_invite"
         else MAX_AUTHORITY_ACCEPTANCE_BYTES
@@ -980,6 +1051,7 @@ def create_workspace_manifest(
     invitation_requests: WorkspaceInvitationPolicy | str = WorkspaceInvitationPolicy.OWNER_ONLY,
     removal_checkpoint_digests: Iterable[str] = (),
     authority_transition_digest: str | None = None,
+    device_transition_digest: str | None = None,
     now: int | None = None,
 ) -> str:
     workspace_id = _validate_uuid(workspace_id, "Workspace ID")
@@ -1057,6 +1129,13 @@ def create_workspace_manifest(
         if authority_transition_digest is None
         else _validate_digest(authority_transition_digest, "Authority transition digest")
     )
+    checked_device_transition = (
+        None
+        if device_transition_digest is None
+        else _validate_digest(device_transition_digest, "Device transition digest")
+    )
+    if transition_digest is not None and checked_device_transition is not None:
+        raise ValidationError("Workspace manifest transition is ambiguous")
     authority_card = next(
         card
         for item in encoded
@@ -1102,6 +1181,8 @@ def create_workspace_manifest(
     if transition_digest is not None:
         unsigned["authority_transition_digest"] = transition_digest
         unsigned["authority_signer_destination"] = authority_destination.hex()
+    if checked_device_transition is not None:
+        unsigned["device_transition_digest"] = checked_device_transition
     return _sign(authority_identity, unsigned)
 
 
@@ -1125,6 +1206,7 @@ def verify_workspace_manifest(
         fields.add("removal_checkpoint_digests")
     transition_digest: str | None = None
     authority_signer_destination: bytes | None = None
+    device_transition_digest: str | None = None
     if "authority_transition_digest" in value or "authority_signer_destination" in value:
         fields.update({"authority_transition_digest", "authority_signer_destination"})
         transition_digest = _validate_digest(
@@ -1133,6 +1215,13 @@ def verify_workspace_manifest(
         authority_signer_destination = _validate_destination(
             value.get("authority_signer_destination"), "Authority signer destination"
         )
+    if "device_transition_digest" in value:
+        fields.add("device_transition_digest")
+        device_transition_digest = _validate_digest(
+            value.get("device_transition_digest"), "Device transition digest"
+        )
+    if transition_digest is not None and device_transition_digest is not None:
+        raise ValidationError("Workspace manifest transition is ambiguous")
     _require_fields(
         value,
         fields,
@@ -1302,6 +1391,7 @@ def verify_workspace_manifest(
         removal_checkpoint_digests=removal_checkpoints,
         authority_transition_digest=transition_digest,
         authority_signer_destination=authority_signer_destination,
+        device_transition_digest=device_transition_digest,
     )
 
 
@@ -1369,6 +1459,7 @@ def verify_workspace_manifest_transition(
     if (
         manifest.authority_transition_digest is not None
         or manifest.authority_signer_destination is not None
+        or manifest.device_transition_digest is not None
         or
         manifest.authority_device_id != previous.authority_device_id
         or manifest.created_at < previous.created_at
@@ -1945,6 +2036,7 @@ def verify_workspace_authority_manifest_transition(
     if (
         manifest.authority_transition_digest != checked_acceptance.digest
         or manifest.authority_signer_destination != previous.authority_destination
+        or manifest.device_transition_digest is not None
         or manifest.authority_device_id != offer.successor_device_id
         or manifest.authority_destination != offer.successor_destination
         or manifest.created_at < checked_acceptance.accepted_at
@@ -2377,6 +2469,740 @@ def extract_workspace_invitation(raw: str) -> str:
         token = "".join(value.split())[len("MESHWORKSPACE1:") :]
         return _b64decode(token, "Workspace invitation token").decode("utf-8")
     return value
+
+
+def _validate_workspace_device_bootstrap_manifests(
+    genesis: VerifiedWorkspaceGenesis,
+    offered_manifest: VerifiedWorkspaceManifest,
+    manifests: Sequence[VerifiedWorkspaceManifest],
+) -> None:
+    """Validate the bounded historical checkpoints endorsed by final admission.
+
+    These checkpoints do not authorize the fresh device by themselves.  They
+    become usable only after the current authority signs the device-transition
+    manifest that binds the exact offer containing them.
+    """
+
+    previous_epoch = 0
+    seen_digests: set[str] = set()
+    initial: VerifiedWorkspaceManifest | None = None
+    for manifest in manifests:
+        if (
+            manifest.workspace_id != genesis.workspace_id
+            or manifest.epoch <= previous_epoch
+            or manifest.epoch >= offered_manifest.epoch
+            or manifest.digest in seen_digests
+        ):
+            raise ValidationError("Workspace device bootstrap manifest set is invalid")
+        previous_epoch = manifest.epoch
+        seen_digests.add(manifest.digest)
+        if manifest.epoch == 1:
+            initial = manifest
+    if offered_manifest.epoch == 1:
+        if manifests:
+            raise ValidationError("Workspace device bootstrap manifest set is invalid")
+        return
+    if initial is None:
+        raise ValidationError("Workspace device bootstrap is missing the initial manifest")
+    verify_workspace_manifest_transition(initial.serialized, genesis)
+
+
+def create_workspace_device_link_offer(
+    sponsor_identity: RNS.Identity,
+    *,
+    genesis: str,
+    manifest: str,
+    member_id: str,
+    sponsor_device_id: str,
+    authority_chain: Sequence[dict[str, str | None]] = (),
+    bootstrap_manifests: Sequence[str] = (),
+    now: int | None = None,
+    lifetime_seconds: int = MAX_DEVICE_LINK_LIFETIME_SECONDS,
+    link_id: str | None = None,
+    nonce: bytes | None = None,
+    replay_key: str | None = None,
+) -> str:
+    """Create a short-lived sponsor proof for one fresh desktop identity."""
+
+    current = int(time.time()) if now is None else int(now)
+    if (
+        isinstance(lifetime_seconds, bool)
+        or not isinstance(lifetime_seconds, int)
+        or not 1 <= lifetime_seconds <= MAX_DEVICE_LINK_LIFETIME_SECONDS
+    ):
+        raise ValidationError("Workspace device-link lifetime is invalid")
+    checked_genesis = verify_workspace_genesis(genesis, now=current)
+    encoded_chain = _encoded_authority_chain(authority_chain)
+    checked_manifest, _ = verify_workspace_authority_chain(
+        checked_genesis, encoded_chain, manifest, now=current
+    )
+    if not isinstance(bootstrap_manifests, Sequence) or isinstance(
+        bootstrap_manifests, (str, bytes)
+    ):
+        raise ValidationError("Workspace device bootstrap manifests are invalid")
+    if len(bootstrap_manifests) > MAX_DEVICE_BOOTSTRAP_MANIFESTS:
+        raise ValidationError("Workspace device bootstrap manifest limit is reached")
+    encoded_bootstrap: list[dict[str, Any]] = []
+    checked_bootstrap: list[VerifiedWorkspaceManifest] = []
+    for raw_bootstrap in bootstrap_manifests:
+        if not isinstance(raw_bootstrap, str):
+            raise ValidationError("Workspace device bootstrap manifest is invalid")
+        checked = verify_workspace_manifest(
+            raw_bootstrap,
+            expected_workspace_id=checked_genesis.workspace_id,
+            now=current,
+        )
+        encoded_bootstrap.append(json.loads(checked.serialized))
+        checked_bootstrap.append(checked)
+    _validate_workspace_device_bootstrap_manifests(
+        checked_genesis, checked_manifest, checked_bootstrap
+    )
+    checked_member_id = _validate_uuid(member_id, "Member ID")
+    checked_sponsor_id = _validate_uuid(sponsor_device_id, "Sponsor device ID")
+    member = find_member(checked_manifest, checked_member_id)
+    sponsor = find_device(checked_manifest, checked_sponsor_id)
+    if (
+        checked_manifest.status != "active"
+        or member is None
+        or member.status != "active"
+        or sponsor is None
+        or sponsor[0].member_id != checked_member_id
+        or sponsor[1].destination_hash != _destination_for(sponsor_identity)
+    ):
+        raise IdentityMismatch("Workspace device-link sponsor is not an active member device")
+    if len(member.devices) >= MAX_LINKED_DEVICES_PER_MEMBER:
+        raise ValidationError("Workspace member already has three linked devices")
+    link_nonce = os.urandom(NONCE_BYTES) if nonce is None else nonce
+    if not isinstance(link_nonce, bytes) or len(link_nonce) != NONCE_BYTES:
+        raise ValidationError("Workspace device-link nonce is invalid")
+    unsigned = {
+        "v": WORKSPACE_PROTOCOL_VERSION,
+        "type": "workspace_device_link_offer",
+        "workspace_id": checked_manifest.workspace_id,
+        "link_id": _validate_uuid(link_id or str(uuid.uuid4()), "Device-link ID"),
+        "base_manifest_epoch": checked_manifest.epoch,
+        "base_manifest_digest": checked_manifest.digest,
+        "member_id": checked_member_id,
+        "sponsor_device_id": checked_sponsor_id,
+        "sponsor_destination": sponsor[1].destination_hash.hex(),
+        "genesis": json.loads(checked_genesis.serialized),
+        "offered_manifest": json.loads(checked_manifest.serialized),
+        "authority_chain": encoded_chain,
+        "bootstrap_manifests": encoded_bootstrap,
+        "nonce": _b64encode(link_nonce),
+        "replay_key": _validate_uuid(replay_key or str(uuid.uuid4()), "Replay key"),
+        "created_at": current,
+        "expires_at": current + lifetime_seconds,
+        "use_limit": 1,
+    }
+    return _sign(sponsor_identity, unsigned, maximum=MAX_DEVICE_LINK_BYTES)
+
+
+def verify_workspace_device_link_offer(
+    raw: str,
+    *,
+    now: int | None = None,
+    allow_expired: bool = False,
+) -> VerifiedWorkspaceDeviceLinkOffer:
+    serialized = extract_workspace_device_link(raw)
+    value = _load_document(serialized, "workspace_device_link_offer")
+    _require_fields(
+        value,
+        {
+            "v", "type", "workspace_id", "link_id", "base_manifest_epoch",
+            "base_manifest_digest", "member_id", "sponsor_device_id",
+            "sponsor_destination", "genesis", "offered_manifest",
+            "authority_chain", "bootstrap_manifests", "nonce", "replay_key", "created_at",
+            "expires_at", "use_limit", "signature",
+        },
+    )
+    if value["v"] != WORKSPACE_PROTOCOL_VERSION or value["use_limit"] != 1:
+        raise ValidationError("Workspace device-link version or use limit is invalid")
+    if not isinstance(value["genesis"], dict) or not isinstance(
+        value["offered_manifest"], dict
+    ) or not isinstance(value["authority_chain"], list) or not isinstance(
+        value["bootstrap_manifests"], list
+    ):
+        raise ValidationError("Workspace device-link bootstrap is invalid")
+    current = int(time.time()) if now is None else int(now)
+    genesis = verify_workspace_genesis(_canonical(value["genesis"]), now=current)
+    manifest, authority_chain = verify_workspace_authority_chain(
+        genesis,
+        value["authority_chain"],
+        _canonical(value["offered_manifest"]),
+        now=current,
+    )
+    if len(value["bootstrap_manifests"]) > MAX_DEVICE_BOOTSTRAP_MANIFESTS:
+        raise ValidationError("Workspace device bootstrap manifest limit is reached")
+    bootstrap_manifests: list[VerifiedWorkspaceManifest] = []
+    for item in value["bootstrap_manifests"]:
+        if not isinstance(item, dict):
+            raise ValidationError("Workspace device bootstrap manifest is invalid")
+        bootstrap_manifests.append(
+            verify_workspace_manifest(
+                _canonical(item),
+                expected_workspace_id=genesis.workspace_id,
+                now=current,
+            )
+        )
+    _validate_workspace_device_bootstrap_manifests(
+        genesis, manifest, bootstrap_manifests
+    )
+    workspace_id = _validate_uuid(value["workspace_id"], "Workspace ID")
+    link_id = _validate_uuid(value["link_id"], "Device-link ID")
+    member_id = _validate_uuid(value["member_id"], "Member ID")
+    sponsor_device_id = _validate_uuid(value["sponsor_device_id"], "Sponsor device ID")
+    base_digest = _validate_digest(value["base_manifest_digest"], "Base manifest digest")
+    base_epoch = value["base_manifest_epoch"]
+    if (
+        workspace_id != genesis.workspace_id
+        or workspace_id != manifest.workspace_id
+        or isinstance(base_epoch, bool)
+        or not isinstance(base_epoch, int)
+        or base_epoch != manifest.epoch
+        or base_digest != manifest.digest
+    ):
+        raise ValidationError("Workspace device-link bootstrap does not match")
+    member = find_member(manifest, member_id)
+    sponsor = find_device(manifest, sponsor_device_id)
+    sponsor_destination = _validate_destination(
+        value["sponsor_destination"], "Sponsor destination"
+    )
+    if (
+        manifest.status != "active"
+        or member is None
+        or member.status != "active"
+        or sponsor is None
+        or sponsor[0].member_id != member_id
+        or sponsor[1].destination_hash != sponsor_destination
+        or len(member.devices) >= MAX_LINKED_DEVICES_PER_MEMBER
+    ):
+        raise IdentityMismatch("Workspace device-link sponsor is not an active member device")
+    _verify_signature(
+        _identity_from_public_key(sponsor[1].public_identity),
+        value,
+        "Workspace device-link offer",
+    )
+    created_at = _validate_timestamp(value["created_at"], now=current)
+    expires_at = value["expires_at"]
+    if (
+        isinstance(expires_at, bool)
+        or not isinstance(expires_at, int)
+        or expires_at < created_at
+        or expires_at - created_at > MAX_DEVICE_LINK_LIFETIME_SECONDS
+    ):
+        raise ValidationError("Workspace device-link dates are invalid")
+    if expires_at < current and not allow_expired:
+        raise InvitationExpired("Workspace device link has expired")
+    return VerifiedWorkspaceDeviceLinkOffer(
+        workspace_id=workspace_id,
+        link_id=link_id,
+        base_manifest_epoch=base_epoch,
+        base_manifest_digest=base_digest,
+        member_id=member_id,
+        sponsor_device_id=sponsor_device_id,
+        sponsor_destination=sponsor_destination,
+        nonce=_b64decode(value["nonce"], "Device-link nonce", expected_length=NONCE_BYTES),
+        replay_key=_validate_uuid(value["replay_key"], "Replay key"),
+        created_at=created_at,
+        expires_at=expires_at,
+        genesis=genesis,
+        offered_manifest=manifest,
+        authority_chain=authority_chain,
+        bootstrap_manifests=tuple(bootstrap_manifests),
+        digest=_digest(value),
+        serialized=_canonical(value),
+    )
+
+
+def workspace_device_link_formats(raw: str, *, now: int | None = None) -> dict[str, Any]:
+    offer = verify_workspace_device_link_offer(raw, now=now)
+    token = _b64encode(offer.serialized.encode("utf-8"))
+    return {
+        "link": f"meshchat://workspace-device/{token}",
+        "text": f"MESHWORKSPACEDEVICE1:{token}",
+        "value": offer.serialized,
+        "expires_at": offer.expires_at,
+    }
+
+
+def extract_workspace_device_link(raw: str) -> str:
+    if not isinstance(raw, str):
+        raise ValidationError("Workspace device link is invalid")
+    value = raw.translate(_INVISIBLE).strip()
+    if not value or len(value.encode("utf-8")) > MAX_DEVICE_LINK_BYTES * 2:
+        raise ValidationError("Workspace device link is empty or too large")
+    lower = value.lower()
+    if lower.startswith("meshchat://workspace-device/"):
+        compact = "".join(value.split())
+        parsed = urlsplit(compact)
+        if (
+            parsed.scheme != "meshchat"
+            or parsed.netloc != "workspace-device"
+            or parsed.query
+            or parsed.fragment
+            or not parsed.path.startswith("/")
+        ):
+            raise ValidationError("Workspace device-link URL is invalid")
+        return _b64decode(parsed.path[1:], "Workspace device-link token").decode("utf-8")
+    if lower.startswith("meshworkspacedevice1:"):
+        token = "".join(value.split())[len("MESHWORKSPACEDEVICE1:") :]
+        return _b64decode(token, "Workspace device-link token").decode("utf-8")
+    return value
+
+
+def create_workspace_device_link_acceptance(
+    new_identity: RNS.Identity,
+    offer: str | VerifiedWorkspaceDeviceLinkOffer,
+    *,
+    device_id: str | None = None,
+    hints: list[dict[str, Any]] | None = None,
+    now: int | None = None,
+    replay_key: str | None = None,
+) -> str:
+    current = int(time.time()) if now is None else int(now)
+    checked = (
+        offer
+        if isinstance(offer, VerifiedWorkspaceDeviceLinkOffer)
+        else verify_workspace_device_link_offer(offer, now=current)
+    )
+    member = find_member(checked.offered_manifest, checked.member_id)
+    if member is None or member.status != "active":
+        raise ValidationError("Workspace device-link member is unavailable")
+    card = create_workspace_device_card(
+        new_identity,
+        workspace_id=checked.workspace_id,
+        member_id=checked.member_id,
+        device_id=device_id or str(uuid.uuid4()),
+        display_name=member.display_name,
+        hints=hints,
+        now=current,
+    )
+    unsigned = {
+        "v": WORKSPACE_PROTOCOL_VERSION,
+        "type": "workspace_device_link",
+        "workspace_id": checked.workspace_id,
+        "link_id": checked.link_id,
+        "offer_digest": checked.digest,
+        "offer": json.loads(checked.serialized),
+        "device_card": json.loads(card),
+        "replay_key": _validate_uuid(replay_key or str(uuid.uuid4()), "Replay key"),
+        "accepted_at": current,
+    }
+    return _sign(new_identity, unsigned, maximum=MAX_DEVICE_LINK_BYTES)
+
+
+def verify_workspace_device_link_acceptance(
+    raw: str,
+    *,
+    offer: str | VerifiedWorkspaceDeviceLinkOffer | None = None,
+    now: int | None = None,
+    allow_expired: bool = False,
+) -> VerifiedWorkspaceDeviceLinkAcceptance:
+    value = _load_document(raw, "workspace_device_link")
+    _require_fields(
+        value,
+        {
+            "v", "type", "workspace_id", "link_id", "offer_digest", "offer",
+            "device_card", "replay_key", "accepted_at", "signature",
+        },
+    )
+    if value["v"] != WORKSPACE_PROTOCOL_VERSION or not isinstance(
+        value["offer"], dict
+    ) or not isinstance(value["device_card"], dict):
+        raise ValidationError("Workspace device-link acceptance is invalid")
+    current = int(time.time()) if now is None else int(now)
+    embedded = verify_workspace_device_link_offer(
+        _canonical(value["offer"]), now=current, allow_expired=allow_expired
+    )
+    expected = (
+        offer
+        if isinstance(offer, VerifiedWorkspaceDeviceLinkOffer)
+        else verify_workspace_device_link_offer(
+            offer, now=current, allow_expired=allow_expired
+        )
+        if isinstance(offer, str)
+        else embedded
+    )
+    if embedded.serialized != expected.serialized:
+        raise ValidationError("Workspace device-link acceptance uses another offer")
+    if (
+        value["workspace_id"] != embedded.workspace_id
+        or value["link_id"] != embedded.link_id
+        or value["offer_digest"] != embedded.digest
+    ):
+        raise ValidationError("Workspace device-link acceptance does not match its offer")
+    card = verify_workspace_device_card(
+        _canonical(value["device_card"]),
+        expected_workspace_id=embedded.workspace_id,
+        expected_member_id=embedded.member_id,
+        now=current,
+    )
+    if find_device(embedded.offered_manifest, card.device_id) is not None:
+        raise ValidationError("Workspace device is already admitted")
+    _verify_signature(
+        _identity_from_public_key(card.public_identity),
+        value,
+        "Workspace device-link acceptance",
+    )
+    accepted_at = _validate_timestamp(value["accepted_at"], now=current)
+    if accepted_at < embedded.created_at or accepted_at > embedded.expires_at:
+        raise InvitationExpired("Workspace device-link acceptance is outside its validity window")
+    return VerifiedWorkspaceDeviceLinkAcceptance(
+        offer=embedded,
+        device=card,
+        replay_key=_validate_uuid(value["replay_key"], "Replay key"),
+        accepted_at=accepted_at,
+        digest=_digest(value),
+        serialized=_canonical(value),
+    )
+
+
+def create_workspace_device_removal(
+    actor_identity: RNS.Identity,
+    *,
+    manifest: VerifiedWorkspaceManifest,
+    member_id: str,
+    actor_device_id: str,
+    target_device_id: str,
+    now: int | None = None,
+    lifetime_seconds: int = MAX_DEVICE_LINK_LIFETIME_SECONDS,
+    removal_id: str | None = None,
+    replay_key: str | None = None,
+) -> str:
+    current = int(time.time()) if now is None else int(now)
+    if (
+        isinstance(lifetime_seconds, bool)
+        or not isinstance(lifetime_seconds, int)
+        or not 1 <= lifetime_seconds <= MAX_DEVICE_LINK_LIFETIME_SECONDS
+    ):
+        raise ValidationError("Workspace device-removal lifetime is invalid")
+    checked_member_id = _validate_uuid(member_id, "Member ID")
+    checked_actor_id = _validate_uuid(actor_device_id, "Actor device ID")
+    checked_target_id = _validate_uuid(target_device_id, "Target device ID")
+    member = find_member(manifest, checked_member_id)
+    actor = find_device(manifest, checked_actor_id)
+    target = find_device(manifest, checked_target_id)
+    if (
+        manifest.status != "active"
+        or member is None
+        or member.status != "active"
+        or actor is None
+        or target is None
+        or actor[0].member_id != checked_member_id
+        or target[0].member_id != checked_member_id
+        or actor[1].destination_hash != _destination_for(actor_identity)
+    ):
+        raise IdentityMismatch("Workspace device removal is not authorized")
+    if checked_actor_id == checked_target_id:
+        raise ValidationError("A device cannot remove itself")
+    if checked_target_id == manifest.authority_device_id:
+        raise ValidationError("Rotate workspace authority before removing that device")
+    if len(member.devices) <= 1:
+        raise ValidationError("A member must retain one admitted device")
+    unsigned = {
+        "v": WORKSPACE_PROTOCOL_VERSION,
+        "type": "workspace_device_removal",
+        "workspace_id": manifest.workspace_id,
+        "removal_id": _validate_uuid(removal_id or str(uuid.uuid4()), "Device-removal ID"),
+        "base_manifest_epoch": manifest.epoch,
+        "base_manifest_digest": manifest.digest,
+        "member_id": checked_member_id,
+        "actor_device_id": checked_actor_id,
+        "target_device_id": checked_target_id,
+        "replay_key": _validate_uuid(replay_key or str(uuid.uuid4()), "Replay key"),
+        "created_at": current,
+        "expires_at": current + lifetime_seconds,
+    }
+    return _sign(actor_identity, unsigned)
+
+
+def verify_workspace_device_removal(
+    raw: str,
+    *,
+    manifest: VerifiedWorkspaceManifest,
+    now: int | None = None,
+    allow_expired: bool = False,
+) -> VerifiedWorkspaceDeviceRemoval:
+    value = _load_document(raw, "workspace_device_removal")
+    _require_fields(
+        value,
+        {
+            "v", "type", "workspace_id", "removal_id", "base_manifest_epoch",
+            "base_manifest_digest", "member_id", "actor_device_id",
+            "target_device_id", "replay_key", "created_at", "expires_at",
+            "signature",
+        },
+    )
+    if value["v"] != WORKSPACE_PROTOCOL_VERSION:
+        raise ValidationError("Workspace device-removal version is unsupported")
+    workspace_id = _validate_uuid(value["workspace_id"], "Workspace ID")
+    removal_id = _validate_uuid(value["removal_id"], "Device-removal ID")
+    member_id = _validate_uuid(value["member_id"], "Member ID")
+    actor_device_id = _validate_uuid(value["actor_device_id"], "Actor device ID")
+    target_device_id = _validate_uuid(value["target_device_id"], "Target device ID")
+    base_epoch = value["base_manifest_epoch"]
+    base_digest = _validate_digest(value["base_manifest_digest"], "Base manifest digest")
+    if (
+        workspace_id != manifest.workspace_id
+        or isinstance(base_epoch, bool)
+        or not isinstance(base_epoch, int)
+        or base_epoch != manifest.epoch
+        or base_digest != manifest.digest
+        or manifest.status != "active"
+    ):
+        raise ValidationError("Workspace device removal is stale")
+    member = find_member(manifest, member_id)
+    actor = find_device(manifest, actor_device_id)
+    target = find_device(manifest, target_device_id)
+    if (
+        member is None
+        or member.status != "active"
+        or actor is None
+        or target is None
+        or actor[0].member_id != member_id
+        or target[0].member_id != member_id
+    ):
+        raise IdentityMismatch("Workspace device removal is not authorized")
+    if actor_device_id == target_device_id:
+        raise ValidationError("A device cannot remove itself")
+    if target_device_id == manifest.authority_device_id:
+        raise ValidationError("Rotate workspace authority before removing that device")
+    if len(member.devices) <= 1:
+        raise ValidationError("A member must retain one admitted device")
+    _verify_signature(
+        _identity_from_public_key(actor[1].public_identity),
+        value,
+        "Workspace device removal",
+    )
+    current = int(time.time()) if now is None else int(now)
+    created_at = _validate_timestamp(value["created_at"], now=current)
+    expires_at = value["expires_at"]
+    if (
+        isinstance(expires_at, bool)
+        or not isinstance(expires_at, int)
+        or expires_at < created_at
+        or expires_at - created_at > MAX_DEVICE_LINK_LIFETIME_SECONDS
+    ):
+        raise ValidationError("Workspace device-removal dates are invalid")
+    if expires_at < current and not allow_expired:
+        raise InvitationExpired("Workspace device removal has expired")
+    return VerifiedWorkspaceDeviceRemoval(
+        workspace_id=workspace_id,
+        removal_id=removal_id,
+        base_manifest_epoch=base_epoch,
+        base_manifest_digest=base_digest,
+        member_id=member_id,
+        actor_device_id=actor_device_id,
+        target_device_id=target_device_id,
+        replay_key=_validate_uuid(value["replay_key"], "Replay key"),
+        created_at=created_at,
+        expires_at=expires_at,
+        digest=_digest(value),
+        serialized=_canonical(value),
+    )
+
+
+def verify_workspace_device_manifest_transition(
+    raw: str,
+    previous: VerifiedWorkspaceManifest,
+    *,
+    transition: str | VerifiedWorkspaceDeviceLinkAcceptance | VerifiedWorkspaceDeviceRemoval,
+    now: int | None = None,
+    allow_expired: bool = False,
+) -> VerifiedWorkspaceManifest:
+    """Verify the one-card delta authorized by a countersigned transition."""
+
+    if isinstance(transition, VerifiedWorkspaceDeviceLinkAcceptance):
+        checked: VerifiedWorkspaceDeviceLinkAcceptance | VerifiedWorkspaceDeviceRemoval = transition
+    elif isinstance(transition, VerifiedWorkspaceDeviceRemoval):
+        checked = transition
+    elif isinstance(transition, str):
+        try:
+            transition_value = json.loads(transition)
+        except json.JSONDecodeError as exc:
+            raise ValidationError("Workspace device transition is invalid") from exc
+        if not isinstance(transition_value, dict):
+            raise ValidationError("Workspace device transition is invalid")
+        if transition_value.get("type") == "workspace_device_link":
+            checked = verify_workspace_device_link_acceptance(
+                transition, now=now, allow_expired=allow_expired
+            )
+        elif transition_value.get("type") == "workspace_device_removal":
+            checked = verify_workspace_device_removal(
+                transition, manifest=previous, now=now, allow_expired=allow_expired
+            )
+        else:
+            raise ValidationError("Workspace device transition is invalid")
+    else:
+        raise ValidationError("Workspace device transition is invalid")
+    base_epoch = (
+        checked.offer.base_manifest_epoch
+        if isinstance(checked, VerifiedWorkspaceDeviceLinkAcceptance)
+        else checked.base_manifest_epoch
+    )
+    base_digest = (
+        checked.offer.base_manifest_digest
+        if isinstance(checked, VerifiedWorkspaceDeviceLinkAcceptance)
+        else checked.base_manifest_digest
+    )
+    if base_epoch != previous.epoch or base_digest != previous.digest:
+        raise ValidationError("Workspace device transition is stale")
+    manifest = verify_workspace_manifest(
+        raw,
+        expected_workspace_id=previous.workspace_id,
+        expected_epoch=previous.epoch + 1,
+        expected_previous_hash=previous.digest,
+        expected_authority_destination=previous.authority_destination,
+        now=now,
+    )
+    if (
+        manifest.device_transition_digest != checked.digest
+        or manifest.authority_transition_digest is not None
+        or manifest.authority_signer_destination is not None
+        or manifest.authority_device_id != previous.authority_device_id
+        or manifest.authority_destination != previous.authority_destination
+        or manifest.status != previous.status
+        or manifest.name != previous.name
+        or manifest.description != previous.description
+        or manifest.retention_days != previous.retention_days
+        or manifest.channel_creation != previous.channel_creation
+        or manifest.posting != previous.posting
+        or manifest.invitation_requests != previous.invitation_requests
+        or manifest.removal_checkpoint_digests != previous.removal_checkpoint_digests
+        or manifest.created_at < previous.created_at
+    ):
+        raise ValidationError("Workspace device manifest is not bound to its transition")
+    before = {member.member_id: member for member in previous.members}
+    after = {member.member_id: member for member in manifest.members}
+    if before.keys() != after.keys():
+        raise ValidationError("Workspace device transition changed membership")
+    target_member_id = (
+        checked.offer.member_id
+        if isinstance(checked, VerifiedWorkspaceDeviceLinkAcceptance)
+        else checked.member_id
+    )
+    for member_id, old_member in before.items():
+        new_member = after[member_id]
+        if (
+            new_member.display_name != old_member.display_name
+            or new_member.role != old_member.role
+            or new_member.status != old_member.status
+        ):
+            raise ValidationError("Workspace device transition changed a member")
+        old_cards = [device.serialized for device in old_member.devices]
+        new_cards = [device.serialized for device in new_member.devices]
+        if member_id != target_member_id:
+            if new_cards != old_cards:
+                raise ValidationError("Workspace device transition changed another member")
+            continue
+        if isinstance(checked, VerifiedWorkspaceDeviceLinkAcceptance):
+            expected_cards = [*old_cards, checked.device.serialized]
+            if len(new_cards) > MAX_LINKED_DEVICES_PER_MEMBER:
+                raise ValidationError("Workspace member has too many linked devices")
+        else:
+            expected_cards = [
+                device.serialized
+                for device in old_member.devices
+                if device.device_id != checked.target_device_id
+            ]
+            if not expected_cards:
+                raise ValidationError("Workspace member must retain one device")
+        if new_cards != expected_cards:
+            raise ValidationError("Workspace device manifest has the wrong device delta")
+    if sum(len(member.devices) for member in manifest.members) > MAX_ACTIVE_DEVICES:
+        raise ValidationError("Workspace manifest has too many active devices")
+    return manifest
+
+
+def create_workspace_read_hint(
+    identity: RNS.Identity,
+    *,
+    manifest: VerifiedWorkspaceManifest,
+    member_id: str,
+    device_id: str,
+    conversation_id: str,
+    through_event_id: str,
+    event_digest: str,
+    now: int | None = None,
+) -> str:
+    member = find_member(manifest, _validate_uuid(member_id, "Member ID"))
+    device = find_device(manifest, _validate_uuid(device_id, "Device ID"))
+    if (
+        manifest.status != "active"
+        or member is None
+        or member.status != "active"
+        or device is None
+        or device[0].member_id != member.member_id
+        or device[1].destination_hash != _destination_for(identity)
+    ):
+        raise IdentityMismatch("Workspace read-hint signer is not admitted")
+    unsigned = {
+        "v": WORKSPACE_PROTOCOL_VERSION,
+        "type": "workspace_read_hint",
+        "workspace_id": manifest.workspace_id,
+        "manifest_digest": manifest.digest,
+        "member_id": member.member_id,
+        "device_id": device[1].device_id,
+        "conversation_id": _validate_uuid(conversation_id, "Conversation ID"),
+        "through_event_id": _validate_uuid(through_event_id, "Event ID"),
+        "event_digest": _validate_digest(event_digest, "Event digest"),
+        "created_at": int(time.time()) if now is None else int(now),
+    }
+    return _sign(identity, unsigned)
+
+
+def verify_workspace_read_hint(
+    raw: str,
+    *,
+    manifest: VerifiedWorkspaceManifest,
+    now: int | None = None,
+) -> VerifiedWorkspaceReadHint:
+    value = _load_document(raw, "workspace_read_hint")
+    _require_fields(
+        value,
+        {
+            "v", "type", "workspace_id", "manifest_digest", "member_id",
+            "device_id", "conversation_id", "through_event_id", "event_digest",
+            "created_at", "signature",
+        },
+    )
+    if value["v"] != WORKSPACE_PROTOCOL_VERSION:
+        raise ValidationError("Workspace read-hint version is unsupported")
+    workspace_id = _validate_uuid(value["workspace_id"], "Workspace ID")
+    manifest_digest = _validate_digest(value["manifest_digest"], "Manifest digest")
+    member_id = _validate_uuid(value["member_id"], "Member ID")
+    device_id = _validate_uuid(value["device_id"], "Device ID")
+    if workspace_id != manifest.workspace_id or manifest_digest != manifest.digest:
+        raise ValidationError("Workspace read hint references another manifest")
+    member = find_member(manifest, member_id)
+    device = find_device(manifest, device_id)
+    if (
+        manifest.status != "active"
+        or member is None
+        or member.status != "active"
+        or device is None
+        or device[0].member_id != member_id
+    ):
+        raise IdentityMismatch("Workspace read-hint signer is not admitted")
+    _verify_signature(
+        _identity_from_public_key(device[1].public_identity),
+        value,
+        "Workspace read hint",
+    )
+    current = int(time.time()) if now is None else int(now)
+    return VerifiedWorkspaceReadHint(
+        workspace_id=workspace_id,
+        manifest_digest=manifest_digest,
+        member_id=member_id,
+        device_id=device_id,
+        conversation_id=_validate_uuid(value["conversation_id"], "Conversation ID"),
+        through_event_id=_validate_uuid(value["through_event_id"], "Event ID"),
+        event_digest=_validate_digest(value["event_digest"], "Event digest"),
+        created_at=_validate_timestamp(value["created_at"], now=current),
+        digest=_digest(value),
+        serialized=_canonical(value),
+    )
 
 
 def create_workspace_join(

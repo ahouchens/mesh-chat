@@ -631,6 +631,36 @@ alter message-text tokens. Existing retained data rebuilds from the sealed
 retention order in restart-safe transactions of at most 128 events. Until it
 finishes, results report indexing rather than claiming retained completeness.
 
+### Linked desktop devices
+
+Increment 14 admits a fresh per-desktop identity to an existing member through
+a countersigned, 15-minute, single-use `workspace_device_link_offer` and
+`workspace_device_link` acceptance. The offer authenticates the workspace,
+exact base manifest, member and existing sponsor device. It also binds at most
+64 strictly ordered historical manifest checkpoints needed by the minimal
+authorized channel-control admission suffix, including epoch one for
+`#general` when linking after the initial epoch. The acceptance embeds that
+offer and a fresh self-signed device card. Only the current authority's
+next manifest makes the card effective. That manifest carries
+`device_transition_digest` and may change exactly one device card while every
+other membership, authority, metadata, policy and retention field remains
+fixed. Ordinary and authority-transition verification reject this field.
+
+`workspace_device_removal` is signed by another admitted device of the same
+member and names the exact base and target. The authority device cannot be
+removed until authority rotates. Known removal stops new delivery to that
+destination, cancels its queued legs, and rejects newly seen events from it;
+partitioned peers enforce removal when the signed manifest reaches them.
+
+Channel and DM commits freeze all recipient devices, including the sender's
+other desktops. Delivery remains one durable leg per destination with explicit
+person/device detail. A new endpoint receives authorized controls and recovers
+canonical events through bounded peer-history catch-up; identity material is
+never copied. Optional encrypted `workspace_read_hint` controls go only to the
+same member's other devices and apply only at an identical canonical head, so
+they are not social read receipts. Exact schemas and lifecycle rules are frozen
+in [ADR 0013](docs/adr/0013-linked-desktop-devices.md).
+
 ## Delivery evidence
 
 | App state | Required evidence |
@@ -662,8 +692,9 @@ Receipts are ordinary signed, end-to-end encrypted LXMF messages. They reference
 - Workspace history catch-up: 32 streams, 64 ranges, 32 events, 32 controls, 32 checkpoints, 128 KiB and 15 minutes per request; 256 sequence probes per response; 2 jobs per workspace and 4 per profile.
 - Workspace administration: 4 KiB requests, 48 KiB decisions, 250-character notes, seven-day maximum lifetime, 128 pending requests per workspace, 512 administrative requests per profile, 32 pending per requester/source, 100 rows per page, 64 inert decisions, and 90-day replay/audit retention.
 - Workspace authority continuity: 8 KiB offers, 16 KiB acceptances, seven-day maximum lifetime, 32 pending transitions per workspace, eight certificate steps, 256 KiB decoded invitation bootstrap, and 90-day replay/audit retention.
+- Linked desktop devices: three admitted devices per member, 24 active workspace destinations, 15-minute one-use links, 320 KiB link/acceptance documents including at most 64 historical manifest checkpoints, 32 pending transitions per workspace, and four pending requests per source fingerprint.
 - Pending reactions: at most 256 total and 32 per authenticated actor.
-- IPC frame: 4 MiB; renderer-originated payload: 32 KiB.
+- IPC frame: 4 MiB; renderer-originated payload: 32 KiB, except the two desktop device-link preview/submission commands which accept at most 700 KiB of encoded bootstrap input.
 - LXMF direct and propagated modes: enabled.
 - LXMF opportunistic, paper, PLAIN and RNS GROUP private-chat/group fallbacks: not used.
 - Propagation cache: 100 MiB.

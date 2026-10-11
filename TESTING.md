@@ -90,6 +90,14 @@ Increment 12 administrator scale benchmark:
   --output .\docs\benchmarks\increment-12-workspace-administrators.json
 ```
 
+Increment 14 linked-desktop scale benchmark:
+
+```powershell
+.\.venv\Scripts\python.exe .\service\tools\workspace_linked_device_benchmark.py `
+  --events 50000 --samples 30 `
+  --output .\docs\benchmarks\increment-14-linked-desktop-devices.json
+```
+
 The 0.2.7 harness runs two configurations. The first advertises signed TCP hints
 from both peers, times reverse-route approval, then verifies direct chat,
 application receipt, group invitation and join, a group message, and another
@@ -2220,6 +2228,96 @@ Artifact hashes for this run:
   in-place installation, and Windows-to-Android validation remain manual or
   physical release gates.
 
+## Workspace increment 14 verification — 2026-10-11
+
+- Increment 14 adds a countersigned, 15-minute, single-use device-link proof.
+  An existing active device signs the genesis/current-manifest bootstrap; the
+  new desktop generates a fresh RNS identity and countersigns its new device
+  card; only the owner authority's exact one-card manifest delta grants access.
+  Historical ordinary and authority manifest paths remain strict and reject
+  device-transition fields. Enrollment is capped at three devices per member
+  and 24 active destinations.
+- Channels and workspace DMs already froze per-device destinations at event
+  commit, including the sender's other devices. Increment 14 exposes the
+  maintained link/review/removal lifecycle, sends authorized public/private
+  controls to the new endpoint, and uses bounded authenticated history for
+  canonical recovery. Removal cancels only the lost endpoint's pending legs,
+  rejects its newly seen traffic once learned, and requires authority rotation
+  before the authority endpoint can be removed. Optional read hints are
+  encrypted same-member controls, opt-in, exact-head-bound, and never social
+  receipts. ADR 0013 freezes the schemas and partition semantics.
+- The automated two-desktop flow uses independent private identities and proves
+  link creation, unknown-source acceptance binding, visible owner approval,
+  manifest convergence after the workspace has advanced beyond epoch one,
+  authority-endorsed historical checkpoint installation, authorized
+  `#general` control delivery, pre-link canonical history recovery, private
+  read-hint convergence, authority-removal rejection, endpoint-only
+  cancellation, and terminal `device_removed` convergence.
+  Protocol coverage also proves ordinary-path rejection, exact one-card deltas,
+  stale/expiry/signature bounds, one remaining device, and the three/24 caps.
+- The final source verification passed **359 Python tests with 10 intentional
+  environment/package skips**. All **91 frontend tests**, TypeScript
+  compilation, the production Vite build, all **6 locked release-profile
+  Rust/Tauri tests**, the 3-test standalone packaged-artwork verifier, and the
+  protected topology/direct-LAN matrix (**4/4**) passed. Final package
+  verification is recorded below after immutable publication.
+- The reproducible encrypted scale run used Windows 10.0.19045, Intel64 Family
+  6 Model 158, Python 3.13.15, 17,019,686,912 bytes physical memory, 50,000
+  events, 8 members, 32 channels, 42,000 roots, 3,000 replies, 2,000 edits,
+  2,000 reactions, 1,000 tombstones, 4,000 linked-device legs and 2,000 queued
+  legs. Startup did not enumerate event or delivery bodies; all inherited
+  paging, pruning, restart, no-duplicate, no-false-delivered and route-independent
+  commit assertions passed.
+- Across 30 samples, countersigned link construction plus validation measured
+  **6.333 ms p50 / 6.955 ms p95**, removal plus exact final-delta validation
+  **1.227 / 1.725 ms**, and maximum 24-device manifest verification **6.331 /
+  7.131 ms**. Warm/cold latest-50 paging measured **56.474 / 52.867 ms p95**;
+  send commit was **34.718 ms**. Peak Python allocation was 99,376,371 bytes
+  and peak working set 230,199,296 bytes. The largest acceptance was 4,016
+  bytes and the 24-device manifest 13,978 bytes. All 12 Increment 14 assertions
+  passed in 300.874 seconds with zero copied private identities.
+- The 8,882-byte evidence file is
+  `docs/benchmarks/increment-14-linked-desktop-devices.json`, SHA-256
+  `BDF539042A64D91950178033B5987C2D95C448A614CA0698F84BB12BBD11469D`.
+  The first complete scale workload passed but the new wrapper referenced three
+  prior-schema report keys and failed before writing output. The reporting keys
+  were corrected and the complete workload was rerun; this recorded run passed.
+  A sandboxed system-Node build also failed because PATH selected Node 14; the
+  pinned Node 24 TypeScript and Vitest runners passed. Final review found that
+  a device linked after epoch one could receive the epoch-one `#general`
+  control without its referenced manifest. The candidate was not released in
+  that state: bounded authority-endorsed bootstrap checkpoints and a late-link
+  regression were added, then the full suite, benchmark and package workflow
+  were rerun successfully.
+- The release driver immutably published desktop **0.2.34** without changing
+  0.2.33 or any earlier release. The 23,470,080-byte MSI hashes to
+  `84618601465F0D890F83FFF39EC289BEB554E9C8638369010E86C7FAD23256A0`;
+  the 22,744,517-byte NSIS installer hashes to
+  `B5AC805640B7ADAC1802AB267916E853A5078FBB66074C2319598F8AD83F21EA`.
+  The 6,735,872-byte application reports file/product 0.2.34 and hashes to
+  `19E723169AFB34D60913323A7C7BC8EBB1BB3F150A45B5A871C6D6EE6B126E80`;
+  the 19,247,657-byte sidecar hashes to
+  `03478DE167141D042FD9F01BD47FAC0762ACB40550E044128C4AC0394E51BCFD`.
+  The 1,345-byte manifest hashes to
+  `E1C3C268FB789C64561249EC3DE347B44EF12B2D43952E43562B982248ABB429`
+  and is selected by `dist/desktop/current.json`. The successful build report
+  is `dist/reports/0.2.34/20261011T193149Z-2c518e5e/report.json`; the final
+  maintained verification report is
+  `dist/reports/0.2.34/20261011T193939Z-9a1fc03e/report.json`.
+- The exact immutable 0.2.34 sidecar passed direct/reaction/delete/reopen,
+  administrator, authority-continuity and linked-device workflows (**5
+  passed**, with the separately exercised legacy case intentionally skipped).
+  The linked-device run proved distinct private identities, inert linking,
+  exact owner approval, post-epoch-one `#general` bootstrap, pre-link history
+  recovery, live fan-out and terminal device removal. Mixed exact-binary runs
+  with 0.2.33, 0.2.32 and 0.2.31 converged; frozen 0.2.9 safely ignored the
+  expanded reaction while ordinary traffic continued. The final application
+  contains all 12 expected artwork/license files (1,947,195 source bytes).
+- No installer or application was launched and no existing Mesh Chat profile
+  was modified. Physical multi-device partitions, native-window accessibility,
+  packet capture, protected-profile full-tree plaintext scanning, production
+  signing and in-place installation remain manual release gates.
+
 ## Acceptance matrix
 
 | Gate | Current evidence |
@@ -2245,7 +2343,7 @@ Artifact hashes for this run:
 | One-to-one approval | Always-on deterministic full flow and prior real bidirectional-hint Reticulum/LXMF runs passed; the phone-shaped harness covers phone-first delivery followed by the desktop reply on the same connection. Exact 0.2.12 physical Windows↔Android validation remains pending |
 | Contact management | Rename, verification toggling, block/unblock trust restoration, deletion cleanup, active-group identity retention, pending-group-invitation refusal, search, confirmations, mobile Back handling, and responsive dialog layout are covered. The shared UI was matched inside the exact Android APK; physical desktop/phone interaction remains pending |
 | Reconnection/interoperability | Upstream format preserved; bidirectional direct-LAN attachment, dirty-route retry, signed-client route replacement, deferred callback re-entry, and phone-shaped full-duplex return traffic are covered; reference-client and suspend/resume runs pending |
-| Platform packaging | Windows x64 0.2.33 MSI/NSIS and Android arm64 debug 0.2.12 packages were built, hashed, and inspected; the exact 0.2.33 Windows binary and sidecar were verified but the app/installer was not launched. Versions, manifest, installer payloads, Android v2 signature/certificate, native architecture, embedded contact UI, and all 12 embedded artwork files were verified. The transactional publisher rejects mixed/stale output and records immutable release/current manifests. Physical Windows↔Android 0.2.12 validation, a 0.2.12 portable bundle, macOS/Linux/iOS native package runs, and production signing remain pending |
+| Platform packaging | Windows x64 0.2.34 MSI/NSIS and Android arm64 debug 0.2.12 packages were built, hashed, and inspected; the exact 0.2.34 Windows binary and sidecar were verified but the app/installer was not launched. Versions, manifest, installer payloads, Android v2 signature/certificate, native architecture, embedded contact UI, and all 12 embedded artwork files were verified. The transactional publisher rejects mixed/stale output and records immutable release/current manifests. Physical Windows↔Android 0.2.12 validation, a 0.2.12 portable bundle, macOS/Linux/iOS native package runs, and production signing remain pending |
 | First-message usability | 0.2.12 retains desktop timeout guidance, exact draft preservation, callback/retry concurrency regressions, and the phone-first/desktop-reply harness together with durable-result, bounded-draft, duplicate-submit, IME, stale-refresh, delivery-state, and responsive-layout coverage. Exact 0.2.12 physical Windows↔Android validation and a broader human study remain open |
 | Invitation entry points | UI and validation implemented; installed-app OS matrix pending |
 | Common flow without technical setup | UI implemented; fresh/returning human run pending |
@@ -2261,5 +2359,6 @@ Artifact hashes for this run:
 | Workspace increment 11 | Canonical signed history requests/responses, bounded streams/ranges/pages/bytes, replay-safe continuation binding, prerequisite controls, signed author checkpoints, removal commitments, encrypted restart-safe jobs/caches/nonces/coverage, direct indexed disclosure, exact canonical-byte acceptance, public/private-era/DM authorization, honest complete/peer-limited/pruned/permanent-gap states, scheduling bounds, erasure, desktop status/actions, and command allowlisting are automated. The reproducible 50,000-event benchmark, protected topology, direct-LAN, immutable 0.2.31 package, frozen 0.2.9 compatibility, and final artwork verification passed; physical concurrent-device partition/removal/re-admission, hostile peer fault injection, native-window accessibility, packet capture, protected-profile plaintext scanning, production signing, and in-place installation remain release gates |
 | Workspace increment 12 | Effective owner/admin/member roles, exact role-aware channel/posting/invitation-request policies, signed bounded owner-approved invitation/removal/role requests, exact one-member manifest transitions, sealed indexed lifecycle/replay/audit state, owner-offline channel operation, private/DM isolation, accessible owner review/outgoing history, demotion enforcement, and command allowlisting are automated. The reproducible 50,000-event benchmark, protected topology, all direct-LAN scenarios, immutable 0.2.32 package administrator flow, exact 0.2.31 and frozen 0.2.9 compatibility, and final artwork verification passed; physical concurrent-device admin partitions, hostile request floods/fault injection, native-window accessibility, packet capture, protected-profile plaintext scanning, production signing, and in-place installation remain release gates |
 | Workspace increment 13 | Canonical authority offers, exact successor acceptances, final predecessor-authority manifests, same-owner rotation fixtures, exact ownership/role cutover, atomic local and staged remote #general recovery, old-authority rejection, successor manifest authority, bounded eight-step invitation proofs, fork suspension, permanent-loss freeze diagnostics, encrypted lifecycle state, desktop confirmation/review, and command allowlisting are automated. The reproducible 50,000-event benchmark, protected topology, all direct-LAN scenarios, immutable 0.2.33 package workflows, exact 0.2.32/0.2.31 and frozen 0.2.9 compatibility, and artwork verification passed; physical concurrent-device authority partitions and kill points, hostile transition floods/fault injection, native-window accessibility, packet capture, protected-profile plaintext scanning, production signing, and in-place installation remain release gates |
+| Workspace increment 14 | Fresh per-device identities, sponsor/new-device countersignatures, exact authority admission, three-device/24-destination caps, authority-endorsed historical channel checkpoints, sender-other-device fan-out, per-person/per-device delivery detail, bounded canonical history recovery, optional exact-head same-member read hints, nonauthority lost-device removal, terminal revocation state, desktop review/removal UI, deep links, and command allowlisting are automated. The reproducible 50,000-event benchmark, protected topology, all direct-LAN scenarios, exact immutable 0.2.34 package workflow, exact 0.2.33/0.2.32/0.2.31 and frozen 0.2.9 compatibility, and artwork verification passed; physical concurrent-device partitions/replacement, hostile link floods/fault injection, native-window accessibility, packet capture, protected-profile plaintext scanning, production signing, and in-place installation remain release gates |
 
 Do not mark a release complete from unit tests alone. Store packet captures, topology configs, full-tree scans, package hashes, platform versions, human timing sheets, and failure notes with the release evidence.

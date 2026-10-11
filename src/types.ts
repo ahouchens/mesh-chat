@@ -161,10 +161,12 @@ export interface GroupInvitation {
 export type WorkspaceRole = "owner" | "admin" | "member";
 export type WorkspaceState =
   | "joining"
+  | "linking"
   | "active"
   | "leaving"
   | "left"
   | "removed"
+  | "device_removed"
   | "closed"
   | "forked"
   | "incomplete_sync";
@@ -227,6 +229,7 @@ export interface Workspace {
   authority_loss?: boolean;
   authority_administration_state?: "permanently_frozen";
   authority_loss_guidance?: string;
+  read_hint_sync?: boolean;
   created_at: number;
   updated_at: number;
 }
@@ -579,6 +582,39 @@ export interface WorkspaceInvitationFormats {
   expires_at: number;
 }
 
+export interface WorkspaceDeviceLinkPreview {
+  workspace_id: string;
+  name: string;
+  member_display_name: string;
+  sponsor_fingerprint: string;
+  device_count: number;
+  expires_at: number;
+}
+
+export interface WorkspaceDeviceLinkFormats {
+  id: string;
+  workspace_id: string;
+  link: string;
+  text: string;
+  value: string;
+  expires_at: number;
+}
+
+export interface WorkspaceDeviceTransition {
+  id: string;
+  workspace_id: string;
+  direction: "incoming" | "outgoing";
+  transition_kind: "link" | "removal";
+  state: "offered" | "waiting_for_approval" | "pending";
+  member_id: string;
+  sponsor_device_id?: string;
+  device_id?: string;
+  fingerprint?: string;
+  created_at: number;
+  expires_at: number;
+  updated_at: number;
+}
+
 export interface WorkspaceDisplayNameRequest {
   id: string;
   workspace_id: string;
@@ -669,6 +705,7 @@ export interface WorkspaceSnapshot {
   workspace_display_name_requests: WorkspaceDisplayNameRequest[];
   workspace_admin_requests: WorkspaceAdminRequest[];
   workspace_authority_transitions?: WorkspaceAuthorityTransition[];
+  workspace_device_transitions?: WorkspaceDeviceTransition[];
   workspace_invitations: WorkspaceInvitation[];
   workspace_drafts: WorkspaceDraft[];
 }
@@ -709,7 +746,7 @@ export interface Snapshot {
   group_messages?: GroupMessage[];
   group_drafts?: GroupDraft[];
   group_invitations?: GroupInvitation[];
-  /** Desktop-only workspace summaries through Increment 7. Message bodies are paged separately. */
+  /** Desktop workspace summaries. Message bodies remain paged separately. */
   workspaces?: Workspace[];
   workspace_channels?: WorkspaceChannel[];
   workspace_directs?: WorkspaceDirect[];
@@ -718,6 +755,7 @@ export interface Snapshot {
   workspace_display_name_requests?: WorkspaceDisplayNameRequest[];
   workspace_admin_requests?: WorkspaceAdminRequest[];
   workspace_authority_transitions?: WorkspaceAuthorityTransition[];
+  workspace_device_transitions?: WorkspaceDeviceTransition[];
   workspace_invitations?: WorkspaceInvitation[];
   workspace_drafts?: WorkspaceDraft[];
   settings: NetworkSettings;

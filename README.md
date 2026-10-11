@@ -6,9 +6,9 @@ Messages use native individual LXMF delivery destinations. Reticulum owns paths 
 
 > This repository is not independently audited and is not yet suitable for sensitive operational use. See [TESTING.md](TESTING.md) for verified and unverified release gates.
 
-## Desktop workspace increment 13
+## Desktop workspace increment 14
 
-This source tree now implements the thirteenth bounded desktop workspace increment from
+This source tree now implements the fourteenth bounded desktop workspace increment from
 [WORKSPACE_SPEC.md](WORKSPACE_SPEC.md): create and switch up to 16 workspaces,
 invite and approve up to seven additional people, and use up to 32 active public or private
 channels including canonical `#general`. Workspace creation explains that the creating device is the authority,
@@ -50,6 +50,23 @@ Conflicting authority records suspend the workspace without selecting a branch.
 Permanent authority-key loss still has no automatic recovery: administration
 freezes, ordinary authorized chat remains usable, and the app explains how to
 create a replacement workspace.
+
+An existing member can now link up to three desktops without copying an
+identity or creating another member. One admitted device creates a short-lived
+single-use link, the new desktop generates and signs with a fresh identity, and
+the owner authority approves the exact device card into the next manifest.
+Channels and workspace DMs fan out to every recipient device, including the
+sender's other desktops, while delivery detail preserves each device leg. The
+new endpoint receives its authorized controls and can recover canonical
+history through the existing bounded peer catch-up flow.
+
+A member can request removal of another one of their devices. The authority
+device must be rotated before it can be removed. Once the signed removal is
+known, pending legs for only that endpoint are cancelled and newly seen events
+from it are rejected; disconnected peers enforce the change when the manifest
+reaches them. Optional read-position hints are encrypted only to the same
+member's linked devices, require an identical canonical conversation head, and
+never become social read receipts.
 
 Workspace messages are signed events and are loaded in bounded pages instead
 of the startup snapshot. Sending returns after an atomic durable commit while a
@@ -182,15 +199,13 @@ older view. Upgrading a retained 0.2.29 profile exposes a truthful indexing
 state and rebuilds at most 128 events per transaction without turning startup
 into a full history scan.
 
-This increment is deliberately desktop-only and capped at eight people. Normal
-enrollment still admits one device per person; authority rotation can use only
-an already admitted seeded owner device. It has no attachments, linked-device
-enrollment, or mobile workspace UI;
-those remain later increments in the spec.
+This increment is deliberately desktop-only and capped at eight people, three
+devices per person, and 24 active destinations. It has no attachments or
+mobile workspace UI; those remain later increments in the spec.
 
 ## Install Mesh Chat
 
-**Current desktop workspace candidate: Mesh Chat 0.2.33.** Install it over the
+**Current desktop workspace candidate: Mesh Chat 0.2.34.** Install it over the
 existing app; do not uninstall Mesh Chat or clear its data first. The current
 paired desktop/mobile install record remains 0.2.12 until workspace support reaches
 the mobile UI and completes physical cross-device validation.
@@ -198,7 +213,7 @@ the mobile UI and completes physical cross-device validation.
 Mesh Chat must be packaged for the operating system where it will run. This
 workspace contains Windows x64 and Android arm64 packaging flows. Check the
 workspace Increment 13 record in [TESTING.md](TESTING.md) for the exact desktop
-verification completed for 0.2.33, and the 0.2.12 record for current Android
+verification completed for 0.2.34, and the 0.2.12 record for current Android
 artifacts. The macOS, Linux, and
 iOS packaging paths are implemented, but their packages still need to be built
 and tested on those operating systems.
@@ -413,17 +428,17 @@ Before installing, confirm that:
   code-signed.
 
 Choose one verified installer from the immutable release directory
-`dist\desktop\releases\0.2.33\x86_64-pc-windows-msvc\bundle`:
+`dist\desktop\releases\0.2.34\x86_64-pc-windows-msvc\bundle`:
 
-- `nsis\Mesh Chat_0.2.33_x64-setup.exe` — normal interactive setup.
-- `msi\Mesh Chat_0.2.33_x64_en-US.msi` — MSI package for Windows deployment
+- `nsis\Mesh Chat_0.2.34_x64-setup.exe` — normal interactive setup.
+- `msi\Mesh Chat_0.2.34_x64_en-US.msi` — MSI package for Windows deployment
   tools or manual installation.
 
 For a portable test without installing, run `mesh-chat.exe` with its sibling
 `mesh-chat-service.exe` from
-`dist\desktop\releases\0.2.33\x86_64-pc-windows-msvc`. Close every
+`dist\desktop\releases\0.2.34\x86_64-pc-windows-msvc`. Close every
 older Mesh Chat process first because the single-instance guard will otherwise
-return to the older window. Confirm **Mesh Chat 0.2.33** in Settings before
+return to the older window. Confirm **Mesh Chat 0.2.34** in Settings before
 testing.
 
 Do not use an older unversioned developer output merely because it is still at
@@ -432,14 +447,14 @@ its sidecar locked while a newer release is packaged elsewhere. The immutable
 versioned `dist\desktop\releases` directory and its `manifest.json` are the
 release authority; `dist\desktop\current.json` identifies the current set.
 
-Verify a 0.2.33 installer against the SHA-256 value in the sibling
-`manifest.json` and the 0.2.33 release record in [TESTING.md](TESTING.md).
+Verify a 0.2.34 installer against the SHA-256 value in the sibling
+`manifest.json` and the 0.2.34 release record in [TESTING.md](TESTING.md).
 `dist\desktop\current.json` records the current manifest hash. The recorded
-older hashes do not apply to 0.2.33. These development packages are not
+older hashes do not apply to 0.2.34. These development packages are not
 Authenticode-signed.
 
 If an earlier Mesh Chat version is installed, close the running app and run the
-0.2.33 desktop installer over the existing release. The current Android
+0.2.34 desktop installer over the existing release. The current Android
 companion remains 0.2.12 until workspace support reaches the mobile UI and completes
 physical cross-device validation.
 The package identities are unchanged, so existing profiles, contacts,
@@ -457,10 +472,10 @@ Versions before 0.2.3 could leave a PyInstaller supervisor or worker running
 after the window closed. That stale process could keep a valid EFS-encrypted
 profile lock and was incorrectly shown as **Protected storage is unavailable**.
 This condition did not remove encryption, write private data in plaintext, or
-damage the profile. If the first 0.2.33 launch appears to do nothing, or an
+damage the profile. If the first 0.2.34 launch appears to do nothing, or an
 older build shows that storage screen, restart Windows or use Task Manager to
 end **Mesh Chat** and every `mesh-chat-service.exe` process, then install or
-launch 0.2.33. Do not uninstall Mesh Chat or clear its data.
+launch 0.2.34. Do not uninstall Mesh Chat or clear its data.
 
 Version 0.2.3 gives profile-lock contention its own **profile is still in use**
 message. On close, the desktop uses an independent deadline and terminates only
@@ -728,7 +743,7 @@ service unless the complete RNS/LXMF workspace has verified at-rest protection:
 
 | Platform | Required protected storage | Packaging status |
 | --- | --- | --- |
-| Windows | NTFS EFS; Mesh Chat enables and verifies inheritance on its profile directory | 0.2.33 x64 EXE, NSIS, and MSI built, hashed, and immutably published; packaged authority-continuity testing is recorded in TESTING.md, while a host-window walkthrough, in-place installation, and physical Windows↔Android testing remain pending |
+| Windows | NTFS EFS; Mesh Chat enables and verifies inheritance on its profile directory | 0.2.34 x64 EXE, NSIS, and MSI built, hashed, and immutably published; packaged linked-device testing is recorded in TESTING.md, while a host-window walkthrough, in-place installation, and physical Windows↔Android testing remain pending |
 | macOS | Active FileVault on the local user-data volume containing the app profile | Native build path implemented; macOS package test pending |
 | Linux | fscrypt on the profile, dm-crypt/LUKS beneath its filesystem, or a recognized eCryptfs/gocryptfs/CryFS mount | Native build path implemented; distribution package tests pending |
 | Android | App-private internal storage, Android Keystore-wrapped vault key, backups disabled | 0.2.12 arm64 debug APK built, hashed, v2-signature-verified, and inspected; physical installation and Windows↔Android testing remain pending because no device was attached |
@@ -771,7 +786,7 @@ Use the deterministic release driver for routine versioning and delivery:
 ```text
 python scripts/release.py check
 python scripts/release.py verify
-python scripts/release.py version 0.2.33
+python scripts/release.py version 0.2.34
 python scripts/release.py build --platform all
 ```
 
