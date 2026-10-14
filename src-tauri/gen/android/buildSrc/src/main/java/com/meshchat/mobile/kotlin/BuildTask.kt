@@ -23,7 +23,7 @@ abstract class BuildTask : DefaultTask() {
 
     @TaskAction
     fun assemble() {
-        val executable = System.getenv("MESH_CHAT_NODE") ?: "node"
+        val executable = System.getenv("MESH_CHAT_PNPM") ?: "pnpm"
         try {
             runTauriCli(executable)
         } catch (e: Exception) {

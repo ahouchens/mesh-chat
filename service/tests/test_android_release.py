@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from scripts.build_android import stage_native_library
 from scripts.publish_android_release import AndroidReleaseError, publish_android_release
 
 
@@ -153,3 +154,44 @@ def test_android_build_template_preserves_the_native_theme_bootstrap() -> None:
     ):
         assert snippet in builder
         assert snippet in activity
+
+
+def test_android_gradle_launcher_uses_the_portable_pnpm_command() -> None:
+    root = Path(__file__).resolve().parents[2]
+    builder = (root / "scripts" / "build_android.py").read_text(encoding="utf-8")
+    build_task = (
+        root
+        / "src-tauri"
+        / "gen"
+        / "android"
+        / "buildSrc"
+        / "src"
+        / "main"
+        / "java"
+        / "com"
+        / "meshchat"
+        / "mobile"
+        / "kotlin"
+        / "BuildTask.kt"
+    ).read_text(encoding="utf-8")
+
+    launcher = 'System.getenv("MESH_CHAT_PNPM") ?: "pnpm"'
+    assert launcher in builder
+    assert launcher in build_task
+    assert 'System.getenv("MESH_CHAT_NODE") ?: "node"' not in build_task
+
+
+def test_android_native_staging_accepts_an_existing_link(tmp_path: Path) -> None:
+    native_library = tmp_path / "target" / "libmesh_chat_lib.so"
+    destination = tmp_path / "jniLibs" / "arm64-v8a"
+    native_library.parent.mkdir()
+    destination.mkdir(parents=True)
+    native_library.write_bytes(b"native-library")
+    staged = destination / native_library.name
+    try:
+        staged.hardlink_to(native_library)
+    except OSError as exc:
+        pytest.skip(f"hard links are unavailable: {exc}")
+
+    assert stage_native_library(native_library, destination) == staged
+    assert staged.samefile(native_library)

@@ -128,6 +128,19 @@ def record_native_library(native_library: Path = NATIVE_LIBRARY) -> None:
     os.replace(temporary, native_stamp)
 
 
+def stage_native_library(native_library: Path, destination: Path) -> Path:
+    """Copy a native library unless Tauri already staged the same file."""
+    destination.mkdir(parents=True, exist_ok=True)
+    staged = destination / native_library.name
+    try:
+        if staged.exists() and native_library.samefile(staged):
+            return staged
+    except OSError:
+        pass
+    shutil.copy2(native_library, staged)
+    return staged
+
+
 def symlinks_available() -> bool:
     if os.name != "nt":
         return True
@@ -284,9 +297,9 @@ def patch_generated_project() -> None:
         value = value.rstrip() + "\norg.gradle.caching=true\n"
     write_if_changed(properties, value)
 
-    # Tauri's generated Gradle task captures the Node path used by `android
-    # init`. Make the checked-in project portable across developer machines and
-    # CI runners while still honoring the explicit release-tool override.
+    # Tauri's generated Gradle task launches `tauri` as a package-manager
+    # command. Keep that launcher portable across developer machines and CI
+    # runners while still honoring the explicit release-tool override.
     build_task = (
         ANDROID
         / "buildSrc"
@@ -301,8 +314,8 @@ def patch_generated_project() -> None:
     )
     build_task_text = build_task.read_text(encoding="utf-8")
     build_task_text, replacements = re.subn(
-        r'val executable = (?:""".*?"""|System\.getenv\("MESH_CHAT_NODE"\) \?: "node");?',
-        'val executable = System.getenv("MESH_CHAT_NODE") ?: "node"',
+        r'val executable = (?:""".*?"""|System\.getenv\("MESH_CHAT_(?:NODE|PNPM)"\) \?: "(?:node|pnpm)");?',
+        'val executable = System.getenv("MESH_CHAT_PNPM") ?: "pnpm"',
         build_task_text,
         count=1,
     )
@@ -512,8 +525,7 @@ def main() -> int:
         if build_android_frontend(pnpm, env, debug=not release) != 0:
             return 1
         destination = ANDROID / "app" / "src" / "main" / "jniLibs" / "arm64-v8a"
-        destination.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(native_library, destination / native_library.name)
+        stage_native_library(native_library, destination)
         wrapper = ANDROID / ("gradlew.bat" if os.name == "nt" else "gradlew")
         variant = "Release" if release else "Debug"
         result = run(
