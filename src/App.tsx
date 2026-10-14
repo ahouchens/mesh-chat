@@ -417,13 +417,103 @@ function sanitizedDoctorSummary(report: DirectDoctorReport): string {
   ].join("\n");
 }
 
-function DirectDoctorPanel({ report, onRetry }: { report: DirectDoctorReport; onRetry: () => void }) {
+function DirectDoctorPanel({
+  report,
+  onRetry,
+  onManualSetup,
+  busy = false,
+}: {
+  report: DirectDoctorReport;
+  onRetry: () => void;
+  onManualSetup?: () => void;
+  busy?: boolean;
+}) {
   const [copied, setCopied] = useState(false);
+  const automaticSetupUnavailable = report.summary.recommended_action === "set_up_manual_forward_or_choose_explicit_fallback"
+    || [
+      "manual_setup_required", "no_global_ipv6", "upnp_no_discovery",
+      "upnp_mapping_denied", "upnp_unsupported_lease", "nat_pmp_no_response",
+      "nat_pmp_mapping_denied", "pcp_no_response", "pcp_mapping_denied",
+      "upnp_wan_private", "upnp_wan_shared", "upstream_nat_detected",
+    ].includes(report.summary.reason);
   return <section className="direct-doctor" aria-label="Direct Internet connection check">
     <h3>{directReasonLabel(report.summary.reason)}</h3>
     <ul>{report.checks.map((step, index) => <li key={`${step.phase}-${index}`}><span>{directPhaseLabel[step.phase]}</span><strong>{directReasonLabel(step.reason)}</strong></li>)}</ul>
     <p>{directActionLabel(report.summary.recommended_action)}</p>
-    <div className="dialog-actions"><Button variant="secondary" onClick={onRetry}><RefreshCw size={17} /> Retry</Button><Button variant="ghost" onClick={async () => { await navigator.clipboard.writeText(sanitizedDoctorSummary(report)); setCopied(true); }}><Copy size={17} /> {copied ? "Copied" : "Copy diagnostic summary"}</Button></div>
+    <details className="direct-help" open={automaticSetupUnavailable}>
+      <summary><CircleHelp size={17} /> What should I do next?</summary>
+      <div className="direct-help__content">
+        <section>
+          <h4>Option 1 — Check automatic router access</h4>
+          <ol>
+            <li>Open your router’s mobile app or administration page. This is usually provided by your router or Internet provider.</li>
+            <li>On a network you trust, look under <strong>Advanced</strong>, <strong>NAT</strong>, or <strong>Port forwarding</strong> and enable <strong>UPnP</strong>, <strong>PCP</strong>, or <strong>NAT-PMP</strong> if your router offers it.</li>
+            <li>Make sure this device is on the main network—not a guest network—and then choose <strong>Retry</strong> below.</li>
+          </ol>
+          <p className="direct-help__note">Enabling UPnP lets other software on this local network request mappings too. Use it only on a network you control and trust.</p>
+        </section>
+        <section>
+          <h4>Option 2 — Create one manual TCP rule</h4>
+          <p>Choose <strong>Start guided manual setup</strong>. Mesh Chat will start a temporary authenticated listener and show the exact device and TCP port to enter in your router.</p>
+          {onManualSetup && <Button variant="secondary" disabled={busy} onClick={onManualSetup}>{busy ? "Starting…" : "Start guided manual setup"}</Button>}
+        </section>
+        <section>
+          <h4>If neither option is available</h4>
+          <p>Use <strong>Same network only</strong> when both people are on the same network, or explicitly choose an approved access point. Provider/shared NAT may require your Internet provider.</p>
+        </section>
+      </div>
+    </details>
+    <div className="dialog-actions"><Button variant="secondary" disabled={busy} onClick={onRetry}><RefreshCw size={17} /> Retry</Button><Button variant="ghost" onClick={async () => { await navigator.clipboard.writeText(sanitizedDoctorSummary(report)); setCopied(true); }}><Copy size={17} /> {copied ? "Copied" : "Copy diagnostic summary"}</Button></div>
+  </section>;
+}
+
+function ManualForwardingPanel({
+  setup,
+  host,
+  port,
+  busy,
+  onHostChange,
+  onPortChange,
+  onCreate,
+}: {
+  setup: ManualParticipantSetup;
+  host: string;
+  port: string;
+  busy: boolean;
+  onHostChange: (value: string) => void;
+  onPortChange: (value: string) => void;
+  onCreate: () => void;
+}) {
+  return <section className="manual-forward" aria-labelledby={`manual-forward-${setup.setup_id}`}>
+    <h3 id={`manual-forward-${setup.setup_id}`}>Manual TCP forwarding</h3>
+    <p>Keep this screen and Mesh Chat open. The temporary listener is ready; complete these steps before creating the invitation.</p>
+    <ol className="manual-forward__steps">
+      <li>
+        <div><strong>Reserve this device in your router</strong><span>In the router’s app or administration page, open DHCP reservations, IP reservations, or connected devices. Reserve <b>{setup.device_label}</b> so its local address does not change.</span></div>
+      </li>
+      <li>
+        <div><strong>Add one port-forwarding rule</strong><span>Open Port forwarding, NAT, or Virtual server and enter these exact values:</span>
+          <dl className="manual-forward__rule">
+            <div><dt>Device</dt><dd>{setup.device_label}</dd></div>
+            <div><dt>Protocol</dt><dd>TCP only</dd></div>
+            <div><dt>Internal port</dt><dd>{setup.tcp_port}</dd></div>
+            <div><dt>External port</dt><dd>{port || setup.tcp_port}</dd></div>
+          </dl>
+        </div>
+      </li>
+      <li>
+        <div><strong>Find the router’s Internet address</strong><span>In the router’s Internet, WAN, or status page, copy its public IPv4 address. You may use a global IPv6 address or a hostname you control instead.</span></div>
+      </li>
+      <li>
+        <div><strong>Enter that address below and create the invitation</strong><span>Create a separate invitation for each person, then keep Mesh Chat open until that person connects and you approve them.</span></div>
+      </li>
+    </ol>
+    <p className="direct-help__note"><strong>Check before continuing:</strong> if the router’s WAN address begins with 10, 192.168, 172.16–172.31, or 100.64–100.127, this router is behind another NAT. You also need a matching rule on the upstream router, bridge/passthrough mode, or help from your provider.</p>
+    {setup.upstream_warning && <p className="direct-host-warning">Mesh Chat found evidence of another private or shared network upstream. This rule alone may not be reachable from the Internet; carrier-grade NAT usually requires your provider or an approved access point.</p>}
+    <label className="field"><span>Router-reported public IPv4, global IPv6, or your hostname</span><input value={host} onChange={(event) => onHostChange(event.target.value)} autoCapitalize="off" autoCorrect="off" spellCheck={false} placeholder="Example: chat.example.net" /></label>
+    <label className="field"><span>External TCP port</span><input inputMode="numeric" value={port} onChange={(event) => onPortChange(event.target.value.replace(/\D/g, ""))} /></label>
+    <Button disabled={busy || !host.trim() || !Number(port)} onClick={onCreate}>{busy ? "Creating…" : "Create manual direct invitation"}</Button>
+    <p className="manual-forward__cleanup"><strong>Afterward:</strong> remove this manual rule in the router when the invitation is no longer needed. Mesh Chat cannot remove a rule created in the router.</p>
   </section>;
 }
 
@@ -929,7 +1019,7 @@ function NewChatDialog({ initialInvitation, remoteProfiles, onClose, onChanged }
       await stopUnsharedHost();
       const setup = await serviceCommand<ManualParticipantSetup>("prepare_manual_participant_host", { purpose: "personal" });
       generatedHostSession.current = setup.setup_id;
-      setManualSetup(setup); setFormats(null); setShared(false);
+      setManualSetup(setup); setManualHost(""); setManualPort(String(setup.tcp_port)); setDoctor(null); setFormats(null); setShared(false);
     } catch (reason) { setInviteError(errorMessage(reason)); }
     finally { setBusy(false); }
   };
@@ -981,7 +1071,7 @@ function NewChatDialog({ initialInvitation, remoteProfiles, onClose, onChanged }
         <button role="tab" aria-selected={tab === "join"} onClick={() => { void stopUnsharedHost(); setTab("join"); }}>Open an invite</button>
       </div>
       {tab === "invite" && <label className="field"><span>How should they connect?</span><select value={connectionChoice} disabled={busy} onChange={(event) => void chooseConnection(event.target.value)}><option value="participant">Over the Internet — directly to this device (default)</option><option value="nearby">Same network only — will not work over cellular</option>{usableProfiles.map((profile) => <option key={profile.id} value={`remote:${profile.id}`}>Approved access point · {profile.label} · {profile.state === "connected" ? "connected" : "currently unavailable"}</option>)}</select></label>}
-      {tab === "invite" && connectionChoice === "participant" && !formats && <div className="stack"><p className="muted">Direct participant hosting stays on this device. Keep Mesh Chat open during invitation and approval. No server, rendezvous service, or transport operator is added.</p><div className="dialog-actions"><Button variant="secondary" disabled={busy} onClick={() => void checkDirect()}>{busy ? "Checking this network…" : "Check direct Internet connection"}</Button><Button disabled={busy} onClick={() => void createInvitation()}>{busy ? "Preparing a direct route…" : "Prepare direct Internet invitation"}</Button><Button variant="ghost" disabled={busy} onClick={() => void prepareManual()}>Set up manual port forwarding</Button></div>{doctor && <DirectDoctorPanel report={doctor} onRetry={() => void checkDirect()} />}{manualSetup && <section className="manual-forward"><h3>Manual TCP forwarding</h3><p>In your router, forward TCP port <strong>{manualSetup.tcp_port}</strong> to <strong>{manualSetup.device_label}</strong> on the same port. Reserve this device’s DHCP lease so the rule keeps pointing to it.</p><p>Mesh Chat never asks for router credentials and cannot remove this router rule later.</p>{manualSetup.upstream_warning && <p className="direct-host-warning">Your router reports another private or shared address upstream. This manual rule may also require a matching rule on an upstream router; carrier-grade NAT usually requires your provider or an approved access point.</p>}<label className="field"><span>Router-reported public IPv4, global IPv6, or your hostname</span><input value={manualHost} onChange={(event) => setManualHost(event.target.value)} autoCapitalize="off" autoCorrect="off" /></label><label className="field"><span>External TCP port</span><input inputMode="numeric" value={manualPort} onChange={(event) => setManualPort(event.target.value.replace(/\D/g, ""))} /></label><Button disabled={busy || !manualHost.trim() || !Number(manualPort)} onClick={() => void createInvitation(true)}>Create manual direct invitation</Button></section>}</div>}
+      {tab === "invite" && connectionChoice === "participant" && !formats && <div className="stack"><p className="muted">Direct participant hosting stays on this device. Keep Mesh Chat open during invitation and approval. No server, rendezvous service, or transport operator is added.</p><div className="dialog-actions"><Button variant="secondary" disabled={busy} onClick={() => void checkDirect()}>{busy ? "Checking this network…" : "Check direct Internet connection"}</Button><Button disabled={busy} onClick={() => void createInvitation()}>{busy ? "Preparing a direct route…" : "Prepare direct Internet invitation"}</Button><Button variant="ghost" disabled={busy} onClick={() => void prepareManual()}>Set up manual port forwarding</Button></div>{doctor && <DirectDoctorPanel report={doctor} busy={busy} onRetry={() => void checkDirect()} onManualSetup={() => void prepareManual()} />}{manualSetup && <ManualForwardingPanel setup={manualSetup} host={manualHost} port={manualPort} busy={busy} onHostChange={setManualHost} onPortChange={setManualPort} onCreate={() => void createInvitation(true)} />}</div>}
       {tab === "invite" && connectionChoice === "nearby" && !formats && <div className="stack"><p className="direct-host-warning">Same network only — will not work over cellular.</p><Button disabled={busy} onClick={() => void createInvitation()}>{busy ? "Creating…" : "Create same-network invitation"}</Button></div>}
       {tab === "invite" && connectionChoice.startsWith("remote:") && !formats && <div className="stack"><p className="muted">This explicitly selected, named access point can observe connection metadata, but not message content.</p><Button disabled={busy} onClick={() => void createInvitation()}>{busy ? "Creating…" : "Create invitation using selected access point"}</Button></div>}
       {tab === "invite" && formats && <InvitationShare formats={formats} onShared={() => setShared(true)} />}
@@ -2280,7 +2370,8 @@ function WorkspaceInviteDialog({ workspace, existingInvitations, remoteProfiles,
     setBusy(true); setError("");
     try {
       if (manualSetup) await serviceCommand("stop_participant_host", { access_id: manualSetup.setup_id }).catch(() => undefined);
-      setManualSetup(await serviceCommand<ManualParticipantSetup>("prepare_manual_participant_host", { purpose: "workspace" }));
+      const setup = await serviceCommand<ManualParticipantSetup>("prepare_manual_participant_host", { purpose: "workspace" });
+      setManualSetup(setup); setManualHost(""); setManualPort(String(setup.tcp_port)); setDoctor(null);
     } catch (reason) { setError(errorMessage(reason)); }
     finally { setBusy(false); }
   };
@@ -2321,7 +2412,7 @@ function WorkspaceInviteDialog({ workspace, existingInvitations, remoteProfiles,
   };
   return <Dialog title={`Invite to ${workspace.name}`} onClose={() => void closeDialog()}><div className="form-stack">
     {invitation && <><p>This bearer invitation works once and expires {formatExpiry(invitation.expires_at)}. This is the effective direct-host expiry.</p>{invitation.connection_mode === "participant" && <p className="direct-host-status" role="status"><ShieldCheck size={17} /> Prepared — waiting for recipient verification. Keep this owner device online.</p>}{invitation.methods?.includes("manual") && <p className="muted">Mesh Chat cannot remove your manual router rule. Remove it in the router when it is no longer needed.</p>}{invitation.link.length <= 4096 && <div className="qr-card"><QRCodeSVG value={invitation.link} size={188} level="M" /></div>}<textarea readOnly value={invitation.text} aria-label="Workspace invitation text" rows={5} /><div className="dialog-actions"><Button variant="danger" disabled={busy} onClick={() => void revoke(invitation.id)}>Revoke invitation</Button><Button variant="secondary" onClick={async () => { await navigator.clipboard.writeText(invitation.text); setCopied(true); setShared(true); }}>{copied ? <Check size={17} /> : <Copy size={17} />}{copied ? "Copied" : "Copy invitation"}</Button><Button variant="secondary" onClick={() => void share()}><Share2 size={17} /> Share</Button><Button variant="ghost" onClick={save}><FileUp size={17} /> Save file</Button>{invitation.connection_mode === "participant" && invitation.host_session_id && !invitation.methods?.includes("manual") && <Button variant="ghost" disabled={busy} onClick={() => void configureFirewall()}><ShieldCheck size={17} /> Allow in Windows Firewall</Button>}</div>{firewallFeedback && <p className="muted" role="status">{firewallFeedback}</p>}</>}
-    {!invitation && <><label className="field"><span>How should they connect?</span><select value={connectionChoice} disabled={busy} onChange={(event) => { setConnectionChoice(event.target.value); setDoctor(null); setError(""); }}><option value="participant">Over the Internet — directly to this owner device (default)</option><option value="nearby">Same network only — will not work over cellular</option>{usableProfiles.map((profile) => <option key={profile.id} value={`remote:${profile.id}`}>Approved access point · {profile.label} · {profile.state === "connected" ? "connected" : "currently unavailable"}</option>)}</select></label>{connectionChoice === "participant" && <><p className="muted">Direct participant hosting stays on this owner device. Keep Mesh Chat open through approval.</p><div className="dialog-actions"><Button variant="secondary" disabled={busy} onClick={() => void checkDirect()}>{busy ? "Checking this network…" : "Check direct Internet connection"}</Button><Button disabled={busy} onClick={() => void create()}>{busy ? "Preparing a direct route…" : "Prepare direct Internet invitation"}</Button><Button variant="ghost" disabled={busy} onClick={() => void prepareManual()}>Set up manual port forwarding</Button></div>{doctor && <DirectDoctorPanel report={doctor} onRetry={() => void checkDirect()} />}{manualSetup && <section className="manual-forward"><h3>Manual TCP forwarding</h3><p>Forward TCP port <strong>{manualSetup.tcp_port}</strong> to <strong>{manualSetup.device_label}</strong> on that same port. A DHCP reservation may be required.</p><p>Mesh Chat does not request or store router credentials.</p>{manualSetup.upstream_warning && <p className="direct-host-warning">Your router reports another private or shared address upstream. This manual rule may also require a matching rule on an upstream router; carrier-grade NAT usually requires your provider or an approved access point.</p>}<label className="field"><span>Router-reported public IPv4, global IPv6, or your hostname</span><input value={manualHost} onChange={(event) => setManualHost(event.target.value)} /></label><label className="field"><span>External TCP port</span><input inputMode="numeric" value={manualPort} onChange={(event) => setManualPort(event.target.value.replace(/\D/g, ""))} /></label><Button disabled={busy || !manualHost.trim() || !Number(manualPort)} onClick={() => void create(true)}>Create manual direct invitation</Button></section>}</>}{connectionChoice === "nearby" && <><p className="direct-host-warning">Same network only — will not work over cellular.</p><Button disabled={busy} onClick={() => void create()}>{busy ? "Creating…" : "Create same-network invitation"}</Button></>}{connectionChoice.startsWith("remote:") && <><p className="muted">This invitation explicitly uses the named approved access point selected above. Its operator can observe connection metadata.</p><Button disabled={busy} onClick={() => void create()}>{busy ? "Creating…" : "Create using selected access point"}</Button></>}<p>Create a separate signed invitation for each person. Each request is reviewed independently.</p></>}
+    {!invitation && <><label className="field"><span>How should they connect?</span><select value={connectionChoice} disabled={busy} onChange={(event) => { setConnectionChoice(event.target.value); setDoctor(null); setError(""); }}><option value="participant">Over the Internet — directly to this owner device (default)</option><option value="nearby">Same network only — will not work over cellular</option>{usableProfiles.map((profile) => <option key={profile.id} value={`remote:${profile.id}`}>Approved access point · {profile.label} · {profile.state === "connected" ? "connected" : "currently unavailable"}</option>)}</select></label>{connectionChoice === "participant" && <><p className="muted">Direct participant hosting stays on this owner device. Keep Mesh Chat open through approval.</p><div className="dialog-actions"><Button variant="secondary" disabled={busy} onClick={() => void checkDirect()}>{busy ? "Checking this network…" : "Check direct Internet connection"}</Button><Button disabled={busy} onClick={() => void create()}>{busy ? "Preparing a direct route…" : "Prepare direct Internet invitation"}</Button><Button variant="ghost" disabled={busy} onClick={() => void prepareManual()}>Set up manual port forwarding</Button></div>{doctor && <DirectDoctorPanel report={doctor} busy={busy} onRetry={() => void checkDirect()} onManualSetup={() => void prepareManual()} />}{manualSetup && <ManualForwardingPanel setup={manualSetup} host={manualHost} port={manualPort} busy={busy} onHostChange={setManualHost} onPortChange={setManualPort} onCreate={() => void create(true)} />}</>}{connectionChoice === "nearby" && <><p className="direct-host-warning">Same network only — will not work over cellular.</p><Button disabled={busy} onClick={() => void create()}>{busy ? "Creating…" : "Create same-network invitation"}</Button></>}{connectionChoice.startsWith("remote:") && <><p className="muted">This invitation explicitly uses the named approved access point selected above. Its operator can observe connection metadata.</p><Button disabled={busy} onClick={() => void create()}>{busy ? "Creating…" : "Create using selected access point"}</Button></>}<p>Create a separate signed invitation for each person. Each request is reviewed independently.</p></>}
     {existing.length > 0 && <div className="workspace-invitation-list"><h3>Active invitations</h3>{existing.filter((item) => item.id !== invitation?.id).map((item) => <div className="workspace-invitation-row" key={item.id}><span>One-use invitation · expires {formatExpiry(item.expires_at)}</span><Button variant="ghost" disabled={busy} onClick={() => void revoke(item.id)}>Revoke</Button></div>)}</div>}
     {error && <p className="form-error" role="alert">{error}</p>}
   </div></Dialog>;

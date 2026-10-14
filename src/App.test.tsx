@@ -605,6 +605,70 @@ describe("new chat invitations", () => {
     expect(nearbyText.value).toBe("MESHCHAT1:nearby");
   });
 
+  it("walks the inviter through manual forwarding when automatic setup is unavailable", async () => {
+    const current = snapshot();
+    const setupId = "manual-setup-1";
+    api.runtimePlatform.mockResolvedValue("desktop");
+    api.initializeService.mockResolvedValue(current);
+    api.onInvitation.mockResolvedValue(() => undefined);
+    api.onServiceEvent.mockResolvedValue(() => undefined);
+    api.serviceCommand.mockImplementation(async (command: string, payload?: Record<string, unknown>) => {
+      if (command === "snapshot") return current;
+      if (command === "check_direct_connection") return {
+        summary: {
+          phase: "precondition", result: "unavailable", reason: "manual_setup_required",
+          recommended_action: "set_up_manual_forward_or_choose_explicit_fallback",
+        },
+        checks: [
+          { phase: "ipv6", result: "unsupported", reason: "no_global_ipv6", recommended_action: "try_router_mapping" },
+          { phase: "upnp", result: "unsupported", reason: "upnp_no_discovery", recommended_action: "try_another_method" },
+          { phase: "pcp", result: "unsupported", reason: "pcp_no_response", recommended_action: "try_another_method" },
+          { phase: "nat_pmp", result: "unsupported", reason: "nat_pmp_no_response", recommended_action: "try_another_method" },
+        ],
+      };
+      if (command === "prepare_manual_participant_host") return {
+        setup_id: setupId,
+        device_label: "OWNER-LAPTOP",
+        tcp_port: 54321,
+        expires_at: 2_000_000_000,
+        warning: "manual_rule_not_removed_automatically",
+        upstream_warning: null,
+      };
+      if (command === "create_invitation" && payload?.connection_mode === "manual") return {
+        link: "meshchat://invite/manual", text: "MESHCHAT3:manual", file: "{}",
+        expires_at: 2_000_000_000, connection_mode: "participant", host_session_id: setupId,
+        methods: ["manual"],
+      };
+      return {};
+    });
+
+    render(<App />);
+    await screen.findByRole("heading", { name: "Your private conversations" });
+    fireEvent.click(screen.getAllByRole("button", { name: "New chat" })[0]);
+    fireEvent.click(await screen.findByRole("button", { name: "Check direct Internet connection" }));
+
+    expect(await screen.findByText("What should I do next?")).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Option 1 — Check automatic router access" })).toBeTruthy();
+    expect(screen.getByText(/main network—not a guest network/i)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Start guided manual setup" }));
+
+    expect(await screen.findByRole("heading", { name: "Manual TCP forwarding" })).toBeTruthy();
+    expect(screen.getAllByText("OWNER-LAPTOP").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("54321").length).toBeGreaterThan(0);
+    const port = screen.getByRole("textbox", { name: "External TCP port" }) as HTMLInputElement;
+    expect(port.value).toBe("54321");
+    fireEvent.change(screen.getByRole("textbox", { name: "Router-reported public IPv4, global IPv6, or your hostname" }), { target: { value: "chat.example.net" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create manual direct invitation" }));
+
+    await waitFor(() => expect(api.serviceCommand).toHaveBeenCalledWith("create_invitation", {
+      connection_mode: "manual",
+      manual_setup_id: setupId,
+      external_host: "chat.example.net",
+      external_port: 54321,
+    }));
+    expect(await screen.findByDisplayValue("MESHCHAT3:manual")).toBeTruthy();
+  });
+
   it("labels participant-hosted invitations as direct and requires no third-party consent", async () => {
     const current = snapshot();
     api.runtimePlatform.mockResolvedValue("desktop");

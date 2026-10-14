@@ -1,6 +1,6 @@
 # Android feature parity
 
-This document compares the Android client with the Windows desktop 0.2.42
+This document compares the Android client with the Windows desktop 0.2.43
 implementation. It is a source-and-evidence audit, not a claim that shared code
 automatically behaves the same on a phone. The Android client shares the React
 renderer, Python messaging core, protocol, encrypted record model, and renderer

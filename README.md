@@ -228,9 +228,10 @@ signed, and exercised on a physical device.
 
 ## Install Mesh Chat
 
-**Current desktop and Android candidate: Mesh Chat 0.2.42.** Install
-it over the existing app; do not uninstall Mesh Chat or clear its data first.
-The Android package is an arm64 development candidate and still requires the
+**Current desktop candidate: Mesh Chat 0.2.43. Current Android candidate:
+Mesh Chat 0.2.42.** Install either over the existing app; do not uninstall Mesh
+Chat or clear its data first. The Android package is an arm64 development
+candidate and still requires the
 physical-device lifecycle matrix recorded in [TESTING.md](TESTING.md).
 
 Mesh Chat must be packaged for the operating system where it will run. This
