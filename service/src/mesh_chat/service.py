@@ -140,6 +140,9 @@ class MeshChatService(
         "remove_remote_profile",
         "approve_remote_propagation",
         "remove_remote_propagation",
+        "check_direct_connection",
+        "prepare_manual_participant_host",
+        "configure_participant_firewall",
         "stop_participant_host",
         "approve_request",
         "decline_request",
@@ -417,6 +420,9 @@ class MeshChatService(
         self,
         profile_id: str | None = None,
         connection_mode: str | None = None,
+        manual_setup_id: str | None = None,
+        external_host: str | None = None,
+        external_port: int | None = None,
     ) -> InvitationFormats:
         profile = self._require_profile()
         if self._identity is None:
@@ -434,13 +440,20 @@ class MeshChatService(
             }:
                 hints.append({"type": "tcp", **listener})
         local = create_invitation(self._identity, profile["display_name"], hints=hints)
-        if connection_mode == "participant":
+        if connection_mode in {"participant", "manual"}:
             scope_id = str(uuid.uuid4())
-            access = self.create_participant_host_access(
-                purpose="personal",
-                scope_id=scope_id,
-                maximum_expires_at=local["expires_at"],
-            )
+            if connection_mode == "manual":
+                access = self.finalize_manual_participant_host(
+                    manual_setup_id, purpose="personal", scope_id=scope_id,
+                    maximum_expires_at=local["expires_at"],
+                    external_host=external_host, external_port=external_port,
+                )
+            else:
+                access = self.create_participant_host_access(
+                    purpose="personal", scope_id=scope_id,
+                    maximum_expires_at=local["expires_at"],
+                )
+            host_session_id = access.pop("host_session_id")
             serialized = create_participant_personal_invitation(
                 self._identity, local["file"], access
             )
@@ -449,7 +462,8 @@ class MeshChatService(
                 **formats,
                 "expires_at": min(local["expires_at"], access["expires_at"]),
                 "connection_mode": "participant",
-                "host_session_id": access["id"],
+                "host_session_id": host_session_id,
+                "methods": sorted({item["path"] for item in access["endpoints"]}),
             }
         if connection_mode not in {None, "nearby", "remote"}:
             raise ValidationError("Invitation connection mode is invalid")
@@ -501,12 +515,16 @@ class MeshChatService(
         if invitation.destination_hash.hex() == profile["destination_hash"]:
             raise ValidationError("Cannot connect to the local identity")
         contact_id = _contact_id(invitation.destination_hash)
+        participant_connection_results: list[dict[str, Any]] = []
         if participant is not None:
-            self.approve_participant_access(
+            participant_record = self.approve_participant_access(
                 participant.access,
                 scope_kind="contact",
                 scope_id=contact_id,
             )
+            participant_connection_results = [
+                dict(item) for item in participant_record.get("candidate_results", [])
+            ]
         elif remote is not None:
             self._approve_remote_document(
                 remote.profile,
@@ -545,7 +563,13 @@ class MeshChatService(
             # cryptographic identity.
             self._unhide_conversation("direct", existing["id"])
             self._changed()
-            return existing
+            return {
+                **existing,
+                **(
+                    {"connection_results": participant_connection_results}
+                    if participant_connection_results else {}
+                ),
+            }
 
         now = time.time()
         contact = Contact(
@@ -569,7 +593,13 @@ class MeshChatService(
         self._apply_contact_hints(contact)
         self._ensure_contact_request(contact)
         self._changed()
-        return contact
+        return {
+            **contact,
+            **(
+                {"connection_results": participant_connection_results}
+                if participant_connection_results else {}
+            ),
+        }
 
     def _ensure_contact_request(self, contact: dict[str, Any]) -> dict[str, Any]:
         for message in self.store.list("message"):
@@ -1713,6 +1743,7 @@ class MeshChatService(
                 sanitized_profile(record) for record in self._remote_profiles()
             ],
             "participant_hosting": self.participant_hosting_snapshot(),
+            "participant_connections": self.participant_connection_snapshot(),
             "network": self.network.snapshot() if self.network else None,
             "service_error": (
                 self._network_error
@@ -1795,6 +1826,9 @@ class MeshChatService(
                 "tcp_clients": [],
                 "tcp_listener": None,
                 "approved_propagation_nodes": [],
+                "remote_tcp_clients": [],
+                "participant_listeners": [],
+                "participant_clients": [],
             }
         )
         return value
@@ -1835,10 +1869,15 @@ class MeshChatService(
             return self.create_profile(body["display_name"])
         if command == "create_invitation":
             body = _payload(
-                value, allowed={"remote_profile_id", "connection_mode"}
+                value, allowed={
+                    "remote_profile_id", "connection_mode", "manual_setup_id",
+                    "external_host", "external_port",
+                }
             )
             return self.invitation(
-                body.get("remote_profile_id"), body.get("connection_mode")
+                body.get("remote_profile_id"), body.get("connection_mode"),
+                body.get("manual_setup_id"), body.get("external_host"),
+                body.get("external_port"),
             )
         if command in {"preview_invitation", "accept_invitation"}:
             body = _payload(value, allowed={"invitation"}, required={"invitation"})
@@ -1897,6 +1936,15 @@ class MeshChatService(
             outcome = self.stop_participant_host(body["access_id"])
             self._changed()
             return outcome
+        if command == "check_direct_connection":
+            _payload(value, allowed=set())
+            return self.check_direct_connection()
+        if command == "prepare_manual_participant_host":
+            body = _payload(value, allowed={"purpose"}, required={"purpose"})
+            return self.prepare_manual_participant_host(body["purpose"])
+        if command == "configure_participant_firewall":
+            body = _payload(value, allowed={"access_id"}, required={"access_id"})
+            return self.configure_participant_firewall(body["access_id"])
         if command in {
             "approve_request",
             "decline_request",
@@ -2029,6 +2077,9 @@ class MeshChatService(
                     "operation_id", "workspace_id", "lifetime_days",
                     "remote_profile_id",
                     "connection_mode",
+                    "manual_setup_id",
+                    "external_host",
+                    "external_port",
                 },
                 required={"operation_id", "workspace_id"},
             )
@@ -2038,6 +2089,9 @@ class MeshChatService(
                 body.get("lifetime_days", 7),
                 body.get("remote_profile_id"),
                 body.get("connection_mode"),
+                body.get("manual_setup_id"),
+                body.get("external_host"),
+                body.get("external_port"),
             )
         if command == "preview_workspace_invitation":
             body = _payload(

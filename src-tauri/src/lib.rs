@@ -133,11 +133,15 @@ fn handle_sidecar_value(app: &AppHandle, state: &ServiceState, value: Value) {
                 let result = if value.get("ok").and_then(Value::as_bool) == Some(true) {
                     Ok(value.get("result").cloned().unwrap_or(Value::Null))
                 } else {
-                    let code = value
-                        .pointer("/error/code")
-                        .and_then(Value::as_str)
-                        .unwrap_or("service_error");
-                    Err(code.to_string())
+                    let error = value.get("error").cloned().unwrap_or_else(|| {
+                        serde_json::json!({"code": "service_error"})
+                    });
+                    if error.get("details").is_some() {
+                        Err(error.to_string())
+                    } else {
+                        Err(error.get("code").and_then(Value::as_str)
+                            .unwrap_or("service_error").to_string())
+                    }
                 };
                 let _ = sender.send(result);
             }
@@ -404,6 +408,9 @@ fn allowed_renderer_command(command: &str) -> bool {
             | "remove_remote_profile"
             | "approve_remote_propagation"
             | "remove_remote_propagation"
+            | "check_direct_connection"
+            | "prepare_manual_participant_host"
+            | "configure_participant_firewall"
             | "stop_participant_host"
             | "approve_request"
             | "decline_request"
@@ -831,11 +838,15 @@ fn mobile_result(response: NativeResponse) -> PendingResult {
     if value.get("ok").and_then(Value::as_bool) == Some(true) {
         Ok(value.get("result").cloned().unwrap_or(Value::Null))
     } else {
-        Err(value
-            .pointer("/error/code")
-            .and_then(Value::as_str)
-            .unwrap_or("service_error")
-            .to_string())
+        let error = value.get("error").cloned().unwrap_or_else(|| {
+            serde_json::json!({"code": "service_error"})
+        });
+        if error.get("details").is_some() {
+            Err(error.to_string())
+        } else {
+            Err(error.get("code").and_then(Value::as_str)
+                .unwrap_or("service_error").to_string())
+        }
     }
 }
 

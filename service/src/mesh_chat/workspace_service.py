@@ -4009,12 +4009,18 @@ class WorkspaceServiceMixin:
         lifetime_days: Any = 7,
         remote_profile_id: Any = None,
         connection_mode: Any = None,
+        manual_setup_id: Any = None,
+        external_host: Any = None,
+        external_port: Any = None,
     ) -> dict[str, Any]:
         payload = {
             "workspace_id": workspace_id,
             "lifetime_days": lifetime_days,
             "remote_profile_id": remote_profile_id,
             "connection_mode": connection_mode,
+            "manual_setup_id": manual_setup_id,
+            "external_host": external_host,
+            "external_port": external_port,
         }
         operation_id, digest, replay = self._workspace_operation(
             "create_workspace_invitation", operation_id, payload
@@ -4082,18 +4088,27 @@ class WorkspaceServiceMixin:
             **workspace_invitation_formats(raw),
         }
         remote_record = None
-        if connection_mode == "participant":
-            access = self.create_participant_host_access(
-                purpose="workspace",
-                scope_id=invitation_id,
-                maximum_expires_at=invite.expires_at,
-            )
+        if connection_mode in {"participant", "manual"}:
+            if connection_mode == "manual":
+                access = self.finalize_manual_participant_host(
+                    manual_setup_id, purpose="workspace", scope_id=invitation_id,
+                    maximum_expires_at=invite.expires_at,
+                    external_host=external_host, external_port=external_port,
+                )
+            else:
+                access = self.create_participant_host_access(
+                    purpose="workspace", scope_id=invitation_id,
+                    maximum_expires_at=invite.expires_at,
+                )
+            host_session_id = access.pop("host_session_id")
             wrapped = create_participant_workspace_invitation(identity, raw, access)
             outcome.update(participant_invitation_formats(wrapped, "workspace"))
             outcome["expires_at"] = min(invite.expires_at, access["expires_at"])
             outcome["connection_mode"] = "participant"
-            outcome["host_session_id"] = access["id"]
-            record["participant_host_id"] = access["id"]
+            outcome["host_session_id"] = host_session_id
+            outcome["methods"] = sorted({item["path"] for item in access["endpoints"]})
+            record["participant_host_id"] = host_session_id
+            record["expires_at"] = float(outcome["expires_at"])
         elif connection_mode not in {None, "nearby", "remote"}:
             raise ValidationError("Workspace invitation connection mode is invalid")
         elif remote_profile_id is not None:
@@ -4442,12 +4457,16 @@ class WorkspaceServiceMixin:
         identity = self._identity
         if identity is None:
             raise ValidationError("Local identity is unavailable")
+        participant_connection_results: list[dict[str, Any]] = []
         if participant is not None:
-            self.approve_participant_access(
+            participant_record = self.approve_participant_access(
                 participant.access,
                 scope_kind="workspace",
                 scope_id=invite.workspace_id,
             )
+            participant_connection_results = [
+                dict(item) for item in participant_record.get("candidate_results", [])
+            ]
         elif remote is not None:
             self._approve_remote_document(
                 remote.profile,
@@ -4547,6 +4566,8 @@ class WorkspaceServiceMixin:
             "expires_at": float(invite.expires_at),
         }
         outcome = self._public_workspace(workspace)
+        if participant_connection_results:
+            outcome["connection_results"] = participant_connection_results
         records = [
             ("workspace", self._workspace_record_id(workspace["id"]), workspace),
             (

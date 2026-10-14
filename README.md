@@ -12,17 +12,17 @@ React/Python code is not treated as physical Android verification.
 
 ## Direct-first Internet invitations
 
-The default invitation is now **Over the Internet — directly to this device**. The inviter stays online and Mesh Chat tries to make that participant's own device reachable using an existing public IPv6 address or a temporary mapping on the participant's router through UPnP IGD, NAT-PMP, or PCP. It does not contact a rendezvous, STUN, TURN, account, signaling, or Mesh Chat server. Email, Slack, Teams, and similar tools carry only the signed invitation; they do not join the workspace or message path.
+The default invitation is **Over the Internet — directly to this device**. The inviter stays online and explicitly chooses **Prepare direct Internet invitation**. Mesh Chat first starts the authenticated listener, then uses an existing public IPv4/global IPv6 path or a temporary mapping on the active default router, preferring PCP, then UPnP IGD, then NAT-PMP. It does not contact a rendezvous, STUN, TURN, public-IP lookup, account, signaling, or Mesh Chat server. Email, Slack, Teams, and similar tools carry only the signed invitation; they do not join the workspace or message path.
 
 A successful direct setup creates `MESHCHAT3` or `MESHWORKSPACE3`. The signed, short-lived envelope binds the ordinary invitation to the inviter's public endpoints and a unique Reticulum interface-access credential. The recipient connects to the inviter, not to a community node. The inviter's temporary listener is separate from the LAN listener, accepts only that credential, is connection/rate bounded, expires with the invitation or router lease, and is removed when the invitation is stopped, revoked, or the app closes. Settings shows active hosted invitations without exposing endpoints or credentials.
 
-Reticulum supplies identities, encrypted paths, routing, and message transport after compatible interfaces can exchange packets; it cannot by itself make an arbitrary device behind carrier-grade or restrictive NAT accept an inbound Internet connection. Automatic direct setup can therefore fail. Common causes are CGNAT, symmetric NAT, disabled router mapping, inbound IPv6 firewall rules, and enterprise networks. Mesh Chat reports that result instead of silently inserting another entity. The user can then choose a nearby/private-network invitation or deliberately select an approved Reticulum access point.
+Reticulum supplies identities, encrypted paths, routing, and message transport after compatible interfaces can exchange packets; it cannot by itself make an arbitrary device behind provider/shared or restrictive NAT accept an inbound Internet connection. Connection Doctor reports safe local evidence and exact actions without exposing addresses or credentials. Automatic setup can therefore fail, and a prepared mapping is not called reachable until an authenticated recipient connects. The user can explicitly set up manual TCP forwarding, choose nearby/private-network mode, or deliberately select an approved Reticulum access point.
 
 Provider-independent Remote Connection Profiles remain the explicit fallback for desktop and Android. Two clients can make outbound connections to the same operator-supplied Reticulum TCP transport. Selecting one creates a signed `MESHCHAT2` or `MESHWORKSPACE2` envelope and the recipient must separately consent before the interface is attached. The operator can observe IP addresses, timing, sizes, duration, and routing identifiers and can delay or drop traffic, but cannot decrypt or forge valid Mesh Chat identities, invitations, workspace authority, messages, or receipts. Optional LXMF propagation is a second, separate approval and is not proof of endpoint or human receipt.
 
 All invitation modes require the inviter or workspace-owner device to remain online for first contact and approval. Direct participant hosting is not an always-on transport node and does not volunteer the device to route unrelated traffic. Workspace members communicate using ordinary Reticulum reachability after admission; a multi-member workspace still needs direct paths between its active devices or an explicitly enabled routing/access topology.
 
-Mesh Chat does not operate a managed public gateway. A fallback access point can be trusted and manually supplied, operated by a workspace participant, or deployed from [deploy/remote-access/README.md](deploy/remote-access/README.md). Routing unrelated mesh traffic remains a separate **Help route messages** opt-in. See [ADR 0016](docs/adr/0016-participant-hosted-internet-invitations.md), [ADR 0015](docs/adr/0015-remote-connection-profiles.md), [PROTOCOL.md](PROTOCOL.md), and [THREAT_MODEL.md](THREAT_MODEL.md) for the exact boundaries.
+Mesh Chat does not operate a managed public gateway. A fallback access point can be trusted and manually supplied, operated by a workspace participant, or deployed from [deploy/remote-access/README.md](deploy/remote-access/README.md). Routing unrelated mesh traffic remains a separate **Help route messages** opt-in. See [Direct Internet connection troubleshooting](docs/DIRECT_CONNECTIVITY_TROUBLESHOOTING.md) for setup and failure guidance, and [ADR 0016](docs/adr/0016-participant-hosted-internet-invitations.md), [ADR 0015](docs/adr/0015-remote-connection-profiles.md), [PROTOCOL.md](PROTOCOL.md), and [THREAT_MODEL.md](THREAT_MODEL.md) for the exact boundaries.
 
 ## Workspace increment 15: mobile lifecycle and local notifications
 
@@ -228,7 +228,7 @@ signed, and exercised on a physical device.
 
 ## Install Mesh Chat
 
-**Current desktop and Android candidate: Mesh Chat 0.2.39.** Install
+**Current desktop and Android candidate: Mesh Chat 0.2.41.** Install
 it over the existing app; do not uninstall Mesh Chat or clear its data first.
 The Android package is an arm64 development candidate and still requires the
 physical-device lifecycle matrix recorded in [TESTING.md](TESTING.md).
@@ -245,7 +245,7 @@ and tested on those operating systems.
 The current Android target supports arm64 phones and tablets running Android 7
 (API 24) or newer. The verified installable development APK is:
 
-`dist/mobile/mesh-chat-0.2.39-android-arm64-debug.apk`
+`dist/mobile/mesh-chat-0.2.41-android-arm64-debug.apk`
 
 An optimized `dist/mobile/mesh-chat-0.2.39-android-arm64-release.apk` was also built and inspected with a disposable test certificate. It is not production-signed, is not an upgrade identity, and must not be presented as a store or production release. The debug APK is the development sideload artifact.
 
@@ -379,7 +379,7 @@ To install it without a computer:
 For an attached phone with USB debugging enabled, install or replace it with:
 
 ```text
-adb install -r dist/mobile/mesh-chat-0.2.39-android-arm64-debug.apk
+adb install -r dist/mobile/mesh-chat-0.2.41-android-arm64-debug.apk
 ```
 
 Use the adjacent `.sha256` file to verify the 0.2.39 APK before transferring

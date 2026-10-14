@@ -18,6 +18,36 @@ export interface ServiceEvent {
 
 let platformPromise: Promise<"desktop" | "android" | "ios"> | null = null;
 
+export class ServiceCommandError extends Error {
+  code: string;
+  details?: Record<string, string>;
+
+  constructor(code: string, details?: Record<string, string>) {
+    super(code);
+    this.name = "ServiceCommandError";
+    this.code = code;
+    this.details = details;
+  }
+}
+
+function normalizedServiceError(reason: unknown): ServiceCommandError {
+  const text = String(reason);
+  try {
+    const parsed = JSON.parse(text) as { code?: unknown; details?: unknown };
+    if (typeof parsed.code === "string") {
+      const details = parsed.details && typeof parsed.details === "object"
+        ? Object.fromEntries(Object.entries(parsed.details).filter(
+          (entry): entry is [string, string] => typeof entry[1] === "string",
+        ))
+        : undefined;
+      return new ServiceCommandError(parsed.code, details);
+    }
+  } catch {
+    // Existing sidecars return a plain allowlisted error code.
+  }
+  return new ServiceCommandError(text);
+}
+
 export function runtimePlatform(): Promise<"desktop" | "android" | "ios"> {
   platformPromise ??= invoke<"desktop" | "android" | "ios">("runtime_platform");
   return platformPromise;
@@ -35,7 +65,11 @@ export async function serviceCommand<T>(
   command: string,
   payload: Record<string, unknown> = {},
 ): Promise<T> {
-  return invoke<T>("service_command", { command, payload });
+  try {
+    return await invoke<T>("service_command", { command, payload });
+  } catch (reason) {
+    throw normalizedServiceError(reason);
+  }
 }
 
 export async function lockService(): Promise<void> {

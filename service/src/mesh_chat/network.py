@@ -691,6 +691,63 @@ class ReticulumNetwork:
         for name in [*desired_listeners, *desired_clients]:
             if name not in existing:
                 self.reticulum.attach_interface(name)
+        # Production participant listeners are configured with port 0 so the
+        # kernel performs allocation in the same bind that creates the real
+        # listener. Record that bound port before any mapping is attempted.
+        interfaces = {
+            str(getattr(interface, "name", "")): interface
+            for interface in list(RNS.Transport.interfaces)
+        }
+        allocated = False
+        for index, listener in enumerate(self.settings.participant_listeners):
+            if int(listener.get("port", -1)) != 0:
+                continue
+            name = participant_listener_name(listener["id"], index)
+            interface = interfaces.get(name)
+            server_address = getattr(getattr(interface, "server", None), "server_address", None)
+            if not server_address or len(server_address) < 2:
+                continue
+            actual_port = int(server_address[1])
+            if not 1 <= actual_port <= 65535:
+                continue
+            listener["port"] = actual_port
+            desired_listeners[name]["port"] = actual_port
+            interface.bind_port = actual_port
+            allocated = True
+        if allocated:
+            write_config(self.rns_dir, self.settings)
+
+    def participant_listener_bindings(self, session_id: str) -> list[dict[str, Any]]:
+        """Return kernel-bound listener coordinates to the protected service."""
+
+        prefix = f"{PARTICIPANT_HOST_PREFIX}{session_id[:12]}"
+        return [
+            {
+                "listen_ip": str(getattr(interface, "bind_ip", "")),
+                "port": int(getattr(interface, "bind_port", 0)),
+            }
+            for interface in list(RNS.Transport.interfaces)
+            if str(getattr(interface, "name", "")).startswith(prefix)
+            and 1 <= int(getattr(interface, "bind_port", 0)) <= 65535
+        ]
+
+    def participant_host_state(self, session_id: str) -> dict[str, Any]:
+        """Return aggregate listener state without exposing bind addresses."""
+
+        prefix = f"{PARTICIPANT_HOST_PREFIX}{session_id[:12]}"
+        selected = [
+            interface for interface in list(RNS.Transport.interfaces)
+            if str(getattr(interface, "name", "")).startswith(prefix)
+        ]
+        return {
+            "listener_count": len(selected),
+            "online": bool(selected) and all(
+                bool(getattr(interface, "online", False)) for interface in selected
+            ),
+            "client_count": sum(
+                int(getattr(interface, "clients", 0)) for interface in selected
+            ),
+        }
 
     def remote_profile_state(self, profile_id: str, endpoint_count: int) -> dict[str, Any]:
         names = {

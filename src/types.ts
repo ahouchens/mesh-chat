@@ -38,7 +38,8 @@ export interface Contact {
   /** Previous state used to safely restore a locally blocked contact. */
   trust_before_block?: Exclude<TrustState, "blocked">;
   request_state?: DeliveryState;
-  route_kind?: "nearby" | "signed_direct" | "remote" | "unavailable";
+  route_kind?: "nearby" | "signed_direct" | "participant_direct" | "remote" | "unavailable";
+  connection_results?: ParticipantCandidateResult[];
   connection_hints: Array<{ type: "tcp"; host: string; port: number }>;
   created_at: number;
   updated_at: number;
@@ -266,6 +267,7 @@ export interface Workspace {
   authority_loss_guidance?: string;
   read_hint_sync?: boolean;
   notification_preference?: WorkspaceNotificationPreference;
+  connection_results?: ParticipantCandidateResult[];
   created_at: number;
   updated_at: number;
 }
@@ -625,6 +627,7 @@ export interface WorkspaceInvitationFormats {
   access_point_reachable?: boolean;
   connection_mode?: "participant";
   host_session_id?: string;
+  methods?: ParticipantHosting["methods"];
 }
 
 export interface WorkspaceDeviceLinkPreview {
@@ -829,9 +832,42 @@ export interface ParticipantHosting {
   purpose: "personal" | "workspace";
   scope_id: string;
   endpoint_count: number;
-  methods: Array<"public_ipv6" | "upnp" | "nat_pmp" | "pcp" | "manual">;
+  methods: Array<"public_ipv4" | "public_ipv6" | "upnp" | "nat_pmp" | "pcp" | "manual">;
   expires_at: number;
-  state: "ready" | "expired";
+  state: "manual_setup" | "prepared_unverified" | "recipient_connected" | "unavailable" | "expired";
+  reason?: string | null;
+  firewall_configured: boolean;
+}
+
+export type DirectDoctorPhase = "precondition" | "ipv6" | "upnp" | "nat_pmp" | "pcp" | "firewall" | "listener";
+export type DirectDoctorResult = "available" | "unavailable" | "blocked" | "unsupported" | "prepared_unverified";
+export interface DirectDoctorStep {
+  phase: DirectDoctorPhase;
+  result: DirectDoctorResult;
+  reason: string;
+  recommended_action: string;
+}
+export interface DirectDoctorReport {
+  summary: DirectDoctorStep;
+  checks: DirectDoctorStep[];
+}
+export interface ManualParticipantSetup {
+  setup_id: string;
+  device_label: string;
+  tcp_port: number;
+  expires_at: number;
+  warning: "manual_rule_not_removed_automatically";
+  upstream_warning?: "upnp_wan_private" | "upnp_wan_shared" | "upstream_nat_detected" | null;
+}
+export interface ParticipantCandidateResult {
+  candidate: number;
+  path: "public_ipv4" | "public_ipv6" | "upnp" | "nat_pmp" | "pcp" | "manual";
+  result: "connected" | "refused" | "timed_out" | "no_ipv6_route" | "unresolved";
+}
+export interface ParticipantConnectionSummary {
+  id: string;
+  candidate_results: ParticipantCandidateResult[];
+  all_failed: boolean;
 }
 
 export interface Snapshot {
@@ -862,6 +898,7 @@ export interface Snapshot {
   settings: NetworkSettings;
   remote_profiles?: RemoteProfile[];
   participant_hosting?: ParticipantHosting[];
+  participant_connections?: ParticipantConnectionSummary[];
   network: {
     transport_enabled: boolean;
     propagation_enabled: boolean;
@@ -893,4 +930,5 @@ export interface InvitationFormats {
   access_point_reachable?: boolean;
   connection_mode?: "participant";
   host_session_id?: string;
+  methods?: ParticipantHosting["methods"];
 }

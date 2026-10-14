@@ -505,12 +505,12 @@ describe("new chat invitations", () => {
     await screen.findByRole("heading", { name: "Your private conversations" });
     fireEvent.click(screen.getAllByRole("button", { name: "New chat" })[0]);
 
+    fireEvent.click(await screen.findByRole("button", { name: "Prepare direct Internet invitation" }));
     expect((await screen.findByRole("alert")).textContent).toContain("did not respond in time");
-    fireEvent.click(screen.getByRole("button", { name: "Retry invitation" }));
+    fireEvent.click(screen.getByRole("button", { name: "Prepare direct Internet invitation" }));
 
     await screen.findByText("Invitation details to share");
     expect(api.serviceCommand.mock.calls.filter(([command]) => command === "create_invitation")).toHaveLength(2);
-    expect(screen.queryByRole("button", { name: "Retry invitation" })).toBeNull();
   });
 
   it("creates a remote-ready invitation only after selecting an approved profile", async () => {
@@ -537,9 +537,10 @@ describe("new chat invitations", () => {
     const reachability = await screen.findByRole("combobox", { name: "How should they connect?" });
     expect((reachability as HTMLSelectElement).value).toBe("participant");
     expect(screen.getByRole("option", { name: "Over the Internet — directly to this device (default)" })).toBeTruthy();
-    expect(screen.getByText(/temporary inbound path/i)).toBeTruthy();
-    expect(api.serviceCommand.mock.calls.find(([command]) => command === "create_invitation")).toEqual(["create_invitation", { connection_mode: "participant" }]);
+    expect(screen.getByText(/Direct participant hosting stays on this device/i)).toBeTruthy();
+    expect(api.serviceCommand.mock.calls.some(([command]) => command === "create_invitation")).toBe(false);
     fireEvent.change(reachability, { target: { value: `remote:${remoteProfile.id}` } });
+    fireEvent.click(await screen.findByRole("button", { name: "Create invitation using selected access point" }));
 
     await waitFor(() => expect(api.serviceCommand).toHaveBeenCalledWith(
       "create_invitation",
@@ -550,38 +551,30 @@ describe("new chat invitations", () => {
     expect(invitationText.value).toBe("MESHCHAT2:remote");
   });
 
-  it("keeps the newest reachability choice and stops a stale participant host", async () => {
+  it("starts hosting only after explicit preparation and stops an unshared host on close", async () => {
     const current = snapshot();
-    const participantAttempt = deferred<{ link: string; text: string; file: string; expires_at: number; connection_mode: "participant"; host_session_id: string }>();
-    const staleHostId = "b".repeat(64);
+    const hostId = "b".repeat(64);
     api.runtimePlatform.mockResolvedValue("desktop");
     api.initializeService.mockResolvedValue(current);
     api.onInvitation.mockResolvedValue(() => undefined);
     api.onServiceEvent.mockResolvedValue(() => undefined);
     api.serviceCommand.mockImplementation(async (command: string, payload?: Record<string, unknown>) => {
       if (command === "snapshot") return current;
-      if (command === "create_invitation" && payload?.connection_mode === "participant") return participantAttempt.promise;
-      if (command === "create_invitation") return { link: "meshchat://invite/nearby", text: "MESHCHAT1:nearby", file: "{}", expires_at: 2_000_000_000 };
+      if (command === "create_invitation" && payload?.connection_mode === "participant") return {
+        link: "meshchat://invite/direct", text: "MESHCHAT3:direct", file: "{}",
+        expires_at: 2_000_000_000, connection_mode: "participant", host_session_id: hostId,
+      };
       return {};
     });
 
     render(<App />);
     await screen.findByRole("heading", { name: "Your private conversations" });
     fireEvent.click(screen.getAllByRole("button", { name: "New chat" })[0]);
-    const reachability = await screen.findByRole("combobox", { name: "How should they connect?" });
-    fireEvent.change(reachability, { target: { value: "nearby" } });
-    await screen.findByDisplayValue("MESHCHAT1:nearby");
-
-    await act(async () => participantAttempt.resolve({
-      link: "meshchat://invite/stale",
-      text: "MESHCHAT3:stale",
-      file: "{}",
-      expires_at: 2_000_000_000,
-      connection_mode: "participant",
-      host_session_id: staleHostId,
-    }));
-    await waitFor(() => expect(api.serviceCommand).toHaveBeenCalledWith("stop_participant_host", { access_id: staleHostId }));
-    expect(screen.getByDisplayValue("MESHCHAT1:nearby")).toBeTruthy();
+    expect(api.serviceCommand.mock.calls.some(([command]) => command === "create_invitation")).toBe(false);
+    fireEvent.click(screen.getByRole("button", { name: "Prepare direct Internet invitation" }));
+    await screen.findByDisplayValue("MESHCHAT3:direct");
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    await waitFor(() => expect(api.serviceCommand).toHaveBeenCalledWith("stop_participant_host", { access_id: hostId }));
   });
 
   it("falls back explicitly when the current router cannot prepare a direct Internet path", async () => {
@@ -600,10 +593,12 @@ describe("new chat invitations", () => {
     render(<App />);
     await screen.findByRole("heading", { name: "Your private conversations" });
     fireEvent.click(screen.getAllByRole("button", { name: "New chat" })[0]);
+    fireEvent.click(await screen.findByRole("button", { name: "Prepare direct Internet invitation" }));
     expect((await screen.findByRole("alert")).textContent).toContain("could not open a direct Internet path");
-    fireEvent.click(screen.getByRole("button", { name: "Use nearby only" }));
+    fireEvent.change(screen.getByRole("combobox", { name: "How should they connect?" }), { target: { value: "nearby" } });
+    fireEvent.click(await screen.findByRole("button", { name: "Create same-network invitation" }));
 
-    await waitFor(() => expect(api.serviceCommand).toHaveBeenCalledWith("create_invitation"));
+    await waitFor(() => expect(api.serviceCommand).toHaveBeenCalledWith("create_invitation", { connection_mode: "nearby" }));
     await screen.findByText("Invitation details to share");
     const nearbyText = screen.getAllByLabelText("Invitation details to share")
       .find((element) => element.tagName === "TEXTAREA") as HTMLTextAreaElement;
@@ -647,6 +642,48 @@ describe("new chat invitations", () => {
     expect((connect as HTMLButtonElement).disabled).toBe(false);
     expect(screen.queryByRole("checkbox", { name: /Connect to this access point/ })).toBeNull();
     expect(screen.getByText(/No separate operator will join/i)).toBeTruthy();
+  });
+
+  it("keeps the invite open and reports sanitized per-candidate failures", async () => {
+    const current = snapshot();
+    api.runtimePlatform.mockResolvedValue("desktop");
+    api.initializeService.mockResolvedValue(current);
+    api.onInvitation.mockResolvedValue(() => undefined);
+    api.onServiceEvent.mockResolvedValue(() => undefined);
+    api.serviceCommand.mockImplementation(async (command: string) => {
+      if (command === "snapshot") return current;
+      if (command === "preview_invitation") return {
+        display_name: "Taylor", identity_hash: "11".repeat(16),
+        destination_hash: "22".repeat(16), fingerprint: "AAAA BBBB CCCC DDDD",
+        hints: [], expires_at: 2_000_000_000,
+        participant_access: {
+          id: "a".repeat(64), mode: "participant_direct", operator: "inviter",
+          endpoint_count: 2, expires_at: 2_000_000_000,
+          privacy_disclosure: "The connection goes directly to the person who sent this invitation.",
+        },
+      };
+      if (command === "accept_invitation") return {
+        ...approved,
+        connection_results: [
+          { candidate: 1, path: "public_ipv6", result: "no_ipv6_route" },
+          { candidate: 2, path: "pcp", result: "timed_out" },
+        ],
+      };
+      return {};
+    });
+
+    render(<App />);
+    await screen.findByRole("heading", { name: "Your private conversations" });
+    fireEvent.click(screen.getAllByRole("button", { name: "New chat" })[0]);
+    fireEvent.click(await screen.findByRole("tab", { name: "Open an invite" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "Invitation" }), { target: { value: "MESHCHAT3:direct" } });
+    fireEvent.click(screen.getByRole("button", { name: "Check invitation" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Connect directly to Taylor" }));
+
+    expect(await screen.findByRole("heading", { name: "No candidate connected yet" })).toBeTruthy();
+    expect(screen.getByText(/Candidate 1 \(public IPv6\): no IPv6 route/i)).toBeTruthy();
+    expect(screen.getByText(/Candidate 2 \(PCP router mapping\): timed out/i)).toBeTruthy();
+    expect(screen.getByRole("dialog", { name: "New chat" })).toBeTruthy();
   });
 
   it("shows verified access-point disclosure and requires consent before accepting", async () => {
@@ -710,7 +747,8 @@ describe("remote connection settings", () => {
       endpoint_count: 1,
       methods: ["upnp" as const],
       expires_at: 1_900_000_000,
-      state: "ready" as const,
+      state: "prepared_unverified" as const,
+      firewall_configured: false,
     };
     const current: Snapshot = { ...snapshot(), participant_hosting: [host] };
     api.runtimePlatform.mockResolvedValue("desktop");
@@ -799,7 +837,8 @@ describe("incoming connection requests", () => {
 
     fireEvent.click(screen.getAllByRole("button", { name: "New chat" })[0]);
     await screen.findByRole("heading", { name: "New chat" });
-    expect(screen.getByText("Invitation details to share")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Prepare direct Internet invitation" }));
+    expect(await screen.findByText("Invitation details to share")).toBeTruthy();
 
     current = snapshot([incoming]);
     await act(async () => {
@@ -1839,6 +1878,21 @@ describe("Android system Back navigation", () => {
 });
 
 describe("connected conversation", () => {
+  it("displays participant_direct as a valid direct Internet route", async () => {
+    const current = snapshot([{ ...approved, route_kind: "participant_direct" }]);
+    api.runtimePlatform.mockResolvedValue("desktop");
+    api.initializeService.mockResolvedValue(current);
+    api.onInvitation.mockResolvedValue(() => undefined);
+    api.onServiceEvent.mockResolvedValue(() => undefined);
+    api.serviceCommand.mockImplementation(async (command: string) => {
+      if (command === "snapshot") return current;
+      return {};
+    });
+
+    render(<App />);
+    expect(await screen.findByText("Connected directly over the Internet")).toBeTruthy();
+  });
+
   it("keeps the first message in the flexible message region when the optional banner is absent", async () => {
     const current = snapshot([approved]);
     current.messages = [firstMessage];
@@ -3343,16 +3397,17 @@ describe("desktop workspaces", () => {
     const dialog = screen.getByRole("dialog");
     expect((within(dialog).getByRole("combobox", { name: "How should they connect?" }) as HTMLSelectElement).value).toBe("participant");
     expect(within(dialog).getByRole("option", { name: "Over the Internet — directly to this owner device (default)" })).toBeTruthy();
-    expect(within(dialog).getByText(/temporary inbound path/i)).toBeTruthy();
+    expect(within(dialog).getByText(/Direct participant hosting stays on this owner device/i)).toBeTruthy();
     expect(within(dialog).getAllByText(/One-use invitation · expires/i)).toHaveLength(2);
     fireEvent.click(within(dialog).getAllByRole("button", { name: "Revoke" })[0]);
     await waitFor(() => expect(api.serviceCommand).toHaveBeenCalledWith("revoke_workspace_invitation", expect.objectContaining({ workspace_id: workspace.id, invitation_id: "invite-one", operation_id: expect.any(String) })));
     expect(within(dialog).getAllByText(/One-use invitation · expires/i)).toHaveLength(1);
-    fireEvent.click(within(dialog).getByRole("button", { name: "Create invitation" }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Prepare direct Internet invitation" }));
     await waitFor(() => expect(api.serviceCommand).toHaveBeenCalledWith("create_workspace_invitation", expect.objectContaining({ workspace_id: workspace.id, operation_id: expect.any(String), connection_mode: "participant" })));
     const workspaceInvitationCall = api.serviceCommand.mock.calls.find(([command]) => command === "create_workspace_invitation");
     expect(workspaceInvitationCall?.[1]).not.toHaveProperty("remote_profile_id");
     expect((await within(dialog).findByRole("textbox", { name: "Workspace invitation text" }) as HTMLTextAreaElement).value).toBe("MESHWORKSPACE3:three");
+    expect(within(dialog).getByText(/effective direct-host expiry/i)).toBeTruthy();
   });
 
   it("allows an owner to replace a removed member at the eight-person history limit", async () => {

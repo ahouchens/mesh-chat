@@ -12,6 +12,12 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from .connectivity import (
+    DIAGNOSTIC_ACTIONS,
+    DIAGNOSTIC_PHASES,
+    DIAGNOSTIC_REASONS,
+    DIAGNOSTIC_RESULTS,
+)
 from .errors import MeshChatError, ValidationError
 from .ipc import FrameWriter, IPC_VERSION, read_frame
 from .service import MeshChatService
@@ -209,11 +215,22 @@ def _start_parent_watchdog(
 
 def _error_response(command_id: Any, error: Exception) -> dict[str, Any]:
     code = error.code if isinstance(error, MeshChatError) else "internal_error"
+    details = getattr(error, "details", None)
+    safe_error = {"code": code}
+    if isinstance(details, dict) and set(details) == {
+        "phase", "result", "reason", "recommended_action"
+    } and (
+        details.get("phase") in DIAGNOSTIC_PHASES
+        and details.get("result") in DIAGNOSTIC_RESULTS
+        and details.get("reason") in DIAGNOSTIC_REASONS
+        and details.get("recommended_action") in DIAGNOSTIC_ACTIONS
+    ):
+        safe_error["details"] = details
     return {
         "type": "response",
         "id": command_id if isinstance(command_id, str) else None,
         "ok": False,
-        "error": {"code": code},
+        "error": safe_error,
     }
 
 

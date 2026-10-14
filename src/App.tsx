@@ -69,6 +69,8 @@ import packageInfo from "../package.json";
 import type {
   ChatMessage,
   Contact,
+  DirectDoctorReport,
+  DirectDoctorStep,
   Group,
   GroupInvitation,
   GroupMember,
@@ -76,9 +78,11 @@ import type {
   GroupPostingPolicy,
   InvitationFormats,
   InvitationPreview,
+  ManualParticipantSetup,
   MessageReaction,
   NetworkSettings,
   ParticipantHosting,
+  ParticipantCandidateResult,
   RemoteProfile,
   NotificationCapability,
   NotificationOpenTarget,
@@ -344,13 +348,102 @@ function Button({
   );
 }
 
-function InvitationShare({ formats }: { formats: InvitationFormats }) {
+const directPhaseLabel: Record<DirectDoctorStep["phase"], string> = {
+  precondition: "Internet route", ipv6: "Native IPv6", upnp: "UPnP",
+  nat_pmp: "NAT-PMP", pcp: "PCP", firewall: "Host firewall",
+  listener: "Invitation listener",
+};
+
+function directReasonLabel(reason: string): string {
+  const labels: Record<string, string> = {
+    ready_to_prepare: "Ready to prepare",
+    no_default_route: "No active default Internet route",
+    no_global_ipv4: "No directly assigned public IPv4",
+    no_global_ipv6: "No usable global IPv6 on the active route",
+    upnp_no_discovery: "No UPnP Internet gateway discovered",
+    upnp_wan_private: "Upstream or double NAT detected",
+    upnp_wan_shared: "Provider/shared NAT likely",
+    upnp_mapping_denied: "The router denied the UPnP mapping",
+    upnp_unsupported_lease: "The router does not support the requested UPnP lease",
+    nat_pmp_no_response: "No NAT-PMP response",
+    nat_pmp_mapping_denied: "The router denied the NAT-PMP mapping",
+    pcp_no_response: "No PCP response",
+    pcp_mapping_denied: "The router denied the PCP mapping",
+    upstream_nat_detected: "Upstream or double NAT detected",
+    listener_bind_failed: "The temporary listener could not start",
+    windows_firewall_blocked: "Windows Firewall needs attention",
+    windows_firewall_permission_required: "Permission will be requested after preparing",
+    firewall_check_unsupported: "Check this device’s firewall manually",
+    session_limit: "Too many temporary invitations are active",
+    direct_public_ipv4: "Public IPv4 is assigned directly to this device",
+    global_ipv6_available: "Usable global IPv6 is present",
+    mapping_prepared: "Prepared, not externally verified",
+    router_state_changed: "The router or address changed; create a new invitation",
+    manual_setup_required: "Automatic setup is unavailable",
+  };
+  return labels[reason] ?? "Unavailable on this network";
+}
+
+function directActionLabel(action: string): string {
+  const labels: Record<string, string> = {
+    retry: "Retry after checking this network.",
+    continue: "Continue to the remaining checks.",
+    prepare_direct: "Prepare the invitation, then keep Mesh Chat open.",
+    share_invitation: "Share the invitation and keep Mesh Chat open.",
+    wait_for_recipient: "Keep Mesh Chat open while the recipient connects.",
+    configure_firewall_after_prepare: "After preparing, allow only its temporary TCP port.",
+    connect_to_internet: "Connect this device to the Internet and retry.",
+    try_router_mapping: "Try a supported automatic router mapping or manual forward.",
+    try_another_method: "Try another listed mapping method or manual forwarding.",
+    check_host_firewall: "Check this device’s inbound firewall for the temporary TCP port.",
+    configure_upstream_router_or_bridge_mode: "Forward through both routers or use modem bridge/passthrough mode.",
+    contact_provider_or_use_approved_access_point: "Ask the provider about inbound service or choose an approved participant access point.",
+    set_up_manual_forward_or_choose_explicit_fallback: "Set up a manual TCP forward, choose same-network mode, or explicitly select an approved access point.",
+    stop_an_active_invitation: "Stop an older hosted invitation and retry.",
+    check_active_network_profile: "Connect using the intended Windows network profile and retry.",
+    retry_or_check_firewall: "Retry, then check the host firewall if binding still fails.",
+    restart_app: "Restart Mesh Chat and try again.",
+    follow_guided_firewall_instructions: "Use the guided narrow firewall rule or configure it manually.",
+    use_ipv6_firewall_instructions: "Allow only the temporary TCP port in the IPv6 firewall, then retry.",
+  };
+  return labels[action] ?? "Retry after checking this network.";
+}
+
+function sanitizedDoctorSummary(report: DirectDoctorReport): string {
+  return [
+    `Mesh Chat direct connection: ${directReasonLabel(report.summary.reason)}`,
+    ...report.checks.map((step) => `${directPhaseLabel[step.phase]}: ${step.result} — ${directReasonLabel(step.reason)}`),
+    `Next action: ${directActionLabel(report.summary.recommended_action)}`,
+  ].join("\n");
+}
+
+function DirectDoctorPanel({ report, onRetry }: { report: DirectDoctorReport; onRetry: () => void }) {
+  const [copied, setCopied] = useState(false);
+  return <section className="direct-doctor" aria-label="Direct Internet connection check">
+    <h3>{directReasonLabel(report.summary.reason)}</h3>
+    <ul>{report.checks.map((step, index) => <li key={`${step.phase}-${index}`}><span>{directPhaseLabel[step.phase]}</span><strong>{directReasonLabel(step.reason)}</strong></li>)}</ul>
+    <p>{directActionLabel(report.summary.recommended_action)}</p>
+    <div className="dialog-actions"><Button variant="secondary" onClick={onRetry}><RefreshCw size={17} /> Retry</Button><Button variant="ghost" onClick={async () => { await navigator.clipboard.writeText(sanitizedDoctorSummary(report)); setCopied(true); }}><Copy size={17} /> {copied ? "Copied" : "Copy diagnostic summary"}</Button></div>
+  </section>;
+}
+
+function candidateSummary(results: ParticipantCandidateResult[]): string {
+  const labels: Record<ParticipantCandidateResult["result"], string> = {
+    connected: "connected", refused: "connection refused", timed_out: "timed out",
+    no_ipv6_route: "no IPv6 route", unresolved: "hostname did not resolve safely",
+  };
+  return results.map((item) => `Candidate ${item.candidate} (${participantMethodLabel(item.path)}): ${labels[item.result]}`).join("\n");
+}
+
+function InvitationShare({ formats, onShared }: { formats: InvitationFormats; onShared?: () => void }) {
   const [feedback, setFeedback] = useState("");
   const [hostingStopped, setHostingStopped] = useState(false);
+  const [firewallBusy, setFirewallBusy] = useState(false);
 
   const copyInvite = async () => {
     try {
       await navigator.clipboard.writeText(formats.text);
+      onShared?.();
       setFeedback("Invitation copied.");
     } catch {
       setFeedback("Copy was unavailable. Select the invitation text above and copy it manually.");
@@ -367,6 +460,7 @@ function InvitationShare({ formats }: { formats: InvitationFormats }) {
         title: "Mesh Chat invitation",
         text: formats.text,
       });
+      onShared?.();
       setFeedback("Invitation shared.");
     } catch (reason) {
       if (reason instanceof DOMException && reason.name === "AbortError") return;
@@ -382,6 +476,19 @@ function InvitationShare({ formats }: { formats: InvitationFormats }) {
     anchor.click();
     URL.revokeObjectURL(anchor.href);
     setFeedback("Invitation file saved.");
+    onShared?.();
+  };
+
+  const configureFirewall = async () => {
+    if (!formats.host_session_id || firewallBusy) return;
+    setFirewallBusy(true);
+    try {
+      const result = await serviceCommand<DirectDoctorStep>("configure_participant_firewall", { access_id: formats.host_session_id });
+      setFeedback(result.result === "prepared_unverified"
+        ? "Temporary Windows Firewall rule added for this invitation only."
+        : `${directReasonLabel(result.reason)} ${directActionLabel(result.recommended_action)}`);
+    } catch (reason) { setFeedback(errorMessage(reason)); }
+    finally { setFirewallBusy(false); }
   };
 
   const stopHosting = async () => {
@@ -410,7 +517,8 @@ function InvitationShare({ formats }: { formats: InvitationFormats }) {
       <p id="invite-safety-note" className="muted invite-safety">
         Send everything in this box. It contains your public identity and connection hints, never your private key.
       </p>
-      {formats.connection_mode === "participant" && <p className={hostingStopped ? "direct-host-warning" : "direct-host-status"} role="status">{hostingStopped ? <WifiOff size={17} /> : <ShieldCheck size={17} />} {hostingStopped ? "Direct hosting is stopped; this invitation cannot connect over the Internet." : "Direct Internet path prepared. Keep Mesh Chat open until the recipient connects; their device will verify the path. No transport node is being used."}</p>}
+      {formats.connection_mode === "participant" && <p className={hostingStopped ? "direct-host-warning" : "direct-host-status"} role="status">{hostingStopped ? <WifiOff size={17} /> : <ShieldCheck size={17} />} {hostingStopped ? "Direct hosting is stopped; this invitation cannot connect over the Internet." : "Prepared — waiting for recipient verification. Keep Mesh Chat open until they connect. No transport node is being used."}</p>}
+      {formats.methods?.includes("manual") && <p className="muted">This invitation uses your manual router rule. Mesh Chat stops its listener when hosting ends, but cannot remove the rule from your router.</p>}
       <p id="invite-expiry-note" className="invite-expiry">
         Expires <time dateTime={new Date(formats.expires_at * 1000).toISOString()}>{formatExpiry(formats.expires_at)}</time>
       </p>
@@ -418,6 +526,7 @@ function InvitationShare({ formats }: { formats: InvitationFormats }) {
         <Button onClick={() => void copyInvite()}><Copy size={17} /> Copy details</Button>
         <Button variant="secondary" onClick={() => void shareInvite()}><Share2 size={17} /> Share invite</Button>
         <Button variant="ghost" onClick={saveInvite}><FileUp size={17} /> Save invite file</Button>
+        {formats.host_session_id && !hostingStopped && <Button variant="ghost" disabled={firewallBusy} onClick={() => void configureFirewall()}><ShieldCheck size={17} /> {firewallBusy ? "Requesting permission…" : "Allow through Windows Firewall"}</Button>}
         {formats.host_session_id && !hostingStopped && <Button variant="ghost" onClick={() => void stopHosting()}><WifiOff size={17} /> Stop hosting</Button>}
       </div>
       <p className="invite-feedback" aria-live="polite">{feedback}</p>
@@ -543,13 +652,7 @@ function Onboarding({
         await serviceCommand("accept_invitation", { invitation });
         onReady(await serviceCommand<Snapshot>("snapshot"));
       } else {
-        try {
-          setFormats(await serviceCommand<InvitationFormats>("create_invitation", { connection_mode: "participant" }));
-        } catch (reason) {
-          if (!String(reason).includes("direct_connection_unavailable")) throw reason;
-          setReachabilityWarning("Your current network did not allow a direct Internet invitation. This nearby invitation still works on the same local or participant-controlled network; you can configure another connection after opening Mesh Chat.");
-          setFormats(await serviceCommand<InvitationFormats>("create_invitation"));
-        }
+        onReady(await serviceCommand<Snapshot>("snapshot"));
       }
     } catch (reason) {
       setError(errorMessage(reason));
@@ -791,63 +894,70 @@ function NewChatDialog({ initialInvitation, remoteProfiles, onClose, onChanged }
   const [preview, setPreview] = useState<InvitationPreview | null>(null);
   const [error, setError] = useState("");
   const [inviteError, setInviteError] = useState("");
-  const [creatingInvitation, setCreatingInvitation] = useState(false);
+  const [busy, setBusy] = useState(false);
   const [connectionChoice, setConnectionChoice] = useState("participant");
-  const [directUnavailable, setDirectUnavailable] = useState(false);
   const [remoteConsent, setRemoteConsent] = useState(false);
-  const invitationGeneration = useRef(0);
+  const [doctor, setDoctor] = useState<DirectDoctorReport | null>(null);
+  const [manualSetup, setManualSetup] = useState<ManualParticipantSetup | null>(null);
+  const [manualHost, setManualHost] = useState("");
+  const [manualPort, setManualPort] = useState("");
+  const [shared, setShared] = useState(false);
+  const [candidateResults, setCandidateResults] = useState<ParticipantCandidateResult[]>([]);
   const generatedHostSession = useRef<string | null>(null);
   const usableProfiles = remoteProfiles.filter((profile) => profile.state !== "expired");
-  const createInvitation = useCallback(async () => {
-    const generation = ++invitationGeneration.current;
-    setCreatingInvitation(true);
-    setInviteError("");
-    setDirectUnavailable(false);
+
+  const stopUnsharedHost = async () => {
+    const id = generatedHostSession.current;
+    if (id && !shared) await serviceCommand("stop_participant_host", { access_id: id }).catch(() => undefined);
+    generatedHostSession.current = null;
+  };
+  const closeDialog = async () => { await stopUnsharedHost(); onClose(); };
+  const chooseConnection = async (value: string) => {
+    await stopUnsharedHost();
+    setConnectionChoice(value); setFormats(null); setManualSetup(null); setDoctor(null);
+    setInviteError(""); setShared(false);
+  };
+  const checkDirect = async () => {
+    setBusy(true); setInviteError("");
+    try { setDoctor(await serviceCommand<DirectDoctorReport>("check_direct_connection")); }
+    catch (reason) { setInviteError(errorMessage(reason)); }
+    finally { setBusy(false); }
+  };
+  const prepareManual = async () => {
+    setBusy(true); setInviteError("");
     try {
-      const payload = connectionChoice === "participant"
-        ? { connection_mode: "participant" }
-        : connectionChoice === "nearby"
-          ? undefined
-          : { connection_mode: "remote", remote_profile_id: connectionChoice.slice("remote:".length) };
-      const created = await (payload
-        ? serviceCommand<InvitationFormats>("create_invitation", payload)
-        : serviceCommand<InvitationFormats>("create_invitation"));
-      if (generation !== invitationGeneration.current) {
-        if (created.host_session_id) void serviceCommand("stop_participant_host", { access_id: created.host_session_id }).catch(() => undefined);
-        return;
-      }
-      const previousHost = generatedHostSession.current;
-      if (previousHost && previousHost !== created.host_session_id) {
-        void serviceCommand("stop_participant_host", { access_id: previousHost }).catch(() => undefined);
-      }
+      await stopUnsharedHost();
+      const setup = await serviceCommand<ManualParticipantSetup>("prepare_manual_participant_host", { purpose: "personal" });
+      generatedHostSession.current = setup.setup_id;
+      setManualSetup(setup); setFormats(null); setShared(false);
+    } catch (reason) { setInviteError(errorMessage(reason)); }
+    finally { setBusy(false); }
+  };
+  const createInvitation = async (manual = false) => {
+    setBusy(true); setInviteError("");
+    try {
+      const payload = manual && manualSetup
+        ? { connection_mode: "manual", manual_setup_id: manualSetup.setup_id, external_host: manualHost.trim(), external_port: Number(manualPort) }
+        : connectionChoice === "participant" ? { connection_mode: "participant" }
+          : connectionChoice === "nearby" ? { connection_mode: "nearby" }
+            : { connection_mode: "remote", remote_profile_id: connectionChoice.slice("remote:".length) };
+      const created = await serviceCommand<InvitationFormats>("create_invitation", payload);
+      const previous = generatedHostSession.current;
+      if (previous && previous !== created.host_session_id) await serviceCommand("stop_participant_host", { access_id: previous }).catch(() => undefined);
       generatedHostSession.current = created.host_session_id ?? null;
-      setFormats(created);
+      setFormats(created); setShared(false); setManualSetup(null);
     } catch (reason) {
-      if (generation !== invitationGeneration.current) return;
-      setFormats(null);
-      setInviteError(errorMessage(reason));
-      setDirectUnavailable(connectionChoice === "participant" && String(reason).includes("direct_connection_unavailable"));
-    } finally {
-      if (generation === invitationGeneration.current) setCreatingInvitation(false);
-    }
-  }, [connectionChoice]);
-  useEffect(() => {
-    if (tab === "invite") {
-      void createInvitation();
-    } else {
-      invitationGeneration.current += 1;
-      setCreatingInvitation(false);
-    }
-  }, [createInvitation, tab]);
+      setFormats(null); setInviteError(errorMessage(reason));
+      const details = (reason as { details?: Record<string, string> })?.details;
+      if (details?.phase) setDoctor({ summary: details as unknown as DirectDoctorStep, checks: [details as unknown as DirectDoctorStep] });
+    } finally { setBusy(false); }
+  };
+
   useEffect(() => {
     if (!initialInvitation) return;
-    setRaw(initialInvitation);
-    setTab("join");
-    setPreview(null);
-    setRemoteConsent(false);
-    void serviceCommand<InvitationPreview>("preview_invitation", {
-      invitation: initialInvitation,
-    }).then(setPreview).catch((reason) => setError(errorMessage(reason)));
+    setRaw(initialInvitation); setTab("join"); setPreview(null); setRemoteConsent(false);
+    void serviceCommand<InvitationPreview>("preview_invitation", { invitation: initialInvitation })
+      .then(setPreview).catch((reason) => setError(errorMessage(reason)));
   }, [initialInvitation]);
   const check = async () => {
     setError("");
@@ -855,27 +965,29 @@ function NewChatDialog({ initialInvitation, remoteProfiles, onClose, onChanged }
     catch (reason) { setError(errorMessage(reason)); }
   };
   const connect = async () => {
+    setError(""); setCandidateResults([]);
     try {
-      await serviceCommand("accept_invitation", { invitation: raw });
+      const accepted = await serviceCommand<Contact>("accept_invitation", { invitation: raw });
       await onChanged();
-      onClose();
+      if (accepted.connection_results?.length && !accepted.connection_results.some((item) => item.result === "connected")) {
+        setCandidateResults(accepted.connection_results);
+      } else onClose();
     } catch (reason) { setError(errorMessage(reason)); }
   };
   return (
-    <Dialog title="New chat" onClose={onClose} wide>
+    <Dialog title="New chat" onClose={() => void closeDialog()} wide>
       <div className="tabs" role="tablist">
         <button role="tab" aria-selected={tab === "invite"} onClick={() => setTab("invite")}>Share an invite</button>
-        <button role="tab" aria-selected={tab === "join"} onClick={() => setTab("join")}>Open an invite</button>
+        <button role="tab" aria-selected={tab === "join"} onClick={() => { void stopUnsharedHost(); setTab("join"); }}>Open an invite</button>
       </div>
-      {tab === "invite" && <label className="field"><span>How should they connect?</span><select value={connectionChoice} onChange={(event) => setConnectionChoice(event.target.value)}><option value="participant">Over the Internet — directly to this device (default)</option><option value="nearby">Nearby or same private network</option>{usableProfiles.map((profile) => <option key={profile.id} value={`remote:${profile.id}`}>Approved access point · {profile.label} · {profile.state === "connected" ? "connected" : "currently unavailable"}</option>)}</select></label>}
-      {tab === "invite" && connectionChoice === "participant" && <p className="muted">Mesh Chat asks this device and your router for a temporary inbound path. Keep the app open until the recipient connects. No transport node, account, rendezvous server, or third-party participant is added.</p>}
-      {tab === "invite" && connectionChoice === "nearby" && <p className="muted">Use this when both devices are on the same Wi-Fi, LAN, VPN, or another participant-controlled network.</p>}
-      {tab === "invite" && connectionChoice.startsWith("remote:") && <p className="muted">This explicit fallback asks the recipient to connect outbound to the selected approved access point. Its operator can observe connection metadata, but not message content.</p>}
-      {tab === "invite" && formats && <InvitationShare formats={formats} />}
-      {tab === "invite" && !formats && !inviteError && <p className="muted">Creating a secure invitation…</p>}
-      {tab === "invite" && !formats && inviteError && <div className="stack"><p className="form-error" role="alert">{inviteError}</p>{directUnavailable && <div className="direct-fallback-actions"><Button variant="secondary" onClick={() => setConnectionChoice("nearby")}>Use nearby only</Button>{usableProfiles.length > 0 && <Button variant="ghost" onClick={() => setConnectionChoice(`remote:${usableProfiles[0].id}`)}>Use approved access point</Button>}</div>}<Button onClick={() => void createInvitation()} disabled={creatingInvitation}>{creatingInvitation ? "Retrying…" : "Retry invitation"}</Button></div>}
+      {tab === "invite" && <label className="field"><span>How should they connect?</span><select value={connectionChoice} disabled={busy} onChange={(event) => void chooseConnection(event.target.value)}><option value="participant">Over the Internet — directly to this device (default)</option><option value="nearby">Same network only — will not work over cellular</option>{usableProfiles.map((profile) => <option key={profile.id} value={`remote:${profile.id}`}>Approved access point · {profile.label} · {profile.state === "connected" ? "connected" : "currently unavailable"}</option>)}</select></label>}
+      {tab === "invite" && connectionChoice === "participant" && !formats && <div className="stack"><p className="muted">Direct participant hosting stays on this device. Keep Mesh Chat open during invitation and approval. No server, rendezvous service, or transport operator is added.</p><div className="dialog-actions"><Button variant="secondary" disabled={busy} onClick={() => void checkDirect()}>{busy ? "Checking this network…" : "Check direct Internet connection"}</Button><Button disabled={busy} onClick={() => void createInvitation()}>{busy ? "Preparing a direct route…" : "Prepare direct Internet invitation"}</Button><Button variant="ghost" disabled={busy} onClick={() => void prepareManual()}>Set up manual port forwarding</Button></div>{doctor && <DirectDoctorPanel report={doctor} onRetry={() => void checkDirect()} />}{manualSetup && <section className="manual-forward"><h3>Manual TCP forwarding</h3><p>In your router, forward TCP port <strong>{manualSetup.tcp_port}</strong> to <strong>{manualSetup.device_label}</strong> on the same port. Reserve this device’s DHCP lease so the rule keeps pointing to it.</p><p>Mesh Chat never asks for router credentials and cannot remove this router rule later.</p>{manualSetup.upstream_warning && <p className="direct-host-warning">Your router reports another private or shared address upstream. This manual rule may also require a matching rule on an upstream router; carrier-grade NAT usually requires your provider or an approved access point.</p>}<label className="field"><span>Router-reported public IPv4, global IPv6, or your hostname</span><input value={manualHost} onChange={(event) => setManualHost(event.target.value)} autoCapitalize="off" autoCorrect="off" /></label><label className="field"><span>External TCP port</span><input inputMode="numeric" value={manualPort} onChange={(event) => setManualPort(event.target.value.replace(/\D/g, ""))} /></label><Button disabled={busy || !manualHost.trim() || !Number(manualPort)} onClick={() => void createInvitation(true)}>Create manual direct invitation</Button></section>}</div>}
+      {tab === "invite" && connectionChoice === "nearby" && !formats && <div className="stack"><p className="direct-host-warning">Same network only — will not work over cellular.</p><Button disabled={busy} onClick={() => void createInvitation()}>{busy ? "Creating…" : "Create same-network invitation"}</Button></div>}
+      {tab === "invite" && connectionChoice.startsWith("remote:") && !formats && <div className="stack"><p className="muted">This explicitly selected, named access point can observe connection metadata, but not message content.</p><Button disabled={busy} onClick={() => void createInvitation()}>{busy ? "Creating…" : "Create invitation using selected access point"}</Button></div>}
+      {tab === "invite" && formats && <InvitationShare formats={formats} onShared={() => setShared(true)} />}
+      {tab === "invite" && inviteError && <p className="form-error" role="alert">{inviteError}</p>}
       {tab === "join" && !preview && <div className="stack"><label className="field"><span>Invitation</span><textarea autoCapitalize="off" autoCorrect="off" spellCheck={false} rows={5} value={raw} onChange={(event) => setRaw(event.target.value)} /></label><ImportButtons onValue={setRaw} /><Button onClick={() => void check()} disabled={!raw.trim()}>Check invitation</Button></div>}
-      {tab === "join" && preview && <div className="stack"><div className="person-preview"><Avatar name={preview.display_name} /><div><h3>{preview.display_name}</h3><p>Identity signature valid</p></div></div><SecurityDetails fingerprint={preview.fingerprint} destination={preview.destination_hash} />{preview.participant_access && <section className="direct-consent" aria-labelledby="personal-direct-connection"><h3 id="personal-direct-connection">Direct connection to {preview.display_name}</h3><p>{preview.participant_access.privacy_disclosure}</p><p>No separate operator will join this chat or workspace.</p></section>}{preview.remote_profile && <section className="remote-consent" aria-labelledby="personal-remote-consent"><h3 id="personal-remote-consent">Remote connection requested</h3><p><strong>{preview.remote_profile.label}</strong> · {preview.remote_profile.endpoint_count} access-point {preview.remote_profile.endpoint_count === 1 ? "endpoint" : "endpoints"}</p><p>{preview.remote_profile.privacy_disclosure}</p><label className="checkbox-line"><input type="checkbox" checked={remoteConsent} onChange={(event) => setRemoteConsent(event.target.checked)} /> Connect to this access point after I continue</label></section>}<Button disabled={Boolean(preview.remote_profile) && !remoteConsent} onClick={() => void connect()}>{preview.remote_profile ? "Connect and send contact request" : preview.participant_access ? `Connect directly to ${preview.display_name}` : `Connect to ${preview.display_name}`}</Button></div>}
+      {tab === "join" && preview && <div className="stack"><div className="person-preview"><Avatar name={preview.display_name} /><div><h3>{preview.display_name}</h3><p>Identity signature valid</p></div></div><SecurityDetails fingerprint={preview.fingerprint} destination={preview.destination_hash} />{preview.participant_access && <section className="direct-consent" aria-labelledby="personal-direct-connection"><h3 id="personal-direct-connection">Direct connection to {preview.display_name}</h3><p>{preview.participant_access.privacy_disclosure}</p><p>No separate operator will join this chat or workspace.</p></section>}{preview.remote_profile && <section className="remote-consent" aria-labelledby="personal-remote-consent"><h3 id="personal-remote-consent">Remote connection requested</h3><p><strong>{preview.remote_profile.label}</strong> · {preview.remote_profile.endpoint_count} access-point {preview.remote_profile.endpoint_count === 1 ? "endpoint" : "endpoints"}</p><p>{preview.remote_profile.privacy_disclosure}</p><label className="checkbox-line"><input type="checkbox" checked={remoteConsent} onChange={(event) => setRemoteConsent(event.target.checked)} /> Connect to this access point after I continue</label></section>}<Button disabled={Boolean(preview.remote_profile) && !remoteConsent} onClick={() => void connect()}>{preview.remote_profile ? "Connect and send contact request" : preview.participant_access ? `Connect directly to ${preview.display_name}` : `Connect to ${preview.display_name}`}</Button>{candidateResults.length > 0 && <section className="direct-host-warning" role="status"><h3>No candidate connected yet</h3><pre>{candidateSummary(candidateResults)}</pre><p>The invitation remains saved and can retry while it is valid.</p><Button variant="ghost" onClick={() => void navigator.clipboard.writeText(candidateSummary(candidateResults))}><Copy size={17} /> Copy result for the sender</Button></section>}</div>}
       {error && <p className="form-error" role="alert">{error}</p>}
     </Dialog>
   );
@@ -1201,6 +1313,7 @@ function remoteStateLabel(profile: RemoteProfile): string {
 }
 
 function participantMethodLabel(method: ParticipantHosting["methods"][number]): string {
+  if (method === "public_ipv4") return "direct public IPv4";
   if (method === "public_ipv6") return "public IPv6";
   if (method === "upnp") return "UPnP router mapping";
   if (method === "nat_pmp") return "NAT-PMP router mapping";
@@ -1212,6 +1325,7 @@ function ParticipantHostingSettings({ initial, workspaces, onChanged }: { initia
   const [hosts, setHosts] = useState(initial);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState("");
+  useEffect(() => setHosts(initial), [initial]);
   const stop = async (host: ParticipantHosting) => {
     setBusy(host.id); setError("");
     try {
@@ -1221,12 +1335,22 @@ function ParticipantHostingSettings({ initial, workspaces, onChanged }: { initia
     } catch (reason) { setError(errorMessage(reason)); }
     finally { setBusy(null); }
   };
+  const configureFirewall = async (host: ParticipantHosting) => {
+    setBusy(host.id); setError("");
+    try {
+      const outcome = await serviceCommand<DirectDoctorStep>("configure_participant_firewall", { access_id: host.id });
+      if (outcome.result !== "prepared_unverified") setError(`${directReasonLabel(outcome.reason)} ${directActionLabel(outcome.recommended_action)}`);
+      await onChanged();
+    } catch (reason) { setError(errorMessage(reason)); }
+    finally { setBusy(null); }
+  };
   const label = (host: ParticipantHosting) => {
     if (host.purpose === "personal") return "Personal invitation";
     const workspace = workspaces.find((item) => item.id === host.scope_id);
     return workspace ? `Workspace invitation · ${workspace.name}` : "Workspace invitation";
   };
-  return <section className="settings-section participant-hosting" aria-labelledby="participant-hosting-title"><div className="settings-section__heading"><h3 id="participant-hosting-title">Invitations hosted by this device</h3><p>Temporary direct Internet paths created for invitations. The invitee connects to this device; no community or third-party transport node is added.</p></div>{hosts.map((host) => <article className="remote-profile-row" key={host.id}><span><strong>{label(host)}</strong><small role="status">{host.state === "ready" ? `Available until ${formatExpiry(host.expires_at)}` : "Expired"}</small><small>{host.endpoint_count} public {host.endpoint_count === 1 ? "path" : "paths"} · {host.methods.map(participantMethodLabel).join(", ")}</small></span><div><Button variant="danger" disabled={busy === host.id} onClick={() => void stop(host)}>{busy === host.id ? "Stopping…" : "Stop hosting"}</Button></div></article>)}{hosts.length === 0 && <p className="muted">No Internet invitation is currently being hosted. Creating one will temporarily open a participant-authenticated path while Mesh Chat remains open.</p>}<p className="muted">Stopping or closing Mesh Chat removes its temporary router mapping. Existing approved contacts and workspace membership are not deleted.</p>{error && <p className="form-error" role="alert">{error}</p>}</section>;
+  const stateLabel = (host: ParticipantHosting) => host.state === "recipient_connected" ? "Recipient connected" : host.state === "prepared_unverified" ? `Prepared, not yet verified · expires ${formatExpiry(host.expires_at)}` : host.state === "manual_setup" ? `Manual setup in progress · expires ${formatExpiry(host.expires_at)}` : host.state === "unavailable" ? directReasonLabel(host.reason ?? "router_state_changed") : "Expired";
+  return <section className="settings-section participant-hosting" aria-labelledby="participant-hosting-title"><div className="settings-section__heading"><h3 id="participant-hosting-title">Invitations hosted by this device</h3><p>Temporary direct Internet paths created for invitations. The invitee connects to this device; no community or third-party transport node is added.</p></div>{hosts.map((host) => <article className="remote-profile-row" key={host.id}><span><strong>{label(host)}</strong><small role="status">{stateLabel(host)}</small><small>{host.endpoint_count} public {host.endpoint_count === 1 ? "path" : "paths"}{host.methods.length > 0 ? ` · ${host.methods.map(participantMethodLabel).join(", ")}` : ""}</small></span><div>{host.state !== "expired" && host.state !== "unavailable" && !host.firewall_configured && <Button variant="ghost" disabled={busy === host.id} onClick={() => void configureFirewall(host)}>Allow in Windows Firewall</Button>}<Button variant="danger" disabled={busy === host.id} onClick={() => void stop(host)}>{busy === host.id ? "Working…" : "Stop hosting"}</Button></div></article>)}{hosts.length === 0 && <p className="muted">No Internet invitation is currently being hosted. Use the explicit prepare action when creating an invitation.</p>}<p className="muted">Stopping or closing Mesh Chat removes automatic router mappings and temporary firewall rules. A manual router rule must be removed in the router.</p>{error && <p className="form-error" role="alert">{error}</p>}</section>;
 }
 
 function RemoteConnectionsSettings({ initial, onChanged }: { initial: RemoteProfile[]; onChanged: () => Promise<void> }) {
@@ -1759,7 +1883,7 @@ function Conversation({ contact, messages, draft, sendError, sending, detailsOpe
     }
   }, [messages.length]);
   const approved = contact.trust === "approved" || contact.trust === "verified";
-  const routeLabel = contact.route_kind === "remote" ? "Reachable through remote transport" : contact.route_kind === "signed_direct" ? "Reachable through signed direct local route" : contact.route_kind === "nearby" ? "Reachable nearby" : "Secure route not currently known";
+  const routeLabel = contact.route_kind === "participant_direct" ? "Connected directly over the Internet" : contact.route_kind === "remote" ? "Reachable through remote transport" : contact.route_kind === "signed_direct" ? "Reachable through signed direct local route" : contact.route_kind === "nearby" ? "Reachable nearby" : "Secure route not currently known";
   return (
     <section className="conversation" aria-label={`Conversation with ${contact.display_name}`}>
       <header className="conversation__header"><button className="icon-button mobile-only mobile-back" type="button" onClick={onBack} aria-label="Back to conversations"><ArrowLeft size={21} /></button><div className="conversation__person"><Avatar name={contact.display_name} small /><div><h2>{contact.display_name}</h2><span>{routeLabel}</span></div></div><div className="conversation__actions"><button className="icon-button conversation-delete" type="button" onClick={onDelete} disabled={sending} aria-label={`Delete conversation with ${contact.display_name}`} title="Delete conversation"><Trash2 size={18} /></button><SecurityDetails fingerprint={contact.fingerprint} destination={contact.destination_hash} open={detailsOpen} onOpenChange={onDetailsOpenChange} /></div></header>
@@ -2064,6 +2188,8 @@ function JoinWorkspaceDialog({ initialValue = "", onClose, onJoined }: { initial
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [remoteConsent, setRemoteConsent] = useState(false);
+  const [connectionResults, setConnectionResults] = useState<ParticipantCandidateResult[]>([]);
+  const [joinedWorkspace, setJoinedWorkspace] = useState<Workspace | null>(null);
   const review = async () => {
     if (!value.trim() || busy) return;
     setBusy(true); setError("");
@@ -2089,12 +2215,15 @@ function JoinWorkspaceDialog({ initialValue = "", onClose, onJoined }: { initial
       const workspace = devicePreview
         ? await serviceCommand<Workspace>("submit_workspace_device_link", { operation_id: newOperationId(), device_link: value.trim() })
         : await serviceCommand<Workspace>("submit_workspace_join", { operation_id: newOperationId(), invitation: value.trim() });
-      await onJoined(workspace);
+      if (workspace.connection_results?.length && !workspace.connection_results.some((item) => item.result === "connected")) {
+        setConnectionResults(workspace.connection_results);
+        setJoinedWorkspace(workspace);
+      } else await onJoined(workspace);
     } catch (reason) { setError(errorMessage(reason)); }
     finally { setBusy(false); }
   };
   const reviewed = preview !== null || devicePreview !== null;
-  return <Dialog title={devicePreview ? "Link this device" : "Join a workspace"} onClose={onClose}><div className="form-stack">{preview ? <><div className="workspace-preview"><span className="workspace-preview__avatar">{initials(preview.name)}</span><div><h3>{preview.name}</h3><p>{preview.description || "No description"}</p></div></div><dl className="security-list"><div><dt>Owner fingerprint</dt><dd>{preview.owner_fingerprint}</dd></div><div><dt>Current members</dt><dd>{preview.member_count}</dd></div><div><dt>History preference</dt><dd>{preview.retention_days === null ? "Indefinite" : `${preview.retention_days} days`}</dd></div></dl><p className="muted">Joining does not approve a global contact. The owner must verify this device and approve your request.</p>{preview.participant_access && <section className="direct-consent" aria-labelledby="workspace-direct-connection"><h3 id="workspace-direct-connection">Direct connection to the workspace owner</h3><p>{preview.participant_access.privacy_disclosure}</p><p>The owner must keep Mesh Chat open until your request arrives.</p></section>}{preview.remote_profile && <section className="remote-consent" aria-labelledby="workspace-remote-consent"><h3 id="workspace-remote-consent">Remote connection requested</h3><p><strong>{preview.remote_profile.label}</strong> · {preview.remote_profile.endpoint_count} access-point {preview.remote_profile.endpoint_count === 1 ? "endpoint" : "endpoints"}</p><p>{preview.remote_profile.privacy_disclosure}</p><label className="checkbox-line"><input type="checkbox" checked={remoteConsent} onChange={(event) => setRemoteConsent(event.target.checked)} /> Connect outbound after I send the join request</label></section>}</> : devicePreview ? <><div className="workspace-preview"><span className="workspace-preview__avatar">{initials(devicePreview.name)}</span><div><h3>{devicePreview.name}</h3><p>Link as {devicePreview.member_display_name}</p></div></div><dl className="security-list"><div><dt>Sponsor fingerprint</dt><dd>{devicePreview.sponsor_fingerprint}</dd></div><div><dt>Existing devices</dt><dd>{devicePreview.device_count}</dd></div><div><dt>Expires</dt><dd>{formatExpiry(devicePreview.expires_at)}</dd></div></dl><p className="muted">This device creates a fresh private identity. No key material is copied. The workspace owner must admit the new device before it can read or send workspace messages.</p></> : <><p>Paste a signed one-use invitation to join as a new person, or a device link created from one of your admitted devices.</p><textarea autoFocus value={value} onChange={(event) => { setValue(event.target.value); setError(""); }} aria-label="Workspace invitation or device link" rows={7} /><ImportButtons onValue={setValue} /></>}{error && <p className="form-error" role="alert">{error}</p>}<div className="dialog-actions"><Button variant="ghost" onClick={reviewed ? () => { setPreview(null); setDevicePreview(null); setRemoteConsent(false); } : onClose}>{reviewed ? "Back" : "Cancel"}</Button><Button disabled={busy || (!reviewed && !value.trim()) || Boolean(preview?.remote_profile) && !remoteConsent} onClick={() => void (reviewed ? join() : review())}>{busy ? "Checking…" : devicePreview ? "Request device approval" : preview ? preview.remote_profile ? "Connect and send join request" : preview.participant_access ? "Connect directly and send join request" : "Send join request" : "Review"}</Button></div></div></Dialog>;
+  return <Dialog title={devicePreview ? "Link this device" : "Join a workspace"} onClose={onClose}><div className="form-stack">{preview ? <><div className="workspace-preview"><span className="workspace-preview__avatar">{initials(preview.name)}</span><div><h3>{preview.name}</h3><p>{preview.description || "No description"}</p></div></div><dl className="security-list"><div><dt>Owner fingerprint</dt><dd>{preview.owner_fingerprint}</dd></div><div><dt>Current members</dt><dd>{preview.member_count}</dd></div><div><dt>History preference</dt><dd>{preview.retention_days === null ? "Indefinite" : `${preview.retention_days} days`}</dd></div></dl><p className="muted">Joining does not approve a global contact. The owner must verify this device and approve your request.</p>{preview.participant_access && <section className="direct-consent" aria-labelledby="workspace-direct-connection"><h3 id="workspace-direct-connection">Direct connection to the workspace owner</h3><p>{preview.participant_access.privacy_disclosure}</p><p>The owner must keep Mesh Chat open until your request arrives.</p></section>}{preview.remote_profile && <section className="remote-consent" aria-labelledby="workspace-remote-consent"><h3 id="workspace-remote-consent">Remote connection requested</h3><p><strong>{preview.remote_profile.label}</strong> · {preview.remote_profile.endpoint_count} access-point {preview.remote_profile.endpoint_count === 1 ? "endpoint" : "endpoints"}</p><p>{preview.remote_profile.privacy_disclosure}</p><label className="checkbox-line"><input type="checkbox" checked={remoteConsent} onChange={(event) => setRemoteConsent(event.target.checked)} /> Connect outbound after I send the join request</label></section>}</> : devicePreview ? <><div className="workspace-preview"><span className="workspace-preview__avatar">{initials(devicePreview.name)}</span><div><h3>{devicePreview.name}</h3><p>Link as {devicePreview.member_display_name}</p></div></div><dl className="security-list"><div><dt>Sponsor fingerprint</dt><dd>{devicePreview.sponsor_fingerprint}</dd></div><div><dt>Existing devices</dt><dd>{devicePreview.device_count}</dd></div><div><dt>Expires</dt><dd>{formatExpiry(devicePreview.expires_at)}</dd></div></dl><p className="muted">This device creates a fresh private identity. No key material is copied. The workspace owner must admit the new device before it can read or send workspace messages.</p></> : <><p>Paste a signed one-use invitation to join as a new person, or a device link created from one of your admitted devices.</p><textarea autoFocus value={value} onChange={(event) => { setValue(event.target.value); setError(""); }} aria-label="Workspace invitation or device link" rows={7} /><ImportButtons onValue={setValue} /></>}{connectionResults.length > 0 && <section className="direct-host-warning" role="status"><h3>No candidate connected yet</h3><pre>{candidateSummary(connectionResults)}</pre><Button variant="ghost" onClick={() => void navigator.clipboard.writeText(candidateSummary(connectionResults))}><Copy size={17} /> Copy result for the sender</Button>{joinedWorkspace && <Button onClick={() => void onJoined(joinedWorkspace)}>Continue to workspace</Button>}</section>}{error && <p className="form-error" role="alert">{error}</p>}<div className="dialog-actions">{connectionResults.length === 0 && <><Button variant="ghost" onClick={reviewed ? () => { setPreview(null); setDevicePreview(null); setRemoteConsent(false); } : onClose}>{reviewed ? "Back" : "Cancel"}</Button><Button disabled={busy || (!reviewed && !value.trim()) || Boolean(preview?.remote_profile) && !remoteConsent} onClick={() => void (reviewed ? join() : review())}>{busy ? "Checking…" : devicePreview ? "Request device approval" : preview ? preview.remote_profile ? "Connect and send join request" : preview.participant_access ? "Connect directly and send join request" : "Send join request" : "Review"}</Button></>}</div></div></Dialog>;
 }
 
 function WorkspaceInviteDialog({ workspace, existingInvitations, remoteProfiles, onClose }: { workspace: Workspace; existingInvitations: WorkspaceInvitation[]; remoteProfiles: RemoteProfile[]; onClose: () => void }) {
@@ -2104,17 +2233,30 @@ function WorkspaceInviteDialog({ workspace, existingInvitations, remoteProfiles,
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState("");
   const [connectionChoice, setConnectionChoice] = useState("participant");
-  const [directUnavailable, setDirectUnavailable] = useState(false);
-  const create = async () => {
+  const [doctor, setDoctor] = useState<DirectDoctorReport | null>(null);
+  const [manualSetup, setManualSetup] = useState<ManualParticipantSetup | null>(null);
+  const [manualHost, setManualHost] = useState("");
+  const [manualPort, setManualPort] = useState("");
+  const [shared, setShared] = useState(false);
+  const [firewallFeedback, setFirewallFeedback] = useState("");
+  const create = async (manual = false) => {
     if (busy) return;
-    setBusy(true); setError(""); setDirectUnavailable(false);
-    const connection = connectionChoice === "participant"
+    setBusy(true); setError("");
+    const connection = manual && manualSetup
+      ? { connection_mode: "manual", manual_setup_id: manualSetup.setup_id, external_host: manualHost.trim(), external_port: Number(manualPort) }
+      : connectionChoice === "participant"
       ? { connection_mode: "participant" }
       : connectionChoice === "nearby"
-        ? {}
+        ? { connection_mode: "nearby" }
         : { connection_mode: "remote", remote_profile_id: connectionChoice.slice("remote:".length) };
-    try { setInvitation(await serviceCommand("create_workspace_invitation", { operation_id: newOperationId(), workspace_id: workspace.id, lifetime_days: 7, ...connection })); }
-    catch (reason) { setError(errorMessage(reason)); setDirectUnavailable(connectionChoice === "participant" && String(reason).includes("direct_connection_unavailable")); }
+    try {
+      const created = await serviceCommand<WorkspaceInvitationFormats>("create_workspace_invitation", { operation_id: newOperationId(), workspace_id: workspace.id, lifetime_days: 7, ...connection });
+      setInvitation(created); setManualSetup(null); setShared(false);
+    } catch (reason) {
+      setError(errorMessage(reason));
+      const details = (reason as { details?: Record<string, string> })?.details;
+      if (details?.phase) setDoctor({ summary: details as unknown as DirectDoctorStep, checks: [details as unknown as DirectDoctorStep] });
+    }
     finally { setBusy(false); }
   };
   const revoke = async (invitationId: string) => {
@@ -2122,19 +2264,41 @@ function WorkspaceInviteDialog({ workspace, existingInvitations, remoteProfiles,
     setBusy(true); setError("");
     try {
       await serviceCommand("revoke_workspace_invitation", { operation_id: newOperationId(), workspace_id: workspace.id, invitation_id: invitationId });
-      if (invitation?.id === invitationId) setInvitation(null);
+      if (invitation?.id === invitationId) { setInvitation(null); setShared(false); }
       setExisting((current) => current.filter((item) => item.id !== invitationId)); setCopied(false);
     } catch (reason) { setError(errorMessage(reason)); }
     finally { setBusy(false); }
   };
   const usableProfiles = remoteProfiles.filter((profile) => profile.state !== "expired");
+  const checkDirect = async () => {
+    setBusy(true); setError("");
+    try { setDoctor(await serviceCommand<DirectDoctorReport>("check_direct_connection")); }
+    catch (reason) { setError(errorMessage(reason)); }
+    finally { setBusy(false); }
+  };
+  const prepareManual = async () => {
+    setBusy(true); setError("");
+    try {
+      if (manualSetup) await serviceCommand("stop_participant_host", { access_id: manualSetup.setup_id }).catch(() => undefined);
+      setManualSetup(await serviceCommand<ManualParticipantSetup>("prepare_manual_participant_host", { purpose: "workspace" }));
+    } catch (reason) { setError(errorMessage(reason)); }
+    finally { setBusy(false); }
+  };
+  const closeDialog = async () => {
+    if (invitation?.host_session_id && !shared) {
+      await serviceCommand("revoke_workspace_invitation", { operation_id: newOperationId(), workspace_id: workspace.id, invitation_id: invitation.id }).catch(() => undefined);
+    } else if (manualSetup) {
+      await serviceCommand("stop_participant_host", { access_id: manualSetup.setup_id }).catch(() => undefined);
+    }
+    onClose();
+  };
   const share = async () => {
     if (!invitation) return;
     if (typeof navigator.share === "function") {
-      try { await navigator.share({ title: `Join ${workspace.name} in Mesh Chat`, text: invitation.text }); return; }
+      try { await navigator.share({ title: `Join ${workspace.name} in Mesh Chat`, text: invitation.text }); setShared(true); return; }
       catch (reason) { if (reason instanceof DOMException && reason.name === "AbortError") return; }
     }
-    await navigator.clipboard.writeText(invitation.text); setCopied(true);
+    await navigator.clipboard.writeText(invitation.text); setCopied(true); setShared(true);
   };
   const save = () => {
     if (!invitation) return;
@@ -2142,9 +2306,25 @@ function WorkspaceInviteDialog({ workspace, existingInvitations, remoteProfiles,
     const anchor = document.createElement("a");
     anchor.href = URL.createObjectURL(blob);
     anchor.download = "mesh-chat-workspace-invite.meshchat-invite";
-    anchor.click(); URL.revokeObjectURL(anchor.href);
+    anchor.click(); URL.revokeObjectURL(anchor.href); setShared(true);
   };
-  return <Dialog title={`Invite to ${workspace.name}`} onClose={onClose}><div className="form-stack">{invitation && <><p>This bearer invitation works once and expires {formatExpiry(invitation.expires_at)}. Copy it now; Mesh Chat will not place it in startup data later.</p>{invitation.connection_mode === "participant" && <p className="direct-host-status" role="status"><ShieldCheck size={17} /> Direct Internet path prepared. Keep this owner device online; the joiner will verify the path. No transport node is being used.</p>}{invitation.link.length <= 4096 && <div className="qr-card"><QRCodeSVG value={invitation.link} size={188} level="M" /></div>}<textarea readOnly value={invitation.text} aria-label="Workspace invitation text" rows={5} /><div className="dialog-actions"><Button variant="danger" disabled={busy} onClick={() => void revoke(invitation.id)}>Revoke invitation</Button><Button variant="secondary" onClick={async () => { await navigator.clipboard.writeText(invitation.text); setCopied(true); }}>{copied ? <Check size={17} /> : <Copy size={17} />}{copied ? "Copied" : "Copy invitation"}</Button><Button variant="secondary" onClick={() => void share()}><Share2 size={17} /> Share</Button><Button variant="ghost" onClick={save}><FileUp size={17} /> Save file</Button></div></>}{existing.length > 0 && <div className="workspace-invitation-list"><h3>Active invitations</h3>{existing.filter((item) => item.id !== invitation?.id).map((item) => <div className="workspace-invitation-row" key={item.id}><span>One-use invitation · expires {formatExpiry(item.expires_at)}</span><Button variant="ghost" disabled={busy} onClick={() => void revoke(item.id)}>Revoke</Button></div>)}</div>}<label className="field"><span>How should they connect?</span><select value={connectionChoice} disabled={busy} onChange={(event) => setConnectionChoice(event.target.value)}><option value="participant">Over the Internet — directly to this owner device (default)</option><option value="nearby">Nearby or same private network</option>{usableProfiles.map((profile) => <option key={profile.id} value={`remote:${profile.id}`}>Approved access point · {profile.label} · {profile.state === "connected" ? "connected" : "currently unavailable"}</option>)}</select></label>{connectionChoice === "participant" && <p className="muted">Mesh Chat asks this device and your router for a temporary inbound path. Keep the app open until the joiner connects. No third-party transport node is added.</p>}{connectionChoice === "nearby" && <p className="muted">Use this when both devices are on the same Wi-Fi, LAN, VPN, or another participant-controlled network.</p>}{connectionChoice.startsWith("remote:") && <p className="muted">This invitation explicitly opts into the selected remote access point. Its operator can observe connection metadata.</p>}<p>Create a separate signed invitation for each person. Each request is reviewed independently.</p><Button disabled={busy} onClick={() => void create()}>{busy ? "Creating…" : "Create invitation"}</Button>{error && <><p className="form-error" role="alert">{error}</p>{directUnavailable && <div className="direct-fallback-actions"><Button variant="secondary" onClick={() => setConnectionChoice("nearby")}>Use nearby only</Button>{usableProfiles.length > 0 && <Button variant="ghost" onClick={() => setConnectionChoice(`remote:${usableProfiles[0].id}`)}>Use approved access point</Button>}</div>}</>}</div></Dialog>;
+  const configureFirewall = async () => {
+    if (!invitation?.host_session_id || busy) return;
+    setBusy(true); setFirewallFeedback("");
+    try {
+      const result = await serviceCommand<DirectDoctorStep>("configure_participant_firewall", { access_id: invitation.host_session_id });
+      setFirewallFeedback(result.result === "prepared_unverified"
+        ? "Temporary Windows Firewall rule added for this invitation only."
+        : `${directReasonLabel(result.reason)} ${directActionLabel(result.recommended_action)}`);
+    } catch (reason) { setFirewallFeedback(errorMessage(reason)); }
+    finally { setBusy(false); }
+  };
+  return <Dialog title={`Invite to ${workspace.name}`} onClose={() => void closeDialog()}><div className="form-stack">
+    {invitation && <><p>This bearer invitation works once and expires {formatExpiry(invitation.expires_at)}. This is the effective direct-host expiry.</p>{invitation.connection_mode === "participant" && <p className="direct-host-status" role="status"><ShieldCheck size={17} /> Prepared — waiting for recipient verification. Keep this owner device online.</p>}{invitation.methods?.includes("manual") && <p className="muted">Mesh Chat cannot remove your manual router rule. Remove it in the router when it is no longer needed.</p>}{invitation.link.length <= 4096 && <div className="qr-card"><QRCodeSVG value={invitation.link} size={188} level="M" /></div>}<textarea readOnly value={invitation.text} aria-label="Workspace invitation text" rows={5} /><div className="dialog-actions"><Button variant="danger" disabled={busy} onClick={() => void revoke(invitation.id)}>Revoke invitation</Button><Button variant="secondary" onClick={async () => { await navigator.clipboard.writeText(invitation.text); setCopied(true); setShared(true); }}>{copied ? <Check size={17} /> : <Copy size={17} />}{copied ? "Copied" : "Copy invitation"}</Button><Button variant="secondary" onClick={() => void share()}><Share2 size={17} /> Share</Button><Button variant="ghost" onClick={save}><FileUp size={17} /> Save file</Button>{invitation.connection_mode === "participant" && invitation.host_session_id && !invitation.methods?.includes("manual") && <Button variant="ghost" disabled={busy} onClick={() => void configureFirewall()}><ShieldCheck size={17} /> Allow in Windows Firewall</Button>}</div>{firewallFeedback && <p className="muted" role="status">{firewallFeedback}</p>}</>}
+    {!invitation && <><label className="field"><span>How should they connect?</span><select value={connectionChoice} disabled={busy} onChange={(event) => { setConnectionChoice(event.target.value); setDoctor(null); setError(""); }}><option value="participant">Over the Internet — directly to this owner device (default)</option><option value="nearby">Same network only — will not work over cellular</option>{usableProfiles.map((profile) => <option key={profile.id} value={`remote:${profile.id}`}>Approved access point · {profile.label} · {profile.state === "connected" ? "connected" : "currently unavailable"}</option>)}</select></label>{connectionChoice === "participant" && <><p className="muted">Direct participant hosting stays on this owner device. Keep Mesh Chat open through approval.</p><div className="dialog-actions"><Button variant="secondary" disabled={busy} onClick={() => void checkDirect()}>{busy ? "Checking this network…" : "Check direct Internet connection"}</Button><Button disabled={busy} onClick={() => void create()}>{busy ? "Preparing a direct route…" : "Prepare direct Internet invitation"}</Button><Button variant="ghost" disabled={busy} onClick={() => void prepareManual()}>Set up manual port forwarding</Button></div>{doctor && <DirectDoctorPanel report={doctor} onRetry={() => void checkDirect()} />}{manualSetup && <section className="manual-forward"><h3>Manual TCP forwarding</h3><p>Forward TCP port <strong>{manualSetup.tcp_port}</strong> to <strong>{manualSetup.device_label}</strong> on that same port. A DHCP reservation may be required.</p><p>Mesh Chat does not request or store router credentials.</p>{manualSetup.upstream_warning && <p className="direct-host-warning">Your router reports another private or shared address upstream. This manual rule may also require a matching rule on an upstream router; carrier-grade NAT usually requires your provider or an approved access point.</p>}<label className="field"><span>Router-reported public IPv4, global IPv6, or your hostname</span><input value={manualHost} onChange={(event) => setManualHost(event.target.value)} /></label><label className="field"><span>External TCP port</span><input inputMode="numeric" value={manualPort} onChange={(event) => setManualPort(event.target.value.replace(/\D/g, ""))} /></label><Button disabled={busy || !manualHost.trim() || !Number(manualPort)} onClick={() => void create(true)}>Create manual direct invitation</Button></section>}</>}{connectionChoice === "nearby" && <><p className="direct-host-warning">Same network only — will not work over cellular.</p><Button disabled={busy} onClick={() => void create()}>{busy ? "Creating…" : "Create same-network invitation"}</Button></>}{connectionChoice.startsWith("remote:") && <><p className="muted">This invitation explicitly uses the named approved access point selected above. Its operator can observe connection metadata.</p><Button disabled={busy} onClick={() => void create()}>{busy ? "Creating…" : "Create using selected access point"}</Button></>}<p>Create a separate signed invitation for each person. Each request is reviewed independently.</p></>}
+    {existing.length > 0 && <div className="workspace-invitation-list"><h3>Active invitations</h3>{existing.filter((item) => item.id !== invitation?.id).map((item) => <div className="workspace-invitation-row" key={item.id}><span>One-use invitation · expires {formatExpiry(item.expires_at)}</span><Button variant="ghost" disabled={busy} onClick={() => void revoke(item.id)}>Revoke</Button></div>)}</div>}
+    {error && <p className="form-error" role="alert">{error}</p>}
+  </div></Dialog>;
 }
 
 function WorkspaceDevicesDialog({ workspace, transitions, busy, error, onClose, onCreate, onDecide, onRemove, onReadSync }: { workspace: Workspace; transitions: WorkspaceDeviceTransition[]; busy: boolean; error: string; onClose: () => void; onCreate: () => Promise<WorkspaceDeviceLinkFormats | null>; onDecide: (transition: WorkspaceDeviceTransition, approve: boolean) => void; onRemove: (deviceId: string) => void; onReadSync: (enabled: boolean) => void }) {

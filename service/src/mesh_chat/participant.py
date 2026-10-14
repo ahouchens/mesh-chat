@@ -28,7 +28,9 @@ MAX_PARTICIPANT_WORKSPACE_BYTES = (
     MAX_AUTHORITY_BOOTSTRAP_BYTES * 2 + 8 * 1024
 )
 MAX_PARTICIPANT_LIFETIME_SECONDS = 24 * 60 * 60
-PARTICIPANT_PATHS = {"public_ipv6", "upnp", "nat_pmp", "pcp", "manual"}
+PARTICIPANT_PATHS = {
+    "public_ipv4", "public_ipv6", "upnp", "nat_pmp", "pcp", "manual"
+}
 TOKEN = re.compile(r"^[A-Za-z0-9_-]{16,96}$")
 _TOKEN_CHARS = frozenset(
     "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-"

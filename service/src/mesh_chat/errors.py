@@ -58,3 +58,7 @@ class NetworkUnavailable(MeshChatError):
 
 class DirectConnectionUnavailable(NetworkUnavailable):
     code = "direct_connection_unavailable"
+
+    def __init__(self, message: str = "direct_connection_unavailable", *, details=None):
+        super().__init__(message)
+        self.details = details
