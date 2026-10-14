@@ -1,6 +1,6 @@
 # Android feature parity
 
-This document compares the Android client with the Windows desktop 0.2.41
+This document compares the Android client with the Windows desktop 0.2.42
 implementation. It is a source-and-evidence audit, not a claim that shared code
 automatically behaves the same on a phone. The Android client shares the React
 renderer, Python messaging core, protocol, encrypted record model, and renderer
@@ -53,7 +53,7 @@ Status labels are deliberately strict:
 | Per-conversation notification preferences | 3 | Workspace conversation preferences remain supported. Personal direct/group notifications honor device permission, foreground state, hidden conversations, and global preview hiding, but do not add a new per-conversation preference model in this increment. This avoids silently weakening established workspace semantics. |
 | Notification as delivery/read evidence | 5 | Native presentation and taps intentionally never change message delivery or read state. Delivery remains application-level authenticated evidence; reading remains an explicit in-app action. |
 | Protected profile storage | 2 | The profile is in app-private internal storage, records are authenticated/encrypted, the vault key is Android-Keystore-wrapped, backup is disabled in the merged manifest, and cleartext traffic is disabled. JVM/Python round trips exist; a physical full-tree plaintext scan and lock/reboot test remain open. |
-| Reproducible ARM64 debug APK | 1 | The maintained build, checksum/manifest boundary, version-code derivation, API 24/36 policy, and package inspection have current 0.2.41 evidence. The immutable debug artifact is 46,964,796 bytes with SHA-256 `F454870743360A64A7002C4209EC1F923E95DF44FF72A00989910177D3E4DBF4`. `aapt2` confirmed package/version/ARM64 metadata and backup/cleartext policy; `apksigner` confirmed the v2 debug signature; `zipalign` passed. Installation is a separate hardware gate. |
+| Reproducible ARM64 debug APK | 1 | The maintained build, checksum/manifest boundary, version-code derivation, API 24/36 policy, and package inspection have current 0.2.42 evidence. The immutable debug artifact is 46,964,796 bytes with SHA-256 `A25435832164A10EE50A143C5607BFF2BF3ABCB1262A2FD86643DCF041DE1B84`. `aapt2` confirmed package/version/ARM64 metadata and backup/cleartext policy; `apksigner` confirmed the v2 debug signature; `zipalign` passed. Installation is a separate hardware gate. |
 | External release signing | 2 | Gradle accepts only externally supplied properties/environment values, creates no release signing config when incomplete, validates the keystore path, and fails clearly without inputs. A 0.2.39 optimized release APK was built with a disposable test certificate and inspected, but no production key was available; that APK is not a production/upgradable signing identity. No key, alias, password, or certificate is committed. |
 | Android App Bundle | 2 | `scripts/build_android.py --aab` selects a release AAB and the immutable publisher records a release-AAB artifact. Publication tests use non-secret fixtures. No signed production AAB has been built. |
 | Upgrade preservation | 3 | Package ID/version-code continuity and prior debug-certificate package inspection are recorded, and migrations are automated. The exact current APK has not been installed over an older profile on a disposable Android device. Release-key continuity also remains a release-operator responsibility. |
@@ -142,7 +142,7 @@ hashes with the results:
    timeout/refusal/no-IPv6-route reporting, and invitation expiry. Confirm the
    host stays prepared-unverified until the authenticated Android client connects.
 5. Exchange Personal direct, private-group, announcement, workspace channel,
-   workspace DM, thread, and structured-mention messages with Windows 0.2.41.
+   workspace DM, thread, and structured-mention messages with Windows 0.2.42.
    Cover offline/reconnect, duplicate delivery, mutation, replay, history catchup,
    linked-device fan-out/revocation, and foreground/background transitions.
 6. For each live family, test notification permission allow/deny/settings,

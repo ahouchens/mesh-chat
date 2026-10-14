@@ -228,7 +228,7 @@ signed, and exercised on a physical device.
 
 ## Install Mesh Chat
 
-**Current desktop and Android candidate: Mesh Chat 0.2.41.** Install
+**Current desktop and Android candidate: Mesh Chat 0.2.42.** Install
 it over the existing app; do not uninstall Mesh Chat or clear its data first.
 The Android package is an arm64 development candidate and still requires the
 physical-device lifecycle matrix recorded in [TESTING.md](TESTING.md).
@@ -245,7 +245,7 @@ and tested on those operating systems.
 The current Android target supports arm64 phones and tablets running Android 7
 (API 24) or newer. The verified installable development APK is:
 
-`dist/mobile/mesh-chat-0.2.41-android-arm64-debug.apk`
+`dist/mobile/mesh-chat-0.2.42-android-arm64-debug.apk`
 
 An optimized `dist/mobile/mesh-chat-0.2.39-android-arm64-release.apk` was also built and inspected with a disposable test certificate. It is not production-signed, is not an upgrade identity, and must not be presented as a store or production release. The debug APK is the development sideload artifact.
 
@@ -379,7 +379,7 @@ To install it without a computer:
 For an attached phone with USB debugging enabled, install or replace it with:
 
 ```text
-adb install -r dist/mobile/mesh-chat-0.2.41-android-arm64-debug.apk
+adb install -r dist/mobile/mesh-chat-0.2.42-android-arm64-debug.apk
 ```
 
 Use the adjacent `.sha256` file to verify the 0.2.39 APK before transferring
