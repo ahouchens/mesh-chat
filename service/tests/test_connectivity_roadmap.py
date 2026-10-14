@@ -135,9 +135,13 @@ def test_pcp_uses_cryptographically_secure_nonce(monkeypatch: pytest.MonkeyPatch
         )
 
     monkeypatch.setattr(connectivity, "_retry_gateway_exchange", retry)
-    mapped = connectivity.map_pcp(45678, routes=[route])
+    mapped = connectivity.map_pcp(
+        45678, routes=[route], preferred_external_port=55000
+    )
     assert captured[0][24:36] == nonce
+    assert struct.unpack("!HH", captured[0][40:44]) == (45678, 55000)
     assert mapped.cleanup["nonce"] == nonce.hex()
+    assert mapped.external_port == 54321
 
 
 def test_pcp_result_code_is_reported_as_policy_denied(monkeypatch: pytest.MonkeyPatch) -> None:

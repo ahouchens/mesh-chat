@@ -39,6 +39,7 @@ export interface Contact {
   trust_before_block?: Exclude<TrustState, "blocked">;
   request_state?: DeliveryState;
   route_kind?: "nearby" | "signed_direct" | "participant_direct" | "remote" | "unavailable";
+  route_status?: "reconnecting_automatically" | "reconnect_update_required";
   connection_results?: ParticipantCandidateResult[];
   connection_hints: Array<{ type: "tcp"; host: string; port: number }>;
   created_at: number;
@@ -613,6 +614,8 @@ export interface WorkspaceInvitationPreview {
   expires_at: number;
   remote_profile?: RemoteProfilePreview;
   participant_access?: ParticipantAccessPreview;
+  connection_reply_available?: boolean;
+  invitation_digest?: string;
   requires_network_consent?: boolean;
 }
 
@@ -625,7 +628,8 @@ export interface WorkspaceInvitationFormats {
   expires_at: number;
   remote_profile_id?: string;
   access_point_reachable?: boolean;
-  connection_mode?: "participant";
+  connection_mode?: "participant" | "email";
+  connection_reply_available?: boolean;
   host_session_id?: string;
   methods?: ParticipantHosting["methods"];
 }
@@ -820,7 +824,7 @@ export interface RemoteProfilePreview {
 
 export interface ParticipantAccessPreview {
   id: string;
-  mode: "participant_direct";
+  mode: "participant_direct" | "participant_callback";
   operator: "inviter";
   endpoint_count: number;
   expires_at: number;
@@ -918,6 +922,8 @@ export interface InvitationPreview {
   expires_at: number;
   remote_profile?: RemoteProfilePreview;
   participant_access?: ParticipantAccessPreview;
+  connection_reply_available?: boolean;
+  invitation_digest?: string;
   requires_network_consent?: boolean;
 }
 
@@ -928,7 +934,40 @@ export interface InvitationFormats {
   expires_at: number;
   remote_profile_id?: string;
   access_point_reachable?: boolean;
-  connection_mode?: "participant";
+  connection_mode?: "participant" | "email";
+  connection_reply_available?: boolean;
   host_session_id?: string;
   methods?: ParticipantHosting["methods"];
+}
+
+export interface ConnectionDocumentFormats {
+  link: string;
+  text: string;
+  file: string;
+  purpose?: "personal" | "workspace";
+  expires_at: number;
+  host_session_id?: string;
+  methods?: ParticipantHosting["methods"];
+}
+
+export interface ConnectionReplyPreview {
+  purpose: "personal" | "workspace";
+  invitation_digest: string;
+  responder_destination: string;
+  responder_fingerprint: string;
+  endpoint_count: number;
+  expires_at: number;
+  connection_results?: ParticipantCandidateResult[];
+}
+
+export interface RouteUpdatePreview {
+  scope_kind: "contact" | "workspace_device";
+  scope_id: string;
+  issuer_destination: string;
+  issuer_fingerprint: string;
+  issuer_display_name: string;
+  generation: number;
+  endpoint_count: number;
+  expires_at: number;
+  connection_results?: ParticipantCandidateResult[];
 }

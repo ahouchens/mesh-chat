@@ -15,6 +15,8 @@ internal object PendingInvitation {
   const val PREFERENCES = "mesh-chat-launch-v1"
   const val PENDING_KEY = "pending-invitation"
   private const val MAX_STANDARD_BYTES = 32 * 1024
+  private const val MAX_CONNECTION_RESPONSE_BYTES = 40 * 1024
+  private const val MAX_ROUTE_UPDATE_BYTES = 24 * 1024
   private const val MAX_WORKSPACE_BYTES = 600 * 1024
   private const val MAX_DEVICE_LINK_BYTES = 700 * 1024
   private const val MAX_DOCUMENT_BYTES = MAX_WORKSPACE_BYTES
@@ -34,13 +36,15 @@ internal object PendingInvitation {
       val maximum = when (kind) {
         "workspace-device" -> MAX_DEVICE_LINK_BYTES
         "workspace" -> MAX_WORKSPACE_BYTES
+        "connect" -> MAX_CONNECTION_RESPONSE_BYTES
+        "route" -> MAX_ROUTE_UPDATE_BYTES
         else -> MAX_STANDARD_BYTES
       }
       val path = uri.rawPath ?: return null
       val segment = path.removePrefix("/")
       if (
         uri.scheme != "meshchat" ||
-        kind !in setOf("invite", "workspace", "workspace-device") ||
+        kind !in setOf("invite", "workspace", "workspace-device", "connect", "route") ||
         uri.userInfo != null || uri.port != -1 || uri.rawQuery != null || uri.rawFragment != null ||
         path != "/$segment" || segment.contains('/') || !token.matches(segment) ||
         compact.toByteArray(StandardCharsets.UTF_8).size > maximum
@@ -54,8 +58,13 @@ internal object PendingInvitation {
       lower.startsWith("meshworkspace1:") ||
       lower.startsWith("meshworkspace2:") ||
       lower.startsWith("meshworkspace3:")
+      || lower.startsWith("meshworkspace4:")
     ) {
       MAX_WORKSPACE_BYTES
+    } else if (lower.startsWith("meshconnect1:")) {
+      MAX_CONNECTION_RESPONSE_BYTES
+    } else if (lower.startsWith("meshroute1:")) {
+      MAX_ROUTE_UPDATE_BYTES
     } else {
       MAX_STANDARD_BYTES
     }
@@ -64,9 +73,13 @@ internal object PendingInvitation {
       lower.startsWith("meshchat1:") -> "meshchat1:"
       lower.startsWith("meshchat2:") -> "meshchat2:"
       lower.startsWith("meshchat3:") -> "meshchat3:"
+      lower.startsWith("meshchat4:") -> "meshchat4:"
       lower.startsWith("meshworkspace1:") -> "meshworkspace1:"
       lower.startsWith("meshworkspace2:") -> "meshworkspace2:"
       lower.startsWith("meshworkspace3:") -> "meshworkspace3:"
+      lower.startsWith("meshworkspace4:") -> "meshworkspace4:"
+      lower.startsWith("meshconnect1:") -> "meshconnect1:"
+      lower.startsWith("meshroute1:") -> "meshroute1:"
       lower.startsWith("meshworkspacedevice1:") -> "meshworkspacedevice1:"
       else -> null
     }
@@ -129,6 +142,55 @@ internal object PendingInvitation {
       (document.opt("created_at") is Int || document.opt("created_at") is Long) &&
       (document.opt("expires_at") is Int || document.opt("expires_at") is Long)
     ) return value
+    val emailExpected = setOf(
+      "v", "type", "purpose", "inner", "inner_digest", "inviter_access",
+      "reply_challenge", "created_at", "expires_at", "signer_destination", "signature",
+    )
+    if (
+      purposeSizeValid && fields == emailExpected &&
+      (document.opt("v") == 4 || document.opt("v") == 4L) &&
+      document.optString("type") == "email_invitation" &&
+      (document.isNull("inviter_access") || document.optJSONObject("inviter_access") != null) &&
+      listOf("inner", "inner_digest", "reply_challenge", "signer_destination", "signature")
+        .all { document.opt(it) is String } &&
+      (document.opt("created_at") is Int || document.opt("created_at") is Long) &&
+      (document.opt("expires_at") is Int || document.opt("expires_at") is Long)
+    ) return value
+    val responseExpected = setOf(
+      "v", "type", "purpose", "invitation_digest", "reply_challenge",
+      "signer_destination", "responder_public_identity", "responder_destination",
+      "access", "created_at", "expires_at", "signature",
+    )
+    if (
+      value.toByteArray(StandardCharsets.UTF_8).size <= MAX_CONNECTION_RESPONSE_BYTES &&
+      fields == responseExpected &&
+      (document.opt("v") == 1 || document.opt("v") == 1L) &&
+      document.optString("type") == "connection_response" &&
+      document.optString("purpose") in setOf("personal", "workspace") &&
+      document.optJSONObject("access") != null &&
+      listOf("invitation_digest", "reply_challenge", "signer_destination", "responder_public_identity", "responder_destination", "signature")
+        .all { document.opt(it) is String } &&
+      (document.opt("created_at") is Int || document.opt("created_at") is Long) &&
+      (document.opt("expires_at") is Int || document.opt("expires_at") is Long)
+    ) return value
+    val routeExpected = setOf(
+      "v", "type", "scope_kind", "scope_id", "audience_destination",
+      "issuer_public_identity", "issuer_destination", "generation", "access",
+      "created_at", "expires_at", "signature",
+    )
+    if (
+      value.toByteArray(StandardCharsets.UTF_8).size <= MAX_ROUTE_UPDATE_BYTES &&
+      fields == routeExpected &&
+      (document.opt("v") == 1 || document.opt("v") == 1L) &&
+      document.optString("type") == "route_update" &&
+      document.optString("scope_kind") in setOf("contact", "workspace_device") &&
+      document.optJSONObject("access") != null &&
+      listOf("scope_id", "audience_destination", "issuer_public_identity", "issuer_destination", "signature")
+        .all { document.opt(it) is String } &&
+      (document.opt("generation") is Int || document.opt("generation") is Long) &&
+      (document.opt("created_at") is Int || document.opt("created_at") is Long) &&
+      (document.opt("expires_at") is Int || document.opt("expires_at") is Long)
+    ) return value
     val participantExpected = setOf(
       "v",
       "type",
@@ -156,7 +218,7 @@ internal object PendingInvitation {
   }
 
   private fun isMeshChatFile(activity: Activity, uri: Uri): Boolean {
-    if (uri.lastPathSegment.orEmpty().lowercase().let { it.endsWith(".meshchat") || it.endsWith(".meshchat-invite") }) return true
+    if (uri.lastPathSegment.orEmpty().lowercase().let { it.endsWith(".meshchat") || it.endsWith(".meshchat-invite") || it.endsWith(".meshchat-connect") || it.endsWith(".meshchat-route") }) return true
     return runCatching {
       activity.contentResolver.query(
         uri,
@@ -168,7 +230,7 @@ internal object PendingInvitation {
         cursor.moveToFirst() &&
           cursor.getString(cursor.getColumnIndexOrThrow(OpenableColumns.DISPLAY_NAME))
             .lowercase()
-            .let { it.endsWith(".meshchat") || it.endsWith(".meshchat-invite") }
+            .let { it.endsWith(".meshchat") || it.endsWith(".meshchat-invite") || it.endsWith(".meshchat-connect") || it.endsWith(".meshchat-route") }
       } == true
     }.getOrDefault(false)
   }

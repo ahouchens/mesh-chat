@@ -47,6 +47,8 @@
                 <data android:mimeType="*/*" />
                 <data android:pathPattern=".*\\.meshchat" />
                 <data android:pathPattern=".*\\.meshchat-invite" />
+                <data android:pathPattern=".*\\.meshchat-connect" />
+                <data android:pathPattern=".*\\.meshchat-route" />
             </intent-filter>
             
             <!-- tauri-file-associations. AUTO-GENERATED. DO NOT REMOVE. -->

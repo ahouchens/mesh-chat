@@ -637,12 +637,12 @@ def inspect_upnp(
 def map_upnp(
     internal_port: int, *, lifetime: int = DEFAULT_MAPPING_LIFETIME,
     timeout: float = 1.1, description: str = "MeshChat participant invite",
-    routes: list[RouteInfo] | None = None,
+    routes: list[RouteInfo] | None = None, preferred_external_port: int = 0,
 ) -> MappingResult:
     local, service_type, control_url, external_host = _upnp_external(
         default_routes() if routes is None else routes, timeout
     )
-    if service_type.endswith(":2"):
+    if service_type.endswith(":2") and not preferred_external_port:
         try:
             payload = _soap(
                 control_url, service_type, "AddAnyPortMapping", {
@@ -670,7 +670,11 @@ def map_upnp(
         except (ConnectivityError, ValueError):
             pass
     last: ConnectivityError | None = None
-    ports = [internal_port, *[random.SystemRandom().randint(42000, 60999) for _ in range(4)]]
+    ports = [
+        *([preferred_external_port] if 1 <= preferred_external_port <= 65535 else []),
+        internal_port,
+        *[random.SystemRandom().randint(42000, 60999) for _ in range(4)],
+    ]
     for external_port in dict.fromkeys(ports):
         try:
             _soap(
@@ -854,6 +858,7 @@ def inspect_nat_pmp(
 def map_nat_pmp(
     internal_port: int, *, lifetime: int = DEFAULT_MAPPING_LIFETIME,
     timeout: float | None = None, routes: list[RouteInfo] | None = None,
+    preferred_external_port: int = 0,
 ) -> MappingResult:
     delays = (timeout,) if timeout is not None else MAPPING_RETRY_DELAYS
     for route in _gateway_routes(routes):
@@ -868,7 +873,8 @@ def map_nat_pmp(
                     "nat_pmp", "upstream_nat_detected", result="blocked",
                     recommended_action="configure_upstream_router_or_bridge_mode",
                 )
-            request = struct.pack("!BBHHHI", 0, 2, 0, internal_port, 0, lifetime)
+            requested = preferred_external_port if 1 <= preferred_external_port <= 65535 else 0
+            request = struct.pack("!BBHHHI", 0, 2, 0, internal_port, requested, lifetime)
             response = _retry_gateway_exchange(
                 route.gateway, request, 16, source_address=route.local_address, delays=delays
             )
@@ -927,6 +933,7 @@ def inspect_pcp(*, routes: list[RouteInfo] | None = None) -> dict[str, str]:
 def map_pcp(
     internal_port: int, *, lifetime: int = DEFAULT_MAPPING_LIFETIME,
     timeout: float | None = None, routes: list[RouteInfo] | None = None,
+    preferred_external_port: int = 0,
 ) -> MappingResult:
     delays = (timeout,) if timeout is not None else MAPPING_RETRY_DELAYS
     for route in _gateway_routes(routes):
@@ -935,7 +942,13 @@ def map_pcp(
             internal_host = route.local_address or _local_address_for(route.gateway, GATEWAY_PORT)
             nonce = secrets.token_bytes(12)
             response = _retry_gateway_exchange(
-                route.gateway, _pcp_request(internal_host, internal_port, lifetime, nonce),
+                route.gateway, _pcp_request(
+                    internal_host, internal_port, lifetime, nonce,
+                    external_port=(
+                        preferred_external_port
+                        if 1 <= preferred_external_port <= 65535 else 0
+                    ),
+                ),
                 60, source_address=internal_host, delays=delays,
             )
             version, opcode, _reserved, result, lease = struct.unpack("!BBBBI", response[:8])
@@ -971,12 +984,15 @@ def map_pcp(
 
 def create_port_mapping(
     internal_port: int, *, lifetime: int = DEFAULT_MAPPING_LIFETIME,
-    routes: list[RouteInfo] | None = None,
+    routes: list[RouteInfo] | None = None, preferred_external_port: int = 0,
 ) -> MappingResult:
     failures: list[ConnectivityError] = []
     for mapper in (map_pcp, map_upnp, map_nat_pmp):
         try:
-            return mapper(internal_port, lifetime=lifetime, routes=routes)
+            return mapper(
+                internal_port, lifetime=lifetime, routes=routes,
+                preferred_external_port=preferred_external_port,
+            )
         except ConnectivityError as exc:
             failures.append(exc)
         except OSError:

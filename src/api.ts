@@ -142,7 +142,7 @@ export function onInvitation(callback: (invitation: string) => void): Promise<Un
   };
   const accept = (urls: string[] | null) => {
     const invitation = urls?.find((value) =>
-      value.startsWith("meshchat://invite/") || value.startsWith("meshchat://workspace/") || value.startsWith("meshchat://workspace-device/"),
+      value.startsWith("meshchat://invite/") || value.startsWith("meshchat://workspace/") || value.startsWith("meshchat://workspace-device/") || value.startsWith("meshchat://connect/") || value.startsWith("meshchat://route/"),
     );
     deliver(invitation);
   };

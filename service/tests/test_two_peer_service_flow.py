@@ -14,9 +14,10 @@ import pytest
 import RNS
 
 from mesh_chat.app_protocol import build_fields, conversation_id, parse_payload
-from mesh_chat.errors import ValidationError
+from mesh_chat.errors import DirectConnectionUnavailable, ValidationError
 from mesh_chat.invitations import verify_invitation
 from mesh_chat.models import Contact, DeliveryState, MessageKind, TrustState
+from mesh_chat.participant import create_access_document
 from mesh_chat.reticulum_config import NetworkSettings
 from mesh_chat.service import MeshChatService
 from mesh_chat.vault import VaultStore
@@ -102,6 +103,7 @@ class DeterministicPeerNetwork:
         self.service: MeshChatService
         self.remembered: dict[bytes, bytes] = {}
         self.cancelled: list[set[str]] = []
+        self.participant_clients: list[dict[str, Any]] = []
 
     def invitation_hints(self) -> list[dict[str, Any]]:
         return []
@@ -124,6 +126,14 @@ class DeterministicPeerNetwork:
     def apply_connection_settings(self, _settings: NetworkSettings) -> None:
         pass
 
+    def apply_participant_interfaces(
+        self, _listeners: list[dict[str, Any]], clients: list[dict[str, Any]]
+    ) -> None:
+        self.participant_clients = [dict(item) for item in clients]
+
+    def reannounce(self) -> None:
+        pass
+
     def send(
         self,
         *,
@@ -141,6 +151,7 @@ class DeterministicPeerNetwork:
         reaction_emoji: str | None = None,
         reaction_active: bool | None = None,
         reaction_revision: int | None = None,
+        route_update: str | None = None,
     ) -> str:
         assert propagated is False
         assert self.remembered[recipient_destination] == recipient_public_key
@@ -162,6 +173,7 @@ class DeterministicPeerNetwork:
             reaction_emoji=reaction_emoji,
             reaction_active=reaction_active,
             reaction_revision=reaction_revision,
+            route_update=route_update,
         )
         return self.hub.queue(self, recipient_destination, text, fields)
 
@@ -441,6 +453,115 @@ def test_two_peers_complete_invitation_approval_and_chat_flow(tmp_path: Path) ->
         assert after_replays["messages"] == []
         assert after_replays["drafts"] == []
         assert not hub.pending
+    finally:
+        alex.close()
+        blair.close()
+
+
+def test_email_role_reversal_delivers_request_and_refreshes_route_without_reapproval(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    hub = DeterministicPeerHub()
+    alex, alex_network = _peer(tmp_path / "alex-email", hub)
+    blair, blair_network = _peer(tmp_path / "blair-email", hub)
+    host_counter = 0
+
+    try:
+        alex_profile = _command(
+            alex, "email-alex-profile", "create_profile", {"display_name": "Alex"}
+        )
+        blair_profile = _command(
+            blair, "email-blair-profile", "create_profile", {"display_name": "Blair"}
+        )
+        hub.register(alex_network)
+        hub.register(blair_network)
+
+        def no_inbound_candidate(**_kwargs: Any) -> dict[str, Any]:
+            raise DirectConnectionUnavailable("manual_setup_required")
+
+        def reachable_callback(**kwargs: Any) -> dict[str, Any]:
+            nonlocal host_counter
+            host_counter += 1
+            now = int(time.time())
+            host_id = f"{host_counter:064x}"
+            access = create_access_document(
+                blair._identity,
+                [{
+                    "host": "93.184.216.34",
+                    "port": 43000 + host_counter,
+                    "path": "pcp",
+                }],
+                network_name=f"callback_network_{host_counter:06d}",
+                passphrase=f"callback_passphrase_{host_counter:06d}_secure",
+                mode=kwargs.get("access_mode", "participant_callback"),
+                now=now,
+                expires_at=min(int(kwargs["maximum_expires_at"]), now + 3600),
+            )
+            blair.store.put("participant_host", host_id, {
+                "id": host_id,
+                "purpose": kwargs["purpose"],
+                "scope_id": kwargs["scope_id"],
+                "access": access,
+                "listeners": [],
+                "mapping": None,
+                "pinhole": None,
+                "firewall": None,
+                "state": "prepared_unverified",
+                "created_at": float(now),
+                "expires_at": float(access["expires_at"]),
+            })
+            return {**access, "host_session_id": host_id}
+
+        alex.create_participant_host_access = no_inbound_candidate  # type: ignore[method-assign]
+        blair.create_participant_host_access = reachable_callback  # type: ignore[method-assign]
+        monkeypatch.setattr(
+            "mesh_chat.participant_service.resolve_public_endpoint",
+            lambda endpoint: [endpoint["host"]],
+        )
+        monkeypatch.setattr(
+            "mesh_chat.participant_service.candidate_connection_result",
+            lambda *_args, **_kwargs: "connected",
+        )
+
+        invitation = alex.invitation(connection_mode="email")
+        assert invitation["text"].startswith("MESHCHAT4:")
+        assert "participant_access" not in alex.preview_invitation(invitation["text"])
+
+        reply = blair.create_connection_reply(invitation["text"], "personal")
+        before_preview = list(alex_network.participant_clients)
+        preview = alex.preview_connection_reply(reply["text"])
+        assert preview["responder_destination"] == blair_profile["destination_hash"]
+        assert alex_network.participant_clients == before_preview
+
+        connected = alex.connect_using_reply(reply["text"])
+        assert connected["connection_results"][0]["result"] == "connected"
+        assert alex_network.participant_clients
+        assert alex.store.list("contact") == []
+
+        awaiting = blair.accept_invitation(invitation["text"])
+        assert awaiting["trust"] == "awaiting_consent"
+        hub.drain()
+        pending = alex.snapshot()["contacts"][0]
+        assert pending["destination_hash"] == blair_profile["destination_hash"]
+        assert pending["trust"] == "pending_request"
+
+        alex.approve_request(pending["id"])
+        hub.drain()
+        blair_contact = blair.snapshot()["contacts"][0]
+        assert blair_contact["trust"] == "approved"
+        assert blair_contact["destination_hash"] == alex_profile["destination_hash"]
+
+        prior_access_ids = {item["id"] for item in alex.store.list("participant_access")}
+        update = blair.create_route_update_command("contact", blair_contact["id"])
+        assert update["delivery_mode"] == "automatic"
+        hub.drain()
+        refreshed_access_ids = {item["id"] for item in alex.store.list("participant_access")}
+        assert refreshed_access_ids != prior_access_ids
+        assert alex.store.get("contact", pending["id"])["trust"] == "approved"
+        assert blair.store.list("participant_host")
+        blair.delete_contact(blair_contact["id"])
+        assert blair.store.list("participant_host") == []
+        assert blair.store.list("connection_response") == []
     finally:
         alex.close()
         blair.close()

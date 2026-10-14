@@ -68,6 +68,8 @@ import {
 import packageInfo from "../package.json";
 import type {
   ChatMessage,
+  ConnectionDocumentFormats,
+  ConnectionReplyPreview,
   Contact,
   DirectDoctorReport,
   DirectDoctorStep,
@@ -84,6 +86,7 @@ import type {
   ParticipantHosting,
   ParticipantCandidateResult,
   RemoteProfile,
+  RouteUpdatePreview,
   NotificationCapability,
   NotificationOpenTarget,
   Snapshot,
@@ -174,10 +177,18 @@ function isWorkspaceInvitationValue(value: string): boolean {
     || trimmed.startsWith("MESHWORKSPACE1:")
     || trimmed.startsWith("MESHWORKSPACE2:")
     || trimmed.startsWith("MESHWORKSPACE3:")
+    || trimmed.startsWith("MESHWORKSPACE4:")
     || trimmed.startsWith("MESHWORKSPACEDEVICE1:")
     || trimmed.includes('"type":"workspace_invite"')
     || trimmed.includes('"purpose":"workspace"')
     || trimmed.includes('"type":"workspace_device_link_offer"');
+}
+
+function connectionDocumentKind(value: string): "reply" | "route" | null {
+  const trimmed = value.trim().toLowerCase();
+  if (trimmed.startsWith("meshconnect1:") || trimmed.startsWith("meshchat://connect/") || trimmed.includes('"type":"connection_response"')) return "reply";
+  if (trimmed.startsWith("meshroute1:") || trimmed.startsWith("meshchat://route/") || trimmed.includes('"type":"route_update"')) return "route";
+  return null;
 }
 
 function pluralize(count: number, singular: string, plural = `${singular}s`): string {
@@ -608,6 +619,7 @@ function InvitationShare({ formats, onShared }: { formats: InvitationFormats; on
         Send everything in this box. It contains your public identity and connection hints, never your private key.
       </p>
       {formats.connection_mode === "participant" && <p className={hostingStopped ? "direct-host-warning" : "direct-host-status"} role="status">{hostingStopped ? <WifiOff size={17} /> : <ShieldCheck size={17} />} {hostingStopped ? "Direct hosting is stopped; this invitation cannot connect over the Internet." : "Prepared — waiting for recipient verification. Keep Mesh Chat open until they connect. No transport node is being used."}</p>}
+      {formats.connection_mode === "email" && <p className="direct-host-status" role="status"><ShieldCheck size={17} /> Email-ready invitation. {formats.host_session_id ? "The recipient will try this device first and can return a signed connection reply if that path fails." : "This device could not host an inbound path, so the recipient can return a signed connection reply."} Mesh Chat never accesses either person’s email account.</p>}
       {formats.methods?.includes("manual") && <p className="muted">This invitation uses your manual router rule. Mesh Chat stops its listener when hosting ends, but cannot remove the rule from your router.</p>}
       <p id="invite-expiry-note" className="invite-expiry">
         Expires <time dateTime={new Date(formats.expires_at * 1000).toISOString()}>{formatExpiry(formats.expires_at)}</time>
@@ -631,6 +643,33 @@ function InvitationShare({ formats, onShared }: { formats: InvitationFormats; on
       </div>
     </section>
   );
+}
+
+function ConnectionDocumentShare({ formats, kind, onShared }: { formats: ConnectionDocumentFormats; kind: "reply" | "route"; onShared?: () => void }) {
+  const [feedback, setFeedback] = useState("");
+  const label = kind === "reply" ? "connection reply" : "reconnect update";
+  const copy = async () => {
+    try { await navigator.clipboard.writeText(formats.text); setFeedback(`${kind === "reply" ? "Connection reply" : "Reconnect update"} copied.`); onShared?.(); }
+    catch { setFeedback("Copy was unavailable. Select the complete text and copy it manually."); }
+  };
+  const share = async () => {
+    if (typeof navigator.share !== "function") { await copy(); return; }
+    try { await navigator.share({ title: `Mesh Chat ${label}`, text: formats.text }); setFeedback("Shared."); onShared?.(); }
+    catch (reason) { if (!(reason instanceof DOMException && reason.name === "AbortError")) await copy(); }
+  };
+  const save = () => {
+    const anchor = document.createElement("a");
+    anchor.href = URL.createObjectURL(new Blob([formats.file], { type: "application/json" }));
+    anchor.download = kind === "reply" ? "mesh-chat-connection.meshchat-connect" : "mesh-chat-reconnect.meshchat-route";
+    anchor.click(); URL.revokeObjectURL(anchor.href); setFeedback("File saved."); onShared?.();
+  };
+  return <section className="invite-share" aria-label={`Signed ${label}`}>
+    <label className="field"><span>Signed {label}</span><textarea readOnly rows={5} value={formats.text} onFocus={(event) => event.currentTarget.select()} /></label>
+    <p className="muted">Share this small signed bootstrap document through email or any app you choose. Mesh Chat does not send it or read an inbox.</p>
+    <p>Expires <time dateTime={new Date(formats.expires_at * 1000).toISOString()}>{formatExpiry(formats.expires_at)}</time></p>
+    <div className="invite-actions"><Button onClick={() => void copy()}><Copy size={17} /> Copy</Button><Button variant="secondary" onClick={() => void share()}><Share2 size={17} /> Share</Button><Button variant="ghost" onClick={save}><FileUp size={17} /> Save file</Button></div>
+    <p className="invite-feedback" aria-live="polite">{feedback}</p>
+  </section>;
 }
 
 function Dialog({
@@ -938,7 +977,7 @@ function ImportButtons({ onValue, showTextFile = true }: { onValue: (value: stri
   }, [scanning, onValue]);
   return (
     <div className="import-row">
-      {showTextFile && <label className="file-action"><FileUp size={17} /> Open invite file<input type="file" accept=".meshchat-invite,.meshchat,.json,text/plain,application/json" onChange={(event) => event.target.files?.[0] && readFile(event.target.files[0])} /></label>}
+      {showTextFile && <label className="file-action"><FileUp size={17} /> Open Mesh Chat file<input type="file" accept=".meshchat-invite,.meshchat-connect,.meshchat-route,.meshchat,.json,text/plain,application/json" onChange={(event) => event.target.files?.[0] && readFile(event.target.files[0])} /></label>}
       <label className="file-action"><QrCode size={17} /> Read QR image<input type="file" accept="image/*" onChange={(event) => event.target.files?.[0] && void scanImage(event.target.files[0])} /></label>
       <button className="file-action file-action--button" type="button" onClick={() => void scanCamera()}><QrCode size={17} /> {scanning ? "Stop camera" : "Scan with camera"}</button>
       {scanning && <div className="camera-box"><video ref={videoRef} muted playsInline aria-label="Camera preview for QR scanning" /><span>Point the camera at a Mesh Chat QR code.</span></div>}
@@ -993,13 +1032,21 @@ function NewChatDialog({ initialInvitation, remoteProfiles, onClose, onChanged }
   const [manualPort, setManualPort] = useState("");
   const [shared, setShared] = useState(false);
   const [candidateResults, setCandidateResults] = useState<ParticipantCandidateResult[]>([]);
+  const [replyFormats, setReplyFormats] = useState<ConnectionDocumentFormats | null>(null);
+  const [replyShared, setReplyShared] = useState(false);
+  const [connectionReplyPreview, setConnectionReplyPreview] = useState<ConnectionReplyPreview | null>(null);
+  const [routeUpdatePreview, setRouteUpdatePreview] = useState<RouteUpdatePreview | null>(null);
   const generatedHostSession = useRef<string | null>(null);
+  const replyHostSession = useRef<string | null>(null);
   const usableProfiles = remoteProfiles.filter((profile) => profile.state !== "expired");
 
   const stopUnsharedHost = async () => {
     const id = generatedHostSession.current;
     if (id && !shared) await serviceCommand("stop_participant_host", { access_id: id }).catch(() => undefined);
     generatedHostSession.current = null;
+    const replyId = replyHostSession.current;
+    if (replyId && !replyShared) await serviceCommand("stop_participant_host", { access_id: replyId }).catch(() => undefined);
+    replyHostSession.current = null;
   };
   const closeDialog = async () => { await stopUnsharedHost(); onClose(); };
   const chooseConnection = async (value: string) => {
@@ -1029,6 +1076,7 @@ function NewChatDialog({ initialInvitation, remoteProfiles, onClose, onChanged }
       const payload = manual && manualSetup
         ? { connection_mode: "manual", manual_setup_id: manualSetup.setup_id, external_host: manualHost.trim(), external_port: Number(manualPort) }
         : connectionChoice === "participant" ? { connection_mode: "participant" }
+          : connectionChoice === "email" ? { connection_mode: "email" }
           : connectionChoice === "nearby" ? { connection_mode: "nearby" }
             : { connection_mode: "remote", remote_profile_id: connectionChoice.slice("remote:".length) };
       const created = await serviceCommand<InvitationFormats>("create_invitation", payload);
@@ -1046,12 +1094,28 @@ function NewChatDialog({ initialInvitation, remoteProfiles, onClose, onChanged }
   useEffect(() => {
     if (!initialInvitation) return;
     setRaw(initialInvitation); setTab("join"); setPreview(null); setRemoteConsent(false);
-    void serviceCommand<InvitationPreview>("preview_invitation", { invitation: initialInvitation })
-      .then(setPreview).catch((reason) => setError(errorMessage(reason)));
+    const documentKind = connectionDocumentKind(initialInvitation);
+    const request = documentKind === "reply"
+      ? serviceCommand<ConnectionReplyPreview>("preview_connection_reply", { response: initialInvitation }).then(setConnectionReplyPreview)
+      : documentKind === "route"
+        ? serviceCommand<RouteUpdatePreview>("preview_route_update", { update: initialInvitation }).then(setRouteUpdatePreview)
+        : serviceCommand<InvitationPreview>("preview_invitation", { invitation: initialInvitation }).then(setPreview);
+    void request.catch((reason) => setError(errorMessage(reason)));
   }, [initialInvitation]);
   const check = async () => {
     setError("");
-    try { setPreview(await serviceCommand("preview_invitation", { invitation: raw })); setRemoteConsent(false); }
+    setConnectionReplyPreview(null); setRouteUpdatePreview(null); setReplyFormats(null);
+    try {
+      const documentKind = connectionDocumentKind(raw);
+      if (documentKind === "reply") {
+        setConnectionReplyPreview(await serviceCommand("preview_connection_reply", { response: raw }));
+        setPreview(null);
+      } else if (documentKind === "route") {
+        setRouteUpdatePreview(await serviceCommand("preview_route_update", { update: raw }));
+        setPreview(null);
+      } else setPreview(await serviceCommand("preview_invitation", { invitation: raw }));
+      setRemoteConsent(false);
+    }
     catch (reason) { setError(errorMessage(reason)); }
   };
   const connect = async () => {
@@ -1064,20 +1128,44 @@ function NewChatDialog({ initialInvitation, remoteProfiles, onClose, onChanged }
       } else onClose();
     } catch (reason) { setError(errorMessage(reason)); }
   };
+  const createReply = async () => {
+    setBusy(true); setError("");
+    try {
+      const created = await serviceCommand<ConnectionDocumentFormats>("create_connection_reply", { invitation: raw, purpose: "personal" });
+      const previous = replyHostSession.current;
+      replyHostSession.current = created.host_session_id ?? null;
+      setReplyShared(false); setReplyFormats(created);
+      if (previous && previous !== created.host_session_id) await serviceCommand("stop_participant_host", { access_id: previous }).catch(() => undefined);
+    }
+    catch (reason) { setError(errorMessage(reason)); }
+    finally { setBusy(false); }
+  };
+  const applyConnectionDocument = async () => {
+    setBusy(true); setError("");
+    try {
+      if (connectionReplyPreview) await serviceCommand("connect_using_reply", { response: raw });
+      else await serviceCommand("apply_route_update", { update: raw });
+      await onChanged(); onClose();
+    } catch (reason) { setError(errorMessage(reason)); }
+    finally { setBusy(false); }
+  };
   return (
     <Dialog title="New chat" onClose={() => void closeDialog()} wide>
       <div className="tabs" role="tablist">
         <button role="tab" aria-selected={tab === "invite"} onClick={() => setTab("invite")}>Share an invite</button>
         <button role="tab" aria-selected={tab === "join"} onClick={() => { void stopUnsharedHost(); setTab("join"); }}>Open an invite</button>
       </div>
-      {tab === "invite" && <label className="field"><span>How should they connect?</span><select value={connectionChoice} disabled={busy} onChange={(event) => void chooseConnection(event.target.value)}><option value="participant">Over the Internet — directly to this device (default)</option><option value="nearby">Same network only — will not work over cellular</option>{usableProfiles.map((profile) => <option key={profile.id} value={`remote:${profile.id}`}>Approved access point · {profile.label} · {profile.state === "connected" ? "connected" : "currently unavailable"}</option>)}</select></label>}
+      {tab === "invite" && <label className="field"><span>How should they connect?</span><select value={connectionChoice} disabled={busy} onChange={(event) => void chooseConnection(event.target.value)}><option value="participant">Over the Internet — directly to this device (default)</option><option value="email">Email-assisted direct connection — either device can host</option><option value="nearby">Same network only — will not work over cellular</option>{usableProfiles.map((profile) => <option key={profile.id} value={`remote:${profile.id}`}>Approved access point · {profile.label} · {profile.state === "connected" ? "connected" : "currently unavailable"}</option>)}</select></label>}
       {tab === "invite" && connectionChoice === "participant" && !formats && <div className="stack"><p className="muted">Direct participant hosting stays on this device. Keep Mesh Chat open during invitation and approval. No server, rendezvous service, or transport operator is added.</p><div className="dialog-actions"><Button variant="secondary" disabled={busy} onClick={() => void checkDirect()}>{busy ? "Checking this network…" : "Check direct Internet connection"}</Button><Button disabled={busy} onClick={() => void createInvitation()}>{busy ? "Preparing a direct route…" : "Prepare direct Internet invitation"}</Button><Button variant="ghost" disabled={busy} onClick={() => void prepareManual()}>Set up manual port forwarding</Button></div>{doctor && <DirectDoctorPanel report={doctor} busy={busy} onRetry={() => void checkDirect()} onManualSetup={() => void prepareManual()} />}{manualSetup && <ManualForwardingPanel setup={manualSetup} host={manualHost} port={manualPort} busy={busy} onHostChange={setManualHost} onPortChange={setManualPort} onCreate={() => void createInvitation(true)} />}</div>}
       {tab === "invite" && connectionChoice === "nearby" && !formats && <div className="stack"><p className="direct-host-warning">Same network only — will not work over cellular.</p><Button disabled={busy} onClick={() => void createInvitation()}>{busy ? "Creating…" : "Create same-network invitation"}</Button></div>}
+      {tab === "invite" && connectionChoice === "email" && !formats && <div className="stack"><p className="muted">Creates a signed invitation even behind CGNAT. If this device cannot accept the connection, the recipient can temporarily host and send a signed reply through email or another share app.</p><p className="muted">Email carries bootstrap files only; Mesh Chat never logs in, sends mail, or polls an inbox.</p><Button disabled={busy} onClick={() => void createInvitation()}>{busy ? "Creating…" : "Create email-ready invitation"}</Button></div>}
       {tab === "invite" && connectionChoice.startsWith("remote:") && !formats && <div className="stack"><p className="muted">This explicitly selected, named access point can observe connection metadata, but not message content.</p><Button disabled={busy} onClick={() => void createInvitation()}>{busy ? "Creating…" : "Create invitation using selected access point"}</Button></div>}
       {tab === "invite" && formats && <InvitationShare formats={formats} onShared={() => setShared(true)} />}
       {tab === "invite" && inviteError && <p className="form-error" role="alert">{inviteError}</p>}
-      {tab === "join" && !preview && <div className="stack"><label className="field"><span>Invitation</span><textarea autoCapitalize="off" autoCorrect="off" spellCheck={false} rows={5} value={raw} onChange={(event) => setRaw(event.target.value)} /></label><ImportButtons onValue={setRaw} /><Button onClick={() => void check()} disabled={!raw.trim()}>Check invitation</Button></div>}
-      {tab === "join" && preview && <div className="stack"><div className="person-preview"><Avatar name={preview.display_name} /><div><h3>{preview.display_name}</h3><p>Identity signature valid</p></div></div><SecurityDetails fingerprint={preview.fingerprint} destination={preview.destination_hash} />{preview.participant_access && <section className="direct-consent" aria-labelledby="personal-direct-connection"><h3 id="personal-direct-connection">Direct connection to {preview.display_name}</h3><p>{preview.participant_access.privacy_disclosure}</p><p>No separate operator will join this chat or workspace.</p></section>}{preview.remote_profile && <section className="remote-consent" aria-labelledby="personal-remote-consent"><h3 id="personal-remote-consent">Remote connection requested</h3><p><strong>{preview.remote_profile.label}</strong> · {preview.remote_profile.endpoint_count} access-point {preview.remote_profile.endpoint_count === 1 ? "endpoint" : "endpoints"}</p><p>{preview.remote_profile.privacy_disclosure}</p><label className="checkbox-line"><input type="checkbox" checked={remoteConsent} onChange={(event) => setRemoteConsent(event.target.checked)} /> Connect to this access point after I continue</label></section>}<Button disabled={Boolean(preview.remote_profile) && !remoteConsent} onClick={() => void connect()}>{preview.remote_profile ? "Connect and send contact request" : preview.participant_access ? `Connect directly to ${preview.display_name}` : `Connect to ${preview.display_name}`}</Button>{candidateResults.length > 0 && <section className="direct-host-warning" role="status"><h3>No candidate connected yet</h3><pre>{candidateSummary(candidateResults)}</pre><p>The invitation remains saved and can retry while it is valid.</p><Button variant="ghost" onClick={() => void navigator.clipboard.writeText(candidateSummary(candidateResults))}><Copy size={17} /> Copy result for the sender</Button></section>}</div>}
+      {tab === "join" && !preview && !connectionReplyPreview && !routeUpdatePreview && <div className="stack"><label className="field"><span>Invitation, connection reply, or reconnect update</span><textarea aria-label="Invitation" autoCapitalize="off" autoCorrect="off" spellCheck={false} rows={5} value={raw} onChange={(event) => setRaw(event.target.value)} /></label><ImportButtons onValue={setRaw} /><Button onClick={() => void check()} disabled={!raw.trim()}>Check invitation</Button></div>}
+      {tab === "join" && connectionReplyPreview && <div className="stack"><h3>Connection reply verified</h3><p>This response is bound to the exact invitation created on this device.</p><SecurityDetails fingerprint={connectionReplyPreview.responder_fingerprint} destination={connectionReplyPreview.responder_destination} /><p>{connectionReplyPreview.endpoint_count} direct callback {connectionReplyPreview.endpoint_count === 1 ? "candidate" : "candidates"}. Importing it does not approve a contact or workspace member.</p><Button disabled={busy} onClick={() => void applyConnectionDocument()}>{busy ? "Connecting…" : "Connect using reply"}</Button></div>}
+      {tab === "join" && routeUpdatePreview && <div className="stack"><h3>Reconnect update verified</h3><p><strong>{routeUpdatePreview.issuer_display_name}</strong> signed route generation {routeUpdatePreview.generation}. Existing approval or workspace membership will not be repeated.</p><SecurityDetails fingerprint={routeUpdatePreview.issuer_fingerprint} destination={routeUpdatePreview.issuer_destination} /><Button disabled={busy} onClick={() => void applyConnectionDocument()}>{busy ? "Reconnecting…" : "Apply reconnect update"}</Button></div>}
+      {tab === "join" && preview && <div className="stack"><div className="person-preview"><Avatar name={preview.display_name} /><div><h3>{preview.display_name}</h3><p>Identity signature valid</p></div></div><SecurityDetails fingerprint={preview.fingerprint} destination={preview.destination_hash} />{preview.participant_access && <section className="direct-consent" aria-labelledby="personal-direct-connection"><h3 id="personal-direct-connection">Direct connection to {preview.display_name}</h3><p>{preview.participant_access.privacy_disclosure}</p><p>No separate operator will join this chat or workspace.</p></section>}{preview.connection_reply_available && <section className="direct-consent"><h3>Email-assisted fallback</h3><p>If the inviter’s direct candidates are absent or fail, this device can temporarily host the authenticated Reticulum interface and return a signed connection reply. Keep Mesh Chat open afterward.</p></section>}{preview.remote_profile && <section className="remote-consent" aria-labelledby="personal-remote-consent"><h3 id="personal-remote-consent">Remote connection requested</h3><p><strong>{preview.remote_profile.label}</strong> · {preview.remote_profile.endpoint_count} access-point {preview.remote_profile.endpoint_count === 1 ? "endpoint" : "endpoints"}</p><p>{preview.remote_profile.privacy_disclosure}</p><label className="checkbox-line"><input type="checkbox" checked={remoteConsent} onChange={(event) => setRemoteConsent(event.target.checked)} /> Connect to this access point after I continue</label></section>}{replyFormats ? <><ConnectionDocumentShare formats={replyFormats} kind="reply" onShared={() => setReplyShared(true)} /><Button onClick={() => void connect()}>Send contact request after sharing</Button></> : <>{(!preview.connection_reply_available || preview.participant_access) && <Button disabled={Boolean(preview.remote_profile) && !remoteConsent} onClick={() => void connect()}>{preview.remote_profile ? "Connect and send contact request" : preview.participant_access ? `Connect directly to ${preview.display_name}` : `Connect to ${preview.display_name}`}</Button>}{preview.connection_reply_available && !preview.participant_access && <Button disabled={busy} onClick={() => void createReply()}>{busy ? "Preparing callback…" : "Create connection reply"}</Button>}</>}{candidateResults.length > 0 && <section className="direct-host-warning" role="status"><h3>No candidate connected yet</h3><pre>{candidateSummary(candidateResults)}</pre><p>The invitation remains saved. You can reverse the route without approving a new identity.</p><Button onClick={() => void createReply()} disabled={busy}>{busy ? "Preparing callback…" : "Create connection reply"}</Button></section>}</div>}
       {error && <p className="form-error" role="alert">{error}</p>}
     </Dialog>
   );
@@ -1279,6 +1367,7 @@ function ContactsDialog({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [confirm, setConfirm] = useState<"block" | "delete" | null>(null);
+  const [reconnectFormats, setReconnectFormats] = useState<ConnectionDocumentFormats | null>(null);
   const selected = contacts.find((contact) => contact.id === selectedId) ?? null;
   const needle = query.trim().toLocaleLowerCase();
   const filtered = sorted.filter((contact) => [
@@ -1297,6 +1386,7 @@ function ContactsDialog({
     setName(selected?.display_name ?? "");
     setError("");
     setConfirm(null);
+    setReconnectFormats(null);
   }, [selected?.id, selected?.display_name]);
 
   const run = async (command: string) => {
@@ -1328,6 +1418,13 @@ function ContactsDialog({
     } finally {
       setBusy(false);
     }
+  };
+  const createReconnect = async () => {
+    if (!selected || busy) return;
+    setBusy(true); setError("");
+    try { setReconnectFormats(await serviceCommand<ConnectionDocumentFormats>("create_route_update", { scope_kind: "contact", scope_id: selected.id })); }
+    catch (reason) { setError(errorMessage(reason)); }
+    finally { setBusy(false); }
   };
   const remove = async () => {
     if (!selected || busy) return;
@@ -1378,6 +1475,9 @@ function ContactsDialog({
                 {canRestoreBlocked && <Button variant="secondary" disabled={busy} onClick={() => void run("unblock_contact")}>Unblock contact</Button>}
               </div>
               <SecurityDetails fingerprint={selected.fingerprint} destination={selected.destination_hash} />
+              {selected.route_status === "reconnecting_automatically" && <p className="direct-host-status" role="status"><RefreshCw size={17} /> Reconnecting automatically using the stored signed route.</p>}
+              {selected.route_status === "reconnect_update_required" && !reconnectFormats && <section className="direct-host-warning"><p>Every known path is gone. Create a signed route update and send it through email or another sharing app; identity approval stays unchanged.</p><Button disabled={busy} onClick={() => void createReconnect()}><Share2 size={17} /> {busy ? "Preparing…" : "Send reconnect update"}</Button></section>}
+              {reconnectFormats && <ConnectionDocumentShare formats={reconnectFormats} kind="route" />}
               {error && <p className="form-error" role="alert">{error}</p>}
               <div className="contact-detail-actions">
                 <Button disabled={busy || !canOpenConversation} onClick={() => void onOpenConversation(selected)}><MessageCircleMore size={17} /> Open conversation</Button>
@@ -2280,6 +2380,15 @@ function JoinWorkspaceDialog({ initialValue = "", onClose, onJoined }: { initial
   const [remoteConsent, setRemoteConsent] = useState(false);
   const [connectionResults, setConnectionResults] = useState<ParticipantCandidateResult[]>([]);
   const [joinedWorkspace, setJoinedWorkspace] = useState<Workspace | null>(null);
+  const [replyFormats, setReplyFormats] = useState<ConnectionDocumentFormats | null>(null);
+  const [replyShared, setReplyShared] = useState(false);
+  const replyHostSession = useRef<string | null>(null);
+  const stopUnsharedReply = async () => {
+    const hostId = replyHostSession.current;
+    if (hostId && !replyShared) await serviceCommand("stop_participant_host", { access_id: hostId }).catch(() => undefined);
+    replyHostSession.current = null;
+  };
+  const closeDialog = async () => { await stopUnsharedReply(); onClose(); };
   const review = async () => {
     if (!value.trim() || busy) return;
     setBusy(true); setError("");
@@ -2312,8 +2421,20 @@ function JoinWorkspaceDialog({ initialValue = "", onClose, onJoined }: { initial
     } catch (reason) { setError(errorMessage(reason)); }
     finally { setBusy(false); }
   };
+  const createReply = async () => {
+    setBusy(true); setError("");
+    try {
+      const created = await serviceCommand<ConnectionDocumentFormats>("create_connection_reply", { invitation: value.trim(), purpose: "workspace" });
+      const previous = replyHostSession.current;
+      replyHostSession.current = created.host_session_id ?? null;
+      setReplyShared(false); setReplyFormats(created);
+      if (previous && previous !== created.host_session_id) await serviceCommand("stop_participant_host", { access_id: previous }).catch(() => undefined);
+    }
+    catch (reason) { setError(errorMessage(reason)); }
+    finally { setBusy(false); }
+  };
   const reviewed = preview !== null || devicePreview !== null;
-  return <Dialog title={devicePreview ? "Link this device" : "Join a workspace"} onClose={onClose}><div className="form-stack">{preview ? <><div className="workspace-preview"><span className="workspace-preview__avatar">{initials(preview.name)}</span><div><h3>{preview.name}</h3><p>{preview.description || "No description"}</p></div></div><dl className="security-list"><div><dt>Owner fingerprint</dt><dd>{preview.owner_fingerprint}</dd></div><div><dt>Current members</dt><dd>{preview.member_count}</dd></div><div><dt>History preference</dt><dd>{preview.retention_days === null ? "Indefinite" : `${preview.retention_days} days`}</dd></div></dl><p className="muted">Joining does not approve a global contact. The owner must verify this device and approve your request.</p>{preview.participant_access && <section className="direct-consent" aria-labelledby="workspace-direct-connection"><h3 id="workspace-direct-connection">Direct connection to the workspace owner</h3><p>{preview.participant_access.privacy_disclosure}</p><p>The owner must keep Mesh Chat open until your request arrives.</p></section>}{preview.remote_profile && <section className="remote-consent" aria-labelledby="workspace-remote-consent"><h3 id="workspace-remote-consent">Remote connection requested</h3><p><strong>{preview.remote_profile.label}</strong> · {preview.remote_profile.endpoint_count} access-point {preview.remote_profile.endpoint_count === 1 ? "endpoint" : "endpoints"}</p><p>{preview.remote_profile.privacy_disclosure}</p><label className="checkbox-line"><input type="checkbox" checked={remoteConsent} onChange={(event) => setRemoteConsent(event.target.checked)} /> Connect outbound after I send the join request</label></section>}</> : devicePreview ? <><div className="workspace-preview"><span className="workspace-preview__avatar">{initials(devicePreview.name)}</span><div><h3>{devicePreview.name}</h3><p>Link as {devicePreview.member_display_name}</p></div></div><dl className="security-list"><div><dt>Sponsor fingerprint</dt><dd>{devicePreview.sponsor_fingerprint}</dd></div><div><dt>Existing devices</dt><dd>{devicePreview.device_count}</dd></div><div><dt>Expires</dt><dd>{formatExpiry(devicePreview.expires_at)}</dd></div></dl><p className="muted">This device creates a fresh private identity. No key material is copied. The workspace owner must admit the new device before it can read or send workspace messages.</p></> : <><p>Paste a signed one-use invitation to join as a new person, or a device link created from one of your admitted devices.</p><textarea autoFocus value={value} onChange={(event) => { setValue(event.target.value); setError(""); }} aria-label="Workspace invitation or device link" rows={7} /><ImportButtons onValue={setValue} /></>}{connectionResults.length > 0 && <section className="direct-host-warning" role="status"><h3>No candidate connected yet</h3><pre>{candidateSummary(connectionResults)}</pre><Button variant="ghost" onClick={() => void navigator.clipboard.writeText(candidateSummary(connectionResults))}><Copy size={17} /> Copy result for the sender</Button>{joinedWorkspace && <Button onClick={() => void onJoined(joinedWorkspace)}>Continue to workspace</Button>}</section>}{error && <p className="form-error" role="alert">{error}</p>}<div className="dialog-actions">{connectionResults.length === 0 && <><Button variant="ghost" onClick={reviewed ? () => { setPreview(null); setDevicePreview(null); setRemoteConsent(false); } : onClose}>{reviewed ? "Back" : "Cancel"}</Button><Button disabled={busy || (!reviewed && !value.trim()) || Boolean(preview?.remote_profile) && !remoteConsent} onClick={() => void (reviewed ? join() : review())}>{busy ? "Checking…" : devicePreview ? "Request device approval" : preview ? preview.remote_profile ? "Connect and send join request" : preview.participant_access ? "Connect directly and send join request" : "Send join request" : "Review"}</Button></>}</div></div></Dialog>;
+  return <Dialog title={devicePreview ? "Link this device" : "Join a workspace"} onClose={() => void closeDialog()}><div className="form-stack">{preview ? <><div className="workspace-preview"><span className="workspace-preview__avatar">{initials(preview.name)}</span><div><h3>{preview.name}</h3><p>{preview.description || "No description"}</p></div></div><dl className="security-list"><div><dt>Owner fingerprint</dt><dd>{preview.owner_fingerprint}</dd></div><div><dt>Current members</dt><dd>{preview.member_count}</dd></div><div><dt>History preference</dt><dd>{preview.retention_days === null ? "Indefinite" : `${preview.retention_days} days`}</dd></div></dl><p className="muted">Joining does not approve a global contact. The owner must verify this device and approve your request.</p>{preview.participant_access && <section className="direct-consent" aria-labelledby="workspace-direct-connection"><h3 id="workspace-direct-connection">Direct connection to the workspace owner</h3><p>{preview.participant_access.privacy_disclosure}</p><p>The owner must keep Mesh Chat open until your request arrives.</p></section>}{preview.connection_reply_available && <section className="direct-consent"><h3>Email-assisted fallback</h3><p>If the owner route is unavailable, temporarily host the authenticated route here, share the signed reply, and keep Mesh Chat open.</p></section>}{preview.remote_profile && <section className="remote-consent" aria-labelledby="workspace-remote-consent"><h3 id="workspace-remote-consent">Remote connection requested</h3><p><strong>{preview.remote_profile.label}</strong> · {preview.remote_profile.endpoint_count} access-point {preview.remote_profile.endpoint_count === 1 ? "endpoint" : "endpoints"}</p><p>{preview.remote_profile.privacy_disclosure}</p><label className="checkbox-line"><input type="checkbox" checked={remoteConsent} onChange={(event) => setRemoteConsent(event.target.checked)} /> Connect outbound after I send the join request</label></section>}{replyFormats && <ConnectionDocumentShare formats={replyFormats} kind="reply" onShared={() => setReplyShared(true)} />}</> : devicePreview ? <><div className="workspace-preview"><span className="workspace-preview__avatar">{initials(devicePreview.name)}</span><div><h3>{devicePreview.name}</h3><p>Link as {devicePreview.member_display_name}</p></div></div><dl className="security-list"><div><dt>Sponsor fingerprint</dt><dd>{devicePreview.sponsor_fingerprint}</dd></div><div><dt>Existing devices</dt><dd>{devicePreview.device_count}</dd></div><div><dt>Expires</dt><dd>{formatExpiry(devicePreview.expires_at)}</dd></div></dl><p className="muted">This device creates a fresh private identity. No key material is copied. The workspace owner must admit the new device before it can read or send workspace messages.</p></> : <><p>Paste a signed one-use invitation to join as a new person, or a device link created from one of your admitted devices.</p><textarea autoFocus value={value} onChange={(event) => { setValue(event.target.value); setError(""); }} aria-label="Workspace invitation or device link" rows={7} /><ImportButtons onValue={setValue} /></>}{connectionResults.length > 0 && <section className="direct-host-warning" role="status"><h3>No candidate connected yet</h3><pre>{candidateSummary(connectionResults)}</pre>{preview?.connection_reply_available && <Button onClick={() => void createReply()} disabled={busy}>{busy ? "Preparing callback…" : "Create connection reply"}</Button>}{joinedWorkspace && <Button onClick={() => void onJoined(joinedWorkspace)}>Continue to workspace</Button>}</section>}{error && <p className="form-error" role="alert">{error}</p>}<div className="dialog-actions">{connectionResults.length === 0 && <><Button variant="ghost" onClick={reviewed ? () => { void stopUnsharedReply(); setPreview(null); setDevicePreview(null); setRemoteConsent(false); setReplyFormats(null); } : () => void closeDialog()}>{reviewed ? "Back" : "Cancel"}</Button>{preview?.connection_reply_available && !preview.participant_access && !replyFormats ? <Button disabled={busy} onClick={() => void createReply()}>{busy ? "Preparing callback…" : "Create connection reply"}</Button> : <Button disabled={busy || (!reviewed && !value.trim()) || Boolean(preview?.remote_profile) && !remoteConsent} onClick={() => void (reviewed ? join() : review())}>{busy ? "Checking…" : devicePreview ? "Request device approval" : preview ? replyFormats ? "Send join request after sharing" : preview.remote_profile ? "Connect and send join request" : preview.participant_access ? "Connect directly and send join request" : "Send join request" : "Review"}</Button>}</>}</div></div></Dialog>;
 }
 
 function WorkspaceInviteDialog({ workspace, existingInvitations, remoteProfiles, onClose }: { workspace: Workspace; existingInvitations: WorkspaceInvitation[]; remoteProfiles: RemoteProfile[]; onClose: () => void }) {
@@ -2336,6 +2457,8 @@ function WorkspaceInviteDialog({ workspace, existingInvitations, remoteProfiles,
       ? { connection_mode: "manual", manual_setup_id: manualSetup.setup_id, external_host: manualHost.trim(), external_port: Number(manualPort) }
       : connectionChoice === "participant"
       ? { connection_mode: "participant" }
+      : connectionChoice === "email"
+        ? { connection_mode: "email" }
       : connectionChoice === "nearby"
         ? { connection_mode: "nearby" }
         : { connection_mode: "remote", remote_profile_id: connectionChoice.slice("remote:".length) };
@@ -2411,8 +2534,8 @@ function WorkspaceInviteDialog({ workspace, existingInvitations, remoteProfiles,
     finally { setBusy(false); }
   };
   return <Dialog title={`Invite to ${workspace.name}`} onClose={() => void closeDialog()}><div className="form-stack">
-    {invitation && <><p>This bearer invitation works once and expires {formatExpiry(invitation.expires_at)}. This is the effective direct-host expiry.</p>{invitation.connection_mode === "participant" && <p className="direct-host-status" role="status"><ShieldCheck size={17} /> Prepared — waiting for recipient verification. Keep this owner device online.</p>}{invitation.methods?.includes("manual") && <p className="muted">Mesh Chat cannot remove your manual router rule. Remove it in the router when it is no longer needed.</p>}{invitation.link.length <= 4096 && <div className="qr-card"><QRCodeSVG value={invitation.link} size={188} level="M" /></div>}<textarea readOnly value={invitation.text} aria-label="Workspace invitation text" rows={5} /><div className="dialog-actions"><Button variant="danger" disabled={busy} onClick={() => void revoke(invitation.id)}>Revoke invitation</Button><Button variant="secondary" onClick={async () => { await navigator.clipboard.writeText(invitation.text); setCopied(true); setShared(true); }}>{copied ? <Check size={17} /> : <Copy size={17} />}{copied ? "Copied" : "Copy invitation"}</Button><Button variant="secondary" onClick={() => void share()}><Share2 size={17} /> Share</Button><Button variant="ghost" onClick={save}><FileUp size={17} /> Save file</Button>{invitation.connection_mode === "participant" && invitation.host_session_id && !invitation.methods?.includes("manual") && <Button variant="ghost" disabled={busy} onClick={() => void configureFirewall()}><ShieldCheck size={17} /> Allow in Windows Firewall</Button>}</div>{firewallFeedback && <p className="muted" role="status">{firewallFeedback}</p>}</>}
-    {!invitation && <><label className="field"><span>How should they connect?</span><select value={connectionChoice} disabled={busy} onChange={(event) => { setConnectionChoice(event.target.value); setDoctor(null); setError(""); }}><option value="participant">Over the Internet — directly to this owner device (default)</option><option value="nearby">Same network only — will not work over cellular</option>{usableProfiles.map((profile) => <option key={profile.id} value={`remote:${profile.id}`}>Approved access point · {profile.label} · {profile.state === "connected" ? "connected" : "currently unavailable"}</option>)}</select></label>{connectionChoice === "participant" && <><p className="muted">Direct participant hosting stays on this owner device. Keep Mesh Chat open through approval.</p><div className="dialog-actions"><Button variant="secondary" disabled={busy} onClick={() => void checkDirect()}>{busy ? "Checking this network…" : "Check direct Internet connection"}</Button><Button disabled={busy} onClick={() => void create()}>{busy ? "Preparing a direct route…" : "Prepare direct Internet invitation"}</Button><Button variant="ghost" disabled={busy} onClick={() => void prepareManual()}>Set up manual port forwarding</Button></div>{doctor && <DirectDoctorPanel report={doctor} busy={busy} onRetry={() => void checkDirect()} onManualSetup={() => void prepareManual()} />}{manualSetup && <ManualForwardingPanel setup={manualSetup} host={manualHost} port={manualPort} busy={busy} onHostChange={setManualHost} onPortChange={setManualPort} onCreate={() => void create(true)} />}</>}{connectionChoice === "nearby" && <><p className="direct-host-warning">Same network only — will not work over cellular.</p><Button disabled={busy} onClick={() => void create()}>{busy ? "Creating…" : "Create same-network invitation"}</Button></>}{connectionChoice.startsWith("remote:") && <><p className="muted">This invitation explicitly uses the named approved access point selected above. Its operator can observe connection metadata.</p><Button disabled={busy} onClick={() => void create()}>{busy ? "Creating…" : "Create using selected access point"}</Button></>}<p>Create a separate signed invitation for each person. Each request is reviewed independently.</p></>}
+    {invitation && <><p>This bearer invitation works once and expires {formatExpiry(invitation.expires_at)}. This is the effective direct-host expiry.</p>{invitation.connection_mode === "participant" && <p className="direct-host-status" role="status"><ShieldCheck size={17} /> Prepared — waiting for recipient verification. Keep this owner device online.</p>}{invitation.connection_mode === "email" && <p className="direct-host-status" role="status"><ShieldCheck size={17} /> Email-ready. {invitation.host_session_id ? "The joiner tries this owner device first, then may return a signed connection reply." : "This owner device could not host an inbound path, so the joiner may return a signed connection reply."}</p>}{invitation.methods?.includes("manual") && <p className="muted">Mesh Chat cannot remove your manual router rule. Remove it in the router when it is no longer needed.</p>}{invitation.link.length <= 4096 && <div className="qr-card"><QRCodeSVG value={invitation.link} size={188} level="M" /></div>}<textarea readOnly value={invitation.text} aria-label="Workspace invitation text" rows={5} /><div className="dialog-actions"><Button variant="danger" disabled={busy} onClick={() => void revoke(invitation.id)}>Revoke invitation</Button><Button variant="secondary" onClick={async () => { await navigator.clipboard.writeText(invitation.text); setCopied(true); setShared(true); }}>{copied ? <Check size={17} /> : <Copy size={17} />}{copied ? "Copied" : "Copy invitation"}</Button><Button variant="secondary" onClick={() => void share()}><Share2 size={17} /> Share</Button><Button variant="ghost" onClick={save}><FileUp size={17} /> Save file</Button>{invitation.connection_mode === "participant" && invitation.host_session_id && !invitation.methods?.includes("manual") && <Button variant="ghost" disabled={busy} onClick={() => void configureFirewall()}><ShieldCheck size={17} /> Allow in Windows Firewall</Button>}</div>{firewallFeedback && <p className="muted" role="status">{firewallFeedback}</p>}</>}
+    {!invitation && <><label className="field"><span>How should they connect?</span><select value={connectionChoice} disabled={busy} onChange={(event) => { setConnectionChoice(event.target.value); setDoctor(null); setError(""); }}><option value="participant">Over the Internet — directly to this owner device (default)</option><option value="email">Email-assisted direct connection — either device can host</option><option value="nearby">Same network only — will not work over cellular</option>{usableProfiles.map((profile) => <option key={profile.id} value={`remote:${profile.id}`}>Approved access point · {profile.label} · {profile.state === "connected" ? "connected" : "currently unavailable"}</option>)}</select></label>{connectionChoice === "participant" && <><p className="muted">Direct participant hosting stays on this owner device. Keep Mesh Chat open through approval.</p><div className="dialog-actions"><Button variant="secondary" disabled={busy} onClick={() => void checkDirect()}>{busy ? "Checking this network…" : "Check direct Internet connection"}</Button><Button disabled={busy} onClick={() => void create()}>{busy ? "Preparing a direct route…" : "Prepare direct Internet invitation"}</Button><Button variant="ghost" disabled={busy} onClick={() => void prepareManual()}>Set up manual port forwarding</Button></div>{doctor && <DirectDoctorPanel report={doctor} busy={busy} onRetry={() => void checkDirect()} onManualSetup={() => void prepareManual()} />}{manualSetup && <ManualForwardingPanel setup={manualSetup} host={manualHost} port={manualPort} busy={busy} onHostChange={setManualHost} onPortChange={setManualPort} onCreate={() => void create(true)} />}</>}{connectionChoice === "email" && <><p className="muted">Creates the signed one-use invitation even behind CGNAT. The joiner can return a callback reply through email or another share app; Mesh Chat never accesses an email account.</p><Button disabled={busy} onClick={() => void create()}>{busy ? "Creating…" : "Create email-ready invitation"}</Button></>}{connectionChoice === "nearby" && <><p className="direct-host-warning">Same network only — will not work over cellular.</p><Button disabled={busy} onClick={() => void create()}>{busy ? "Creating…" : "Create same-network invitation"}</Button></>}{connectionChoice.startsWith("remote:") && <><p className="muted">This invitation explicitly uses the named approved access point selected above. Its operator can observe connection metadata.</p><Button disabled={busy} onClick={() => void create()}>{busy ? "Creating…" : "Create using selected access point"}</Button></>}<p>Create a separate signed invitation for each person. Each request is reviewed independently.</p></>}
     {existing.length > 0 && <div className="workspace-invitation-list"><h3>Active invitations</h3>{existing.filter((item) => item.id !== invitation?.id).map((item) => <div className="workspace-invitation-row" key={item.id}><span>One-use invitation · expires {formatExpiry(item.expires_at)}</span><Button variant="ghost" disabled={busy} onClick={() => void revoke(item.id)}>Revoke</Button></div>)}</div>}
     {error && <p className="form-error" role="alert">{error}</p>}
   </div></Dialog>;

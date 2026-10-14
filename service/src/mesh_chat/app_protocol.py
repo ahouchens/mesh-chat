@@ -38,6 +38,7 @@ M_REACTION_FOR = 14
 M_REACTION_EMOJI = 15
 M_REACTION_ACTIVE = 16
 M_REACTION_REVISION = 17
+M_ROUTE_UPDATE = 18
 
 # Kept as a compatibility/export name for the original quick-reaction set.
 # Validation is intentionally broader; see is_valid_reaction_emoji().
@@ -67,6 +68,7 @@ MAX_GROUP_DOCUMENT_BYTES = 16 * 1024
 MAX_GROUP_EPOCH = (1 << 63) - 1
 MAX_SENDER_SEQUENCE = (1 << 63) - 1
 MAX_REACTION_REVISION = (1 << 63) - 1
+MAX_ROUTE_UPDATE_BYTES = 24 * 1024
 
 
 def _uuid_bytes(value: str, label: str) -> bytes:
@@ -107,6 +109,7 @@ class AppPayload:
     reaction_emoji: str | None = None
     reaction_active: bool | None = None
     reaction_revision: int | None = None
+    route_update: str | None = None
 
 
 def build_fields(
@@ -127,6 +130,7 @@ def build_fields(
     reaction_emoji: str | None = None,
     reaction_active: bool | None = None,
     reaction_revision: int | None = None,
+    route_update: str | None = None,
 ) -> dict[int, Any]:
     metadata: dict[int, Any] = {
         M_VERSION: PAYLOAD_VERSION,
@@ -228,6 +232,16 @@ def build_fields(
         ):
             raise ValidationError("Reaction revision is invalid")
         metadata[M_REACTION_REVISION] = reaction_revision
+    if kind == MessageKind.ROUTE_UPDATE:
+        if (
+            not isinstance(route_update, str)
+            or not route_update
+            or len(route_update.encode("utf-8")) > MAX_ROUTE_UPDATE_BYTES
+        ):
+            raise ValidationError("Route update document is invalid")
+        metadata[M_ROUTE_UPDATE] = route_update
+    elif route_update is not None:
+        raise ValidationError("Route update is not valid for this message kind")
     return {TYPE_FIELD: CUSTOM_TYPE, META_FIELD: metadata}
 
 
@@ -256,6 +270,7 @@ def parse_payload(message: LXMF.LXMessage, *, now: int | None = None) -> AppPayl
         M_REACTION_EMOJI,
         M_REACTION_ACTIVE,
         M_REACTION_REVISION,
+        M_ROUTE_UPDATE,
     }
     if set(metadata) - allowed or metadata.get(M_VERSION) != PAYLOAD_VERSION:
         raise ValidationError("Message metadata version is unsupported")
@@ -292,6 +307,7 @@ def parse_payload(message: LXMF.LXMessage, *, now: int | None = None) -> AppPayl
     reaction_emoji = None
     reaction_active = None
     reaction_revision = None
+    route_update = None
     group_metadata_fields = {
         M_GROUP_ID,
         M_GROUP_EPOCH,
@@ -374,6 +390,17 @@ def parse_payload(message: LXMF.LXMessage, *, now: int | None = None) -> AppPayl
         ):
             raise ValidationError("Reaction revision is invalid")
 
+    if kind == MessageKind.ROUTE_UPDATE:
+        route_update = metadata.get(M_ROUTE_UPDATE)
+        if (
+            not isinstance(route_update, str)
+            or not route_update
+            or len(route_update.encode("utf-8")) > MAX_ROUTE_UPDATE_BYTES
+        ):
+            raise ValidationError("Route update document is invalid")
+    elif M_ROUTE_UPDATE in metadata:
+        raise ValidationError("Route update is not valid for this message kind")
+
     text = message.content_as_string()
     if text is None or len(message.content) > MAX_TEXT_BYTES:
         raise ValidationError("Message text is invalid or too large")
@@ -397,6 +424,8 @@ def parse_payload(message: LXMF.LXMessage, *, now: int | None = None) -> AppPayl
         raise ValidationError("Group control message content must be empty")
     if kind in GROUP_KINDS and kind != MessageKind.GROUP_RECEIPT and receipt_for is not None:
         raise ValidationError("Receipt reference is not valid for this message kind")
+    if kind == MessageKind.ROUTE_UPDATE and (text or receipt_for is not None or invitation is not None):
+        raise ValidationError("Route update payload is invalid")
     return AppPayload(
         kind=kind,
         logical_id=logical_id,
@@ -415,4 +444,5 @@ def parse_payload(message: LXMF.LXMessage, *, now: int | None = None) -> AppPayl
         reaction_emoji=reaction_emoji,
         reaction_active=reaction_active,
         reaction_revision=reaction_revision,
+        route_update=route_update,
     )

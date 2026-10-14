@@ -443,6 +443,110 @@ describe("first-run remote invitation consent", () => {
 });
 
 describe("new chat invitations", () => {
+  it("creates an email-ready invitation without requiring an inbound path", async () => {
+    const current = snapshot();
+    api.runtimePlatform.mockResolvedValue("desktop");
+    api.initializeService.mockResolvedValue(current);
+    api.onInvitation.mockResolvedValue(() => undefined);
+    api.onServiceEvent.mockResolvedValue(() => undefined);
+    api.serviceCommand.mockImplementation(async (command: string, payload?: Record<string, unknown>) => {
+      if (command === "snapshot") return current;
+      if (command === "create_invitation" && payload?.connection_mode === "email") return {
+        link: "meshchat://invite/email",
+        text: "MESHCHAT4:email",
+        file: "{}",
+        expires_at: 2_000_000_000,
+        connection_mode: "email",
+      };
+      return {};
+    });
+
+    render(<App />);
+    await screen.findByRole("heading", { name: "Your private conversations" });
+    fireEvent.click(screen.getAllByRole("button", { name: "New chat" })[0]);
+    fireEvent.change(await screen.findByRole("combobox", { name: "How should they connect?" }), { target: { value: "email" } });
+    fireEvent.click(await screen.findByRole("button", { name: "Create email-ready invitation" }));
+
+    await waitFor(() => expect(api.serviceCommand).toHaveBeenCalledWith("create_invitation", { connection_mode: "email" }));
+    expect(await screen.findByDisplayValue("MESHCHAT4:email")).toBeTruthy();
+    expect(screen.getByText(/could not host an inbound path/i)).toBeTruthy();
+    expect(screen.getByText(/never accesses either person’s email account/i)).toBeTruthy();
+  });
+
+  it("creates a signed callback reply for a v4 invitation without approving the contact", async () => {
+    const current = snapshot();
+    api.runtimePlatform.mockResolvedValue("desktop");
+    api.initializeService.mockResolvedValue(current);
+    api.onInvitation.mockResolvedValue(() => undefined);
+    api.onServiceEvent.mockResolvedValue(() => undefined);
+    api.serviceCommand.mockImplementation(async (command: string) => {
+      if (command === "snapshot") return current;
+      if (command === "preview_invitation") return {
+        display_name: "Taylor",
+        identity_hash: "11".repeat(16),
+        destination_hash: "22".repeat(16),
+        fingerprint: "AAAA BBBB CCCC DDDD",
+        hints: [],
+        expires_at: 2_000_000_000,
+        connection_reply_available: true,
+      };
+      if (command === "create_connection_reply") return {
+        link: "meshchat://connect/reply",
+        text: "MESHCONNECT1:reply",
+        file: "{}",
+        expires_at: 2_000_000_000,
+      };
+      return {};
+    });
+
+    render(<App />);
+    await screen.findByRole("heading", { name: "Your private conversations" });
+    fireEvent.click(screen.getAllByRole("button", { name: "New chat" })[0]);
+    fireEvent.click(await screen.findByRole("tab", { name: "Open an invite" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "Invitation" }), { target: { value: "MESHCHAT4:invitation" } });
+    fireEvent.click(screen.getByRole("button", { name: "Check invitation" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Create connection reply" }));
+
+    await waitFor(() => expect(api.serviceCommand).toHaveBeenCalledWith("create_connection_reply", {
+      invitation: "MESHCHAT4:invitation",
+      purpose: "personal",
+    }));
+    expect(await screen.findByDisplayValue("MESHCONNECT1:reply")).toBeTruthy();
+    expect(api.serviceCommand.mock.calls.some(([command]) => command === "accept_invitation")).toBe(false);
+  });
+
+  it("previews and imports a connection reply without presenting it as contact approval", async () => {
+    const current = snapshot();
+    api.runtimePlatform.mockResolvedValue("desktop");
+    api.initializeService.mockResolvedValue(current);
+    api.onInvitation.mockResolvedValue(() => undefined);
+    api.onServiceEvent.mockResolvedValue(() => undefined);
+    api.serviceCommand.mockImplementation(async (command: string) => {
+      if (command === "snapshot") return current;
+      if (command === "preview_connection_reply") return {
+        purpose: "personal",
+        responder_fingerprint: "AAAA BBBB CCCC DDDD",
+        responder_destination: "22".repeat(16),
+        endpoint_count: 1,
+        expires_at: 2_000_000_000,
+      };
+      return {};
+    });
+
+    render(<App />);
+    await screen.findByRole("heading", { name: "Your private conversations" });
+    fireEvent.click(screen.getAllByRole("button", { name: "New chat" })[0]);
+    fireEvent.click(await screen.findByRole("tab", { name: "Open an invite" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "Invitation" }), { target: { value: "MESHCONNECT1:reply" } });
+    fireEvent.click(screen.getByRole("button", { name: "Check invitation" }));
+
+    expect(await screen.findByRole("heading", { name: "Connection reply verified" })).toBeTruthy();
+    expect(screen.getByText(/does not approve a contact or workspace member/i)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Connect using reply" }));
+    await waitFor(() => expect(api.serviceCommand).toHaveBeenCalledWith("connect_using_reply", { response: "MESHCONNECT1:reply" }));
+    expect(api.serviceCommand.mock.calls.some(([command]) => command === "accept_contact")).toBe(false);
+  });
+
   it("opens an incoming v3 personal invitation without hosting a new listener", async () => {
     const current = snapshot();
     let deliverInvitation: ((value: string) => void) | undefined;
@@ -1070,6 +1174,38 @@ describe("network settings", () => {
 });
 
 describe("contact management", () => {
+  it("exports a reconnect update only when the approved contact has no remaining route", async () => {
+    const disconnected = { ...approved, route_status: "reconnect_update_required" as const };
+    const current = snapshot([disconnected]);
+    api.runtimePlatform.mockResolvedValue("desktop");
+    api.initializeService.mockResolvedValue(current);
+    api.onInvitation.mockResolvedValue(() => undefined);
+    api.onServiceEvent.mockResolvedValue(() => undefined);
+    api.serviceCommand.mockImplementation(async (command: string) => {
+      if (command === "snapshot") return current;
+      if (command === "create_route_update") return {
+        link: "meshchat://route/refresh",
+        text: "MESHROUTE1:refresh",
+        file: "{}",
+        expires_at: 2_000_000_000,
+      };
+      return {};
+    });
+
+    render(<App />);
+    await screen.findByLabelText("Conversation with Taylor");
+    fireEvent.click(screen.getByRole("button", { name: "Contacts" }));
+    const dialog = await screen.findByRole("dialog", { name: "Contacts" });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Send reconnect update" }));
+
+    await waitFor(() => expect(api.serviceCommand).toHaveBeenCalledWith("create_route_update", {
+      scope_kind: "contact",
+      scope_id: approved.id,
+    }));
+    expect(await within(dialog).findByDisplayValue("MESHROUTE1:refresh")).toBeTruthy();
+    expect(within(dialog).queryByRole("button", { name: "Mark verified" })).toBeTruthy();
+  });
+
   it("renames, verifies, blocks, and restores a saved contact", async () => {
     let current = snapshot([approved]);
     api.runtimePlatform.mockResolvedValue("desktop");

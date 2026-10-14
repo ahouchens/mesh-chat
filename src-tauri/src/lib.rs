@@ -48,6 +48,8 @@ const IPC_VERSION: u64 = 1;
 // invalid sidecar length prefix from causing an unbounded allocation.
 const MAX_FRAME_BYTES: usize = 4 * 1024 * 1024;
 const MAX_RENDERER_PAYLOAD_BYTES: usize = 32 * 1024;
+const MAX_CONNECTION_RESPONSE_PAYLOAD_BYTES: usize = 40 * 1024;
+const MAX_ROUTE_UPDATE_PAYLOAD_BYTES: usize = 24 * 1024;
 const MAX_WORKSPACE_INVITATION_PAYLOAD_BYTES: usize = 600 * 1024;
 const MAX_WORKSPACE_DEVICE_LINK_PAYLOAD_BYTES: usize = 700 * 1024;
 
@@ -133,14 +135,18 @@ fn handle_sidecar_value(app: &AppHandle, state: &ServiceState, value: Value) {
                 let result = if value.get("ok").and_then(Value::as_bool) == Some(true) {
                     Ok(value.get("result").cloned().unwrap_or(Value::Null))
                 } else {
-                    let error = value.get("error").cloned().unwrap_or_else(|| {
-                        serde_json::json!({"code": "service_error"})
-                    });
+                    let error = value
+                        .get("error")
+                        .cloned()
+                        .unwrap_or_else(|| serde_json::json!({"code": "service_error"}));
                     if error.get("details").is_some() {
                         Err(error.to_string())
                     } else {
-                        Err(error.get("code").and_then(Value::as_str)
-                            .unwrap_or("service_error").to_string())
+                        Err(error
+                            .get("code")
+                            .and_then(Value::as_str)
+                            .unwrap_or("service_error")
+                            .to_string())
                     }
                 };
                 let _ = sender.send(result);
@@ -399,6 +405,12 @@ fn allowed_renderer_command(command: &str) -> bool {
             | "create_invitation"
             | "preview_invitation"
             | "accept_invitation"
+            | "create_connection_reply"
+            | "preview_connection_reply"
+            | "connect_using_reply"
+            | "create_route_update"
+            | "preview_route_update"
+            | "apply_route_update"
             | "preview_remote_profile"
             | "create_manual_remote_profile"
             | "approve_remote_profile"
@@ -537,24 +549,39 @@ fn validated_invitation_value(raw: &str) -> Option<String> {
     let (prefix, maximum) = if compact.starts_with("meshchat://invite/") {
         ("meshchat://invite/", MAX_RENDERER_PAYLOAD_BYTES)
     } else if compact.starts_with("meshchat://workspace/") {
-        ("meshchat://workspace/", MAX_WORKSPACE_INVITATION_PAYLOAD_BYTES)
+        (
+            "meshchat://workspace/",
+            MAX_WORKSPACE_INVITATION_PAYLOAD_BYTES,
+        )
     } else if compact.starts_with("meshchat://workspace-device/") {
         (
             "meshchat://workspace-device/",
             MAX_WORKSPACE_DEVICE_LINK_PAYLOAD_BYTES,
         )
+    } else if compact.starts_with("meshchat://connect/") {
+        ("meshchat://connect/", MAX_CONNECTION_RESPONSE_PAYLOAD_BYTES)
+    } else if compact.starts_with("meshchat://route/") {
+        ("meshchat://route/", MAX_ROUTE_UPDATE_PAYLOAD_BYTES)
     } else if compact.starts_with("MESHCHAT1:") {
         ("MESHCHAT1:", MAX_RENDERER_PAYLOAD_BYTES)
     } else if compact.starts_with("MESHCHAT2:") {
         ("MESHCHAT2:", MAX_RENDERER_PAYLOAD_BYTES)
     } else if compact.starts_with("MESHCHAT3:") {
         ("MESHCHAT3:", MAX_RENDERER_PAYLOAD_BYTES)
+    } else if compact.starts_with("MESHCHAT4:") {
+        ("MESHCHAT4:", MAX_RENDERER_PAYLOAD_BYTES)
     } else if compact.starts_with("MESHWORKSPACE1:") {
         ("MESHWORKSPACE1:", MAX_WORKSPACE_INVITATION_PAYLOAD_BYTES)
     } else if compact.starts_with("MESHWORKSPACE2:") {
         ("MESHWORKSPACE2:", MAX_WORKSPACE_INVITATION_PAYLOAD_BYTES)
     } else if compact.starts_with("MESHWORKSPACE3:") {
         ("MESHWORKSPACE3:", MAX_WORKSPACE_INVITATION_PAYLOAD_BYTES)
+    } else if compact.starts_with("MESHWORKSPACE4:") {
+        ("MESHWORKSPACE4:", MAX_WORKSPACE_INVITATION_PAYLOAD_BYTES)
+    } else if compact.starts_with("MESHCONNECT1:") {
+        ("MESHCONNECT1:", MAX_CONNECTION_RESPONSE_PAYLOAD_BYTES)
+    } else if compact.starts_with("MESHROUTE1:") {
+        ("MESHROUTE1:", MAX_ROUTE_UPDATE_PAYLOAD_BYTES)
     } else if compact.starts_with("MESHWORKSPACEDEVICE1:") {
         (
             "MESHWORKSPACEDEVICE1:",
@@ -618,7 +645,9 @@ fn validated_invitation_value(raw: &str) -> Option<String> {
         };
         if purpose_size_valid
             && fields.len() == remote_expected.len()
-            && remote_expected.iter().all(|field| fields.contains_key(*field))
+            && remote_expected
+                .iter()
+                .all(|field| fields.contains_key(*field))
             && fields.get("v").and_then(Value::as_i64) == Some(2)
             && fields.get("type").and_then(Value::as_str) == Some("remote_invitation")
             && fields.get("profile").is_some_and(Value::is_object)
@@ -658,6 +687,121 @@ fn validated_invitation_value(raw: &str) -> Option<String> {
         {
             return Some(value.to_string());
         }
+        let email_expected = [
+            "v",
+            "type",
+            "purpose",
+            "inner",
+            "inner_digest",
+            "inviter_access",
+            "reply_challenge",
+            "created_at",
+            "expires_at",
+            "signer_destination",
+            "signature",
+        ];
+        if purpose_size_valid
+            && fields.len() == email_expected.len()
+            && email_expected
+                .iter()
+                .all(|field| fields.contains_key(*field))
+            && fields.get("v").and_then(Value::as_i64) == Some(4)
+            && fields.get("type").and_then(Value::as_str) == Some("email_invitation")
+            && (fields.get("inviter_access").is_some_and(Value::is_null)
+                || fields.get("inviter_access").is_some_and(Value::is_object))
+            && [
+                "inner",
+                "inner_digest",
+                "reply_challenge",
+                "signer_destination",
+                "signature",
+            ]
+            .iter()
+            .all(|field| fields.get(*field).and_then(Value::as_str).is_some())
+            && fields.get("created_at").and_then(Value::as_i64).is_some()
+            && fields.get("expires_at").and_then(Value::as_i64).is_some()
+        {
+            return Some(value.to_string());
+        }
+        let response_expected = [
+            "v",
+            "type",
+            "purpose",
+            "invitation_digest",
+            "reply_challenge",
+            "signer_destination",
+            "responder_public_identity",
+            "responder_destination",
+            "access",
+            "created_at",
+            "expires_at",
+            "signature",
+        ];
+        if raw_bytes <= MAX_CONNECTION_RESPONSE_PAYLOAD_BYTES
+            && fields.len() == response_expected.len()
+            && response_expected
+                .iter()
+                .all(|field| fields.contains_key(*field))
+            && fields.get("v").and_then(Value::as_i64) == Some(1)
+            && fields.get("type").and_then(Value::as_str) == Some("connection_response")
+            && matches!(purpose, Some("personal") | Some("workspace"))
+            && fields.get("access").is_some_and(Value::is_object)
+            && [
+                "invitation_digest",
+                "reply_challenge",
+                "signer_destination",
+                "responder_public_identity",
+                "responder_destination",
+                "signature",
+            ]
+            .iter()
+            .all(|field| fields.get(*field).and_then(Value::as_str).is_some())
+            && fields.get("created_at").and_then(Value::as_i64).is_some()
+            && fields.get("expires_at").and_then(Value::as_i64).is_some()
+        {
+            return Some(value.to_string());
+        }
+        let route_expected = [
+            "v",
+            "type",
+            "scope_kind",
+            "scope_id",
+            "audience_destination",
+            "issuer_public_identity",
+            "issuer_destination",
+            "generation",
+            "access",
+            "created_at",
+            "expires_at",
+            "signature",
+        ];
+        if raw_bytes <= MAX_ROUTE_UPDATE_PAYLOAD_BYTES
+            && fields.len() == route_expected.len()
+            && route_expected
+                .iter()
+                .all(|field| fields.contains_key(*field))
+            && fields.get("v").and_then(Value::as_i64) == Some(1)
+            && fields.get("type").and_then(Value::as_str) == Some("route_update")
+            && matches!(
+                fields.get("scope_kind").and_then(Value::as_str),
+                Some("contact") | Some("workspace_device")
+            )
+            && fields.get("access").is_some_and(Value::is_object)
+            && [
+                "scope_id",
+                "audience_destination",
+                "issuer_public_identity",
+                "issuer_destination",
+                "signature",
+            ]
+            .iter()
+            .all(|field| fields.get(*field).and_then(Value::as_str).is_some())
+            && fields.get("generation").and_then(Value::as_i64).is_some()
+            && fields.get("created_at").and_then(Value::as_i64).is_some()
+            && fields.get("expires_at").and_then(Value::as_i64).is_some()
+        {
+            return Some(value.to_string());
+        }
         return None;
     };
     let token = compact.strip_prefix(prefix)?;
@@ -689,14 +833,14 @@ fn invitation_from_argument(argument: &str) -> Option<String> {
         .is_some_and(|value| {
             value.eq_ignore_ascii_case("meshchat")
                 || value.eq_ignore_ascii_case("meshchat-invite")
+                || value.eq_ignore_ascii_case("meshchat-connect")
+                || value.eq_ignore_ascii_case("meshchat-route")
         })
     {
         return None;
     }
     let metadata = fs::metadata(path).ok()?;
-    if !metadata.is_file()
-        || metadata.len() > MAX_WORKSPACE_INVITATION_PAYLOAD_BYTES as u64
-    {
+    if !metadata.is_file() || metadata.len() > MAX_WORKSPACE_INVITATION_PAYLOAD_BYTES as u64 {
         return None;
     }
     let contents = fs::read_to_string(path).ok()?;
@@ -800,9 +944,19 @@ async fn service_command(
         MAX_WORKSPACE_DEVICE_LINK_PAYLOAD_BYTES
     } else if matches!(
         command.as_str(),
-        "preview_workspace_invitation" | "submit_workspace_join"
+        "preview_workspace_invitation" | "submit_workspace_join" | "create_connection_reply"
     ) {
         MAX_WORKSPACE_INVITATION_PAYLOAD_BYTES
+    } else if matches!(
+        command.as_str(),
+        "preview_connection_reply" | "connect_using_reply"
+    ) {
+        MAX_CONNECTION_RESPONSE_PAYLOAD_BYTES + 1024
+    } else if matches!(
+        command.as_str(),
+        "preview_route_update" | "apply_route_update"
+    ) {
+        MAX_ROUTE_UPDATE_PAYLOAD_BYTES + 1024
     } else {
         MAX_RENDERER_PAYLOAD_BYTES
     };
@@ -838,14 +992,18 @@ fn mobile_result(response: NativeResponse) -> PendingResult {
     if value.get("ok").and_then(Value::as_bool) == Some(true) {
         Ok(value.get("result").cloned().unwrap_or(Value::Null))
     } else {
-        let error = value.get("error").cloned().unwrap_or_else(|| {
-            serde_json::json!({"code": "service_error"})
-        });
+        let error = value
+            .get("error")
+            .cloned()
+            .unwrap_or_else(|| serde_json::json!({"code": "service_error"}));
         if error.get("details").is_some() {
             Err(error.to_string())
         } else {
-            Err(error.get("code").and_then(Value::as_str)
-                .unwrap_or("service_error").to_string())
+            Err(error
+                .get("code")
+                .and_then(Value::as_str)
+                .unwrap_or("service_error")
+                .to_string())
         }
     }
 }
@@ -876,9 +1034,19 @@ async fn service_command(app: AppHandle, command: String, payload: Value) -> Pen
         MAX_WORKSPACE_DEVICE_LINK_PAYLOAD_BYTES
     } else if matches!(
         command.as_str(),
-        "preview_workspace_invitation" | "submit_workspace_join"
+        "preview_workspace_invitation" | "submit_workspace_join" | "create_connection_reply"
     ) {
         MAX_WORKSPACE_INVITATION_PAYLOAD_BYTES
+    } else if matches!(
+        command.as_str(),
+        "preview_connection_reply" | "connect_using_reply"
+    ) {
+        MAX_CONNECTION_RESPONSE_PAYLOAD_BYTES + 1024
+    } else if matches!(
+        command.as_str(),
+        "preview_route_update" | "apply_route_update"
+    ) {
+        MAX_ROUTE_UPDATE_PAYLOAD_BYTES + 1024
     } else {
         MAX_RENDERER_PAYLOAD_BYTES
     };
@@ -1303,12 +1471,24 @@ mod tests {
             Some("MESHCHAT3:abc_DEF-123".to_string())
         );
         assert_eq!(
+            validated_invitation_value("MESHCHAT4:abc_DEF-123"),
+            Some("MESHCHAT4:abc_DEF-123".to_string())
+        );
+        assert_eq!(
             validated_invitation_value("MESHWORKSPACE2:abc_DEF-123"),
             Some("MESHWORKSPACE2:abc_DEF-123".to_string())
         );
         assert_eq!(
             validated_invitation_value("MESHWORKSPACE3:abc_DEF-123"),
             Some("MESHWORKSPACE3:abc_DEF-123".to_string())
+        );
+        assert_eq!(
+            validated_invitation_value("MESHCONNECT1:abc_DEF-123"),
+            Some("MESHCONNECT1:abc_DEF-123".to_string())
+        );
+        assert_eq!(
+            validated_invitation_value("MESHROUTE1:abc_DEF-123"),
+            Some("MESHROUTE1:abc_DEF-123".to_string())
         );
         let workspace_document = "{\"v\":2,\"type\":\"remote_invitation\",\"purpose\":\"workspace\",\"inner\":\"signed\",\"inner_digest\":\"digest\",\"profile\":{},\"created_at\":1,\"expires_at\":2,\"signer_destination\":\"destination\",\"signature\":\"signature\"}";
         assert_eq!(

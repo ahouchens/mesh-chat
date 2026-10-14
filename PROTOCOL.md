@@ -23,6 +23,48 @@ Text forms use `MESHCHAT3:` or `MESHWORKSPACE3:` plus canonical URL-safe base64.
 
 v3 changes only reachability bootstrap. Automatic hosting reads selected default routes, starts the actual listener before creating the mapping, and prefers PCP, UPnP IGD, then NAT-PMP. Manual hosting reuses the same signed v3 structure and listener credential; `path: "manual"` does not carry router credentials or cleanup authority. After attachment, normal Reticulum paths, LXMF recipient ratchets, signed contact/workspace controls, replay protection, outbox behavior, and application receipts remain authoritative. A participant listener is not configured as a Reticulum transport instance or propagation node and does not route unrelated users.
 
+## Email-ready invitation envelopes v4
+
+Version 4 is additive. `MESHCHAT4` and `MESHWORKSPACE4` use the existing `meshchat://invite/` and `meshchat://workspace/` deep-link hosts and carry one canonical `email_invitation` document. The document wraps the complete canonical v1 invitation; it does not wrap v2 or v3 and does not change any v1 field or signature.
+
+| Field | Required meaning |
+| --- | --- |
+| `v`, `type`, `purpose` | Exact values `4`, `email_invitation`, and `personal` or `workspace` |
+| `inner` | Complete canonical, independently verified v1 invitation string |
+| `inner_digest` | Lowercase SHA-256 of the exact UTF-8 `inner` bytes |
+| `inviter_access` | `null` or a complete `participant_direct` access document owned by the v1 inviter/current workspace authority |
+| `reply_challenge` | Base64url encoding of 32 random bytes |
+| `created_at`, `expires_at` | Integer dates; expiry cannot exceed the inner invitation or optional access credential |
+| `signer_destination` | Destination re-derived from the inner personal identity or current workspace authority |
+| `signature` | That signer's signature over all preceding canonical fields |
+
+Unknown fields, wrong types, non-canonical inner bytes, digest/challenge/signature mismatch, destination/authority mismatch, invalid access ownership, excessive size/nesting, and invalid or expired dates fail closed. Personal v4 input remains bounded by the personal participant-invitation limit; workspace v4 input remains bounded by the workspace participant-invitation limit. Preview is side-effect free. When `inviter_access` exists, normal direct-first acceptance can use it. When absent or unreachable, accepting the verified inner invitation still creates only the existing pending contact/workspace operation and enables the role-reversal reply flow.
+
+### Connection response v1
+
+`MESHCONNECT1`, `meshchat://connect/<base64url>`, raw JSON, and `.meshchat-connect` carry a canonical `connection_response` document of at most 40 KiB:
+
+| Field | Required meaning |
+| --- | --- |
+| `v`, `type`, `purpose` | Exact values `1`, `connection_response`, and the original `personal` or `workspace` purpose |
+| `invitation_digest`, `reply_challenge`, `signer_destination` | Exact bindings copied from one still-active locally stored v4 invitation |
+| `responder_public_identity`, `responder_destination` | Complete responder public identity and its re-derived Reticulum destination |
+| `access` | Complete `participant_callback` access document owned by the responder destination |
+| `created_at`, `expires_at` | Bounded dates no later than the original invitation or listener/mapping lease |
+| `signature` | Responder signature over all preceding canonical fields |
+
+The inviter must possess the original v4 record it created. Import atomically marks that record consumed and persists a `pending_invitation` route scope before any DNS, probe, or interface activation. A second import is rejected. The response proves control of a callback listener and responder identity only: it never creates a Contact, verifies an identity, admits a workspace device, or changes a workspace manifest. The unchanged signed contact request/workspace join and approval path remains authoritative.
+
+### Scoped route update v1
+
+`MESHROUTE1`, `meshchat://route/<base64url>`, raw JSON, and `.meshchat-route` carry a canonical `route_update` document of at most 24 KiB. It binds exact `scope_kind` (`contact` or `workspace_device`), `scope_id`, local `audience_destination`, issuer public identity and re-derived destination, positive 63-bit monotonic `generation`, one issuer-owned `participant_callback` access document, dates, and issuer signature.
+
+An update is applicable only when the issuer is already the approved contact or an active admitted device in that exact workspace scope, the audience is this local identity, and the generation exceeds the last accepted generation for that issuer/scope. Application atomically stores the accepted generation and replacement scoped route before network activation. Unknown, cross-scope, stale, replayed, expired, removed-member, or identity-mismatched updates fail closed. Route updates never change verification, blocking, membership, authority, ratchets, message bytes, or receipts.
+
+While an authenticated path remains usable, the issuer sends the same signed route-update document as the bounded `route_update` LXMF application-control kind before the callback access expires. The receiver still performs the complete portable-document verification and additionally binds the native source and pairwise conversation ID. If every path is unavailable, the document is shared out of band. On refresh or restart, automatic router mapping requests the previously assigned external port when available, but the new access document advertises only the port the router actually restored after the listener is active.
+
+All v4/reply/route JSON documents use exact field sets, canonical UTF-8 JSON for signatures, a maximum nesting depth of six, and at most 192 parsed nodes. Native desktop and Android ingress apply family byte bounds and structural filtering before the Python verifier. Reticulum remains the routing/security layer; the added documents only distribute signed temporary interface credentials.
+
 ## Remote invitation envelopes v2
 
 Version 2 is additive. Existing `MESHCHAT1` and `MESHWORKSPACE1` encodings and their canonical bytes are unchanged. v2 is emitted only after explicit per-invitation selection of an approved operator access point; merely configuring a profile does not override the direct-first v3 default. Remote-ready text, file, QR, and deep-link entry points carry one signed v2 outer envelope around the complete verified v1 string.
@@ -66,7 +108,7 @@ Text remains in LXMF Content. Mesh Chat uses upstream-reserved `FIELD_CUSTOM_TYP
 | Key | Value |
 | --- | --- |
 | `1` | schema version `1` |
-| `2` | `chat`, `reaction`, `receipt`, `contact_request`, `contact_accept`, `contact_decline`, `group_invite`, `group_accept`, `group_manifest`, `group_chat`, `group_reaction`, `group_receipt`, or `group_leave_request` |
+| `2` | `chat`, `reaction`, `receipt`, `contact_request`, `contact_accept`, `contact_decline`, `route_update`, `group_invite`, `group_accept`, `group_manifest`, `group_chat`, `group_reaction`, `group_receipt`, or `group_leave_request` |
 | `3` | random 16-byte logical delivery UUID |
 | `4` | deterministic 16-byte pairwise conversation UUID |
 | `5` | authenticated application expiry timestamp |
@@ -82,10 +124,11 @@ Text remains in LXMF Content. Mesh Chat uses upstream-reserved `FIELD_CUSTOM_TYP
 | `15` | one exact fully-qualified Unicode Emoji 18.0 sequence, at most 16 Unicode code points and 64 UTF-8 bytes |
 | `16` | Boolean active state: `true` applies or replaces the actor's reaction; `false` is its tombstone |
 | `17` | positive, monotonically increasing per-actor/per-target reaction revision |
+| `18` | canonical signed route-update document, at most 24 KiB and only for `route_update` |
 
 The conversation ID is the first 16 bytes of SHA-256 over a versioned domain separator and the two sorted LXMF delivery hashes. It is not a human or network address.
 
-Messages are accepted only after native signature validation, exact local destination matching, schema validation, conversation re-derivation, expiry validation, and trust-policy checks. A one-to-one source must bind to an approved contact; an unknown source may create only a bounded pending contact request carrying a signed invitation and cannot enter a direct chat or trigger a receipt. A group source must instead bind to an active identity card in the verified manifest for that group and epoch. Group-scoped authorization does not create an approved direct contact.
+Messages are accepted only after native signature validation, exact local destination matching, schema validation, conversation re-derivation, expiry validation, and trust-policy checks. A one-to-one source must bind to an approved contact; an unknown source may create only a bounded pending contact request carrying a signed invitation and cannot enter a direct chat or trigger a receipt. A route update may also bind to an active admitted workspace device without creating a Personal contact. A group source must instead bind to an active identity card in the verified manifest for that group and epoch. Group-scoped authorization does not create an approved direct contact.
 
 Group fields are additive to payload version 1; existing one-to-one payloads and
 conversation IDs do not change. Group metadata on a non-group kind, a group

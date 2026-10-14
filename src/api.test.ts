@@ -65,3 +65,24 @@ describe("Android invitation ingress", () => {
     stop();
   });
 });
+
+describe("Android connection-document ingress", () => {
+  it.each([
+    "meshchat://connect/signed_reply",
+    "meshchat://route/signed_update",
+  ])("accepts %s through the same bounded launch handoff", async (document) => {
+    const pending = [document, null];
+    tauri.invoke.mockImplementation(async (command: string) => {
+      if (command === "runtime_platform") return "android";
+      if (command === "take_pending_invitation") return pending.shift() ?? null;
+      return null;
+    });
+    const received = vi.fn();
+
+    const stop = await onInvitation(received);
+
+    expect(received).toHaveBeenCalledTimes(1);
+    expect(received).toHaveBeenCalledWith(document);
+    stop();
+  });
+});

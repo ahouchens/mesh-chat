@@ -4,6 +4,19 @@ Mesh Chat is direct-first: a new Internet invitation asks the sender's own devic
 
 The sender must keep Mesh Chat open and online while the invitation is active and while the recipient connects and is approved. `Prepared — waiting for recipient verification` means that a listener and candidate path were created locally. It is not proof that the path is reachable from the Internet. Only an authenticated recipient connection changes the state to `Recipient connected`.
 
+## Email-ready invitations and connection replies
+
+Choose **Email-ready invitation** when you want the other person to be able to reverse the connection direction. Mesh Chat does not sign in to, read, send, or monitor email. It creates signed text or a file for you to send with any sharing tool.
+
+- If the inviter can host, the v4 invitation includes that short-lived direct route and the recipient tries it first.
+- If that path is absent or fails, the recipient can choose **Create connection reply**. Their device prepares its own short-lived listener and produces a signed `.meshchat-connect` reply.
+- The inviter imports the reply and then sends the normal contact request or workspace join. Importing the reply alone does not approve a contact or admit a workspace device.
+- Keep the device hosting the current callback route open until the normal request and approval finish. Every invitation and reply has an explicit expiry.
+
+If neither device can accept inbound Internet traffic, exchanging more replies will not fix the topology. Use an explicit manual forward, nearby mode on the same private network, or a separately approved participant-operated Remote Connection Profile. Mesh Chat never uploads the documents to a rendezvous service and never silently selects a relay.
+
+After approval, Mesh Chat keeps the successful callback under that exact contact or workspace-device scope. **Reconnecting automatically** means a still-valid stored scoped route can be retried; it does not claim that the peer is online. If another authenticated Reticulum path works as a callback route approaches expiry, Mesh Chat sends the signed refresh through that path automatically and asks the router to reuse the previous external port where supported. The new document always records the mapping actually restored. **Reconnect update required** means every path is gone and the peer must share a newly signed `.meshchat-route` update. A route update cannot change contact verification or workspace membership, and an update from a removed or unknown peer is rejected.
+
 ## Start with Connection Doctor
 
 Choose **Check direct Internet connection** before preparing an invitation. The checklist uses only local route, interface, router-protocol, listener, and firewall information. Its copy action omits public and local addresses, invitation credentials, router URLs, executable paths, and raw exception text.
@@ -20,7 +33,7 @@ Typical results and actions:
 | Mapping blocked or unsupported | Router policy denied the request or does not support the protocol | Use manual TCP forwarding if the upstream path is controllable |
 | Windows Firewall needs permission | The listener may need a narrow inbound rule | Use **Allow in Windows Firewall** and approve the operating-system elevation prompt |
 
-Retry after changing a router, interface, VPN, firewall, or Windows network profile. A router reboot, mapping epoch reset, or public-address change invalidates the old prepared invitation; create and share a new one.
+Retry after changing a router, interface, VPN, firewall, or Windows network profile. A router reboot, mapping epoch reset, or public-address change invalidates the old prepared invitation. Before approval, create and share a new invitation or connection reply. After approval, send a new scoped reconnect update.
 
 ## How automatic paths work
 

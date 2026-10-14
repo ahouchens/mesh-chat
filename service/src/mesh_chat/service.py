@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import threading
 import time
 import uuid
@@ -24,6 +25,7 @@ from .errors import (
     MeshChatError,
     NetworkUnavailable,
     ValidationError,
+    DirectConnectionUnavailable,
 )
 from .invitations import (
     MAX_HINTS,
@@ -37,10 +39,19 @@ from .group_service import GroupServiceMixin
 from .models import Contact, DeliveryState, Message, MessageKind, Profile, TrustState
 from .network import ReticulumNetwork, select_lan_listener_port
 from .participant import (
+    connection_response_formats,
+    create_connection_response,
+    create_email_invitation,
     create_participant_personal_invitation,
+    create_route_update as create_signed_route_update,
+    email_invitation_formats,
     participant_invitation_formats,
     preview_participant_access,
+    route_update_formats,
+    verify_connection_response,
+    verify_email_invitation,
     verify_participant_invitation,
+    verify_route_update,
 )
 from .participant_service import ParticipantAccessServiceMixin
 from .reactions import ReactionServiceMixin
@@ -61,6 +72,8 @@ CONTACT_REQUEST_WINDOW_SECONDS = 60 * 60
 CONTACT_REQUESTS_PER_IDENTITY = 5
 MAX_PENDING_REQUESTS = 100
 CONTACT_FLUSH_ATTEMPTS = 4
+ROUTE_REFRESH_MARGIN_SECONDS = 10 * 60
+ROUTE_REFRESH_RETRY_SECONDS = 5 * 60
 DELETED_MESSAGE_REPLAY_GRACE_SECONDS = 24 * 60 * 60
 
 DIRECT_RETRY_STATES = {
@@ -131,6 +144,12 @@ class MeshChatService(
         "create_invitation",
         "preview_invitation",
         "accept_invitation",
+        "create_connection_reply",
+        "preview_connection_reply",
+        "connect_using_reply",
+        "create_route_update",
+        "preview_route_update",
+        "apply_route_update",
         "preview_remote_profile",
         "create_manual_remote_profile",
         "approve_remote_profile",
@@ -282,6 +301,8 @@ class MeshChatService(
         "search",
         "connection_help",
         "preview_invitation",
+        "preview_connection_reply",
+        "preview_route_update",
         "preview_remote_profile",
         "list_remote_profiles",
         "preview_workspace_invitation",
@@ -440,6 +461,47 @@ class MeshChatService(
             }:
                 hints.append({"type": "tcp", **listener})
         local = create_invitation(self._identity, profile["display_name"], hints=hints)
+        if connection_mode == "email":
+            scope_id = str(uuid.uuid4())
+            access: dict[str, Any] | None = None
+            host_session_id: str | None = None
+            try:
+                hosted = self.create_participant_host_access(
+                    purpose="personal", scope_id=scope_id,
+                    maximum_expires_at=local["expires_at"],
+                )
+                host_session_id = hosted.pop("host_session_id")
+                access = hosted
+            except DirectConnectionUnavailable:
+                # Role reversal is the explicit fallback. The v4 capability is
+                # still useful when this device cannot accept an inbound path.
+                access = None
+            serialized = create_email_invitation(
+                self._identity, "personal", local["file"], access
+            )
+            verified = verify_email_invitation(serialized, "personal")
+            if verified is None:
+                raise ValidationError("Email-ready invitation could not be created")
+            self.store.put("email_invitation", verified.digest, {
+                "id": verified.digest,
+                "purpose": "personal",
+                "scope_id": scope_id,
+                "document": verified.serialized,
+                "state": "active",
+                "created_at": float(verified.created_at),
+                "expires_at": float(verified.expires_at),
+                "host_session_id": host_session_id,
+            })
+            formats = email_invitation_formats(serialized, "personal")
+            return {
+                **formats,
+                "expires_at": verified.expires_at,
+                "connection_mode": "email",
+                "host_session_id": host_session_id,
+                "methods": sorted({item["path"] for item in access["endpoints"]})
+                if access else [],
+                "connection_reply_available": True,
+            }
         if connection_mode in {"participant", "manual"}:
             scope_id = str(uuid.uuid4())
             if connection_mode == "manual":
@@ -485,13 +547,21 @@ class MeshChatService(
 
     def preview_invitation(self, raw: str) -> dict[str, Any]:
         try:
-            participant = verify_participant_invitation(raw, "personal")
-            remote = None if participant else verify_remote_invitation(raw, "personal")
+            email = verify_email_invitation(raw, "personal")
+            participant = None if email else verify_participant_invitation(raw, "personal")
+            remote = None if email or participant else verify_remote_invitation(raw, "personal")
             invitation = verify_invitation(
-                participant.inner if participant else remote.inner if remote else raw
+                email.inner if email else participant.inner if participant else remote.inner if remote else raw
             )
             preview = invitation.preview()
-            if participant is not None:
+            if email is not None:
+                preview["connection_reply_available"] = True
+                preview["invitation_digest"] = email.digest
+                if email.inviter_access is not None:
+                    preview["participant_access"] = preview_participant_access(
+                        email.inviter_access
+                    )
+            elif participant is not None:
                 preview["participant_access"] = preview_participant_access(
                     participant.access
                 )
@@ -504,10 +574,11 @@ class MeshChatService(
 
     def accept_invitation(self, raw: str) -> dict[str, Any]:
         try:
-            participant = verify_participant_invitation(raw, "personal")
-            remote = None if participant else verify_remote_invitation(raw, "personal")
+            email = verify_email_invitation(raw, "personal")
+            participant = None if email else verify_participant_invitation(raw, "personal")
+            remote = None if email or participant else verify_remote_invitation(raw, "personal")
             invitation = verify_invitation(
-                participant.inner if participant else remote.inner if remote else raw
+                email.inner if email else participant.inner if participant else remote.inner if remote else raw
             )
         except ValidationError as exc:
             raise InvitationInvalid("Invitation could not be validated") from exc
@@ -516,9 +587,10 @@ class MeshChatService(
             raise ValidationError("Cannot connect to the local identity")
         contact_id = _contact_id(invitation.destination_hash)
         participant_connection_results: list[dict[str, Any]] = []
-        if participant is not None:
+        email_access = email.inviter_access if email is not None else None
+        if participant is not None or email_access is not None:
             participant_record = self.approve_participant_access(
-                participant.access,
+                participant.access if participant is not None else email_access,
                 scope_kind="contact",
                 scope_id=contact_id,
             )
@@ -599,6 +671,511 @@ class MeshChatService(
                 {"connection_results": participant_connection_results}
                 if participant_connection_results else {}
             ),
+        }
+
+    def create_connection_reply(self, raw: Any, purpose: Any) -> dict[str, Any]:
+        if not isinstance(raw, str) or purpose not in {"personal", "workspace"}:
+            raise ValidationError("Connection reply request is invalid")
+        if self._identity is None:
+            raise ValidationError("Local identity is unavailable")
+        invitation = verify_email_invitation(raw, purpose)
+        if invitation is None:
+            raise ValidationError("A connection reply requires a v4 invitation")
+        previous = self.store.get("connection_response", invitation.digest)
+        access = self.create_participant_host_access(
+            purpose=purpose,
+            scope_id=invitation.digest,
+            maximum_expires_at=invitation.expires_at,
+            access_mode="participant_callback",
+        )
+        host_session_id = access.pop("host_session_id")
+        serialized = create_connection_response(
+            self._identity, invitation.serialized, purpose, access
+        )
+        formats = connection_response_formats(serialized)
+        self.store.put("connection_response", invitation.digest, {
+            "id": invitation.digest,
+            "purpose": purpose,
+            "invitation_digest": invitation.digest,
+            "peer_destination": invitation.signer_destination.hex(),
+            "document": serialized,
+            "host_session_id": host_session_id,
+            "state": "ready",
+            "preferred_external_port": next((
+                int(item["port"]) for item in access["endpoints"]
+                if item.get("path") in {"pcp", "upnp", "nat_pmp"}
+            ), None),
+            "created_at": time.time(),
+            "expires_at": float(min(invitation.expires_at, access["expires_at"])),
+        })
+        previous_host = previous.get("host_session_id") if previous else None
+        if isinstance(previous_host, str) and previous_host != host_session_id:
+            try:
+                self.stop_participant_host(previous_host)
+            except Exception:
+                pass
+        return {
+            **formats,
+            "purpose": purpose,
+            "expires_at": min(invitation.expires_at, access["expires_at"]),
+            "host_session_id": host_session_id,
+            "methods": sorted({item["path"] for item in access["endpoints"]}),
+        }
+
+    def _verified_pending_response(self, raw: Any) -> tuple[Any, dict[str, Any], Any]:
+        if not isinstance(raw, str):
+            raise ValidationError("Connection reply must be text")
+        unbound = verify_connection_response(raw)
+        pending = self.store.get("email_invitation", unbound.invitation_digest)
+        if pending is None:
+            raise ValidationError("The original invitation is not available on this device")
+        if pending.get("state") == "consumed":
+            raise ValidationError("This connection reply was already used")
+        if pending.get("state") != "active" or float(pending.get("expires_at", 0)) < time.time():
+            raise ValidationError("The original invitation is no longer active")
+        invitation = verify_email_invitation(
+            pending.get("document", ""), pending.get("purpose")
+        )
+        if invitation is None:
+            raise ValidationError("The original invitation is invalid")
+        response = verify_connection_response(raw, invitation=invitation)
+        profile = self._require_profile()
+        if response.signer_destination.hex() != profile["destination_hash"]:
+            raise ValidationError("Connection reply is for another profile")
+        return response, pending, invitation
+
+    def preview_connection_reply(self, raw: Any) -> dict[str, Any]:
+        response, _pending, _invitation = self._verified_pending_response(raw)
+        # Verification and preview intentionally perform no DNS lookup, socket
+        # probe, interface attachment or trust mutation.
+        return response.preview()
+
+    def connect_using_reply(self, raw: Any) -> dict[str, Any]:
+        response, pending, _invitation = self._verified_pending_response(raw)
+        access = response.access
+        scope = {"kind": "pending_invitation", "id": response.invitation_digest}
+        access_record = {
+            "id": access["id"], "access": access, "scopes": [scope],
+            "resolved_endpoints": [], "candidate_results": [],
+            "resolution_attempted": False,
+            "consented_at": float(time.time()),
+        }
+        pending = dict(pending)
+        pending.update({
+            "state": "consumed",
+            "consumed_at": time.time(),
+            "responder_destination": response.responder_destination.hex(),
+            "response_digest": hashlib.sha256(
+                response.serialized.encode("utf-8")
+            ).hexdigest(),
+        })
+        # Replay state and the exact scoped credential become durable in one
+        # vault transaction before DNS, probing, or interface attachment.
+        self.store.put_and_delete(
+            [
+                ("email_invitation", response.invitation_digest, pending),
+                ("participant_access", access["id"], access_record),
+            ],
+            [],
+            redact_command_cache=True,
+        )
+        original_host = pending.get("host_session_id")
+        if isinstance(original_host, str):
+            try:
+                self.stop_participant_host(original_host)
+            except Exception:
+                pass
+        resolved, results = self._resolved_participant_endpoints(access)
+        access_record["resolved_endpoints"] = resolved
+        access_record["candidate_results"] = results
+        access_record["resolution_attempted"] = True
+        self.store.put("participant_access", access["id"], access_record)
+        self._apply_participant_interfaces()
+        if self.network is not None:
+            self.network.remember_contact(
+                response.responder_public_identity, response.responder_destination
+            )
+            self.network.reannounce()
+        self._changed()
+        return {**response.preview(), "connection_results": results}
+
+    def _bind_callback_host(
+        self, purpose: str, peer_destination: str, *, scope_kind: str, scope_id: str
+    ) -> None:
+        relationship = {"kind": scope_kind, "id": scope_id}
+        for response_id, response in self.store.items("connection_response"):
+            if (
+                response.get("purpose") != purpose
+                or response.get("peer_destination") != peer_destination
+                or response.get("state") not in {"ready", "shared", "active"}
+            ):
+                continue
+            response["relationship_scope"] = relationship
+            response["state"] = "active"
+            response["updated_at"] = time.time()
+            self.store.put("connection_response", response_id, response)
+            host_id = response.get("host_session_id")
+            host = self.store.get("participant_host", host_id) if isinstance(host_id, str) else None
+            if host is not None:
+                host["relationship_scope"] = relationship
+                host["peer_destination"] = peer_destination
+                self.store.put("participant_host", host_id, host)
+
+    def _bind_workspace_callback_host(self, workspace_id: str) -> None:
+        relationship = {"kind": "workspace_device", "id": workspace_id}
+        for response_id, response in self.store.items("connection_response"):
+            if response.get("purpose") != "workspace" or response.get("workspace_id") != workspace_id:
+                continue
+            response["relationship_scope"] = relationship
+            response["state"] = "active"
+            response["updated_at"] = time.time()
+            self.store.put("connection_response", response_id, response)
+            host_id = response.get("host_session_id")
+            host = self.store.get("participant_host", host_id) if isinstance(host_id, str) else None
+            if host is not None:
+                host["relationship_scope"] = relationship
+                host["peer_destination"] = response.get("peer_destination")
+                self.store.put("participant_host", host_id, host)
+
+    def _release_callback_hosts(self, scope_kind: str, scope_id: str) -> None:
+        relationship = {"kind": scope_kind, "id": scope_id}
+        host_ids: set[str] = set()
+        response_ids: list[str] = []
+        for response_id, response in self.store.items("connection_response"):
+            if response.get("relationship_scope") != relationship:
+                continue
+            if isinstance(response.get("host_session_id"), str):
+                host_ids.add(response["host_session_id"])
+            response_ids.append(response_id)
+        generation_ids: list[str] = []
+        for generation_id, generation in self.store.items("route_generation"):
+            if generation.get("relationship_scope") != relationship:
+                continue
+            if isinstance(generation.get("host_session_id"), str):
+                host_ids.add(generation["host_session_id"])
+            generation_ids.append(generation_id)
+        for host_id in host_ids:
+            try:
+                self.stop_participant_host(host_id)
+            except Exception:
+                pass
+        for response_id in response_ids:
+            self.store.delete("connection_response", response_id)
+        for generation_id in generation_ids:
+            self.store.delete("route_generation", generation_id)
+
+    def _stop_pending_callback_for_peer(self, purpose: str, peer_destination: str) -> None:
+        for response_id, response in list(self.store.items("connection_response")):
+            if response.get("purpose") != purpose or response.get("peer_destination") != peer_destination:
+                continue
+            host_id = response.get("host_session_id")
+            if isinstance(host_id, str):
+                try:
+                    self.stop_participant_host(host_id)
+                except Exception:
+                    pass
+            self.store.delete("connection_response", response_id)
+
+    def _contact_route_scope(self, peer_destination: bytes) -> str:
+        profile = self._require_profile()
+        local = bytes.fromhex(profile["destination_hash"])
+        first, second = sorted((local, peer_destination))
+        return hashlib.sha256(
+            b"mesh-chat:contact-route:v1:" + first + second
+        ).hexdigest()
+
+    def _route_update_binding(
+        self, scope_kind: Any, scope_id: Any, peer_destination: Any = None
+    ) -> tuple[str, bytes, bytes, str]:
+        if scope_kind == "contact":
+            contact = self._require_contact(scope_id)
+            if contact["trust"] not in {TrustState.APPROVED.value, TrustState.VERIFIED.value}:
+                raise ContactNotApproved("Reconnect updates require an approved contact")
+            peer = bytes.fromhex(contact["destination_hash"])
+            return self._contact_route_scope(peer), peer, _unb64(contact["public_identity"]), contact["display_name"]
+        if scope_kind != "workspace_device" or not isinstance(scope_id, str) or not isinstance(peer_destination, str):
+            raise ValidationError("Route update scope is invalid")
+        workspace = self._require_workspace(scope_id)
+        if workspace.get("state") != "active":
+            raise ValidationError("Workspace is not active")
+        manifest = self._workspace_current_manifest(workspace)
+        for member in manifest.members:
+            if member.status != "active":
+                continue
+            for device in member.devices:
+                if device.destination_hash.hex() == peer_destination:
+                    return scope_id, device.destination_hash, device.public_identity, member.display_name
+        raise ValidationError("Workspace device is not admitted")
+
+    def create_route_update_command(
+        self, scope_kind: Any, scope_id: Any, peer_destination: Any = None,
+        *, preferred_external_port: int | None = None,
+    ) -> dict[str, Any]:
+        if self._identity is None:
+            raise ValidationError("Local identity is unavailable")
+        canonical_scope, audience, _public_key, _label = self._route_update_binding(
+            scope_kind, scope_id, peer_destination
+        )
+        generation_id = f"out:{scope_kind}:{canonical_scope}:{audience.hex()}"
+        generation_record = self.store.get("route_generation", generation_id) or {"generation": 0}
+        generation = int(generation_record.get("generation", 0)) + 1
+        access = self.create_participant_host_access(
+            purpose="personal" if scope_kind == "contact" else "workspace",
+            scope_id=canonical_scope,
+            maximum_expires_at=int(time.time()) + 24 * 60 * 60,
+            access_mode="participant_callback",
+            preferred_external_port=preferred_external_port,
+        )
+        host_session_id = access.pop("host_session_id")
+        serialized = create_signed_route_update(
+            self._identity,
+            scope_kind=scope_kind,
+            scope_id=canonical_scope,
+            audience_destination=audience,
+            generation=generation,
+            access=access,
+        )
+        self.store.put("route_generation", generation_id, {
+            "id": generation_id, "generation": generation,
+            "updated_at": time.time(), "host_session_id": host_session_id,
+            "relationship_scope": {"kind": scope_kind, "id": scope_id},
+            "peer_destination": audience.hex(),
+            "preferred_external_port": next((
+                int(item["port"]) for item in access["endpoints"]
+                if item.get("path") in {"pcp", "upnp", "nat_pmp"}
+            ), None),
+        })
+        host_record = self.store.get("participant_host", host_session_id)
+        if host_record is not None:
+            host_record["relationship_scope"] = {"kind": scope_kind, "id": scope_id}
+            host_record["peer_destination"] = audience.hex()
+            self.store.put("participant_host", host_session_id, host_record)
+        delivered_live = self._send_live_route_update(
+            serialized, audience=audience, recipient_public_key=_public_key,
+            expires_at=int(access["expires_at"]),
+        )
+        return {
+            **route_update_formats(serialized),
+            "expires_at": access["expires_at"],
+            "generation": generation,
+            "host_session_id": host_session_id,
+            "methods": sorted({item["path"] for item in access["endpoints"]}),
+            "delivery_mode": "automatic" if delivered_live else "share_required",
+        }
+
+    def _send_live_route_update(
+        self, serialized: str, *, audience: bytes,
+        recipient_public_key: bytes, expires_at: int,
+    ) -> bool:
+        if self.network is None:
+            return False
+        path_known = getattr(self.network, "path_known", None)
+        recipient_ready = getattr(self.network, "recipient_ready", None)
+        if (
+            not callable(path_known)
+            or not callable(recipient_ready)
+            or not path_known(audience)
+            or not recipient_ready(audience)
+        ):
+            return False
+        try:
+            profile = self._require_profile()
+            local = bytes.fromhex(profile["destination_hash"])
+            self.network.send(
+                logical_id=_new_id(),
+                conversation_id=conversation_id(local, audience),
+                recipient_public_key=recipient_public_key,
+                recipient_destination=audience,
+                kind=MessageKind.ROUTE_UPDATE,
+                text="",
+                expires_at=expires_at,
+                route_update=serialized,
+                propagated=False,
+            )
+            return True
+        except Exception:
+            return False
+
+    def _refresh_callback_routes(self) -> None:
+        """Refresh an expiring hosted route over an already usable Reticulum path."""
+
+        if self.network is None:
+            return
+        path_known = getattr(self.network, "path_known", None)
+        recipient_ready = getattr(self.network, "recipient_ready", None)
+        if not callable(path_known) or not callable(recipient_ready):
+            return
+        now = time.time()
+        for host_id, host in list(self.store.items("participant_host")):
+            relationship = host.get("relationship_scope")
+            peer_text = host.get("peer_destination")
+            if (
+                not isinstance(relationship, dict)
+                or relationship.get("kind") not in {"contact", "workspace_device"}
+                or not isinstance(relationship.get("id"), str)
+                or not isinstance(peer_text, str)
+                or host.get("refresh_superseded") is True
+                or (
+                    host.get("state") != "unavailable"
+                    and float(host.get("expires_at", 0))
+                    > now + ROUTE_REFRESH_MARGIN_SECONDS
+                )
+                or now - float(host.get("refresh_attempted_at", 0))
+                < ROUTE_REFRESH_RETRY_SECONDS
+            ):
+                continue
+            try:
+                peer = bytes.fromhex(peer_text)
+            except ValueError:
+                continue
+            if not path_known(peer) or not recipient_ready(peer):
+                continue
+            host["refresh_attempted_at"] = now
+            self.store.put("participant_host", host_id, host)
+            try:
+                refreshed = self.create_route_update_command(
+                    relationship["kind"],
+                    relationship["id"],
+                    peer_text if relationship["kind"] == "workspace_device" else None,
+                    preferred_external_port=next((
+                        int(item["port"])
+                        for item in (host.get("access") or {}).get("endpoints", [])
+                        if item.get("path") in {"pcp", "upnp", "nat_pmp"}
+                    ), None),
+                )
+            except Exception:
+                continue
+            if refreshed.get("delivery_mode") == "automatic":
+                host["refresh_superseded"] = True
+                host["refreshed_at"] = now
+                self.store.put("participant_host", host_id, host)
+                for response_id, response in self.store.items("connection_response"):
+                    if response.get("host_session_id") == host_id:
+                        response["state"] = "route_refreshed"
+                        response["updated_at"] = now
+                        self.store.put("connection_response", response_id, response)
+
+        # A clean shutdown removes actual listeners and router mappings, but
+        # retains only encrypted relationship metadata. On restart, rebuild a
+        # listener only when another Reticulum path is already usable, asking
+        # the router for the prior external port as a preference. The returned
+        # signed update contains the actual restored mapping, never the wish.
+        restart_candidates = [
+            record for _record_id, record in self.store.items("route_generation")
+            if str(record.get("id", "")).startswith("out:")
+            and isinstance(record.get("relationship_scope"), dict)
+        ]
+        restart_candidates.extend(
+            response for _response_id, response in self.store.items("connection_response")
+            if response.get("state") == "active"
+            and isinstance(response.get("relationship_scope"), dict)
+        )
+        for candidate in restart_candidates:
+            host_id = candidate.get("host_session_id")
+            if isinstance(host_id, str) and self.store.get("participant_host", host_id) is not None:
+                continue
+            relationship = candidate.get("relationship_scope")
+            peer_text = candidate.get("peer_destination")
+            if (
+                not isinstance(relationship, dict)
+                or relationship.get("kind") not in {"contact", "workspace_device"}
+                or not isinstance(relationship.get("id"), str)
+                or not isinstance(peer_text, str)
+            ):
+                continue
+            try:
+                peer = bytes.fromhex(peer_text)
+            except ValueError:
+                continue
+            if not path_known(peer) or not recipient_ready(peer):
+                continue
+            try:
+                refreshed = self.create_route_update_command(
+                    relationship["kind"],
+                    relationship["id"],
+                    peer_text if relationship["kind"] == "workspace_device" else None,
+                    preferred_external_port=candidate.get("preferred_external_port"),
+                )
+            except Exception:
+                continue
+            if (
+                refreshed.get("delivery_mode") == "automatic"
+                and isinstance(candidate.get("invitation_digest"), str)
+            ):
+                response_id = candidate["invitation_digest"]
+                response = self.store.get("connection_response", response_id)
+                if response is not None:
+                    response["state"] = "route_refreshed"
+                    response["updated_at"] = now
+                    self.store.put("connection_response", response_id, response)
+
+    def _verified_scoped_route_update(self, raw: Any) -> tuple[Any, str, str]:
+        if not isinstance(raw, str):
+            raise ValidationError("Reconnect update must be text")
+        update = verify_route_update(raw)
+        profile = self._require_profile()
+        if update.audience_destination.hex() != profile["destination_hash"]:
+            raise ValidationError("Reconnect update is for another profile")
+        label = ""
+        durable_scope = update.scope_id
+        if update.scope_kind == "contact":
+            contact = self._contact_by_destination(update.issuer_destination.hex())
+            if contact is None or contact["trust"] not in {
+                TrustState.APPROVED.value, TrustState.VERIFIED.value
+            }:
+                raise ContactNotApproved("Reconnect update issuer is not an approved contact")
+            if _unb64(contact["public_identity"]) != update.issuer_public_identity:
+                raise ValidationError("Reconnect update identity changed")
+            durable_scope = contact["id"]
+            label = contact["display_name"]
+            if update.scope_id != self._contact_route_scope(update.issuer_destination):
+                raise ValidationError("Reconnect update contact scope is invalid")
+        else:
+            workspace = self._require_workspace(update.scope_id)
+            if workspace.get("state") != "active":
+                raise ValidationError("Workspace is not active")
+            manifest = self._workspace_current_manifest(workspace)
+            device_match = next((
+                (member, device)
+                for member in manifest.members if member.status == "active"
+                for device in member.devices
+                if device.destination_hash == update.issuer_destination
+            ), None)
+            if device_match is None or device_match[1].public_identity != update.issuer_public_identity:
+                raise ValidationError("Reconnect update issuer is not an admitted device")
+            label = device_match[0].display_name
+        generation_id = f"in:{update.scope_kind}:{update.scope_id}:{update.issuer_destination.hex()}"
+        previous = self.store.get("route_generation", generation_id)
+        if previous is not None and update.generation <= int(previous.get("generation", 0)):
+            raise ValidationError("Reconnect update is stale or was already used")
+        return update, durable_scope, label
+
+    def preview_route_update(self, raw: Any) -> dict[str, Any]:
+        update, _scope, label = self._verified_scoped_route_update(raw)
+        return {**update.preview(), "issuer_display_name": label}
+
+    def apply_route_update(self, raw: Any) -> dict[str, Any]:
+        update, durable_scope, label = self._verified_scoped_route_update(raw)
+        generation_id = f"in:{update.scope_kind}:{update.scope_id}:{update.issuer_destination.hex()}"
+        generation_record = {
+            "id": generation_id, "generation": update.generation,
+            "updated_at": time.time(),
+        }
+        record = self.replace_participant_scope_access(
+            update.access,
+            scope_kind="contact" if update.scope_kind == "contact" else "workspace_device",
+            scope_id=durable_scope,
+            additional_writes=[("route_generation", generation_id, generation_record)],
+        )
+        if self.network is not None:
+            self.network.remember_contact(
+                update.issuer_public_identity, update.issuer_destination
+            )
+            self.network.reannounce()
+        self._changed()
+        return {
+            **update.preview(), "issuer_display_name": label,
+            "connection_results": record.get("candidate_results", []),
         }
 
     def _ensure_contact_request(self, contact: dict[str, Any]) -> dict[str, Any]:
@@ -802,6 +1379,14 @@ class MeshChatService(
         deletions.extend(self._reaction_deletions("direct", contact_id))
         self.store.put_and_delete(writes, deletions, redact_command_cache=True)
         self.release_remote_scope("contact", contact_id)
+        self.release_participant_scope("contact", contact_id)
+        self._release_callback_hosts("contact", contact_id)
+        for record_id, record in list(self.store.items("route_generation")):
+            if (
+                contact["destination_hash"] in record_id
+                or record.get("relationship_scope") == {"kind": "contact", "id": contact_id}
+            ):
+                self.store.delete("route_generation", record_id)
 
         if settings_changed:
             self.settings.tcp_clients = desired_clients
@@ -1394,6 +1979,22 @@ class MeshChatService(
             app = parse_payload(native)
             source = native.source_hash.hex()
             contact = self._contact_by_destination(source)
+            if app.kind == MessageKind.ROUTE_UPDATE:
+                if app.route_update is None:
+                    return
+                update, _scope, _label = self._verified_scoped_route_update(
+                    app.route_update
+                )
+                profile = self._require_profile()
+                if (
+                    update.issuer_destination != native.source_hash
+                    or app.conversation_id != conversation_id(
+                        bytes.fromhex(profile["destination_hash"]), native.source_hash
+                    )
+                ):
+                    return
+                self.apply_route_update(app.route_update)
+                return
             if app.kind in GROUP_KINDS:
                 self._receive_group_payload(native, app, contact)
                 return
@@ -1416,6 +2017,9 @@ class MeshChatService(
                     contact["trust"] = TrustState.APPROVED.value
                     contact["updated_at"] = time.time()
                     self.store.put("contact", contact["id"], contact)
+                    self._bind_callback_host(
+                        "personal", source, scope_kind="contact", scope_id=contact["id"]
+                    )
                     self._flush_contact(contact["id"])
                     self._changed()
                 return
@@ -1424,6 +2028,7 @@ class MeshChatService(
                     contact["trust"] = TrustState.BLOCKED.value
                     contact["updated_at"] = time.time()
                     self.store.put("contact", contact["id"], contact)
+                    self._stop_pending_callback_for_peer("personal", source)
                     self._changed()
                 return
             if app.kind == MessageKind.RECEIPT:
@@ -1495,6 +2100,11 @@ class MeshChatService(
             existing["trust"] = TrustState.IDENTITY_CHANGED.value
             self.store.put("contact", existing["id"], existing)
             return
+        self.promote_pending_callback(
+            invitation.destination_hash.hex(),
+            scope_kind="contact",
+            scope_id=(contact if existing is None else existing)["id"],
+        )
         self._changed()
 
     def _receive_chat(self, contact: dict[str, Any], native: LXMF.LXMessage, app: Any) -> None:
@@ -1676,6 +2286,10 @@ class MeshChatService(
                     self.reconcile_participant_access()
                 except Exception:
                     pass
+                try:
+                    self._refresh_callback_routes()
+                except Exception:
+                    pass
 
     def _flush_contact(self, contact_id: str) -> None:
         attempted = 0
@@ -1715,6 +2329,19 @@ class MeshChatService(
                     )
                 except Exception:
                     contact["route_kind"] = "unavailable"
+            if contact.get("trust") in {
+                TrustState.APPROVED.value, TrustState.VERIFIED.value
+            } and contact.get("route_kind") == "unavailable":
+                has_stored_route = any(
+                    {"kind": "contact", "id": contact["id"]}
+                    in record.get("scopes", [])
+                    for record in self._participant_access_records()
+                )
+                contact["route_status"] = (
+                    "reconnecting_automatically"
+                    if has_stored_route
+                    else "reconnect_update_required"
+                )
             if contact["trust"] != TrustState.AWAITING_CONSENT.value:
                 continue
             request = latest_requests.get(contact["id"])
@@ -1887,6 +2514,36 @@ class MeshChatService(
                 self.preview_invitation(body["invitation"])
                 if command == "preview_invitation"
                 else self.accept_invitation(body["invitation"])
+            )
+        if command == "create_connection_reply":
+            body = _payload(
+                value,
+                allowed={"invitation", "purpose"},
+                required={"invitation", "purpose"},
+            )
+            return self.create_connection_reply(body["invitation"], body["purpose"])
+        if command in {"preview_connection_reply", "connect_using_reply"}:
+            body = _payload(value, allowed={"response"}, required={"response"})
+            return (
+                self.preview_connection_reply(body["response"])
+                if command == "preview_connection_reply"
+                else self.connect_using_reply(body["response"])
+            )
+        if command == "create_route_update":
+            body = _payload(
+                value,
+                allowed={"scope_kind", "scope_id", "peer_destination"},
+                required={"scope_kind", "scope_id"},
+            )
+            return self.create_route_update_command(
+                body["scope_kind"], body["scope_id"], body.get("peer_destination")
+            )
+        if command in {"preview_route_update", "apply_route_update"}:
+            body = _payload(value, allowed={"update"}, required={"update"})
+            return (
+                self.preview_route_update(body["update"])
+                if command == "preview_route_update"
+                else self.apply_route_update(body["update"])
             )
         if command == "preview_remote_profile":
             body = _payload(

@@ -14,6 +14,7 @@ import RNS
 
 from .errors import (
     ContactNotApproved,
+    DirectConnectionUnavailable,
     HistoryPruned,
     MeshChatError,
     StaleCursor,
@@ -27,9 +28,12 @@ from .remote import (
     verify_remote_invitation,
 )
 from .participant import (
+    create_email_invitation,
     create_participant_workspace_invitation,
+    email_invitation_formats,
     participant_invitation_formats,
     preview_participant_access,
+    verify_email_invitation,
     verify_participant_invitation,
 )
 from .models import (
@@ -4088,7 +4092,44 @@ class WorkspaceServiceMixin:
             **workspace_invitation_formats(raw),
         }
         remote_record = None
-        if connection_mode in {"participant", "manual"}:
+        email_record = None
+        if connection_mode == "email":
+            access = None
+            host_session_id = None
+            try:
+                hosted = self.create_participant_host_access(
+                    purpose="workspace", scope_id=invitation_id,
+                    maximum_expires_at=invite.expires_at,
+                )
+                host_session_id = hosted.pop("host_session_id")
+                access = hosted
+            except DirectConnectionUnavailable:
+                access = None
+            wrapped = create_email_invitation(identity, "workspace", raw, access)
+            verified_email = verify_email_invitation(wrapped, "workspace")
+            if verified_email is None:
+                raise ValidationError("Email-ready workspace invitation could not be created")
+            outcome.update(email_invitation_formats(wrapped, "workspace"))
+            outcome["expires_at"] = verified_email.expires_at
+            outcome["connection_mode"] = "email"
+            outcome["host_session_id"] = host_session_id
+            outcome["methods"] = sorted({item["path"] for item in access["endpoints"]}) if access else []
+            outcome["connection_reply_available"] = True
+            record["email_invitation_digest"] = verified_email.digest
+            record["participant_host_id"] = host_session_id
+            record["expires_at"] = float(verified_email.expires_at)
+            email_record = {
+                "id": verified_email.digest,
+                "purpose": "workspace",
+                "scope_id": invitation_id,
+                "workspace_id": workspace["id"],
+                "document": verified_email.serialized,
+                "state": "active",
+                "created_at": float(verified_email.created_at),
+                "expires_at": float(verified_email.expires_at),
+                "host_session_id": host_session_id,
+            }
+        elif connection_mode in {"participant", "manual"}:
             if connection_mode == "manual":
                 access = self.finalize_manual_participant_host(
                     manual_setup_id, purpose="workspace", scope_id=invitation_id,
@@ -4137,6 +4178,11 @@ class WorkspaceServiceMixin:
                 *expired_records,
                 ("workspace_invitation", invitation_id, record),
                 *(
+                    [("email_invitation", email_record["id"], email_record)]
+                    if email_record is not None
+                    else []
+                ),
+                *(
                     [("remote_profile", remote_profile_id, remote_record)]
                     if remote_record is not None
                     else []
@@ -4149,13 +4195,21 @@ class WorkspaceServiceMixin:
     def preview_workspace_invitation(self, raw: Any) -> dict[str, Any]:
         if not isinstance(raw, str):
             raise ValidationError("Workspace invitation must be text")
-        participant = verify_participant_invitation(raw, "workspace")
-        remote = None if participant else verify_remote_invitation(raw, "workspace")
+        email = verify_email_invitation(raw, "workspace")
+        participant = None if email else verify_participant_invitation(raw, "workspace")
+        remote = None if email or participant else verify_remote_invitation(raw, "workspace")
         invitation = verify_workspace_invitation(
-            participant.inner if participant else remote.inner if remote else raw
+            email.inner if email else participant.inner if participant else remote.inner if remote else raw
         )
         preview = invitation.preview()
-        if participant is not None:
+        if email is not None:
+            preview["connection_reply_available"] = True
+            preview["invitation_digest"] = email.digest
+            if email.inviter_access is not None:
+                preview["participant_access"] = preview_participant_access(
+                    email.inviter_access
+                )
+        elif participant is not None:
             preview["participant_access"] = preview_participant_access(
                 participant.access
             )
@@ -4185,12 +4239,26 @@ class WorkspaceServiceMixin:
             raise ValidationError("Workspace invitation was already used")
         invitation["state"] = "revoked"
         invitation["updated_at"] = time.time()
+        email_record = None
+        email_digest = invitation.get("email_invitation_digest")
+        if isinstance(email_digest, str):
+            email_record = self.store.get("email_invitation", email_digest)
+            if email_record is not None:
+                email_record["state"] = "revoked"
+                email_record["updated_at"] = time.time()
         outcome = {"id": invitation_id, "workspace_id": workspace_id, "state": "revoked"}
         committed = self.store.commit_operation(
             operation_id,
             digest,
             outcome,
-            [("workspace_invitation", invitation_id, invitation)],
+            [
+                ("workspace_invitation", invitation_id, invitation),
+                *(
+                    [("email_invitation", email_digest, email_record)]
+                    if email_record is not None
+                    else []
+                ),
+            ],
         )
         self.stop_participant_host_for_scope("workspace", invitation_id)
         self.release_remote_scope("pending_invitation", invitation_id)
@@ -4444,10 +4512,11 @@ class WorkspaceServiceMixin:
             return replay
         if not isinstance(invitation, str):
             raise ValidationError("Workspace invitation must be text")
-        participant = verify_participant_invitation(invitation, "workspace")
-        remote = None if participant else verify_remote_invitation(invitation, "workspace")
+        email = verify_email_invitation(invitation, "workspace")
+        participant = None if email else verify_participant_invitation(invitation, "workspace")
+        remote = None if email or participant else verify_remote_invitation(invitation, "workspace")
         invite = verify_workspace_invitation(
-            participant.inner if participant else remote.inner if remote else invitation
+            email.inner if email else participant.inner if participant else remote.inner if remote else invitation
         )
         if self.store.get("workspace", self._workspace_record_id(invite.workspace_id)) is not None:
             raise ValidationError("This workspace is already known on this device")
@@ -4458,9 +4527,10 @@ class WorkspaceServiceMixin:
         if identity is None:
             raise ValidationError("Local identity is unavailable")
         participant_connection_results: list[dict[str, Any]] = []
-        if participant is not None:
+        email_access = email.inviter_access if email is not None else None
+        if participant is not None or email_access is not None:
             participant_record = self.approve_participant_access(
-                participant.access,
+                participant.access if participant is not None else email_access,
                 scope_kind="workspace",
                 scope_id=invite.workspace_id,
             )
@@ -4580,6 +4650,13 @@ class WorkspaceServiceMixin:
             ("workspace_delivery", delivery["id"], delivery),
             *self._due_records(add=[delivery]),
         ]
+        if email is not None:
+            callback_response = self.store.get("connection_response", email.digest)
+            if callback_response is not None:
+                callback_response = dict(callback_response)
+                callback_response["workspace_id"] = invite.workspace_id
+                callback_response["updated_at"] = time.time()
+                records.append(("connection_response", email.digest, callback_response))
         committed = self.store.commit_operation(
             operation_id, digest, outcome, records
         )
@@ -4651,6 +4728,11 @@ class WorkspaceServiceMixin:
         network = getattr(self, "network", None)
         if network is not None:
             network.remember_contact(join.device.public_identity, join.device.destination_hash)
+        self.promote_pending_callback(
+            join.device.destination_hash.hex(),
+            scope_kind="workspace_device",
+            scope_id=join.workspace_id,
+        )
         self._workspace_changed(join.workspace_id, resource_kind="join_request")
 
     def approve_workspace_join(
@@ -8464,6 +8546,9 @@ class WorkspaceServiceMixin:
                 "closed", "removed", "left", "device_removed"
             }:
                 self.release_remote_scope("workspace", workspace["id"])
+                self._release_callback_hosts("workspace_device", workspace["id"])
+            elif workspace.get("state") == "active":
+                self._bind_workspace_callback_host(workspace["id"])
             self._remember_workspace_devices(workspace)
             if drain_pending:
                 self._drain_workspace_pending_controls(workspace["id"])
@@ -15625,6 +15710,9 @@ class WorkspaceServiceMixin:
                 self.stop_participant_host_for_scope("workspace", invitation_id)
                 self.release_remote_scope("pending_invitation", invitation_id)
         self.release_remote_scope("workspace", workspace_id)
+        self.release_participant_scope("workspace", workspace_id)
+        self.release_participant_scope("workspace_device", workspace_id)
+        self._release_callback_hosts("workspace_device", workspace_id)
         self._workspace_changed(workspace_id)
         return committed
 
@@ -15841,6 +15929,12 @@ class WorkspaceServiceMixin:
         if network is not None and delivery_ids:
             network.cancel_outbound(set(delivery_ids))
         self.release_remote_scope("workspace", workspace_id)
+        self.release_participant_scope("workspace", workspace_id)
+        self.release_participant_scope("workspace_device", workspace_id)
+        self._release_callback_hosts("workspace_device", workspace_id)
+        for record_id, _record in list(self.store.items("route_generation")):
+            if workspace_id in record_id:
+                self.store.delete("route_generation", record_id)
         self._workspace_changed(workspace_id, resource_kind="local_removal")
         return committed
 

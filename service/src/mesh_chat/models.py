@@ -33,6 +33,7 @@ class MessageKind(StrEnum):
     CONTACT_REQUEST = "contact_request"
     CONTACT_ACCEPT = "contact_accept"
     CONTACT_DECLINE = "contact_decline"
+    ROUTE_UPDATE = "route_update"
     GROUP_INVITE = "group_invite"
     GROUP_ACCEPT = "group_accept"
     GROUP_MANIFEST = "group_manifest"

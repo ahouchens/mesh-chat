@@ -852,6 +852,7 @@ class ReticulumNetwork:
         reaction_emoji: str | None = None,
         reaction_active: bool | None = None,
         reaction_revision: int | None = None,
+        route_update: str | None = None,
     ) -> str:
         fields = build_fields(
             kind=kind,
@@ -864,6 +865,7 @@ class ReticulumNetwork:
             reaction_emoji=reaction_emoji,
             reaction_active=reaction_active,
             reaction_revision=reaction_revision,
+            route_update=route_update,
         )
         return self.send_with_fields(
             logical_id=logical_id,

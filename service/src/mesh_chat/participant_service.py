@@ -73,7 +73,19 @@ class ParticipantAccessServiceMixin:
             if float(access.get("expires_at", 0)) <= now:
                 self.store.delete("participant_access", record_id)
                 continue
-            endpoints = record.get("resolved_endpoints", access.get("endpoints", []))
+            endpoints = record.get("resolved_endpoints")
+            if not record.get("resolution_attempted"):
+                # Import commits the exact credential and replay state before
+                # DNS or sockets. If the process stopped in that intentional
+                # gap, finish resolution only after reading the durable record.
+                try:
+                    endpoints, results = self._resolved_participant_endpoints(access)
+                    record["resolved_endpoints"] = endpoints
+                    record["candidate_results"] = results
+                    record["resolution_attempted"] = True
+                    self.store.put("participant_access", record_id, record)
+                except Exception:
+                    endpoints = []
             for index, endpoint in enumerate(endpoints):
                 clients.append({
                     "id": access["id"], "endpoint_index": index,
@@ -251,9 +263,13 @@ class ParticipantAccessServiceMixin:
 
     def create_participant_host_access(
         self, *, purpose: str, scope_id: str, maximum_expires_at: int,
+        access_mode: str = "participant_direct",
+        preferred_external_port: int | None = None,
     ) -> dict[str, Any]:
         if purpose not in {"personal", "workspace"} or not isinstance(scope_id, str):
             raise ValidationError("Participant host scope is invalid")
+        if access_mode not in {"participant_direct", "participant_callback"}:
+            raise ValidationError("Participant access mode is invalid")
         if self._identity is None or self.network is None:
             raise self._direct_failure(ConnectivityError(
                 "precondition", "listener_bind_failed", recommended_action="restart_app"
@@ -292,7 +308,14 @@ class ParticipantAccessServiceMixin:
         else:
             try:
                 mapping = create_port_mapping(
-                    v4_listener["port"], lifetime=DEFAULT_MAPPING_LIFETIME, routes=routes
+                    v4_listener["port"], lifetime=DEFAULT_MAPPING_LIFETIME, routes=routes,
+                    preferred_external_port=(
+                        preferred_external_port
+                        if isinstance(preferred_external_port, int)
+                        and not isinstance(preferred_external_port, bool)
+                        and 1 <= preferred_external_port <= 65535
+                        else 0
+                    ),
                 )
                 mapping_record = mapping.record()
                 endpoints.append(mapping.endpoint())
@@ -360,6 +383,7 @@ class ParticipantAccessServiceMixin:
         access = create_access_document(
             self._identity, endpoints[:3], network_name=record["network_name"],
             passphrase=record["passphrase"], now=now, expires_at=expires_at,
+            mode=access_mode,
         )
         for listener in record["listeners"]:
             listener["expires_at"] = expires_at
@@ -438,6 +462,7 @@ class ParticipantAccessServiceMixin:
     def finalize_manual_participant_host(
         self, setup_id: Any, *, purpose: str, scope_id: str,
         maximum_expires_at: int, external_host: Any, external_port: Any,
+        access_mode: str = "participant_direct",
     ) -> dict[str, Any]:
         if not isinstance(setup_id, str):
             raise ValidationError("Manual participant setup is invalid")
@@ -452,7 +477,7 @@ class ParticipantAccessServiceMixin:
         access = create_access_document(
             self._identity, [{**endpoint, "path": "manual"}],
             network_name=record["network_name"], passphrase=record["passphrase"],
-            now=now, expires_at=expires_at,
+            now=now, expires_at=expires_at, mode=access_mode,
         )
         for listener in record["listeners"]:
             listener["expires_at"] = expires_at
@@ -531,7 +556,9 @@ class ParticipantAccessServiceMixin:
     def approve_participant_access(
         self, value: Any, *, scope_kind: str, scope_id: str,
     ) -> dict[str, Any]:
-        if scope_kind not in {"contact", "workspace"} or not isinstance(scope_id, str):
+        if scope_kind not in {
+            "contact", "workspace", "pending_invitation", "workspace_device"
+        } or not isinstance(scope_id, str):
             raise ValidationError("Participant access scope is invalid")
         access = validate_access_document(value)
         existing = self.store.get("participant_access", access["id"])
@@ -545,6 +572,7 @@ class ParticipantAccessServiceMixin:
         record = {
             "id": access["id"], "access": access, "scopes": scopes,
             "resolved_endpoints": resolved, "candidate_results": results,
+            "resolution_attempted": True,
             "consented_at": float(time.time()),
         }
         self.store.put("participant_access", access["id"], record)
@@ -553,6 +581,100 @@ class ParticipantAccessServiceMixin:
         except Exception:
             pass
         return record
+
+    def release_participant_scope(self, scope_kind: str, scope_id: str) -> None:
+        """Remove only the selected relationship's imported route material."""
+
+        changed = False
+        scope = {"kind": scope_kind, "id": scope_id}
+        for record_id, record in list(self.store.items("participant_access")):
+            scopes = [item for item in record.get("scopes", []) if item != scope]
+            if scopes == record.get("scopes", []):
+                continue
+            changed = True
+            if scopes:
+                record["scopes"] = scopes
+                self.store.put("participant_access", record_id, record)
+            else:
+                self.store.delete("participant_access", record_id)
+        if changed:
+            try:
+                self._apply_participant_interfaces()
+            except Exception:
+                pass
+
+    def replace_participant_scope_access(
+        self, value: Any, *, scope_kind: str, scope_id: str,
+        additional_writes: list[tuple[str, str, dict[str, Any]]] | None = None,
+    ) -> dict[str, Any]:
+        """Persist a verified route before activation and retire older scope routes."""
+
+        if scope_kind not in {"contact", "workspace_device"} or not isinstance(scope_id, str):
+            raise ValidationError("Participant access scope is invalid")
+        access = validate_access_document(value)
+        scope = {"kind": scope_kind, "id": scope_id}
+        deletions: list[tuple[str, str]] = []
+        writes: list[tuple[str, str, dict[str, Any]]] = []
+        for record_id, record in self.store.items("participant_access"):
+            if record_id == access["id"] or scope not in record.get("scopes", []):
+                continue
+            scopes = [item for item in record.get("scopes", []) if item != scope]
+            if scopes:
+                updated = dict(record)
+                updated["scopes"] = scopes
+                writes.append(("participant_access", record_id, updated))
+            else:
+                deletions.append(("participant_access", record_id))
+        existing = self.store.get("participant_access", access["id"])
+        scopes = list(existing.get("scopes", [])) if existing else []
+        if scope not in scopes:
+            scopes.append(scope)
+        record = {
+            "id": access["id"], "access": access, "scopes": scopes,
+            "resolved_endpoints": [], "candidate_results": [],
+            "resolution_attempted": False,
+            "consented_at": float(time.time()),
+        }
+        writes.append(("participant_access", access["id"], record))
+        writes.extend(additional_writes or [])
+        self.store.put_and_delete(writes, deletions, redact_command_cache=True)
+
+        # Network activity starts only after the exact scoped record is durable.
+        resolved, results = self._resolved_participant_endpoints(access)
+        record["resolved_endpoints"] = resolved
+        record["candidate_results"] = results
+        record["resolution_attempted"] = True
+        self.store.put("participant_access", access["id"], record)
+        try:
+            self._apply_participant_interfaces()
+        except Exception:
+            pass
+        return record
+
+    def promote_pending_callback(
+        self, responder_destination: str, *, scope_kind: str, scope_id: str,
+    ) -> None:
+        """Move a consumed callback route onto the admitted relationship scope."""
+
+        for pending_id, pending in self.store.items("email_invitation"):
+            if (
+                pending.get("state") != "consumed"
+                or pending.get("responder_destination") != responder_destination
+            ):
+                continue
+            pending_scope = {"kind": "pending_invitation", "id": pending_id}
+            durable_scope = {"kind": scope_kind, "id": scope_id}
+            for record_id, record in self.store.items("participant_access"):
+                scopes = list(record.get("scopes", []))
+                if pending_scope not in scopes:
+                    continue
+                scopes = [item for item in scopes if item != pending_scope]
+                if durable_scope not in scopes:
+                    scopes.append(durable_scope)
+                record["scopes"] = scopes
+                self.store.put("participant_access", record_id, record)
+            pending["promoted_scope"] = durable_scope
+            self.store.put("email_invitation", pending_id, pending)
 
     def participant_connection_snapshot(self) -> list[dict[str, Any]]:
         return [{
