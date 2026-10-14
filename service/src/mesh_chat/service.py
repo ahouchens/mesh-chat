@@ -36,7 +36,21 @@ from .invitations import (
 from .group_service import GroupServiceMixin
 from .models import Contact, DeliveryState, Message, MessageKind, Profile, TrustState
 from .network import ReticulumNetwork, select_lan_listener_port
+from .participant import (
+    create_participant_personal_invitation,
+    participant_invitation_formats,
+    preview_participant_access,
+    verify_participant_invitation,
+)
+from .participant_service import ParticipantAccessServiceMixin
 from .reactions import ReactionServiceMixin
+from .remote import (
+    create_remote_personal_invitation,
+    remote_invitation_formats,
+    sanitized_profile,
+    verify_remote_invitation,
+)
+from .remote_service import RemoteProfileServiceMixin
 from .reticulum_config import NetworkSettings
 from .vault import VaultStore
 from .workspace_service import WorkspaceServiceMixin
@@ -103,7 +117,13 @@ def _payload(
     return value
 
 
-class MeshChatService(ReactionServiceMixin, GroupServiceMixin, WorkspaceServiceMixin):
+class MeshChatService(
+    ReactionServiceMixin,
+    GroupServiceMixin,
+    WorkspaceServiceMixin,
+    RemoteProfileServiceMixin,
+    ParticipantAccessServiceMixin,
+):
     COMMANDS = {
         "snapshot",
         "workspace_snapshot",
@@ -111,6 +131,16 @@ class MeshChatService(ReactionServiceMixin, GroupServiceMixin, WorkspaceServiceM
         "create_invitation",
         "preview_invitation",
         "accept_invitation",
+        "preview_remote_profile",
+        "create_manual_remote_profile",
+        "approve_remote_profile",
+        "test_remote_profile",
+        "list_remote_profiles",
+        "retry_remote_profile",
+        "remove_remote_profile",
+        "approve_remote_propagation",
+        "remove_remote_propagation",
+        "stop_participant_host",
         "approve_request",
         "decline_request",
         "update_contact",
@@ -248,6 +278,9 @@ class MeshChatService(ReactionServiceMixin, GroupServiceMixin, WorkspaceServiceM
         "workspace_snapshot",
         "search",
         "connection_help",
+        "preview_invitation",
+        "preview_remote_profile",
+        "list_remote_profiles",
         "preview_workspace_invitation",
         "preview_workspace_device_link",
         "list_workspace_messages",
@@ -291,6 +324,7 @@ class MeshChatService(ReactionServiceMixin, GroupServiceMixin, WorkspaceServiceM
             self._identity = RNS.Identity.from_bytes(_unb64(identity_record["private_key"]))
             if self._identity is None:
                 raise ValidationError("Stored private identity is invalid")
+            self._restore_participant_interfaces()
             self._prepare_lan_fallback()
             self._start_network(profile_record["display_name"])
             with self._dispatch_lock:
@@ -319,6 +353,7 @@ class MeshChatService(ReactionServiceMixin, GroupServiceMixin, WorkspaceServiceM
                 self._remember_group_members(group)
             for workspace in self.store.list("workspace"):
                 self._remember_workspace_devices(workspace)
+            self.reconcile_remote_profiles(force_dns=True)
             # Interface availability can change after startup (for example when
             # a Wi-Fi interface appears or an approved TCP hint is attached),
             # so snapshot() derives that health live instead of latching it.
@@ -378,7 +413,11 @@ class MeshChatService(ReactionServiceMixin, GroupServiceMixin, WorkspaceServiceM
         self._changed()
         return profile.to_dict()
 
-    def invitation(self) -> InvitationFormats:
+    def invitation(
+        self,
+        profile_id: str | None = None,
+        connection_mode: str | None = None,
+    ) -> InvitationFormats:
         profile = self._require_profile()
         if self._identity is None:
             raise ValidationError("Local identity is unavailable")
@@ -394,22 +433,87 @@ class MeshChatService(ReactionServiceMixin, GroupServiceMixin, WorkspaceServiceM
                 "::1",
             }:
                 hints.append({"type": "tcp", **listener})
-        return create_invitation(self._identity, profile["display_name"], hints=hints)
+        local = create_invitation(self._identity, profile["display_name"], hints=hints)
+        if connection_mode == "participant":
+            scope_id = str(uuid.uuid4())
+            access = self.create_participant_host_access(
+                purpose="personal",
+                scope_id=scope_id,
+                maximum_expires_at=local["expires_at"],
+            )
+            serialized = create_participant_personal_invitation(
+                self._identity, local["file"], access
+            )
+            formats = participant_invitation_formats(serialized, "personal")
+            return {
+                **formats,
+                "expires_at": min(local["expires_at"], access["expires_at"]),
+                "connection_mode": "participant",
+                "host_session_id": access["id"],
+            }
+        if connection_mode not in {None, "nearby", "remote"}:
+            raise ValidationError("Invitation connection mode is invalid")
+        if profile_id is None:
+            return local
+        remote = self._require_remote_profile(profile_id)
+        if remote.get("state") == "expired":
+            raise ValidationError("Remote profile has expired")
+        serialized = create_remote_personal_invitation(
+            self._identity, local["file"], remote["profile"]
+        )
+        formats = remote_invitation_formats(serialized, "personal")
+        return {
+            **formats,
+            "expires_at": min(local["expires_at"], remote["profile"]["expires_at"]),
+            "remote_profile_id": profile_id,
+            "access_point_reachable": int(remote.get("connected_endpoints", 0)) > 0,
+        }
 
     def preview_invitation(self, raw: str) -> dict[str, Any]:
         try:
-            return verify_invitation(raw).preview()
+            participant = verify_participant_invitation(raw, "personal")
+            remote = None if participant else verify_remote_invitation(raw, "personal")
+            invitation = verify_invitation(
+                participant.inner if participant else remote.inner if remote else raw
+            )
+            preview = invitation.preview()
+            if participant is not None:
+                preview["participant_access"] = preview_participant_access(
+                    participant.access
+                )
+            elif remote is not None:
+                preview["remote_profile"] = self.preview_remote_profile(remote.profile)
+                preview["requires_network_consent"] = True
+            return preview
         except ValidationError as exc:
             raise InvitationInvalid("Invitation could not be validated") from exc
 
     def accept_invitation(self, raw: str) -> dict[str, Any]:
         try:
-            invitation = verify_invitation(raw)
+            participant = verify_participant_invitation(raw, "personal")
+            remote = None if participant else verify_remote_invitation(raw, "personal")
+            invitation = verify_invitation(
+                participant.inner if participant else remote.inner if remote else raw
+            )
         except ValidationError as exc:
             raise InvitationInvalid("Invitation could not be validated") from exc
         profile = self._require_profile()
         if invitation.destination_hash.hex() == profile["destination_hash"]:
             raise ValidationError("Cannot connect to the local identity")
+        contact_id = _contact_id(invitation.destination_hash)
+        if participant is not None:
+            self.approve_participant_access(
+                participant.access,
+                scope_kind="contact",
+                scope_id=contact_id,
+            )
+        elif remote is not None:
+            self._approve_remote_document(
+                remote.profile,
+                origin="personal_invitation",
+                scope_kind="contact",
+                scope_id=contact_id,
+            )
         existing = self._contact_by_destination(invitation.destination_hash.hex())
         if existing:
             if existing["public_identity"] != _b64(invitation.public_identity):
@@ -667,6 +771,7 @@ class MeshChatService(ReactionServiceMixin, GroupServiceMixin, WorkspaceServiceM
         )
         deletions.extend(self._reaction_deletions("direct", contact_id))
         self.store.put_and_delete(writes, deletions, redact_command_cache=True)
+        self.release_remote_scope("contact", contact_id)
 
         if settings_changed:
             self.settings.tcp_clients = desired_clients
@@ -1533,6 +1638,14 @@ class MeshChatService(ReactionServiceMixin, GroupServiceMixin, WorkspaceServiceM
                     self._retry_workspace_outbox()
                 except Exception:
                     pass
+                try:
+                    self.reconcile_remote_profiles()
+                except Exception:
+                    pass
+                try:
+                    self.reconcile_participant_access()
+                except Exception:
+                    pass
 
     def _flush_contact(self, contact_id: str) -> None:
         attempted = 0
@@ -1565,6 +1678,13 @@ class MeshChatService(ReactionServiceMixin, GroupServiceMixin, WorkspaceServiceM
             if current is None or float(message["created_at"]) > float(current["created_at"]):
                 latest_requests[message["contact_id"]] = message
         for contact in contacts:
+            if self.network is not None:
+                try:
+                    contact["route_kind"] = self.network.route_kind(
+                        bytes.fromhex(contact["destination_hash"])
+                    )
+                except Exception:
+                    contact["route_kind"] = "unavailable"
             if contact["trust"] != TrustState.AWAITING_CONSENT.value:
                 continue
             request = latest_requests.get(contact["id"])
@@ -1588,7 +1708,11 @@ class MeshChatService(ReactionServiceMixin, GroupServiceMixin, WorkspaceServiceM
                 }
                 for marker in self.store.list("conversation_hidden")
             ],
-            "settings": self.settings.to_dict(),
+            "settings": self._public_network_settings(),
+            "remote_profiles": [
+                sanitized_profile(record) for record in self._remote_profiles()
+            ],
+            "participant_hosting": self.participant_hosting_snapshot(),
             "network": self.network.snapshot() if self.network else None,
             "service_error": (
                 self._network_error
@@ -1637,11 +1761,43 @@ class MeshChatService(ReactionServiceMixin, GroupServiceMixin, WorkspaceServiceM
 
     def update_settings(self, value: dict[str, Any]) -> dict[str, Any]:
         settings = NetworkSettings.from_dict(value)
+        # The renderer controls user-facing role toggles only. Native listener
+        # addresses, direct peers, remote profiles and propagation allowlists
+        # remain service-owned and cannot be injected through update_settings.
+        settings.lan_listener_port = self.settings.lan_listener_port
+        settings.tcp_clients = [dict(item) for item in self.settings.tcp_clients]
+        settings.tcp_listener = (
+            dict(self.settings.tcp_listener) if self.settings.tcp_listener else None
+        )
+        settings.approved_propagation_nodes = list(
+            self.settings.approved_propagation_nodes
+        )
+        settings.remote_tcp_clients = [
+            dict(item) for item in self.settings.remote_tcp_clients
+        ]
+        settings.participant_listeners = [
+            dict(item) for item in self.settings.participant_listeners
+        ]
+        settings.participant_clients = [
+            dict(item) for item in self.settings.participant_clients
+        ]
         self.settings = settings
         self._prepare_lan_fallback()
         self.store.put("settings", "network", self.settings.to_dict())
         self._changed()
         return {"settings": self.settings.to_dict(), "restart_required": True}
+
+    def _public_network_settings(self) -> dict[str, Any]:
+        value = self.settings.to_dict()
+        value.update(
+            {
+                "lan_listener_port": None,
+                "tcp_clients": [],
+                "tcp_listener": None,
+                "approved_propagation_nodes": [],
+            }
+        )
+        return value
 
     def dispatch(self, request: dict[str, Any]) -> tuple[dict[str, Any], bool]:
         with self._dispatch_lock:
@@ -1678,8 +1834,12 @@ class MeshChatService(ReactionServiceMixin, GroupServiceMixin, WorkspaceServiceM
             body = _payload(value, allowed={"display_name"}, required={"display_name"})
             return self.create_profile(body["display_name"])
         if command == "create_invitation":
-            _payload(value, allowed=set())
-            return self.invitation()
+            body = _payload(
+                value, allowed={"remote_profile_id", "connection_mode"}
+            )
+            return self.invitation(
+                body.get("remote_profile_id"), body.get("connection_mode")
+            )
         if command in {"preview_invitation", "accept_invitation"}:
             body = _payload(value, allowed={"invitation"}, required={"invitation"})
             if not isinstance(body["invitation"], str):
@@ -1689,6 +1849,54 @@ class MeshChatService(ReactionServiceMixin, GroupServiceMixin, WorkspaceServiceM
                 if command == "preview_invitation"
                 else self.accept_invitation(body["invitation"])
             )
+        if command == "preview_remote_profile":
+            body = _payload(
+                value,
+                allowed={"profile", "allow_private"},
+                required={"profile"},
+            )
+            return self.preview_remote_profile(
+                body["profile"], body.get("allow_private", False)
+            )
+        if command == "create_manual_remote_profile":
+            body = _payload(
+                value,
+                allowed={"label", "endpoints", "propagation_node", "allow_private"},
+                required={"label", "endpoints"},
+            )
+            return self.create_manual_remote_profile(
+                body["label"], body["endpoints"], body.get("propagation_node"),
+                body.get("allow_private", False),
+            )
+        if command == "approve_remote_profile":
+            body = _payload(
+                value,
+                allowed={"profile", "origin", "scope_kind", "scope_id", "allow_private"},
+                required={"profile", "origin", "scope_kind", "scope_id"},
+            )
+            return self.approve_remote_profile(
+                body["profile"], origin=body["origin"],
+                scope_kind=body["scope_kind"], scope_id=body["scope_id"],
+                allow_private=body.get("allow_private", False),
+            )
+        if command == "list_remote_profiles":
+            _payload(value, allowed=set())
+            return self.list_remote_profiles()
+        if command in {"test_remote_profile", "retry_remote_profile", "remove_remote_profile", "approve_remote_propagation", "remove_remote_propagation"}:
+            body = _payload(value, allowed={"profile_id"}, required={"profile_id"})
+            method = {
+                "test_remote_profile": self.test_remote_profile,
+                "retry_remote_profile": self.retry_remote_profile,
+                "remove_remote_profile": self.remove_remote_profile,
+                "approve_remote_propagation": self.approve_remote_propagation,
+                "remove_remote_propagation": self.remove_remote_propagation,
+            }[command]
+            return method(body["profile_id"])
+        if command == "stop_participant_host":
+            body = _payload(value, allowed={"access_id"}, required={"access_id"})
+            outcome = self.stop_participant_host(body["access_id"])
+            self._changed()
+            return outcome
         if command in {
             "approve_request",
             "decline_request",
@@ -1817,13 +2025,19 @@ class MeshChatService(ReactionServiceMixin, GroupServiceMixin, WorkspaceServiceM
         if command == "create_workspace_invitation":
             body = _payload(
                 value,
-                allowed={"operation_id", "workspace_id", "lifetime_days"},
+                allowed={
+                    "operation_id", "workspace_id", "lifetime_days",
+                    "remote_profile_id",
+                    "connection_mode",
+                },
                 required={"operation_id", "workspace_id"},
             )
             return self.create_workspace_invitation_command(
                 body["workspace_id"],
                 body["operation_id"],
                 body.get("lifetime_days", 7),
+                body.get("remote_profile_id"),
+                body.get("connection_mode"),
             )
         if command == "preview_workspace_invitation":
             body = _payload(
@@ -2933,6 +3147,10 @@ class MeshChatService(ReactionServiceMixin, GroupServiceMixin, WorkspaceServiceM
                 return
             self._close_started = True
         self._shutdown.set()
+        try:
+            self.close_participant_hosts()
+        except Exception:
+            pass
         # Stop application retries first so they cannot enter LXMF while its
         # router is unwinding. Both waits are bounded for desktop's two-second
         # sidecar shutdown deadline.

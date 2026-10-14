@@ -42,12 +42,23 @@ def _peer(
     # Keep that production behavior, but substitute loopback inside this
     # isolated topology so the test never depends on the host's Wi-Fi state.
     from mesh_chat import network as network_module
+    from mesh_chat import remote_service as remote_service_module
 
     network_module.lan_ipv4_addresses = lambda _rns=network_module.RNS, limit=3: [
         "127.0.0.1"
     ][:limit]
     network_module._source_is_on_lan = (
         lambda source, _rns=network_module.RNS: source in {"127.0.0.1", "::1"}
+    )
+    # The separate remote-access topology harness uses a documentation-only
+    # hostname while its isolated transport node listens on loopback. Security
+    # validation and DNS-rebinding behavior remain covered without monkeypatches
+    # in test_remote_profiles.py; only this process-local resolver is replaced.
+    original_resolver = remote_service_module.resolve_public_endpoint
+    remote_service_module.resolve_public_endpoint = (
+        lambda endpoint, *, allow_private=False: ["127.0.0.1"]
+        if endpoint.get("host") == "remote.test"
+        else original_resolver(endpoint, allow_private=allow_private)
     )
     inbound_diagnostics: list[dict[str, Any]] = []
     original_network_inbound = network_module.ReticulumNetwork._on_inbound
@@ -119,7 +130,7 @@ def _peer(
             action = command.get("action")
             try:
                 if action == "create_invitation":
-                    formats = service.invitation()
+                    formats = service.invitation(command.get("profile_id"))
                     respond(action, formats=formats)
                 elif action == "accept_invitation":
                     contact = service.accept_invitation(command["invitation"])

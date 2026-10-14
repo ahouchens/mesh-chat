@@ -1,0 +1,18 @@
+[propagation]
+  enable_node = yes
+  node_name = Private MeshChat Propagation Node
+  announce_interval = 360
+  announce_at_start = yes
+  autopeer = no
+  autopeer_maxdepth = 0
+  message_storage_limit = 512
+  propagation_message_max_accepted_size = 256
+  propagation_sync_max_accepted_size = 4096
+  max_peers = 4
+  max_inbound_syncs = 2
+  from_static_only = True
+
+[lxmf]
+  display_name = MeshChat Propagation Node
+  announce_at_start = no
+  delivery_transfer_max_accepted_size = 1

@@ -78,6 +78,8 @@ import type {
   InvitationPreview,
   MessageReaction,
   NetworkSettings,
+  ParticipantHosting,
+  RemoteProfile,
   NotificationCapability,
   NotificationOpenTarget,
   Snapshot,
@@ -159,6 +161,19 @@ function safeDate(timestamp: number): Date | null {
 
 function machineTime(timestamp: number): string | undefined {
   return safeDate(timestamp)?.toISOString();
+}
+
+function isWorkspaceInvitationValue(value: string): boolean {
+  const trimmed = value.trim();
+  return trimmed.startsWith("meshchat://workspace/")
+    || trimmed.startsWith("meshchat://workspace-device/")
+    || trimmed.startsWith("MESHWORKSPACE1:")
+    || trimmed.startsWith("MESHWORKSPACE2:")
+    || trimmed.startsWith("MESHWORKSPACE3:")
+    || trimmed.startsWith("MESHWORKSPACEDEVICE1:")
+    || trimmed.includes('"type":"workspace_invite"')
+    || trimmed.includes('"purpose":"workspace"')
+    || trimmed.includes('"type":"workspace_device_link_offer"');
 }
 
 function pluralize(count: number, singular: string, plural = `${singular}s`): string {
@@ -263,6 +278,9 @@ function groupDeliveryLabel(message: GroupMessage): string {
 
 function errorMessage(error: unknown): string {
   const raw = String(error);
+  if (raw.includes("direct_connection_unavailable")) {
+    return "This device could not open a direct Internet path through the current network. Check whether the router permits UPnP, NAT-PMP, PCP, or inbound IPv6; otherwise use nearby access or explicitly choose an approved access point.";
+  }
   if (raw.includes("profile_in_use")) {
     return "Your encrypted profile is still in use by another Mesh Chat process. Close any other Mesh Chat window, wait a moment, and reopen the app. Your existing encrypted data is unchanged.";
   }
@@ -291,7 +309,7 @@ function errorMessage(error: unknown): string {
     return "This invitation has expired. Ask the sender to create a new one.";
   }
   if (raw.includes("invitation_invalid")) {
-    return "This does not appear to be a complete Mesh Chat invitation. Copy it again, including the MESHCHAT1: prefix, or scan its QR code.";
+    return "This does not appear to be a complete Mesh Chat invitation. Copy the entire invitation again, including its MESHCHAT prefix, or scan its QR code.";
   }
   if (raw.includes("contact_not_approved")) {
     return "This contact is not approved for that action.";
@@ -328,6 +346,7 @@ function Button({
 
 function InvitationShare({ formats }: { formats: InvitationFormats }) {
   const [feedback, setFeedback] = useState("");
+  const [hostingStopped, setHostingStopped] = useState(false);
 
   const copyInvite = async () => {
     try {
@@ -359,10 +378,21 @@ function InvitationShare({ formats }: { formats: InvitationFormats }) {
     const blob = new Blob([formats.file], { type: "application/json" });
     const anchor = document.createElement("a");
     anchor.href = URL.createObjectURL(blob);
-    anchor.download = "mesh-chat-invite.meshchat";
+    anchor.download = "mesh-chat-invite.meshchat-invite";
     anchor.click();
     URL.revokeObjectURL(anchor.href);
     setFeedback("Invitation file saved.");
+  };
+
+  const stopHosting = async () => {
+    if (!formats.host_session_id) return;
+    try {
+      await serviceCommand("stop_participant_host", { access_id: formats.host_session_id });
+      setHostingStopped(true);
+      setFeedback("Direct hosting stopped. Create a new Internet invitation to reconnect.");
+    } catch (reason) {
+      setFeedback(errorMessage(reason));
+    }
   };
 
   return (
@@ -380,6 +410,7 @@ function InvitationShare({ formats }: { formats: InvitationFormats }) {
       <p id="invite-safety-note" className="muted invite-safety">
         Send everything in this box. It contains your public identity and connection hints, never your private key.
       </p>
+      {formats.connection_mode === "participant" && <p className={hostingStopped ? "direct-host-warning" : "direct-host-status"} role="status">{hostingStopped ? <WifiOff size={17} /> : <ShieldCheck size={17} />} {hostingStopped ? "Direct hosting is stopped; this invitation cannot connect over the Internet." : "Direct Internet path prepared. Keep Mesh Chat open until the recipient connects; their device will verify the path. No transport node is being used."}</p>}
       <p id="invite-expiry-note" className="invite-expiry">
         Expires <time dateTime={new Date(formats.expires_at * 1000).toISOString()}>{formatExpiry(formats.expires_at)}</time>
       </p>
@@ -387,6 +418,7 @@ function InvitationShare({ formats }: { formats: InvitationFormats }) {
         <Button onClick={() => void copyInvite()}><Copy size={17} /> Copy details</Button>
         <Button variant="secondary" onClick={() => void shareInvite()}><Share2 size={17} /> Share invite</Button>
         <Button variant="ghost" onClick={saveInvite}><FileUp size={17} /> Save invite file</Button>
+        {formats.host_session_id && !hostingStopped && <Button variant="ghost" onClick={() => void stopHosting()}><WifiOff size={17} /> Stop hosting</Button>}
       </div>
       <p className="invite-feedback" aria-live="polite">{feedback}</p>
       <div className="invite-qr">
@@ -486,6 +518,8 @@ function Onboarding({
   const [invitation, setInvitation] = useState(initialInvitation);
   const [preview, setPreview] = useState<InvitationPreview | null>(null);
   const [formats, setFormats] = useState<InvitationFormats | null>(null);
+  const [remoteConsent, setRemoteConsent] = useState(false);
+  const [reachabilityWarning, setReachabilityWarning] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
@@ -494,6 +528,7 @@ function Onboarding({
     setInvitation(initialInvitation);
     setMode("join");
     setPreview(null);
+    setRemoteConsent(false);
     void serviceCommand<InvitationPreview>("preview_invitation", {
       invitation: initialInvitation,
     }).then(setPreview).catch((reason) => setError(errorMessage(reason)));
@@ -508,8 +543,13 @@ function Onboarding({
         await serviceCommand("accept_invitation", { invitation });
         onReady(await serviceCommand<Snapshot>("snapshot"));
       } else {
-        const created = await serviceCommand<InvitationFormats>("create_invitation");
-        setFormats(created);
+        try {
+          setFormats(await serviceCommand<InvitationFormats>("create_invitation", { connection_mode: "participant" }));
+        } catch (reason) {
+          if (!String(reason).includes("direct_connection_unavailable")) throw reason;
+          setReachabilityWarning("Your current network did not allow a direct Internet invitation. This nearby invitation still works on the same local or participant-controlled network; you can configure another connection after opening Mesh Chat.");
+          setFormats(await serviceCommand<InvitationFormats>("create_invitation"));
+        }
       }
     } catch (reason) {
       setError(errorMessage(reason));
@@ -525,6 +565,7 @@ function Onboarding({
       setPreview(
         await serviceCommand<InvitationPreview>("preview_invitation", { invitation }),
       );
+      setRemoteConsent(false);
     } catch (reason) {
       setPreview(null);
       setError(errorMessage(reason));
@@ -542,6 +583,7 @@ function Onboarding({
           <p className="eyebrow">You’re ready</p>
           <h1>Invite someone you trust</h1>
           <p className="muted">They can open this on a device that already has Mesh Chat.</p>
+          {reachabilityWarning && <p className="direct-host-warning" role="status"><WifiOff size={17} /> {reachabilityWarning}</p>}
           <InvitationShare formats={formats} />
           <Button variant="ghost" onClick={async () => onReady(await serviceCommand("snapshot"))}>
             Open Mesh Chat <ChevronRight size={18} />
@@ -556,7 +598,7 @@ function Onboarding({
       <div className="onboarding__brand"><Brand /></div>
       <section className="welcome-card">
         {mode !== "home" && (
-          <button className="back-link" onClick={() => { setMode("home"); setPreview(null); setError(""); }}>
+          <button className="back-link" onClick={() => { setMode("home"); setPreview(null); setRemoteConsent(false); setError(""); }}>
             <ArrowLeft size={18} /> Back
           </button>
         )}
@@ -618,8 +660,10 @@ function Onboarding({
               <input autoFocus value={name} onChange={(event) => setName(event.target.value)} maxLength={64} />
             </label>
             <SecurityDetails fingerprint={preview.fingerprint} destination={preview.destination_hash} />
+            {preview.participant_access && <section className="direct-consent" aria-labelledby="onboarding-direct-connection"><h3 id="onboarding-direct-connection">Direct connection to the inviter</h3><p>{preview.participant_access.privacy_disclosure}</p><p>They must keep Mesh Chat open until this device connects.</p></section>}
+            {preview.remote_profile && <section className="remote-consent" aria-labelledby="onboarding-remote-consent"><h3 id="onboarding-remote-consent">Remote connection requested</h3><p><strong>{preview.remote_profile.label}</strong> · {preview.remote_profile.endpoint_count} access-point {preview.remote_profile.endpoint_count === 1 ? "endpoint" : "endpoints"}</p><p>{preview.remote_profile.privacy_disclosure}</p><label className="checkbox-line"><input type="checkbox" checked={remoteConsent} onChange={(event) => setRemoteConsent(event.target.checked)} /> Connect to this access point after I create my profile</label></section>}
             {error && <p className="form-error" role="alert">{error}</p>}
-            <Button type="submit" disabled={!name.trim() || busy}>{busy ? "Connecting…" : `Connect to ${preview.display_name}`}</Button>
+            <Button type="submit" disabled={!name.trim() || busy || Boolean(preview.remote_profile) && !remoteConsent}>{busy ? "Connecting…" : preview.remote_profile ? "Create profile and connect" : preview.participant_access ? `Connect directly to ${preview.display_name}` : `Connect to ${preview.display_name}`}</Button>
           </form>
         )}
       </section>
@@ -701,7 +745,7 @@ function ImportButtons({ onValue, showTextFile = true }: { onValue: (value: stri
   }, [scanning, onValue]);
   return (
     <div className="import-row">
-      {showTextFile && <label className="file-action"><FileUp size={17} /> Open invite file<input type="file" accept=".meshchat,.json,text/plain,application/json" onChange={(event) => event.target.files?.[0] && readFile(event.target.files[0])} /></label>}
+      {showTextFile && <label className="file-action"><FileUp size={17} /> Open invite file<input type="file" accept=".meshchat-invite,.meshchat,.json,text/plain,application/json" onChange={(event) => event.target.files?.[0] && readFile(event.target.files[0])} /></label>}
       <label className="file-action"><QrCode size={17} /> Read QR image<input type="file" accept="image/*" onChange={(event) => event.target.files?.[0] && void scanImage(event.target.files[0])} /></label>
       <button className="file-action file-action--button" type="button" onClick={() => void scanCamera()}><QrCode size={17} /> {scanning ? "Stop camera" : "Scan with camera"}</button>
       {scanning && <div className="camera-box"><video ref={videoRef} muted playsInline aria-label="Camera preview for QR scanning" /><span>Point the camera at a Mesh Chat QR code.</span></div>}
@@ -740,7 +784,7 @@ function SecurityDetails({ fingerprint, destination, open, onOpenChange }: { fin
   );
 }
 
-function NewChatDialog({ initialInvitation, onClose, onChanged }: { initialInvitation: string; onClose: () => void; onChanged: () => Promise<void> }) {
+function NewChatDialog({ initialInvitation, remoteProfiles, onClose, onChanged }: { initialInvitation: string; remoteProfiles: RemoteProfile[]; onClose: () => void; onChanged: () => Promise<void> }) {
   const [tab, setTab] = useState<"invite" | "join">(initialInvitation ? "join" : "invite");
   const [formats, setFormats] = useState<InvitationFormats | null>(null);
   const [raw, setRaw] = useState(initialInvitation);
@@ -748,31 +792,66 @@ function NewChatDialog({ initialInvitation, onClose, onChanged }: { initialInvit
   const [error, setError] = useState("");
   const [inviteError, setInviteError] = useState("");
   const [creatingInvitation, setCreatingInvitation] = useState(false);
+  const [connectionChoice, setConnectionChoice] = useState("participant");
+  const [directUnavailable, setDirectUnavailable] = useState(false);
+  const [remoteConsent, setRemoteConsent] = useState(false);
+  const invitationGeneration = useRef(0);
+  const generatedHostSession = useRef<string | null>(null);
+  const usableProfiles = remoteProfiles.filter((profile) => profile.state !== "expired");
   const createInvitation = useCallback(async () => {
+    const generation = ++invitationGeneration.current;
     setCreatingInvitation(true);
     setInviteError("");
+    setDirectUnavailable(false);
     try {
-      setFormats(await serviceCommand<InvitationFormats>("create_invitation"));
+      const payload = connectionChoice === "participant"
+        ? { connection_mode: "participant" }
+        : connectionChoice === "nearby"
+          ? undefined
+          : { connection_mode: "remote", remote_profile_id: connectionChoice.slice("remote:".length) };
+      const created = await (payload
+        ? serviceCommand<InvitationFormats>("create_invitation", payload)
+        : serviceCommand<InvitationFormats>("create_invitation"));
+      if (generation !== invitationGeneration.current) {
+        if (created.host_session_id) void serviceCommand("stop_participant_host", { access_id: created.host_session_id }).catch(() => undefined);
+        return;
+      }
+      const previousHost = generatedHostSession.current;
+      if (previousHost && previousHost !== created.host_session_id) {
+        void serviceCommand("stop_participant_host", { access_id: previousHost }).catch(() => undefined);
+      }
+      generatedHostSession.current = created.host_session_id ?? null;
+      setFormats(created);
     } catch (reason) {
+      if (generation !== invitationGeneration.current) return;
       setFormats(null);
       setInviteError(errorMessage(reason));
+      setDirectUnavailable(connectionChoice === "participant" && String(reason).includes("direct_connection_unavailable"));
     } finally {
+      if (generation === invitationGeneration.current) setCreatingInvitation(false);
+    }
+  }, [connectionChoice]);
+  useEffect(() => {
+    if (tab === "invite") {
+      void createInvitation();
+    } else {
+      invitationGeneration.current += 1;
       setCreatingInvitation(false);
     }
-  }, []);
-  useEffect(() => { void createInvitation(); }, [createInvitation]);
+  }, [createInvitation, tab]);
   useEffect(() => {
     if (!initialInvitation) return;
     setRaw(initialInvitation);
     setTab("join");
     setPreview(null);
+    setRemoteConsent(false);
     void serviceCommand<InvitationPreview>("preview_invitation", {
       invitation: initialInvitation,
     }).then(setPreview).catch((reason) => setError(errorMessage(reason)));
   }, [initialInvitation]);
   const check = async () => {
     setError("");
-    try { setPreview(await serviceCommand("preview_invitation", { invitation: raw })); }
+    try { setPreview(await serviceCommand("preview_invitation", { invitation: raw })); setRemoteConsent(false); }
     catch (reason) { setError(errorMessage(reason)); }
   };
   const connect = async () => {
@@ -788,11 +867,15 @@ function NewChatDialog({ initialInvitation, onClose, onChanged }: { initialInvit
         <button role="tab" aria-selected={tab === "invite"} onClick={() => setTab("invite")}>Share an invite</button>
         <button role="tab" aria-selected={tab === "join"} onClick={() => setTab("join")}>Open an invite</button>
       </div>
+      {tab === "invite" && <label className="field"><span>How should they connect?</span><select value={connectionChoice} onChange={(event) => setConnectionChoice(event.target.value)}><option value="participant">Over the Internet — directly to this device (default)</option><option value="nearby">Nearby or same private network</option>{usableProfiles.map((profile) => <option key={profile.id} value={`remote:${profile.id}`}>Approved access point · {profile.label} · {profile.state === "connected" ? "connected" : "currently unavailable"}</option>)}</select></label>}
+      {tab === "invite" && connectionChoice === "participant" && <p className="muted">Mesh Chat asks this device and your router for a temporary inbound path. Keep the app open until the recipient connects. No transport node, account, rendezvous server, or third-party participant is added.</p>}
+      {tab === "invite" && connectionChoice === "nearby" && <p className="muted">Use this when both devices are on the same Wi-Fi, LAN, VPN, or another participant-controlled network.</p>}
+      {tab === "invite" && connectionChoice.startsWith("remote:") && <p className="muted">This explicit fallback asks the recipient to connect outbound to the selected approved access point. Its operator can observe connection metadata, but not message content.</p>}
       {tab === "invite" && formats && <InvitationShare formats={formats} />}
       {tab === "invite" && !formats && !inviteError && <p className="muted">Creating a secure invitation…</p>}
-      {tab === "invite" && !formats && inviteError && <div className="stack"><p className="form-error" role="alert">{inviteError}</p><Button onClick={() => void createInvitation()} disabled={creatingInvitation}>{creatingInvitation ? "Retrying…" : "Retry invitation"}</Button></div>}
+      {tab === "invite" && !formats && inviteError && <div className="stack"><p className="form-error" role="alert">{inviteError}</p>{directUnavailable && <div className="direct-fallback-actions"><Button variant="secondary" onClick={() => setConnectionChoice("nearby")}>Use nearby only</Button>{usableProfiles.length > 0 && <Button variant="ghost" onClick={() => setConnectionChoice(`remote:${usableProfiles[0].id}`)}>Use approved access point</Button>}</div>}<Button onClick={() => void createInvitation()} disabled={creatingInvitation}>{creatingInvitation ? "Retrying…" : "Retry invitation"}</Button></div>}
       {tab === "join" && !preview && <div className="stack"><label className="field"><span>Invitation</span><textarea autoCapitalize="off" autoCorrect="off" spellCheck={false} rows={5} value={raw} onChange={(event) => setRaw(event.target.value)} /></label><ImportButtons onValue={setRaw} /><Button onClick={() => void check()} disabled={!raw.trim()}>Check invitation</Button></div>}
-      {tab === "join" && preview && <div className="stack"><div className="person-preview"><Avatar name={preview.display_name} /><div><h3>{preview.display_name}</h3><p>Identity signature valid</p></div></div><SecurityDetails fingerprint={preview.fingerprint} destination={preview.destination_hash} /><Button onClick={() => void connect()}>Connect to {preview.display_name}</Button></div>}
+      {tab === "join" && preview && <div className="stack"><div className="person-preview"><Avatar name={preview.display_name} /><div><h3>{preview.display_name}</h3><p>Identity signature valid</p></div></div><SecurityDetails fingerprint={preview.fingerprint} destination={preview.destination_hash} />{preview.participant_access && <section className="direct-consent" aria-labelledby="personal-direct-connection"><h3 id="personal-direct-connection">Direct connection to {preview.display_name}</h3><p>{preview.participant_access.privacy_disclosure}</p><p>No separate operator will join this chat or workspace.</p></section>}{preview.remote_profile && <section className="remote-consent" aria-labelledby="personal-remote-consent"><h3 id="personal-remote-consent">Remote connection requested</h3><p><strong>{preview.remote_profile.label}</strong> · {preview.remote_profile.endpoint_count} access-point {preview.remote_profile.endpoint_count === 1 ? "endpoint" : "endpoints"}</p><p>{preview.remote_profile.privacy_disclosure}</p><label className="checkbox-line"><input type="checkbox" checked={remoteConsent} onChange={(event) => setRemoteConsent(event.target.checked)} /> Connect to this access point after I continue</label></section>}<Button disabled={Boolean(preview.remote_profile) && !remoteConsent} onClick={() => void connect()}>{preview.remote_profile ? "Connect and send contact request" : preview.participant_access ? `Connect directly to ${preview.display_name}` : `Connect to ${preview.display_name}`}</Button></div>}
       {error && <p className="form-error" role="alert">{error}</p>}
     </Dialog>
   );
@@ -1109,6 +1192,82 @@ function ContactsDialog({
   );
 }
 
+function remoteStateLabel(profile: RemoteProfile): string {
+  if (profile.state === "connected") return `Connected · ${profile.connected_endpoint_count}/${profile.endpoint_count} endpoints`;
+  if (profile.state === "connecting") return "Connecting to remote access point";
+  if (profile.state === "expired") return "Profile expired";
+  if (profile.state === "access_point_unavailable") return "Access point unavailable";
+  return "Approved · waiting to connect";
+}
+
+function participantMethodLabel(method: ParticipantHosting["methods"][number]): string {
+  if (method === "public_ipv6") return "public IPv6";
+  if (method === "upnp") return "UPnP router mapping";
+  if (method === "nat_pmp") return "NAT-PMP router mapping";
+  if (method === "pcp") return "PCP router mapping";
+  return "participant-supplied address";
+}
+
+function ParticipantHostingSettings({ initial, workspaces, onChanged }: { initial: ParticipantHosting[]; workspaces: Workspace[]; onChanged: () => Promise<void> }) {
+  const [hosts, setHosts] = useState(initial);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [error, setError] = useState("");
+  const stop = async (host: ParticipantHosting) => {
+    setBusy(host.id); setError("");
+    try {
+      await serviceCommand("stop_participant_host", { access_id: host.id });
+      setHosts((current) => current.filter((item) => item.id !== host.id));
+      await onChanged();
+    } catch (reason) { setError(errorMessage(reason)); }
+    finally { setBusy(null); }
+  };
+  const label = (host: ParticipantHosting) => {
+    if (host.purpose === "personal") return "Personal invitation";
+    const workspace = workspaces.find((item) => item.id === host.scope_id);
+    return workspace ? `Workspace invitation · ${workspace.name}` : "Workspace invitation";
+  };
+  return <section className="settings-section participant-hosting" aria-labelledby="participant-hosting-title"><div className="settings-section__heading"><h3 id="participant-hosting-title">Invitations hosted by this device</h3><p>Temporary direct Internet paths created for invitations. The invitee connects to this device; no community or third-party transport node is added.</p></div>{hosts.map((host) => <article className="remote-profile-row" key={host.id}><span><strong>{label(host)}</strong><small role="status">{host.state === "ready" ? `Available until ${formatExpiry(host.expires_at)}` : "Expired"}</small><small>{host.endpoint_count} public {host.endpoint_count === 1 ? "path" : "paths"} · {host.methods.map(participantMethodLabel).join(", ")}</small></span><div><Button variant="danger" disabled={busy === host.id} onClick={() => void stop(host)}>{busy === host.id ? "Stopping…" : "Stop hosting"}</Button></div></article>)}{hosts.length === 0 && <p className="muted">No Internet invitation is currently being hosted. Creating one will temporarily open a participant-authenticated path while Mesh Chat remains open.</p>}<p className="muted">Stopping or closing Mesh Chat removes its temporary router mapping. Existing approved contacts and workspace membership are not deleted.</p>{error && <p className="form-error" role="alert">{error}</p>}</section>;
+}
+
+function RemoteConnectionsSettings({ initial, onChanged }: { initial: RemoteProfile[]; onChanged: () => Promise<void> }) {
+  const [profiles, setProfiles] = useState(initial);
+  const [adding, setAdding] = useState(false);
+  const [label, setLabel] = useState("");
+  const [host, setHost] = useState("");
+  const [port, setPort] = useState("4242");
+  const [propagation, setPropagation] = useState("");
+  const [allowPrivate, setAllowPrivate] = useState(false);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [error, setError] = useState("");
+  const reload = async () => {
+    const result = await serviceCommand<{ profiles: RemoteProfile[] }>("list_remote_profiles");
+    setProfiles(result.profiles);
+  };
+  const run = async (command: string, profileId: string) => {
+    setBusy(profileId); setError("");
+    try { await serviceCommand(command, { profile_id: profileId }); await reload(); await onChanged(); }
+    catch (reason) { setError(errorMessage(reason)); }
+    finally { setBusy(null); }
+  };
+  const add = async () => {
+    const numericPort = Number(port);
+    if (!label.trim() || !host.trim() || !Number.isInteger(numericPort)) return;
+    setBusy("new"); setError("");
+    try {
+      await serviceCommand("create_manual_remote_profile", {
+        label: label.trim(),
+        endpoints: [{ host: host.trim(), port: numericPort }],
+        propagation_node: propagation.trim() || null,
+        allow_private: allowPrivate,
+      });
+      setLabel(""); setHost(""); setPort("4242"); setPropagation(""); setAllowPrivate(false); setAdding(false);
+      await reload(); await onChanged();
+    } catch (reason) { setError(errorMessage(reason)); }
+    finally { setBusy(null); }
+  };
+  return <section className="settings-section remote-connections" aria-labelledby="remote-connections-title"><div className="settings-section__heading"><h3 id="remote-connections-title">Approved access points</h3><p>Internet invitations first try a temporary path hosted by the inviter. Add an operator-supplied Reticulum access point only as an explicit fallback when the inviter's device or router cannot accept an inbound connection.</p></div><p className="muted">Operators can observe IP addresses, timing, packet sizes, connection duration, and Reticulum routing identifiers. They cannot decrypt or forge valid MeshChat content.</p>{profiles.map((profile) => <article className="remote-profile-row" key={profile.id}><span><strong>{profile.label}</strong><small role="status">{remoteStateLabel(profile)}</small><small>{profile.ratchet_ready ? "Encrypted recipient ready" : profile.path_available ? "Known peer path; awaiting ratchet" : "Path discovery occurs when an invitation is used"} · {profile.offline_delivery_available ? "Offline delivery node connected" : profile.offline_delivery_approved ? "Offline delivery approved; node unavailable" : profile.offline_delivery_recommended ? "Offline delivery available after separate approval" : "Live delivery only"}</small></span><div><Button variant="secondary" disabled={busy === profile.id || profile.state === "expired"} onClick={() => void run("test_remote_profile", profile.id)}>Test</Button><Button variant="ghost" disabled={busy === profile.id || profile.state === "expired"} onClick={() => void run("retry_remote_profile", profile.id)}>Retry</Button>{profile.offline_delivery_recommended && <Button variant="ghost" disabled={busy === profile.id} onClick={() => void run(profile.offline_delivery_approved ? "remove_remote_propagation" : "approve_remote_propagation", profile.id)}>{profile.offline_delivery_approved ? "Remove offline delivery" : "Approve offline delivery"}</Button>}<Button variant="danger" disabled={busy === profile.id || profile.offline_delivery_approved} title={profile.offline_delivery_approved ? "Remove offline delivery approval first" : undefined} onClick={() => void run("remove_remote_profile", profile.id)}>Remove</Button></div>{profile.offline_delivery_recommended && !profile.offline_delivery_approved && <p>Optional node {profile.propagation_identifier} stores recipient-encrypted objects and routing metadata. Storage is not endpoint or human receipt. Android may not retrieve messages until Mesh Chat runs again.</p>}</article>)}{profiles.length === 0 && <p className="muted">No access point is configured. Internet invitations still try a direct path to the online inviter.</p>}{adding ? <div className="remote-profile-form"><label>Profile name<input value={label} maxLength={64} onChange={(event) => setLabel(event.target.value)} /></label><label>TCP hostname or address<input value={host} autoCapitalize="off" autoCorrect="off" spellCheck={false} onChange={(event) => setHost(event.target.value)} /></label><label>TCP port<input value={port} inputMode="numeric" onChange={(event) => setPort(event.target.value)} /></label><label>Recommended LXMF propagation destination <small>Optional, 32 hexadecimal characters</small><input value={propagation} maxLength={32} autoCapitalize="off" autoCorrect="off" spellCheck={false} onChange={(event) => setPropagation(event.target.value)} /></label><label className="checkbox-line"><input type="checkbox" checked={allowPrivate} onChange={(event) => setAllowPrivate(event.target.checked)} /> Advanced: allow a private-network endpoint. This can expose local services and must only be used with an operator you trust.</label><div className="dialog-actions"><Button variant="ghost" onClick={() => setAdding(false)}>Cancel</Button><Button disabled={busy === "new" || !label.trim() || !host.trim()} onClick={() => void add()}>{busy === "new" ? "Connecting…" : "Approve and connect"}</Button></div></div> : <Button variant="secondary" disabled={profiles.length >= 4} onClick={() => setAdding(true)}>Add remote connection</Button>}{error && <p className="form-error" role="alert">{error}</p>}</section>;
+}
+
 function SettingsDialog({ snapshot, theme, onThemeChange, onClose, onSaved }: { snapshot: Snapshot; theme: Theme; onThemeChange: (theme: Theme) => void; onClose: () => void; onSaved: () => Promise<void> }) {
   const [settings, setSettings] = useState<NetworkSettings>(snapshot.settings);
   const [saved, setSaved] = useState(false);
@@ -1196,6 +1355,8 @@ function SettingsDialog({ snapshot, theme, onThemeChange, onClose, onSaved }: { 
         </div>
         <details className="advanced-settings"><summary>Advanced connection roles</summary><p>These options make this device part of the wider Reticulum mesh and may use additional power, storage, and bandwidth.</p><div className="settings-list settings-list--advanced"><Toggle title="Help route messages" description="Allow this device to forward encrypted Reticulum traffic for others." checked={settings.help_route} onChange={() => toggle("help_route")} /><Toggle title="Store encrypted messages" description="Act as an LXMF propagation node with a 100 MiB cache. This is separate from routing." checked={settings.store_for_offline} onChange={() => toggle("store_for_offline")} /></div></details>
       </section>
+      <ParticipantHostingSettings initial={snapshot.participant_hosting ?? []} workspaces={snapshot.workspaces ?? []} onChanged={onSaved} />
+      <RemoteConnectionsSettings initial={snapshot.remote_profiles ?? []} onChanged={onSaved} />
       <section className="notification-settings" aria-labelledby="notification-settings-title">
         <h3 id="notification-settings-title"><Bell size={18} /> Local notifications</h3>
         <p role="status" aria-live="polite"><strong>{!capability?.supported ? "Not supported on this platform" : capability.permission_state === "allowed" ? "Allowed" : capability.permission_state === "not_requested" ? "Permission not requested" : "Permission denied or settings required"}</strong></p>
@@ -1598,9 +1759,10 @@ function Conversation({ contact, messages, draft, sendError, sending, detailsOpe
     }
   }, [messages.length]);
   const approved = contact.trust === "approved" || contact.trust === "verified";
+  const routeLabel = contact.route_kind === "remote" ? "Reachable through remote transport" : contact.route_kind === "signed_direct" ? "Reachable through signed direct local route" : contact.route_kind === "nearby" ? "Reachable nearby" : "Secure route not currently known";
   return (
     <section className="conversation" aria-label={`Conversation with ${contact.display_name}`}>
-      <header className="conversation__header"><button className="icon-button mobile-only mobile-back" type="button" onClick={onBack} aria-label="Back to conversations"><ArrowLeft size={21} /></button><div className="conversation__person"><Avatar name={contact.display_name} small /><div><h2>{contact.display_name}</h2><span>{contact.trust === "verified" ? "Verified contact" : "Private conversation"}</span></div></div><div className="conversation__actions"><button className="icon-button conversation-delete" type="button" onClick={onDelete} disabled={sending} aria-label={`Delete conversation with ${contact.display_name}`} title="Delete conversation"><Trash2 size={18} /></button><SecurityDetails fingerprint={contact.fingerprint} destination={contact.destination_hash} open={detailsOpen} onOpenChange={onDetailsOpenChange} /></div></header>
+      <header className="conversation__header"><button className="icon-button mobile-only mobile-back" type="button" onClick={onBack} aria-label="Back to conversations"><ArrowLeft size={21} /></button><div className="conversation__person"><Avatar name={contact.display_name} small /><div><h2>{contact.display_name}</h2><span>{routeLabel}</span></div></div><div className="conversation__actions"><button className="icon-button conversation-delete" type="button" onClick={onDelete} disabled={sending} aria-label={`Delete conversation with ${contact.display_name}`} title="Delete conversation"><Trash2 size={18} /></button><SecurityDetails fingerprint={contact.fingerprint} destination={contact.destination_hash} open={detailsOpen} onOpenChange={onDetailsOpenChange} /></div></header>
       {!approved && <div className={`connection-banner connection-banner--${contact.trust}`} role="status"><span>{contactConnectionLabel(contact)}</span>{contact.trust === "awaiting_consent" && <Button variant="ghost" onClick={onHelp}><CircleHelp size={17} /> Connection help</Button>}</div>}
       <div className="message-list" aria-live="polite" ref={messageListRef}>
         <div className="day-divider"><span>Messages are end-to-end encrypted</span></div>
@@ -1901,6 +2063,7 @@ function JoinWorkspaceDialog({ initialValue = "", onClose, onJoined }: { initial
   const [devicePreview, setDevicePreview] = useState<WorkspaceDeviceLinkPreview | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [remoteConsent, setRemoteConsent] = useState(false);
   const review = async () => {
     if (!value.trim() || busy) return;
     setBusy(true); setError("");
@@ -1912,6 +2075,7 @@ function JoinWorkspaceDialog({ initialValue = "", onClose, onJoined }: { initial
         setPreview(null);
       } else {
         setPreview(await serviceCommand("preview_workspace_invitation", { invitation: trimmed }));
+        setRemoteConsent(false);
         setDevicePreview(null);
       }
     }
@@ -1930,20 +2094,27 @@ function JoinWorkspaceDialog({ initialValue = "", onClose, onJoined }: { initial
     finally { setBusy(false); }
   };
   const reviewed = preview !== null || devicePreview !== null;
-  return <Dialog title={devicePreview ? "Link this device" : "Join a workspace"} onClose={onClose}><div className="form-stack">{preview ? <><div className="workspace-preview"><span className="workspace-preview__avatar">{initials(preview.name)}</span><div><h3>{preview.name}</h3><p>{preview.description || "No description"}</p></div></div><dl className="security-list"><div><dt>Owner fingerprint</dt><dd>{preview.owner_fingerprint}</dd></div><div><dt>Current members</dt><dd>{preview.member_count}</dd></div><div><dt>History preference</dt><dd>{preview.retention_days === null ? "Indefinite" : `${preview.retention_days} days`}</dd></div></dl><p className="muted">Joining does not approve a global contact. The owner must verify this device and approve your request.</p></> : devicePreview ? <><div className="workspace-preview"><span className="workspace-preview__avatar">{initials(devicePreview.name)}</span><div><h3>{devicePreview.name}</h3><p>Link as {devicePreview.member_display_name}</p></div></div><dl className="security-list"><div><dt>Sponsor fingerprint</dt><dd>{devicePreview.sponsor_fingerprint}</dd></div><div><dt>Existing devices</dt><dd>{devicePreview.device_count}</dd></div><div><dt>Expires</dt><dd>{formatExpiry(devicePreview.expires_at)}</dd></div></dl><p className="muted">This device creates a fresh private identity. No key material is copied. The workspace owner must admit the new device before it can read or send workspace messages.</p></> : <><p>Paste a signed one-use invitation to join as a new person, or a device link created from one of your admitted devices.</p><textarea autoFocus value={value} onChange={(event) => { setValue(event.target.value); setError(""); }} aria-label="Workspace invitation or device link" rows={7} /><ImportButtons onValue={setValue} showTextFile={false} /></>}{error && <p className="form-error" role="alert">{error}</p>}<div className="dialog-actions"><Button variant="ghost" onClick={reviewed ? () => { setPreview(null); setDevicePreview(null); } : onClose}>{reviewed ? "Back" : "Cancel"}</Button><Button disabled={busy || (!reviewed && !value.trim())} onClick={() => void (reviewed ? join() : review())}>{busy ? "Checking…" : devicePreview ? "Request device approval" : preview ? "Send join request" : "Review"}</Button></div></div></Dialog>;
+  return <Dialog title={devicePreview ? "Link this device" : "Join a workspace"} onClose={onClose}><div className="form-stack">{preview ? <><div className="workspace-preview"><span className="workspace-preview__avatar">{initials(preview.name)}</span><div><h3>{preview.name}</h3><p>{preview.description || "No description"}</p></div></div><dl className="security-list"><div><dt>Owner fingerprint</dt><dd>{preview.owner_fingerprint}</dd></div><div><dt>Current members</dt><dd>{preview.member_count}</dd></div><div><dt>History preference</dt><dd>{preview.retention_days === null ? "Indefinite" : `${preview.retention_days} days`}</dd></div></dl><p className="muted">Joining does not approve a global contact. The owner must verify this device and approve your request.</p>{preview.participant_access && <section className="direct-consent" aria-labelledby="workspace-direct-connection"><h3 id="workspace-direct-connection">Direct connection to the workspace owner</h3><p>{preview.participant_access.privacy_disclosure}</p><p>The owner must keep Mesh Chat open until your request arrives.</p></section>}{preview.remote_profile && <section className="remote-consent" aria-labelledby="workspace-remote-consent"><h3 id="workspace-remote-consent">Remote connection requested</h3><p><strong>{preview.remote_profile.label}</strong> · {preview.remote_profile.endpoint_count} access-point {preview.remote_profile.endpoint_count === 1 ? "endpoint" : "endpoints"}</p><p>{preview.remote_profile.privacy_disclosure}</p><label className="checkbox-line"><input type="checkbox" checked={remoteConsent} onChange={(event) => setRemoteConsent(event.target.checked)} /> Connect outbound after I send the join request</label></section>}</> : devicePreview ? <><div className="workspace-preview"><span className="workspace-preview__avatar">{initials(devicePreview.name)}</span><div><h3>{devicePreview.name}</h3><p>Link as {devicePreview.member_display_name}</p></div></div><dl className="security-list"><div><dt>Sponsor fingerprint</dt><dd>{devicePreview.sponsor_fingerprint}</dd></div><div><dt>Existing devices</dt><dd>{devicePreview.device_count}</dd></div><div><dt>Expires</dt><dd>{formatExpiry(devicePreview.expires_at)}</dd></div></dl><p className="muted">This device creates a fresh private identity. No key material is copied. The workspace owner must admit the new device before it can read or send workspace messages.</p></> : <><p>Paste a signed one-use invitation to join as a new person, or a device link created from one of your admitted devices.</p><textarea autoFocus value={value} onChange={(event) => { setValue(event.target.value); setError(""); }} aria-label="Workspace invitation or device link" rows={7} /><ImportButtons onValue={setValue} /></>}{error && <p className="form-error" role="alert">{error}</p>}<div className="dialog-actions"><Button variant="ghost" onClick={reviewed ? () => { setPreview(null); setDevicePreview(null); setRemoteConsent(false); } : onClose}>{reviewed ? "Back" : "Cancel"}</Button><Button disabled={busy || (!reviewed && !value.trim()) || Boolean(preview?.remote_profile) && !remoteConsent} onClick={() => void (reviewed ? join() : review())}>{busy ? "Checking…" : devicePreview ? "Request device approval" : preview ? preview.remote_profile ? "Connect and send join request" : preview.participant_access ? "Connect directly and send join request" : "Send join request" : "Review"}</Button></div></div></Dialog>;
 }
 
-function WorkspaceInviteDialog({ workspace, existingInvitations, onClose }: { workspace: Workspace; existingInvitations: WorkspaceInvitation[]; onClose: () => void }) {
+function WorkspaceInviteDialog({ workspace, existingInvitations, remoteProfiles, onClose }: { workspace: Workspace; existingInvitations: WorkspaceInvitation[]; remoteProfiles: RemoteProfile[]; onClose: () => void }) {
   const [invitation, setInvitation] = useState<WorkspaceInvitationFormats | null>(null);
   const [existing, setExisting] = useState(existingInvitations);
   const [busy, setBusy] = useState(false);
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState("");
+  const [connectionChoice, setConnectionChoice] = useState("participant");
+  const [directUnavailable, setDirectUnavailable] = useState(false);
   const create = async () => {
     if (busy) return;
-    setBusy(true); setError("");
-    try { setInvitation(await serviceCommand("create_workspace_invitation", { operation_id: newOperationId(), workspace_id: workspace.id, lifetime_days: 7 })); }
-    catch (reason) { setError(errorMessage(reason)); }
+    setBusy(true); setError(""); setDirectUnavailable(false);
+    const connection = connectionChoice === "participant"
+      ? { connection_mode: "participant" }
+      : connectionChoice === "nearby"
+        ? {}
+        : { connection_mode: "remote", remote_profile_id: connectionChoice.slice("remote:".length) };
+    try { setInvitation(await serviceCommand("create_workspace_invitation", { operation_id: newOperationId(), workspace_id: workspace.id, lifetime_days: 7, ...connection })); }
+    catch (reason) { setError(errorMessage(reason)); setDirectUnavailable(connectionChoice === "participant" && String(reason).includes("direct_connection_unavailable")); }
     finally { setBusy(false); }
   };
   const revoke = async (invitationId: string) => {
@@ -1956,7 +2127,24 @@ function WorkspaceInviteDialog({ workspace, existingInvitations, onClose }: { wo
     } catch (reason) { setError(errorMessage(reason)); }
     finally { setBusy(false); }
   };
-  return <Dialog title={`Invite to ${workspace.name}`} onClose={onClose}><div className="form-stack">{invitation && <><p>This bearer invitation works once and expires {formatExpiry(invitation.expires_at)}. Copy it now; Mesh Chat will not place it in startup data later.</p>{invitation.link.length <= 4096 && <div className="qr-card"><QRCodeSVG value={invitation.link} size={188} level="M" /></div>}<textarea readOnly value={invitation.text} aria-label="Workspace invitation text" rows={5} /><div className="dialog-actions"><Button variant="danger" disabled={busy} onClick={() => void revoke(invitation.id)}>Revoke invitation</Button><Button variant="secondary" onClick={async () => { await navigator.clipboard.writeText(invitation.text); setCopied(true); }}>{copied ? <Check size={17} /> : <Copy size={17} />}{copied ? "Copied" : "Copy invitation"}</Button></div></>}{existing.length > 0 && <div className="workspace-invitation-list"><h3>Active invitations</h3>{existing.filter((item) => item.id !== invitation?.id).map((item) => <div className="workspace-invitation-row" key={item.id}><span>One-use invitation · expires {formatExpiry(item.expires_at)}</span><Button variant="ghost" disabled={busy} onClick={() => void revoke(item.id)}>Revoke</Button></div>)}</div>}<p>Create a separate signed invitation for each person. Each request is reviewed independently.</p><Button disabled={busy} onClick={() => void create()}>{busy ? "Creating…" : "Create another invitation"}</Button>{error && <p className="form-error" role="alert">{error}</p>}</div></Dialog>;
+  const usableProfiles = remoteProfiles.filter((profile) => profile.state !== "expired");
+  const share = async () => {
+    if (!invitation) return;
+    if (typeof navigator.share === "function") {
+      try { await navigator.share({ title: `Join ${workspace.name} in Mesh Chat`, text: invitation.text }); return; }
+      catch (reason) { if (reason instanceof DOMException && reason.name === "AbortError") return; }
+    }
+    await navigator.clipboard.writeText(invitation.text); setCopied(true);
+  };
+  const save = () => {
+    if (!invitation) return;
+    const blob = new Blob([invitation.value], { type: "application/json" });
+    const anchor = document.createElement("a");
+    anchor.href = URL.createObjectURL(blob);
+    anchor.download = "mesh-chat-workspace-invite.meshchat-invite";
+    anchor.click(); URL.revokeObjectURL(anchor.href);
+  };
+  return <Dialog title={`Invite to ${workspace.name}`} onClose={onClose}><div className="form-stack">{invitation && <><p>This bearer invitation works once and expires {formatExpiry(invitation.expires_at)}. Copy it now; Mesh Chat will not place it in startup data later.</p>{invitation.connection_mode === "participant" && <p className="direct-host-status" role="status"><ShieldCheck size={17} /> Direct Internet path prepared. Keep this owner device online; the joiner will verify the path. No transport node is being used.</p>}{invitation.link.length <= 4096 && <div className="qr-card"><QRCodeSVG value={invitation.link} size={188} level="M" /></div>}<textarea readOnly value={invitation.text} aria-label="Workspace invitation text" rows={5} /><div className="dialog-actions"><Button variant="danger" disabled={busy} onClick={() => void revoke(invitation.id)}>Revoke invitation</Button><Button variant="secondary" onClick={async () => { await navigator.clipboard.writeText(invitation.text); setCopied(true); }}>{copied ? <Check size={17} /> : <Copy size={17} />}{copied ? "Copied" : "Copy invitation"}</Button><Button variant="secondary" onClick={() => void share()}><Share2 size={17} /> Share</Button><Button variant="ghost" onClick={save}><FileUp size={17} /> Save file</Button></div></>}{existing.length > 0 && <div className="workspace-invitation-list"><h3>Active invitations</h3>{existing.filter((item) => item.id !== invitation?.id).map((item) => <div className="workspace-invitation-row" key={item.id}><span>One-use invitation · expires {formatExpiry(item.expires_at)}</span><Button variant="ghost" disabled={busy} onClick={() => void revoke(item.id)}>Revoke</Button></div>)}</div>}<label className="field"><span>How should they connect?</span><select value={connectionChoice} disabled={busy} onChange={(event) => setConnectionChoice(event.target.value)}><option value="participant">Over the Internet — directly to this owner device (default)</option><option value="nearby">Nearby or same private network</option>{usableProfiles.map((profile) => <option key={profile.id} value={`remote:${profile.id}`}>Approved access point · {profile.label} · {profile.state === "connected" ? "connected" : "currently unavailable"}</option>)}</select></label>{connectionChoice === "participant" && <p className="muted">Mesh Chat asks this device and your router for a temporary inbound path. Keep the app open until the joiner connects. No third-party transport node is added.</p>}{connectionChoice === "nearby" && <p className="muted">Use this when both devices are on the same Wi-Fi, LAN, VPN, or another participant-controlled network.</p>}{connectionChoice.startsWith("remote:") && <p className="muted">This invitation explicitly opts into the selected remote access point. Its operator can observe connection metadata.</p>}<p>Create a separate signed invitation for each person. Each request is reviewed independently.</p><Button disabled={busy} onClick={() => void create()}>{busy ? "Creating…" : "Create invitation"}</Button>{error && <><p className="form-error" role="alert">{error}</p>{directUnavailable && <div className="direct-fallback-actions"><Button variant="secondary" onClick={() => setConnectionChoice("nearby")}>Use nearby only</Button>{usableProfiles.length > 0 && <Button variant="ghost" onClick={() => setConnectionChoice(`remote:${usableProfiles[0].id}`)}>Use approved access point</Button>}</div>}</>}</div></Dialog>;
 }
 
 function WorkspaceDevicesDialog({ workspace, transitions, busy, error, onClose, onCreate, onDecide, onRemove, onReadSync }: { workspace: Workspace; transitions: WorkspaceDeviceTransition[]; busy: boolean; error: string; onClose: () => void; onCreate: () => Promise<WorkspaceDeviceLinkFormats | null>; onDecide: (transition: WorkspaceDeviceTransition, approve: boolean) => void; onRemove: (deviceId: string) => void; onReadSync: (enabled: boolean) => void }) {
@@ -2702,7 +2890,7 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceChannelIn
   useEffect(() => { void runtimePlatform().then(() => setWorkspacesEnabled(true)); }, []);
   useEffect(() => {
     if (!initialInvitation) return;
-    const workspaceInvitation = initialInvitation.startsWith("meshchat://workspace/") || initialInvitation.startsWith("meshchat://workspace-device/") || initialInvitation.trim().startsWith("MESHWORKSPACE1:") || initialInvitation.trim().startsWith("MESHWORKSPACEDEVICE1:") || initialInvitation.includes('"type":"workspace_invite"') || initialInvitation.includes('"type":"workspace_device_link_offer"');
+    const workspaceInvitation = isWorkspaceInvitationValue(initialInvitation);
     if (workspaceInvitation) {
       if (workspacesEnabled) setJoinWorkspaceOpen(true);
       return;
@@ -4268,11 +4456,11 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceChannelIn
         )}
       </div>
       {createWorkspaceOpen && <CreateWorkspaceDialog onClose={() => setCreateWorkspaceOpen(false)} onCreated={async (workspace) => { await refresh(true); setActiveSpaceId(workspace.id); setCreateWorkspaceOpen(false); }} />}
-      {joinWorkspaceOpen && <JoinWorkspaceDialog initialValue={initialInvitation.startsWith("meshchat://workspace/") || initialInvitation.startsWith("meshchat://workspace-device/") || initialInvitation.trim().startsWith("MESHWORKSPACE1:") || initialInvitation.trim().startsWith("MESHWORKSPACEDEVICE1:") || initialInvitation.includes("workspace_invite") || initialInvitation.includes("workspace_device_link_offer") ? initialInvitation : ""} onClose={() => { setJoinWorkspaceOpen(false); onInvitationHandled(); }} onJoined={async (workspace) => { await refresh(true); setActiveSpaceId(workspace.id); setJoinWorkspaceOpen(false); onInvitationHandled(); }} />}
+      {joinWorkspaceOpen && <JoinWorkspaceDialog initialValue={isWorkspaceInvitationValue(initialInvitation) ? initialInvitation : ""} onClose={() => { setJoinWorkspaceOpen(false); onInvitationHandled(); }} onJoined={async (workspace) => { await refresh(true); setActiveSpaceId(workspace.id); setJoinWorkspaceOpen(false); onInvitationHandled(); }} />}
       {selectedWorkspace && workspaceBrowseOpen && <BrowseWorkspaceChannelsDialog workspace={selectedWorkspace} channels={selectedWorkspaceChannels.filter((channel) => channel.visibility === "public")} busy={workspaceActionBusy} error={workspaceActionError} onClose={() => setWorkspaceBrowseOpen(false)} onOpen={(channelId) => { setWorkspaceMentionsOpen(false); setWorkspaceThreadsOpen(false); setWorkspaceThreadRootId(null); setWorkspaceSelectedChannelId(channelId); setWorkspaceSelectedDirectId(null); setWorkspaceBrowseOpen(false); setMobileSidebarOpen(false); }} onSubscribe={(channelId, subscribed) => void runWorkspaceChannelAction("set_workspace_channel_subscription", { channel_id: channelId, subscribed })} onSync={() => void runWorkspaceChannelAction("sync_workspace_channels")} onCreate={() => { setWorkspaceBrowseOpen(false); setWorkspaceCreateChannelOpen(true); }} />}
       {selectedWorkspace && workspaceCreateChannelOpen && <CreateWorkspaceChannelDialog workspace={selectedWorkspace} busy={workspaceActionBusy} error={workspaceActionError} onClose={() => setWorkspaceCreateChannelOpen(false)} onCreate={(name, topic, visibility, memberIds) => void runWorkspaceChannelAction("create_workspace_channel", { name, topic, visibility, member_ids: memberIds })} />}
       {selectedWorkspace && selectedWorkspaceChannel && workspaceManageChannelOpen && <ManageWorkspaceChannelDialog workspace={selectedWorkspace} channel={selectedWorkspaceChannel} transfers={workspaceChannelTransfers.filter((item) => item.workspace_id === selectedWorkspace.id)} busy={workspaceActionBusy} error={workspaceActionError} onClose={() => setWorkspaceManageChannelOpen(false)} onUpdate={(name, topic, archived) => void runWorkspaceChannelAction("update_workspace_channel", { channel_id: selectedWorkspaceChannel.id, name, topic, archived })} onMembers={(memberIds) => void runWorkspaceChannelAction("update_workspace_private_channel_members", { channel_id: selectedWorkspaceChannel.id, member_ids: memberIds })} onLeave={() => void runWorkspaceChannelAction("leave_workspace_private_channel", { channel_id: selectedWorkspaceChannel.id })} onOfferTransfer={(successorMemberId) => void runWorkspaceChannelAction("offer_workspace_channel_transfer", { channel_id: selectedWorkspaceChannel.id, successor_member_id: successorMemberId })} onAcceptTransfer={(transferId) => void runWorkspaceChannelAction("accept_workspace_channel_transfer", { transfer_id: transferId })} onRecover={() => void runWorkspaceChannelAction("recover_workspace_channel", { channel_id: selectedWorkspaceChannel.id })} />}
-      {selectedWorkspace && inviteWorkspaceOpen && <WorkspaceInviteDialog workspace={selectedWorkspace} existingInvitations={workspaceInvitations.filter((invitation) => invitation.workspace_id === selectedWorkspace.id)} onClose={() => setInviteWorkspaceOpen(false)} />}
+      {selectedWorkspace && inviteWorkspaceOpen && <WorkspaceInviteDialog workspace={selectedWorkspace} existingInvitations={workspaceInvitations.filter((invitation) => invitation.workspace_id === selectedWorkspace.id)} remoteProfiles={snapshot.remote_profiles ?? []} onClose={() => setInviteWorkspaceOpen(false)} />}
       {selectedWorkspace && workspacePeopleOpen && <WorkspacePeopleDialog
         workspace={selectedWorkspace}
         requests={workspaceDisplayNameRequests.filter((request) => request.workspace_id === selectedWorkspace.id)}
@@ -4295,7 +4483,7 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceChannelIn
       {selectedWorkspace && workspaceDevicesOpen && <WorkspaceDevicesDialog workspace={selectedWorkspace} transitions={workspaceDeviceTransitions.filter((item) => item.workspace_id === selectedWorkspace.id)} busy={workspaceActionBusy} error={workspaceActionError} onClose={() => setWorkspaceDevicesOpen(false)} onCreate={createWorkspaceDeviceLink} onDecide={(transition, approve) => void runWorkspaceAdministration(transition.transition_kind === "link" ? (approve ? "approve_workspace_device_link" : "decline_workspace_device_link") : (approve ? "approve_workspace_device_removal" : "decline_workspace_device_removal"), transition.transition_kind === "link" ? { link_id: transition.id } : { removal_id: transition.id })} onRemove={(deviceId) => void runWorkspaceAdministration("request_workspace_device_removal", { target_device_id: deviceId })} onReadSync={(enabled) => void runWorkspaceAdministration("set_workspace_read_hint_sync", { enabled })} />}
       {selectedWorkspace && workspaceSettingsOpen && <WorkspaceSettingsDialog workspace={selectedWorkspace} conversation={selectedWorkspaceConversation} networkSettings={snapshot.settings} busy={workspaceActionBusy} error={workspaceActionError} onClose={() => setWorkspaceSettingsOpen(false)} onUpdateMetadata={(name, description) => void runWorkspaceAdministration("update_workspace_metadata", { name, description })} onUpdatePolicies={(channelCreation, posting) => void runWorkspaceAdministration("update_workspace_policies", { channel_creation: channelCreation, posting })} onSetNotificationPreference={(conversationId, mode) => void runWorkspaceNotificationPreference(conversationId, mode)} onApprovePropagationNode={(node) => void approveWorkspacePropagationNode(node)} onCloseWorkspace={() => void runWorkspaceLifecycle("close_workspace")} onLeave={() => void runWorkspaceLifecycle("leave_workspace")} onRemove={(confirmation) => void runWorkspaceLifecycle("remove_workspace_data", confirmation)} />}
       {selectedWorkspace && workspaceRetentionOpen && <WorkspaceRetentionDialog workspace={selectedWorkspace} conversationId={selectedWorkspaceConversation?.id} conversationName={selectedWorkspaceDirect?.peer_display_name ?? selectedWorkspaceChannel?.display_name ?? selectedWorkspaceChannel?.name} busy={workspaceActionBusy} error={workspaceActionError} onClose={() => setWorkspaceRetentionOpen(false)} onUpdate={(retentionDays) => void runWorkspaceAdministration("update_workspace_retention", { retention_days: retentionDays })} onPrune={pruneWorkspaceHistory} />}
-      {newChat && <div className={hasForegroundRequest ? "dialog-suspended" : ""} aria-hidden={hasForegroundRequest ? true : undefined}><NewChatDialog initialInvitation={initialInvitation} onClose={() => { setNewChat(false); onInvitationHandled(); }} onChanged={async () => { await refresh(true); }} /></div>}
+      {newChat && <div className={hasForegroundRequest ? "dialog-suspended" : ""} aria-hidden={hasForegroundRequest ? true : undefined}><NewChatDialog initialInvitation={initialInvitation} remoteProfiles={snapshot.remote_profiles ?? []} onClose={() => { setNewChat(false); onInvitationHandled(); }} onChanged={async () => { await refresh(true); }} /></div>}
       {newGroup && <div className={hasForegroundRequest ? "dialog-suspended" : ""} aria-hidden={hasForegroundRequest ? true : undefined}><CreateGroupDialog contacts={snapshot.contacts} onClose={() => setNewGroup(false)} onCreated={async (group) => { await refresh(true); selectConversation({ kind: "group", id: group.id }); setNewGroup(false); }} /></div>}
       {contactsOpen && <div className={hasForegroundRequest ? "dialog-suspended" : ""} aria-hidden={hasForegroundRequest ? true : undefined}><ContactsDialog contacts={snapshot.contacts.filter((contact) => contact.trust !== "pending_request")} onClose={() => setContactsOpen(false)} onChanged={async () => { await refresh(true); }} onOpenConversation={async (contact) => { const hidden = hiddenConversationKeys.has(`direct:${contact.id}`); setContactsOpen(false); await restoreAndSelect({ kind: "contact", id: contact.id }, hidden); }} onDeleted={async (contactId) => { if (selection?.kind === "contact" && selection.id === contactId) setSelection(null); setDrafts((current) => { const next = { ...current }; delete next[contactId]; return next; }); setLocallySavedMessages((current) => Object.fromEntries(Object.entries(current).filter(([, message]) => message.contact_id !== contactId))); await refresh(true); }} /></div>}
       {settings && <div className={hasForegroundRequest ? "dialog-suspended" : ""} aria-hidden={hasForegroundRequest ? true : undefined}><SettingsDialog snapshot={snapshot} theme={theme} onThemeChange={onThemeChange} onClose={() => setSettings(false)} onSaved={async () => { await refresh(true); }} /></div>}

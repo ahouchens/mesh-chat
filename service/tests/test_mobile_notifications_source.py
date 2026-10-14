@@ -118,6 +118,7 @@ def test_android_launch_ingress_is_bounded_durable_and_single_task_safe() -> Non
     assert 'android:launchMode="singleTask"' in manifest
     assert 'android:mimeType="*/*"' in manifest
     assert 'android:pathPattern=".*\\\\.meshchat"' in manifest
+    assert 'android:pathPattern=".*\\\\.meshchat-invite"' in manifest
     assert 'android.intent.action.SEND"' not in manifest
     assert "override fun onCreate" in activity
     assert "override fun onNewIntent" in activity
@@ -127,7 +128,7 @@ def test_android_launch_ingress_is_bounded_durable_and_single_task_safe() -> Non
     assert 'MAX_DEVICE_LINK_BYTES = 700 * 1024' in pending
     assert 'uri.scheme != "meshchat"' in pending
     assert 'uri.scheme != "content"' in pending
-    assert 'lowercase().endsWith(".meshchat")' in pending
+    assert 'it.endsWith(".meshchat") || it.endsWith(".meshchat-invite")' in pending
     assert "CodingErrorAction.REPORT" in pending
     assert "canonicalPath" not in pending
     assert "takePendingInvitation" in plugin

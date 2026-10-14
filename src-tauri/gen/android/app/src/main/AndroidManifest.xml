@@ -46,6 +46,7 @@
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:mimeType="*/*" />
                 <data android:pathPattern=".*\\.meshchat" />
+                <data android:pathPattern=".*\\.meshchat-invite" />
             </intent-filter>
             
             <!-- tauri-file-associations. AUTO-GENERATED. DO NOT REMOVE. -->

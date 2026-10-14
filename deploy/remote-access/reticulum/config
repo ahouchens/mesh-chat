@@ -1,0 +1,19 @@
+[reticulum]
+  enable_transport = Yes
+  share_instance = Yes
+  discover_interfaces = No
+  enable_remote_management = No
+  respond_to_probes = No
+  panic_on_interface_error = No
+
+[logging]
+  loglevel = 2
+  logtimestamps = Yes
+
+[interfaces]
+  [[MeshChat public TCP transport]]
+    type = TCPServerInterface
+    enabled = Yes
+    listen_ip = 0.0.0.0
+    listen_port = 4242
+    ingress_control = Yes

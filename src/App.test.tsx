@@ -90,6 +90,28 @@ const approved: Contact = {
   trust: "approved",
 };
 
+const remoteProfile = {
+  id: "ab".repeat(32),
+  label: "Field relay",
+  origin: "manual" as const,
+  expires_at: 2_000_000_000,
+  endpoint_count: 1,
+  connected_endpoint_count: 1,
+  state: "connected" as const,
+  path_available: false,
+  ratchet_ready: false,
+  offline_delivery_recommended: true,
+  offline_delivery_approved: false,
+  offline_delivery_available: false,
+  propagation_identifier: "abcd1234…5678",
+  scope_count: 1,
+  retry_count: 0,
+  last_error: null,
+  last_connected_at: 1_900_000_000,
+  capabilities: ["reticulum_tcp", "lxmf_propagation"],
+  allow_private: false,
+};
+
 const firstMessage: ChatMessage = {
   id: "first-message",
   conversation_id: "conversation-one",
@@ -363,7 +385,100 @@ describe("appearance theme", () => {
   });
 });
 
+describe("first-run remote invitation consent", () => {
+  it("does not activate a remote invitation until the new user checks consent", async () => {
+    const onboarding: Snapshot = { ...snapshot(), profile: null };
+    const ready = snapshot([approved]);
+    api.runtimePlatform.mockResolvedValue("desktop");
+    api.initializeService.mockResolvedValue(onboarding);
+    api.onInvitation.mockResolvedValue(() => undefined);
+    api.onServiceEvent.mockResolvedValue(() => undefined);
+    api.serviceCommand.mockImplementation(async (command: string) => {
+      if (command === "preview_invitation") return {
+        display_name: "Taylor",
+        identity_hash: "11".repeat(16),
+        destination_hash: "22".repeat(16),
+        fingerprint: "AAAA BBBB CCCC DDDD",
+        hints: [],
+        expires_at: 2_000_000_000,
+        requires_network_consent: true,
+        remote_profile: {
+          id: remoteProfile.id,
+          label: remoteProfile.label,
+          endpoint_count: 1,
+          expires_at: 2_000_000_000,
+          capabilities: ["reticulum_tcp"],
+          private_endpoint_warning: false,
+          propagation_identifier: null,
+          privacy_disclosure: "The operator can observe connection metadata but cannot decrypt or forge valid MeshChat content.",
+        },
+      };
+      if (command === "create_profile") return profile;
+      if (command === "accept_invitation") return approved;
+      if (command === "snapshot") return ready;
+      return {};
+    });
+
+    render(<App />);
+    await screen.findByRole("heading", { name: "Chat without a central server." });
+    fireEvent.click(screen.getByRole("button", { name: "Join a chat" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "Invitation" }), { target: { value: "MESHCHAT2:first-run" } });
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+
+    const submit = await screen.findByRole("button", { name: "Create profile and connect" });
+    fireEvent.change(screen.getByRole("textbox", { name: "Your display name" }), { target: { value: "Alex" } });
+    expect((submit as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByText(/cannot decrypt or forge/i)).toBeTruthy();
+    expect(api.serviceCommand).not.toHaveBeenCalledWith("accept_invitation", expect.anything());
+
+    fireEvent.click(screen.getByRole("checkbox", { name: /Connect to this access point/ }));
+    expect((submit as HTMLButtonElement).disabled).toBe(false);
+    fireEvent.click(submit);
+
+    await waitFor(() => expect(api.serviceCommand).toHaveBeenCalledWith(
+      "accept_invitation",
+      { invitation: "MESHCHAT2:first-run" },
+    ));
+  });
+});
+
 describe("new chat invitations", () => {
+  it("opens an incoming v3 personal invitation without hosting a new listener", async () => {
+    const current = snapshot();
+    let deliverInvitation: ((value: string) => void) | undefined;
+    api.runtimePlatform.mockResolvedValue("desktop");
+    api.initializeService.mockResolvedValue(current);
+    api.onInvitation.mockImplementation(async (callback) => {
+      deliverInvitation = callback;
+      return () => undefined;
+    });
+    api.onServiceEvent.mockResolvedValue(() => undefined);
+    api.serviceCommand.mockImplementation(async (command: string) => {
+      if (command === "snapshot") return current;
+      if (command === "preview_invitation") return {
+        display_name: "Taylor",
+        identity_hash: "11".repeat(16),
+        destination_hash: "22".repeat(16),
+        fingerprint: "AAAA BBBB CCCC DDDD",
+        hints: [],
+        expires_at: 2_000_000_000,
+        participant_access: {
+          id: "a".repeat(64), mode: "participant_direct", operator: "inviter", endpoint_count: 1,
+          expires_at: 2_000_000_000,
+          privacy_disclosure: "The connection goes directly to the person who sent this invitation.",
+        },
+      };
+      return {};
+    });
+
+    render(<App />);
+    await screen.findByRole("heading", { name: "Your private conversations" });
+    await act(async () => deliverInvitation?.("MESHCHAT3:participant"));
+
+    expect(await screen.findByRole("button", { name: "Connect directly to Taylor" })).toBeTruthy();
+    expect(api.serviceCommand.mock.calls.some(([command]) => command === "create_invitation")).toBe(false);
+  });
+
   it("can retry invitation creation after the first attempt fails", async () => {
     const current = snapshot();
     let invitationAttempts = 0;
@@ -396,6 +511,257 @@ describe("new chat invitations", () => {
     await screen.findByText("Invitation details to share");
     expect(api.serviceCommand.mock.calls.filter(([command]) => command === "create_invitation")).toHaveLength(2);
     expect(screen.queryByRole("button", { name: "Retry invitation" })).toBeNull();
+  });
+
+  it("creates a remote-ready invitation only after selecting an approved profile", async () => {
+    const current: Snapshot = { ...snapshot(), remote_profiles: [remoteProfile] };
+    api.runtimePlatform.mockResolvedValue("desktop");
+    api.initializeService.mockResolvedValue(current);
+    api.onInvitation.mockResolvedValue(() => undefined);
+    api.onServiceEvent.mockResolvedValue(() => undefined);
+    api.serviceCommand.mockImplementation(async (command: string, payload?: Record<string, unknown>) => {
+      if (command === "snapshot") return current;
+      if (command === "create_invitation") return {
+        link: "meshchat://invite/remote",
+        text: payload?.remote_profile_id ? "MESHCHAT2:remote" : payload?.connection_mode === "participant" ? "MESHCHAT3:direct" : "MESHCHAT1:local",
+        file: "{}",
+        expires_at: 2_000_000_000,
+        ...(payload?.connection_mode === "participant" ? { connection_mode: "participant" } : {}),
+      };
+      return {};
+    });
+
+    render(<App />);
+    await screen.findByRole("heading", { name: "Your private conversations" });
+    fireEvent.click(screen.getAllByRole("button", { name: "New chat" })[0]);
+    const reachability = await screen.findByRole("combobox", { name: "How should they connect?" });
+    expect((reachability as HTMLSelectElement).value).toBe("participant");
+    expect(screen.getByRole("option", { name: "Over the Internet — directly to this device (default)" })).toBeTruthy();
+    expect(screen.getByText(/temporary inbound path/i)).toBeTruthy();
+    expect(api.serviceCommand.mock.calls.find(([command]) => command === "create_invitation")).toEqual(["create_invitation", { connection_mode: "participant" }]);
+    fireEvent.change(reachability, { target: { value: `remote:${remoteProfile.id}` } });
+
+    await waitFor(() => expect(api.serviceCommand).toHaveBeenCalledWith(
+      "create_invitation",
+      { connection_mode: "remote", remote_profile_id: remoteProfile.id },
+    ));
+    const invitationText = screen.getAllByLabelText("Invitation details to share")
+      .find((element) => element.tagName === "TEXTAREA") as HTMLTextAreaElement;
+    expect(invitationText.value).toBe("MESHCHAT2:remote");
+  });
+
+  it("keeps the newest reachability choice and stops a stale participant host", async () => {
+    const current = snapshot();
+    const participantAttempt = deferred<{ link: string; text: string; file: string; expires_at: number; connection_mode: "participant"; host_session_id: string }>();
+    const staleHostId = "b".repeat(64);
+    api.runtimePlatform.mockResolvedValue("desktop");
+    api.initializeService.mockResolvedValue(current);
+    api.onInvitation.mockResolvedValue(() => undefined);
+    api.onServiceEvent.mockResolvedValue(() => undefined);
+    api.serviceCommand.mockImplementation(async (command: string, payload?: Record<string, unknown>) => {
+      if (command === "snapshot") return current;
+      if (command === "create_invitation" && payload?.connection_mode === "participant") return participantAttempt.promise;
+      if (command === "create_invitation") return { link: "meshchat://invite/nearby", text: "MESHCHAT1:nearby", file: "{}", expires_at: 2_000_000_000 };
+      return {};
+    });
+
+    render(<App />);
+    await screen.findByRole("heading", { name: "Your private conversations" });
+    fireEvent.click(screen.getAllByRole("button", { name: "New chat" })[0]);
+    const reachability = await screen.findByRole("combobox", { name: "How should they connect?" });
+    fireEvent.change(reachability, { target: { value: "nearby" } });
+    await screen.findByDisplayValue("MESHCHAT1:nearby");
+
+    await act(async () => participantAttempt.resolve({
+      link: "meshchat://invite/stale",
+      text: "MESHCHAT3:stale",
+      file: "{}",
+      expires_at: 2_000_000_000,
+      connection_mode: "participant",
+      host_session_id: staleHostId,
+    }));
+    await waitFor(() => expect(api.serviceCommand).toHaveBeenCalledWith("stop_participant_host", { access_id: staleHostId }));
+    expect(screen.getByDisplayValue("MESHCHAT1:nearby")).toBeTruthy();
+  });
+
+  it("falls back explicitly when the current router cannot prepare a direct Internet path", async () => {
+    const current = snapshot();
+    api.runtimePlatform.mockResolvedValue("desktop");
+    api.initializeService.mockResolvedValue(current);
+    api.onInvitation.mockResolvedValue(() => undefined);
+    api.onServiceEvent.mockResolvedValue(() => undefined);
+    api.serviceCommand.mockImplementation(async (command: string, payload?: Record<string, unknown>) => {
+      if (command === "snapshot") return current;
+      if (command === "create_invitation" && payload?.connection_mode === "participant") throw new Error("direct_connection_unavailable");
+      if (command === "create_invitation") return { link: "meshchat://invite/nearby", text: "MESHCHAT1:nearby", file: "{}", expires_at: 2_000_000_000 };
+      return {};
+    });
+
+    render(<App />);
+    await screen.findByRole("heading", { name: "Your private conversations" });
+    fireEvent.click(screen.getAllByRole("button", { name: "New chat" })[0]);
+    expect((await screen.findByRole("alert")).textContent).toContain("could not open a direct Internet path");
+    fireEvent.click(screen.getByRole("button", { name: "Use nearby only" }));
+
+    await waitFor(() => expect(api.serviceCommand).toHaveBeenCalledWith("create_invitation"));
+    await screen.findByText("Invitation details to share");
+    const nearbyText = screen.getAllByLabelText("Invitation details to share")
+      .find((element) => element.tagName === "TEXTAREA") as HTMLTextAreaElement;
+    expect(nearbyText.value).toBe("MESHCHAT1:nearby");
+  });
+
+  it("labels participant-hosted invitations as direct and requires no third-party consent", async () => {
+    const current = snapshot();
+    api.runtimePlatform.mockResolvedValue("desktop");
+    api.initializeService.mockResolvedValue(current);
+    api.onInvitation.mockResolvedValue(() => undefined);
+    api.onServiceEvent.mockResolvedValue(() => undefined);
+    api.serviceCommand.mockImplementation(async (command: string) => {
+      if (command === "snapshot") return current;
+      if (command === "create_invitation") return { link: "meshchat://invite/local", text: "MESHCHAT3:direct", file: "{}", expires_at: 2_000_000_000, connection_mode: "participant", host_session_id: "a".repeat(64) };
+      if (command === "preview_invitation") return {
+        display_name: "Taylor",
+        identity_hash: "11".repeat(16),
+        destination_hash: "22".repeat(16),
+        fingerprint: "AAAA BBBB CCCC DDDD",
+        hints: [],
+        expires_at: 2_000_000_000,
+        participant_access: {
+          id: "a".repeat(64), mode: "participant_direct", operator: "inviter", endpoint_count: 1,
+          expires_at: 2_000_000_000,
+          privacy_disclosure: "The connection goes directly to the person who sent this invitation. No community or third-party transport node is added.",
+        },
+      };
+      if (command === "accept_invitation") return approved;
+      return {};
+    });
+
+    render(<App />);
+    await screen.findByRole("heading", { name: "Your private conversations" });
+    fireEvent.click(screen.getAllByRole("button", { name: "New chat" })[0]);
+    fireEvent.click(await screen.findByRole("tab", { name: "Open an invite" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "Invitation" }), { target: { value: "MESHCHAT3:direct" } });
+    fireEvent.click(screen.getByRole("button", { name: "Check invitation" }));
+
+    const connect = await screen.findByRole("button", { name: "Connect directly to Taylor" });
+    expect((connect as HTMLButtonElement).disabled).toBe(false);
+    expect(screen.queryByRole("checkbox", { name: /Connect to this access point/ })).toBeNull();
+    expect(screen.getByText(/No separate operator will join/i)).toBeTruthy();
+  });
+
+  it("shows verified access-point disclosure and requires consent before accepting", async () => {
+    const current: Snapshot = { ...snapshot(), remote_profiles: [] };
+    api.runtimePlatform.mockResolvedValue("desktop");
+    api.initializeService.mockResolvedValue(current);
+    api.onInvitation.mockResolvedValue(() => undefined);
+    api.onServiceEvent.mockResolvedValue(() => undefined);
+    api.serviceCommand.mockImplementation(async (command: string) => {
+      if (command === "snapshot") return current;
+      if (command === "create_invitation") return { link: "meshchat://invite/local", text: "MESHCHAT1:local", file: "{}", expires_at: 2_000_000_000 };
+      if (command === "preview_invitation") return {
+        display_name: "Taylor",
+        identity_hash: "11".repeat(16),
+        destination_hash: "22".repeat(16),
+        fingerprint: "AAAA BBBB CCCC DDDD",
+        hints: [],
+        expires_at: 2_000_000_000,
+        requires_network_consent: true,
+        remote_profile: {
+          id: remoteProfile.id,
+          label: remoteProfile.label,
+          endpoint_count: 1,
+          expires_at: 2_000_000_000,
+          capabilities: ["reticulum_tcp"],
+          private_endpoint_warning: false,
+          propagation_identifier: null,
+          privacy_disclosure: "The operator can observe connection metadata but cannot decrypt or forge valid MeshChat content.",
+        },
+      };
+      if (command === "accept_invitation") return approved;
+      return {};
+    });
+
+    render(<App />);
+    await screen.findByRole("heading", { name: "Your private conversations" });
+    fireEvent.click(screen.getAllByRole("button", { name: "New chat" })[0]);
+    fireEvent.click(await screen.findByRole("tab", { name: "Open an invite" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "Invitation" }), { target: { value: "MESHCHAT2:remote" } });
+    fireEvent.click(screen.getByRole("button", { name: "Check invitation" }));
+
+    const connect = await screen.findByRole("button", { name: "Connect and send contact request" });
+    expect((connect as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByText(/cannot decrypt or forge/i)).toBeTruthy();
+    fireEvent.click(screen.getByRole("checkbox", { name: /Connect to this access point/ }));
+    expect((connect as HTMLButtonElement).disabled).toBe(false);
+    fireEvent.click(connect);
+    await waitFor(() => expect(api.serviceCommand).toHaveBeenCalledWith(
+      "accept_invitation",
+      { invitation: "MESHCHAT2:remote" },
+    ));
+  });
+});
+
+describe("remote connection settings", () => {
+  it("shows and stops participant-hosted Internet invitations without deleting membership", async () => {
+    const host = {
+      id: "direct-access-1",
+      purpose: "personal" as const,
+      scope_id: "invite-1",
+      endpoint_count: 1,
+      methods: ["upnp" as const],
+      expires_at: 1_900_000_000,
+      state: "ready" as const,
+    };
+    const current: Snapshot = { ...snapshot(), participant_hosting: [host] };
+    api.runtimePlatform.mockResolvedValue("desktop");
+    api.initializeService.mockResolvedValue(current);
+    api.onInvitation.mockResolvedValue(() => undefined);
+    api.onServiceEvent.mockResolvedValue(() => undefined);
+    api.serviceCommand.mockImplementation(async (command: string) => {
+      if (command === "snapshot") return current;
+      if (command === "get_notification_state") return null;
+      return {};
+    });
+
+    render(<App />);
+    await screen.findByRole("heading", { name: "Your private conversations" });
+    fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+    const dialog = await screen.findByRole("dialog", { name: "Settings" });
+    expect(within(dialog).getByText(/no community or third-party transport node/i)).toBeTruthy();
+    expect(within(dialog).getByText(/UPnP router mapping/i)).toBeTruthy();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Stop hosting" }));
+    await waitFor(() => expect(api.serviceCommand).toHaveBeenCalledWith(
+      "stop_participant_host",
+      { access_id: host.id },
+    ));
+    expect(within(dialog).getByText(/No Internet invitation is currently being hosted/i)).toBeTruthy();
+  });
+
+  it("shows sanitized state and keeps propagation approval separate", async () => {
+    const current: Snapshot = { ...snapshot(), remote_profiles: [remoteProfile] };
+    api.runtimePlatform.mockResolvedValue("desktop");
+    api.initializeService.mockResolvedValue(current);
+    api.onInvitation.mockResolvedValue(() => undefined);
+    api.onServiceEvent.mockResolvedValue(() => undefined);
+    api.serviceCommand.mockImplementation(async (command: string) => {
+      if (command === "snapshot") return current;
+      if (command === "get_notification_state") return null;
+      if (command === "approve_remote_propagation") return { ...remoteProfile, offline_delivery_available: true };
+      if (command === "list_remote_profiles") return { profiles: [{ ...remoteProfile, offline_delivery_available: true }] };
+      return {};
+    });
+
+    render(<App />);
+    await screen.findByRole("heading", { name: "Your private conversations" });
+    fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+    const dialog = await screen.findByRole("dialog", { name: "Settings" });
+    expect(within(dialog).getByText("Connected · 1/1 endpoints")).toBeTruthy();
+    expect(within(dialog).queryByText(/relay\.example/i)).toBeNull();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Approve offline delivery" }));
+    await waitFor(() => expect(api.serviceCommand).toHaveBeenCalledWith(
+      "approve_remote_propagation",
+      { profile_id: remoteProfile.id },
+    ));
   });
 });
 
@@ -2154,6 +2520,29 @@ describe("small private groups", () => {
 });
 
 describe("desktop workspaces", () => {
+  it("routes incoming v3 workspace text to the workspace join flow", async () => {
+    const current = snapshot();
+    let deliverInvitation: ((value: string) => void) | undefined;
+    api.runtimePlatform.mockResolvedValue("desktop");
+    api.initializeService.mockResolvedValue(current);
+    api.onInvitation.mockImplementation(async (callback) => {
+      deliverInvitation = callback;
+      return () => undefined;
+    });
+    api.onServiceEvent.mockResolvedValue(() => undefined);
+    api.serviceCommand.mockImplementation(async (command: string) => {
+      if (command === "snapshot") return current;
+      return {};
+    });
+
+    render(<App />);
+    await screen.findByRole("heading", { name: "Your private conversations" });
+    await act(async () => deliverInvitation?.("MESHWORKSPACE3:participant"));
+
+    const dialog = await screen.findByRole("dialog", { name: "Join a workspace" });
+    expect((within(dialog).getByRole("textbox", { name: "Workspace invitation or device link" }) as HTMLTextAreaElement).value).toBe("MESHWORKSPACE3:participant");
+  });
+
   it("uses device-neutral linked-device terminology on Android", async () => {
     const current: Snapshot = {
       ...snapshot(),
@@ -2944,7 +3333,7 @@ describe("desktop workspaces", () => {
     api.serviceCommand.mockImplementation(async (command: string) => {
       if (command === "snapshot") return current;
       if (command === "list_workspace_messages") return { messages: [], next_cursor: null, high_water: 0 } satisfies WorkspaceMessagePage;
-      if (command === "create_workspace_invitation") return { id: "invite-three", workspace_id: workspace.id, link: "meshchat://workspace/three", text: "MESHWORKSPACE1:three", value: "three", expires_at: 2_000_000_200 };
+      if (command === "create_workspace_invitation") return { id: "invite-three", workspace_id: workspace.id, link: "meshchat://workspace/three", text: "MESHWORKSPACE3:three", value: "three", expires_at: 2_000_000_200, connection_mode: "participant" };
       return {};
     });
 
@@ -2952,13 +3341,18 @@ describe("desktop workspaces", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Workspace Lakewatcher" }));
     fireEvent.click(await screen.findByRole("button", { name: "Invite people to Lakewatcher" }));
     const dialog = screen.getByRole("dialog");
+    expect((within(dialog).getByRole("combobox", { name: "How should they connect?" }) as HTMLSelectElement).value).toBe("participant");
+    expect(within(dialog).getByRole("option", { name: "Over the Internet — directly to this owner device (default)" })).toBeTruthy();
+    expect(within(dialog).getByText(/temporary inbound path/i)).toBeTruthy();
     expect(within(dialog).getAllByText(/One-use invitation · expires/i)).toHaveLength(2);
     fireEvent.click(within(dialog).getAllByRole("button", { name: "Revoke" })[0]);
     await waitFor(() => expect(api.serviceCommand).toHaveBeenCalledWith("revoke_workspace_invitation", expect.objectContaining({ workspace_id: workspace.id, invitation_id: "invite-one", operation_id: expect.any(String) })));
     expect(within(dialog).getAllByText(/One-use invitation · expires/i)).toHaveLength(1);
-    fireEvent.click(within(dialog).getByRole("button", { name: "Create another invitation" }));
-    await waitFor(() => expect(api.serviceCommand).toHaveBeenCalledWith("create_workspace_invitation", expect.objectContaining({ workspace_id: workspace.id, operation_id: expect.any(String) })));
-    expect((await within(dialog).findByRole("textbox", { name: "Workspace invitation text" }) as HTMLTextAreaElement).value).toBe("MESHWORKSPACE1:three");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Create invitation" }));
+    await waitFor(() => expect(api.serviceCommand).toHaveBeenCalledWith("create_workspace_invitation", expect.objectContaining({ workspace_id: workspace.id, operation_id: expect.any(String), connection_mode: "participant" })));
+    const workspaceInvitationCall = api.serviceCommand.mock.calls.find(([command]) => command === "create_workspace_invitation");
+    expect(workspaceInvitationCall?.[1]).not.toHaveProperty("remote_profile_id");
+    expect((await within(dialog).findByRole("textbox", { name: "Workspace invitation text" }) as HTMLTextAreaElement).value).toBe("MESHWORKSPACE3:three");
   });
 
   it("allows an owner to replace a removed member at the eight-person history limit", async () => {

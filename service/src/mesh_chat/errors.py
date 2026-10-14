@@ -54,3 +54,7 @@ class RecipientKeysUnavailable(MeshChatError):
 
 class NetworkUnavailable(MeshChatError):
     code = "network_unavailable"
+
+
+class DirectConnectionUnavailable(NetworkUnavailable):
+    code = "direct_connection_unavailable"

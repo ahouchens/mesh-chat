@@ -38,6 +38,7 @@ export interface Contact {
   /** Previous state used to safely restore a locally blocked contact. */
   trust_before_block?: Exclude<TrustState, "blocked">;
   request_state?: DeliveryState;
+  route_kind?: "nearby" | "signed_direct" | "remote" | "unavailable";
   connection_hints: Array<{ type: "tcp"; host: string; port: number }>;
   created_at: number;
   updated_at: number;
@@ -608,6 +609,9 @@ export interface WorkspaceInvitationPreview {
   member_count: number;
   retention_days: 30 | 90 | 365 | null;
   expires_at: number;
+  remote_profile?: RemoteProfilePreview;
+  participant_access?: ParticipantAccessPreview;
+  requires_network_consent?: boolean;
 }
 
 export interface WorkspaceInvitationFormats {
@@ -617,6 +621,10 @@ export interface WorkspaceInvitationFormats {
   text: string;
   value: string;
   expires_at: number;
+  remote_profile_id?: string;
+  access_point_reachable?: boolean;
+  connection_mode?: "participant";
+  host_session_id?: string;
 }
 
 export interface WorkspaceDeviceLinkPreview {
@@ -772,6 +780,60 @@ export interface NetworkInterfaceState {
   client_count?: number;
 }
 
+export type RemoteProfileState = "approved" | "connecting" | "connected" | "access_point_unavailable" | "expired";
+
+export interface RemoteProfile {
+  id: string;
+  label: string;
+  origin: "manual" | "personal_invitation" | "workspace_invitation";
+  expires_at: number;
+  endpoint_count: number;
+  connected_endpoint_count: number;
+  state: RemoteProfileState;
+  path_available: boolean;
+  ratchet_ready: boolean;
+  offline_delivery_recommended: boolean;
+  offline_delivery_approved: boolean;
+  offline_delivery_available: boolean;
+  propagation_identifier: string | null;
+  scope_count: number;
+  retry_count: number;
+  last_error: string | null;
+  last_connected_at: number | null;
+  capabilities: string[];
+  allow_private: boolean;
+}
+
+export interface RemoteProfilePreview {
+  id: string;
+  label: string;
+  endpoint_count: number;
+  expires_at: number;
+  capabilities: string[];
+  private_endpoint_warning: boolean;
+  propagation_identifier: string | null;
+  privacy_disclosure: string;
+}
+
+export interface ParticipantAccessPreview {
+  id: string;
+  mode: "participant_direct";
+  operator: "inviter";
+  endpoint_count: number;
+  expires_at: number;
+  privacy_disclosure: string;
+}
+
+export interface ParticipantHosting {
+  id: string;
+  purpose: "personal" | "workspace";
+  scope_id: string;
+  endpoint_count: number;
+  methods: Array<"public_ipv6" | "upnp" | "nat_pmp" | "pcp" | "manual">;
+  expires_at: number;
+  state: "ready" | "expired";
+}
+
 export interface Snapshot {
   profile: Profile | null;
   contacts: Contact[];
@@ -798,6 +860,8 @@ export interface Snapshot {
   workspace_drafts?: WorkspaceDraft[];
   workspace_notification_state?: WorkspaceNotificationState;
   settings: NetworkSettings;
+  remote_profiles?: RemoteProfile[];
+  participant_hosting?: ParticipantHosting[];
   network: {
     transport_enabled: boolean;
     propagation_enabled: boolean;
@@ -815,6 +879,9 @@ export interface InvitationPreview {
   fingerprint: string;
   hints: Array<{ type: "tcp"; host: string; port: number }>;
   expires_at: number;
+  remote_profile?: RemoteProfilePreview;
+  participant_access?: ParticipantAccessPreview;
+  requires_network_consent?: boolean;
 }
 
 export interface InvitationFormats {
@@ -822,4 +889,8 @@ export interface InvitationFormats {
   text: string;
   file: string;
   expires_at: number;
+  remote_profile_id?: string;
+  access_point_reachable?: boolean;
+  connection_mode?: "participant";
+  host_session_id?: string;
 }

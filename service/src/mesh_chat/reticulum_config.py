@@ -26,6 +26,21 @@ INTERFACE_NAME = re.compile(r"^[A-Za-z0-9_. -]{1,64}$")
 # connections before Mesh Chat authenticates an application payload. Raising
 # its gravity would let an unauthenticated LAN client attract preferred paths.
 SIGNED_TCP_ROUTE_GRAVITY = 1
+REMOTE_TCP_ROUTE_GRAVITY = 0
+
+
+def participant_listener_name(access_id: str, index: int) -> str:
+    return f"Participant host {access_id[:12]} {index + 1}"
+
+
+def participant_client_name(access_id: str, endpoint_index: int) -> str:
+    return f"Participant invite {access_id[:12]} {endpoint_index + 1}"
+
+
+def remote_interface_name(profile_id: str, endpoint_index: int) -> str:
+    """Return a stable, content-free Reticulum interface name."""
+
+    return f"Remote access {profile_id[:12]} {endpoint_index + 1}"
 
 
 @dataclass(slots=True)
@@ -39,6 +54,14 @@ class NetworkSettings:
     help_route: bool = False
     store_for_offline: bool = False
     approved_propagation_nodes: list[str] = field(default_factory=list)
+    # Runtime-only, DNS-policy-checked numeric endpoints. The canonical hosts
+    # remain sealed in remote_profile vault records and never enter renderer
+    # settings. This field is deliberately omitted from from_dict()/to_dict().
+    remote_tcp_clients: list[dict[str, Any]] = field(default_factory=list)
+    # Encrypted-vault participant sessions are injected at runtime. Credentials
+    # are intentionally omitted from the general settings record and renderer.
+    participant_listeners: list[dict[str, Any]] = field(default_factory=list)
+    participant_clients: list[dict[str, Any]] = field(default_factory=list)
 
     @classmethod
     def from_dict(cls, value: dict[str, Any] | None) -> "NetworkSettings":
@@ -169,6 +192,50 @@ def write_config(config_dir: Path, settings: NetworkSettings) -> Path:
             ]
         )
 
+    for endpoint in settings.remote_tcp_clients:
+        lines.extend(
+            [
+                f"  [[{remote_interface_name(endpoint['profile_id'], endpoint['endpoint_index'])}]]",
+                "    type = TCPClientInterface",
+                "    enabled = Yes",
+                f"    target_host = {endpoint['host']}",
+                f"    target_port = {endpoint['port']}",
+                "    connect_timeout = 5",
+                f"    gravity = {REMOTE_TCP_ROUTE_GRAVITY}",
+            ]
+        )
+
+    for index, listener in enumerate(settings.participant_listeners):
+        lines.extend(
+            [
+                f"  [[{participant_listener_name(listener['id'], index)}]]",
+                "    type = TCPServerInterface",
+                "    enabled = Yes",
+                f"    listen_ip = {listener['listen_ip']}",
+                f"    listen_port = {listener['port']}",
+                f"    network_name = {listener['network_name']}",
+                f"    passphrase = {listener['passphrase']}",
+                "    ifac_size = 128",
+                "    ingress_control = Yes",
+            ]
+        )
+
+    for client in settings.participant_clients:
+        lines.extend(
+            [
+                f"  [[{participant_client_name(client['id'], client['endpoint_index'])}]]",
+                "    type = TCPClientInterface",
+                "    enabled = Yes",
+                f"    target_host = {client['host']}",
+                f"    target_port = {client['port']}",
+                "    connect_timeout = 5",
+                f"    gravity = {SIGNED_TCP_ROUTE_GRAVITY}",
+                f"    network_name = {client['network_name']}",
+                f"    passphrase = {client['passphrase']}",
+                "    ifac_size = 128",
+            ]
+        )
+
     if settings.lan_fallback and settings.lan_listener_port is not None:
         lines.extend(
             [
@@ -195,6 +262,9 @@ def write_config(config_dir: Path, settings: NetworkSettings) -> Path:
     if (
         not settings.nearby_discovery
         and not settings.tcp_clients
+        and not settings.remote_tcp_clients
+        and not settings.participant_listeners
+        and not settings.participant_clients
         and not settings.tcp_listener
         and not (settings.lan_fallback and settings.lan_listener_port is not None)
     ):

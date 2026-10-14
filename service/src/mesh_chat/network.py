@@ -16,7 +16,13 @@ from .app_protocol import build_fields, parse_payload
 from .errors import NetworkUnavailable, RecipientKeysUnavailable, ValidationError
 from .invitations import verify_invitation
 from .models import DeliveryState, MessageKind
-from .reticulum_config import NetworkSettings, write_config
+from .reticulum_config import (
+    NetworkSettings,
+    participant_client_name,
+    participant_listener_name,
+    remote_interface_name,
+    write_config,
+)
 from .workspace_protocol import (
     verify_workspace_device_link_acceptance,
     verify_workspace_join,
@@ -29,6 +35,10 @@ StatusCallback = Callable[[str, DeliveryState, str | None], None]
 LAN_FALLBACK_INTERFACE = "Mesh Chat LAN fallback"
 LAN_FALLBACK_MAX_CLIENTS = 4
 LAN_FALLBACK_ATTEMPTS_PER_MINUTE = 10
+PARTICIPANT_MAX_CLIENTS = 8
+PARTICIPANT_ATTEMPTS_PER_MINUTE = 20
+PARTICIPANT_HOST_PREFIX = "Participant host "
+PARTICIPANT_CLIENT_PREFIX = "Participant invite "
 LAN_FALLBACK_PORT_MIN = 42000
 LAN_FALLBACK_PORT_SPAN = 7000
 CALLBACK_QUEUE_MAX_ITEMS = 256
@@ -172,7 +182,10 @@ def install_lan_listener_guard(rns_module: Any = RNS) -> None:
             pass
 
     def guarded_incoming(interface: Any, handler: Any) -> Any:
-        if getattr(interface, "name", None) != LAN_FALLBACK_INTERFACE:
+        interface_name = str(getattr(interface, "name", ""))
+        is_lan = interface_name == LAN_FALLBACK_INTERFACE
+        is_participant = interface_name.startswith(PARTICIPANT_HOST_PREFIX)
+        if not is_lan and not is_participant:
             return original_incoming(interface, handler)
         lock = getattr(interface, "_mesh_chat_guard_lock", None)
         if lock is None:
@@ -187,9 +200,15 @@ def install_lan_listener_guard(rns_module: Any = RNS) -> None:
                 history.popleft()
             active = int(getattr(interface, "_mesh_chat_active", 0))
             if (
-                not _source_is_on_lan(source, rns_module)
-                or active >= LAN_FALLBACK_MAX_CLIENTS
-                or len(history) >= LAN_FALLBACK_ATTEMPTS_PER_MINUTE
+                (is_lan and not _source_is_on_lan(source, rns_module))
+                or active
+                >= (LAN_FALLBACK_MAX_CLIENTS if is_lan else PARTICIPANT_MAX_CLIENTS)
+                or len(history)
+                >= (
+                    LAN_FALLBACK_ATTEMPTS_PER_MINUTE
+                    if is_lan
+                    else PARTICIPANT_ATTEMPTS_PER_MINUTE
+                )
             ):
                 reject(handler)
                 return None
@@ -462,6 +481,28 @@ class ReticulumNetwork:
     def request_path(self, destination_hash: bytes) -> None:
         RNS.Transport.request_path(destination_hash)
 
+    def route_kind(self, destination_hash: bytes) -> str:
+        if not self.path_known(destination_hash):
+            return "unavailable"
+        try:
+            interface = RNS.Transport.next_hop_interface(destination_hash)
+        except Exception:
+            return "unavailable"
+        names: list[str] = []
+        current = interface
+        for _ in range(3):
+            if current is None:
+                break
+            names.append(str(getattr(current, "name", "")))
+            current = getattr(current, "parent_interface", None)
+        if any("Remote access " in name for name in names):
+            return "remote"
+        if any(PARTICIPANT_CLIENT_PREFIX in name or PARTICIPANT_HOST_PREFIX in name for name in names):
+            return "participant_direct"
+        if any("Private TCP peer " in name for name in names):
+            return "signed_direct"
+        return "nearby"
+
     def prefer_signed_route(
         self,
         destination_hash: bytes,
@@ -566,6 +607,147 @@ class ReticulumNetwork:
         for name in desired:
             if name not in existing:
                 self.reticulum.attach_interface(name)
+
+    def apply_remote_profiles(self, endpoints: list[dict[str, Any]]) -> None:
+        """Attach only service-validated numeric shared-access endpoints.
+
+        Remote access points intentionally use their own interface namespace
+        and normal route gravity. They are never treated as signed direct-peer
+        hints and cannot receive the preference probe used for those hints.
+        """
+
+        desired: dict[str, dict[str, Any]] = {}
+        for endpoint in endpoints:
+            name = remote_interface_name(
+                endpoint["profile_id"], int(endpoint["endpoint_index"])
+            )
+            desired[name] = dict(endpoint)
+        self.settings.remote_tcp_clients = [dict(item) for item in endpoints]
+        write_config(self.rns_dir, self.settings)
+        for interface in list(RNS.Transport.interfaces):
+            name = str(getattr(interface, "name", ""))
+            if not name.startswith("Remote access "):
+                continue
+            endpoint = desired.get(name)
+            matches = endpoint is not None and (
+                str(getattr(interface, "target_ip", "")) == endpoint["host"]
+                and int(getattr(interface, "target_port", -1)) == endpoint["port"]
+            )
+            if not matches:
+                self.reticulum.detach_interface(name)
+        existing = {str(getattr(interface, "name", "")) for interface in RNS.Transport.interfaces}
+        for name in desired:
+            if name not in existing:
+                self.reticulum.attach_interface(name)
+
+    def apply_participant_interfaces(
+        self,
+        listeners: list[dict[str, Any]],
+        clients: list[dict[str, Any]],
+    ) -> None:
+        """Apply invitation-bound IFAC listeners and clients at runtime."""
+
+        desired_listeners = {
+            participant_listener_name(listener["id"], index): listener
+            for index, listener in enumerate(listeners)
+        }
+        desired_clients = {
+            participant_client_name(client["id"], int(client["endpoint_index"])): client
+            for client in clients
+        }
+        self.settings.participant_listeners = [dict(item) for item in listeners]
+        self.settings.participant_clients = [dict(item) for item in clients]
+        write_config(self.rns_dir, self.settings)
+        for interface in list(RNS.Transport.interfaces):
+            name = str(getattr(interface, "name", ""))
+            if name.startswith(PARTICIPANT_HOST_PREFIX):
+                listener = desired_listeners.get(name)
+                matches = listener is not None and (
+                    str(getattr(interface, "bind_ip", "")) == listener["listen_ip"]
+                    and int(getattr(interface, "bind_port", -1)) == listener["port"]
+                    and getattr(interface, "ifac_netname", None)
+                    == listener["network_name"]
+                    and getattr(interface, "ifac_netkey", None)
+                    == listener["passphrase"]
+                )
+                if not matches:
+                    self.reticulum.detach_interface(name)
+            elif name.startswith(PARTICIPANT_CLIENT_PREFIX):
+                client = desired_clients.get(name)
+                matches = client is not None and (
+                    str(getattr(interface, "target_ip", "")) == client["host"]
+                    and int(getattr(interface, "target_port", -1)) == client["port"]
+                    and getattr(interface, "ifac_netname", None)
+                    == client["network_name"]
+                    and getattr(interface, "ifac_netkey", None)
+                    == client["passphrase"]
+                )
+                if not matches:
+                    self.reticulum.detach_interface(name)
+        existing = {
+            str(getattr(interface, "name", ""))
+            for interface in RNS.Transport.interfaces
+        }
+        for name in [*desired_listeners, *desired_clients]:
+            if name not in existing:
+                self.reticulum.attach_interface(name)
+
+    def remote_profile_state(self, profile_id: str, endpoint_count: int) -> dict[str, Any]:
+        names = {
+            remote_interface_name(profile_id, index) for index in range(endpoint_count)
+        }
+        selected = [
+            interface
+            for interface in list(RNS.Transport.interfaces)
+            if str(getattr(interface, "name", "")) in names
+        ]
+        online = sum(
+            1
+            for interface in selected
+            if bool(getattr(interface, "online", False))
+            and bool(getattr(interface, "receives", False))
+        )
+        return {
+            "connected_endpoint_count": online,
+            "interface_count": len(selected),
+            "connected": online > 0,
+        }
+
+    def reannounce(self) -> None:
+        self.router.announce(self.delivery_destination.hash)
+
+    def apply_propagation_nodes(self, nodes: list[str]) -> None:
+        checked = [bytes.fromhex(value) for value in nodes]
+        self.settings.approved_propagation_nodes = list(nodes)
+        # Auto-peering remains disabled. LXMF's outbound node is a delivery
+        # choice, not an identity, membership authority or receipt.
+        if checked:
+            self.router.set_outbound_propagation_node(checked[0])
+            self.router.request_messages_from_propagation_node(self.identity)
+        else:
+            link = getattr(self.router, "outbound_propagation_link", None)
+            if link is not None:
+                try:
+                    link.teardown()
+                except Exception:
+                    pass
+            # LXMF 1.2.0 validates only non-null destinations in its setter
+            # and exposes no symmetric clear method. These are public router
+            # state attributes; no ratchet or packing internals are touched.
+            self.router.outbound_propagation_link = None
+            self.router.outbound_propagation_node = None
+
+    def request_propagated_messages(self) -> None:
+        if self.router.outbound_propagation_node:
+            self.router.request_messages_from_propagation_node(self.identity)
+
+    def propagation_available(self, node: str) -> bool:
+        try:
+            selected = self.router.outbound_propagation_node == bytes.fromhex(node)
+            link = self.router.outbound_propagation_link
+            return bool(selected and link is not None and link.status == RNS.Link.ACTIVE)
+        except (AttributeError, TypeError, ValueError):
+            return False
 
     def invitation_hints(self) -> list[dict[str, Any]]:
         """Return only live, concrete listener addresses for a signed invitation."""
@@ -1007,6 +1189,13 @@ class ReticulumNetwork:
                 )
             elif str(interface.name) == LAN_FALLBACK_INTERFACE:
                 item["client_count"] = int(getattr(interface, "clients", 0))
+            elif str(interface.name).startswith("Remote access "):
+                item["name"] = "Remote access point"
+            elif str(interface.name).startswith(PARTICIPANT_HOST_PREFIX):
+                item["name"] = "Participant-hosted Internet listener"
+                item["client_count"] = int(getattr(interface, "clients", 0))
+            elif str(interface.name).startswith(PARTICIPANT_CLIENT_PREFIX):
+                item["name"] = "Direct connection to inviter"
             interfaces.append(item)
         return {
             "transport_enabled": bool(RNS.Reticulum.transport_enabled()),

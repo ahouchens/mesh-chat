@@ -1,5 +1,23 @@
 # Workspace Feature Specification
 
+## Internet workspace admission
+
+Workspace invitation creation defaults to participant-hosted v3 with no third-party transport profile. The owner device stays online until the join request arrives and owner approval completes. Mesh Chat tries an owner-controlled public IPv6 listener or short local-router mapping and signs its temporary Reticulum access credential into the invitation. Email, Slack, Teams, or another sharing tool carries that invitation only; it is not a workspace participant, authority, or message transport.
+
+This direct hosting path bootstraps the invitee to the owner/authority device. It does not turn the owner into a general transport node and does not by itself guarantee all-to-all Internet reachability after a workspace gains more members. Ordinary workspace events retain their per-device fan-out semantics and require usable Reticulum paths between active recipient devices. Participants can create their own direct invitations where the workflow permits, explicitly enable routing, or deliberately use an approved access topology.
+
+If participant hosting cannot produce a public path because of CGNAT, restrictive NAT/firewall policy, or disabled router mapping, the UI reports that limitation. Nearby/private-network v1 and an approved Remote Connection Profile are explicit choices; there is no silent fallback. An approved profile is included only when the owner deliberately selects it for that invitation and the invitee separately consents.
+
+Remote admission wraps—without changing—the existing signed, single-use workspace invitation in `MESHWORKSPACE2`. The current authority signs the exact canonical remote profile and digest of the complete inner v1 invitation. Preview verifies the genesis, manifest checkpoint, bounded authority proof, owner fingerprint, retention preference, member summary, both expiry layers, and outer/inner authority agreement without network activity.
+
+Participant-hosted admission similarly wraps the same v1 invitation in `MESHWORKSPACE3`. The current authority signs the exact access document, inner digest, dates, purpose, and authority destination. Preview verifies both layers locally. Acceptance stores only workspace-scoped access before attaching the temporary outbound client; it never creates Personal contact trust.
+
+After explicit consent, the service persists the profile under a pending-workspace scope, attaches the outbound Reticulum TCP interface, remembers and requests the authority path, waits for its recipient ratchet, and queues the unchanged signed `workspace_join`. The existing bounded unknown-source verification exception still requires exact native source and embedded device-card agreement. Owner approval atomically consumes the invitation nonce and publishes the next authority-signed manifest. Import never creates a Personal contact.
+
+Once admitted, channel, private-channel, thread, reaction, mention, history, and workspace-DM events use the ordinary per-device signing, authorization, audience, ratchet, fan-out, delivery-evidence, retention, and history rules. A remote route changes only transport selection. It does not let the owner read member DMs, weaken manifest chains, expand private-channel audiences, or bypass fork suspension.
+
+Rejected, revoked, expired, consumed-terminal, removed, closed, and locally erased pending/workspace states release their exact profile scope. Reference counting preserves a profile still used by another workspace or Personal contact. An optional propagation recommendation remains disabled until a second explicit approval and never changes membership or receipt semantics. Android uses the same records and protocol; suspension may defer join, manifest, message, and propagation progress until the app runs again.
+
 Status: reviewed proposal
 
 Last reviewed: 2026-10-06

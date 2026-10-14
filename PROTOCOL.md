@@ -1,5 +1,44 @@
 # Mesh Chat protocol profile
 
+## Participant-hosted invitation envelopes v3
+
+Version 3 is additive. `MESHCHAT3` and `MESHWORKSPACE3` carry a canonical `participant_invitation` envelope around the complete existing v1 invitation. The outer signature is made by the personal inviter or current workspace authority and binds every field below:
+
+| Field | Meaning |
+| --- | --- |
+| `v`, `type`, `purpose` | Exact values `3`, `participant_invitation`, and `personal` or `workspace` |
+| `inner`, `inner_digest` | Complete verified v1 string and SHA-256 of its exact UTF-8 bytes |
+| `access` | Exact participant-access document described below |
+| `created_at`, `expires_at` | Outer dates; expiry cannot exceed the inner invitation or access credential |
+| `signer_destination` | Inviter/authority LXMF destination, cross-checked with both inner documents |
+| `signature` | URL-safe base64 signature over all preceding canonical fields |
+
+The exact participant-access document has version `1`, mode `participant_direct`, a content-derived SHA-256 `id`, the same `operator_destination`, one to three public `{host, port, path}` endpoints, fresh IFAC `network_name` and `passphrase` tokens, and creation/expiry times. `path` is one of `public_ipv6`, `upnp`, `nat_pmp`, `pcp`, or `manual`. Maximum access lifetime is 24 hours; an automatic IPv4 mapping shortens it to the router lease less a cleanup margin. Endpoints pass the same public-address validation used by imported remote profiles. Private, loopback, link-local, multicast, unspecified, reserved, documentation, and benchmarking addresses fail closed.
+
+The access credential authorizes only attachment to the inviter's temporary Reticulum interface; it is not a Mesh Chat identity, contact approval, workspace membership grant, transport-role grant, or message key. The envelope cross-binding prevents substituting another listener, operator, personal identity, or workspace authority. Unknown/extra fields, invalid types, noncanonical token encodings, duplicate endpoints, excessive size/lifetime, digest mismatch, expiry, identity mismatch, or signature failure are rejected before any socket is opened.
+
+Preview is local and side-effect free. Accepting a verified v3 personal invitation stores the access document under the resulting contact scope before attaching outbound clients; workspace acceptance uses only the pending/workspace scope and never creates a Personal contact. No separate third-party-operator consent checkbox appears because the signed operator is the inviter already shown in the approval UI. Connection is still an explicit consequence of accepting the invitation.
+
+Text forms use `MESHCHAT3:` or `MESHWORKSPACE3:` plus canonical URL-safe base64. Links retain `meshchat://invite/` and `meshchat://workspace/`; raw files contain the exact canonical envelope and may use `.meshchat-invite` (legacy `.meshchat` remains accepted). Personal v3 payloads are bounded to 32 KiB and workspace v3 payloads to the authority-bootstrap bound plus 8 KiB. Desktop and Android native ingress exact-parse the supported v1/v2/v3 families before renderer handoff.
+
+v3 changes only reachability bootstrap. After attachment, normal Reticulum paths, LXMF recipient ratchets, signed contact/workspace controls, replay protection, outbox behavior, and application receipts remain authoritative. A participant listener is not configured as a Reticulum transport instance or propagation node and does not route unrelated users.
+
+## Remote invitation envelopes v2
+
+Version 2 is additive. Existing `MESHCHAT1` and `MESHWORKSPACE1` encodings and their canonical bytes are unchanged. v2 is emitted only after explicit per-invitation selection of an approved operator access point; merely configuring a profile does not override the direct-first v3 default. Remote-ready text, file, QR, and deep-link entry points carry one signed v2 outer envelope around the complete verified v1 string.
+
+The canonical connection profile is versioned and exact-field parsed. It contains a normalized label, one or two bounded TCP endpoint objects, an optional 16-byte LXMF propagation destination, creation and expiry times with no more than a 90-day lifetime, and a bounded capability list. Its stable identifier is the SHA-256 digest of the canonical profile bytes. Runtime origin, consent, scopes, connection state, and retry state are protected local records and are not part of the portable profile identifier.
+
+The `MESHCHAT2` and `MESHWORKSPACE2` canonical outer document binds the wrapper version and purpose, complete inner-v1 bytes, SHA-256 digest of those exact bytes, complete canonical profile, wrapper creation and expiry times, signer destination, and signature. The personal signer must equal the identity/destination verified inside the personal v1 invitation. The workspace signer must equal the current workspace authority verified by the inner invitation and authority proof. Any unknown or extra field, wrong type, excessive size/nesting, invalid date, digest mismatch, signer mismatch, identity/destination mismatch, or invalid signature fails closed before preview.
+
+Native ingress applies outer bounds before handing data to the service: personal invitation payloads are at most 32 KiB, workspace invitation payloads are at most 600 KiB, and Android durable launch ingress is at most 700 KiB. The service then applies the narrower field, profile, invitation, and protocol limits. Desktop and Android accept the same text/file/deep-link forms and invoke the same service parser.
+
+Preview is a pure verification operation. It cannot resolve DNS, attach an interface, request a path, or approve propagation. Approval stores a contact, workspace, or pending-invitation scope before interface activation. Workspace scope never creates a Personal contact. Existing invitation nonce consumption, revocation, expiry, replay, identity-change, owner review, manifest, membership, and per-device checks remain authoritative after unwrapping.
+
+Imported endpoints must be public. Literal and resolved loopback, private, link-local, multicast, unspecified, reserved, documentation, and benchmarking addresses are rejected, as are local-only hostname suffixes. Before every attempt all DNS answers are revalidated; one unsafe answer rejects the entire endpoint, and only a validated numeric address is passed to Reticulum. Private endpoints exist only in an explicit advanced manual profile and are never authorized by imported invitation content.
+
+Route selection does not change message bytes. Nearby and signed direct routes retain preference over a shared remote interface. Direct and propagated LXMF packing require the recipient ratchet; no v2 code permits base-key encryption. TCP connection, Reticulum path, ratchet, optional propagation storage, LXMF endpoint delivery, and authenticated Mesh Chat application receipt are distinct states.
+
 Mesh Chat keeps the LXMF wire format, `lxmf.delivery` destination name, standard Content field, native source signature, and native encryption. It adds signed contact and group-control documents, a small LXMF custom-field map, and local IPC.
 
 ## Invitation v1

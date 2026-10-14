@@ -15,8 +15,9 @@ internal object PendingInvitation {
   const val PREFERENCES = "mesh-chat-launch-v1"
   const val PENDING_KEY = "pending-invitation"
   private const val MAX_STANDARD_BYTES = 32 * 1024
+  private const val MAX_WORKSPACE_BYTES = 600 * 1024
   private const val MAX_DEVICE_LINK_BYTES = 700 * 1024
-  private const val MAX_DOCUMENT_BYTES = 16 * 1024
+  private const val MAX_DOCUMENT_BYTES = MAX_WORKSPACE_BYTES
 
   private val token = Regex("^[A-Za-z0-9_-]+$")
 
@@ -30,7 +31,11 @@ internal object PendingInvitation {
       // Uri implementation is only needed below when opening a content URI.
       val uri = runCatching { java.net.URI(compact) }.getOrNull() ?: return null
       val kind = uri.host ?: return null
-      val maximum = if (kind == "workspace-device") MAX_DEVICE_LINK_BYTES else MAX_STANDARD_BYTES
+      val maximum = when (kind) {
+        "workspace-device" -> MAX_DEVICE_LINK_BYTES
+        "workspace" -> MAX_WORKSPACE_BYTES
+        else -> MAX_STANDARD_BYTES
+      }
       val path = uri.rawPath ?: return null
       val segment = path.removePrefix("/")
       if (
@@ -45,13 +50,23 @@ internal object PendingInvitation {
 
     val maximum = if (lower.startsWith("meshworkspacedevice1:")) {
       MAX_DEVICE_LINK_BYTES
+    } else if (
+      lower.startsWith("meshworkspace1:") ||
+      lower.startsWith("meshworkspace2:") ||
+      lower.startsWith("meshworkspace3:")
+    ) {
+      MAX_WORKSPACE_BYTES
     } else {
       MAX_STANDARD_BYTES
     }
     if (value.toByteArray(StandardCharsets.UTF_8).size > maximum) return null
     val prefix = when {
       lower.startsWith("meshchat1:") -> "meshchat1:"
+      lower.startsWith("meshchat2:") -> "meshchat2:"
+      lower.startsWith("meshchat3:") -> "meshchat3:"
       lower.startsWith("meshworkspace1:") -> "meshworkspace1:"
+      lower.startsWith("meshworkspace2:") -> "meshworkspace2:"
+      lower.startsWith("meshworkspace3:") -> "meshworkspace3:"
       lower.startsWith("meshworkspacedevice1:") -> "meshworkspacedevice1:"
       else -> null
     }
@@ -59,7 +74,7 @@ internal object PendingInvitation {
       return if (token.matches(compact.substring(prefix.length))) value else null
     }
 
-    // Personal .meshchat files use one exact signed JSON shape. Cryptographic,
+    // .meshchat files use an exact signed JSON shape. Cryptographic,
     // expiry, key-size, and destination validation remain authoritative in the
     // Python service, but unrelated JSON never crosses into the renderer.
     if (value.toByteArray(StandardCharsets.UTF_8).size > MAX_DOCUMENT_BYTES) return null
@@ -76,6 +91,7 @@ internal object PendingInvitation {
     )
     val fields = document.keys().asSequence().toSet()
     if (
+      value.toByteArray(StandardCharsets.UTF_8).size <= MAX_STANDARD_BYTES &&
       fields == expected &&
       (document.opt("v") == 1 || document.opt("v") == 1L) &&
       listOf("label", "public_identity", "destination", "signature")
@@ -84,11 +100,63 @@ internal object PendingInvitation {
       (document.opt("expires_at") is Int || document.opt("expires_at") is Long) &&
       document.optJSONArray("hints") != null
     ) return value
+    val remoteExpected = setOf(
+      "v",
+      "type",
+      "purpose",
+      "inner",
+      "inner_digest",
+      "profile",
+      "created_at",
+      "expires_at",
+      "signer_destination",
+      "signature",
+    )
+    val purpose = document.optString("purpose")
+    val purposeSizeValid = when (purpose) {
+      "personal" -> value.toByteArray(StandardCharsets.UTF_8).size <= MAX_STANDARD_BYTES
+      "workspace" -> value.toByteArray(StandardCharsets.UTF_8).size <= MAX_WORKSPACE_BYTES
+      else -> false
+    }
+    if (
+      purposeSizeValid &&
+      fields == remoteExpected &&
+      (document.opt("v") == 2 || document.opt("v") == 2L) &&
+      document.optString("type") == "remote_invitation" &&
+      listOf("inner", "inner_digest", "signer_destination", "signature")
+        .all { document.opt(it) is String && (document.opt(it) as String).isNotEmpty() } &&
+      document.optJSONObject("profile") != null &&
+      (document.opt("created_at") is Int || document.opt("created_at") is Long) &&
+      (document.opt("expires_at") is Int || document.opt("expires_at") is Long)
+    ) return value
+    val participantExpected = setOf(
+      "v",
+      "type",
+      "purpose",
+      "inner",
+      "inner_digest",
+      "access",
+      "created_at",
+      "expires_at",
+      "signer_destination",
+      "signature",
+    )
+    if (
+      purposeSizeValid &&
+      fields == participantExpected &&
+      (document.opt("v") == 3 || document.opt("v") == 3L) &&
+      document.optString("type") == "participant_invitation" &&
+      listOf("inner", "inner_digest", "signer_destination", "signature")
+        .all { document.opt(it) is String && (document.opt(it) as String).isNotEmpty() } &&
+      document.optJSONObject("access") != null &&
+      (document.opt("created_at") is Int || document.opt("created_at") is Long) &&
+      (document.opt("expires_at") is Int || document.opt("expires_at") is Long)
+    ) return value
     return null
   }
 
   private fun isMeshChatFile(activity: Activity, uri: Uri): Boolean {
-    if (uri.lastPathSegment.orEmpty().lowercase().endsWith(".meshchat")) return true
+    if (uri.lastPathSegment.orEmpty().lowercase().let { it.endsWith(".meshchat") || it.endsWith(".meshchat-invite") }) return true
     return runCatching {
       activity.contentResolver.query(
         uri,
@@ -100,7 +168,7 @@ internal object PendingInvitation {
         cursor.moveToFirst() &&
           cursor.getString(cursor.getColumnIndexOrThrow(OpenableColumns.DISPLAY_NAME))
             .lowercase()
-            .endsWith(".meshchat")
+            .let { it.endsWith(".meshchat") || it.endsWith(".meshchat-invite") }
       } == true
     }.getOrDefault(false)
   }

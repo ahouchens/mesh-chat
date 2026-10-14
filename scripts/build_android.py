@@ -34,8 +34,15 @@ NATIVE_LIBRARY = (
     / "debug"
     / "libmesh_chat_lib.so"
 )
+RELEASE_NATIVE_LIBRARY = (
+    ROOT
+    / "src-tauri"
+    / "target"
+    / "aarch64-linux-android"
+    / "release"
+    / "libmesh_chat_lib.so"
+)
 APK = ANDROID / "app" / "build" / "outputs" / "apk" / "arm64" / "debug" / "app-arm64-debug.apk"
-NATIVE_STAMP = NATIVE_LIBRARY.with_name(".mesh-chat-native-input.json")
 
 
 def native_input_files() -> list[Path]:
@@ -83,22 +90,23 @@ def native_input_digest() -> str:
     return digest.hexdigest()
 
 
-def _native_library_newer_than_inputs() -> bool:
-    if not NATIVE_LIBRARY.is_file():
+def _native_library_newer_than_inputs(native_library: Path = NATIVE_LIBRARY) -> bool:
+    if not native_library.is_file():
         return False
-    library_mtime = NATIVE_LIBRARY.stat().st_mtime
+    library_mtime = native_library.stat().st_mtime
     return all(path.stat().st_mtime <= library_mtime for path in native_input_files())
 
 
-def native_library_is_current() -> bool:
+def native_library_is_current(native_library: Path = NATIVE_LIBRARY) -> bool:
     """Return true only for a content-addressed, untampered native library."""
-    if not NATIVE_LIBRARY.is_file() or not NATIVE_STAMP.is_file():
+    native_stamp = native_library.with_name(".mesh-chat-native-input.json")
+    if not native_library.is_file() or not native_stamp.is_file():
         return False
     try:
-        stamp = json.loads(NATIVE_STAMP.read_text(encoding="utf-8"))
+        stamp = json.loads(native_stamp.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return False
-    library_digest = hashlib.sha256(NATIVE_LIBRARY.read_bytes()).hexdigest()
+    library_digest = hashlib.sha256(native_library.read_bytes()).hexdigest()
     return (
         stamp.get("schema_version") == 1
         and stamp.get("input_sha256") == native_input_digest()
@@ -106,17 +114,18 @@ def native_library_is_current() -> bool:
     )
 
 
-def record_native_library() -> None:
-    if not NATIVE_LIBRARY.is_file():
+def record_native_library(native_library: Path = NATIVE_LIBRARY) -> None:
+    if not native_library.is_file():
         return
+    native_stamp = native_library.with_name(".mesh-chat-native-input.json")
     value = {
         "schema_version": 1,
         "input_sha256": native_input_digest(),
-        "library_sha256": hashlib.sha256(NATIVE_LIBRARY.read_bytes()).hexdigest(),
+        "library_sha256": hashlib.sha256(native_library.read_bytes()).hexdigest(),
     }
-    temporary = NATIVE_STAMP.with_name(f".{NATIVE_STAMP.name}.{os.getpid()}.tmp")
+    temporary = native_stamp.with_name(f".{native_stamp.name}.{os.getpid()}.tmp")
     temporary.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    os.replace(temporary, NATIVE_STAMP)
+    os.replace(temporary, native_stamp)
 
 
 def symlinks_available() -> bool:
@@ -467,6 +476,7 @@ def main() -> int:
         requested_reuse or not symlinks_available()
     )
     result = 1
+    native_library = RELEASE_NATIVE_LIBRARY if release else NATIVE_LIBRARY
     if not reuse_native:
         build_started = time.time()
         command = [pnpm, "tauri", "android", "build"]
@@ -480,33 +490,40 @@ def main() -> int:
         # On Windows Tauri may finish Cargo and then fail while creating its
         # convenience symlink. Capture that freshly built library so the direct
         # Gradle fallback and later builds can safely reuse it.
-        if not release and NATIVE_LIBRARY.is_file() and (
+        if native_library.is_file() and (
             result == 0
-            or NATIVE_LIBRARY.stat().st_mtime >= build_started
-            or _native_library_newer_than_inputs()
+            or native_library.stat().st_mtime >= build_started
+            or _native_library_newer_than_inputs(native_library)
         ):
-            record_native_library()
+            record_native_library(native_library)
     else:
         print("Reusing the content-verified Android Rust library.")
-    if result != 0 and not release:
+    if result != 0:
         # Windows requires Developer Mode for Tauri's convenience symlink. Keep
         # the build portable by copying the completed library and invoking the
         # equivalent Gradle packaging task when symlinks are unavailable.
-        if not native_library_is_current():
+        if not native_library_is_current(native_library):
             print(
                 "The reusable Android Rust library is missing or older than its source inputs; "
                 "refusing to package a stale APK.",
                 file=sys.stderr,
             )
             return result
-        if build_android_frontend(pnpm, env) != 0:
+        if build_android_frontend(pnpm, env, debug=not release) != 0:
             return 1
         destination = ANDROID / "app" / "src" / "main" / "jniLibs" / "arm64-v8a"
         destination.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(NATIVE_LIBRARY, destination / NATIVE_LIBRARY.name)
+        shutil.copy2(native_library, destination / native_library.name)
         wrapper = ANDROID / ("gradlew.bat" if os.name == "nt" else "gradlew")
+        variant = "Release" if release else "Debug"
         result = run(
-            [str(wrapper), ":app:assembleArm64Debug", "-x", "rustBuildArm64Debug", "--no-configuration-cache"],
+            [
+                str(wrapper),
+                f":app:assembleArm64{variant}",
+                "-x",
+                f"rustBuildArm64{variant}",
+                "--no-configuration-cache",
+            ],
             cwd=ANDROID,
             env=env,
         )

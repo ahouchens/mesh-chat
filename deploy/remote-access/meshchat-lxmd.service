@@ -1,0 +1,28 @@
+[Unit]
+Description=Optional MeshChat LXMF propagation node
+After=meshchat-rnsd.service
+Requires=meshchat-rnsd.service
+
+[Service]
+Type=simple
+User=meshchat-gateway
+Group=meshchat-gateway
+WorkingDirectory=/var/lib/meshchat-gateway
+ExecStart=/opt/meshchat-gateway/venv/bin/lxmd --config /etc/meshchat-gateway/lxmd --rnsconfig /etc/meshchat-gateway/reticulum --propagation-node --service
+Restart=on-failure
+RestartSec=5s
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/meshchat-gateway
+LimitNOFILE=4096
+TasksMax=128
+MemoryMax=1G
+CapabilityBoundingSet=
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+LockPersonality=true
+MemoryDenyWriteExecute=true
+
+[Install]
+WantedBy=multi-user.target

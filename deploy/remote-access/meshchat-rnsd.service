@@ -1,0 +1,28 @@
+[Unit]
+Description=MeshChat Reticulum TCP transport
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=meshchat-gateway
+Group=meshchat-gateway
+WorkingDirectory=/var/lib/meshchat-gateway
+ExecStart=/opt/meshchat-gateway/venv/bin/rnsd --config /etc/meshchat-gateway/reticulum --service
+Restart=on-failure
+RestartSec=5s
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/meshchat-gateway
+LimitNOFILE=4096
+TasksMax=128
+MemoryMax=512M
+CapabilityBoundingSet=
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+LockPersonality=true
+MemoryDenyWriteExecute=true
+
+[Install]
+WantedBy=multi-user.target

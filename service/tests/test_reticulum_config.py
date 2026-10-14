@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from mesh_chat.reticulum_config import (
+    REMOTE_TCP_ROUTE_GRAVITY,
     SIGNED_TCP_ROUTE_GRAVITY,
     NetworkSettings,
     write_config,
@@ -63,3 +64,19 @@ def test_legacy_settings_enable_lan_fallback_without_inventing_a_port() -> None:
 
     assert settings.lan_fallback is True
     assert settings.lan_listener_port is None
+
+
+def test_shared_remote_access_does_not_receive_signed_direct_route_gravity(tmp_path) -> None:
+    settings = NetworkSettings(
+        remote_tcp_clients=[{
+            "profile_id": "ab" * 32,
+            "endpoint_index": 0,
+            "host": "93.184.216.34",
+            "port": 4242,
+        }]
+    )
+    text = write_config(tmp_path, settings).read_text(encoding="utf-8")
+    remote = text.split("[[Remote access abababababab 1]]", 1)[1]
+    assert f"gravity = {REMOTE_TCP_ROUTE_GRAVITY}" in remote
+    assert f"gravity = {SIGNED_TCP_ROUTE_GRAVITY}" not in remote
+    assert "relay" not in remote.lower()

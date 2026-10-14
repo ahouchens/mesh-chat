@@ -1,5 +1,38 @@
 # Architecture
 
+## Participant-hosted Internet invitations
+
+Internet invitation creation is direct-first on desktop and Android. The protected Python service inspects only local interface/router state, chooses a temporary port, and attempts either a global IPv6 listener or a local-router mapping through UPnP IGD, NAT-PMP, or PCP. No public discovery, rendezvous, STUN, TURN, account, signaling, key-directory, or Mesh Chat service participates. Failure is explicit; the app does not silently select a configured access point.
+
+Each successful host session creates fresh Reticulum IFAC `network_name` and `passphrase` values, a bounded list of public endpoints, and an expiry no later than the underlying mapping lease or inner invitation. Those values are signed together with the complete existing personal/workspace invitation in a v3 envelope. The host record, mapping cleanup data, listener definitions, and imported recipient credential live in encrypted service records. Renderer snapshots receive only an opaque ID, purpose, endpoint count, method names, expiry, and state.
+
+The temporary listener is distinct from the same-LAN TCP listener. It permits off-LAN clients only through its invitation-bound IFAC credential, has bounded connection and retry behavior, and is never configured as a general Reticulum transport or LXMF propagation node. Recipient approval persists the signed credential and its exact contact/workspace scope before adding outbound `TCPClientInterface` instances. Stopping, revoking, expiring, or closing the application detaches the corresponding interface and removes a router mapping where the mapping protocol supports deletion.
+
+This mechanism establishes an Internet underlay interface; Reticulum then performs its normal announce, path, Link, ratchet, and delivery work. Reticulum does not itself pierce arbitrary NAT. Direct setup remains best effort and can fail behind carrier-grade/symmetric NAT, disabled mapping, enterprise filtering, or an inbound IPv6 firewall. The recipient is the first independent reachability check because Mesh Chat intentionally has no external probe service.
+
+## Remote connection profiles
+
+Remote connectivity is an opt-in service capability shared by desktop and Android. The protected Python service, not React or the WebView, owns canonical profile validation, encrypted persistence, consent, DNS resolution, interface lifecycle, path requests, ratchet readiness, retry state, scope cleanup, and optional propagation configuration.
+
+Invitation creation starts in participant-hosted v3 mode and requires the inviter or workspace-owner device to remain online until the recipient reaches it and approval completes. If direct setup is unavailable, nearby/private-network v1 remains an explicit choice. Configuring or importing a Remote Connection Profile never changes the direct-first default; v2 is created only after deliberate per-invitation profile selection.
+
+A profile has a content-derived identifier, normalized label, one or two Reticulum TCP endpoints, optional LXMF propagation recommendation, bounded capabilities and lifetime, origin, consent time, contact/workspace/pending-invitation scope references, and restart-safe connection state. At most four approved profiles exist. Renderer snapshots contain only the label, abbreviated identifier, counts, booleans, safe state names, and safe errors; raw hosts, ports, destinations, invitation bytes, keys, and credentials do not cross that boundary.
+
+The lifecycle is:
+
+1. Parse and fully verify a v1 or v2 invitation locally. Preview performs no DNS or network work.
+2. After explicit consent, atomically persist the profile and its exact scope before attaching a standard Reticulum `TCPClientInterface`.
+3. Resolve every hostname for every attempt, reject the endpoint if any answer is unsafe, and give Reticulum a validated numeric address.
+4. When transport becomes usable, reannounce the local LXMF destination and request only the inviter, contact, authority, or admitted-device paths relevant to the profile's scopes.
+5. Track transport connection, path discovery, recipient ratchet readiness, propagation availability, and application delivery separately. Retry with bounded exponential backoff, jitter, and endpoint failover without pinning outbox jobs to the failed route.
+6. Release only the removed contact, workspace, or pending-invitation scope. Detach and erase an imported profile only after no approved scope or explicit propagation approval references it.
+
+Remote interfaces use ordinary route gravity. Signed direct-peer TCP hints retain their elevated preference, and nearby discovery stays enabled, so remote access remains a fallback. Exact destination/identity validation and recipient-ratchet enforcement happen in the existing LXMF path regardless of route kind; there is no base-key fallback or private Reticulum ratchet injection.
+
+An optional recommended propagation destination is inert until separately approved. Approval adds only that destination to the bounded existing allowlist, keeps automatic propagation peering disabled, and schedules standard LXMF retrieval on startup, foreground/network recovery, and explicit retry. Propagation storage is not an endpoint receipt or application receipt.
+
+The first supported access point is self-hosted or manually supplied. It is outside the client processes and has no Mesh Chat account, contact, workspace, membership, key-directory, or control API. The example deployment is under `deploy/remote-access`. A managed public Mesh Chat gateway is not part of this architecture.
+
 ## Trust and process boundaries
 
 | Component | Owns | Must not own |

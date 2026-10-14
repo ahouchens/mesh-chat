@@ -20,6 +20,18 @@ from .errors import (
     ValidationError,
 )
 from .invitations import canonical_bytes
+from .remote import (
+    add_profile_scope,
+    create_remote_workspace_invitation,
+    remote_invitation_formats,
+    verify_remote_invitation,
+)
+from .participant import (
+    create_participant_workspace_invitation,
+    participant_invitation_formats,
+    preview_participant_access,
+    verify_participant_invitation,
+)
 from .models import (
     DeliveryState,
     WorkspaceChannelCreationPolicy,
@@ -1645,6 +1657,16 @@ class WorkspaceServiceMixin:
             self.store.put(
                 "workspace_lifecycle_state", self._workspace_lifecycle_id(), lifecycle
             )
+            reconcile_remote = getattr(self, "reconcile_remote_profiles", None)
+            if callable(reconcile_remote):
+                reconcile_remote(force_dns=True)
+            network = getattr(self, "network", None)
+            if network is not None:
+                request_propagated = getattr(
+                    network, "request_propagated_messages", None
+                )
+                if callable(request_propagated):
+                    request_propagated()
             # This touches only bounded summaries, pending queues and sharded
             # due-work indexes. It never scans the event or delivery kinds.
             for workspace in self.store.list("workspace")[:MAX_WORKSPACES]:
@@ -3985,8 +4007,15 @@ class WorkspaceServiceMixin:
         workspace_id: Any,
         operation_id: Any,
         lifetime_days: Any = 7,
+        remote_profile_id: Any = None,
+        connection_mode: Any = None,
     ) -> dict[str, Any]:
-        payload = {"workspace_id": workspace_id, "lifetime_days": lifetime_days}
+        payload = {
+            "workspace_id": workspace_id,
+            "lifetime_days": lifetime_days,
+            "remote_profile_id": remote_profile_id,
+            "connection_mode": connection_mode,
+        }
         operation_id, digest, replay = self._workspace_operation(
             "create_workspace_invitation", operation_id, payload
         )
@@ -4052,11 +4081,52 @@ class WorkspaceServiceMixin:
             "workspace_id": workspace["id"],
             **workspace_invitation_formats(raw),
         }
+        remote_record = None
+        if connection_mode == "participant":
+            access = self.create_participant_host_access(
+                purpose="workspace",
+                scope_id=invitation_id,
+                maximum_expires_at=invite.expires_at,
+            )
+            wrapped = create_participant_workspace_invitation(identity, raw, access)
+            outcome.update(participant_invitation_formats(wrapped, "workspace"))
+            outcome["expires_at"] = min(invite.expires_at, access["expires_at"])
+            outcome["connection_mode"] = "participant"
+            outcome["host_session_id"] = access["id"]
+            record["participant_host_id"] = access["id"]
+        elif connection_mode not in {None, "nearby", "remote"}:
+            raise ValidationError("Workspace invitation connection mode is invalid")
+        elif remote_profile_id is not None:
+            remote_record = self._require_remote_profile(remote_profile_id)
+            if remote_record.get("state") == "expired":
+                raise ValidationError("Remote profile has expired")
+            wrapped = create_remote_workspace_invitation(
+                identity, raw, remote_record["profile"]
+            )
+            outcome.update(remote_invitation_formats(wrapped, "workspace"))
+            outcome["expires_at"] = min(
+                invite.expires_at, remote_record["profile"]["expires_at"]
+            )
+            outcome["remote_profile_id"] = remote_profile_id
+            outcome["access_point_reachable"] = (
+                int(remote_record.get("connected_endpoints", 0)) > 0
+            )
+            remote_record = add_profile_scope(
+                dict(remote_record), "pending_invitation", invitation_id
+            )
         committed = self.store.commit_operation(
             operation_id,
             digest,
             outcome,
-            [*expired_records, ("workspace_invitation", invitation_id, record)],
+            [
+                *expired_records,
+                ("workspace_invitation", invitation_id, record),
+                *(
+                    [("remote_profile", remote_profile_id, remote_record)]
+                    if remote_record is not None
+                    else []
+                ),
+            ],
         )
         self._workspace_changed(workspace["id"], resource_kind="invitation")
         return committed
@@ -4064,7 +4134,20 @@ class WorkspaceServiceMixin:
     def preview_workspace_invitation(self, raw: Any) -> dict[str, Any]:
         if not isinstance(raw, str):
             raise ValidationError("Workspace invitation must be text")
-        return verify_workspace_invitation(raw).preview()
+        participant = verify_participant_invitation(raw, "workspace")
+        remote = None if participant else verify_remote_invitation(raw, "workspace")
+        invitation = verify_workspace_invitation(
+            participant.inner if participant else remote.inner if remote else raw
+        )
+        preview = invitation.preview()
+        if participant is not None:
+            preview["participant_access"] = preview_participant_access(
+                participant.access
+            )
+        elif remote is not None:
+            preview["remote_profile"] = self.preview_remote_profile(remote.profile)
+            preview["requires_network_consent"] = True
+        return preview
 
     def revoke_workspace_invitation(
         self, workspace_id: Any, invitation_id: Any, operation_id: Any
@@ -4094,6 +4177,8 @@ class WorkspaceServiceMixin:
             outcome,
             [("workspace_invitation", invitation_id, invitation)],
         )
+        self.stop_participant_host_for_scope("workspace", invitation_id)
+        self.release_remote_scope("pending_invitation", invitation_id)
         self._workspace_changed(workspace_id, resource_kind="invitation")
         return committed
 
@@ -4344,7 +4429,11 @@ class WorkspaceServiceMixin:
             return replay
         if not isinstance(invitation, str):
             raise ValidationError("Workspace invitation must be text")
-        invite = verify_workspace_invitation(invitation)
+        participant = verify_participant_invitation(invitation, "workspace")
+        remote = None if participant else verify_remote_invitation(invitation, "workspace")
+        invite = verify_workspace_invitation(
+            participant.inner if participant else remote.inner if remote else invitation
+        )
         if self.store.get("workspace", self._workspace_record_id(invite.workspace_id)) is not None:
             raise ValidationError("This workspace is already known on this device")
         if len(self.store.list("workspace")) >= MAX_WORKSPACES:
@@ -4353,6 +4442,19 @@ class WorkspaceServiceMixin:
         identity = self._identity
         if identity is None:
             raise ValidationError("Local identity is unavailable")
+        if participant is not None:
+            self.approve_participant_access(
+                participant.access,
+                scope_kind="workspace",
+                scope_id=invite.workspace_id,
+            )
+        elif remote is not None:
+            self._approve_remote_document(
+                remote.profile,
+                origin="workspace_invitation",
+                scope_kind="workspace",
+                scope_id=invite.workspace_id,
+            )
         join_raw = create_workspace_join(
             identity,
             invite,
@@ -4674,6 +4776,12 @@ class WorkspaceServiceMixin:
         ]
         committed = self.store.commit_operation(
             operation_id, digest, outcome, records
+        )
+        self.stop_participant_host_for_scope(
+            "workspace", request["invitation_id"]
+        )
+        self.release_remote_scope(
+            "pending_invitation", request["invitation_id"]
         )
         self._workspace_changed(workspace_id)
         return committed
@@ -8331,6 +8439,10 @@ class WorkspaceServiceMixin:
             network = getattr(self, "network", None)
             if network is not None and cancelled_ids:
                 network.cancel_outbound(cancelled_ids)
+            if workspace.get("state") in {
+                "closed", "removed", "left", "device_removed"
+            }:
+                self.release_remote_scope("workspace", workspace["id"])
             self._remember_workspace_devices(workspace)
             if drain_pending:
                 self._drain_workspace_pending_controls(workspace["id"])
@@ -15487,6 +15599,11 @@ class WorkspaceServiceMixin:
         committed = self.store.commit_operation(
             operation_id, digest, outcome, records
         )
+        for _kind, invitation_id, _record in invalidated_records:
+            if _kind == "workspace_invitation":
+                self.stop_participant_host_for_scope("workspace", invitation_id)
+                self.release_remote_scope("pending_invitation", invitation_id)
+        self.release_remote_scope("workspace", workspace_id)
         self._workspace_changed(workspace_id)
         return committed
 
@@ -15702,6 +15819,7 @@ class WorkspaceServiceMixin:
         network = getattr(self, "network", None)
         if network is not None and delivery_ids:
             network.cancel_outbound(set(delivery_ids))
+        self.release_remote_scope("workspace", workspace_id)
         self._workspace_changed(workspace_id, resource_kind="local_removal")
         return committed
 
@@ -15862,6 +15980,7 @@ class WorkspaceServiceMixin:
         now = time.time()
         records: list[tuple[str, str, dict[str, Any]]] = []
         deletions: list[tuple[str, str]] = []
+        expired_invitation_ids: list[str] = []
         changed_workspaces: set[str] = set()
         for record_id, stored in self.store.items("workspace_invitation"):
             if (
@@ -15873,6 +15992,7 @@ class WorkspaceServiceMixin:
             invitation["state"] = "expired"
             invitation["updated_at"] = now
             records.append(("workspace_invitation", record_id, invitation))
+            expired_invitation_ids.append(record_id)
             if isinstance(invitation.get("workspace_id"), str):
                 changed_workspaces.add(invitation["workspace_id"])
         profile_index_id = self._workspace_admin_profile_index_id()
@@ -15957,6 +16077,9 @@ class WorkspaceServiceMixin:
         if not records and not deletions:
             return
         self.store.put_and_delete(records, deletions)
+        for invitation_id in expired_invitation_ids:
+            self.stop_participant_host_for_scope("workspace", invitation_id)
+            self.release_remote_scope("pending_invitation", invitation_id)
         for workspace_id in changed_workspaces:
             self._workspace_changed(workspace_id, resource_kind="invitation")
 

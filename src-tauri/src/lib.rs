@@ -48,6 +48,7 @@ const IPC_VERSION: u64 = 1;
 // invalid sidecar length prefix from causing an unbounded allocation.
 const MAX_FRAME_BYTES: usize = 4 * 1024 * 1024;
 const MAX_RENDERER_PAYLOAD_BYTES: usize = 32 * 1024;
+const MAX_WORKSPACE_INVITATION_PAYLOAD_BYTES: usize = 600 * 1024;
 const MAX_WORKSPACE_DEVICE_LINK_PAYLOAD_BYTES: usize = 700 * 1024;
 
 type PendingResult = Result<Value, String>;
@@ -394,6 +395,16 @@ fn allowed_renderer_command(command: &str) -> bool {
             | "create_invitation"
             | "preview_invitation"
             | "accept_invitation"
+            | "preview_remote_profile"
+            | "create_manual_remote_profile"
+            | "approve_remote_profile"
+            | "test_remote_profile"
+            | "list_remote_profiles"
+            | "retry_remote_profile"
+            | "remove_remote_profile"
+            | "approve_remote_propagation"
+            | "remove_remote_propagation"
+            | "stop_participant_host"
             | "approve_request"
             | "decline_request"
             | "send_message"
@@ -519,7 +530,7 @@ fn validated_invitation_value(raw: &str) -> Option<String> {
     let (prefix, maximum) = if compact.starts_with("meshchat://invite/") {
         ("meshchat://invite/", MAX_RENDERER_PAYLOAD_BYTES)
     } else if compact.starts_with("meshchat://workspace/") {
-        ("meshchat://workspace/", MAX_RENDERER_PAYLOAD_BYTES)
+        ("meshchat://workspace/", MAX_WORKSPACE_INVITATION_PAYLOAD_BYTES)
     } else if compact.starts_with("meshchat://workspace-device/") {
         (
             "meshchat://workspace-device/",
@@ -527,18 +538,27 @@ fn validated_invitation_value(raw: &str) -> Option<String> {
         )
     } else if compact.starts_with("MESHCHAT1:") {
         ("MESHCHAT1:", MAX_RENDERER_PAYLOAD_BYTES)
+    } else if compact.starts_with("MESHCHAT2:") {
+        ("MESHCHAT2:", MAX_RENDERER_PAYLOAD_BYTES)
+    } else if compact.starts_with("MESHCHAT3:") {
+        ("MESHCHAT3:", MAX_RENDERER_PAYLOAD_BYTES)
     } else if compact.starts_with("MESHWORKSPACE1:") {
-        ("MESHWORKSPACE1:", MAX_RENDERER_PAYLOAD_BYTES)
+        ("MESHWORKSPACE1:", MAX_WORKSPACE_INVITATION_PAYLOAD_BYTES)
+    } else if compact.starts_with("MESHWORKSPACE2:") {
+        ("MESHWORKSPACE2:", MAX_WORKSPACE_INVITATION_PAYLOAD_BYTES)
+    } else if compact.starts_with("MESHWORKSPACE3:") {
+        ("MESHWORKSPACE3:", MAX_WORKSPACE_INVITATION_PAYLOAD_BYTES)
     } else if compact.starts_with("MESHWORKSPACEDEVICE1:") {
         (
             "MESHWORKSPACEDEVICE1:",
             MAX_WORKSPACE_DEVICE_LINK_PAYLOAD_BYTES,
         )
     } else {
-        // The personal .meshchat export is canonical signed JSON. Its full
-        // cryptographic, expiry, and key validation remains in the Python
-        // service, but unrelated JSON never crosses into the renderer.
-        if value.len() > MAX_RENDERER_PAYLOAD_BYTES {
+        // A .meshchat export is canonical signed JSON. Workspace envelopes can
+        // contain a bounded manifest, while personal envelopes retain the
+        // smaller renderer limit. Full validation remains in the service.
+        let raw_bytes = value.len();
+        if raw_bytes > MAX_WORKSPACE_INVITATION_PAYLOAD_BYTES {
             return None;
         }
         let document = serde_json::from_str::<Value>(value).ok()?;
@@ -553,7 +573,8 @@ fn validated_invitation_value(raw: &str) -> Option<String> {
             "hints",
             "signature",
         ];
-        if fields.len() == expected.len()
+        if raw_bytes <= MAX_RENDERER_PAYLOAD_BYTES
+            && fields.len() == expected.len()
             && expected.iter().all(|field| fields.contains_key(*field))
             && fields.get("v").and_then(Value::as_i64) == Some(1)
             && ["label", "public_identity", "destination", "signature"]
@@ -567,6 +588,66 @@ fn validated_invitation_value(raw: &str) -> Option<String> {
             && fields.get("created_at").and_then(Value::as_i64).is_some()
             && fields.get("expires_at").and_then(Value::as_i64).is_some()
             && fields.get("hints").is_some_and(Value::is_array)
+        {
+            return Some(value.to_string());
+        }
+        let remote_expected = [
+            "v",
+            "type",
+            "purpose",
+            "inner",
+            "inner_digest",
+            "profile",
+            "created_at",
+            "expires_at",
+            "signer_destination",
+            "signature",
+        ];
+        let purpose = fields.get("purpose").and_then(Value::as_str);
+        let purpose_size_valid = match purpose {
+            Some("personal") => raw_bytes <= MAX_RENDERER_PAYLOAD_BYTES,
+            Some("workspace") => raw_bytes <= MAX_WORKSPACE_INVITATION_PAYLOAD_BYTES,
+            _ => false,
+        };
+        if purpose_size_valid
+            && fields.len() == remote_expected.len()
+            && remote_expected.iter().all(|field| fields.contains_key(*field))
+            && fields.get("v").and_then(Value::as_i64) == Some(2)
+            && fields.get("type").and_then(Value::as_str) == Some("remote_invitation")
+            && fields.get("profile").is_some_and(Value::is_object)
+            && ["inner", "inner_digest", "signer_destination", "signature"]
+                .iter()
+                .all(|field| fields.get(*field).and_then(Value::as_str).is_some())
+            && fields.get("created_at").and_then(Value::as_i64).is_some()
+            && fields.get("expires_at").and_then(Value::as_i64).is_some()
+        {
+            return Some(value.to_string());
+        }
+        let participant_expected = [
+            "v",
+            "type",
+            "purpose",
+            "inner",
+            "inner_digest",
+            "access",
+            "created_at",
+            "expires_at",
+            "signer_destination",
+            "signature",
+        ];
+        if purpose_size_valid
+            && fields.len() == participant_expected.len()
+            && participant_expected
+                .iter()
+                .all(|field| fields.contains_key(*field))
+            && fields.get("v").and_then(Value::as_i64) == Some(3)
+            && fields.get("type").and_then(Value::as_str) == Some("participant_invitation")
+            && fields.get("access").is_some_and(Value::is_object)
+            && ["inner", "inner_digest", "signer_destination", "signature"]
+                .iter()
+                .all(|field| fields.get(*field).and_then(Value::as_str).is_some())
+            && fields.get("created_at").and_then(Value::as_i64).is_some()
+            && fields.get("expires_at").and_then(Value::as_i64).is_some()
         {
             return Some(value.to_string());
         }
@@ -598,12 +679,17 @@ fn invitation_from_argument(argument: &str) -> Option<String> {
     if !path
         .extension()
         .and_then(|value| value.to_str())
-        .is_some_and(|value| value.eq_ignore_ascii_case("meshchat"))
+        .is_some_and(|value| {
+            value.eq_ignore_ascii_case("meshchat")
+                || value.eq_ignore_ascii_case("meshchat-invite")
+        })
     {
         return None;
     }
     let metadata = fs::metadata(path).ok()?;
-    if !metadata.is_file() || metadata.len() > MAX_RENDERER_PAYLOAD_BYTES as u64 {
+    if !metadata.is_file()
+        || metadata.len() > MAX_WORKSPACE_INVITATION_PAYLOAD_BYTES as u64
+    {
         return None;
     }
     let contents = fs::read_to_string(path).ok()?;
@@ -705,6 +791,11 @@ async fn service_command(
         "preview_workspace_device_link" | "submit_workspace_device_link"
     ) {
         MAX_WORKSPACE_DEVICE_LINK_PAYLOAD_BYTES
+    } else if matches!(
+        command.as_str(),
+        "preview_workspace_invitation" | "submit_workspace_join"
+    ) {
+        MAX_WORKSPACE_INVITATION_PAYLOAD_BYTES
     } else {
         MAX_RENDERER_PAYLOAD_BYTES
     };
@@ -772,6 +863,11 @@ async fn service_command(app: AppHandle, command: String, payload: Value) -> Pen
         "preview_workspace_device_link" | "submit_workspace_device_link"
     ) {
         MAX_WORKSPACE_DEVICE_LINK_PAYLOAD_BYTES
+    } else if matches!(
+        command.as_str(),
+        "preview_workspace_invitation" | "submit_workspace_join"
+    ) {
+        MAX_WORKSPACE_INVITATION_PAYLOAD_BYTES
     } else {
         MAX_RENDERER_PAYLOAD_BYTES
     };
@@ -1067,6 +1163,19 @@ mod tests {
         assert!(allowed_renderer_command("restore_conversation"));
         assert!(allowed_renderer_command("set_message_reaction"));
         assert!(!allowed_renderer_command("delete_contact_identity"));
+        for command in [
+            "preview_remote_profile",
+            "create_manual_remote_profile",
+            "test_remote_profile",
+            "list_remote_profiles",
+            "retry_remote_profile",
+            "remove_remote_profile",
+            "approve_remote_propagation",
+            "remove_remote_propagation",
+            "stop_participant_host",
+        ] {
+            assert!(allowed_renderer_command(command));
+        }
     }
 
     #[test]
@@ -1174,6 +1283,32 @@ mod tests {
     fn desktop_accepts_workspace_deep_links() {
         let link = "meshchat://workspace/fixture-token";
         assert_eq!(invitation_from_argument(link), Some(link.to_string()));
+        assert_eq!(
+            validated_invitation_value("MESHCHAT2:abc_DEF-123"),
+            Some("MESHCHAT2:abc_DEF-123".to_string())
+        );
+        assert_eq!(
+            validated_invitation_value("MESHCHAT3:abc_DEF-123"),
+            Some("MESHCHAT3:abc_DEF-123".to_string())
+        );
+        assert_eq!(
+            validated_invitation_value("MESHWORKSPACE2:abc_DEF-123"),
+            Some("MESHWORKSPACE2:abc_DEF-123".to_string())
+        );
+        assert_eq!(
+            validated_invitation_value("MESHWORKSPACE3:abc_DEF-123"),
+            Some("MESHWORKSPACE3:abc_DEF-123".to_string())
+        );
+        let workspace_document = "{\"v\":2,\"type\":\"remote_invitation\",\"purpose\":\"workspace\",\"inner\":\"signed\",\"inner_digest\":\"digest\",\"profile\":{},\"created_at\":1,\"expires_at\":2,\"signer_destination\":\"destination\",\"signature\":\"signature\"}";
+        assert_eq!(
+            validated_invitation_value(workspace_document),
+            Some(workspace_document.to_string())
+        );
+        let participant_document = "{\"v\":3,\"type\":\"participant_invitation\",\"purpose\":\"personal\",\"inner\":\"signed\",\"inner_digest\":\"digest\",\"access\":{},\"created_at\":1,\"expires_at\":2,\"signer_destination\":\"destination\",\"signature\":\"signature\"}";
+        assert_eq!(
+            validated_invitation_value(participant_document),
+            Some(participant_document.to_string())
+        );
         let device = "meshchat://workspace-device/fixture-token";
         assert_eq!(invitation_from_argument(device), Some(device.to_string()));
     }
