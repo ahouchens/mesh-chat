@@ -152,6 +152,11 @@ jobs:
     needs: verify
     runs-on: ubuntu-latest
     timeout-minutes: 120
+    env:
+      MESH_CHAT_ANDROID_KEYSTORE_PATH: ${{ runner.temp }}/mesh-chat-release.jks
+      MESH_CHAT_ANDROID_KEYSTORE_PASSWORD: ${{ secrets.MESH_CHAT_ANDROID_KEYSTORE_PASSWORD }}
+      MESH_CHAT_ANDROID_KEY_ALIAS: ${{ secrets.MESH_CHAT_ANDROID_KEY_ALIAS }}
+      MESH_CHAT_ANDROID_KEY_PASSWORD: ${{ secrets.MESH_CHAT_ANDROID_KEY_PASSWORD }}
 
     steps:
       - name: Check out repository
@@ -212,8 +217,22 @@ jobs:
       - name: Install Python dependencies
         run: python -m pip install --disable-pip-version-check -r service/requirements-dev.lock
 
-      - name: Build and verify Android artifacts
-        run: python scripts/release.py build --platform android --skip-tests --expected-version "${{ needs.verify.outputs.version }}"
+      - name: Restore Android release signing key
+        shell: bash
+        env:
+          KEYSTORE_BASE64: ${{ secrets.MESH_CHAT_ANDROID_KEYSTORE_BASE64 }}
+        run: |
+          set -euo pipefail
+          test -n "$KEYSTORE_BASE64"
+          printf '%s' "$KEYSTORE_BASE64" | base64 --decode > "$MESH_CHAT_ANDROID_KEYSTORE_PATH"
+          chmod 600 "$MESH_CHAT_ANDROID_KEYSTORE_PATH"
+
+      - name: Build and verify signed Android artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/release.py check --expected-version "${{ needs.verify.outputs.version }}"
+          python scripts/build_android.py --release
 
       - name: Upload Android artifacts and report
         if: always()
@@ -232,6 +251,7 @@ jobs:
     needs:
       - verify
       - desktop
+      - android
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -243,6 +263,12 @@ jobs:
           name: mesh-chat-${{ needs.verify.outputs.version }}-windows-desktop
           path: release-input/windows
 
+      - name: Download verified Android artifacts
+        uses: actions/download-artifact@v5
+        with:
+          name: mesh-chat-${{ needs.verify.outputs.version }}-android-arm64
+          path: release-input/android
+
       - name: Stage public release assets
         shell: bash
         env:
@@ -251,12 +277,13 @@ jobs:
           set -euo pipefail
           mapfile -d '' windows_exe < <(find release-input/windows -type f -path "*/releases/$RELEASE_VERSION/x86_64-pc-windows-msvc/bundle/nsis/*.exe" -print0)
           mapfile -d '' windows_msi < <(find release-input/windows -type f -path "*/releases/$RELEASE_VERSION/x86_64-pc-windows-msvc/bundle/msi/*.msi" -print0)
-          if (( ${#windows_exe[@]} != 1 || ${#windows_msi[@]} != 1 )); then
-            echo "Expected exactly one verified NSIS installer and MSI" >&2
+          mapfile -d '' android_apk < <(find release-input/android -type f -name "mesh-chat-$RELEASE_VERSION-android-arm64-release.apk" -not -path "*/releases/*" -print0)
+          if (( ${#windows_exe[@]} != 1 || ${#windows_msi[@]} != 1 || ${#android_apk[@]} != 1 )); then
+            echo "Expected exactly one verified NSIS installer, MSI, and signed Android APK" >&2
             exit 1
           fi
           mkdir release-assets
-          cp "${windows_exe[0]}" "${windows_msi[0]}" release-assets/
+          cp "${windows_exe[0]}" "${windows_msi[0]}" "${android_apk[0]}" release-assets/
           (cd release-assets && sha256sum -- * > SHA256SUMS.txt)
 
       - name: Create persistent GitHub release
