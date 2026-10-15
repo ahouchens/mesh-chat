@@ -228,10 +228,11 @@ signed, and exercised on a physical device.
 
 ## Install Mesh Chat
 
-**Current desktop candidate: Mesh Chat 0.2.44. Current Android candidate:
-Mesh Chat 0.2.42.** Install either over the existing app; do not uninstall Mesh
-Chat or clear its data first. The Android package is an arm64 development
-candidate and still requires the
+**Current desktop candidate: Mesh Chat 0.2.45. Current Android candidate:
+Mesh Chat 0.2.45.** Download the Windows setup executable (or deployment MSI)
+from [GitHub Releases](https://github.com/ahouchens/mesh-chat/releases), then
+install it over the existing app; do not uninstall Mesh Chat or clear its data
+first. The Android package is an arm64 development candidate and still requires the
 physical-device lifecycle matrix recorded in [TESTING.md](TESTING.md).
 
 Mesh Chat must be packaged for the operating system where it will run. This
@@ -825,7 +826,10 @@ failure, `dist/reports/latest.json` identifies the failed stage and its log.
 
 GitHub Actions runs the same commands: `CI` validates each pull request and
 main-branch push, and `Release build` verifies a `vMAJOR.MINOR.PATCH` tag or
-manually supplied version before building Windows and Android concurrently.
+manually supplied version before building Windows and Android concurrently. A
+successful version tag also creates or updates a persistent GitHub Release with
+the verified Windows setup executable, MSI, and checksums; a manual dispatch
+keeps its output as Actions artifacts only.
 pnpm, pip, Cargo, and Gradle
 caches are reused across runs. The workflows become active after this workspace
 is committed and pushed to a GitHub remote.

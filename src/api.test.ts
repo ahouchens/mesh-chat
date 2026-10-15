@@ -15,7 +15,7 @@ vi.mock("@tauri-apps/plugin-deep-link", () => ({
 }));
 vi.mock("@tauri-apps/api/app", () => ({ onBackButtonPress: vi.fn() }));
 
-import { onInvitation } from "./api";
+import { onInvitation, pickInvitationFile } from "./api";
 
 afterEach(() => {
   vi.useRealTimers();
@@ -23,6 +23,29 @@ afterEach(() => {
 });
 
 describe("Android invitation ingress", () => {
+  it("returns a natively validated invitation selected from the document picker", async () => {
+    const invitation = "MESHWORKSPACE4:validated";
+    tauri.invoke.mockResolvedValueOnce(invitation);
+
+    await expect(pickInvitationFile()).resolves.toBe(invitation);
+    expect(tauri.invoke).toHaveBeenCalledWith("pick_invitation_file");
+  });
+
+  it("treats document-picker cancellation as a non-error", async () => {
+    tauri.invoke.mockResolvedValueOnce(null);
+
+    await expect(pickInvitationFile()).resolves.toBeNull();
+  });
+
+  it("preserves a native invitation-file error code", async () => {
+    tauri.invoke.mockRejectedValueOnce("invitation_file_type_invalid");
+
+    await expect(pickInvitationFile()).rejects.toMatchObject({
+      name: "ServiceCommandError",
+      code: "invitation_file_type_invalid",
+    });
+  });
+
   it("hands a cold-launch invitation to the renderer exactly once", async () => {
     const invitation = "meshchat://invite/cold_launch";
     const pending = [invitation, null, invitation];

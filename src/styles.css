@@ -131,6 +131,8 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .file-action { display: inline-flex; align-items: center; gap: 7px; color: var(--green-700); font-size: 0.82rem; font-weight: 750; cursor: pointer; }
 .file-action input { position: absolute; width: 1px; height: 1px; opacity: 0; }
 .file-action--button { padding: 0; background: transparent; border: 0; }
+.visually-hidden-file { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+.import-status { width: 100%; color: var(--green-700); font-size: .78rem; font-weight: 700; }
 .camera-box { display: grid; width: 100%; gap: 7px; padding: 10px; color: var(--muted); background: #e9ede8; border-radius: 12px; font-size: .76rem; text-align: center; }
 .camera-box video { width: 100%; max-height: 240px; object-fit: cover; background: #14221c; border-radius: 9px; }
 .security-details { border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); padding: 14px 0; }
@@ -146,6 +148,11 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .success-mark { display: grid; width: 52px; height: 52px; place-items: center; color: white; background: var(--accent-fill); border-radius: 50%; }
 .qr-frame { display: grid; padding: 16px; place-items: center; background: var(--cream); border: 1px solid #d9ddd5; border-radius: 18px; }
 .qr-frame--small { padding: 12px; }
+.invitation-qr { display: grid; width: 100%; gap: 12px; text-align: left; }
+.invitation-qr > div:first-child { display: grid; gap: 5px; }
+.invitation-qr > div:first-child span { color: var(--muted); font-size: .8rem; line-height: 1.4; }
+.qr-frame--transfer { width: min(100%, 632px); margin-inline: auto; padding: 16px; }
+.qr-frame--transfer svg { width: 100%; height: auto; max-width: 600px; }
 .invite-share { display: grid; width: 100%; gap: 11px; text-align: left; }
 .invite-details textarea { min-height: 108px; color: #2b3c34; background: #fff; font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace; font-size: .7rem; line-height: 1.45; overflow-wrap: anywhere; }
 .invite-safety { font-size: .8rem; line-height: 1.45; }

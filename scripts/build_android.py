@@ -26,6 +26,9 @@ except ImportError:  # Direct execution: python scripts/build_android.py
 
 ROOT = Path(__file__).resolve().parents[1]
 ANDROID = ROOT / "src-tauri" / "gen" / "android"
+PENDING_INVITATION_TEMPLATE = (
+    ROOT / "scripts" / "templates" / "android" / "PendingInvitation.kt"
+)
 NATIVE_LIBRARY = (
     ROOT
     / "src-tauri"
@@ -352,13 +355,16 @@ def patch_generated_project() -> None:
         """package com.meshchat.mobile
 
 import android.content.Intent
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import androidx.core.graphics.Insets
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
+import com.meshchat.runtime.InvitationDocumentHost
+import com.meshchat.runtime.InvitationDocumentResult
 
-class MainActivity : TauriActivity() {
+class MainActivity : TauriActivity(), InvitationDocumentHost {
   companion object {
     private const val THEME_PREFERENCES = "mesh-chat-vault"
     private const val UI_THEME = "ui-theme"
@@ -378,6 +384,9 @@ class MainActivity : TauriActivity() {
       setIntent(Intent(Intent.ACTION_MAIN).setPackage(packageName))
     }
   }
+
+  override fun readInvitationDocument(uri: Uri): InvitationDocumentResult =
+    PendingInvitation.readDocument(this, uri)
 
   override fun onCreate(savedInstanceState: Bundle?) {
     captureLaunch(intent)
@@ -416,6 +425,11 @@ class MainActivity : TauriActivity() {
   }
 }
 """,
+    )
+    pending_invitation = activity.with_name("PendingInvitation.kt")
+    write_if_changed(
+        pending_invitation,
+        PENDING_INVITATION_TEMPLATE.read_text(encoding="utf-8"),
     )
 
     # Mobile bundles do not currently copy Tauri's desktop-style `resources`

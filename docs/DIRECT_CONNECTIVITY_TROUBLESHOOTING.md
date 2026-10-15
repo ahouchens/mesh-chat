@@ -2,6 +2,12 @@
 
 Mesh Chat is direct-first: a new Internet invitation asks the sender's own device to host a short-lived, authenticated connection. There is no Mesh Chat account, rendezvous service, public-IP lookup, STUN/TURN service, managed relay, or silent transport operator. Email, Slack, Teams, QR, clipboard, and invitation files carry only the signed invitation.
 
+When a signed invitation is too dense for a reliable ordinary QR, Mesh Chat may
+display a `MESHQR1` camera transport. It contains a bounded compressed copy of
+the same signed document; scanning restores the original document before the
+normal signature, expiry, single-use, identity, and workspace-authority checks.
+It is not a relay, lookup, or alternate trust path.
+
 The sender must keep Mesh Chat open and online while the invitation is active and while the recipient connects and is approved. `Prepared — waiting for recipient verification` means that a listener and candidate path were created locally. It is not proof that the path is reachable from the Internet. Only an authenticated recipient connection changes the state to `Recipient connected`.
 
 ## Email-ready invitations and connection replies

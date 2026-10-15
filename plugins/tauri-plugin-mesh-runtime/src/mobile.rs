@@ -39,6 +39,13 @@ impl<R: Runtime> MeshRuntime<R> {
         Ok(self.0.run_mobile_plugin("takePendingInvitation", ())?)
     }
 
+    pub async fn pick_invitation_file(&self) -> Result<NativeResponse> {
+        Ok(self
+            .0
+            .run_mobile_plugin_async("pickInvitationFile", ())
+            .await?)
+    }
+
     pub fn notification_capability(&self) -> Result<NativeResponse> {
         Ok(self.0.run_mobile_plugin("notificationCapability", ())?)
     }

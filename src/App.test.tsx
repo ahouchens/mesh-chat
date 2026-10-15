@@ -13,6 +13,7 @@ const api = vi.hoisted(() => ({
   onNotificationOpen: vi.fn<(callback: (notificationId: string) => void) => Promise<() => void>>(async () => () => undefined),
   onServiceEvent: vi.fn(),
   openNotificationSettings: vi.fn(async () => ({ supported: false, platform: "desktop", permission_state: "unsupported" })),
+  pickInvitationFile: vi.fn(),
   requestNotificationPermission: vi.fn(async () => ({ supported: false, platform: "desktop", permission_state: "unsupported" })),
   runtimePlatform: vi.fn(),
   setNativeTheme: vi.fn(async () => undefined),
@@ -386,6 +387,133 @@ describe("appearance theme", () => {
 });
 
 describe("first-run remote invitation consent", () => {
+  it("verifies an initial workspace invitation before creating a profile and resumes it exactly", async () => {
+    const invitation = `MESHWORKSPACE4:${"abc_DEF-123".repeat(430)}`;
+    const onboarding: Snapshot = { ...snapshot(), profile: null };
+    const ready = snapshot();
+    const initializing = deferred<Snapshot>();
+    const commands: string[] = [];
+    let deliverInvitation: ((value: string) => void) | undefined;
+    api.runtimePlatform.mockResolvedValue("desktop");
+    api.initializeService.mockReturnValue(initializing.promise);
+    api.onInvitation.mockImplementation(async (callback) => {
+      deliverInvitation = callback;
+      return () => undefined;
+    });
+    api.onServiceEvent.mockResolvedValue(() => undefined);
+    api.serviceCommand.mockImplementation(async (command: string) => {
+      commands.push(command);
+      if (command === "preview_workspace_invitation") return {
+        name: "Lakewatcher",
+        description: "Field coordination",
+        owner_fingerprint: "AAAA BBBB CCCC DDDD",
+        member_count: 1,
+        retention_days: 90,
+        expires_at: 2_000_000_000,
+      };
+      if (command === "create_profile") return profile;
+      if (command === "snapshot") return ready;
+      return {};
+    });
+
+    render(<App />);
+    await waitFor(() => expect(deliverInvitation).toBeTypeOf("function"));
+    await act(async () => {
+      deliverInvitation?.(invitation);
+      initializing.resolve(onboarding);
+      await initializing.promise;
+    });
+
+    expect(await screen.findByRole("heading", { name: "Set up this device for Lakewatcher" })).toBeTruthy();
+    expect(screen.getByText(/Field coordination/)).toBeTruthy();
+    expect(commands).not.toContain("preview_invitation");
+    expect(api.serviceCommand).toHaveBeenCalledWith("preview_workspace_invitation", { invitation });
+
+    fireEvent.change(screen.getByRole("textbox", { name: "Display name" }), { target: { value: "Alex" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create profile and continue" }));
+
+    await waitFor(() => expect(api.serviceCommand).toHaveBeenCalledWith(
+      "create_profile",
+      { display_name: "Alex" },
+    ));
+    const dialog = await screen.findByRole("dialog", { name: "Join a workspace" });
+    expect(await within(dialog).findByRole("heading", { name: "Lakewatcher" })).toBeTruthy();
+    const workspacePreviews = api.serviceCommand.mock.calls.filter(([command]) => command === "preview_workspace_invitation");
+    expect(workspacePreviews.at(-1)?.[1]).toEqual({ invitation });
+    expect(commands.indexOf("create_profile")).toBeLessThan(commands.indexOf("snapshot"));
+    expect(commands).not.toContain("preview_invitation");
+  });
+
+  it("keeps an invalid initial workspace invitation on the entry screen without creating a profile", async () => {
+    const invitation = "MESHWORKSPACE4:truncated";
+    const onboarding: Snapshot = { ...snapshot(), profile: null };
+    const initializing = deferred<Snapshot>();
+    let deliverInvitation: ((value: string) => void) | undefined;
+    api.runtimePlatform.mockResolvedValue("desktop");
+    api.initializeService.mockReturnValue(initializing.promise);
+    api.onInvitation.mockImplementation(async (callback) => {
+      deliverInvitation = callback;
+      return () => undefined;
+    });
+    api.onServiceEvent.mockResolvedValue(() => undefined);
+    api.serviceCommand.mockImplementation(async (command: string) => {
+      if (command === "preview_workspace_invitation") throw new Error("invitation_invalid");
+      return {};
+    });
+
+    render(<App />);
+    await waitFor(() => expect(deliverInvitation).toBeTypeOf("function"));
+    await act(async () => {
+      deliverInvitation?.(invitation);
+      initializing.resolve(onboarding);
+      await initializing.promise;
+    });
+
+    expect(await screen.findByRole("heading", { name: "Open an invitation" })).toBeTruthy();
+    expect((await screen.findByRole("alert")).textContent).toMatch(/not a complete workspace invitation/i);
+    expect(api.serviceCommand).toHaveBeenCalledWith("preview_workspace_invitation", { invitation });
+    expect(api.serviceCommand.mock.calls.some(([command]) => command === "create_profile")).toBe(false);
+    expect(screen.queryByRole("button", { name: "Create profile and continue" })).toBeNull();
+  });
+
+  it("shows verified workspace-device context before creating a first-run profile", async () => {
+    const invitation = "MESHWORKSPACEDEVICE1:signed-device-link";
+    const onboarding: Snapshot = { ...snapshot(), profile: null };
+    const initializing = deferred<Snapshot>();
+    let deliverInvitation: ((value: string) => void) | undefined;
+    api.runtimePlatform.mockResolvedValue("desktop");
+    api.initializeService.mockReturnValue(initializing.promise);
+    api.onInvitation.mockImplementation(async (callback) => {
+      deliverInvitation = callback;
+      return () => undefined;
+    });
+    api.onServiceEvent.mockResolvedValue(() => undefined);
+    api.serviceCommand.mockImplementation(async (command: string) => {
+      if (command === "preview_workspace_device_link") return {
+        workspace_id: "workspace-one",
+        name: "Lakewatcher",
+        member_display_name: "Alex",
+        sponsor_fingerprint: "AAAA BBBB CCCC DDDD",
+        device_count: 1,
+        expires_at: 2_000_000_000,
+      };
+      return {};
+    });
+
+    render(<App />);
+    await waitFor(() => expect(deliverInvitation).toBeTypeOf("function"));
+    await act(async () => {
+      deliverInvitation?.(invitation);
+      initializing.resolve(onboarding);
+      await initializing.promise;
+    });
+
+    expect(await screen.findByRole("heading", { name: "Set up this device for Lakewatcher" })).toBeTruthy();
+    expect(screen.getByText(/signed link is for Alex/i)).toBeTruthy();
+    expect(api.serviceCommand).toHaveBeenCalledWith("preview_workspace_device_link", { device_link: invitation });
+    expect(api.serviceCommand.mock.calls.some(([command]) => command === "create_profile")).toBe(false);
+  });
+
   it("does not activate a remote invitation until the new user checks consent", async () => {
     const onboarding: Snapshot = { ...snapshot(), profile: null };
     const ready = snapshot([approved]);
@@ -443,6 +571,161 @@ describe("first-run remote invitation consent", () => {
 });
 
 describe("new chat invitations", () => {
+  it("closes New chat and stops its unshared host before opening an incoming workspace invitation", async () => {
+    const current = snapshot();
+    const invitation = "MESHWORKSPACE4:incoming-workspace";
+    const hostId = "b".repeat(64);
+    let deliverInvitation: ((value: string) => void) | undefined;
+    api.runtimePlatform.mockResolvedValue("desktop");
+    api.initializeService.mockResolvedValue(current);
+    api.onInvitation.mockImplementation(async (callback) => {
+      deliverInvitation = callback;
+      return () => undefined;
+    });
+    api.onServiceEvent.mockResolvedValue(() => undefined);
+    api.serviceCommand.mockImplementation(async (command: string, payload?: Record<string, unknown>) => {
+      if (command === "snapshot") return current;
+      if (command === "create_invitation" && payload?.connection_mode === "participant") return {
+        link: "meshchat://invite/direct",
+        text: "MESHCHAT3:direct",
+        file: "{}",
+        expires_at: 2_000_000_000,
+        connection_mode: "participant",
+        host_session_id: hostId,
+      };
+      if (command === "preview_workspace_invitation") return {
+        name: "Lakewatcher",
+        description: "Field coordination",
+        owner_fingerprint: "AAAA BBBB CCCC DDDD",
+        member_count: 1,
+        retention_days: 90,
+        expires_at: 2_000_000_000,
+      };
+      return {};
+    });
+
+    render(<App />);
+    await screen.findByRole("heading", { name: "Your private conversations" });
+    fireEvent.click(screen.getAllByRole("button", { name: "New chat" })[0]);
+    fireEvent.click(await screen.findByRole("button", { name: "Prepare direct Internet invitation" }));
+    await screen.findByDisplayValue("MESHCHAT3:direct");
+
+    await act(async () => deliverInvitation?.(invitation));
+
+    const dialog = await screen.findByRole("dialog", { name: "Join a workspace" });
+    expect(await within(dialog).findByRole("heading", { name: "Lakewatcher" })).toBeTruthy();
+    expect(screen.queryByRole("dialog", { name: "New chat" })).toBeNull();
+    expect(screen.getAllByRole("dialog")).toHaveLength(1);
+    expect(api.serviceCommand).toHaveBeenCalledWith("stop_participant_host", { access_id: hostId });
+    expect(api.serviceCommand).toHaveBeenCalledWith("preview_workspace_invitation", { invitation });
+    expect(api.serviceCommand.mock.calls.some(([command]) => command === "preview_invitation")).toBe(false);
+  });
+
+  it("replaces and auto-reviews a new workspace invitation in an already-open Join dialog exactly once", async () => {
+    const current = snapshot();
+    const firstInvitation = "MESHWORKSPACE4:first-workspace";
+    const secondInvitation = "MESHWORKSPACE4:second-workspace";
+    let deliverInvitation: ((value: string) => void) | undefined;
+    api.runtimePlatform.mockResolvedValue("desktop");
+    api.initializeService.mockResolvedValue(current);
+    api.onInvitation.mockImplementation(async (callback) => {
+      deliverInvitation = callback;
+      return () => undefined;
+    });
+    api.onServiceEvent.mockResolvedValue(() => undefined);
+    api.serviceCommand.mockImplementation(async (command: string, payload?: Record<string, unknown>) => {
+      if (command === "snapshot") return current;
+      if (command === "preview_workspace_invitation") {
+        const invitation = String(payload?.invitation ?? "");
+        return {
+          name: invitation === secondInvitation ? "Harborwatch" : "Lakewatcher",
+          description: invitation === secondInvitation ? "Second workspace" : "First workspace",
+          owner_fingerprint: "AAAA BBBB CCCC DDDD",
+          member_count: 1,
+          retention_days: 90,
+          expires_at: 2_000_000_000,
+        };
+      }
+      return {};
+    });
+
+    render(<App />);
+    await screen.findByRole("heading", { name: "Your private conversations" });
+    await act(async () => deliverInvitation?.(firstInvitation));
+    const dialog = await screen.findByRole("dialog", { name: "Join a workspace" });
+    expect(await within(dialog).findByRole("heading", { name: "Lakewatcher" })).toBeTruthy();
+
+    await act(async () => deliverInvitation?.(secondInvitation));
+
+    expect(await within(dialog).findByRole("heading", { name: "Harborwatch" })).toBeTruthy();
+    expect(within(dialog).queryByRole("heading", { name: "Lakewatcher" })).toBeNull();
+    const secondPreviews = api.serviceCommand.mock.calls.filter(([command, payload]) =>
+      command === "preview_workspace_invitation" && payload?.invitation === secondInvitation
+    );
+    expect(secondPreviews).toHaveLength(1);
+  });
+
+  it("routes a pasted workspace invitation to Join workspace without using the personal preview", async () => {
+    const current = snapshot();
+    const invitation = `MESHWORKSPACE4:${"abc_DEF-123".repeat(430)}`;
+    api.runtimePlatform.mockResolvedValue("desktop");
+    api.initializeService.mockResolvedValue(current);
+    api.onInvitation.mockResolvedValue(() => undefined);
+    api.onServiceEvent.mockResolvedValue(() => undefined);
+    api.serviceCommand.mockImplementation(async (command: string) => {
+      if (command === "snapshot") return current;
+      if (command === "preview_workspace_invitation") return {
+        name: "Lakewatcher",
+        description: "Field coordination",
+        owner_fingerprint: "AAAA BBBB CCCC DDDD",
+        member_count: 1,
+        retention_days: 90,
+        expires_at: 2_000_000_000,
+      };
+      return {};
+    });
+
+    render(<App />);
+    await screen.findByRole("heading", { name: "Your private conversations" });
+    fireEvent.click(screen.getAllByRole("button", { name: "New chat" })[0]);
+    fireEvent.click(await screen.findByRole("tab", { name: "Open an invite" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "Invitation" }), { target: { value: invitation } });
+    fireEvent.click(screen.getByRole("button", { name: "Check invitation" }));
+
+    const dialog = await screen.findByRole("dialog", { name: "Join a workspace" });
+    expect(await within(dialog).findByRole("heading", { name: "Lakewatcher" })).toBeTruthy();
+    expect(api.serviceCommand.mock.calls.some(([command]) => command === "preview_invitation")).toBe(false);
+    expect(api.serviceCommand).toHaveBeenCalledWith(
+      "preview_workspace_invitation",
+      { invitation },
+    );
+    expect(api.serviceCommand.mock.calls.some(([command]) => command === "preview_invitation")).toBe(false);
+  });
+
+  it("explains a workspace prefix without sending it to any invitation parser", async () => {
+    const current = snapshot();
+    api.runtimePlatform.mockResolvedValue("desktop");
+    api.initializeService.mockResolvedValue(current);
+    api.onInvitation.mockResolvedValue(() => undefined);
+    api.onServiceEvent.mockResolvedValue(() => undefined);
+    api.serviceCommand.mockImplementation(async (command: string) => command === "snapshot" ? current : {});
+
+    render(<App />);
+    await screen.findByRole("heading", { name: "Your private conversations" });
+    fireEvent.click(screen.getAllByRole("button", { name: "New chat" })[0]);
+    fireEvent.click(await screen.findByRole("tab", { name: "Open an invite" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "Invitation" }), { target: { value: "MESHWORKSPACE4" } });
+    fireEvent.click(screen.getByRole("button", { name: "Check invitation" }));
+
+    const dialog = await screen.findByRole("dialog", { name: "Join a workspace" });
+    expect((await within(dialog).findByRole("alert")).textContent).toBe(
+      "This is only the MESHWORKSPACE4 prefix. Copy the complete invitation, including the colon and all signed text after it.",
+    );
+    expect(api.serviceCommand.mock.calls.some(([command]) =>
+      command === "preview_invitation" || command === "preview_workspace_invitation"
+    )).toBe(false);
+  });
+
   it("creates an email-ready invitation without requiring an inbound path", async () => {
     const current = snapshot();
     api.runtimePlatform.mockResolvedValue("desktop");
@@ -517,6 +800,7 @@ describe("new chat invitations", () => {
 
   it("previews and imports a connection reply without presenting it as contact approval", async () => {
     const current = snapshot();
+    const reply = '{"type":"connection_response","purpose":"workspace","v":1}';
     api.runtimePlatform.mockResolvedValue("desktop");
     api.initializeService.mockResolvedValue(current);
     api.onInvitation.mockResolvedValue(() => undefined);
@@ -524,7 +808,7 @@ describe("new chat invitations", () => {
     api.serviceCommand.mockImplementation(async (command: string) => {
       if (command === "snapshot") return current;
       if (command === "preview_connection_reply") return {
-        purpose: "personal",
+        purpose: "workspace",
         responder_fingerprint: "AAAA BBBB CCCC DDDD",
         responder_destination: "22".repeat(16),
         endpoint_count: 1,
@@ -537,13 +821,14 @@ describe("new chat invitations", () => {
     await screen.findByRole("heading", { name: "Your private conversations" });
     fireEvent.click(screen.getAllByRole("button", { name: "New chat" })[0]);
     fireEvent.click(await screen.findByRole("tab", { name: "Open an invite" }));
-    fireEvent.change(screen.getByRole("textbox", { name: "Invitation" }), { target: { value: "MESHCONNECT1:reply" } });
+    fireEvent.change(screen.getByRole("textbox", { name: "Invitation" }), { target: { value: reply } });
     fireEvent.click(screen.getByRole("button", { name: "Check invitation" }));
 
     expect(await screen.findByRole("heading", { name: "Connection reply verified" })).toBeTruthy();
     expect(screen.getByText(/does not approve a contact or workspace member/i)).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Connect using reply" }));
-    await waitFor(() => expect(api.serviceCommand).toHaveBeenCalledWith("connect_using_reply", { response: "MESHCONNECT1:reply" }));
+    await waitFor(() => expect(api.serviceCommand).toHaveBeenCalledWith("connect_using_reply", { response: reply }));
+    expect(api.serviceCommand.mock.calls.some(([command]) => command === "preview_workspace_invitation")).toBe(false);
     expect(api.serviceCommand.mock.calls.some(([command]) => command === "accept_contact")).toBe(false);
   });
 
@@ -2786,6 +3071,16 @@ describe("desktop workspaces", () => {
     api.onServiceEvent.mockResolvedValue(() => undefined);
     api.serviceCommand.mockImplementation(async (command: string) => {
       if (command === "snapshot") return current;
+      if (command === "preview_workspace_invitation") {
+        return {
+          name: "Lakewatcher",
+          description: "Field coordination",
+          owner_fingerprint: "AAAA BBBB CCCC DDDD",
+          member_count: 1,
+          retention_days: 90,
+          expires_at: 2_000_000_000,
+        };
+      }
       return {};
     });
 
@@ -2794,7 +3089,10 @@ describe("desktop workspaces", () => {
     await act(async () => deliverInvitation?.("MESHWORKSPACE3:participant"));
 
     const dialog = await screen.findByRole("dialog", { name: "Join a workspace" });
-    expect((within(dialog).getByRole("textbox", { name: "Workspace invitation or device link" }) as HTMLTextAreaElement).value).toBe("MESHWORKSPACE3:participant");
+    expect(await within(dialog).findByRole("heading", { name: "Lakewatcher" })).toBeTruthy();
+    expect(api.serviceCommand).toHaveBeenCalledWith("preview_workspace_invitation", {
+      invitation: "MESHWORKSPACE3:participant",
+    });
   });
 
   it("uses device-neutral linked-device terminology on Android", async () => {

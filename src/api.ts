@@ -89,6 +89,19 @@ export function openNotificationSettings(): Promise<NotificationCapability> {
 }
 
 /**
+ * Open Android's document picker and return a native-validated Mesh Chat
+ * invitation. Cancellation resolves to null; validation and provider failures
+ * reject with a stable invitation_file_* error code.
+ */
+export async function pickInvitationFile(): Promise<string | null> {
+  try {
+    return await invoke<string | null>("pick_invitation_file");
+  } catch (reason) {
+    throw normalizedServiceError(reason);
+  }
+}
+
+/**
  * Temporarily take ownership of Android's system back action.
  *
  * Callers should only keep this listener mounted while they have an in-app

@@ -840,7 +840,7 @@ fn invitation_from_argument(argument: &str) -> Option<String> {
         return None;
     }
     let metadata = fs::metadata(path).ok()?;
-    if !metadata.is_file() || metadata.len() > MAX_WORKSPACE_INVITATION_PAYLOAD_BYTES as u64 {
+    if !metadata.is_file() || metadata.len() > MAX_WORKSPACE_DEVICE_LINK_PAYLOAD_BYTES as u64 {
         return None;
     }
     let contents = fs::read_to_string(path).ok()?;
@@ -1083,6 +1083,24 @@ fn take_pending_invitation(app: AppHandle) -> Result<Option<String>, String> {
 
 #[cfg(mobile)]
 #[tauri::command]
+async fn pick_invitation_file(app: AppHandle) -> Result<Option<String>, String> {
+    let response = app
+        .mesh_runtime()
+        .pick_invitation_file()
+        .await
+        .map_err(|_| "invitation_file_unavailable".to_string())?;
+    let value = mobile_result(response)?;
+    serde_json::from_value(value).map_err(|_| "service_protocol_error".to_string())
+}
+
+#[cfg(desktop)]
+#[tauri::command]
+fn pick_invitation_file() -> Result<Option<String>, String> {
+    Err("unsupported_platform".to_string())
+}
+
+#[cfg(mobile)]
+#[tauri::command]
 fn poll_mobile_events(app: AppHandle) -> Result<Vec<Value>, String> {
     let response = app
         .mesh_runtime()
@@ -1273,6 +1291,7 @@ pub fn run() {
             service_command,
             lock_service,
             take_pending_invitation,
+            pick_invitation_file,
             poll_mobile_events,
             runtime_platform,
             set_native_theme,

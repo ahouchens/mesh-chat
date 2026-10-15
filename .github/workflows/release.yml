@@ -225,3 +225,51 @@ jobs:
             dist/reports/**
           if-no-files-found: warn
           retention-days: 30
+
+  publish:
+    name: Publish GitHub release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs:
+      - verify
+      - desktop
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download verified Windows artifacts
+        uses: actions/download-artifact@v5
+        with:
+          name: mesh-chat-${{ needs.verify.outputs.version }}-windows-desktop
+          path: release-input/windows
+
+      - name: Stage public release assets
+        shell: bash
+        env:
+          RELEASE_VERSION: ${{ needs.verify.outputs.version }}
+        run: |
+          set -euo pipefail
+          mapfile -d '' windows_exe < <(find release-input/windows -type f -path "*/releases/$RELEASE_VERSION/x86_64-pc-windows-msvc/bundle/nsis/*.exe" -print0)
+          mapfile -d '' windows_msi < <(find release-input/windows -type f -path "*/releases/$RELEASE_VERSION/x86_64-pc-windows-msvc/bundle/msi/*.msi" -print0)
+          if (( ${#windows_exe[@]} != 1 || ${#windows_msi[@]} != 1 )); then
+            echo "Expected exactly one verified NSIS installer and MSI" >&2
+            exit 1
+          fi
+          mkdir release-assets
+          cp "${windows_exe[0]}" "${windows_msi[0]}" release-assets/
+          (cd release-assets && sha256sum -- * > SHA256SUMS.txt)
+
+      - name: Create persistent GitHub release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ needs.verify.outputs.version }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" release-assets/* --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" release-assets/* \
+              --verify-tag \
+              --generate-notes \
+              --title "Mesh Chat $RELEASE_VERSION"
+          fi

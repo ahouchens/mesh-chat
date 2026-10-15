@@ -1,5 +1,26 @@
 # Mesh Chat protocol profile
 
+## Compact QR transport v1
+
+`MESHQR1:<base64url>` is a camera transport, not a new invitation or trust
+protocol. The payload is the zlib/DEFLATE representation of one complete
+canonical Mesh Chat invitation, workspace invitation, device link, connection
+response, or route update. Base64url is emitted without padding. Decoding must
+recover a recognized Mesh Chat document and then pass those signed bytes to the
+existing family-specific parser and signature checks; decompression does not
+approve an identity, contact, device, route, or workspace member.
+
+The renderer emits a compact transport only when the ordinary signed document
+would be too dense for a reliably scannable single QR. Short documents remain
+raw for compatibility with older clients. Emitted `MESHQR1` values are at most
+2,800 UTF-8 bytes, leaving headroom below a version-40 level-L QR's capacity.
+Compressed input is syntax-bounded and decompressed output is capped at the
+700 KiB native-ingress ceiling before the narrower personal, workspace,
+device-link, response, or route limit is applied. Invalid base64url, malformed
+DEFLATE, invalid UTF-8, unknown document families, and excess output fail
+closed. This transport changes neither signed bytes nor invitation expiry,
+single-use, revocation, authority, or replay semantics.
+
 ## Participant-hosted invitation envelopes v3
 
 Version 3 is additive. `MESHCHAT3` and `MESHWORKSPACE3` carry a canonical `participant_invitation` envelope around the complete existing v1 invitation. The outer signature is made by the personal inviter or current workspace authority and binds every field below:

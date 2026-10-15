@@ -1,13 +1,16 @@
 package com.meshchat.mobile
 
 import android.content.Intent
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import androidx.core.graphics.Insets
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
+import com.meshchat.runtime.InvitationDocumentHost
+import com.meshchat.runtime.InvitationDocumentResult
 
-class MainActivity : TauriActivity() {
+class MainActivity : TauriActivity(), InvitationDocumentHost {
   companion object {
     private const val THEME_PREFERENCES = "mesh-chat-vault"
     private const val UI_THEME = "ui-theme"
@@ -27,6 +30,9 @@ class MainActivity : TauriActivity() {
       setIntent(Intent(Intent.ACTION_MAIN).setPackage(packageName))
     }
   }
+
+  override fun readInvitationDocument(uri: Uri): InvitationDocumentResult =
+    PendingInvitation.readDocument(this, uri)
 
   override fun onCreate(savedInstanceState: Bundle?) {
     captureLaunch(intent)

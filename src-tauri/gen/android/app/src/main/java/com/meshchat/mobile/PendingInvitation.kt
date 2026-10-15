@@ -9,6 +9,7 @@ import java.io.ByteArrayOutputStream
 import java.nio.ByteBuffer
 import java.nio.charset.CodingErrorAction
 import java.nio.charset.StandardCharsets
+import com.meshchat.runtime.InvitationDocumentResult
 import org.json.JSONObject
 
 internal object PendingInvitation {
@@ -19,7 +20,14 @@ internal object PendingInvitation {
   private const val MAX_ROUTE_UPDATE_BYTES = 24 * 1024
   private const val MAX_WORKSPACE_BYTES = 600 * 1024
   private const val MAX_DEVICE_LINK_BYTES = 700 * 1024
-  private const val MAX_DOCUMENT_BYTES = MAX_WORKSPACE_BYTES
+  internal const val MAX_WORKSPACE_INVITE_DOCUMENT_BYTES = 256 * 1024
+  internal const val MAX_DEVICE_LINK_DOCUMENT_BYTES = 320 * 1024
+  private const val MAX_AUTHORITY_TRANSITIONS = 8
+  private const val MAX_DEVICE_BOOTSTRAP_MANIFESTS = 64
+  // A workspace device link is the largest supported invitation family. The
+  // document reader must not impose the smaller workspace-invitation bound
+  // before the family-specific validator gets to inspect the value.
+  internal const val MAX_DOCUMENT_BYTES = MAX_DEVICE_LINK_BYTES
 
   private val token = Regex("^[A-Za-z0-9_-]+$")
 
@@ -52,45 +60,34 @@ internal object PendingInvitation {
       return compact
     }
 
-    val maximum = if (lower.startsWith("meshworkspacedevice1:")) {
-      MAX_DEVICE_LINK_BYTES
-    } else if (
-      lower.startsWith("meshworkspace1:") ||
-      lower.startsWith("meshworkspace2:") ||
-      lower.startsWith("meshworkspace3:")
-      || lower.startsWith("meshworkspace4:")
-    ) {
-      MAX_WORKSPACE_BYTES
-    } else if (lower.startsWith("meshconnect1:")) {
-      MAX_CONNECTION_RESPONSE_BYTES
-    } else if (lower.startsWith("meshroute1:")) {
-      MAX_ROUTE_UPDATE_BYTES
-    } else {
-      MAX_STANDARD_BYTES
-    }
-    if (value.toByteArray(StandardCharsets.UTF_8).size > maximum) return null
-    val prefix = when {
-      lower.startsWith("meshchat1:") -> "meshchat1:"
-      lower.startsWith("meshchat2:") -> "meshchat2:"
-      lower.startsWith("meshchat3:") -> "meshchat3:"
-      lower.startsWith("meshchat4:") -> "meshchat4:"
-      lower.startsWith("meshworkspace1:") -> "meshworkspace1:"
-      lower.startsWith("meshworkspace2:") -> "meshworkspace2:"
-      lower.startsWith("meshworkspace3:") -> "meshworkspace3:"
-      lower.startsWith("meshworkspace4:") -> "meshworkspace4:"
-      lower.startsWith("meshconnect1:") -> "meshconnect1:"
-      lower.startsWith("meshroute1:") -> "meshroute1:"
-      lower.startsWith("meshworkspacedevice1:") -> "meshworkspacedevice1:"
+    val prefixedMaximum = when {
+      lower.startsWith("meshchat1:") -> "meshchat1:" to MAX_STANDARD_BYTES
+      lower.startsWith("meshchat2:") -> "meshchat2:" to MAX_STANDARD_BYTES
+      lower.startsWith("meshchat3:") -> "meshchat3:" to MAX_STANDARD_BYTES
+      lower.startsWith("meshchat4:") -> "meshchat4:" to MAX_STANDARD_BYTES
+      lower.startsWith("meshworkspace1:") -> "meshworkspace1:" to MAX_WORKSPACE_BYTES
+      lower.startsWith("meshworkspace2:") -> "meshworkspace2:" to MAX_WORKSPACE_BYTES
+      lower.startsWith("meshworkspace3:") -> "meshworkspace3:" to MAX_WORKSPACE_BYTES
+      lower.startsWith("meshworkspace4:") -> "meshworkspace4:" to MAX_WORKSPACE_BYTES
+      lower.startsWith("meshconnect1:") -> "meshconnect1:" to MAX_CONNECTION_RESPONSE_BYTES
+      lower.startsWith("meshroute1:") -> "meshroute1:" to MAX_ROUTE_UPDATE_BYTES
+      lower.startsWith("meshworkspacedevice1:") ->
+        "meshworkspacedevice1:" to MAX_DEVICE_LINK_BYTES
       else -> null
     }
-    if (prefix != null) {
-      return if (token.matches(compact.substring(prefix.length))) value else null
+    if (prefixedMaximum != null) {
+      val (prefix, maximum) = prefixedMaximum
+      return if (
+        value.toByteArray(StandardCharsets.UTF_8).size <= maximum &&
+        token.matches(compact.substring(prefix.length))
+      ) value else null
     }
 
     // .meshchat files use an exact signed JSON shape. Cryptographic,
     // expiry, key-size, and destination validation remain authoritative in the
     // Python service, but unrelated JSON never crosses into the renderer.
-    if (value.toByteArray(StandardCharsets.UTF_8).size > MAX_DOCUMENT_BYTES) return null
+    val documentBytes = value.toByteArray(StandardCharsets.UTF_8).size
+    if (documentBytes > MAX_DOCUMENT_BYTES) return null
     val document = runCatching { JSONObject(value) }.getOrNull() ?: return null
     val expected = setOf(
       "v",
@@ -104,7 +101,7 @@ internal object PendingInvitation {
     )
     val fields = document.keys().asSequence().toSet()
     if (
-      value.toByteArray(StandardCharsets.UTF_8).size <= MAX_STANDARD_BYTES &&
+      documentBytes <= MAX_STANDARD_BYTES &&
       fields == expected &&
       (document.opt("v") == 1 || document.opt("v") == 1L) &&
       listOf("label", "public_identity", "destination", "signature")
@@ -127,8 +124,8 @@ internal object PendingInvitation {
     )
     val purpose = document.optString("purpose")
     val purposeSizeValid = when (purpose) {
-      "personal" -> value.toByteArray(StandardCharsets.UTF_8).size <= MAX_STANDARD_BYTES
-      "workspace" -> value.toByteArray(StandardCharsets.UTF_8).size <= MAX_WORKSPACE_BYTES
+      "personal" -> documentBytes <= MAX_STANDARD_BYTES
+      "workspace" -> documentBytes <= MAX_WORKSPACE_BYTES
       else -> false
     }
     if (
@@ -162,7 +159,7 @@ internal object PendingInvitation {
       "access", "created_at", "expires_at", "signature",
     )
     if (
-      value.toByteArray(StandardCharsets.UTF_8).size <= MAX_CONNECTION_RESPONSE_BYTES &&
+      documentBytes <= MAX_CONNECTION_RESPONSE_BYTES &&
       fields == responseExpected &&
       (document.opt("v") == 1 || document.opt("v") == 1L) &&
       document.optString("type") == "connection_response" &&
@@ -179,7 +176,7 @@ internal object PendingInvitation {
       "created_at", "expires_at", "signature",
     )
     if (
-      value.toByteArray(StandardCharsets.UTF_8).size <= MAX_ROUTE_UPDATE_BYTES &&
+      documentBytes <= MAX_ROUTE_UPDATE_BYTES &&
       fields == routeExpected &&
       (document.opt("v") == 1 || document.opt("v") == 1L) &&
       document.optString("type") == "route_update" &&
@@ -214,11 +211,66 @@ internal object PendingInvitation {
       (document.opt("created_at") is Int || document.opt("created_at") is Long) &&
       (document.opt("expires_at") is Int || document.opt("expires_at") is Long)
     ) return value
+    val workspaceInviteExpected = setOf(
+      "v", "type", "workspace_id", "genesis_digest", "offered_manifest_digest",
+      "genesis", "offered_manifest", "authority_chain", "nonce", "created_at",
+      "expires_at", "use_limit", "signature",
+    )
+    val authorityChain = document.optJSONArray("authority_chain")
+    if (
+      documentBytes <= MAX_WORKSPACE_INVITE_DOCUMENT_BYTES &&
+      fields == workspaceInviteExpected &&
+      (document.opt("v") == 1 || document.opt("v") == 1L) &&
+      document.optString("type") == "workspace_invite" &&
+      (document.opt("use_limit") == 1 || document.opt("use_limit") == 1L) &&
+      document.optJSONObject("genesis") != null &&
+      document.optJSONObject("offered_manifest") != null &&
+      authorityChain != null && authorityChain.length() <= MAX_AUTHORITY_TRANSITIONS &&
+      listOf("workspace_id", "genesis_digest", "offered_manifest_digest", "nonce", "signature")
+        .all { document.opt(it) is String && (document.opt(it) as String).isNotEmpty() } &&
+      (document.opt("created_at") is Int || document.opt("created_at") is Long) &&
+      (document.opt("expires_at") is Int || document.opt("expires_at") is Long)
+    ) return value
+    val deviceLinkExpected = setOf(
+      "v", "type", "workspace_id", "link_id", "base_manifest_epoch",
+      "base_manifest_digest", "member_id", "sponsor_device_id", "sponsor_destination",
+      "genesis", "offered_manifest", "authority_chain", "bootstrap_manifests", "nonce",
+      "replay_key", "created_at", "expires_at", "use_limit", "signature",
+    )
+    val bootstrapManifests = document.optJSONArray("bootstrap_manifests")
+    if (
+      documentBytes <= MAX_DEVICE_LINK_DOCUMENT_BYTES &&
+      fields == deviceLinkExpected &&
+      (document.opt("v") == 1 || document.opt("v") == 1L) &&
+      document.optString("type") == "workspace_device_link_offer" &&
+      (document.opt("use_limit") == 1 || document.opt("use_limit") == 1L) &&
+      document.optJSONObject("genesis") != null &&
+      document.optJSONObject("offered_manifest") != null &&
+      authorityChain != null && authorityChain.length() <= MAX_AUTHORITY_TRANSITIONS &&
+      bootstrapManifests != null &&
+      bootstrapManifests.length() <= MAX_DEVICE_BOOTSTRAP_MANIFESTS &&
+      listOf(
+        "workspace_id", "link_id", "base_manifest_digest", "member_id",
+        "sponsor_device_id", "sponsor_destination", "nonce", "replay_key", "signature",
+      ).all { document.opt(it) is String && (document.opt(it) as String).isNotEmpty() } &&
+      (document.opt("base_manifest_epoch") is Int ||
+        document.opt("base_manifest_epoch") is Long) &&
+      (document.opt("created_at") is Int || document.opt("created_at") is Long) &&
+      (document.opt("expires_at") is Int || document.opt("expires_at") is Long)
+    ) return value
     return null
   }
 
+  internal fun isSupportedFileName(name: String): Boolean = name.lowercase().let {
+    it.endsWith(".meshchat") ||
+      it.endsWith(".meshchat-invite") ||
+      it.endsWith(".meshchat-connect") ||
+      it.endsWith(".meshchat-route") ||
+      it.endsWith(".json")
+  }
+
   private fun isMeshChatFile(activity: Activity, uri: Uri): Boolean {
-    if (uri.lastPathSegment.orEmpty().lowercase().let { it.endsWith(".meshchat") || it.endsWith(".meshchat-invite") || it.endsWith(".meshchat-connect") || it.endsWith(".meshchat-route") }) return true
+    if (isSupportedFileName(uri.lastPathSegment.orEmpty())) return true
     return runCatching {
       activity.contentResolver.query(
         uri,
@@ -228,39 +280,53 @@ internal object PendingInvitation {
         null,
       )?.use { cursor ->
         cursor.moveToFirst() &&
-          cursor.getString(cursor.getColumnIndexOrThrow(OpenableColumns.DISPLAY_NAME))
-            .lowercase()
-            .let { it.endsWith(".meshchat") || it.endsWith(".meshchat-invite") || it.endsWith(".meshchat-connect") || it.endsWith(".meshchat-route") }
+          isSupportedFileName(
+            cursor.getString(cursor.getColumnIndexOrThrow(OpenableColumns.DISPLAY_NAME))
+          )
       } == true
     }.getOrDefault(false)
   }
 
-  private fun readBounded(activity: Activity, uri: Uri): String? {
-    if (uri.scheme != "content" || !isMeshChatFile(activity, uri)) return null
-    val bytes = activity.contentResolver.openInputStream(uri)?.use { stream ->
-      val output = ByteArrayOutputStream()
-      val buffer = ByteArray(8192)
-      while (output.size() <= MAX_DOCUMENT_BYTES) {
-        val count = stream.read(buffer)
-        if (count < 0) break
-        output.write(buffer, 0, count)
-      }
-      if (output.size() > MAX_DOCUMENT_BYTES) return@use null
-      output.toByteArray()
-    } ?: return null
-    return runCatching {
+  fun readDocument(activity: Activity, uri: Uri): InvitationDocumentResult {
+    if (uri.scheme != "content") {
+      return InvitationDocumentResult(error = "invitation_file_unavailable")
+    }
+    if (!isMeshChatFile(activity, uri)) {
+      return InvitationDocumentResult(error = "invitation_file_type_invalid")
+    }
+    val bytes = try {
+      activity.contentResolver.openInputStream(uri)?.use { stream ->
+        val output = ByteArrayOutputStream()
+        val buffer = ByteArray(8192)
+        while (true) {
+          val count = stream.read(buffer)
+          if (count < 0) break
+          if (count > MAX_DOCUMENT_BYTES - output.size()) {
+            return InvitationDocumentResult(error = "invitation_file_too_large")
+          }
+          output.write(buffer, 0, count)
+        }
+        output.toByteArray()
+      } ?: return InvitationDocumentResult(error = "invitation_file_unavailable")
+    } catch (_: Exception) {
+      return InvitationDocumentResult(error = "invitation_file_unavailable")
+    }
+    val decoded = runCatching {
       StandardCharsets.UTF_8.newDecoder()
         .onMalformedInput(CodingErrorAction.REPORT)
         .onUnmappableCharacter(CodingErrorAction.REPORT)
         .decode(ByteBuffer.wrap(bytes))
         .toString()
-    }.getOrNull()
+    }.getOrNull() ?: return InvitationDocumentResult(error = "invitation_file_encoding_invalid")
+    val invitation = validate(decoded)
+      ?: return InvitationDocumentResult(error = "invitation_file_invalid")
+    return InvitationDocumentResult(value = invitation)
   }
 
   fun capture(activity: Activity, intent: Intent?): Boolean {
     if (intent?.action != Intent.ACTION_VIEW) return false
     val uri = intent.data ?: return true
-    val candidate = if (uri.scheme == "meshchat") uri.toString() else readBounded(activity, uri)
+    val candidate = if (uri.scheme == "meshchat") uri.toString() else readDocument(activity, uri).value
     val invitation = candidate?.let(::validate) ?: return true
     activity.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
       .edit()

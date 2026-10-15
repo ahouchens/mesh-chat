@@ -20,11 +20,13 @@ import android.provider.Settings
 import android.util.Base64
 import android.util.Log
 import android.webkit.WebView
+import androidx.activity.result.ActivityResult
 import androidx.core.app.ActivityCompat
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import app.tauri.annotation.ActivityCallback
 import app.tauri.annotation.Command
 import app.tauri.annotation.InvokeArg
 import app.tauri.annotation.Permission
@@ -54,6 +56,22 @@ class InitializeArgs {
 @InvokeArg
 class ThemeArgs {
     var theme: String? = null
+}
+
+/**
+ * Result of opening and validating an invitation document in the host app.
+ *
+ * The runtime plugin owns the system picker while the app owns the invitation
+ * parser. Keeping this interface value-only prevents content-provider paths or
+ * URIs from crossing the native bridge into the renderer.
+ */
+data class InvitationDocumentResult(
+    val value: String? = null,
+    val error: String? = null,
+)
+
+interface InvitationDocumentHost {
+    fun readInvitationDocument(uri: Uri): InvitationDocumentResult
 }
 
 @TauriPlugin(
@@ -490,6 +508,73 @@ class MeshRuntimePlugin(private val activity: Activity) : Plugin(activity) {
             } catch (error: Throwable) {
                 reject(invoke, "take_pending_invitation", error)
             }
+        }
+    }
+
+    @Command
+    fun pickInvitationFile(invoke: Invoke) {
+        val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            type = "*/*"
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        try {
+            startActivityForResult(invoke, intent, "pickInvitationFileResult")
+        } catch (_: Exception) {
+            resolve(
+                invoke,
+                JSONObject()
+                    .put("ok", false)
+                    .put("error", JSONObject().put("code", "invitation_file_unavailable"))
+                    .toString(),
+            )
+        }
+    }
+
+    @ActivityCallback
+    private fun pickInvitationFileResult(invoke: Invoke, result: ActivityResult) {
+        if (result.resultCode != Activity.RESULT_OK) {
+            resolve(
+                invoke,
+                JSONObject().put("ok", true).put("result", JSONObject.NULL).toString(),
+            )
+            return
+        }
+        val uri = result.data?.data
+        val host = activity as? InvitationDocumentHost
+        if (uri == null || host == null) {
+            resolve(
+                invoke,
+                JSONObject()
+                    .put("ok", false)
+                    .put("error", JSONObject().put("code", "invitation_file_unavailable"))
+                    .toString(),
+            )
+            return
+        }
+        pythonExecutor.execute {
+            val document = try {
+                host.readInvitationDocument(uri)
+            } catch (_: Throwable) {
+                InvitationDocumentResult(error = "invitation_file_unavailable")
+            }
+            if (document.value != null) {
+                resolve(
+                    invoke,
+                    JSONObject().put("ok", true).put("result", document.value).toString(),
+                )
+                return@execute
+            }
+            resolve(
+                invoke,
+                JSONObject()
+                    .put("ok", false)
+                    .put(
+                        "error",
+                        JSONObject().put("code", document.error ?: "invitation_file_invalid"),
+                    )
+                    .toString(),
+            )
         }
     }
 
