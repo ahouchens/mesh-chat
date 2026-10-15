@@ -284,7 +284,9 @@ jobs:
             exit 1
           fi
           mkdir release-assets
-          cp "${windows_exe[0]}" "${windows_msi[0]}" "${android_apk[0]}" release-assets/
+          cp "${windows_exe[0]}" "release-assets/Mesh-Chat_${RELEASE_VERSION}_x64-setup.exe"
+          cp "${windows_msi[0]}" "release-assets/Mesh-Chat_${RELEASE_VERSION}_x64_en-US.msi"
+          cp "${android_apk[0]}" release-assets/
           (cd release-assets && sha256sum -- * > SHA256SUMS.txt)
 
       - name: Create persistent GitHub release
