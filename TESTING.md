@@ -2816,3 +2816,11 @@ tests locally. Windows/Linux native tests and Android ARM64 compilation passed a
 `15c002e` in [run 38931048072](https://github.com/ahouchens/mesh-chat/actions/runs/38931048072).
 Coverage includes selected-chain/certificate mismatch, failed writes, restart,
 replay, expiry, revocation and child-document invalidation without resetting replay history.
+
+
+The retained-Answer Ready topology and native expiry probes passed on Windows/Linux,
+with Android ARM64 compilation, at `fa5186e` in
+[run 38931467624](https://github.com/ahouchens/mesh-chat/actions/runs/38931467624).
+The owner refreshes native credentials; the joiner retains its original Answer
+socket/key and re-arms only after durable Ready acceptance. Source topology and
+controller checks also pass. This remains a controlled proof, not shipped email setup.

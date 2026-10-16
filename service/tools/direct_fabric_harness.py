@@ -335,10 +335,12 @@ class PacketCarrier:
                 except queue.Full:
                     pass
 
-    def _watch_revocation(self):
+    def _watch_authority_owner(self):
         # A separate event cannot be dropped behind a full packet queue.
         while not self.stop.wait(0.05):
-            if any(peer["revoked"].is_set() for peer in self.peers):
+            if any(peer["revoked"].is_set()
+                   or (peer.get("process") is not None and not peer["process"].is_alive())
+                   for peer in self.peers):
                 self.cancellation_requested.set()
                 try:
                     if self.process:
@@ -384,7 +386,7 @@ class PacketCarrier:
                 raise RuntimeError("Native peers did not authenticate")
         for index in range(2):
             self._thread(self._forward, index)
-        self._thread(self._watch_revocation)
+        self._thread(self._watch_authority_owner)
 
     def close(self, *, require_graceful=False):
         self._mark_lost()
@@ -407,7 +409,11 @@ class PacketCarrier:
             raise RuntimeError("Native bridge did not shut down gracefully")
 
 
-def run(*, executable=None, timeout=45):
+def run(*, executable=None, timeout=45, failure="revocation"):
+    if failure not in {"revocation", "service-crash", "engine-crash"}:
+        raise ValueError("Unknown topology failure scenario")
+    if failure == "engine-crash" and executable is None:
+        raise ValueError("Native engine crash requires a native carrier")
     context = mp.get_context("spawn")
     peers = []
     carrier = None
@@ -532,22 +538,38 @@ def run(*, executable=None, timeout=45):
                 peer=peers[1-index]["profile"]["destination_hash"]) for index, peer in enumerate(peers)]
             assert all(state["interfaces"] == 1 and not state["routing"] and state["online"]
                        and state["ratchet_ready"] and state["received_bytes"] > 0 for state in states)
-            _framed(owner, "remove_workspace_member", {"workspace_id": workspace["id"],
-                "member_id": workspaces[1]["local_member_id"], "operation_id": op()})
-            deadline = time.monotonic() + 5
-            while _call(owner["commands"], owner["responses"], "state",
-                        peer=joiner["profile"]["destination_hash"])["online"]:
-                if time.monotonic() > deadline:
-                    raise TimeoutError("Revoked peer adapter remained online")
-                time.sleep(0.05)
-            # No explicit close or activation request triggers this cancellation.
-            if not carrier.cancellation_requested.wait(timeout=5):
-                raise AssertionError("Revocation did not request carrier cancellation")
-            if carrier.process and carrier.process.wait(timeout=5) != 0:
-                raise AssertionError("Revoked native carrier did not exit gracefully")
-            carrier.close(require_graceful=True)
-            carrier = None
+            if failure == "revocation":
+                _framed(owner, "remove_workspace_member", {"workspace_id": workspace["id"],
+                    "member_id": workspaces[1]["local_member_id"], "operation_id": op()})
+                deadline = time.monotonic() + 5
+                while _call(owner["commands"], owner["responses"], "state",
+                            peer=joiner["profile"]["destination_hash"])["online"]:
+                    if time.monotonic() > deadline:
+                        raise TimeoutError("Revoked peer adapter remained online")
+                    time.sleep(0.05)
+            elif failure == "service-crash":
+                owner["process"].kill()
+                owner["process"].join(timeout=5)
+                if owner["process"].is_alive():
+                    raise AssertionError("Fault injection did not stop the owner service")
+            else:
+                carrier.process.kill()
+                carrier.process.wait(timeout=5)
+                if carrier.process.returncode == 0:
+                    raise AssertionError("Fault injection did not crash the native engine")
+            # No explicit close or activation request triggers retirement.
+            if failure != "engine-crash":
+                if not carrier.cancellation_requested.wait(timeout=5):
+                    raise AssertionError("Authority loss did not request carrier cancellation")
+                if carrier.process and carrier.process.wait(timeout=5) != 0:
+                    raise AssertionError("Orphaned native carrier did not exit gracefully")
+            if not carrier.stop.wait(timeout=5):
+                raise AssertionError("Failed carrier did not signal loss")
             for index, peer in enumerate(peers):
+                if not peer["process"].is_alive():
+                    if failure == "service-crash" and peer is owner:
+                        continue
+                    raise AssertionError("A surviving service unexpectedly stopped")
                 deadline = time.monotonic() + 5
                 while True:
                     state = _call(peer["commands"], peer["responses"], "state",
@@ -557,16 +579,23 @@ def run(*, executable=None, timeout=45):
                     if time.monotonic() > deadline:
                         raise TimeoutError("Dead carrier remained online")
                     time.sleep(0.05)
-            return {"carrier": "quic" if executable else "source-pipes", "join_acknowledged": True,
+            carrier.close(require_graceful=failure != "engine-crash")
+            carrier = None
+            return {"carrier": "quic" if executable else "source-pipes", "failure": failure,
+                    "failure_retired_adapters": True, "join_acknowledged": True,
                     "admitted": True, "bidirectional_messages": True, "ratchets": True,
-                    "engine_death_offline": True, "isolated": True, "admitted_key_rotation": True,
-                    "endpoint_receipts": True, "stale_activation_rejected": True, "live_revocation_offline": True, "revocation_cancels_carrier": True, "ready_retains_answer": True}
+                    "engine_death_offline": failure == "engine-crash",
+                    "service_crash_cancels_carrier": failure == "service-crash",
+                    "isolated": True, "admitted_key_rotation": True, "endpoint_receipts": True,
+                    "stale_activation_rejected": True, "live_revocation_offline": failure == "revocation",
+                    "revocation_cancels_carrier": failure == "revocation", "ready_retains_answer": True}
         finally:
             if carrier:
                 carrier.close()
             for peer in peers:
                 try:
-                    _call(peer["commands"], peer["responses"], "stop", response_timeout=5)
+                    if peer["process"].is_alive():
+                        _call(peer["commands"], peer["responses"], "stop", response_timeout=5)
                 except Exception:
                     pass
                 peer["process"].join(timeout=5)

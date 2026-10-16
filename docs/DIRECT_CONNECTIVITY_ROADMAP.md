@@ -454,5 +454,18 @@ persist and verify the full chain before native activation. The joiner retains
 its exact Answer socket/key; the native gate re-arms it using the accepted Ready
 digest and generation. Conflicting Answer references, duplicate activation and
 repeated owner refresh fail. Source topology and focused controller checks pass.
-Native qualification, including expiry before and after Ready activation, is pending.
+Native qualification, including expiry before and after Ready activation, passed
+on Windows/Linux with Android ARM64 compilation at `fa5186e` in
+[run 38931467624](https://github.com/ahouchens/mesh-chat/actions/runs/38931467624).
 This is controlled private-channel integration, not public email or shipping IPC.
+
+
+The controlled carrier now watches its service owners and requests cancellation
+if a service process exits unexpectedly. The topology separately injects member
+revocation, service kill and native-engine kill after bidirectional messaging;
+surviving services must stay alive and retire their adapters before explicit
+cleanup. Source revocation/service-crash tests pass; native crash qualification is
+pending. Additional native Ready tests send conflicting Answer digests, wrong
+generations, repeated refresh, early packets and oversized frames directly to
+the private bridge, requiring rejection and loss notification. Shipping process
+supervision and durable crash recovery remain open.
