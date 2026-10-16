@@ -217,12 +217,14 @@ mod tests {
         assert_eq!(peer.address().unwrap(), address);
         let (outbound, inbound) =
             tokio::join!(peer.connect(remote.address().unwrap()), remote.accept());
+        // Retain both connection handles until the receiver consumes the
+        // unreliable DATAGRAM; dropping the sender closes the connection.
+        let (outbound, inbound) = (outbound.unwrap(), inbound.unwrap());
         outbound
-            .unwrap()
             .send(bytes::Bytes::from_static(b"owned socket"))
             .unwrap();
         assert_eq!(
-            tokio::time::timeout(Duration::from_secs(2), inbound.unwrap().receive())
+            tokio::time::timeout(Duration::from_secs(2), inbound.receive())
                 .await
                 .unwrap()
                 .unwrap(),
