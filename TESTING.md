@@ -86,6 +86,16 @@ unchanged. The real source topology passes with the persisted owner challenge.
 The prior joiner-loader increment `c692c14` passed all native jobs in
 [run 38856186805](https://github.com/ahouchens/mesh-chat/actions/runs/38856186805).
 
+Expired owner-negotiation replacement adds checks for active-attempt rejection,
+stale compare-and-swap input, conflicting retries, failed-write rollback,
+idempotence, preserved selected peer/generation, old-challenge rejection,
+higher-generation recovery, reopening the vault and invitation revocation.
+The workspace, binding and vault regression suite passed 101 tests with one
+platform-specific skip. The source integration harness is unchanged by this
+private control increment. The preceding owner-selection commit `37d6afe` passed
+all native jobs in
+[run 38900551953](https://github.com/ahouchens/mesh-chat/actions/runs/38900551953).
+
 ## Commands
 
 Focused service and UI checks:

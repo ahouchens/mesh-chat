@@ -51,8 +51,12 @@ changed identities and mismatched authority destinations. The owner now persists
 its challenge/deadline before accepting a signed binding, atomically pins one
 responder and replay history, and rechecks current local authority and the active
 invitation. Selection neither synthesizes a join nor admits a member. Expired
-negotiations fail closed and require a future explicit replacement flow; preparation
-retries preserve the original challenge and deadline. Public Offer/Answer/Ready
+negotiations fail closed. A private explicit replacement transaction checks the old
+challenge and current authority, changes only the challenge/deadline, and retains
+selected-peer and replay records. Identical retries return the saved replacement;
+conflicting retries and replacement of active attempts fail. Preparation retries
+preserve the original challenge and deadline. Native lifecycle reconciliation must
+still establish socket ownership before any future candidate advertisement. Public Offer/Answer/Ready
 schemas and lifecycle reconciliation remain open. No binding
 command or packet API is exposed to React. The initial unbound Offer remains a
 separate phase-2 document; this verifier requires an exact audience.

@@ -67,8 +67,12 @@ The first valid signed binding atomically selects one responder and saves replay
 history; competing peers cannot replace it, including after restart. Current owner
 authority and invitation state are rechecked before each acceptance. No join request
 or membership is created by this private selection step. The public Offer/Answer/
-Ready envelopes, expired-negotiation replacement, native control channel and
-activation/revocation reconciliation remain open.
+Ready envelopes, native control channel and activation/revocation reconciliation
+remain open. Private expired-negotiation replacement now compares the previous
+challenge, atomically rotates challenge/deadline, and preserves selected identity
+and replay history. Identical replacement retries are idempotent; stale or
+conflicting replacements, active attempts and revoked invitations are rejected.
+Replacement does not create sockets or advertise candidates.
 
 The Rust proof now owns a `BoundSocket` before peer authorization and consumes
 that exact socket when creating the QUIC endpoint. It exposes no clone/read API

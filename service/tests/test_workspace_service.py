@@ -469,15 +469,46 @@ def test_direct_owner_binding_selects_one_responder_without_admission(tmp_path, 
         assert accept(binding(peer, generation=2)).generation == 2
         with pytest.raises(ValidationError):
             accept(pairs[winner])
+        with pytest.raises(ValidationError, match="still active"):
+            owner._replace_direct_invitation(invitation["id"], prepared["challenge"], now + 290)
+        old_challenge = prepared["challenge"]
+        old_expiry = prepared["expires_at"]
         with monkeypatch.context() as clock:
-            clock.setattr(time, "time", lambda: prepared["expires_at"] + 1)
+            clock.setattr(time, "time", lambda: old_expiry + 1)
             with pytest.raises(ValidationError):
                 accept(pairs[winner])
             with pytest.raises(ValidationError):
                 owner._prepare_direct_invitation(invitation["id"], prepared["expires_at"] + 200)
+            with monkeypatch.context() as disk:
+                disk.setattr(owner.store, "_seal", fail_write)
+                with pytest.raises(OSError):
+                    owner._replace_direct_invitation(invitation["id"], old_challenge, old_expiry + 200)
+            assert owner.store.get("direct_pending", invitation["id"])["challenge"] == old_challenge
+            prepared = owner._replace_direct_invitation(invitation["id"], old_challenge, old_expiry + 200)
+            assert prepared["challenge"] != old_challenge
+            assert prepared["selected_identity"] == peer.get_public_key().hex()
+            assert prepared["accepted"]["generation"] == 2
+            assert owner._replace_direct_invitation(invitation["id"], old_challenge, old_expiry + 200) == prepared
+            with pytest.raises(ValidationError):
+                owner._replace_direct_invitation(invitation["id"], old_challenge, old_expiry + 201)
+            with pytest.raises(ValidationError):
+                owner._replace_direct_invitation(invitation["id"], "00" * 32, old_expiry + 200)
+            with pytest.raises(IdentityMismatch):
+                accept(pairs[winner])  # Old challenge cannot reactivate the expired path.
+            with pytest.raises(IdentityMismatch):
+                accept(binding((first, second)[1 - winner], generation=3))
+            with pytest.raises(ValidationError):
+                accept(binding(peer, generation=2))  # Replacement does not reset replay history.
+            refreshed = binding(peer, generation=3)
+            assert accept(refreshed).generation == 3
+        owner.close()
+        owner, _ = _service(tmp_path, identity, "Owner", vault_key=key)
+        assert accept(refreshed).generation == 3
         owner.revoke_workspace_invitation(workspace["id"], invitation["id"], _op(92002))
         with pytest.raises(ValidationError):
             accept(pairs[winner])
+        with pytest.raises(ValidationError):
+            owner._replace_direct_invitation(invitation["id"], old_challenge, prepared["expires_at"])
     finally:
         owner.close()
 

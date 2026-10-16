@@ -2104,6 +2104,39 @@ class WorkspaceServiceMixin:
         with self._dispatch_lock:
             return self.store.update_record("direct_pending", invitation_id, prepare)
 
+    def _replace_direct_invitation(self, invitation_id, previous_challenge, expires_at):
+        """Replace an expired attempt using compare-and-swap; retain peer/replay history.
+
+        Private control only. Runtime socket retirement/creation must precede any
+        future advertisement; this transaction does not advertise candidates.
+        """
+        from .direct_binding import MAX_GENERATION, _hex, _integer
+        _hex(previous_challenge, 32)
+        _integer(expires_at, 1, MAX_GENERATION)
+        def replace(record):
+            invite, owner = self._direct_owner_invitation(invitation_id)
+            now = int(time.time())
+            if record is None:
+                raise ValidationError("Direct negotiation does not exist")
+            scope = {"kind": "invitation", "digest": workspace_document_digest(invite.serialized),
+                     "expires_at": invite.expires_at}
+            if record["scope"] != scope or record["audience"] != owner.destination_hash.hex():
+                raise IdentityMismatch("Direct invitation authorization changed")
+            if record.get("replaced_challenge") == previous_challenge:
+                if record["expires_at"] != expires_at or record["expires_at"] <= now:
+                    raise ValidationError("Direct replacement retry is conflicting or expired")
+                return record
+            if record["challenge"] != previous_challenge:
+                raise ValidationError("Direct replacement targets a stale negotiation")
+            if record["expires_at"] > now:
+                raise ValidationError("Direct negotiation is still active")
+            if not now < expires_at <= min(now + 300, invite.expires_at):
+                raise ValidationError("Direct pending negotiation lifetime is invalid")
+            return {**record, "challenge": os.urandom(32).hex(), "expires_at": expires_at,
+                    "replaced_challenge": previous_challenge}
+        with self._dispatch_lock:
+            return self.store.update_record("direct_pending", invitation_id, replace)
+
     def _accept_direct_owner_binding(self, invitation_id, raw, expected, certificate_der):
         """Select one signed responder atomically, independently of workspace joins."""
         from .direct_binding import AcceptedBinding, BindingAuthority, verify_binding
