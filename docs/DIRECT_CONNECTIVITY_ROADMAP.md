@@ -386,5 +386,7 @@ for service authorization and while handshaking, as well as during active traffi
 A short remaining lifetime cannot be extended by the fixed authorization wait or
 handshake timeout. New native process tests leave stdin open and send no cancel,
 checking expiry both before authorization and after activation, including offline
-notification to both packet consumers. These tests await CI qualification; the
-source topology passes and does not substitute for native expiry evidence.
+notification to both packet consumers. The native expiry probes and real topology
+passed on Windows/Linux; Android ARM64 compilation passed at `839b40a` in
+[run 38926921146](https://github.com/ahouchens/mesh-chat/actions/runs/38926921146).
+The source topology also passes.

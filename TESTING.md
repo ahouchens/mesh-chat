@@ -161,7 +161,9 @@ passed at `0c3884c` in
 Native carrier expiry probes now exercise pre-authorization and active-session
 expiry without closing stdin or sending cancellation. They assert process exit
 and offline notification to both consumers. Source validation passed its topology
-and skipped these two native-only probes; GitHub qualification is pending.
+and skipped these two native-only probes. Both probes and the real topology then
+passed on Windows/Linux in GitHub; Android ARM64 compilation passed at `839b40a` in
+[run 38926921146](https://github.com/ahouchens/mesh-chat/actions/runs/38926921146).
 
 ## Commands
 
