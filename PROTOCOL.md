@@ -871,3 +871,20 @@ and the new email exchange are not enabled by this groundwork.
 
 Wire references: [NAT-PMP RFC 6886](https://www.rfc-editor.org/rfc/rfc6886.html#section-3.3)
 and [PCP RFC 6887](https://www.rfc-editor.org/rfc/rfc6887.html#section-11).
+
+## Direct Offer codec (not enabled for import)
+
+The experimental canonical `direct_offer` version 1 carries `scope`,
+`issuer_public_identity`, `issuer_destination`, `certificate_sha256`, `alpn`,
+`session_id`, `challenge`, `generation`, `candidates`, `issued_at`, `expires_at`
+and `signature`, alongside `v` and `type`. There is no audience field. Scope is
+an exact invitation digest and expiry; the expected authority comes from the
+separately verified invitation. RNS signs the entire unsigned canonical object.
+The 16 KiB/depth-eight parser rejects duplicate/unknown fields and non-integer
+numbers. Transport validation shares direct-binding certificate, challenge,
+generation, validity and global numeric candidate rules. Equal generation and
+identical digest is idempotent; conflicting or lower generations fail.
+
+This codec has no public prefix, renderer command, import/export flow or network
+side effects. Its verified result does not select a responder, attach an RNS
+interface or grant membership. Answer/Ready document chaining remains unfinished.

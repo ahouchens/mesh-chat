@@ -66,9 +66,12 @@ challenge and at most five-minute negotiation deadline against its live invitati
 The first valid signed binding atomically selects one responder and saves replay
 history; competing peers cannot replace it, including after restart. Current owner
 authority and invitation state are rechecked before each acceptance. No join request
-or membership is created by this private selection step. The public Offer/Answer/
-Ready envelopes, native control channel and activation/revocation reconciliation
-remain open. Private expired-negotiation replacement now compares the previous
+or membership is created by this private selection step. A pure signed Offer
+codec now validates an unbound invitation-scoped descriptor with canonical
+16 KiB parsing and the same transport/candidate limits as audience-bound bindings.
+It is not registered as an import command and cannot itself authorize a path.
+Answer/Ready envelopes, import/export integration, the native control channel and
+activation/revocation reconciliation remain open. Private expired-negotiation replacement now compares the previous
 challenge, atomically rotates challenge/deadline, and preserves selected identity
 and replay history. Identical replacement retries are idempotent; stale or
 conflicting replacements, active attempts and revoked invitations are rejected.

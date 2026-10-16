@@ -56,10 +56,13 @@ challenge and current authority, changes only the challenge/deadline, and retain
 selected-peer and replay records. Identical retries return the saved replacement;
 conflicting retries and replacement of active attempts fail. Preparation retries
 preserve the original challenge and deadline. Native lifecycle reconciliation must
-still establish socket ownership before any future candidate advertisement. Public Offer/Answer/Ready
-schemas and lifecycle reconciliation remain open. No binding
-command or packet API is exposed to React. The initial unbound Offer remains a
-separate phase-2 document; this verifier requires an exact audience.
+still establish socket ownership before any future candidate advertisement. The pure initial Offer schema is now implemented in `direct_offer.py`; it has
+no audience field, requires independently supplied invitation authority, and
+shares canonical parsing and transport limits with direct bindings. Its generation
+result is verification evidence only. Answer/Ready schemas, public import/export
+integration and lifecycle reconciliation remain open. No binding
+command or packet API is exposed to React. The initial unbound Offer uses a
+separate pure codec; the binding verifier still requires an exact audience.
 
 The proof owns one UDP socket throughout bind, connect, and packet transfer.
 `BoundSocket` permits candidate preparation before peer authorization and is

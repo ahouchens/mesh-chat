@@ -185,6 +185,19 @@ def verify_binding(
         or _hex(value["audience_destination"], 16) != authority.audience_destination
     ):
         raise IdentityMismatch("Direct binding peer does not match authorization")
+    _verify_transport_fields(value, authority, certificate_der, now=now)
+    _verify_signature(identity, value, "Direct binding")
+    accepted = AcceptedBinding(value["generation"], hashlib.sha256(raw.encode("utf-8")).hexdigest())
+    if previous is not None and (
+        accepted.generation < previous.generation
+        or (accepted.generation == previous.generation and accepted.digest != previous.digest)
+    ):
+        _fail("Direct binding generation is stale or conflicting")
+    return accepted
+
+
+def _verify_transport_fields(value, authority, certificate_der, *, now):
+    """Shared signed Offer/binding transport limits; no signature or peer authority."""
     if not isinstance(certificate_der, bytes) or not 1 <= len(certificate_der) <= MAX_BYTES:
         _fail("Transport certificate size is invalid")
     if _hex(value["certificate_sha256"], 32) != hashlib.sha256(certificate_der).digest():
@@ -224,14 +237,6 @@ def verify_binding(
         if endpoint in seen:
             _fail("Duplicate direct candidate")
         seen.add(endpoint)
-    _verify_signature(identity, value, "Direct binding")
-    accepted = AcceptedBinding(value["generation"], hashlib.sha256(raw.encode("utf-8")).hexdigest())
-    if previous is not None and (
-        accepted.generation < previous.generation
-        or (accepted.generation == previous.generation and accepted.digest != previous.digest)
-    ):
-        _fail("Direct binding generation is stale or conflicting")
-    return accepted
 
 
 def create_binding(identity: RNS.Identity, authority: BindingAuthority,

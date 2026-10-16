@@ -36,7 +36,7 @@ context evidence, not support for the shipping shared router. Full pipeline
 resource accounting, platform embedding, public-Internet topology, Android
 lifecycle/battery behavior, and physical device results remain release gates.
 
-Local non-integration validation passed 547 tests with unhandled-thread warnings
+Local non-integration validation passed 573 tests with unhandled-thread warnings
 treated as errors (7 skipped, 6 integration tests deselected). Skips require
 packaged artifacts or non-Windows paths. The final source topology passed after
 routed-packet filtering was tightened. UDP mapping tests cover TCP/UDP creation,
@@ -95,6 +95,14 @@ platform-specific skip. The source integration harness is unchanged by this
 private control increment. The preceding owner-selection commit `37d6afe` passed
 all native jobs in
 [run 38900551953](https://github.com/ahouchens/mesh-chat/actions/runs/38900551953).
+
+The initial Offer codec tests cover the absence of an audience, rejection as a
+binding, generation rotation/conflicts, wrong authority/certificate/signature,
+signed invalid fields, expiry, canonical encoding, duplicate keys and byte/depth
+limits. Both Windows and Linux CI include this codec suite. It remains a pure
+codec without an import or activation path. The preceding replacement commit
+`0f40ad0` passed all native jobs in
+[run 38901347792](https://github.com/ahouchens/mesh-chat/actions/runs/38901347792).
 
 ## Commands
 
