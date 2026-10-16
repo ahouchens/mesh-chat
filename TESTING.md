@@ -128,6 +128,13 @@ tests with one platform skip; the final recovery assertion passed separately. Th
 durable Answer commit `8c33b54` passed all native jobs in
 [run 38919767480](https://github.com/ahouchens/mesh-chat/actions/runs/38919767480).
 
+Native `PreparedAttempt` tests now cover exact session/generation/Answer matching,
+60-second windows, duplicate suppression, Ready generation conflicts, lifetime
+expiry, fresh-process rejection and same-socket/key QUIC packet transfer. These
+new Rust tests await GitHub execution; only rustfmt and diff checks ran locally.
+The preceding Ready-acceptance commit `5ca44b5` passed all native jobs in
+[run 38920216664](https://github.com/ahouchens/mesh-chat/actions/runs/38920216664).
+
 ## Commands
 
 Focused service and UI checks:

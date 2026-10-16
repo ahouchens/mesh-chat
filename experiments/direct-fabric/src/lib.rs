@@ -5,6 +5,7 @@
 //! Those gates must pass before this transport can become an app interface.
 
 use bytes::Bytes;
+pub mod attempt;
 use quinn::crypto::rustls::{QuicClientConfig, QuicServerConfig};
 use rustls::pki_types::{CertificateDer, PrivatePkcs8KeyDer};
 use std::{

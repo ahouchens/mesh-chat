@@ -338,3 +338,17 @@ Public DHT rendezvous, external address observers, and advanced NAT prediction c
 Before adding advanced prediction, demonstrate a reproducible improvement on a named test matrix over ordinary direct paths and punching. Record socket counts, probe traffic, battery cost, mapping behavior, and failure rate. Do not infer a traversal guarantee from a NAT label or a single successful experiment.
 
 The remaining implementation decisions are the QUIC library and toolchain, final adapter, exact wire schema and budgets, platform socket-binding APIs, and whether optional participant assistance ships with the first release. Resolve these in phases 1–2 with small proofs and documented results; none requires introducing a public server as the baseline.
+
+### Native attempt gate increment
+
+The isolated Rust proof now includes a non-cloneable `PreparedAttempt` owning
+one socket and session key. Starting requires the exact local session/generation
+and saved Answer digest. A verified Ready can re-arm that same Answer for at most
+60 monotonic seconds, capped by the original authorization lifetime (at most
+five minutes). Duplicate start/Ready calls do not extend the window; conflicting
+or older Ready generations and expired authorization fail. Activation consumes
+the original socket/key once. A new process cannot re-arm from saved Ready alone.
+Native tests are authored for these transitions and an authenticated QUIC packet
+transfer after activation; this increment awaits GitHub qualification. The gate
+is not yet connected to service IPC, scheduling, cancellation or post-activation
+teardown and is not part of the shipping app.
