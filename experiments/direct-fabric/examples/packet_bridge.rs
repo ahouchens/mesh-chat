@@ -18,7 +18,7 @@ fn frame(writer: &mut impl Write, peer: u8, data: &[u8]) -> std::io::Result<()> 
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let a = SessionKey::generate().map_err(|_| "session key")?;
     let b = SessionKey::generate().map_err(|_| "session key")?;
-    let ac = a.certificate();
+    let mut ac = a.certificate();
     let bc = b.certificate();
     // A bounded pipe receiver is the only input channel. No TCP/UDP control
     // listener exists, and input cannot select a remote socket address.
@@ -52,8 +52,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     if init.len() != 52 {
         return Err("invalid session initialization".into());
     }
-    let a_session: [u8; 16] = init[..16].try_into()?;
-    let a_generation = u64::from_be_bytes(init[16..24].try_into()?);
+    let mut a_session: [u8; 16] = init[..16].try_into()?;
+    let mut a_generation = u64::from_be_bytes(init[16..24].try_into()?);
     let b_session: [u8; 16] = init[24..40].try_into()?;
     let b_generation = u64::from_be_bytes(init[40..48].try_into()?);
     let remaining = Duration::from_secs(u32::from_be_bytes(init[48..52].try_into()?) as u64);
@@ -74,13 +74,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         remaining,
     )
     .map_err(|_| "prepare")?;
-    let (a_address, b_address) = (
+    let (mut a_address, b_address) = (
         a.address().map_err(|_| "address")?,
         b.address().map_err(|_| "address")?,
     );
     frame(&mut std::io::stdout(), 3, ac.as_ref())?;
     frame(&mut std::io::stdout(), 4, bc.as_ref())?;
-    let Some((2, authorized)) = tokio::time::timeout_at(
+    let Some((2, mut authorized)) = tokio::time::timeout_at(
         authorization_deadline.min(tokio::time::Instant::now() + Duration::from_secs(30)),
         input.recv(),
     )
@@ -88,15 +88,60 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     else {
         return Err("missing trusted-harness authorization".into());
     };
-    if authorized.len() != 64 {
+    let refreshed = authorized.len() == 57 && authorized[0] == b'R';
+    if refreshed {
+        // The owner has durably accepted the Answer. Retain the joiner's exact
+        // socket/key while replacing only the owner's Offer credentials.
+        b.start(b_session, b_generation, authorized[25..57].try_into()?)
+            .map_err(|_| "save answer")?;
+        let next_generation = u64::from_be_bytes(authorized[17..25].try_into()?);
+        if next_generation <= a_generation {
+            return Err("owner generation did not advance".into());
+        }
+        a_session = authorized[1..17].try_into()?;
+        a_generation = next_generation;
+        a.cancel();
+        let key = SessionKey::generate().map_err(|_| "refresh key")?;
+        ac = key.certificate();
+        a = PreparedAttempt::new(
+            BoundSocket::bind("127.0.0.1:0".parse()?).map_err(|_| "refresh bind")?,
+            key,
+            a_session,
+            a_generation,
+            authorization_deadline.saturating_duration_since(tokio::time::Instant::now()),
+        )
+        .map_err(|_| "refresh prepare")?;
+        a_address = a.address().map_err(|_| "refresh address")?;
+        frame(&mut std::io::stdout(), 3, ac.as_ref())?;
+        let Some((2, ready)) =
+            tokio::time::timeout_at(authorization_deadline, input.recv()).await?
+        else {
+            return Err("missing Ready authorization".into());
+        };
+        authorized = ready;
+    }
+    if authorized.len() != (if refreshed { 72 } else { 64 }) {
         return Err("invalid authorization digests".into());
     }
-    // Digests name the local saved Offer/Answer, or admitted binding. The trusted
+    // Digests name the local saved Ready/Answer, or admitted binding. The trusted
     // harness sends these only after the other service has accepted the peer.
     a.start(a_session, a_generation, authorized[..32].try_into()?)
         .map_err(|_| "arm")?;
-    b.start(b_session, b_generation, authorized[32..].try_into()?)
-        .map_err(|_| "arm")?;
+    if refreshed {
+        let ready_generation = u64::from_be_bytes(authorized[64..72].try_into()?);
+        if ready_generation != a_generation {
+            return Err("Ready generation differs from owned session".into());
+        }
+        b.rearm(
+            authorized[32..64].try_into()?,
+            ready_generation,
+            authorized[..32].try_into()?,
+        )
+        .map_err(|_| "Ready rearm")?;
+    } else {
+        b.start(b_session, b_generation, authorized[32..64].try_into()?)
+            .map_err(|_| "arm")?;
+    }
     let a = a.into_peer(bc).map_err(|_| "activate")?;
     let b = b.into_peer(ac).map_err(|_| "activate")?;
     if a.address().map_err(|_| "address")? != a_address

@@ -442,5 +442,17 @@ transaction. Duplicate saves are idempotent; conflicting or stale generations
 fail, including after restart. Changed Offers clear saved child documents, and
 changed Answers clear saved Ready documents, while replay history is retained.
 Failed writes return no acceptance. Source authority and direct-boundary tests
-pass; CI qualification is pending. This private persistence step does not export
-Ready, re-arm native attempts or activate a runtime adapter.
+pass (6 authority tests and 112 direct-boundary tests). Windows/Linux native CI
+and Android ARM64 compilation passed at `15c002e` in
+[run 38931048072](https://github.com/ahouchens/mesh-chat/actions/runs/38931048072).
+This private persistence step does not export Ready or activate a runtime adapter.
+
+
+The controlled topology now creates owner Ready with a fresh native socket,
+certificate, session and generation after accepting the saved Answer. Both services
+persist and verify the full chain before native activation. The joiner retains
+its exact Answer socket/key; the native gate re-arms it using the accepted Ready
+digest and generation. Conflicting Answer references, duplicate activation and
+repeated owner refresh fail. Source topology and focused controller checks pass.
+Native qualification, including expiry before and after Ready activation, is pending.
+This is controlled private-channel integration, not public email or shipping IPC.

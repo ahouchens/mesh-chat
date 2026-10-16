@@ -26,7 +26,7 @@ import RNS
 
 from mesh_chat.direct_binding import BindingAuthority, create_binding
 from mesh_chat.direct_offer import OfferAuthority, create_offer
-from mesh_chat.direct_exchange import create_answer
+from mesh_chat.direct_exchange import create_answer, create_ready
 from mesh_chat.reticulum_config import NetworkSettings
 from mesh_chat.service import MeshChatService
 from mesh_chat.vault import VaultStore
@@ -113,7 +113,7 @@ def _worker(name, root, commands, responses, incoming, outgoing, revoked, carrie
                     if should_stop or not value.get("ok"):
                         raise RuntimeError(value)
                     result = {"result": value["result"]}
-                elif action in {"sign_binding", "verify_binding"}:
+                elif action in {"sign_binding", "verify_binding", "sign_ready", "verify_ready"}:
                     authority = BindingAuthority(
                         base64.urlsafe_b64decode(request["issuer"]), bytes.fromhex(request["audience"]),
                         request["scope"], request["expires_at"], bytes.fromhex(request["challenge"]))
@@ -134,13 +134,16 @@ def _worker(name, root, commands, responses, incoming, outgoing, revoked, carrie
                     load_authority()
                     cert = bytes.fromhex(request["certificate"])
                     now = int(time.time())
-                    if action == "sign_binding":
+                    if action in {"sign_binding", "sign_ready"}:
                         raw = create_binding(network.identity, authority, cert,
                             session_id=request["session_id"], challenge=authority.challenge, generation=request["generation"],
                             candidates=[{"host": "8.8.8.8", "port": 12345, "expires_at": authority.expires_at}],
                             issued_at=now, expires_at=authority.expires_at)
                         result = {"binding": raw}
-                        if authority.scope["kind"] == "invitation":
+                        if action == "sign_ready":
+                            result["ready"] = create_ready(network.identity, raw, request["answer"])
+                            service._save_direct_owner_ready(request["invitation_id"], result["ready"], cert)
+                        elif authority.scope["kind"] == "invitation":
                             if service._require_workspace(request["workspace_id"])["state"] == "active":
                                 fields = json.loads(raw)
                                 offer = create_offer(network.identity, OfferAuthority(
@@ -162,7 +165,9 @@ def _worker(name, root, commands, responses, incoming, outgoing, revoked, carrie
                         # Recheck local workspace membership and persist the
                         # exact relationship generation under one vault transaction.
                         # Pending authority is reloaded from durable service records.
-                        if authority.scope["kind"] == "workspace":
+                        if action == "verify_ready":
+                            check = partial(service._accept_direct_ready, request["workspace_id"], request["ready"], cert)
+                        elif authority.scope["kind"] == "workspace":
                             check = partial(service._accept_direct_workspace_binding, request["binding"], authority, cert)
                         elif service._require_workspace(request["workspace_id"])["state"] == "joining":
                             check = partial(service._accept_direct_join_binding, request["workspace_id"], request["binding"], authority, cert)
@@ -249,6 +254,8 @@ class PacketCarrier:
         self.threads = []
         self.session_ids = [uuid.uuid4(), uuid.uuid4()]
         self.generation = generation
+        self._refreshed_answer = None
+        self._started = False
         remaining = min(240, int(expires_at - time.time()))
         if remaining <= 0:
             raise ValueError("Native session authorization has expired")
@@ -342,10 +349,35 @@ class PacketCarrier:
                     self._mark_lost()
                 return
 
-    def start(self, documents):
+    def refresh_owner(self, answer):
+        if self._started or self.stop.is_set() or self._refreshed_answer is not None:
+            raise ValueError("Owner refresh requires one pending owned attempt")
+        digest = hashlib.sha256(answer.encode("utf-8")).digest()
+        self.session_ids[0] = uuid.uuid4()
+        if self.process:
+            self._write(2, b"R" + self.session_ids[0].bytes + struct.pack("!Q", self.generation + 1) + digest)
+            side, certificate = self.controls.get(timeout=15)
+            if side != 3:
+                raise RuntimeError("Native owner refresh did not provide its certificate")
+            self.certificates[0] = certificate
+        else:
+            self.certificates[0] = os.urandom(64)
+        self._refreshed_answer = digest
+        return self.generation + 1
+
+    def start(self, documents, *, ready_generation=None):
+        if self._started or self.stop.is_set():
+            raise ValueError("Carrier activation is terminal or already consumed")
         if len(documents) != 2:
             raise ValueError("Expected two authorized local session documents")
         digests = b"".join(hashlib.sha256(document.encode("utf-8")).digest() for document in documents)
+        if self._refreshed_answer is not None:
+            if ready_generation != self.generation + 1 or digests[32:] != self._refreshed_answer:
+                raise ValueError("Ready must retain the exact owned Answer and fresh owner generation")
+            digests += struct.pack("!Q", ready_generation)
+        elif ready_generation is not None:
+            raise ValueError("Ready requires refreshed owner credentials")
+        self._started = True
         if self.process:
             self._write(2, digests)
             if self.controls.get(timeout=15) != (2, b"ready"):
@@ -423,7 +455,23 @@ def run(*, executable=None, timeout=45):
                     _call(other["commands"], other["responses"], "verify_binding", **arguments,
                           binding=signed["binding"], answer=signed.get("answer"))
                     documents.append(signed.get("answer", signed.get("offer", signed["binding"])))
-                carrier.start(documents)
+                ready_generation = None
+                if scopes[0]["kind"] == "invitation":
+                    old_owner_certificate = carrier.certificates[0]
+                    answer_certificate, answer_session = carrier.certificates[1], carrier.session_ids[1]
+                    ready_generation = carrier.refresh_owner(documents[1])
+                    if (carrier.certificates[0] == old_owner_certificate
+                            or carrier.certificates[1] != answer_certificate or carrier.session_ids[1] != answer_session):
+                        raise AssertionError("Ready did not retain Answer ownership and rotate owner credentials")
+                    arguments = dict(issuer=owner["profile"]["public_identity"],
+                        audience=joiner["profile"]["destination_hash"], scope=scopes[0], expires_at=expiry,
+                        challenge=challenge, certificate=carrier.certificates[0].hex(), generation=ready_generation,
+                        workspace_id=workspace["id"], invitation_id=invitation["id"], answer=documents[1],
+                        session_id=str(carrier.session_ids[0]))
+                    signed = _call(owner["commands"], owner["responses"], "sign_ready", **arguments)
+                    _call(joiner["commands"], joiner["responses"], "verify_ready", **arguments, ready=signed["ready"])
+                    documents[0] = signed["ready"]
+                carrier.start(documents, ready_generation=ready_generation)
                 for peer in peers:
                     _call(peer["commands"], peer["responses"], "activate")
             _framed(joiner, "submit_workspace_join", {"invitation": invitation["text"], "operation_id": op()})
@@ -512,7 +560,7 @@ def run(*, executable=None, timeout=45):
             return {"carrier": "quic" if executable else "source-pipes", "join_acknowledged": True,
                     "admitted": True, "bidirectional_messages": True, "ratchets": True,
                     "engine_death_offline": True, "isolated": True, "admitted_key_rotation": True,
-                    "endpoint_receipts": True, "stale_activation_rejected": True, "live_revocation_offline": True, "revocation_cancels_carrier": True}
+                    "endpoint_receipts": True, "stale_activation_rejected": True, "live_revocation_offline": True, "revocation_cancels_carrier": True, "ready_retains_answer": True}
         finally:
             if carrier:
                 carrier.close()

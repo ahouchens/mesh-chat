@@ -2809,3 +2809,10 @@ Carrier-loss delivery with full packet queues passed at `3f159e7` in
 on Windows/Linux native CI and Android ARM64 compilation. Dedicated process
 events retire workers independently of packet capacity, including EOF and repeated
 close. Source validation: 3 passed, 2 native-only skips.
+
+
+Owner Ready persistence passed 6 targeted authority tests and 112 direct-boundary
+tests locally. Windows/Linux native tests and Android ARM64 compilation passed at
+`15c002e` in [run 38931048072](https://github.com/ahouchens/mesh-chat/actions/runs/38931048072).
+Coverage includes selected-chain/certificate mismatch, failed writes, restart,
+replay, expiry, revocation and child-document invalidation without resetting replay history.
