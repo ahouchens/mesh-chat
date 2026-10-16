@@ -2789,5 +2789,16 @@ adapter goes offline while the carrier remains running, without reactivation.
 The source topology passed (1 passed, 2 native-only tests skipped). Windows/Linux
 native tests and Android ARM64 compilation passed at `88094ec` in
 [run 38928825216](https://github.com/ahouchens/mesh-chat/actions/runs/38928825216).
-Authority is polled every 250 ms; native carrier cleanup remains controller-owned.
+Authority is polled every 250 ms. The subsequent increment below adds automatic
+controller-driven native cancellation.
 This does not qualify shipping revocation or pending-invitation lifecycle integration.
+
+
+Automatic revocation cancellation passed at `7bce7d9` in
+[run 38929519471](https://github.com/ahouchens/mesh-chat/actions/runs/38929519471):
+Windows/Linux native tests and Android ARM64 compilation. The topology requires
+the native process to exit successfully after member removal before explicit
+cleanup. A dedicated process event carries revocation independently of packet
+queues; a source test verifies cancellation with full queues. Local validation:
+2 passed, 2 native-only skips. Shipping IPC and pending-invitation lifecycle
+integration remain open.

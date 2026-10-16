@@ -419,5 +419,7 @@ process event, independent of bounded packet queues. The carrier controller watc
 these events and requests native cancellation automatically. The topology requires
 a successful native process exit before explicit cleanup; a source regression also
 checks cancellation with full packet queues. Source validation passed (2 passed,
-2 native-only skips); native CI qualification is pending. This is private harness lifecycle wiring, not shipping
+2 native-only skips). Windows/Linux native tests and Android ARM64 compilation
+passed at `7bce7d9` in
+[run 38929519471](https://github.com/ahouchens/mesh-chat/actions/runs/38929519471). This is private harness lifecycle wiring, not shipping
 service IPC or pending-invitation lifecycle integration.
