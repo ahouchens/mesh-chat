@@ -2781,3 +2781,13 @@ Version 0.2.42 contains the tested 0.2.41 direct-connectivity implementation wit
 | Workspace increment 15 | Increment 14 linking is unchanged and now available through the mobile UI. Atomic durable local-notification decisions, bounded service-to-native work, permission/denial/settings recovery, sealed preview and conversation preferences, structured mention/thread precedence, opaque re-authorized routes, lifecycle generations, bounded overflow/resume reconciliation, restart deduplication, and historical-storm suppression are automated. The final 50,000-event benchmark, protected topology/direct-LAN matrix, exact immutable 0.2.35 desktop/Android packages, 0.2.34/0.2.33/0.2.32/0.2.31 and frozen 0.2.9 compatibility, APK/source markers, and artwork checks passed. No authorized Android device or macOS/iOS environment was available, so physical lifecycle/permission/lock-screen/upgrade evidence remains a blocking completion gate |
 
 Do not mark a release complete from unit tests alone. Store packet captures, topology configs, full-tree scans, package hashes, platform versions, human timing sheets, and failure notes with the release evidence.
+
+
+The controlled direct-fabric topology also verifies live admitted-member revocation:
+after bidirectional messages and receipts, the owner removes the peer and its
+adapter goes offline while the carrier remains running, without reactivation.
+The source topology passed (1 passed, 2 native-only tests skipped). Windows/Linux
+native tests and Android ARM64 compilation passed at `88094ec` in
+[run 38928825216](https://github.com/ahouchens/mesh-chat/actions/runs/38928825216).
+Authority is polled every 250 ms; native carrier cleanup remains controller-owned.
+This does not qualify shipping revocation or pending-invitation lifecycle integration.

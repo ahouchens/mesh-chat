@@ -408,7 +408,8 @@ under the service dispatch lock while its adapter is online. A failed authority
 read retires the adapter and stops its packet pump without rewriting binding
 acceptance records. The source topology removes the admitted member after
 bidirectional messaging and verifies the owner's adapter goes offline while the
-carrier is still running, without another activation request. Native qualification
-is pending. This bounded polling proof does not provide instantaneous revocation,
+carrier is still running, without another activation request. Native topology
+qualification passed on Windows/Linux, with Android ARM64 compilation, at
+`88094ec` in [run 38928825216](https://github.com/ahouchens/mesh-chat/actions/runs/38928825216). This bounded polling proof does not provide instantaneous revocation,
 pending-invitation lifecycle monitoring, or automatic native carrier cancellation;
 the controller still owns carrier cleanup. Shipping lifecycle integration remains open.
