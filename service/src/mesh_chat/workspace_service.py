@@ -3258,8 +3258,23 @@ class WorkspaceServiceMixin:
                 "next_sender_sequence",
                 "last_event_digest",
                 "members",
+                "join_delivery_id",
             }
         }
+        if workspace.get("state") == "joining":
+            join_delivery_id = workspace.get("join_delivery_id")
+            delivery = (
+                self.store.get("workspace_delivery", join_delivery_id)
+                if isinstance(join_delivery_id, str)
+                else None
+            )
+            if (
+                delivery is not None
+                and delivery.get("workspace_id") == workspace.get("id")
+                and delivery.get("kind") == "workspace_join"
+                and isinstance(delivery.get("state"), str)
+            ):
+                public["join_delivery_state"] = delivery["state"]
         public["members"] = [
             {
                 **{
@@ -4568,6 +4583,7 @@ class WorkspaceServiceMixin:
             "name": invite.offered_manifest.name,
             "description": invite.offered_manifest.description,
             "state": "joining",
+            "join_delivery_id": delivery["id"],
             "local_role": WorkspaceRole.MEMBER.value,
             "local_member_id": join.member_id,
             "local_device_id": join.device.device_id,
@@ -4636,6 +4652,9 @@ class WorkspaceServiceMixin:
             "expires_at": float(invite.expires_at),
         }
         outcome = self._public_workspace(workspace)
+        # The delivery is committed atomically with the joining workspace below,
+        # so it is not available to `_public_workspace`'s direct lookup yet.
+        outcome["join_delivery_state"] = delivery["state"]
         if participant_connection_results:
             outcome["connection_results"] = participant_connection_results
         records = [
@@ -15843,7 +15862,27 @@ class WorkspaceServiceMixin:
         if replay is not None:
             return replay
         workspace = self._require_workspace(workspace_id)
-        if workspace.get("state") not in {"left", "removed", "device_removed", "closed"}:
+        removable_states = {"left", "removed", "device_removed", "closed"}
+        failed_join = False
+        if workspace.get("state") == "joining":
+            join_delivery_id = workspace.get("join_delivery_id")
+            join_delivery = (
+                self.store.get("workspace_delivery", join_delivery_id)
+                if isinstance(join_delivery_id, str)
+                else None
+            )
+            failed_join = (
+                join_delivery is not None
+                and join_delivery.get("workspace_id") == workspace_id
+                and join_delivery.get("kind") == "workspace_join"
+                and join_delivery.get("state")
+                in {
+                    DeliveryState.FAILED.value,
+                    DeliveryState.EXPIRED.value,
+                    DeliveryState.CANCELLED.value,
+                }
+            )
+        if workspace.get("state") not in removable_states and not failed_join:
             raise ValidationError("Leave or close the workspace before removing its data")
         if confirmation != workspace_id:
             raise ValidationError("Workspace removal confirmation does not match")
@@ -16130,8 +16169,21 @@ class WorkspaceServiceMixin:
             )
             return
         hints = delivery.get("recipient_hints", [])
-        if hints and any(hint not in self.settings.tcp_clients for hint in hints):
+        if self._connection_settings_dirty or (
+            hints and any(hint not in self.settings.tcp_clients for hint in hints)
+        ):
             self._apply_contact_hints({"connection_hints": hints})
+        prefer_signed_route = getattr(network, "prefer_signed_route", None)
+        if callable(prefer_signed_route):
+            try:
+                # Workspace due work is processed in a bounded batch while the
+                # service dispatch lock is held. Trigger/check the exact signed
+                # route without sleeping here; a later retry observes any path
+                # response. One faulty preference implementation must not
+                # abort the batch or starve later deliveries.
+                prefer_signed_route(destination, hints, timeout=0.0)
+            except Exception:
+                pass
         if not network.recipient_ready(destination):
             delivery["state"] = DeliveryState.WAITING_FOR_KEYS.value
             delivery["next_attempt_at"] = now + WORKSPACE_RETRY_BASE_SECONDS
@@ -17984,8 +18036,51 @@ class WorkspaceServiceMixin:
                     }
                 )
         stored_workspaces = self.store.list("workspace")
+        joining_without_delivery_pointer = [
+            workspace
+            for workspace in stored_workspaces
+            if workspace.get("state") == "joining"
+            and "join_delivery_id" not in workspace
+        ]
+        migrated_joining_ids: set[str] = set()
+        if joining_without_delivery_pointer:
+            # v0.2.46 joining records predate the direct delivery pointer. Scan
+            # the delivery collection once for all such workspaces, then persist
+            # either the deterministic oldest join delivery or a null marker so
+            # subsequent snapshots use only bounded direct lookups.
+            candidates: dict[str, list[dict[str, Any]]] = defaultdict(list)
+            legacy_workspace_ids = {
+                workspace["id"]
+                for workspace in joining_without_delivery_pointer
+                if isinstance(workspace.get("id"), str)
+            }
+            for delivery in self.store.list("workspace_delivery"):
+                workspace_id = delivery.get("workspace_id")
+                if (
+                    workspace_id in legacy_workspace_ids
+                    and delivery.get("kind") == "workspace_join"
+                    and isinstance(delivery.get("id"), str)
+                ):
+                    candidates[workspace_id].append(delivery)
+            for workspace in joining_without_delivery_pointer:
+                workspace_id = workspace.get("id")
+                if not isinstance(workspace_id, str):
+                    continue
+                matches = candidates.get(workspace_id, [])
+                selected = min(
+                    matches,
+                    key=lambda delivery: (
+                        float(delivery.get("created_at", 0)),
+                        delivery["id"],
+                    ),
+                    default=None,
+                )
+                workspace["join_delivery_id"] = (
+                    selected["id"] if selected is not None else None
+                )
+                migrated_joining_ids.add(workspace_id)
         for item in stored_workspaces:
-            changed = False
+            changed = item.get("id") in migrated_joining_ids
             if "mention_unread_count" not in item:
                 item["mention_unread_count"] = self._workspace_mention_unread_count(
                     item
@@ -18120,6 +18215,15 @@ class WorkspaceServiceMixin:
         )
         admin_requests: list[dict[str, Any]] = []
         owner_review_counts: dict[str, int] = defaultdict(int)
+        for request in requests:
+            workspace_id = request.get("workspace_id")
+            stored_workspace = workspaces_by_id.get(workspace_id)
+            if (
+                stored_workspace is not None
+                and stored_workspace.get("local_role")
+                == WorkspaceRole.OWNER.value
+            ):
+                owner_review_counts[workspace_id] += 1
         for stored_workspace in stored_workspaces:
             for request in self._refresh_workspace_admin_requests(stored_workspace):
                 if request.get("dismissed"):

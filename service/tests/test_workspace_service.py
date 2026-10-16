@@ -78,6 +78,57 @@ class RecordingWorkspaceNetwork:
         pass
 
 
+class RecoveringWorkspaceRouteNetwork(RecordingWorkspaceNetwork):
+    def __init__(self) -> None:
+        super().__init__()
+        self.route_attached = False
+        self.attachment_failures = 1
+        self.events: list[str] = []
+        self.preference_timeouts: list[float] = []
+
+    def apply_connection_settings(self, _settings: Any) -> None:
+        self.events.append("apply")
+        if self.attachment_failures:
+            self.attachment_failures -= 1
+            raise RuntimeError("route attachment failed")
+        self.route_attached = True
+
+    def prefer_signed_route(
+        self,
+        _destination: bytes,
+        _connection_hints: list[dict[str, Any]],
+        *,
+        timeout: float = 0.75,
+    ) -> bool:
+        self.events.append("prefer")
+        self.preference_timeouts.append(timeout)
+        return self.route_attached
+
+    def recipient_ready(self, _destination: bytes) -> bool:
+        self.events.append("ready")
+        return self.route_attached
+
+    def send_with_fields(self, **value: Any) -> str:
+        self.events.append("send")
+        return super().send_with_fields(**value)
+
+
+class RaisingPreferenceWorkspaceNetwork(RecordingWorkspaceNetwork):
+    def __init__(self) -> None:
+        super().__init__()
+        self.preference_timeouts: list[float] = []
+
+    def prefer_signed_route(
+        self,
+        _destination: bytes,
+        _connection_hints: list[dict[str, Any]],
+        *,
+        timeout: float = 0.75,
+    ) -> bool:
+        self.preference_timeouts.append(timeout)
+        raise RuntimeError("route preference failed")
+
+
 def _profile(identity: RNS.Identity, display_name: str) -> dict[str, Any]:
     public_key = identity.get_public_key()
     destination = RNS.Destination.hash(identity, "lxmf", "delivery")
@@ -703,6 +754,269 @@ def test_workspace_notification_families_cover_channel_dm_thread_and_skip_mutati
     )
     work = member.drain_native_notification_work(16)["items"]
     assert [item["category"] for item in work] == ["mention"]
+
+
+def test_joining_workspace_projects_exact_delivery_state(
+    tmp_path: Path,
+) -> None:
+    owner_identity = RNS.Identity()
+    joiner_identity = RNS.Identity()
+    owner, _owner_network = _service(
+        tmp_path / "join-state-owner", owner_identity, "Alex"
+    )
+    joiner, _joiner_network = _service(
+        tmp_path / "join-state-joiner", joiner_identity, "Bailey"
+    )
+    workspace = owner.create_workspace(_op(9000), "Delivery state", "")
+    invitation = owner.create_workspace_invitation_command(
+        workspace["id"], _op(9001)
+    )
+
+    submitted = joiner.submit_workspace_join(invitation["text"], _op(9002))
+    assert submitted["state"] == "joining"
+    assert submitted["join_delivery_state"] == DeliveryState.QUEUED.value
+    assert "join_delivery_id" not in submitted
+
+    joining = joiner.workspace_snapshot()["workspaces"][0]
+    assert joining["join_delivery_state"] == DeliveryState.QUEUED.value
+    assert "join_delivery_id" not in joining
+    stored = joiner._require_workspace(workspace["id"])
+    delivery_id = stored["join_delivery_id"]
+    assert isinstance(delivery_id, str)
+
+    assert joiner._on_workspace_native_status(
+        delivery_id, DeliveryState.RECEIVED_BY_ENDPOINT, None
+    )
+    received = joiner.workspace_snapshot()["workspaces"][0]
+    assert received["join_delivery_state"] == DeliveryState.RECEIVED_BY_ENDPOINT.value
+    assert "join_delivery_id" not in received
+
+    owner.close()
+    joiner.close()
+
+
+def test_join_delivery_pointer_migrates_once_and_uses_direct_reads(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    owner_identity = RNS.Identity()
+    joiner_identity = RNS.Identity()
+    owner, _owner_network = _service(
+        tmp_path / "join-migration-owner", owner_identity, "Alex"
+    )
+    joiner, _joiner_network = _service(
+        tmp_path / "join-migration-joiner", joiner_identity, "Bailey"
+    )
+    workspace = owner.create_workspace(_op(9010), "Migrated join", "")
+    invitation = owner.create_workspace_invitation_command(
+        workspace["id"], _op(9011)
+    )
+    joiner.submit_workspace_join(invitation["text"], _op(9012))
+
+    record_id = joiner._workspace_record_id(workspace["id"])
+    stored = joiner.store.get("workspace", record_id)
+    assert stored is not None
+    delivery_id = stored.pop("join_delivery_id")
+    joiner.store.put("workspace", record_id, stored)
+
+    original_delivery = joiner.store.get("workspace_delivery", delivery_id)
+    assert original_delivery is not None
+    later_delivery = dict(original_delivery)
+    later_delivery["id"] = _op(9013)
+    later_delivery["created_at"] = float(original_delivery["created_at"]) + 1
+    joiner.store.put("workspace_delivery", later_delivery["id"], later_delivery)
+
+    original_list = joiner.store.list
+    delivery_scans = 0
+
+    def counted_list(kind: str) -> list[dict[str, Any]]:
+        nonlocal delivery_scans
+        if kind == "workspace_delivery":
+            delivery_scans += 1
+        return original_list(kind)
+
+    monkeypatch.setattr(joiner.store, "list", counted_list)
+    first = joiner.workspace_snapshot()["workspaces"][0]
+    assert first["join_delivery_state"] == DeliveryState.QUEUED.value
+    assert delivery_scans == 1
+    migrated = joiner.store.get("workspace", record_id)
+    assert migrated is not None
+    assert migrated["join_delivery_id"] == delivery_id
+
+    second = joiner.workspace_snapshot()["workspaces"][0]
+    assert second["join_delivery_state"] == DeliveryState.QUEUED.value
+    assert delivery_scans == 1
+
+    owner.close()
+    joiner.close()
+
+
+def test_pending_workspace_join_counts_as_owner_review(
+    tmp_path: Path,
+) -> None:
+    owner_identity = RNS.Identity()
+    joiner_identity = RNS.Identity()
+    owner, _owner_network = _service(
+        tmp_path / "join-review-owner", owner_identity, "Alex"
+    )
+    joiner, joiner_network = _service(
+        tmp_path / "join-review-joiner", joiner_identity, "Bailey"
+    )
+    owner_profile = owner._require_profile()
+    joiner_profile = joiner._require_profile()
+    workspace = owner.create_workspace(_op(9020), "Owner review", "")
+    invitation = owner.create_workspace_invitation_command(
+        workspace["id"], _op(9021)
+    )
+    joiner.submit_workspace_join(invitation["text"], _op(9022))
+
+    outgoing = _flush(joiner, joiner_network)
+    assert len(outgoing) == 1
+    _deliver(
+        owner,
+        outgoing[0],
+        source_profile=joiner_profile,
+        recipient_profile=owner_profile,
+    )
+    owner_snapshot = owner.workspace_snapshot()
+    assert len(owner_snapshot["workspace_join_requests"]) == 1
+    assert owner_snapshot["workspaces"][0]["pending_owner_review_count"] == 1
+
+    owner.close()
+    joiner.close()
+
+
+def test_workspace_delivery_retries_dirty_signed_route_attachment(
+    tmp_path: Path,
+) -> None:
+    owner_identity = RNS.Identity()
+    joiner_identity = RNS.Identity()
+    owner, _owner_network = _service(
+        tmp_path / "route-retry-owner", owner_identity, "Alex"
+    )
+    joiner, _joiner_network = _service(
+        tmp_path / "route-retry-joiner", joiner_identity, "Bailey"
+    )
+    workspace = owner.create_workspace(_op(9030), "Route retry", "")
+    invitation = owner.create_workspace_invitation_command(
+        workspace["id"], _op(9031)
+    )
+    joiner.submit_workspace_join(invitation["text"], _op(9032))
+
+    delivery = next(
+        item
+        for item in joiner.store.list("workspace_delivery")
+        if item.get("workspace_id") == workspace["id"]
+        and item.get("kind") == "workspace_join"
+    )
+    delivery_id = delivery["id"]
+    hint = {"type": "tcp", "host": "198.51.100.23", "port": 4242}
+    delivery["recipient_hints"] = [hint]
+    delivery["next_attempt_at"] = 0
+    joiner.store.put("workspace_delivery", delivery_id, delivery)
+
+    network = RecoveringWorkspaceRouteNetwork()
+    joiner.network = network  # type: ignore[assignment]
+    joiner._attempt_workspace_delivery(delivery_id)
+
+    first_attempt = joiner.store.get("workspace_delivery", delivery_id)
+    assert first_attempt is not None
+    assert first_attempt["state"] == DeliveryState.WAITING_FOR_KEYS.value
+    assert joiner.settings.tcp_clients == [hint]
+    assert joiner._connection_settings_dirty is True
+    assert network.events == ["apply", "prefer", "ready"]
+    assert network.preference_timeouts == [0.0]
+
+    first_attempt["next_attempt_at"] = 0
+    joiner.store.put("workspace_delivery", delivery_id, first_attempt)
+    joiner._attempt_workspace_delivery(delivery_id)
+
+    assert joiner._connection_settings_dirty is False
+    assert network.events == [
+        "apply",
+        "prefer",
+        "ready",
+        "apply",
+        "prefer",
+        "ready",
+        "send",
+    ]
+    assert network.preference_timeouts == [0.0, 0.0]
+    assert len(network.sent) == 1
+    assert network.sent[0]["logical_id"] == delivery_id
+
+    owner.close()
+    joiner.close()
+
+
+def test_workspace_delivery_preference_failure_does_not_starve_due_batch(
+    tmp_path: Path,
+) -> None:
+    owner_identity = RNS.Identity()
+    joiner_identity = RNS.Identity()
+    owner, _owner_network = _service(
+        tmp_path / "preference-failure-owner", owner_identity, "Alex"
+    )
+    joiner, _joiner_network = _service(
+        tmp_path / "preference-failure-joiner", joiner_identity, "Bailey"
+    )
+    for index in range(2):
+        workspace = owner.create_workspace(
+            _op(9040 + index * 3), f"Preference {index}", ""
+        )
+        invitation = owner.create_workspace_invitation_command(
+            workspace["id"], _op(9041 + index * 3)
+        )
+        joiner.submit_workspace_join(
+            invitation["text"], _op(9042 + index * 3)
+        )
+
+    network = RaisingPreferenceWorkspaceNetwork()
+    joiner.network = network  # type: ignore[assignment]
+    joiner._retry_workspace_outbox()
+
+    assert len(network.sent) == 2
+    assert network.preference_timeouts == [0.0, 0.0]
+
+    owner.close()
+    joiner.close()
+
+
+def test_terminal_workspace_join_can_be_removed_before_retrying(
+    tmp_path: Path,
+) -> None:
+    owner_identity = RNS.Identity()
+    joiner_identity = RNS.Identity()
+    owner, _owner_network = _service(
+        tmp_path / "failed-join-owner", owner_identity, "Alex"
+    )
+    joiner, _joiner_network = _service(
+        tmp_path / "failed-join-joiner", joiner_identity, "Bailey"
+    )
+    workspace = owner.create_workspace(_op(9060), "Failed join", "")
+    invitation = owner.create_workspace_invitation_command(
+        workspace["id"], _op(9061)
+    )
+    joiner.submit_workspace_join(invitation["text"], _op(9062))
+
+    with pytest.raises(ValidationError, match="Leave or close"):
+        joiner.remove_workspace_data(workspace["id"], workspace["id"], _op(9063))
+
+    stored_workspace = joiner._require_workspace(workspace["id"])
+    delivery_id = stored_workspace["join_delivery_id"]
+    delivery = joiner.store.get("workspace_delivery", delivery_id)
+    assert delivery is not None
+    delivery["state"] = DeliveryState.FAILED.value
+    joiner.store.put("workspace_delivery", delivery_id, delivery)
+
+    removed = joiner.remove_workspace_data(
+        workspace["id"], workspace["id"], _op(9064)
+    )
+    assert removed == {"workspace_id": workspace["id"], "removed": True}
+    assert joiner.workspace_snapshot()["workspaces"] == []
+    assert joiner.store.get("workspace_delivery", delivery_id) is None
+
+    owner.close()
+    joiner.close()
 
 
 def test_two_member_workspace_create_join_chat_and_page(

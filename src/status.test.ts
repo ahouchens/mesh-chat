@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { contactConnectionLabel, deliveryLabel } from "./status";
-import type { Contact } from "./types";
+import { contactConnectionLabel, deliveryLabel, workspaceJoinStatus } from "./status";
+import type { Contact, Workspace } from "./types";
 
 describe("plain-language status mapping", () => {
   it("does not call native endpoint evidence delivered", () => {
@@ -41,4 +41,36 @@ describe("plain-language status mapping", () => {
     } as Contact;
     expect(contactConnectionLabel(contact)).toContain("Trying to reach Alex");
   });
+
+  it.each([undefined, "queued", "waiting_for_keys", "sending", "stored_for_delivery"] as const)(
+    "does not claim owner review before workspace join evidence (%s)",
+    (join_delivery_state) => {
+      const status = workspaceJoinStatus({ state: "joining", join_delivery_state } as Workspace);
+      expect(status?.headline).toContain("trying to reach owner");
+      expect(status?.detail).toContain("has not received it yet");
+      expect(status?.headline).not.toContain("waiting for review");
+    },
+  );
+
+  it.each(["received_by_endpoint", "delivered"] as const)(
+    "shows owner-device evidence for a workspace join after %s",
+    (join_delivery_state) => {
+      const status = workspaceJoinStatus({ state: "joining", join_delivery_state } as Workspace);
+      expect(status?.headline).toContain("reached owner’s device");
+      expect(status?.headline).toContain("awaiting validation");
+      expect(status?.headline).not.toContain("waiting for review");
+      expect(status?.detail).toContain("must still validate");
+      expect(status?.ownerReached).toBe(true);
+    },
+  );
+
+  it.each(["failed", "expired", "cancelled"] as const)(
+    "shows a terminal workspace join failure for %s",
+    (join_delivery_state) => {
+      const status = workspaceJoinStatus({ state: "joining", join_delivery_state } as Workspace);
+      expect(status?.headline).toBe("Join request was not delivered");
+      expect(status?.detail).toContain("remove this failed join");
+      expect(status?.terminal).toBe(true);
+    },
+  );
 });

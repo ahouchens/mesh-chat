@@ -2,7 +2,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testi
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import packageInfo from "../package.json";
-import type { ChatMessage, Contact, Group, GroupInvitation, GroupMessage, Snapshot, Workspace, WorkspaceAdminRequest, WorkspaceChannel, WorkspaceDirect, WorkspaceMentionPage, WorkspaceMessage, WorkspaceMessagePage, WorkspaceSearchPage, WorkspaceThreadActivityPage, WorkspaceThreadPage } from "./types";
+import type { ChatMessage, Contact, Group, GroupInvitation, GroupMessage, Snapshot, Workspace, WorkspaceAdminRequest, WorkspaceChannel, WorkspaceDirect, WorkspaceJoinRequest, WorkspaceMentionPage, WorkspaceMessage, WorkspaceMessagePage, WorkspaceSearchPage, WorkspaceThreadActivityPage, WorkspaceThreadPage } from "./types";
 
 const api = vi.hoisted(() => ({
   initializeService: vi.fn(),
@@ -3231,6 +3231,150 @@ describe("small private groups", () => {
 });
 
 describe("desktop workspaces", () => {
+  it("distinguishes a locally saved join request from one received by the owner", async () => {
+    const joiningWorkspace: Workspace = {
+      ...workspace,
+      state: "joining",
+      local_role: "member",
+      general_channel_id: null,
+      channel_discovery: "incomplete",
+      join_delivery_state: "queued",
+    };
+    const current: Snapshot = {
+      ...snapshot(),
+      workspaces: [joiningWorkspace],
+      workspace_channels: [],
+      workspace_directs: [],
+      workspace_join_requests: [],
+      workspace_invitations: [],
+      workspace_drafts: [],
+    };
+    api.runtimePlatform.mockResolvedValue("desktop");
+    api.initializeService.mockResolvedValue(current);
+    api.onInvitation.mockResolvedValue(() => undefined);
+    api.onServiceEvent.mockResolvedValue(() => undefined);
+    api.serviceCommand.mockImplementation(async (command: string) => {
+      if (command === "snapshot" || command === "workspace_snapshot") return current;
+      return {};
+    });
+
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: /Workspace Lakewatcher, Join request saved/ }));
+
+    expect(screen.getAllByText("Join request saved · trying to reach owner").length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/The owner has not received it yet/i).length).toBeGreaterThan(0);
+    expect(screen.queryByText("Waiting for owner approval")).toBeNull();
+    expect(screen.queryByText("Waiting for #general access")).toBeNull();
+    expect(screen.getByText(/#general appears only after the owner receives, validates, and approves/i)).toBeTruthy();
+  });
+
+  it("lets a terminal workspace join be removed before trying a fresh invitation", async () => {
+    const failedWorkspace: Workspace = {
+      ...workspace,
+      state: "joining",
+      local_role: "member",
+      general_channel_id: null,
+      channel_discovery: "incomplete",
+      join_delivery_state: "failed",
+    };
+    const current: Snapshot = {
+      ...snapshot(),
+      workspaces: [failedWorkspace],
+      workspace_channels: [],
+      workspace_directs: [],
+      workspace_join_requests: [],
+      workspace_invitations: [],
+      workspace_drafts: [],
+    };
+    api.runtimePlatform.mockResolvedValue("desktop");
+    api.initializeService.mockResolvedValue(current);
+    api.onInvitation.mockResolvedValue(() => undefined);
+    api.onServiceEvent.mockResolvedValue(() => undefined);
+    api.serviceCommand.mockImplementation(async (command: string) => {
+      if (command === "snapshot" || command === "workspace_snapshot") return current;
+      return {};
+    });
+
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: /Workspace Lakewatcher, Join request was not delivered/ }));
+
+    expect(screen.getAllByText("Join request was not delivered").length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/remove this failed join/i).length).toBeGreaterThan(0);
+    expect(screen.queryByText(/#general appears only after/i)).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Open Workspace settings" }));
+
+    const dialog = screen.getByRole("dialog", { name: "Workspace settings" });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Remove local data…" }));
+    fireEvent.change(within(dialog).getByRole("textbox", { name: "Workspace removal confirmation" }), { target: { value: failedWorkspace.name } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Remove local data" }));
+    await waitFor(() => expect(api.serviceCommand).toHaveBeenCalledWith(
+      "remove_workspace_data",
+      expect.objectContaining({ workspace_id: failedWorkspace.id, confirmation: failedWorkspace.id, operation_id: expect.any(String) }),
+    ));
+  });
+
+  it("alerts the owner when a workspace join request actually reaches this device", async () => {
+    const request: WorkspaceJoinRequest = {
+      id: "join-request-one",
+      workspace_id: workspace.id,
+      member_id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      display_name: "Bailey",
+      device_id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+      destination_hash: "99".repeat(16),
+      fingerprint: "BBBB CCCC DDDD EEEE",
+      invitation_id: "invite-one",
+      state: "pending",
+      created_at: 5,
+    };
+    const ownerWorkspace: Workspace = { ...workspace, pending_owner_review_count: 1 };
+    let current: Snapshot = {
+      ...snapshot(),
+      workspaces: [workspace],
+      workspace_channels: [workspaceChannel],
+      workspace_directs: [],
+      workspace_join_requests: [],
+      workspace_invitations: [],
+      workspace_drafts: [],
+    };
+    let serviceEvent: ((event: ServiceEvent) => void) | undefined;
+    api.runtimePlatform.mockResolvedValue("desktop");
+    api.initializeService.mockResolvedValue(current);
+    api.onInvitation.mockResolvedValue(() => undefined);
+    api.onServiceEvent.mockImplementation(async (callback) => {
+      serviceEvent = callback;
+      return () => undefined;
+    });
+    api.serviceCommand.mockImplementation(async (command: string) => {
+      if (command === "snapshot" || command === "workspace_snapshot") return current;
+      if (command === "list_workspace_messages") return { messages: [], next_cursor: null, high_water: 0 } satisfies WorkspaceMessagePage;
+      if (command === "approve_workspace_join") {
+        current = { ...current, workspaces: [workspace], workspace_join_requests: [] };
+      }
+      return {};
+    });
+
+    render(<App />);
+    await screen.findByRole("heading", { name: "Your private conversations" });
+    expect(screen.queryByRole("dialog", { name: "Workspace join request" })).toBeNull();
+    await act(async () => {
+      current = { ...current, workspaces: [ownerWorkspace], workspace_join_requests: [request] };
+      serviceEvent?.({ type: "event", event: "workspace_changed", workspace_id: workspace.id, resource_kind: "join_request", generation: 1 });
+    });
+
+    const dialog = await screen.findByRole("dialog", { name: "Workspace join request" });
+    expect(within(dialog).getByRole("heading", { name: "Bailey wants to join Lakewatcher" })).toBeTruthy();
+    expect(within(dialog).getByText("This signed request reached this owner device.")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Workspace Lakewatcher, 1 owner review pending" })).toBeTruthy();
+
+    fireEvent.click(within(dialog).getByRole("button", { name: "Approve workspace access" }));
+    await waitFor(() => expect(api.serviceCommand).toHaveBeenCalledWith(
+      "approve_workspace_join",
+      expect.objectContaining({ workspace_id: workspace.id, request_id: request.id, operation_id: expect.any(String) }),
+    ));
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Workspace join request" })).toBeNull());
+    expect(screen.getByRole("button", { name: "Workspace Lakewatcher" })).toBeTruthy();
+  });
+
   it("routes incoming v3 workspace text to the workspace join flow", async () => {
     const current = snapshot();
     let deliverInvitation: ((value: string) => void) | undefined;
@@ -3453,7 +3597,7 @@ describe("desktop workspaces", () => {
     });
 
     render(<App />);
-    fireEvent.click(await screen.findByRole("button", { name: "Workspace Lakewatcher" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Workspace Lakewatcher, 1 owner review pending" }));
     expect((await screen.findByRole("status")).textContent).toContain("1 pending owner review");
     fireEvent.click(await screen.findByRole("button", { name: "People in Lakewatcher" }));
     const dialog = screen.getByRole("dialog");
@@ -4036,7 +4180,7 @@ describe("desktop workspaces", () => {
     current = { ...current, workspaces: [{ ...workspace, state: "forked", security_error: "manifest_fork" }] };
     api.initializeService.mockResolvedValue(current);
     render(<App />);
-    fireEvent.click(await screen.findByRole("button", { name: "Workspace Lakewatcher" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Workspace Lakewatcher, Paused for a security conflict" }));
     fireEvent.click(await screen.findByRole("button", { name: "Lakewatcher settings" }));
     const paused = screen.getByRole("dialog");
     expect(within(paused).getByText(/will not choose between conflicting signed histories/i)).toBeTruthy();

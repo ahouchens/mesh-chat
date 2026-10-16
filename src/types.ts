@@ -14,7 +14,8 @@ export type DeliveryState =
   | "received_by_endpoint"
   | "delivered"
   | "expired"
-  | "failed";
+  | "failed"
+  | "cancelled";
 
 export interface Profile {
   display_name: string;
@@ -268,6 +269,8 @@ export interface Workspace {
   authority_loss_guidance?: string;
   read_hint_sync?: boolean;
   notification_preference?: WorkspaceNotificationPreference;
+  /** Transport evidence for this device's initial join request. */
+  join_delivery_state?: DeliveryState;
   connection_results?: ParticipantCandidateResult[];
   created_at: number;
   updated_at: number;

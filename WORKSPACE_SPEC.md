@@ -351,8 +351,17 @@ The protocol uses these exact policy values:
 | Change workspace metadata, retention, and policies | Sign and publish | No | Signed display-name request only |
 | Rotate authority, transfer ownership, or close | Sign and publish | No | No |
 
-The UI labels an unapplied request **Waiting for owner approval**. It never
-presents a request as an effective membership change.
+The UI distinguishes admission transport from authority review. A join request
+that is only stored on the joining device is labeled **Join request saved ·
+trying to reach owner**, with an explicit statement that the owner has not
+received it. Endpoint transport evidence is labeled **Request reached owner's
+device · awaiting validation** because the owner app can still reject an
+expired, consumed, duplicate, unauthorized, or over-limit request before it
+creates a review item. Neither state is presented as an effective membership
+change, and workspace channels appear only after signed owner approval arrives.
+If delivery reaches a terminal failed, expired, or cancelled state, the joining
+device may remove only that failed local join and then use a fresh invitation;
+an active or endpoint-confirmed join cannot be removed through this recovery path.
 
 ## Functional requirements
 
