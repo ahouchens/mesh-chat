@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import hashlib
 import json
 import multiprocessing as mp
 import os
@@ -117,7 +118,7 @@ def _worker(name, root, commands, responses, incoming, outgoing):
                     now = int(time.time())
                     if action == "sign_binding":
                         raw = create_binding(network.identity, authority, cert,
-                            session_id=str(uuid.uuid4()), challenge=authority.challenge, generation=request["generation"],
+                            session_id=request["session_id"], challenge=authority.challenge, generation=request["generation"],
                             candidates=[{"host": "8.8.8.8", "port": 12345, "expires_at": authority.expires_at}],
                             issued_at=now, expires_at=authority.expires_at)
                         result = {"binding": raw}
@@ -132,6 +133,11 @@ def _worker(name, root, commands, responses, incoming, outgoing):
                                 result["offer"] = offer
                             else:
                                 result["answer"] = create_answer(network.identity, raw, request["offer"])
+                                offered = json.loads(request["offer"])
+                                service._save_direct_join_answer(request["workspace_id"], request["offer"],
+                                    bytes.fromhex(request["offer_certificate"]), result["answer"], cert,
+                                    BindingAuthority(bytes.fromhex(offered["issuer_public_identity"]), network.destination_hash,
+                                        authority.scope, authority.expires_at, authority.challenge))
                     else:
                         if authority.audience_destination != network.destination_hash:
                             raise ValueError("Wrong local audience")
@@ -199,18 +205,25 @@ def _worker(name, root, commands, responses, incoming, outgoing):
 
 
 class PacketCarrier:
-    def __init__(self, peers, executable=None):
+    def __init__(self, peers, executable=None, *, generation=1, expires_at):
         self.peers = peers
         self.stop = threading.Event()
         self.controls = queue.Queue(maxsize=8)
         self.lock = threading.Lock()
         self.process = None
         self.threads = []
+        self.session_ids = [uuid.uuid4(), uuid.uuid4()]
+        self.generation = generation
+        remaining = min(240, int(expires_at - time.time()))
+        if remaining <= 0:
+            raise ValueError("Native session authorization has expired")
         if executable:
             self.process = subprocess.Popen([str(executable)], stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE, stderr=subprocess.PIPE)
             self._thread(self._read)
             try:
+                self._write(2, b"".join(session.bytes + struct.pack("!Q", generation) for session in self.session_ids)
+                            + struct.pack("!I", remaining))
                 first, second = self.controls.get(timeout=20), self.controls.get(timeout=20)
                 if first[0] != 3 or second[0] != 4:
                     raise RuntimeError("Native proof did not provide certificates")
@@ -278,9 +291,12 @@ class PacketCarrier:
                 except queue.Full:
                     pass
 
-    def start(self):
+    def start(self, documents):
+        if len(documents) != 2:
+            raise ValueError("Expected two authorized local session documents")
+        digests = b"".join(hashlib.sha256(document.encode("utf-8")).digest() for document in documents)
         if self.process:
-            self._write(2, b"authorized")
+            self._write(2, digests)
             if self.controls.get(timeout=15) != (2, b"ready"):
                 raise RuntimeError("Native peers did not authenticate")
         for index in range(2):
@@ -331,20 +347,26 @@ def run(*, executable=None, timeout=45):
             negotiation = _call(owner["commands"], owner["responses"], "prepare_direct_invitation",
                                 invitation_id=invitation["id"], expires_at=int(time.time()) + 240)
             expiry, challenge = negotiation["expires_at"], negotiation["challenge"]
-            carrier = PacketCarrier(peers, executable)
+            carrier = PacketCarrier(peers, executable, expires_at=expiry)
             def authorize(scopes, generation):
                 offer = None
+                documents = []
+                if generation != carrier.generation:
+                    raise ValueError("Native session generation mismatch")
                 for index, peer in enumerate(peers):
                     other = peers[1 - index]
                     arguments = dict(issuer=peer["profile"]["public_identity"],
                         audience=other["profile"]["destination_hash"], scope=scopes[index], expires_at=expiry,
                         challenge=challenge, certificate=carrier.certificates[index].hex(), generation=generation,
-                        workspace_id=workspace["id"], invitation_id=invitation["id"], offer=offer)
+                        workspace_id=workspace["id"], invitation_id=invitation["id"], offer=offer,
+                        offer_certificate=carrier.certificates[0].hex(),
+                        session_id=str(carrier.session_ids[index]))
                     signed = _call(peer["commands"], peer["responses"], "sign_binding", **arguments)
                     offer = signed.get("offer", offer)
                     _call(other["commands"], other["responses"], "verify_binding", **arguments,
                           binding=signed["binding"], answer=signed.get("answer"))
-                carrier.start()
+                    documents.append(signed.get("answer", signed.get("offer", signed["binding"])))
+                carrier.start(documents)
                 for peer in peers:
                     _call(peer["commands"], peer["responses"], "activate")
             _framed(joiner, "submit_workspace_join", {"invitation": invitation["text"], "operation_id": op()})
@@ -370,7 +392,7 @@ def run(*, executable=None, timeout=45):
                                if item["id"] == workspace["id"]) for peer in peers]
             for peer in peers:
                 _call(peer["commands"], peer["responses"], "reset")
-            carrier = PacketCarrier(peers, executable)
+            carrier = PacketCarrier(peers, executable, generation=2, expires_at=expiry)
             challenge = os.urandom(32).hex()
             authorize([{"kind": "workspace", "workspace_id": workspace["id"],
                         "issuer_device_id": workspaces[index]["local_device_id"],

@@ -140,6 +140,13 @@ reception. No native build or native test ran locally.
 The preceding Ready-acceptance commit `5ca44b5` passed all native jobs in
 [run 38920216664](https://github.com/ahouchens/mesh-chat/actions/runs/38920216664).
 
+The packet bridge now exercises `PreparedAttempt` on both peers before native
+activation. Its private initialization frame binds session IDs, generations and
+a bounded remaining lifetime; authorization carries the accepted local document
+digests. Socket addresses must remain unchanged through activation. The updated
+source topology passed with the joiner's Offer/Answer durably saved. Native CI
+qualification of this bridge increment is pending.
+
 ## Commands
 
 Focused service and UI checks:

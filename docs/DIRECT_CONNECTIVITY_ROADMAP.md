@@ -356,3 +356,12 @@ The initial transfer regression dropped its sender handle before reception;
 retaining both handles through the assertion fixed that test-lifetime failure. The gate
 is not yet connected to service IPC, scheduling, cancellation or post-activation
 teardown and is not part of the shipping app.
+
+The controlled packet bridge now prepares sockets before publishing certificates,
+uses the service's exact local session IDs/generations, and waits for accepted
+Offer/Answer (or admitted-binding) digests before consuming both native gates.
+It checks socket addresses across activation. The joiner durably saves its own
+Offer/Answer chain in the source/native harness. This inherited-pipe integration
+is CI-only: public runtime IPC, Ready-driven re-arming, cancellation and teardown
+remain unimplemented. The updated source topology passes; native qualification
+for this bridge increment is pending.

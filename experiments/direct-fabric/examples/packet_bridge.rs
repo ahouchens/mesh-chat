@@ -2,8 +2,9 @@
 //! or exposed through app commands. Python authorizes public certificate pins
 //! before the harness permits either native peer to establish its path.
 use bytes::Bytes;
-use mesh_direct_proof::{Peer, SessionKey, MAX_PACKET};
+use mesh_direct_proof::{attempt::PreparedAttempt, BoundSocket, SessionKey, MAX_PACKET};
 use std::io::{Read, Write};
+use std::time::Duration;
 
 fn frame(writer: &mut impl Write, peer: u8, data: &[u8]) -> std::io::Result<()> {
     let size = u16::try_from(data.len()).expect("bounded proof frame");
@@ -19,8 +20,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let b = SessionKey::generate().map_err(|_| "session key")?;
     let ac = a.certificate();
     let bc = b.certificate();
-    frame(&mut std::io::stdout(), 3, ac.as_ref())?;
-    frame(&mut std::io::stdout(), 4, bc.as_ref())?;
     // A bounded pipe receiver is the only input channel. No TCP/UDP control
     // listener exists, and input cannot select a remote socket address.
     let (sender, mut input) = tokio::sync::mpsc::channel(128);
@@ -45,12 +44,61 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
     });
-    let authorized = tokio::time::timeout(std::time::Duration::from_secs(30), input.recv()).await?;
-    if authorized != Some((2, Bytes::from_static(b"authorized"))) {
-        return Err("missing trusted-harness authorization".into());
+    // Initialize exact local session/generation pairs before exporting keys.
+    // This is a CI-only inherited-pipe protocol, not shipping service IPC.
+    let Some((2, init)) = tokio::time::timeout(Duration::from_secs(30), input.recv()).await? else {
+        return Err("missing session initialization".into());
+    };
+    if init.len() != 52 {
+        return Err("invalid session initialization".into());
     }
-    let a = Peer::bind("127.0.0.1:0".parse()?, a, bc).map_err(|_| "bind")?;
-    let b = Peer::bind("127.0.0.1:0".parse()?, b, ac).map_err(|_| "bind")?;
+    let a_session: [u8; 16] = init[..16].try_into()?;
+    let a_generation = u64::from_be_bytes(init[16..24].try_into()?);
+    let b_session: [u8; 16] = init[24..40].try_into()?;
+    let b_generation = u64::from_be_bytes(init[40..48].try_into()?);
+    let remaining = Duration::from_secs(u32::from_be_bytes(init[48..52].try_into()?) as u64);
+    let mut a = PreparedAttempt::new(
+        BoundSocket::bind("127.0.0.1:0".parse()?).map_err(|_| "bind")?,
+        a,
+        a_session,
+        a_generation,
+        remaining,
+    )
+    .map_err(|_| "prepare")?;
+    let mut b = PreparedAttempt::new(
+        BoundSocket::bind("127.0.0.1:0".parse()?).map_err(|_| "bind")?,
+        b,
+        b_session,
+        b_generation,
+        remaining,
+    )
+    .map_err(|_| "prepare")?;
+    let (a_address, b_address) = (
+        a.address().map_err(|_| "address")?,
+        b.address().map_err(|_| "address")?,
+    );
+    frame(&mut std::io::stdout(), 3, ac.as_ref())?;
+    frame(&mut std::io::stdout(), 4, bc.as_ref())?;
+    let Some((2, authorized)) = tokio::time::timeout(Duration::from_secs(30), input.recv()).await?
+    else {
+        return Err("missing trusted-harness authorization".into());
+    };
+    if authorized.len() != 64 {
+        return Err("invalid authorization digests".into());
+    }
+    // Digests name the local saved Offer/Answer, or admitted binding. The trusted
+    // harness sends these only after the other service has accepted the peer.
+    a.start(a_session, a_generation, authorized[..32].try_into()?)
+        .map_err(|_| "arm")?;
+    b.start(b_session, b_generation, authorized[32..].try_into()?)
+        .map_err(|_| "arm")?;
+    let a = a.into_peer(bc).map_err(|_| "activate")?;
+    let b = b.into_peer(ac).map_err(|_| "activate")?;
+    if a.address().map_err(|_| "address")? != a_address
+        || b.address().map_err(|_| "address")? != b_address
+    {
+        return Err("candidate socket changed".into());
+    }
     let (ap, bp) = tokio::join!(a.connect(b.address().map_err(|_| "address")?), b.accept());
     let ap = ap.map_err(|_| "connect")?;
     let bp = bp.map_err(|_| "accept")?;
