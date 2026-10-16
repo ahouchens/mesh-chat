@@ -302,11 +302,18 @@ class PacketCarrier:
         for index in range(2):
             self._thread(self._forward, index)
 
-    def close(self):
+    def close(self, *, require_graceful=False):
         self.stop.set()
-        if self.process:
-            self.process.terminate()
-            self.process.wait(timeout=5)
+        forced = False
+        if self.process and self.process.poll() is None:
+            try:
+                self._write(2, b"cancel")
+                self.process.wait(timeout=5)
+            except (OSError, ValueError, subprocess.TimeoutExpired):
+                if self.process.poll() is None:
+                    forced = True
+                    self.process.terminate()
+                    self.process.wait(timeout=5)
         for peer in self.peers:
             try:
                 peer["incoming"].put(None, timeout=1)
@@ -317,6 +324,8 @@ class PacketCarrier:
         if self.process:
             for stream in (self.process.stdin, self.process.stdout, self.process.stderr):
                 stream.close()
+        if require_graceful and self.process and (forced or self.process.returncode != 0):
+            raise RuntimeError("Native bridge did not shut down gracefully")
 
 
 def run(*, executable=None, timeout=45):
@@ -386,7 +395,7 @@ def run(*, executable=None, timeout=45):
                 "admitted general-channel bootstrap", timeout)
             # Retire invitation credentials. A second native carrier generates
             # fresh TLS keys; both services bind them to exact admitted devices.
-            carrier.close()
+            carrier.close(require_graceful=True)
             carrier = None
             workspaces = [next(item for item in _framed(peer, "workspace_snapshot", {})["workspaces"]
                                if item["id"] == workspace["id"]) for peer in peers]
@@ -415,7 +424,7 @@ def run(*, executable=None, timeout=45):
                 peer=peers[1-index]["profile"]["destination_hash"]) for index, peer in enumerate(peers)]
             assert all(state["interfaces"] == 1 and not state["routing"] and state["online"]
                        and state["ratchet_ready"] and state["received_bytes"] > 0 for state in states)
-            carrier.close()
+            carrier.close(require_graceful=True)
             carrier = None
             for index, peer in enumerate(peers):
                 deadline = time.monotonic() + 5

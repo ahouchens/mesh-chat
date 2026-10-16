@@ -57,6 +57,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let b_session: [u8; 16] = init[24..40].try_into()?;
     let b_generation = u64::from_be_bytes(init[40..48].try_into()?);
     let remaining = Duration::from_secs(u32::from_be_bytes(init[48..52].try_into()?) as u64);
+    let authorization_deadline = tokio::time::Instant::now() + remaining;
     let mut a = PreparedAttempt::new(
         BoundSocket::bind("127.0.0.1:0".parse()?).map_err(|_| "bind")?,
         a,
@@ -114,6 +115,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
     loop {
         tokio::select! {
+            _ = tokio::time::sleep_until(authorization_deadline) => break,
             incoming = input.recv() => match incoming {
                 Some((0, packet)) => { let _ = ap.send(packet); }
                 Some((1, packet)) => { let _ = bp.send(packet); }

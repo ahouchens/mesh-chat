@@ -367,3 +367,14 @@ remain unimplemented. The updated source topology passes; native qualification
 for this bridge increment passed on Windows/Linux, including real RNS/LXMF, and
 Android ARM64 compilation at `7824fd2` in
 [run 38924221050](https://github.com/ahouchens/mesh-chat/actions/runs/38924221050).
+
+### Cancellation and authorization-expiry proof
+
+`PreparedAttempt` now has terminal, idempotent cancellation that drops its retained
+socket and key. Further address/certificate access, start, re-arm and activation
+fail closed. Expiry checks release pending resources; the owner must poll expiry
+while idle. The controlled bridge also closes active peers at the authorization
+deadline or on private cancellation. Normal harness teardown requests cancellation
+and requires a successful graceful exit; forced termination remains cleanup only.
+Source topology passes; the new native cancellation tests await CI qualification.
+Shipping lifecycle events, mapping cleanup and service IPC remain unintegrated.

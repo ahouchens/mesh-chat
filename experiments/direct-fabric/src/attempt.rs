@@ -11,8 +11,8 @@ const MAX_LIFETIME: Duration = Duration::from_secs(300);
 /// Non-cloneable owner of the exact socket/key described by one local Answer.
 /// Process restart drops this object; durable documents cannot recreate it.
 pub struct PreparedAttempt {
-    socket: BoundSocket,
-    key: SessionKey,
+    socket: Option<BoundSocket>,
+    key: Option<SessionKey>,
     session: [u8; 16],
     generation: u64,
     expires: Instant,
@@ -37,8 +37,8 @@ impl PreparedAttempt {
             return Err(Error::Configuration);
         }
         Ok(Self {
-            socket,
-            key,
+            socket: Some(socket),
+            key: Some(key),
             session,
             generation,
             expires: Instant::now() + remaining_authorization,
@@ -49,11 +49,26 @@ impl PreparedAttempt {
     }
 
     pub fn address(&self) -> Result<SocketAddr, Error> {
-        self.socket.address()
+        self.socket.as_ref().ok_or(Error::Closed)?.address()
     }
 
-    pub fn certificate(&self) -> CertificateDer<'static> {
-        self.key.certificate()
+    pub fn certificate(&self) -> Result<CertificateDer<'static>, Error> {
+        Ok(self.key.as_ref().ok_or(Error::Closed)?.certificate())
+    }
+
+    /// Idempotent terminal cancellation: release both socket and private key.
+    pub fn cancel(&mut self) {
+        self.socket.take();
+        self.key.take();
+        self.deadline = None;
+    }
+
+    /// Runtime owners poll this during preparation; no background thread is spawned.
+    pub fn expire(&mut self) -> bool {
+        if Instant::now() >= self.expires {
+            self.cancel();
+        }
+        self.socket.is_none()
     }
 
     /// Call only after the matching locally signed Answer is durably saved.
@@ -73,10 +88,14 @@ impl PreparedAttempt {
         answer: [u8; 32],
         now: Instant,
     ) -> Result<(), Error> {
+        if self.socket.is_none() {
+            return Err(Error::Closed);
+        }
         if session != self.session || generation != self.generation {
             return Err(Error::Identity);
         }
         if now >= self.expires {
+            self.cancel();
             return Err(Error::Timeout);
         }
         if let Some(saved) = self.answer {
@@ -107,10 +126,14 @@ impl PreparedAttempt {
         digest: [u8; 32],
         now: Instant,
     ) -> Result<(), Error> {
+        if self.socket.is_none() {
+            return Err(Error::Closed);
+        }
         if self.answer != Some(answer) || generation == 0 || generation > i64::MAX as u64 {
             return Err(Error::Identity);
         }
         if now >= self.expires {
+            self.cancel();
             return Err(Error::Timeout);
         }
         if let Some((prior, saved)) = self.ready {
@@ -127,6 +150,9 @@ impl PreparedAttempt {
     }
 
     fn check_at(&self, now: Instant) -> Result<(), Error> {
+        if self.socket.is_none() {
+            return Err(Error::Closed);
+        }
         if now >= self.expires || self.deadline.is_none_or(|deadline| now >= deadline) {
             Err(Error::Timeout)
         } else {
@@ -135,9 +161,13 @@ impl PreparedAttempt {
     }
 
     /// Consume ownership once. No socket rebind or separate receiver is created.
-    pub fn into_peer(self, expected: CertificateDer<'static>) -> Result<Peer, Error> {
+    pub fn into_peer(mut self, expected: CertificateDer<'static>) -> Result<Peer, Error> {
         self.check_at(Instant::now())?;
-        Peer::from_bound_socket(self.socket, self.key, expected)
+        Peer::from_bound_socket(
+            self.socket.take().ok_or(Error::Closed)?,
+            self.key.take().ok_or(Error::Closed)?,
+            expected,
+        )
     }
 }
 
@@ -208,7 +238,7 @@ mod tests {
     async fn activation_consumes_the_original_socket_and_certificate() {
         let mut prepared = attempt();
         let address = prepared.address().unwrap();
-        let cert = prepared.certificate();
+        let cert = prepared.certificate().unwrap();
         let remote_key = SessionKey::generate().unwrap();
         let expected = remote_key.certificate();
         let remote = Peer::bind("127.0.0.1:0".parse().unwrap(), remote_key, cert).unwrap();
@@ -236,5 +266,32 @@ mod tests {
     fn restart_cannot_rearm_from_durable_evidence_alone() {
         let mut fresh = attempt();
         assert_eq!(fresh.rearm([3; 32], 2, [5; 32]), Err(Error::Identity));
+    }
+
+    #[test]
+    fn cancellation_releases_resources_and_is_terminal() {
+        let mut pending = attempt();
+        let address = pending.address().unwrap();
+        pending.start([1; 16], 1, [3; 32]).unwrap();
+        pending.cancel();
+        pending.cancel();
+        assert!(pending.socket.is_none() && pending.key.is_none());
+        assert_eq!(pending.address(), Err(Error::Closed));
+        assert!(pending.certificate().is_err());
+        assert_eq!(pending.start([1; 16], 1, [3; 32]), Err(Error::Closed));
+        assert_eq!(pending.rearm([3; 32], 2, [4; 32]), Err(Error::Closed));
+        let _replacement = BoundSocket::bind(address).unwrap();
+        assert!(pending
+            .into_peer(SessionKey::generate().unwrap().certificate())
+            .is_err());
+    }
+
+    #[test]
+    fn expired_authorization_releases_resources() {
+        let mut pending = attempt();
+        pending.expires = Instant::now();
+        assert!(pending.expire());
+        assert!(pending.socket.is_none() && pending.key.is_none());
+        assert_eq!(pending.start([1; 16], 1, [3; 32]), Err(Error::Closed));
     }
 }

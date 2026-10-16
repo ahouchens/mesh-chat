@@ -149,6 +149,13 @@ qualification passed on Windows/Linux (native tests and real RNS/LXMF topology)
 and Android ARM64 compilation at `7824fd2` in
 [run 38924221050](https://github.com/ahouchens/mesh-chat/actions/runs/38924221050).
 
+Native cancellation regressions assert immediate socket/key release, idempotent
+cancel, refusal to re-arm or activate cancelled state, address rebinding after
+release, and expiry cleanup. The controlled native topology now requires graceful
+cancellation at pending-to-admitted replacement and final teardown; forced process
+termination cannot satisfy those assertions. Source topology passed; native CI
+qualification of this increment is pending.
+
 ## Commands
 
 Focused service and UI checks:
