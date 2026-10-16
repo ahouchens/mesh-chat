@@ -481,4 +481,19 @@ callbacks; mobile suspension retires current leases, and resume requires fresh
 registration. The controlled adapter consumes these leases. This does not enable
 native host embedding, shipping IPC or pending-scope lifecycle handling. Source
 validation passed: 612 non-integration tests, 7 environment-dependent skips,
-plus 5 source topology/controller tests. Native qualification is pending.
+plus 5 source topology/controller tests. At `8b8546b`, Linux native tests and
+Android compilation passed; Windows found an expected dead-pipe flush error during
+intentional engine-kill cleanup. Cleanup now continues through all dead-process
+stream handles, while strict graceful qualification still rejects a nonzero exit.
+The follow-up native qualification is pending.
+
+
+Controlled suspension/resume and process-restart topologies now queue an ordinary
+workspace message while offline, reject reuse of retired authorization, create
+fresh native credentials and recover the same logical message and endpoint receipt
+without another admission. The restart case reopens the encrypted profile with
+its Python-only test custodian key and fresh process channels; durable identity
+and member/device IDs must remain unchanged. Both new source cases pass, along
+with a dead-pipe cleanup regression. Native qualification is pending. These tests
+use a trusted coordinator and known controlled paths; they do not implement
+shipping automatic candidate recovery or qualify physical Android lifecycle behavior.

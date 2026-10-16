@@ -37,8 +37,8 @@ from tools.direct_packet_adapter import MeshDirectInterface, ProfileBudget, scop
 from tools.direct_packet_policy import PacketPolicy
 
 
-def _worker(name, root, commands, responses, incoming, outgoing, revoked, carrier_lost):
-    store = VaultStore(Path(root), os.urandom(32), allow_unprotected_for_tests=True)
+def _worker(name, root, commands, responses, incoming, outgoing, revoked, carrier_lost, vault_key):
+    store = VaultStore(Path(root), vault_key, allow_unprotected_for_tests=True)
     store.put("settings", "network", NetworkSettings(nearby_discovery=False, lan_fallback=False).to_dict())
     service = MeshChatService(store, Path(root), lambda _: None)
     interface = None
@@ -54,7 +54,7 @@ def _worker(name, root, commands, responses, incoming, outgoing, revoked, carrie
     thread = None
     budget = ProfileBudget()
     try:
-        profile = service.create_profile(name)
+        profile = service._require_profile() if store.get("profile", "local") else service.create_profile(name)
         network = service.network
         def scoped_inbound(message):
             if scoped_message_allowed(message, peer_destination, authorized_workspace, pending=pending):
@@ -406,13 +406,20 @@ class PacketCarrier:
             thread.join(timeout=2)
         if self.process:
             for stream in (self.process.stdin, self.process.stdout, self.process.stderr):
-                stream.close()
+                try:
+                    stream.close()
+                except OSError:
+                    # Windows can fail the buffered stdin flush after a killed
+                    # reader exits. Still close the other handles; a nonzero
+                    # process exit remains a failure for graceful qualification.
+                    if self.process.poll() is None:
+                        raise
         if require_graceful and self.process and (forced or self.process.returncode != 0):
             raise RuntimeError("Native bridge did not shut down gracefully")
 
 
 def run(*, executable=None, timeout=45, failure="revocation"):
-    if failure not in {"revocation", "service-crash", "engine-crash"}:
+    if failure not in {"revocation", "service-crash", "engine-crash", "suspend-resume", "restart"}:
         raise ValueError("Unknown topology failure scenario")
     if failure == "engine-crash" and executable is None:
         raise ValueError("Native engine crash requires a native carrier")
@@ -425,11 +432,13 @@ def run(*, executable=None, timeout=45, failure="revocation"):
                 commands, responses = context.Queue(), context.Queue()
                 incoming, outgoing = context.Queue(maxsize=128), context.Queue(maxsize=128)
                 revoked, carrier_lost = context.Event(), context.Event()
+                vault_key = os.urandom(32)  # Python-only test custodian; never sent to Rust.
                 process = context.Process(target=_worker, args=(name, str(Path(root) / name),
-                    commands, responses, incoming, outgoing, revoked, carrier_lost))
+                    commands, responses, incoming, outgoing, revoked, carrier_lost, vault_key))
                 process.start()
                 peer = dict(commands=commands, responses=responses, process=process,
-                            incoming=incoming, outgoing=outgoing, revoked=revoked, carrier_lost=carrier_lost)
+                            incoming=incoming, outgoing=outgoing, revoked=revoked, carrier_lost=carrier_lost,
+                            vault_key=vault_key, root=str(Path(root) / name), name=name)
                 peers.append(peer)
                 peer["profile"] = _receive(responses, "ready", 30)["profile"]
             owner, joiner = peers
@@ -549,6 +558,8 @@ def run(*, executable=None, timeout=45, failure="revocation"):
                     if time.monotonic() > deadline:
                         raise TimeoutError("Revoked peer adapter remained online")
                     time.sleep(0.05)
+            elif failure in {"suspend-resume", "restart"}:
+                _framed(owner, "mobile_lifecycle_transition", {"state": "suspended", "reason": "direct_proof"})
             elif failure == "service-crash":
                 owner["process"].kill()
                 owner["process"].join(timeout=5)
@@ -581,13 +592,83 @@ def run(*, executable=None, timeout=45, failure="revocation"):
                     if time.monotonic() > deadline:
                         raise TimeoutError("Dead carrier remained online")
                     time.sleep(0.05)
+            old_certificates, old_sessions = list(carrier.certificates), list(carrier.session_ids)
             carrier.close(require_graceful=failure != "engine-crash")
             carrier = None
+            if failure in {"suspend-resume", "restart"}:
+                queued = _framed(owner, "send_workspace_message", {"workspace_id": workspace["id"],
+                    "channel_id": workspace["general_channel_id"], "text": "Queued during direct suspension",
+                    "event_id": op(), "operation_id": op()})
+                page = _framed(joiner, "list_workspace_messages", {"workspace_id": workspace["id"],
+                    "channel_id": workspace["general_channel_id"], "limit": 50})
+                if any(item["id"] == queued["id"] for item in page["messages"]):
+                    raise AssertionError("Suspended carrier delivered a new message")
+                if failure == "restart":
+                    original_profile = dict(owner["profile"])
+                    owner["process"].kill()
+                    owner["process"].join(timeout=5)
+                    if owner["process"].is_alive():
+                        raise AssertionError("Restart fault did not stop the service")
+                    # A killed Queue producer can leave partial frames. The new
+                    # process receives fresh channels and cancellation events.
+                    for key in ("commands", "responses", "incoming", "outgoing"):
+                        owner[key].cancel_join_thread()
+                        owner[key].close()
+                        owner[key] = context.Queue(maxsize=128) if key in {"incoming", "outgoing"} else context.Queue()
+                    owner["revoked"], owner["carrier_lost"] = context.Event(), context.Event()
+                    owner["process"] = context.Process(target=_worker, args=(owner["name"], owner["root"],
+                        owner["commands"], owner["responses"], owner["incoming"], owner["outgoing"],
+                        owner["revoked"], owner["carrier_lost"], owner["vault_key"]))
+                    owner["process"].start()
+                    owner["profile"] = _receive(owner["responses"], "ready", 30)["profile"]
+                    if any(owner["profile"][field] != original_profile[field]
+                           for field in ("public_identity", "destination_hash")):
+                        raise AssertionError("Restart replaced the durable identity")
+                _framed(owner, "mobile_lifecycle_transition", {"state": "foreground", "reason": "direct_proof"})
+                # Foreground reconciliation must not revive a retired lease.
+                owner["commands"].put({"action": "activate"})
+                rejected = owner["responses"].get(timeout=5)
+                if rejected.get("action") != "activate" or rejected.get("ok"):
+                    raise AssertionError("Resume reused a retired direct session")
+                for peer in peers:
+                    if failure != "restart" or peer is not owner:
+                        _call(peer["commands"], peer["responses"], "reset")
+                carrier = PacketCarrier(peers, executable, generation=3, expires_at=expiry)
+                if (any(old == new for old, new in zip(old_certificates, carrier.certificates))
+                        or any(old == new for old, new in zip(old_sessions, carrier.session_ids))):
+                    raise AssertionError("Resume did not create fresh native credentials")
+                challenge = os.urandom(32).hex()
+                authorize([{"kind": "workspace", "workspace_id": workspace["id"],
+                            "issuer_device_id": workspaces[index]["local_device_id"],
+                            "audience_device_id": workspaces[1-index]["local_device_id"]}
+                           for index in range(2)], 3)
+                page = _wait(joiner, "list_workspace_messages", {"workspace_id": workspace["id"],
+                    "channel_id": workspace["general_channel_id"], "limit": 50}, lambda page:
+                    page if any(item["id"] == queued["id"] for item in page["messages"]) else None,
+                    "queued message after fresh direct resume", timeout)
+                if sum(item["id"] == queued["id"] for item in page["messages"]) != 1:
+                    raise AssertionError("Resume duplicated the logical message")
+                _wait(owner, "list_workspace_messages", {"workspace_id": workspace["id"],
+                    "channel_id": workspace["general_channel_id"], "limit": 50}, lambda page: next((
+                        item for item in page["messages"] if item["id"] == queued["id"]
+                        and item.get("delivery_summary", {}).get("devices_reached") == 1), None),
+                    "resumed message endpoint receipt", timeout)
+                for index, peer in enumerate(peers):
+                    resumed = next(item for item in _framed(peer, "workspace_snapshot", {})["workspaces"]
+                                   if item["id"] == workspace["id"])
+                    if (resumed["state"] != "active"
+                            or resumed["local_device_id"] != workspaces[index]["local_device_id"]
+                            or resumed["local_member_id"] != workspaces[index]["local_member_id"]):
+                        raise AssertionError("Resume changed admitted identity")
+                carrier.close(require_graceful=True)
+                carrier = None
             return {"carrier": "quic" if executable else "source-pipes", "failure": failure,
                     "failure_retired_adapters": True, "join_acknowledged": True,
                     "admitted": True, "bidirectional_messages": True, "ratchets": True,
                     "engine_death_offline": failure == "engine-crash",
                     "service_crash_cancels_carrier": failure == "service-crash",
+                    "suspension_recovered": failure == "suspend-resume",
+                    "restart_recovered": failure == "restart",
                     "isolated": True, "admitted_key_rotation": True, "endpoint_receipts": True,
                     "stale_activation_rejected": True, "live_revocation_offline": failure == "revocation",
                     "revocation_cancels_carrier": failure == "revocation", "ready_retains_answer": True}

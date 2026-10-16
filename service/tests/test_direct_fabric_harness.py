@@ -5,6 +5,7 @@ import queue
 import time
 import threading
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -12,7 +13,7 @@ from tools.direct_fabric_harness import PacketCarrier, run
 
 
 @pytest.mark.integration
-@pytest.mark.parametrize("failure", ["revocation", "service-crash", "engine-crash"])
+@pytest.mark.parametrize("failure", ["revocation", "service-crash", "engine-crash", "suspend-resume", "restart"])
 def test_real_services_over_private_direct_packet_carrier(failure):
     if os.environ.get("MESH_CHAT_RUN_DIRECT_FABRIC_TESTS") != "1":
         pytest.skip("Set MESH_CHAT_RUN_DIRECT_FABRIC_TESTS=1 for the isolated packet topology")
@@ -27,6 +28,8 @@ def test_real_services_over_private_direct_packet_carrier(failure):
         "stale_activation_rejected", "ready_retains_answer", "failure_retired_adapters",
     ))
     assert result["failure"] == failure
+    assert result["suspension_recovered"] == (failure == "suspend-resume")
+    assert result["restart_recovered"] == (failure == "restart")
     assert result["engine_death_offline"] == (failure == "engine-crash")
     assert result["service_crash_cancels_carrier"] == (failure == "service-crash")
     assert result["live_revocation_offline"] == (failure == "revocation")
@@ -144,3 +147,25 @@ def test_native_ready_rejects_conflicting_or_misphased_control(fault):
         assert all(peer["carrier_lost"].wait(timeout=2) for peer in peers)
     finally:
         carrier.close()
+
+
+def test_crashed_carrier_closes_all_streams_when_dead_pipe_flush_fails():
+    peers = [{"incoming": queue.Queue(maxsize=1), "outgoing": queue.Queue(maxsize=1),
+              "revoked": threading.Event(), "carrier_lost": threading.Event()} for _ in range(2)]
+    carrier = PacketCarrier(peers, expires_at=time.time() + 30)
+    closed = []
+    class Stream:
+        def __init__(self, name):
+            self.name = name
+        def close(self):
+            closed.append(self.name)
+            if self.name == "stdin":
+                raise OSError(22, "dead reader flush")
+    carrier.process = SimpleNamespace(poll=lambda: 1, returncode=1,
+        stdin=Stream("stdin"), stdout=Stream("stdout"), stderr=Stream("stderr"))
+    carrier.close()
+    assert closed == ["stdin", "stdout", "stderr"]
+    assert all(peer["carrier_lost"].is_set() for peer in peers)
+    with pytest.raises(RuntimeError, match="gracefully"):
+        carrier.close(require_graceful=True)
+    assert closed == ["stdin", "stdout", "stderr"] * 2
