@@ -429,5 +429,18 @@ Carrier-loss notification now uses dedicated process events rather than packet
 queue sentinels. Native EOF, forwarding failure, explicit close and revocation
 all signal both workers even when packet queues are full. Workers check the event
 before processing more packets; replacement clears it only after the old pump has
-joined. Full-queue and repeated-close regressions accompany the topology. Native
-qualification is pending; this remains private harness lifecycle wiring.
+joined. Full-queue and repeated-close regressions accompany the topology. Source
+validation passed (3 passed, 2 native-only skips). Windows/Linux native tests and
+Android ARM64 compilation passed at `3f159e7` in
+[run 38930632785](https://github.com/ahouchens/mesh-chat/actions/runs/38930632785).
+This remains private harness lifecycle wiring.
+
+
+The owner service now saves Ready only after revalidating its live invitation,
+selected peer and full saved Offer/Answer chain inside the encrypted vault
+transaction. Duplicate saves are idempotent; conflicting or stale generations
+fail, including after restart. Changed Offers clear saved child documents, and
+changed Answers clear saved Ready documents, while replay history is retained.
+Failed writes return no acceptance. Source authority and direct-boundary tests
+pass; CI qualification is pending. This private persistence step does not export
+Ready, re-arm native attempts or activate a runtime adapter.

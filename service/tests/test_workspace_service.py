@@ -535,6 +535,99 @@ def test_direct_owner_binding_selects_one_responder_without_admission(tmp_path, 
         owner.close()
 
 
+
+def test_direct_ready_owner_persistence_rechecks_selected_chain(tmp_path, monkeypatch):
+    from mesh_chat.direct_binding import BindingAuthority, create_binding
+    from mesh_chat.direct_offer import OfferAuthority, create_offer
+    from mesh_chat.direct_exchange import create_answer, create_ready
+    from mesh_chat.workspace_protocol import _destination_for
+    identity, peer, key = RNS.Identity(), RNS.Identity(), os.urandom(32)
+    owner, _ = _service(tmp_path, identity, "Owner", vault_key=key)
+    try:
+        workspace = owner.create_workspace(_op(94000), "Owner Ready", "")
+        invitation = owner.create_workspace_invitation_command(workspace["id"], _op(94001))
+        now = int(time.time())
+        prepared = owner._prepare_direct_invitation(invitation["id"], now + 240)
+        scope, challenge = prepared["scope"], bytes.fromhex(prepared["challenge"])
+        options = dict(session_id=str(uuid.uuid4()), generation=1,
+            candidates=[{"host": "8.8.8.8", "port": 12345, "expires_at": now + 240}],
+            issued_at=now, expires_at=now + 240)
+        offer_authority = OfferAuthority(identity.get_public_key(), scope, now + 240, challenge)
+        answer_authority = BindingAuthority(peer.get_public_key(), _destination_for(identity), scope, now + 240, challenge)
+        ready_authority = BindingAuthority(identity.get_public_key(), _destination_for(peer), scope, now + 240, challenge)
+        offer = create_offer(identity, offer_authority, b"offer cert", **options)
+        def make_answer(generation):
+            binding = create_binding(peer, answer_authority, b"answer cert", challenge=challenge,
+                                     **{**options, "generation": generation})
+            return create_answer(peer, binding, offer)
+        def make_ready(answer, generation, **overrides):
+            binding = create_binding(identity, ready_authority, b"ready cert", challenge=challenge,
+                                     **{**options, "generation": generation, **overrides})
+            return create_ready(identity, binding, answer)
+        answer = make_answer(1)
+        ready = make_ready(answer, 2)
+        def save(raw=ready, certificate=b"ready cert"):
+            return owner._save_direct_owner_ready(invitation["id"], raw, certificate)
+        with pytest.raises(ValidationError, match="Selected direct Answer"):
+            save()
+        owner._save_direct_offer(invitation["id"], offer, b"offer cert")
+        with pytest.raises(ValidationError, match="Selected direct Answer"):
+            save()
+        owner._accept_direct_answer(invitation["id"], answer, answer_authority, b"answer cert")
+        with pytest.raises(IdentityMismatch):
+            save(certificate=b"substituted cert")
+        with pytest.raises(IdentityMismatch):
+            save(make_ready(make_answer(2), 2))
+        with monkeypatch.context() as disk:
+            def fail(*args):
+                raise OSError("write failed")
+            disk.setattr(owner.store, "_seal", fail)
+            with pytest.raises(OSError):
+                save()
+        assert "ready" not in owner.store.get("direct_pending", invitation["id"])
+        accepted = save()
+        assert save() == accepted
+        assert owner.store.list("workspace_join_request") == []
+        owner.close()
+        owner, _ = _service(tmp_path, identity, "Owner", vault_key=key)
+        assert save() == accepted
+        with pytest.raises(ValidationError):
+            save(make_ready(answer, 2, session_id=str(uuid.uuid4())))
+        fresh_answer = make_answer(2)
+        owner._accept_direct_answer(invitation["id"], fresh_answer, answer_authority, b"answer cert")
+        record = owner.store.get("direct_pending", invitation["id"])
+        assert "ready" not in record and "ready_certificate" not in record
+        assert record["ready_accepted"]["generation"] == 2
+        with pytest.raises(IdentityMismatch):
+            save()
+        with pytest.raises(ValidationError):
+            save(make_ready(fresh_answer, 2))
+        fresh_ready = make_ready(fresh_answer, 3)
+        assert save(fresh_ready).generation == 3
+        # Updating the Offer invalidates child documents but retains replay history.
+        offer = create_offer(identity, offer_authority, b"offer cert", **{**options, "generation": 2})
+        owner._save_direct_offer(invitation["id"], offer, b"offer cert")
+        record = owner.store.get("direct_pending", invitation["id"])
+        assert all(field not in record for field in ("answer", "answer_certificate", "ready", "ready_certificate"))
+        assert record["ready_accepted"]["generation"] == 3
+        assert record["answer_accepted"]["generation"] == 2
+        with pytest.raises(ValidationError):
+            save(fresh_ready)
+        fresh_answer = make_answer(3)
+        owner._accept_direct_answer(invitation["id"], fresh_answer, answer_authority, b"answer cert")
+        fresh_ready = make_ready(fresh_answer, 4)
+        assert save(fresh_ready).generation == 4
+        with monkeypatch.context() as clock:
+            clock.setattr(time, "time", lambda: now + 241)
+            with pytest.raises(ValidationError):
+                save(fresh_ready)
+        owner.revoke_workspace_invitation(workspace["id"], invitation["id"], _op(94002))
+        with pytest.raises(ValidationError):
+            save(fresh_ready)
+    finally:
+        owner.close()
+
+
 def test_direct_ready_requires_saved_local_answer_and_current_join(tmp_path, monkeypatch):
     from mesh_chat.direct_binding import BindingAuthority, create_binding
     from mesh_chat.direct_offer import OfferAuthority, create_offer

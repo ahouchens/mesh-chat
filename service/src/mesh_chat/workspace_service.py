@@ -2151,7 +2151,11 @@ class WorkspaceServiceMixin:
                                        bytes.fromhex(record["challenge"]))
             accepted = verify_offer(raw, authority, certificate_der, now=int(time.time()),
                 previous=AcceptedBinding(**record["offer_accepted"]) if record.get("offer_accepted") else None)
-            return {**record, "offer": raw, "offer_certificate": certificate_der.hex(),
+            retained = dict(record)
+            if record.get("offer") != raw:
+                for field in ("answer", "answer_certificate", "ready", "ready_certificate"):
+                    retained.pop(field, None)
+            return {**retained, "offer": raw, "offer_certificate": certificate_der.hex(),
                     "offer_accepted": {"generation": accepted.generation, "digest": accepted.digest}}
         with self._dispatch_lock:
             return self.store.update_record("direct_pending", invitation_id, save)["offer_accepted"]
@@ -2183,13 +2187,51 @@ class WorkspaceServiceMixin:
             binding = verify_binding(canonical_bytes(_parse(raw)["binding"]).decode("utf-8"),
                 authority, certificate_der, now=int(time.time()),
                 previous=AcceptedBinding(**record["accepted"]) if record["accepted"] else None)
-            return {**record, "selected_identity": authority.issuer_public_identity.hex(),
+            retained = dict(record)
+            if record.get("answer") != raw:
+                retained.pop("ready", None)
+                retained.pop("ready_certificate", None)
+            return {**retained, "selected_identity": authority.issuer_public_identity.hex(),
                     "accepted": {"generation": binding.generation, "digest": binding.digest},
                     "answer": raw, "answer_certificate": certificate_der.hex(),
                     "answer_accepted": {"generation": accepted.generation, "digest": accepted.digest}}
         with self._dispatch_lock:
             record = self.store.update_record("direct_pending", invitation_id, accept)
         return AcceptedBinding(**record["answer_accepted"])
+
+    def _save_direct_owner_ready(self, invitation_id, raw, certificate_der):
+        """Save verified owner Ready evidence; no export or runtime activation."""
+        from .direct_binding import AcceptedBinding, BindingAuthority
+        from .direct_exchange import verify_ready
+        from .direct_offer import OfferAuthority
+        from .workspace_protocol import _destination_for, _identity_from_public_key
+        def save(record):
+            invite, owner = self._direct_owner_invitation(invitation_id)
+            now = int(time.time())
+            if (record is None or not record.get("answer") or not record.get("offer")
+                    or not record.get("selected_identity") or record["expires_at"] <= now):
+                raise ValidationError("Selected direct Answer is unavailable or expired")
+            scope = {"kind": "invitation", "digest": workspace_document_digest(invite.serialized),
+                     "expires_at": invite.expires_at}
+            if record["scope"] != scope or record["audience"] != owner.destination_hash.hex():
+                raise IdentityMismatch("Direct invitation authorization changed")
+            selected = bytes.fromhex(record["selected_identity"])
+            challenge = bytes.fromhex(record["challenge"])
+            authority = BindingAuthority(owner.public_identity,
+                _destination_for(_identity_from_public_key(selected)), scope, record["expires_at"], challenge)
+            accepted = verify_ready(raw, authority, certificate_der,
+                answer_raw=record["answer"], answer_authority=BindingAuthority(selected,
+                    owner.destination_hash, scope, record["expires_at"], challenge),
+                answer_certificate_der=bytes.fromhex(record["answer_certificate"]),
+                offer_raw=record["offer"], offer_authority=OfferAuthority(owner.public_identity,
+                    scope, record["expires_at"], challenge),
+                offer_certificate_der=bytes.fromhex(record["offer_certificate"]), now=now,
+                previous=AcceptedBinding(**record["ready_accepted"]) if record.get("ready_accepted") else None)
+            return {**record, "ready": raw, "ready_certificate": certificate_der.hex(),
+                    "ready_accepted": {"generation": accepted.generation, "digest": accepted.digest}}
+        with self._dispatch_lock:
+            record = self.store.update_record("direct_pending", invitation_id, save)
+        return AcceptedBinding(**record["ready_accepted"])
 
     def _accept_direct_owner_binding(self, invitation_id, raw, expected, certificate_der):
         """Select one signed responder atomically, independently of workspace joins."""

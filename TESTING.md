@@ -2802,3 +2802,10 @@ cleanup. A dedicated process event carries revocation independently of packet
 queues; a source test verifies cancellation with full queues. Local validation:
 2 passed, 2 native-only skips. Shipping IPC and pending-invitation lifecycle
 integration remain open.
+
+
+Carrier-loss delivery with full packet queues passed at `3f159e7` in
+[run 38930632785](https://github.com/ahouchens/mesh-chat/actions/runs/38930632785)
+on Windows/Linux native CI and Android ARM64 compilation. Dedicated process
+events retire workers independently of packet capacity, including EOF and repeated
+close. Source validation: 3 passed, 2 native-only skips.
