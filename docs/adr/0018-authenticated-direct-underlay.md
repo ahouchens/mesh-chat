@@ -63,8 +63,12 @@ result is verification evidence only. `direct_exchange.py` adds pure signed
 Answer/Ready envelopes carrying an exact parent digest and signed binding. The
 full chain must verify; Answer addresses the Offer signer, Ready addresses the
 Answer signer, and Ready advances the owner's generation. Child validity cannot
-extend its parent's validity. Public import/export, durable exchange acceptance,
-native socket reconciliation and monotonic attempt windows remain open. No binding
+extend its parent's validity. The owner service now saves the signed Offer and
+public certificate against its prepared challenge, then atomically verifies and
+saves the exact Answer with selected peer and both replay records. A replacement
+challenge requires a fresh saved Offer before any new Answer is accepted. Public
+import/export, durable Ready acceptance, native socket reconciliation and monotonic
+attempt windows remain open. No binding
 command or packet API is exposed to React. The initial unbound Offer uses a
 separate pure codec; the binding verifier still requires an exact audience.
 

@@ -74,8 +74,13 @@ Pure signed Answer/Ready envelopes now reference the exact preceding canonical
 document digest and carry an independently signed audience-bound binding. Chain
 verification rechecks every signature/certificate, peer, scope, challenge and
 validity, and Ready requires a newer owner generation than Offer. Import/export
-integration, durable exchange acceptance, monotonic attempt windows, native socket
-ownership checks and activation/revocation reconciliation remain open. Private expired-negotiation replacement now compares the previous
+integration, durable Ready acceptance, monotonic attempt windows, native socket
+ownership checks and activation/revocation reconciliation remain open. Owner-side
+Offer/Answer acceptance now persists the exact Offer and public certificate before
+verifying an Answer against it. One vault transaction rechecks invitation authority,
+selects the responder, and stores both envelope and binding replay records. The
+real source harness uses this path; selection still creates no membership or join
+request. Private expired-negotiation replacement now compares the previous
 challenge, atomically rotates challenge/deadline, and preserves selected identity
 and replay history. Identical replacement retries are idempotent; stale or
 conflicting replacements, active attempts and revoked invitations are rejected.

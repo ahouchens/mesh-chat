@@ -2137,6 +2137,60 @@ class WorkspaceServiceMixin:
         with self._dispatch_lock:
             return self.store.update_record("direct_pending", invitation_id, replace)
 
+    def _save_direct_offer(self, invitation_id, raw, certificate_der):
+        """Persist the exact signed public Offer against the prepared challenge."""
+        from .direct_binding import AcceptedBinding
+        from .direct_offer import OfferAuthority, verify_offer
+        def save(record):
+            invite, owner = self._direct_owner_invitation(invitation_id)
+            if record is None or record["expires_at"] <= int(time.time()):
+                raise ValidationError("Direct negotiation is unavailable or expired")
+            scope = {"kind": "invitation", "digest": workspace_document_digest(invite.serialized),
+                     "expires_at": invite.expires_at}
+            authority = OfferAuthority(owner.public_identity, scope, record["expires_at"],
+                                       bytes.fromhex(record["challenge"]))
+            accepted = verify_offer(raw, authority, certificate_der, now=int(time.time()),
+                previous=AcceptedBinding(**record["offer_accepted"]) if record.get("offer_accepted") else None)
+            return {**record, "offer": raw, "offer_certificate": certificate_der.hex(),
+                    "offer_accepted": {"generation": accepted.generation, "digest": accepted.digest}}
+        with self._dispatch_lock:
+            return self.store.update_record("direct_pending", invitation_id, save)["offer_accepted"]
+
+    def _accept_direct_answer(self, invitation_id, raw, expected, certificate_der):
+        """Accept an Answer only against the exact durably saved Offer."""
+        from .direct_binding import AcceptedBinding, BindingAuthority, _parse, verify_binding
+        from .direct_exchange import verify_answer
+        from .direct_offer import OfferAuthority
+        from .invitations import canonical_bytes
+        def accept(record):
+            invite, owner = self._direct_owner_invitation(invitation_id)
+            if record is None or not record.get("offer") or record["expires_at"] <= int(time.time()):
+                raise ValidationError("Saved direct Offer is unavailable or expired")
+            scope = {"kind": "invitation", "digest": workspace_document_digest(invite.serialized),
+                     "expires_at": invite.expires_at}
+            if (record["scope"] != scope or record["audience"] != owner.destination_hash.hex()
+                    or (record["selected_identity"] is not None
+                        and record["selected_identity"] != expected.issuer_public_identity.hex())):
+                raise IdentityMismatch("Direct invitation selected another responder")
+            challenge = bytes.fromhex(record["challenge"])
+            authority = BindingAuthority(expected.issuer_public_identity, owner.destination_hash,
+                                         scope, record["expires_at"], challenge)
+            offer_authority = OfferAuthority(owner.public_identity, scope, record["expires_at"], challenge)
+            accepted = verify_answer(raw, authority, certificate_der, offer_raw=record["offer"],
+                offer_authority=offer_authority, offer_certificate_der=bytes.fromhex(record["offer_certificate"]),
+                now=int(time.time()), previous=AcceptedBinding(**record["answer_accepted"])
+                if record.get("answer_accepted") else None)
+            binding = verify_binding(canonical_bytes(_parse(raw)["binding"]).decode("utf-8"),
+                authority, certificate_der, now=int(time.time()),
+                previous=AcceptedBinding(**record["accepted"]) if record["accepted"] else None)
+            return {**record, "selected_identity": authority.issuer_public_identity.hex(),
+                    "accepted": {"generation": binding.generation, "digest": binding.digest},
+                    "answer": raw, "answer_certificate": certificate_der.hex(),
+                    "answer_accepted": {"generation": accepted.generation, "digest": accepted.digest}}
+        with self._dispatch_lock:
+            record = self.store.update_record("direct_pending", invitation_id, accept)
+        return AcceptedBinding(**record["answer_accepted"])
+
     def _accept_direct_owner_binding(self, invitation_id, raw, expected, certificate_der):
         """Select one signed responder atomically, independently of workspace joins."""
         from .direct_binding import AcceptedBinding, BindingAuthority, verify_binding

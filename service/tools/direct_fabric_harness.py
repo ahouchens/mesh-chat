@@ -23,6 +23,8 @@ import uuid
 import RNS
 
 from mesh_chat.direct_binding import BindingAuthority, create_binding
+from mesh_chat.direct_offer import OfferAuthority, create_offer
+from mesh_chat.direct_exchange import create_answer
 from mesh_chat.reticulum_config import NetworkSettings
 from mesh_chat.service import MeshChatService
 from mesh_chat.vault import VaultStore
@@ -119,6 +121,17 @@ def _worker(name, root, commands, responses, incoming, outgoing):
                             candidates=[{"host": "8.8.8.8", "port": 12345, "expires_at": authority.expires_at}],
                             issued_at=now, expires_at=authority.expires_at)
                         result = {"binding": raw}
+                        if authority.scope["kind"] == "invitation":
+                            if service._require_workspace(request["workspace_id"])["state"] == "active":
+                                fields = json.loads(raw)
+                                offer = create_offer(network.identity, OfferAuthority(
+                                    authority.issuer_public_identity, authority.scope, authority.expires_at, authority.challenge),
+                                    cert, session_id=fields["session_id"], generation=fields["generation"],
+                                    candidates=fields["candidates"], issued_at=fields["issued_at"], expires_at=fields["expires_at"])
+                                service._save_direct_offer(request["invitation_id"], offer, cert)
+                                result["offer"] = offer
+                            else:
+                                result["answer"] = create_answer(network.identity, raw, request["offer"])
                     else:
                         if authority.audience_destination != network.destination_hash:
                             raise ValueError("Wrong local audience")
@@ -130,7 +143,7 @@ def _worker(name, root, commands, responses, incoming, outgoing):
                         elif service._require_workspace(request["workspace_id"])["state"] == "joining":
                             service._accept_direct_join_binding(request["workspace_id"], request["binding"], authority, cert)
                         else:
-                            service._accept_direct_owner_binding(request["invitation_id"], request["binding"], authority, cert)
+                            service._accept_direct_answer(request["invitation_id"], request["answer"], authority, cert)
                         authorized = True
                         pending = authority.scope["kind"] == "invitation"
                         peer_destination = _destination_for(_identity_from_public_key(authority.issuer_public_identity))
@@ -320,15 +333,17 @@ def run(*, executable=None, timeout=45):
             expiry, challenge = negotiation["expires_at"], negotiation["challenge"]
             carrier = PacketCarrier(peers, executable)
             def authorize(scopes, generation):
+                offer = None
                 for index, peer in enumerate(peers):
                     other = peers[1 - index]
                     arguments = dict(issuer=peer["profile"]["public_identity"],
                         audience=other["profile"]["destination_hash"], scope=scopes[index], expires_at=expiry,
                         challenge=challenge, certificate=carrier.certificates[index].hex(), generation=generation,
-                        workspace_id=workspace["id"], invitation_id=invitation["id"])
+                        workspace_id=workspace["id"], invitation_id=invitation["id"], offer=offer)
                     signed = _call(peer["commands"], peer["responses"], "sign_binding", **arguments)
+                    offer = signed.get("offer", offer)
                     _call(other["commands"], other["responses"], "verify_binding", **arguments,
-                          binding=signed["binding"])
+                          binding=signed["binding"], answer=signed.get("answer"))
                 carrier.start()
                 for peer in peers:
                     _call(peer["commands"], peer["responses"], "activate")

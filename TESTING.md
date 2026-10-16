@@ -112,6 +112,14 @@ and workspace regression suite passed 131 tests. The preceding Offer commit
 `0ee2130` passed all native jobs in
 [run 38901917302](https://github.com/ahouchens/mesh-chat/actions/runs/38901917302).
 
+Durable owner Answer acceptance passes the responder-selection regression in
+both binding and envelope modes, including missing Offer, rollback, concurrency,
+restart, replay and replacement-challenge cases. The targeted exchange, Offer,
+binding, workspace and vault suites passed 145 tests with one platform skip.
+The real two-service source topology passed using persisted Offer/Answer state.
+The prior codec commit `771a365` passed all native jobs in
+[run 38906448204](https://github.com/ahouchens/mesh-chat/actions/runs/38906448204).
+
 ## Commands
 
 Focused service and UI checks:

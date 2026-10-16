@@ -901,3 +901,11 @@ child validity stays within parent validity. The envelope's generation/digest
 provide replay evidence. These codecs do not persist acceptance, select a peer,
 start attempt timers or prove continued socket ownership. Import/export and
 runtime activation remain unimplemented.
+
+Private owner acceptance now stores the exact signed Offer and public certificate
+in the encrypted pending negotiation. Answer acceptance reloads that Offer and
+current invitation authority under the same transaction that pins the responder
+and stores envelope/binding replay history. No imported caller-provided parent
+replaces the saved Offer. This is service groundwork used by the controlled
+harness; no renderer import command, join request or membership side effect is
+introduced. Durable Ready acceptance and runtime re-arming remain unfinished.

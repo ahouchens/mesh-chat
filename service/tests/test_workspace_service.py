@@ -412,9 +412,12 @@ def test_direct_join_binding_requires_saved_pending_join(tmp_path, monkeypatch):
         joiner.close()
 
 
-def test_direct_owner_binding_selects_one_responder_without_admission(tmp_path, monkeypatch):
+@pytest.mark.parametrize("enveloped", [False, True])
+def test_direct_owner_binding_selects_one_responder_without_admission(tmp_path, monkeypatch, enveloped):
     from concurrent.futures import ThreadPoolExecutor
     from mesh_chat.direct_binding import BindingAuthority, create_binding
+    from mesh_chat.direct_offer import OfferAuthority, create_offer
+    from mesh_chat.direct_exchange import create_answer
     identity, key = RNS.Identity(), os.urandom(32)
     owner, _ = _service(tmp_path, identity, "Owner", vault_key=key)
     try:
@@ -424,6 +427,13 @@ def test_direct_owner_binding_selects_one_responder_without_admission(tmp_path, 
         prepared = owner._prepare_direct_invitation(invitation["id"], now + 240)
         assert owner._prepare_direct_invitation(invitation["id"], now + 250) == prepared
         cert = b"native public certificate"
+        def make_offer(generation):
+            return create_offer(identity, OfferAuthority(identity.get_public_key(), prepared["scope"],
+                prepared["expires_at"], bytes.fromhex(prepared["challenge"])), b"owner cert",
+                session_id=str(uuid.uuid4()), generation=generation,
+                candidates=[{"host": "8.8.8.8", "port": 12345, "expires_at": prepared["expires_at"]}],
+                issued_at=now, expires_at=prepared["expires_at"])
+        offer = make_offer(1)
         def binding(peer, generation=1, challenge=None):
             authority = BindingAuthority(peer.get_public_key(), bytes.fromhex(prepared["audience"]),
                 prepared["scope"], prepared["expires_at"], challenge or bytes.fromhex(prepared["challenge"]))
@@ -433,8 +443,15 @@ def test_direct_owner_binding_selects_one_responder_without_admission(tmp_path, 
                 issued_at=now, expires_at=prepared["expires_at"])
             return raw, authority
         def accept(pair):
+            if enveloped:
+                signer = first if pair[1].issuer_public_identity == first.get_public_key() else second
+                return owner._accept_direct_answer(invitation["id"], create_answer(signer, pair[0], offer), pair[1], cert)
             return owner._accept_direct_owner_binding(invitation["id"], *pair, cert)
         first, second = RNS.Identity(), RNS.Identity()
+        if enveloped:
+            with pytest.raises(ValidationError, match="Saved direct Offer"):
+                accept(binding(first))
+            owner._save_direct_offer(invitation["id"], offer, b"owner cert")
         with pytest.raises(IdentityMismatch):
             accept(binding(first, challenge=b"x" * 32))
         assert owner.store.get("direct_pending", invitation["id"])["selected_identity"] is None
@@ -493,6 +510,11 @@ def test_direct_owner_binding_selects_one_responder_without_admission(tmp_path, 
                 owner._replace_direct_invitation(invitation["id"], old_challenge, old_expiry + 201)
             with pytest.raises(ValidationError):
                 owner._replace_direct_invitation(invitation["id"], "00" * 32, old_expiry + 200)
+            if enveloped:
+                with pytest.raises(IdentityMismatch):
+                    accept(binding(peer, generation=3))  # Saved Offer still has the retired challenge.
+                offer = make_offer(2)
+                owner._save_direct_offer(invitation["id"], offer, b"owner cert")
             with pytest.raises(IdentityMismatch):
                 accept(pairs[winner])  # Old challenge cannot reactivate the expired path.
             with pytest.raises(IdentityMismatch):
