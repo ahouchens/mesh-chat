@@ -36,7 +36,7 @@ context evidence, not support for the shipping shared router. Full pipeline
 resource accounting, platform embedding, public-Internet topology, Android
 lifecycle/battery behavior, and physical device results remain release gates.
 
-Local non-integration validation passed 539 tests with unhandled-thread warnings
+Local non-integration validation passed 544 tests with unhandled-thread warnings
 treated as errors (7 skipped, 6 integration tests deselected). Skips require
 packaged artifacts or non-Windows paths. The final source topology passed after
 routed-packet filtering was tightened. UDP mapping tests cover TCP/UDP creation,
@@ -53,6 +53,13 @@ source formatting passed.
 Native, frontend/package and release builds run only in GitHub Actions, as
 required by the roadmap. No native build was performed locally. A successful
 proof or cross-compile is not a packaged application or physical-device test.
+
+Transactional binding acceptance additionally passes concurrent conflicting-import,
+exact-scope replay isolation, changed authority/challenge/expiry, encrypted write
+failure, commit rollback, and reopen/rotation regression checks. The focused binding
+and vault suite passed 54 tests (one platform skip), and the real two-service source
+topology passed with transactional acceptance. This increment changes Python source;
+the native qualification above identifies the earlier tested native commit.
 
 ## Commands
 

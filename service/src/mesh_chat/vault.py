@@ -15,7 +15,7 @@ import sys
 import threading
 import time
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Callable, Iterable
 
 try:
     from cryptography.hazmat.primitives.ciphers.aead import AESGCM
@@ -530,6 +530,29 @@ class VaultStore:
                 """,
                 prepared,
             )
+
+    def update_record(
+        self, kind: str, record_id: str,
+        update: Callable[[dict[str, Any] | None], dict[str, Any]],
+    ) -> dict[str, Any]:
+        """Read, validate and replace one sealed record in a single transaction.
+
+        The callback may read other vault records to recheck authorization. It
+        must not mutate the vault or perform network effects. Return only after
+        commit; callback, encryption and commit failures leave no acceptance.
+        """
+        with self._transaction():
+            value = update(self.get(kind, record_id))
+            sealed = self._seal(kind, record_id, value)
+            now = time.time()
+            self._db.execute(
+                """INSERT INTO records(kind, record_id, sealed, created_at, updated_at)
+                VALUES(?, ?, ?, ?, ?)
+                ON CONFLICT(kind, record_id) DO UPDATE SET
+                    sealed=excluded.sealed, updated_at=excluded.updated_at""",
+                (kind, record_id, sealed, now, now),
+            )
+        return value
 
     def opaque_id(self, namespace: str, *parts: str) -> str:
         """Return a local keyed identifier safe to expose to SQLite indexes."""

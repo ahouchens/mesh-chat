@@ -26,7 +26,7 @@ jobs now pass on Windows and Linux, including the real QUIC/LXMF topology, and
 Android ARM64 cross-compilation passes. See the
 [successful owned-socket proof run](https://github.com/ahouchens/mesh-chat/actions/runs/38854581893)
 at `cbcf659`. The crate is not linked into the app;
-durable binding transactions, the private runtime control channel, and a qualified
+production binding authorization/lifecycle integration, the private runtime control channel, and a qualified
 production Reticulum adapter remain open. A socket-free adapter proof now uses
 bounded inherited packet channels, rejects retired/cross-peer callbacks, and
 requires an isolated non-routing RNS context for pending bootstrap. Its source
@@ -48,6 +48,15 @@ cleanup. Legacy records still mean TCP; UDP results cannot become legacy TCP
 invitation endpoints. This has source-level protocol tests, not physical router
 or Internet traversal evidence. Native-owned socket candidate collection and
 advertisement are not yet connected to these mapping APIs.
+
+Binding acceptance now has an encrypted vault transaction that reloads local
+scope authorization and compares the persisted generation before committing.
+Replay history is keyed to the exact issuer, audience and scope, retained across
+restart, and independent of transport certificate rotation. Concurrent conflicting
+imports have one winner; failed encryption or commit returns no acceptance.
+The isolated harness uses this path and rechecks workspace membership within the
+transaction. Pending authorization still comes from the trusted test harness;
+shipping authorization loaders and activation/revocation reconciliation remain open.
 
 The Rust proof now owns a `BoundSocket` before peer authorization and consumes
 that exact socket when creating the QUIC endpoint. It exposes no clone/read API

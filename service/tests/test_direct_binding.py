@@ -5,7 +5,8 @@ from dataclasses import replace
 import pytest
 import RNS
 
-from mesh_chat.direct_binding import BindingAuthority, create_binding, verify_binding
+from mesh_chat.direct_binding import BindingAuthority, accept_binding, create_binding, verify_binding
+from mesh_chat.vault import VaultStore
 from mesh_chat.errors import IdentityMismatch, ValidationError
 from mesh_chat.workspace_protocol import _destination_for, _sign
 
@@ -29,6 +30,103 @@ def resign(issuer, raw, **fields):
     value = json.loads(raw)
     value.pop("signature")
     return _sign(issuer, {**value, **fields})
+
+
+def test_durable_acceptance_restart_rotation_and_revocation(binding, tmp_path):
+    issuer, authority, cert, raw = binding
+    key = b"k" * 32
+    newer = resign(issuer, raw, generation=2)
+    with VaultStore(tmp_path, key, allow_unprotected_for_tests=True) as store:
+        store.put("authorization", "peer", {"active": True})
+        def load():
+            if not store.get("authorization", "peer")["active"]:
+                raise ValidationError("Revoked")
+            return authority
+        def accept(document):
+            return accept_binding(store, document, authority, cert,
+                                  load_authority=load, clock=lambda: 1100)
+        assert accept(raw) == accept(raw)
+        assert accept(newer).generation == 2
+        store.put("authorization", "peer", {"active": False})
+        with pytest.raises(ValidationError, match="Revoked"):
+            accept(newer)
+    with VaultStore(tmp_path, key, allow_unprotected_for_tests=True) as store:
+        with pytest.raises(ValidationError, match="stale"):
+            accept_binding(store, raw, authority, cert,
+                           load_authority=lambda: authority, clock=lambda: 1100)
+
+
+def test_concurrent_conflicting_acceptance_has_one_winner(binding, tmp_path):
+    from concurrent.futures import ThreadPoolExecutor
+    import threading
+    issuer, authority, cert, raw = binding
+    conflict = resign(issuer, raw, session_id=str(uuid.uuid4()))
+    barrier = threading.Barrier(2)
+    with VaultStore(tmp_path, b"k" * 32, allow_unprotected_for_tests=True) as store:
+        def accept(document):
+            barrier.wait(timeout=5)
+            try:
+                return accept_binding(store, document, authority, cert,
+                                      load_authority=lambda: authority, clock=lambda: 1100)
+            except ValidationError:
+                return None
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            results = list(pool.map(accept, [raw, conflict]))
+        assert sum(result is not None for result in results) == 1
+
+
+def test_acceptance_scopes_have_independent_replay_history(binding, tmp_path):
+    issuer, authority, cert, raw = binding
+    other = replace(authority, scope={**authority.scope, "digest": "cd" * 32})
+    with VaultStore(tmp_path, b"k" * 32, allow_unprotected_for_tests=True) as store:
+        accept_binding(store, resign(issuer, raw, generation=9), authority, cert,
+                       load_authority=lambda: authority, clock=lambda: 1100)
+        assert accept_binding(store, resign(issuer, raw, scope=other.scope), other, cert,
+                              load_authority=lambda: other, clock=lambda: 1100).generation == 1
+
+
+def test_acceptance_commit_failure_does_not_return_or_persist(binding, tmp_path):
+    issuer, authority, cert, raw = binding
+    with VaultStore(tmp_path, b"k" * 32, allow_unprotected_for_tests=True) as store:
+        database = store._db
+        class FailCommit:
+            def execute(self, statement, *args):
+                if statement == "COMMIT":
+                    raise OSError("commit failure")
+                return database.execute(statement, *args)
+        store._db = FailCommit()
+        try:
+            with pytest.raises(OSError, match="commit failure"):
+                accept_binding(store, raw, authority, cert,
+                               load_authority=lambda: authority, clock=lambda: 1100)
+        finally:
+            store._db = database
+        assert accept_binding(store, resign(issuer, raw, session_id=str(uuid.uuid4())),
+                              authority, cert, load_authority=lambda: authority,
+                              clock=lambda: 1100).generation == 1
+
+
+def test_acceptance_failure_rolls_back_and_rechecks_current_authority(binding, tmp_path, monkeypatch):
+    issuer, authority, cert, raw = binding
+    with VaultStore(tmp_path, b"k" * 32, allow_unprotected_for_tests=True) as store:
+        def accept(document, current=authority):
+            return accept_binding(store, document, authority, cert,
+                                  load_authority=lambda: current, clock=lambda: 1100)
+        with pytest.raises(IdentityMismatch):
+            accept(raw, replace(authority, audience_destination=b"x" * 16))
+        with pytest.raises(IdentityMismatch):
+            accept(raw, replace(authority, challenge=b"x" * 32))
+        with pytest.raises(ValidationError):
+            accept(raw, replace(authority, expires_at=1099))
+        original = store._seal
+        def failed_seal(*args):
+            raise OSError("disk failure")
+        monkeypatch.setattr(store, "_seal", failed_seal)
+        with pytest.raises(OSError):
+            accept(raw)
+        monkeypatch.setattr(store, "_seal", original)
+        # A conflicting first generation remains eligible after failed commit.
+        assert accept(resign(issuer, raw, session_id=str(uuid.uuid4()))).generation == 1
 
 
 def test_binding_rotation_replay_and_conflict(binding):

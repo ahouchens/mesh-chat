@@ -22,7 +22,7 @@ import uuid
 
 import RNS
 
-from mesh_chat.direct_binding import AcceptedBinding, BindingAuthority, create_binding, verify_binding
+from mesh_chat.direct_binding import BindingAuthority, accept_binding, create_binding
 from mesh_chat.reticulum_config import NetworkSettings
 from mesh_chat.service import MeshChatService
 from mesh_chat.vault import VaultStore
@@ -94,18 +94,21 @@ def _worker(name, root, commands, responses, incoming, outgoing):
                     authority = BindingAuthority(
                         base64.urlsafe_b64decode(request["issuer"]), bytes.fromhex(request["audience"]),
                         request["scope"], request["expires_at"], bytes.fromhex(request["challenge"]))
-                    if authority.scope["kind"] == "workspace":
-                        workspace = service._require_workspace(authority.scope["workspace_id"])
-                        if workspace["state"] != "active":
-                            raise ValueError("Workspace is not active")
-                        manifest = service._workspace_current_manifest(workspace)
-                        issuer = find_device(manifest, authority.scope["issuer_device_id"])
-                        audience = find_device(manifest, authority.scope["audience_device_id"])
-                        if (issuer is None or audience is None or issuer[0].status != "active"
-                                or audience[0].status != "active"
-                                or issuer[1].public_identity != authority.issuer_public_identity
-                                or audience[1].destination_hash != authority.audience_destination):
-                            raise ValueError("Binding does not match admitted devices")
+                    def load_authority():
+                        if authority.scope["kind"] == "workspace":
+                            workspace = service._require_workspace(authority.scope["workspace_id"])
+                            if workspace["state"] != "active":
+                                raise ValueError("Workspace is not active")
+                            manifest = service._workspace_current_manifest(workspace)
+                            issuer = find_device(manifest, authority.scope["issuer_device_id"])
+                            audience = find_device(manifest, authority.scope["audience_device_id"])
+                            if (issuer is None or audience is None or issuer[0].status != "active"
+                                    or audience[0].status != "active"
+                                    or issuer[1].public_identity != authority.issuer_public_identity
+                                    or audience[1].destination_hash != authority.audience_destination):
+                                raise ValueError("Binding does not match admitted devices")
+                        return authority
+                    load_authority()
                     cert = bytes.fromhex(request["certificate"])
                     now = int(time.time())
                     if action == "sign_binding":
@@ -117,13 +120,11 @@ def _worker(name, root, commands, responses, incoming, outgoing):
                     else:
                         if authority.audience_destination != network.destination_hash:
                             raise ValueError("Wrong local audience")
-                        previous = store.get("direct_proof", "accepted")
-                        accepted = verify_binding(request["binding"], authority, cert, now=now,
-                            previous=AcceptedBinding(**previous) if previous else None)
-                        # Proof only: persist before activation. Shipping runtime
-                        # still needs transactional scope/generation reconciliation.
-                        store.put("direct_proof", "accepted", {
-                            "generation": accepted.generation, "digest": accepted.digest})
+                        # Recheck local workspace membership and persist the
+                        # exact relationship generation under one vault transaction.
+                        # Pending authority still comes from this trusted harness.
+                        accept_binding(store, request["binding"], authority, cert,
+                            load_authority=load_authority, clock=lambda: int(time.time()))
                         authorized = True
                         pending = authority.scope["kind"] == "invitation"
                         peer_destination = _destination_for(_identity_from_public_key(authority.issuer_public_identity))

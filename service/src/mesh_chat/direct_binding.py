@@ -1,9 +1,10 @@
 """Phase-1 direct transport binding proof; not registered as an app command.
 
 The caller supplies locally verified authorization, never authority taken from
-the incoming document. Verification is pure: the returned replay record must
-be committed with authorization under the vault transaction before attaching
-an interface. A binding authorizes a transport key, not workspace admission.
+the incoming document. Verification is pure; acceptance wraps it in a vault
+transaction with an authorization reload and durable replay protection. Runtime
+activation still requires lifecycle checks. A binding authorizes a transport
+key, not workspace admission.
 """
 from __future__ import annotations
 
@@ -11,12 +12,13 @@ import hashlib
 import ipaddress
 import json
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Callable
 
 import RNS
 
 from .errors import IdentityMismatch, ValidationError
 from .invitations import canonical_bytes
+from .vault import VaultStore
 from .workspace_protocol import (
     _destination_for, _identity_from_public_key, _sign, _validate_uuid,
     _verify_signature,
@@ -42,6 +44,41 @@ class BindingAuthority:
 class AcceptedBinding:
     generation: int
     digest: str
+
+
+def accept_binding(
+    store: VaultStore, raw: str, expected: BindingAuthority, certificate_der: bytes,
+    *, load_authority: Callable[[], BindingAuthority], clock: Callable[[], int],
+) -> AcceptedBinding:
+    """Commit replay protection with current local authorization, without network I/O.
+
+    The protected caller loads authority from vault records in the callback,
+    rejecting revoked/removed scopes. It must not reuse a cached snapshot or
+    trust document fields. This is durable acceptance, not an activation token:
+    a later runtime activation still needs lifecycle/revocation reconciliation.
+    Expired records must be retained so rotation cannot reset replay protection.
+    """
+    def relationship(authority):
+        return canonical_bytes({
+            "issuer": authority.issuer_public_identity.hex(),
+            "audience": authority.audience_destination.hex(),
+            "scope": authority.scope,
+        }).decode("utf-8")
+
+    expected_relationship = relationship(expected)
+    record_id = store.opaque_id("direct-binding", expected_relationship)
+
+    def update(previous):
+        current = load_authority()
+        if relationship(current) != expected_relationship:
+            raise IdentityMismatch("Direct binding authorization changed")
+        accepted = verify_binding(
+            raw, current, certificate_der, now=clock(),
+            previous=AcceptedBinding(**previous) if previous is not None else None,
+        )
+        return {"generation": accepted.generation, "digest": accepted.digest}
+
+    return AcceptedBinding(**store.update_record("direct_binding", record_id, update))
 
 
 def _fail(message: str = "Direct binding is invalid") -> None:

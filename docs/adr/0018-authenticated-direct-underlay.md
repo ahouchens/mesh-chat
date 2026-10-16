@@ -38,9 +38,13 @@ not the app control channel and does not establish workspace authority.
 validation against explicitly supplied local authorization. It checks exact
 scope, issuer and audience, certificate digest, ALPN, session, challenge,
 bounded global numeric candidates, validity, signature, and generation conflicts.
-The caller must load the previous accepted generation for the exact relationship
-and atomically persist acceptance while rechecking authorization before any
-network effects. That runtime transaction is not yet implemented. No binding
+`accept_binding` now loads the previous generation for the exact relationship
+and commits acceptance while reloading authorization under the vault transaction.
+Its protected caller must supply a current vault-backed authority loader; failed
+validation, encryption or commit returns no acceptance. Record indexes are keyed
+opaque IDs, and expired replay history is retained. This primitive does not grant
+runtime activation: shipping authority loaders and lifecycle reconciliation remain
+open. No binding
 command or packet API is exposed to React. The initial unbound Offer remains a
 separate phase-2 document; this verifier requires an exact audience.
 
@@ -150,8 +154,10 @@ queue carrier: actual join, signed acknowledgment before approval, admission,
 fresh workspace-scoped bindings checked against the local manifest, bidirectional
 LXMF messages, ratchet readiness, endpoint receipts, and carrier-death teardown.
 It closes the pending carrier and creates fresh credentials after admission.
-The proof stores accepted binding generations before activation, but does not
-implement the production authorization/reconciliation transaction or crash recovery.
+The proof uses transactional binding acceptance before activation, including a
+local workspace membership recheck. Its pending scope is still supplied by the
+trusted harness. Production activation/revocation reconciliation and crash recovery
+remain unimplemented.
 
 The GitHub-only `packet_bridge` example carries the same private frames over two
 mutually authenticated native QUIC peers. Native TLS keys stay in Rust and RNS
