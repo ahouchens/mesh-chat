@@ -35,6 +35,7 @@ from .invitations import (
     readable_fingerprint,
     verify_invitation,
 )
+from .direct_runtime import SessionRegistry
 from .group_service import GroupServiceMixin
 from .models import Contact, DeliveryState, Message, MessageKind, Profile, TrustState
 from .network import ReticulumNetwork, select_lan_listener_port
@@ -332,6 +333,7 @@ class MeshChatService(
         self._identity: RNS.Identity | None = None
         self._shutdown = threading.Event()
         self._dispatch_lock = threading.RLock()
+        self._direct_sessions = SessionRegistry()
         self._close_lock = threading.Lock()
         self._close_started = False
         self._store_closed = False
@@ -3882,6 +3884,7 @@ class MeshChatService(
                 return
             self._close_started = True
         self._shutdown.set()
+        self._direct_sessions.retire_all("closed", close=True)
         try:
             self.close_participant_hosts()
         except Exception:

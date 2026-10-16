@@ -46,7 +46,7 @@ def _worker(name, root, commands, responses, incoming, outgoing, revoked, carrie
     session = object()
     authorized = False
     authorization_check = None
-    live_authority_check = None
+    runtime_lease = None
     pending = True
     peer_destination = None
     authorized_workspace = None
@@ -70,15 +70,10 @@ def _worker(name, root, commands, responses, incoming, outgoing, revoked, carrie
                     interface.engine_lost(session)
                     return
                 if interface.online and time.monotonic() >= next_authority_check:
-                    with service._dispatch_lock:
-                        if live_authority_check is not None:
-                            try:
-                                live_authority_check()
-                            except Exception:
-                                # Fail closed on revoked or unavailable authority.
-                                interface.engine_lost(session)
-                                revoked.set()
-                                return
+                    if runtime_lease is not None and not runtime_lease.check():
+                        interface.engine_lost(session)
+                        revoked.set()
+                        return
                     next_authority_check = time.monotonic() + 0.25
                 try:
                     packet = incoming.get(timeout=0.01)
@@ -173,10 +168,13 @@ def _worker(name, root, commands, responses, incoming, outgoing, revoked, carrie
                             check = partial(service._accept_direct_join_binding, request["workspace_id"], request["binding"], authority, cert)
                         else:
                             check = partial(service._accept_direct_answer, request["invitation_id"], request["answer"], authority, cert)
-                        check()
+                        if interface.online:
+                            raise ValueError("Retire the active path before replacing authorization")
+                        if authority.scope["kind"] == "workspace":
+                            runtime_lease = service._track_direct_workspace_session(request["binding"], authority, cert)
+                        else:
+                            check()
                         authorization_check = check
-                        live_authority_check = (partial(service._direct_workspace_binding_authority, authority)
-                                                if authority.scope["kind"] == "workspace" else None)
                         authorized = True
                         pending = authority.scope["kind"] == "invitation"
                         peer_destination = _destination_for(_identity_from_public_key(authority.issuer_public_identity))
@@ -199,7 +197,9 @@ def _worker(name, root, commands, responses, incoming, outgoing, revoked, carrie
                                 break
                     authorized = False
                     authorization_check = None
-                    live_authority_check = None
+                    if runtime_lease is not None:
+                        runtime_lease.cancel()
+                    runtime_lease = None
                     revoked.clear()
                     carrier_lost.clear()
                     session = object()
@@ -213,6 +213,8 @@ def _worker(name, root, commands, responses, incoming, outgoing, revoked, carrie
                     with service._dispatch_lock:
                         try:
                             authorization_check()
+                            if runtime_lease is not None and not runtime_lease.check():
+                                raise ValueError("Direct runtime lease is retired")
                         except Exception:
                             authorized = False
                             authorization_check = None

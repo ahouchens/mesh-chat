@@ -8,6 +8,7 @@ from types import SimpleNamespace
 import LXMF
 import RNS
 
+from mesh_chat.direct_runtime import SessionRegistry
 from mesh_chat.models import DeliveryState
 from mesh_chat.network import ReticulumNetwork
 from mesh_chat.service import MeshChatService
@@ -308,6 +309,8 @@ def test_service_close_defers_vault_close_until_active_callback_finishes(
     monkeypatch.setattr(RNS.Reticulum, "exit_handler", lambda: None)
 
     service = MeshChatService.__new__(MeshChatService)
+    service._direct_sessions = SessionRegistry()
+    lease = service._direct_sessions.open(30, lambda: None)
     service._shutdown = threading.Event()
     service._dispatch_lock = threading.RLock()
     service._close_lock = threading.Lock()
@@ -328,6 +331,7 @@ def test_service_close_defers_vault_close_until_active_callback_finishes(
     service.close()
 
     assert service._shutdown.is_set()
+    assert lease.cancelled and lease.reason == "closed"
     assert not closed.is_set()
     assert service._close_finalizer is not None
     release_callback.set()
@@ -342,6 +346,8 @@ def test_service_close_defers_vault_close_until_active_callback_finishes(
 
 def test_service_close_closes_vault_after_workers_stop() -> None:
     service = MeshChatService.__new__(MeshChatService)
+    service._direct_sessions = SessionRegistry()
+    lease = service._direct_sessions.open(30, lambda: None)
     service._shutdown = threading.Event()
     service._dispatch_lock = threading.RLock()
     service._close_lock = threading.Lock()
@@ -356,3 +362,4 @@ def test_service_close_closes_vault_after_workers_stop() -> None:
     service.close()
 
     assert closed.is_set()
+    assert lease.cancelled and lease.reason == "closed"

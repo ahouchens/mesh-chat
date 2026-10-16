@@ -344,6 +344,56 @@ def test_direct_workspace_binding_rechecks_admission_and_local_identity(tmp_path
         member.close()
 
 
+
+@pytest.mark.parametrize("terminal", ["revocation", "close", "suspend", "expiry"])
+def test_direct_workspace_binding_runtime_lease_lifecycle(tmp_path, terminal):
+    from mesh_chat.direct_binding import BindingAuthority, create_binding
+    from mesh_chat.direct_runtime import SessionRegistry
+    owner, _, owner_profile, member, _, _, workspace, _, identity = _joined_pair(tmp_path, base=95000)
+    now, monotonic = int(time.time()), [0.0]
+    owner._direct_sessions = SessionRegistry(clock=lambda: monotonic[0])
+    # The recording fixture uses shutdown solely to stop its retry worker.
+    owner._retry_thread.join(timeout=2)
+    assert not owner._retry_thread.is_alive()
+    owner._shutdown.clear()
+    try:
+        local, remote = owner._require_workspace(workspace["id"]), member._require_workspace(workspace["id"])
+        scope = {"kind": "workspace", "workspace_id": workspace["id"],
+                 "issuer_device_id": remote["local_device_id"], "audience_device_id": local["local_device_id"]}
+        authority = BindingAuthority(identity.get_public_key(), bytes.fromhex(owner_profile["destination_hash"]),
+                                     scope, now + 300, b"c" * 32)
+        raw = create_binding(identity, authority, b"cert", session_id=str(uuid.uuid4()),
+            challenge=authority.challenge, generation=1, issued_at=now, expires_at=now + 10,
+            candidates=[{"host": "8.8.8.8", "port": 12345, "expires_at": now + 10}])
+        with pytest.raises(IdentityMismatch):
+            owner._track_direct_workspace_session(raw, authority, b"wrong cert")
+        lease = owner._track_direct_workspace_session(raw, authority, b"cert")
+        assert lease.check()
+        scope["workspace_id"] = "changed caller input"
+        assert lease.check()  # The service retains its own authority snapshot.
+        if terminal == "revocation":
+            owner.remove_workspace_member(workspace["id"], remote["local_member_id"], _op(95010))
+            assert not lease.check() and lease.reason == "authority_unavailable"
+        elif terminal == "close":
+            owner.close()
+            assert lease.cancelled and lease.reason == "closed"
+        elif terminal == "suspend":
+            owner.mobile_lifecycle_transition("suspended", "test")
+            assert lease.cancelled and lease.reason == "suspended"
+            scope["workspace_id"] = workspace["id"]
+            with pytest.raises(ValidationError, match="suspended"):
+                owner._track_direct_workspace_session(raw, authority, b"cert")
+            owner.mobile_lifecycle_transition("foreground", "test")
+            assert lease.cancelled
+            assert owner._track_direct_workspace_session(raw, authority, b"cert").check()
+        else:
+            monotonic[0] = 11
+            assert not lease.check() and lease.reason == "expired"  # Document, not authority's 300s.
+    finally:
+        owner.close()
+        member.close()
+
+
 def test_direct_join_binding_requires_saved_pending_join(tmp_path, monkeypatch):
     from dataclasses import replace
     from mesh_chat.errors import InvitationExpired

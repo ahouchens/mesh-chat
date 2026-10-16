@@ -2824,3 +2824,13 @@ with Android ARM64 compilation, at `fa5186e` in
 The owner refreshes native credentials; the joiner retains its original Answer
 socket/key and re-arms only after durable Ready acceptance. Source topology and
 controller checks also pass. This remains a controlled proof, not shipped email setup.
+
+
+Crash and native control rejection qualification passed at `42d85ca` in
+[run 38931951270](https://github.com/ahouchens/mesh-chat/actions/runs/38931951270):
+Windows/Linux native tests and Android ARM64 compilation. Real topologies inject
+service and native-engine kills after messaging and require surviving services
+to retire adapters before cleanup. Native Ready rejects conflicting Answer digests,
+wrong generations, repeated refresh, early packets and oversized frames. Source
+revocation/service-crash cases and controller tests passed (5 passed; 10 native-only
+cases skipped locally).

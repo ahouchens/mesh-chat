@@ -1661,6 +1661,8 @@ class WorkspaceServiceMixin:
         self.store.put(
             "workspace_lifecycle_state", self._workspace_lifecycle_id(), lifecycle
         )
+        if state == "suspended":
+            self._direct_sessions.retire_all("suspended")
         if state == "foreground":
             lifecycle["state"] = "reconciling"
             self.store.put(
@@ -2395,6 +2397,24 @@ class WorkspaceServiceMixin:
             raise IdentityMismatch("Direct binding does not match current admitted devices")
         return BindingAuthority(issuer[1].public_identity, audience[1].destination_hash,
                                 dict(scope), expected.expires_at, expected.challenge)
+
+    def _track_direct_workspace_session(self, raw, expected, certificate_der):
+        """Private runtime lease after durable acceptance; creates no adapter."""
+        from dataclasses import replace
+        from .direct_binding import _parse
+        expected = replace(expected, scope=dict(expected.scope))
+        def check_authority():
+            with self._dispatch_lock:
+                if self._shutdown.is_set():
+                    raise ValidationError("Direct runtime is closing")
+                if self._workspace_lifecycle_state().get("state") == "suspended":
+                    raise ValidationError("Direct runtime is suspended")
+                self._direct_workspace_binding_authority(expected)
+        with self._dispatch_lock:
+            check_authority()
+            self._accept_direct_workspace_binding(raw, expected, certificate_der)
+            expires_at = min(expected.expires_at, _parse(raw)["expires_at"])
+            return self._direct_sessions.open(expires_at - time.time(), check_authority)
 
     def _accept_direct_workspace_binding(self, raw, expected, certificate_der):
         """Commit admitted binding acceptance without creating network effects."""

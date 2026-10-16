@@ -464,8 +464,21 @@ The controlled carrier now watches its service owners and requests cancellation
 if a service process exits unexpectedly. The topology separately injects member
 revocation, service kill and native-engine kill after bidirectional messaging;
 surviving services must stay alive and retire their adapters before explicit
-cleanup. Source revocation/service-crash tests pass; native crash qualification is
-pending. Additional native Ready tests send conflicting Answer digests, wrong
+cleanup. Source revocation/service-crash tests pass. Native crash qualification
+and the rejection cases below passed on Windows/Linux, with Android ARM64 compilation,
+at `42d85ca` in [run 38931951270](https://github.com/ahouchens/mesh-chat/actions/runs/38931951270). Additional native Ready tests send conflicting Answer digests, wrong
 generations, repeated refresh, early packets and oversized frames directly to
 the private bridge, requiring rejection and loss notification. Shipping process
 supervision and durable crash recovery remain open.
+
+
+Admitted runtime leases are now owned by the protected service through a private,
+ephemeral registry capped at eight sessions. Registration follows durable binding
+acceptance and copies the authority snapshot; a lease cannot outlive its signed
+document. Monotonic expiry and failed current-authority checks are terminal.
+Service close cancels all leases without native I/O or waiting for authority
+callbacks; mobile suspension retires current leases, and resume requires fresh
+registration. The controlled adapter consumes these leases. This does not enable
+native host embedding, shipping IPC or pending-scope lifecycle handling. Source
+validation passed: 612 non-integration tests, 7 environment-dependent skips,
+plus 5 source topology/controller tests. Native qualification is pending.
