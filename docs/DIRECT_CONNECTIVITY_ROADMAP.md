@@ -354,16 +354,16 @@ passes at `f797d01` in
 [run 38923294960](https://github.com/ahouchens/mesh-chat/actions/runs/38923294960).
 The initial transfer regression dropped its sender handle before reception;
 retaining both handles through the assertion fixed that test-lifetime failure. The gate
-is not yet connected to service IPC, scheduling, cancellation or post-activation
-teardown and is not part of the shipping app.
+is not yet connected to shipping service IPC or scheduling. Later increments below
+add proof cancellation and teardown; none is part of the shipping app.
 
 The controlled packet bridge now prepares sockets before publishing certificates,
 uses the service's exact local session IDs/generations, and waits for accepted
 Offer/Answer (or admitted-binding) digests before consuming both native gates.
 It checks socket addresses across activation. The joiner durably saves its own
 Offer/Answer chain in the source/native harness. This inherited-pipe integration
-is CI-only: public runtime IPC, Ready-driven re-arming, cancellation and teardown
-remain unimplemented. The updated source topology passes; native qualification
+is CI-only: shipping runtime IPC and Ready-driven re-arming remain unimplemented.
+Later proof increments below add cancellation and teardown. The updated source topology passes; native qualification
 for this bridge increment passed on Windows/Linux, including real RNS/LXMF, and
 Android ARM64 compilation at `7824fd2` in
 [run 38924221050](https://github.com/ahouchens/mesh-chat/actions/runs/38924221050).
@@ -390,3 +390,11 @@ notification to both packet consumers. The native expiry probes and real topolog
 passed on Windows/Linux; Android ARM64 compilation passed at `839b40a` in
 [run 38926921146](https://github.com/ahouchens/mesh-chat/actions/runs/38926921146).
 The source topology also passes.
+
+The controlled worker now reloads durable authorization immediately before RNS
+adapter activation under the service dispatch lock. A failed recheck clears the
+cached authorization and retires the pending adapter. The source topology attempts
+to reuse both peers' accepted pending credentials after admission and confirms
+rejection/offline state, then establishes fresh admitted credentials and exchanges
+messages. Native qualification is pending. This closes an activation-time gap in
+the proof, not continuous production revocation monitoring or shipping IPC.

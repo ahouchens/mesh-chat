@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import base64
 import hashlib
+from functools import partial
 import json
 import multiprocessing as mp
 import os
@@ -44,6 +45,7 @@ def _worker(name, root, commands, responses, incoming, outgoing):
     stop = threading.Event()
     session = object()
     authorized = False
+    authorization_check = None
     pending = True
     peer_destination = None
     authorized_workspace = None
@@ -145,11 +147,13 @@ def _worker(name, root, commands, responses, incoming, outgoing):
                         # exact relationship generation under one vault transaction.
                         # Pending authority is reloaded from durable service records.
                         if authority.scope["kind"] == "workspace":
-                            service._accept_direct_workspace_binding(request["binding"], authority, cert)
+                            check = partial(service._accept_direct_workspace_binding, request["binding"], authority, cert)
                         elif service._require_workspace(request["workspace_id"])["state"] == "joining":
-                            service._accept_direct_join_binding(request["workspace_id"], request["binding"], authority, cert)
+                            check = partial(service._accept_direct_join_binding, request["workspace_id"], request["binding"], authority, cert)
                         else:
-                            service._accept_direct_answer(request["invitation_id"], request["answer"], authority, cert)
+                            check = partial(service._accept_direct_answer, request["invitation_id"], request["answer"], authority, cert)
+                        check()
+                        authorization_check = check
                         authorized = True
                         pending = authority.scope["kind"] == "invitation"
                         peer_destination = _destination_for(_identity_from_public_key(authority.issuer_public_identity))
@@ -171,16 +175,25 @@ def _worker(name, root, commands, responses, incoming, outgoing):
                             except queue.Empty:
                                 break
                     authorized = False
+                    authorization_check = None
                     session = object()
                     interface = MeshDirectInterface(RNS.Transport, budget=budget)
                     network.reticulum._add_interface(interface, mode=interface.MODE_POINT_TO_POINT)
                     thread = threading.Thread(target=pump, args=(interface, session), daemon=True)
                     thread.start()
                 elif action == "activate":
-                    if not authorized:
+                    if not authorized or authorization_check is None:
                         raise ValueError("No verified peer binding")
-                    interface.packet_policy = PacketPolicy(network.destination_hash, peer_destination)
-                    interface.activate(session, expires_at=lease_deadline, pending=pending)
+                    with service._dispatch_lock:
+                        try:
+                            authorization_check()
+                        except Exception:
+                            authorized = False
+                            authorization_check = None
+                            interface.engine_lost(session)
+                            raise
+                        interface.packet_policy = PacketPolicy(network.destination_hash, peer_destination)
+                        interface.activate(session, expires_at=lease_deadline, pending=pending)
                     network.interface_start_failed = False
                     network.router.announce(network.destination_hash)
                 elif action == "state":
@@ -393,6 +406,18 @@ def run(*, executable=None, timeout=45):
             _wait(joiner, "workspace_snapshot", {}, lambda snap: next((item
                 for item in snap["workspace_channels"] if item["id"] == workspace["general_channel_id"]), None),
                 "admitted general-channel bootstrap", timeout)
+            # Durable pending acceptance cannot be reused after admission.
+            # Exercise the same activation command, without replacing its cache.
+            for index, peer in enumerate(peers):
+                peer["commands"].put({"action": "activate"})
+                rejected = peer["responses"].get(timeout=5)
+                if (rejected.get("action") != "activate" or rejected.get("ok")
+                        or not rejected.get("error", "").startswith("ValidationError:")):
+                    raise AssertionError("Retired invitation authorization was not rejected")
+                state = _call(peer["commands"], peer["responses"], "state",
+                              peer=peers[1-index]["profile"]["destination_hash"])
+                if state["online"]:
+                    raise AssertionError("Rejected activation left pending adapter online")
             # Retire invitation credentials. A second native carrier generates
             # fresh TLS keys; both services bind them to exact admitted devices.
             carrier.close(require_graceful=True)
@@ -439,7 +464,7 @@ def run(*, executable=None, timeout=45):
             return {"carrier": "quic" if executable else "source-pipes", "join_acknowledged": True,
                     "admitted": True, "bidirectional_messages": True, "ratchets": True,
                     "engine_death_offline": True, "isolated": True, "admitted_key_rotation": True,
-                    "endpoint_receipts": True}
+                    "endpoint_receipts": True, "stale_activation_rejected": True}
         finally:
             if carrier:
                 carrier.close()
