@@ -120,6 +120,14 @@ The real two-service source topology passed using persisted Offer/Answer state.
 The prior codec commit `771a365` passed all native jobs in
 [run 38906448204](https://github.com/ahouchens/mesh-chat/actions/runs/38906448204).
 
+Joiner Ready acceptance tests cover a missing saved Answer, failed-write rollback,
+identical replay, restart, conflicting owner generation, Answer replacement,
+obsolete-parent rejection, higher-generation recovery, expiry and post-admission
+rejection. The exchange, Offer, binding, workspace and vault suites passed 146
+tests with one platform skip; the final recovery assertion passed separately. The previous
+durable Answer commit `8c33b54` passed all native jobs in
+[run 38919767480](https://github.com/ahouchens/mesh-chat/actions/runs/38919767480).
+
 ## Commands
 
 Focused service and UI checks:

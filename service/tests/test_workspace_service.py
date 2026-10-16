@@ -535,6 +535,80 @@ def test_direct_owner_binding_selects_one_responder_without_admission(tmp_path, 
         owner.close()
 
 
+def test_direct_ready_requires_saved_local_answer_and_current_join(tmp_path, monkeypatch):
+    from mesh_chat.direct_binding import BindingAuthority, create_binding
+    from mesh_chat.direct_offer import OfferAuthority, create_offer
+    from mesh_chat.direct_exchange import create_answer, create_ready
+    from mesh_chat.workspace_protocol import verify_workspace_invitation, workspace_document_digest
+    owner_identity, local_identity, key = RNS.Identity(), RNS.Identity(), os.urandom(32)
+    owner, _ = _service(tmp_path / "owner", owner_identity, "Owner")
+    joiner, _ = _service(tmp_path / "joiner", local_identity, "Joiner", vault_key=key)
+    try:
+        workspace = owner.create_workspace(_op(93000), "Ready", "")
+        invitation = owner.create_workspace_invitation_command(workspace["id"], _op(93001))
+        joiner.submit_workspace_join(invitation["text"], _op(93002))
+        invite = verify_workspace_invitation(invitation["text"])
+        now = int(time.time())
+        scope = {"kind": "invitation", "digest": workspace_document_digest(invite.serialized), "expires_at": invite.expires_at}
+        authority = BindingAuthority(owner_identity.get_public_key(), bytes.fromhex(joiner._require_profile()["destination_hash"]),
+                                     scope, now + 240, b"c" * 32)
+        answer_authority = BindingAuthority(local_identity.get_public_key(), bytes.fromhex(owner._require_profile()["destination_hash"]),
+                                            scope, now + 240, b"c" * 32)
+        options = dict(session_id=str(uuid.uuid4()), generation=1,
+                       candidates=[{"host": "8.8.8.8", "port": 12345, "expires_at": now + 240}],
+                       issued_at=now, expires_at=now + 240)
+        offer = create_offer(owner_identity, OfferAuthority(owner_identity.get_public_key(), scope, now + 240, b"c" * 32),
+                             b"offer cert", **options)
+        answer_binding = create_binding(local_identity, answer_authority, b"answer cert", challenge=b"c" * 32, **options)
+        answer = create_answer(local_identity, answer_binding, offer)
+        ready_binding = create_binding(owner_identity, authority, b"ready cert", challenge=b"c" * 32,
+                                       **{**options, "generation": 2})
+        ready = create_ready(owner_identity, ready_binding, answer)
+        def accept(raw=ready):
+            return joiner._accept_direct_ready(workspace["id"], raw, b"ready cert")
+        with pytest.raises(ValidationError):
+            accept()
+        joiner._save_direct_join_answer(workspace["id"], offer, b"offer cert", answer, b"answer cert", authority)
+        with monkeypatch.context() as disk:
+            def fail(*args):
+                raise OSError("write failed")
+            disk.setattr(joiner.store, "_seal", fail)
+            with pytest.raises(OSError):
+                accept()
+        assert "ready" not in joiner.store.get("direct_join_exchange", joiner._workspace_record_id(workspace["id"]))
+        first = accept()
+        assert accept() == first
+        joiner.close()
+        joiner, _ = _service(tmp_path / "joiner", local_identity, "Joiner", vault_key=key)
+        assert accept() == first
+        different_binding = create_binding(owner_identity, authority, b"ready cert", challenge=b"c" * 32,
+            **{**options, "generation": 2, "session_id": str(uuid.uuid4())})
+        with pytest.raises(ValidationError):
+            accept(create_ready(owner_identity, different_binding, answer))
+        new_answer_binding = create_binding(local_identity, answer_authority, b"answer cert", challenge=b"c" * 32,
+                                            **{**options, "generation": 2})
+        new_answer = create_answer(local_identity, new_answer_binding, offer)
+        joiner._save_direct_join_answer(workspace["id"], offer, b"offer cert", new_answer, b"answer cert", authority)
+        record = joiner.store.get("direct_join_exchange", joiner._workspace_record_id(workspace["id"]))
+        assert "ready" not in record and record["ready_accepted"]["generation"] == 2
+        with pytest.raises(IdentityMismatch):
+            accept()
+        fresh_binding = create_binding(owner_identity, authority, b"ready cert", challenge=b"c" * 32,
+                                       **{**options, "generation": 3})
+        assert accept(create_ready(owner_identity, fresh_binding, new_answer)).generation == 3
+        with monkeypatch.context() as clock:
+            clock.setattr(time, "time", lambda: now + 241)
+            with pytest.raises(ValidationError):
+                accept()
+        local = joiner._require_workspace(workspace["id"])
+        joiner.store.put("workspace", joiner._workspace_record_id(workspace["id"]), {**local, "state": "active"})
+        with pytest.raises(ValidationError):
+            accept()
+    finally:
+        owner.close()
+        joiner.close()
+
+
 def _deliver_all(
     recipient: MeshChatService,
     packets: list[dict[str, Any]],

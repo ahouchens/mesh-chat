@@ -67,8 +67,12 @@ extend its parent's validity. The owner service now saves the signed Offer and
 public certificate against its prepared challenge, then atomically verifies and
 saves the exact Answer with selected peer and both replay records. A replacement
 challenge requires a fresh saved Offer before any new Answer is accepted. Public
-import/export, durable Ready acceptance, native socket reconciliation and monotonic
-attempt windows remain open. No binding
+import/export, native socket reconciliation and monotonic attempt windows remain
+open. The joiner now saves its own verified Offer/Answer chain and accepts Ready
+under a vault transaction that reloads pending-join authority. It retains replay
+history across restarts and replacement Answers, clearing obsolete Ready evidence
+when the Answer changes. Acceptance does not establish native socket ownership
+or re-arm the attempt window. No binding
 command or packet API is exposed to React. The initial unbound Offer uses a
 separate pure codec; the binding verifier still requires an exact audience.
 

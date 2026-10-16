@@ -908,4 +908,8 @@ current invitation authority under the same transaction that pins the responder
 and stores envelope/binding replay history. No imported caller-provided parent
 replaces the saved Offer. This is service groundwork used by the controlled
 harness; no renderer import command, join request or membership side effect is
-introduced. Durable Ready acceptance and runtime re-arming remain unfinished.
+introduced. The joiner privately persists its own verified Offer/Answer chain
+and accepts Ready against that saved chain while rechecking pending-join authority
+in the vault transaction. Replacing the Answer clears previous Ready evidence but
+retains replay history. These durable records confer no socket ownership or live
+readiness. Runtime re-arming and import/export integration remain unfinished.
