@@ -59,8 +59,12 @@ preserve the original challenge and deadline. Native lifecycle reconciliation mu
 still establish socket ownership before any future candidate advertisement. The pure initial Offer schema is now implemented in `direct_offer.py`; it has
 no audience field, requires independently supplied invitation authority, and
 shares canonical parsing and transport limits with direct bindings. Its generation
-result is verification evidence only. Answer/Ready schemas, public import/export
-integration and lifecycle reconciliation remain open. No binding
+result is verification evidence only. `direct_exchange.py` adds pure signed
+Answer/Ready envelopes carrying an exact parent digest and signed binding. The
+full chain must verify; Answer addresses the Offer signer, Ready addresses the
+Answer signer, and Ready advances the owner's generation. Child validity cannot
+extend its parent's validity. Public import/export, durable exchange acceptance,
+native socket reconciliation and monotonic attempt windows remain open. No binding
 command or packet API is exposed to React. The initial unbound Offer uses a
 separate pure codec; the binding verifier still requires an exact audience.
 

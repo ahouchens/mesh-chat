@@ -70,8 +70,12 @@ or membership is created by this private selection step. A pure signed Offer
 codec now validates an unbound invitation-scoped descriptor with canonical
 16 KiB parsing and the same transport/candidate limits as audience-bound bindings.
 It is not registered as an import command and cannot itself authorize a path.
-Answer/Ready envelopes, import/export integration, the native control channel and
-activation/revocation reconciliation remain open. Private expired-negotiation replacement now compares the previous
+Pure signed Answer/Ready envelopes now reference the exact preceding canonical
+document digest and carry an independently signed audience-bound binding. Chain
+verification rechecks every signature/certificate, peer, scope, challenge and
+validity, and Ready requires a newer owner generation than Offer. Import/export
+integration, durable exchange acceptance, monotonic attempt windows, native socket
+ownership checks and activation/revocation reconciliation remain open. Private expired-negotiation replacement now compares the previous
 challenge, atomically rotates challenge/deadline, and preserves selected identity
 and replay history. Identical replacement retries are idempotent; stale or
 conflicting replacements, active attempts and revoked invitations are rejected.

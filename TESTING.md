@@ -104,6 +104,14 @@ codec without an import or activation path. The preceding replacement commit
 `0f40ad0` passed all native jobs in
 [run 38901347792](https://github.com/ahouchens/mesh-chat/actions/runs/38901347792).
 
+Answer/Ready codec regressions cover full-chain verification, identical replay,
+conflicting generation, exact parent substitution, invalid signed envelopes,
+forged signatures, certificate substitution, expiry, parent validity bounds,
+wrong audience and non-advancing Ready generations. The exchange, Offer, binding
+and workspace regression suite passed 131 tests. The preceding Offer commit
+`0ee2130` passed all native jobs in
+[run 38901917302](https://github.com/ahouchens/mesh-chat/actions/runs/38901917302).
+
 ## Commands
 
 Focused service and UI checks:

@@ -887,4 +887,17 @@ identical digest is idempotent; conflicting or lower generations fail.
 
 This codec has no public prefix, renderer command, import/export flow or network
 side effects. Its verified result does not select a responder, attach an RNS
-interface or grant membership. Answer/Ready document chaining remains unfinished.
+interface or grant membership.
+
+Experimental `direct_answer` and `direct_ready` version 1 contain exactly `v`,
+`type`, `parent_digest`, `binding` and `signature`. `parent_digest` is the SHA-256
+of the exact signed canonical Offer or Answer respectively; `binding` is the
+existing signed audience-bound descriptor. The binding issuer signs the entire
+unsigned envelope. Full-chain verification checks all signatures and supplied
+native certificates against independently supplied authority. Answer addresses
+the Offer signer; Ready is signed by that owner, addresses the Answer signer,
+and uses an owner generation greater than Offer's. Scope/challenge match and
+child validity stays within parent validity. The envelope's generation/digest
+provide replay evidence. These codecs do not persist acceptance, select a peer,
+start attempt timers or prove continued socket ownership. Import/export and
+runtime activation remain unimplemented.
