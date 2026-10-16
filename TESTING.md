@@ -153,8 +153,10 @@ Native cancellation regressions assert immediate socket/key release, idempotent
 cancel, refusal to re-arm or activate cancelled state, address rebinding after
 release, and expiry cleanup. The controlled native topology now requires graceful
 cancellation at pending-to-admitted replacement and final teardown; forced process
-termination cannot satisfy those assertions. Source topology passed; native CI
-qualification of this increment is pending.
+termination cannot satisfy those assertions. Source topology passed. Native tests
+and the strict teardown topology passed on Windows/Linux; Android ARM64 compilation
+passed at `0c3884c` in
+[run 38925223083](https://github.com/ahouchens/mesh-chat/actions/runs/38925223083).
 
 ## Commands
 

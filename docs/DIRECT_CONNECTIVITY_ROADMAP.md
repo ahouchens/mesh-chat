@@ -376,5 +376,7 @@ fail closed. Expiry checks release pending resources; the owner must poll expiry
 while idle. The controlled bridge also closes active peers at the authorization
 deadline or on private cancellation. Normal harness teardown requests cancellation
 and requires a successful graceful exit; forced termination remains cleanup only.
-Source topology passes; the new native cancellation tests await CI qualification.
+Source topology passes. Native cancellation and strict graceful teardown passed
+on Windows/Linux, and Android ARM64 compilation passed at `0c3884c` in
+[run 38925223083](https://github.com/ahouchens/mesh-chat/actions/runs/38925223083).
 Shipping lifecycle events, mapping cleanup and service IPC remain unintegrated.
