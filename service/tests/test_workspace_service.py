@@ -412,6 +412,76 @@ def test_direct_join_binding_requires_saved_pending_join(tmp_path, monkeypatch):
         joiner.close()
 
 
+def test_direct_owner_binding_selects_one_responder_without_admission(tmp_path, monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    from mesh_chat.direct_binding import BindingAuthority, create_binding
+    identity, key = RNS.Identity(), os.urandom(32)
+    owner, _ = _service(tmp_path, identity, "Owner", vault_key=key)
+    try:
+        workspace = owner.create_workspace(_op(92000), "Owner negotiation", "")
+        invitation = owner.create_workspace_invitation_command(workspace["id"], _op(92001))
+        now = int(time.time())
+        prepared = owner._prepare_direct_invitation(invitation["id"], now + 240)
+        assert owner._prepare_direct_invitation(invitation["id"], now + 250) == prepared
+        cert = b"native public certificate"
+        def binding(peer, generation=1, challenge=None):
+            authority = BindingAuthority(peer.get_public_key(), bytes.fromhex(prepared["audience"]),
+                prepared["scope"], prepared["expires_at"], challenge or bytes.fromhex(prepared["challenge"]))
+            raw = create_binding(peer, authority, cert, session_id=str(uuid.uuid4()),
+                challenge=authority.challenge, generation=generation,
+                candidates=[{"host": "8.8.8.8", "port": 12345, "expires_at": prepared["expires_at"]}],
+                issued_at=now, expires_at=prepared["expires_at"])
+            return raw, authority
+        def accept(pair):
+            return owner._accept_direct_owner_binding(invitation["id"], *pair, cert)
+        first, second = RNS.Identity(), RNS.Identity()
+        with pytest.raises(IdentityMismatch):
+            accept(binding(first, challenge=b"x" * 32))
+        assert owner.store.get("direct_pending", invitation["id"])["selected_identity"] is None
+        pairs = [binding(first), binding(second)]
+        with monkeypatch.context() as disk:
+            def fail_write(*args):
+                raise OSError("write failed")
+            disk.setattr(owner.store, "_seal", fail_write)
+            with pytest.raises(OSError):
+                accept(pairs[0])
+        assert owner.store.get("direct_pending", invitation["id"])["selected_identity"] is None
+        def compete(pair):
+            try:
+                return accept(pair)
+            except IdentityMismatch:
+                return None
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            results = list(pool.map(compete, pairs))
+        assert sum(value is not None for value in results) == 1
+        winner = 0 if results[0] else 1
+        assert accept(pairs[winner]) == results[winner]
+        assert owner.store.list("workspace_join_request") == []
+        assert len(owner._workspace_current_manifest(owner._require_workspace(workspace["id"])).members) == 1
+        owner.close()
+        owner, _ = _service(tmp_path, identity, "Owner", vault_key=key)
+        assert accept(pairs[winner]) == results[winner]
+        with pytest.raises(IdentityMismatch):
+            accept(pairs[1 - winner])
+        peer = (first, second)[winner]
+        with pytest.raises(ValidationError):
+            accept(binding(peer))  # Same generation, different signed bytes.
+        assert accept(binding(peer, generation=2)).generation == 2
+        with pytest.raises(ValidationError):
+            accept(pairs[winner])
+        with monkeypatch.context() as clock:
+            clock.setattr(time, "time", lambda: prepared["expires_at"] + 1)
+            with pytest.raises(ValidationError):
+                accept(pairs[winner])
+            with pytest.raises(ValidationError):
+                owner._prepare_direct_invitation(invitation["id"], prepared["expires_at"] + 200)
+        owner.revoke_workspace_invitation(workspace["id"], invitation["id"], _op(92002))
+        with pytest.raises(ValidationError):
+            accept(pairs[winner])
+    finally:
+        owner.close()
+
+
 def _deliver_all(
     recipient: MeshChatService,
     packets: list[dict[str, Any]],

@@ -61,9 +61,14 @@ and the issuer identity and audience destination. It rejects foreign manifests
 and self-connections. The joiner now reloads pending authority from its durable
 signed join and submitted invitation, checking exact local device/identity,
 invitation digest/expiry and authority destination before acceptance. The harness
-saves the join before authorizing its carrier. Owner-side selected-response
-authorization and negotiation challenge/lease still come from the trusted harness;
-their durable production loaders and activation/revocation reconciliation remain open.
+saves the join before authorizing its carrier. The owner now persists a random
+challenge and at most five-minute negotiation deadline against its live invitation.
+The first valid signed binding atomically selects one responder and saves replay
+history; competing peers cannot replace it, including after restart. Current owner
+authority and invitation state are rechecked before each acceptance. No join request
+or membership is created by this private selection step. The public Offer/Answer/
+Ready envelopes, expired-negotiation replacement, native control channel and
+activation/revocation reconciliation remain open.
 
 The Rust proof now owns a `BoundSocket` before peer authorization and consumes
 that exact socket when creating the QUIC endpoint. It exposes no clone/read API

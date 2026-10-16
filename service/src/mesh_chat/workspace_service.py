@@ -2062,6 +2062,72 @@ class WorkspaceServiceMixin:
             records.append(("workspace_due_work_index", record_id, current))
         return records
 
+    def _direct_owner_invitation(self, invitation_id):
+        """Reload the live invitation and current local workspace authority."""
+        record = self.store.get("workspace_invitation", invitation_id)
+        if record is None or record.get("state") != "active" or self._identity is None:
+            raise ValidationError("Direct invitation is unavailable")
+        invite = verify_workspace_invitation(record["document"])
+        workspace = self._require_workspace(invite.workspace_id)
+        manifest = self._workspace_current_manifest(workspace)
+        owner = find_device(manifest, manifest.authority_device_id)
+        offered_owner = find_device(invite.offered_manifest, invite.offered_manifest.authority_device_id)
+        if (invitation_id != self._workspace_invitation_record_id(invite.nonce)
+                or record.get("workspace_id") != invite.workspace_id
+                or workspace.get("state") != "active" or manifest.status != "active"
+                or manifest.workspace_id != invite.workspace_id
+                or owner is None or offered_owner is None or owner[0].status != "active"
+                or owner[1].device_id != workspace.get("local_device_id")
+                or owner[0].member_id != workspace.get("local_member_id")
+                or owner[1].public_identity != self._identity.get_public_key()
+                or offered_owner[1].public_identity != owner[1].public_identity):
+            raise IdentityMismatch("Direct invitation authority is no longer local")
+        return invite, owner[1]
+
+    def _prepare_direct_invitation(self, invitation_id, expires_at):
+        """Persist one private negotiation; no sockets, public Offer or join request."""
+        from .direct_binding import MAX_GENERATION, _integer
+        _integer(expires_at, 1, MAX_GENERATION)
+        def prepare(previous):
+            invite, owner = self._direct_owner_invitation(invitation_id)
+            now = int(time.time())
+            if not now < expires_at <= min(now + 300, invite.expires_at):
+                raise ValidationError("Direct pending negotiation lifetime is invalid")
+            if previous is not None:
+                if previous["expires_at"] <= now:
+                    raise ValidationError("Direct negotiation expired; explicit replacement is required")
+                return previous
+            return {"scope": {"kind": "invitation", "digest": workspace_document_digest(invite.serialized),
+                              "expires_at": invite.expires_at},
+                    "audience": owner.destination_hash.hex(), "challenge": os.urandom(32).hex(),
+                    "expires_at": expires_at, "selected_identity": None, "accepted": None}
+        with self._dispatch_lock:
+            return self.store.update_record("direct_pending", invitation_id, prepare)
+
+    def _accept_direct_owner_binding(self, invitation_id, raw, expected, certificate_der):
+        """Select one signed responder atomically, independently of workspace joins."""
+        from .direct_binding import AcceptedBinding, BindingAuthority, verify_binding
+        def select(record):
+            invite, owner = self._direct_owner_invitation(invitation_id)
+            if record is None or record["expires_at"] <= int(time.time()):
+                raise ValidationError("Direct negotiation is unavailable or expired")
+            scope = {"kind": "invitation", "digest": workspace_document_digest(invite.serialized),
+                     "expires_at": invite.expires_at}
+            if (record["scope"] != scope or record["audience"] != owner.destination_hash.hex()
+                    or expected.issuer_public_identity == owner.public_identity
+                    or (record["selected_identity"] is not None
+                        and record["selected_identity"] != expected.issuer_public_identity.hex())):
+                raise IdentityMismatch("Direct invitation already selected another responder")
+            authority = BindingAuthority(expected.issuer_public_identity, owner.destination_hash,
+                scope, min(record["expires_at"], invite.expires_at), bytes.fromhex(record["challenge"]))
+            accepted = verify_binding(raw, authority, certificate_der, now=int(time.time()),
+                previous=AcceptedBinding(**record["accepted"]) if record["accepted"] else None)
+            return {**record, "selected_identity": authority.issuer_public_identity.hex(),
+                    "accepted": {"generation": accepted.generation, "digest": accepted.digest}}
+        with self._dispatch_lock:
+            record = self.store.update_record("direct_pending", invitation_id, select)
+        return AcceptedBinding(**record["accepted"])
+
     def _direct_join_binding_authority(self, workspace_id, expected):
         """Authenticate an invitation authority from this joiner's saved request.
 

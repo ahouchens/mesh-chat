@@ -48,7 +48,7 @@ jobs:
       - name: Validate service binding boundaries
         run: python -m pytest service/tests/test_direct_binding.py service/tests/test_direct_packet_adapter.py service/tests/test_direct_packet_policy.py service/tests/test_udp_mapping.py -q
       - name: Validate workspace and pending join binding authority
-        run: python -m pytest service/tests/test_workspace_service.py -k "direct_workspace_binding or direct_join_binding" -q
+        run: python -m pytest service/tests/test_workspace_service.py -k "direct_workspace_binding or direct_join_binding or direct_owner_binding" -q
       - name: Test controlled peers (no discovery service)
         env:
           MESH_DIRECT_BINDING_PYTHON: python

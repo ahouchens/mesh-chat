@@ -47,9 +47,13 @@ runtime activation. The service now reloads admitted workspace authority from
 the current signed manifest, verifying active state and exact local/remote device
 identities. The joiner also reloads pending authority from the saved signed join
 and submitted invitation. It rejects missing/terminal records, expired invitations,
-changed identities and mismatched authority destinations. The owner still requires
-a durable selected Answer; durable negotiation state and lifecycle reconciliation
-remain open. No binding
+changed identities and mismatched authority destinations. The owner now persists
+its challenge/deadline before accepting a signed binding, atomically pins one
+responder and replay history, and rechecks current local authority and the active
+invitation. Selection neither synthesizes a join nor admits a member. Expired
+negotiations fail closed and require a future explicit replacement flow; preparation
+retries preserve the original challenge and deadline. Public Offer/Answer/Ready
+schemas and lifecycle reconciliation remain open. No binding
 command or packet API is exposed to React. The initial unbound Offer remains a
 separate phase-2 document; this verifier requires an exact audience.
 
@@ -162,8 +166,9 @@ It closes the pending carrier and creates fresh credentials after admission.
 The proof uses transactional binding acceptance before activation, including a
 private service workspace authority reload. Before carrier authorization the joiner
 saves its signed join, and its pending authority loader verifies that durable state.
-The owner's selected responder and both negotiation challenges/leases still come
-from the trusted harness. Production activation/revocation reconciliation and crash recovery
+The owner prepares the durable challenge/deadline and selects the signed responder
+through the private service transaction. The trusted harness carries the challenge
+between peers; this is not an implemented public Offer/Answer/Ready exchange. Production activation/revocation reconciliation and crash recovery
 remain unimplemented.
 
 The GitHub-only `packet_bridge` example carries the same private frames over two

@@ -22,7 +22,7 @@ import uuid
 
 import RNS
 
-from mesh_chat.direct_binding import BindingAuthority, accept_binding, create_binding
+from mesh_chat.direct_binding import BindingAuthority, create_binding
 from mesh_chat.reticulum_config import NetworkSettings
 from mesh_chat.service import MeshChatService
 from mesh_chat.vault import VaultStore
@@ -84,7 +84,9 @@ def _worker(name, root, commands, responses, incoming, outgoing):
                 if action == "stop":
                     responses.put({"ok": True, "action": action})
                     break
-                if action == "framed_command":
+                if action == "prepare_direct_invitation":
+                    result = service._prepare_direct_invitation(request["invitation_id"], request["expires_at"])
+                elif action == "framed_command":
                     value, should_stop = service.dispatch({"v": 1, "id": request["request_id"],
                         "command": request["service_command"], "payload": request["payload"]})
                     if should_stop or not value.get("ok"):
@@ -122,14 +124,13 @@ def _worker(name, root, commands, responses, incoming, outgoing):
                             raise ValueError("Wrong local audience")
                         # Recheck local workspace membership and persist the
                         # exact relationship generation under one vault transaction.
-                        # Pending authority still comes from this trusted harness.
+                        # Pending authority is reloaded from durable service records.
                         if authority.scope["kind"] == "workspace":
                             service._accept_direct_workspace_binding(request["binding"], authority, cert)
                         elif service._require_workspace(request["workspace_id"])["state"] == "joining":
                             service._accept_direct_join_binding(request["workspace_id"], request["binding"], authority, cert)
                         else:
-                            accept_binding(store, request["binding"], authority, cert,
-                                load_authority=load_authority, clock=lambda: int(time.time()))
+                            service._accept_direct_owner_binding(request["invitation_id"], request["binding"], authority, cert)
                         authorized = True
                         pending = authority.scope["kind"] == "invitation"
                         peer_destination = _destination_for(_identity_from_public_key(authority.issuer_public_identity))
@@ -314,7 +315,9 @@ def run(*, executable=None, timeout=45):
             verified = verify_workspace_invitation(invitation["text"])
             scope = {"kind": "invitation", "digest": workspace_document_digest(verified.serialized),
                      "expires_at": verified.expires_at}
-            expiry, challenge = int(time.time()) + 240, os.urandom(32).hex()
+            negotiation = _call(owner["commands"], owner["responses"], "prepare_direct_invitation",
+                                invitation_id=invitation["id"], expires_at=int(time.time()) + 240)
+            expiry, challenge = negotiation["expires_at"], negotiation["challenge"]
             carrier = PacketCarrier(peers, executable)
             def authorize(scopes, generation):
                 for index, peer in enumerate(peers):
@@ -322,7 +325,7 @@ def run(*, executable=None, timeout=45):
                     arguments = dict(issuer=peer["profile"]["public_identity"],
                         audience=other["profile"]["destination_hash"], scope=scopes[index], expires_at=expiry,
                         challenge=challenge, certificate=carrier.certificates[index].hex(), generation=generation,
-                        workspace_id=workspace["id"])
+                        workspace_id=workspace["id"], invitation_id=invitation["id"])
                     signed = _call(peer["commands"], peer["responses"], "sign_binding", **arguments)
                     _call(other["commands"], other["responses"], "verify_binding", **arguments,
                           binding=signed["binding"])

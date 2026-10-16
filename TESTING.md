@@ -36,7 +36,7 @@ context evidence, not support for the shipping shared router. Full pipeline
 resource accounting, platform embedding, public-Internet topology, Android
 lifecycle/battery behavior, and physical device results remain release gates.
 
-Local non-integration validation passed 545 tests with unhandled-thread warnings
+Local non-integration validation passed 547 tests with unhandled-thread warnings
 treated as errors (7 skipped, 6 integration tests deselected). Skips require
 packaged artifacts or non-Windows paths. The final source topology passed after
 routed-packet filtering was tightened. UDP mapping tests cover TCP/UDP creation,
@@ -77,6 +77,14 @@ The source topology passes with the join
 saved before carrier authorization. The prior admitted-workspace increment
 `41fb859` passed all native jobs in
 [run 38855759048](https://github.com/ahouchens/mesh-chat/actions/runs/38855759048).
+
+Owner pending negotiation tests cover preserved preparation retries, wrong
+challenge, failed persistence before selection, competing valid responders,
+reopening the vault, identical replay, conflicting/lower generations, expiry and
+revocation. Selection leaves join-request storage and workspace membership
+unchanged. The real source topology passes with the persisted owner challenge.
+The prior joiner-loader increment `c692c14` passed all native jobs in
+[run 38856186805](https://github.com/ahouchens/mesh-chat/actions/runs/38856186805).
 
 ## Commands
 
