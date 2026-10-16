@@ -16,6 +16,7 @@ from .errors import (
     ContactNotApproved,
     DirectConnectionUnavailable,
     HistoryPruned,
+    IdentityMismatch,
     MeshChatError,
     StaleCursor,
     ValidationError,
@@ -2060,6 +2061,45 @@ class WorkspaceServiceMixin:
             current["generation"] = int(current.get("generation", 0)) + 1
             records.append(("workspace_due_work_index", record_id, current))
         return records
+
+    def _direct_workspace_binding_authority(self, expected):
+        """Reload admitted peer authority; private native/service use only.
+
+        Call inside binding acceptance's vault transaction. Challenge and lease
+        remain protected negotiation inputs, not fields imported as authority.
+        This does not authorize pending invitations or attach an interface.
+        """
+        from .direct_binding import BindingAuthority, _scope
+        _scope(expected.scope)
+        scope = expected.scope
+        if scope["kind"] != "workspace" or self._identity is None:
+            raise ValidationError("Direct workspace authorization is unavailable")
+        workspace = self._require_workspace(scope["workspace_id"])
+        if (workspace.get("state") != "active"
+                or scope["audience_device_id"] != workspace.get("local_device_id")
+                or scope["issuer_device_id"] == scope["audience_device_id"]):
+            raise ValidationError("Direct binding requires the active local workspace device")
+        manifest = self._workspace_current_manifest(workspace)
+        issuer = find_device(manifest, scope["issuer_device_id"])
+        audience = find_device(manifest, scope["audience_device_id"])
+        if (manifest.workspace_id != scope["workspace_id"] or manifest.status != "active"
+                or issuer is None or audience is None
+                or issuer[0].status != "active" or audience[0].status != "active"
+                or audience[0].member_id != workspace.get("local_member_id")
+                or audience[1].public_identity != self._identity.get_public_key()
+                or issuer[1].public_identity != expected.issuer_public_identity
+                or audience[1].destination_hash != expected.audience_destination):
+            raise IdentityMismatch("Direct binding does not match current admitted devices")
+        return BindingAuthority(issuer[1].public_identity, audience[1].destination_hash,
+                                dict(scope), expected.expires_at, expected.challenge)
+
+    def _accept_direct_workspace_binding(self, raw, expected, certificate_der):
+        """Commit admitted binding acceptance without creating network effects."""
+        from .direct_binding import accept_binding
+        with self._dispatch_lock:
+            return accept_binding(self.store, raw, expected, certificate_der,
+                                  load_authority=lambda: self._direct_workspace_binding_authority(expected),
+                                  clock=lambda: int(time.time()))
 
     def _require_workspace(self, workspace_id: str) -> dict[str, Any]:
         if not isinstance(workspace_id, str):

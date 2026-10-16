@@ -123,8 +123,11 @@ def _worker(name, root, commands, responses, incoming, outgoing):
                         # Recheck local workspace membership and persist the
                         # exact relationship generation under one vault transaction.
                         # Pending authority still comes from this trusted harness.
-                        accept_binding(store, request["binding"], authority, cert,
-                            load_authority=load_authority, clock=lambda: int(time.time()))
+                        if authority.scope["kind"] == "workspace":
+                            service._accept_direct_workspace_binding(request["binding"], authority, cert)
+                        else:
+                            accept_binding(store, request["binding"], authority, cert,
+                                load_authority=load_authority, clock=lambda: int(time.time()))
                         authorized = True
                         pending = authority.scope["kind"] == "invitation"
                         peer_destination = _destination_for(_identity_from_public_key(authority.issuer_public_identity))

@@ -286,6 +286,64 @@ def _joined_pair(
     )
 
 
+def test_direct_workspace_binding_rechecks_admission_and_local_identity(tmp_path):
+    from dataclasses import replace
+    from mesh_chat.direct_binding import BindingAuthority, create_binding
+    owner, _, owner_profile, member, _, _, workspace, _, identity = _joined_pair(tmp_path, base=90000)
+    try:
+        local = owner._require_workspace(workspace["id"])
+        remote = member._require_workspace(workspace["id"])
+        now = int(time.time())
+        authority = BindingAuthority(identity.get_public_key(),
+            bytes.fromhex(owner_profile["destination_hash"]), {
+                "kind": "workspace", "workspace_id": workspace["id"],
+                "issuer_device_id": remote["local_device_id"],
+                "audience_device_id": local["local_device_id"],
+            }, now + 300, b"c" * 32)
+        cert = b"native public certificate"
+        raw = create_binding(identity, authority, cert, session_id=str(uuid.uuid4()),
+            challenge=authority.challenge, generation=1,
+            candidates=[{"host": "8.8.8.8", "port": 12345, "expires_at": now + 300}],
+            issued_at=now, expires_at=now + 300)
+        assert owner._accept_direct_workspace_binding(raw, authority, cert).generation == 1
+        for changed in (
+            replace(authority, audience_destination=b"x" * 16),
+            replace(authority, issuer_public_identity=RNS.Identity().get_public_key()),
+            replace(authority, scope={**authority.scope, "audience_device_id": remote["local_device_id"]}),
+        ):
+            with pytest.raises((ValidationError, IdentityMismatch)):
+                owner._accept_direct_workspace_binding(raw, changed, cert)
+        original_identity = owner._identity
+        owner._identity = RNS.Identity()
+        with pytest.raises(IdentityMismatch):
+            owner._accept_direct_workspace_binding(raw, authority, cert)
+        owner._identity = original_identity
+        owner._identity = None
+        with pytest.raises(ValidationError):
+            owner._accept_direct_workspace_binding(raw, authority, cert)
+        owner._identity = original_identity
+        for state in ("joining", "removed", "closed", "frozen"):
+            owner.store.put("workspace", owner._workspace_record_id(workspace["id"]),
+                            {**local, "state": state})
+            with pytest.raises(ValidationError):
+                owner._accept_direct_workspace_binding(raw, authority, cert)
+        owner.store.put("workspace", owner._workspace_record_id(workspace["id"]), local)
+        # Even an independently valid signed manifest from another workspace
+        # must not authorize this scope through a changed local pointer.
+        other = owner.create_workspace(_op(90011), "Other", "")
+        owner.store.put("workspace", owner._workspace_record_id(workspace["id"]),
+                        {**local, "manifest_hash": owner._require_workspace(other["id"])["manifest_hash"]})
+        with pytest.raises(IdentityMismatch):
+            owner._accept_direct_workspace_binding(raw, authority, cert)
+        owner.store.put("workspace", owner._workspace_record_id(workspace["id"]), local)
+        owner.remove_workspace_member(workspace["id"], remote["local_member_id"], _op(90010))
+        with pytest.raises(IdentityMismatch):
+            owner._accept_direct_workspace_binding(raw, authority, cert)
+    finally:
+        owner.close()
+        member.close()
+
+
 def _deliver_all(
     recipient: MeshChatService,
     packets: list[dict[str, Any]],

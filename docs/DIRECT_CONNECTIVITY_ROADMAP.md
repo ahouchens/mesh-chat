@@ -54,9 +54,13 @@ scope authorization and compares the persisted generation before committing.
 Replay history is keyed to the exact issuer, audience and scope, retained across
 restart, and independent of transport certificate rotation. Concurrent conflicting
 imports have one winner; failed encryption or commit returns no acceptance.
-The isolated harness uses this path and rechecks workspace membership within the
-transaction. Pending authorization still comes from the trusted test harness;
-shipping authorization loaders and activation/revocation reconciliation remain open.
+The isolated harness uses this path. Admitted bindings now call a private service
+loader within the transaction: it checks the current signed manifest, active
+workspace and members, exact local device/member and unlocked local identity,
+and the issuer identity and audience destination. It rejects foreign manifests
+and self-connections. Pending authorization and negotiation challenge/lease
+still come from the trusted test harness; their durable production loaders and
+activation/revocation reconciliation remain open.
 
 The Rust proof now owns a `BoundSocket` before peer authorization and consumes
 that exact socket when creating the QUIC endpoint. It exposes no clone/read API

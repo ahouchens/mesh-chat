@@ -36,7 +36,7 @@ context evidence, not support for the shipping shared router. Full pipeline
 resource accounting, platform embedding, public-Internet topology, Android
 lifecycle/battery behavior, and physical device results remain release gates.
 
-Local non-integration validation passed 544 tests with unhandled-thread warnings
+Local non-integration validation passed 545 tests with unhandled-thread warnings
 treated as errors (7 skipped, 6 integration tests deselected). Skips require
 packaged artifacts or non-Windows paths. The final source topology passed after
 routed-packet filtering was tightened. UDP mapping tests cover TCP/UDP creation,
@@ -60,6 +60,12 @@ failure, commit rollback, and reopen/rotation regression checks. The focused bin
 and vault suite passed 54 tests (one platform skip), and the real two-service source
 topology passed with transactional acceptance. This increment changes Python source;
 the native qualification above identifies the earlier tested native commit.
+
+The private admitted-workspace authority loader passes a real signed-admission
+regression covering wrong issuer/audience, local identity loss/substitution,
+inactive workspace states, a foreign signed manifest, and member removal. The
+two-service source topology also passes using this service loader. GitHub runs
+this regression on Windows and Linux; no renderer command was added.
 
 ## Commands
 

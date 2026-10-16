@@ -43,8 +43,10 @@ and commits acceptance while reloading authorization under the vault transaction
 Its protected caller must supply a current vault-backed authority loader; failed
 validation, encryption or commit returns no acceptance. Record indexes are keyed
 opaque IDs, and expired replay history is retained. This primitive does not grant
-runtime activation: shipping authority loaders and lifecycle reconciliation remain
-open. No binding
+runtime activation. The service now reloads admitted workspace authority from
+the current signed manifest, verifying active state and exact local/remote device
+identities. Pending authority, durable negotiation state and lifecycle reconciliation
+remain open. No binding
 command or packet API is exposed to React. The initial unbound Offer remains a
 separate phase-2 document; this verifier requires an exact audience.
 
@@ -155,7 +157,7 @@ fresh workspace-scoped bindings checked against the local manifest, bidirectiona
 LXMF messages, ratchet readiness, endpoint receipts, and carrier-death teardown.
 It closes the pending carrier and creates fresh credentials after admission.
 The proof uses transactional binding acceptance before activation, including a
-local workspace membership recheck. Its pending scope is still supplied by the
+private service workspace authority reload. Its pending scope is still supplied by the
 trusted harness. Production activation/revocation reconciliation and crash recovery
 remain unimplemented.
 
