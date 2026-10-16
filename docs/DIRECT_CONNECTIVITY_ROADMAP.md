@@ -396,5 +396,8 @@ adapter activation under the service dispatch lock. A failed recheck clears the
 cached authorization and retires the pending adapter. The source topology attempts
 to reuse both peers' accepted pending credentials after admission and confirms
 rejection/offline state, then establishes fresh admitted credentials and exchanges
-messages. Native qualification is pending. This closes an activation-time gap in
+messages. Native qualification passed on Windows/Linux and Android ARM64 compilation
+at `0af3059` in
+[run 38927826917](https://github.com/ahouchens/mesh-chat/actions/runs/38927826917).
+This closes an activation-time gap in
 the proof, not continuous production revocation monitoring or shipping IPC.

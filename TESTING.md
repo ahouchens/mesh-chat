@@ -168,7 +168,9 @@ passed on Windows/Linux in GitHub; Android ARM64 compilation passed at `839b40a`
 Activation-time revalidation now rejects both peers' old pending authorization
 after admission, clears cached permission and marks adapters offline before fresh
 admitted credentials are installed. The source topology passed this assertion and
-subsequent messaging; native CI qualification is pending. The two native expiry
+subsequent messaging. Native tests/topology passed on Windows/Linux, and Android
+ARM64 compilation passed at `0af3059` in
+[run 38927826917](https://github.com/ahouchens/mesh-chat/actions/runs/38927826917). The two native expiry
 probes remain skipped locally because they require the GitHub-built carrier.
 
 ## Commands
