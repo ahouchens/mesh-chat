@@ -64,6 +64,7 @@ from .remote import (
 from .remote_service import RemoteProfileServiceMixin
 from .reticulum_config import NetworkSettings
 from .vault import VaultStore
+from .workspace_protocol import verify_workspace_invitation
 from .workspace_service import WorkspaceServiceMixin
 from .workspace_wire import is_workspace_payload, parse_workspace_payload
 
@@ -681,6 +682,11 @@ class MeshChatService(
         invitation = verify_email_invitation(raw, purpose)
         if invitation is None:
             raise ValidationError("A connection reply requires a v4 invitation")
+        workspace_id = (
+            verify_workspace_invitation(invitation.inner).workspace_id
+            if purpose == "workspace"
+            else None
+        )
         previous = self.store.get("connection_response", invitation.digest)
         access = self.create_participant_host_access(
             purpose=purpose,
@@ -693,7 +699,7 @@ class MeshChatService(
             self._identity, invitation.serialized, purpose, access
         )
         formats = connection_response_formats(serialized)
-        self.store.put("connection_response", invitation.digest, {
+        response_record = {
             "id": invitation.digest,
             "purpose": purpose,
             "invitation_digest": invitation.digest,
@@ -707,7 +713,10 @@ class MeshChatService(
             ), None),
             "created_at": time.time(),
             "expires_at": float(min(invitation.expires_at, access["expires_at"])),
-        })
+        }
+        if workspace_id is not None:
+            response_record["workspace_id"] = workspace_id
+        self.store.put("connection_response", invitation.digest, response_record)
         previous_host = previous.get("host_session_id") if previous else None
         if isinstance(previous_host, str) and previous_host != host_session_id:
             try:
@@ -1214,6 +1223,12 @@ class MeshChatService(
                 ("message", accepted["id"], accepted),
             ]
         )
+        self.promote_pending_callback(
+            contact["destination_hash"],
+            scope_kind="contact",
+            scope_id=contact_id,
+            purpose="personal",
+        )
         self._apply_contact_hints(contact)
         # Flush once. Calling _attempt() first would change the acceptance to
         # `sending`, then immediately submit the same durable packet again.
@@ -1230,6 +1245,12 @@ class MeshChatService(
         contact["trust"] = TrustState.BLOCKED.value
         contact["updated_at"] = time.time()
         self.store.put("contact", contact_id, contact)
+        self.decline_pending_callbacks(
+            contact["destination_hash"],
+            purpose="personal",
+            legacy_scope_kind="contact",
+            legacy_scope_id=contact_id,
+        )
         self._changed()
         return contact
 
@@ -2100,11 +2121,14 @@ class MeshChatService(
             existing["trust"] = TrustState.IDENTITY_CHANGED.value
             self.store.put("contact", existing["id"], existing)
             return
-        self.promote_pending_callback(
-            invitation.destination_hash.hex(),
-            scope_kind="contact",
-            scope_id=(contact if existing is None else existing)["id"],
-        )
+        received_contact = contact if existing is None else existing
+        if received_contact["trust"] != TrustState.PENDING_REQUEST.value:
+            self.promote_pending_callback(
+                invitation.destination_hash.hex(),
+                scope_kind="contact",
+                scope_id=received_contact["id"],
+                purpose="personal",
+            )
         self._changed()
 
     def _receive_chat(self, contact: dict[str, Any], native: LXMF.LXMessage, app: Any) -> None:

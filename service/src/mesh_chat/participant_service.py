@@ -652,7 +652,12 @@ class ParticipantAccessServiceMixin:
         return record
 
     def promote_pending_callback(
-        self, responder_destination: str, *, scope_kind: str, scope_id: str,
+        self,
+        responder_destination: str,
+        *,
+        scope_kind: str,
+        scope_id: str,
+        purpose: str | None = None,
     ) -> None:
         """Move a consumed callback route onto the admitted relationship scope."""
 
@@ -660,6 +665,7 @@ class ParticipantAccessServiceMixin:
             if (
                 pending.get("state") != "consumed"
                 or pending.get("responder_destination") != responder_destination
+                or (purpose is not None and pending.get("purpose") != purpose)
             ):
                 continue
             pending_scope = {"kind": "pending_invitation", "id": pending_id}
@@ -675,6 +681,80 @@ class ParticipantAccessServiceMixin:
                 self.store.put("participant_access", record_id, record)
             pending["promoted_scope"] = durable_scope
             self.store.put("email_invitation", pending_id, pending)
+
+    def decline_pending_callbacks(
+        self,
+        responder_destination: str,
+        *,
+        purpose: str,
+        legacy_scope_kind: str | None = None,
+        legacy_scope_id: str | None = None,
+    ) -> None:
+        """Retire an unapproved peer's callback routes without other scopes."""
+
+        pending = [
+            (pending_id, record)
+            for pending_id, record in self.store.items("email_invitation")
+            if record.get("state") == "consumed"
+            and record.get("purpose") == purpose
+            and record.get("responder_destination") == responder_destination
+        ]
+        if not pending:
+            return
+        pending_scopes = [
+            {"kind": "pending_invitation", "id": pending_id}
+            for pending_id, _record in pending
+        ]
+        legacy_scope = {
+            "kind": legacy_scope_kind,
+            "id": legacy_scope_id,
+        }
+        release_legacy_scope = (
+            legacy_scope_kind is not None
+            and legacy_scope_id is not None
+            and any(
+                record.get("promoted_scope") == legacy_scope
+                for _pending_id, record in pending
+            )
+        )
+        writes: list[tuple[str, str, dict[str, Any]]] = []
+        deletions: list[tuple[str, str]] = []
+        changed = False
+        for record_id, record in self.store.items("participant_access"):
+            removable_scopes = list(pending_scopes)
+            if (
+                release_legacy_scope
+                and record.get("access", {}).get("operator_destination")
+                == responder_destination
+            ):
+                removable_scopes.append(legacy_scope)
+            scopes = [
+                item
+                for item in record.get("scopes", [])
+                if item not in removable_scopes
+            ]
+            if scopes == record.get("scopes", []):
+                continue
+            changed = True
+            if scopes:
+                updated = dict(record)
+                updated["scopes"] = scopes
+                writes.append(("participant_access", record_id, updated))
+            else:
+                deletions.append(("participant_access", record_id))
+        now = time.time()
+        for pending_id, record in pending:
+            updated = dict(record)
+            updated["state"] = "declined"
+            updated["declined_at"] = now
+            updated.pop("promoted_scope", None)
+            writes.append(("email_invitation", pending_id, updated))
+        self.store.put_and_delete(writes, deletions, redact_command_cache=True)
+        if changed:
+            try:
+                self._apply_participant_interfaces()
+            except Exception:
+                pass
 
     def participant_connection_snapshot(self) -> list[dict[str, Any]]:
         return [{

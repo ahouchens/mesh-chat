@@ -4728,12 +4728,30 @@ class WorkspaceServiceMixin:
         network = getattr(self, "network", None)
         if network is not None:
             network.remember_contact(join.device.public_identity, join.device.destination_hash)
-        self.promote_pending_callback(
-            join.device.destination_hash.hex(),
-            scope_kind="workspace_device",
-            scope_id=join.workspace_id,
-        )
         self._workspace_changed(join.workspace_id, resource_kind="join_request")
+
+    def _workspace_pending_callback(
+        self,
+        workspace_id: str,
+        invitation: dict[str, Any],
+        responder_destination: str,
+    ) -> tuple[str, dict[str, Any]] | None:
+        """Return the exact consumed callback associated with a join request."""
+
+        email_digest = invitation.get("email_invitation_digest")
+        if not isinstance(email_digest, str):
+            return None
+        pending = self.store.get("email_invitation", email_digest)
+        if (
+            pending is None
+            or pending.get("state") != "consumed"
+            or pending.get("purpose") != "workspace"
+            or pending.get("scope_id") != invitation.get("id")
+            or pending.get("workspace_id") != workspace_id
+            or pending.get("responder_destination") != responder_destination
+        ):
+            return None
+        return email_digest, pending
 
     def approve_workspace_join(
         self,
@@ -4810,6 +4828,36 @@ class WorkspaceServiceMixin:
         invitation["state"] = "consumed"
         invitation["consumed_by_member_id"] = join.member_id
         invitation["updated_at"] = time.time()
+        callback_records: list[tuple[str, str, dict[str, Any]]] = []
+        callback = self._workspace_pending_callback(
+            workspace_id, invitation, request["destination_hash"]
+        )
+        if callback is not None:
+            callback_id, callback_record = callback
+            pending_scope = {"kind": "pending_invitation", "id": callback_id}
+            durable_scope = {"kind": "workspace_device", "id": workspace_id}
+            promoted = False
+            for access_id, access_record in self.store.items("participant_access"):
+                scopes = list(access_record.get("scopes", []))
+                if pending_scope not in scopes:
+                    continue
+                updated_access = dict(access_record)
+                updated_access["scopes"] = [
+                    item for item in scopes if item != pending_scope
+                ]
+                if durable_scope not in updated_access["scopes"]:
+                    updated_access["scopes"].append(durable_scope)
+                callback_records.append(
+                    ("participant_access", access_id, updated_access)
+                )
+                promoted = True
+            if promoted:
+                callback_record = dict(callback_record)
+                callback_record["promoted_scope"] = durable_scope
+                callback_record["promoted_at"] = time.time()
+                callback_records.append(
+                    ("email_invitation", callback_id, callback_record)
+                )
         public_channels = sorted(
             (
                 item
@@ -4867,6 +4915,7 @@ class WorkspaceServiceMixin:
             self._manifest_epoch_record(next_manifest),
             ("workspace_join_request", request_id, request),
             ("workspace_invitation", request["invitation_id"], invitation),
+            *callback_records,
             *[
                 ("workspace_delivery", delivery["id"], delivery)
                 for delivery in manifest_deliveries
@@ -4915,13 +4964,81 @@ class WorkspaceServiceMixin:
             raise ValidationError("Workspace join request is no longer pending")
         request["state"] = "declined"
         request["updated_at"] = time.time()
+        invitation = self.store.get(
+            "workspace_invitation", request.get("invitation_id", "")
+        )
+        callback_records: list[tuple[str, str, dict[str, Any]]] = []
+        callback_deletions: list[tuple[str, str]] = []
+        callback_changed = False
+        callback = (
+            self._workspace_pending_callback(
+                workspace_id, invitation, request.get("destination_hash", "")
+            )
+            if invitation is not None
+            else None
+        )
+        if callback is not None:
+            callback_id, callback_record = callback
+            pending_scope = {"kind": "pending_invitation", "id": callback_id}
+            legacy_scope = {"kind": "workspace_device", "id": workspace_id}
+            current = self._workspace_current_manifest(workspace)
+            responder_is_admitted = any(
+                device.destination_hash.hex() == request.get("destination_hash")
+                for member in current.members
+                for device in member.devices
+            )
+            release_legacy_scope = (
+                callback_record.get("promoted_scope") == legacy_scope
+                and not responder_is_admitted
+            )
+            for access_id, access_record in self.store.items("participant_access"):
+                access = access_record.get("access", {})
+                removable_scopes = [pending_scope]
+                if (
+                    release_legacy_scope
+                    and access.get("operator_destination")
+                    == request.get("destination_hash")
+                ):
+                    removable_scopes.append(legacy_scope)
+                scopes = [
+                    item
+                    for item in access_record.get("scopes", [])
+                    if item not in removable_scopes
+                ]
+                if scopes == access_record.get("scopes", []):
+                    continue
+                callback_changed = True
+                if scopes:
+                    updated_access = dict(access_record)
+                    updated_access["scopes"] = scopes
+                    callback_records.append(
+                        ("participant_access", access_id, updated_access)
+                    )
+                else:
+                    callback_deletions.append(("participant_access", access_id))
+            callback_record = dict(callback_record)
+            callback_record["state"] = "declined"
+            callback_record["declined_at"] = time.time()
+            callback_record.pop("promoted_scope", None)
+            callback_records.append(
+                ("email_invitation", callback_id, callback_record)
+            )
         outcome = {"request_id": request_id, "state": "declined"}
         committed = self.store.commit_operation(
             operation_id,
             digest,
             outcome,
-            [("workspace_join_request", request_id, request)],
+            [
+                ("workspace_join_request", request_id, request),
+                *callback_records,
+            ],
+            callback_deletions,
         )
+        if callback_changed:
+            try:
+                self._apply_participant_interfaces()
+            except Exception:
+                pass
         self._workspace_changed(workspace_id, resource_kind="join_request")
         return committed
 

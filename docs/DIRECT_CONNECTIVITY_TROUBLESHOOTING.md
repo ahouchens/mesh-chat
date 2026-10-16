@@ -1,6 +1,6 @@
 # Direct Internet connection troubleshooting
 
-Mesh Chat is direct-first: a new Internet invitation asks the sender's own device to host a short-lived, authenticated connection. There is no Mesh Chat account, rendezvous service, public-IP lookup, STUN/TURN service, managed relay, or silent transport operator. Email, Slack, Teams, QR, clipboard, and invitation files carry only the signed invitation.
+Mesh Chat is direct-first: a new Internet invitation asks the sender's own device to host a short-lived, authenticated connection, and the recipient first tries an outbound connection to that signed route. There is no Mesh Chat account, rendezvous service, public-IP lookup, STUN/TURN service, managed relay, or silent transport operator. Email, Slack, Teams, QR, clipboard, and invitation files carry only the signed invitation.
 
 When a signed invitation is too dense for a reliable ordinary QR, Mesh Chat may
 display a `MESHQR1` camera transport. It contains a bounded compressed copy of
@@ -12,14 +12,15 @@ The sender must keep Mesh Chat open and online while the invitation is active an
 
 ## Email-ready invitations and connection replies
 
-Choose **Email-ready invitation** when you want the other person to be able to reverse the connection direction. Mesh Chat does not sign in to, read, send, or monitor email. It creates signed text or a file for you to send with any sharing tool.
+Choose **Email-ready invitation** when you want the other person to be able to reverse the connection direction if the normal outbound-first join cannot reach you. Mesh Chat does not sign in to, read, send, or monitor email. It creates signed text or a file for you to send with any sharing tool.
 
-- If the inviter can host, the v4 invitation includes that short-lived direct route and the recipient tries it first.
-- If that path is absent or fails, the recipient can choose **Create connection reply**. Their device prepares its own short-lived listener and produces a signed `.meshchat-connect` reply.
-- The inviter imports the reply and then sends the normal contact request or workspace join. Importing the reply alone does not approve a contact or admit a workspace device.
-- Keep the device hosting the current callback route open until the normal request and approval finish. Every invitation and reply has an explicit expiry.
+- If the inviter can host, the v4 invitation includes that short-lived direct route. The recipient first attaches an authenticated outbound client and sends its signed contact request or workspace join toward the inviter.
+- With no inviter route, Mesh Chat can still queue the invitee-authored request and try an already-known nearby or approved Reticulum path. A queued request is durable, but it is not evidence that an Internet route exists.
+- If those outbound attempts cannot find a path, the recipient may explicitly choose the role-reversal action. Their device then prepares its own short-lived inbound listener and produces a signed `.meshchat-connect` reply; this step may fail behind carrier/shared NAT or an inbound firewall.
+- The inviter imports the reply and dials the recipient's callback from an outbound client. The recipient remains the author and sender of the contact request or workspace join; the workspace owner never authors the join for it. Importing the reply or opening the callback alone does not approve a contact or admit a workspace device.
+- Keep the device hosting the current callback route open and, on mobile, foregrounded until the normal request and approval finish. Mobile operating systems may suspend or terminate a backgrounded listener. Every invitation and reply has an explicit expiry.
 
-If neither device can accept inbound Internet traffic, exchanging more replies will not fix the topology. Use an explicit manual forward, nearby mode on the same private network, or a separately approved participant-operated Remote Connection Profile. Mesh Chat never uploads the documents to a rendezvous service and never silently selects a relay.
+If neither device can accept inbound Internet traffic, both devices are outbound-only. Without an already-working Reticulum path or a shared access point, neither has an addressable listener for the other to dial, so exchanging more replies or retrying NAT-PMP cannot fix the topology. Use an explicit manual forward, nearby mode on the same private network, or a separately approved participant-operated Remote Connection Profile. Mesh Chat never uploads the documents to a rendezvous service and never silently selects a relay.
 
 After approval, Mesh Chat keeps the successful callback under that exact contact or workspace-device scope. **Reconnecting automatically** means a still-valid stored scoped route can be retried; it does not claim that the peer is online. If another authenticated Reticulum path works as a callback route approaches expiry, Mesh Chat sends the signed refresh through that path automatically and asks the router to reuse the previous external port where supported. The new document always records the mapping actually restored. **Reconnect update required** means every path is gone and the peer must share a newly signed `.meshchat-route` update. A route update cannot change contact verification or workspace membership, and an update from a removed or unknown peer is rejected.
 
@@ -82,11 +83,11 @@ If the router's WAN address is private, an upstream modem/router still needs a m
 
 ## Why the recipient phone's carrier NAT is usually irrelevant
 
-In the common desktop-on-home-Wi-Fi to phone-on-cellular flow, the phone initiates an outbound TCP connection to the sender. Mobile carrier NAT usually allows that outbound connection and its replies. The difficult side is the sender accepting an inbound connection through its router and firewalls. Carrier policy can still filter destinations or suspend the app, so this is not a guarantee.
+In the common desktop-on-home-Wi-Fi to phone-on-cellular flow, the phone first initiates an outbound TCP connection to the sender. Mobile carrier NAT usually allows that outbound connection and its replies. The difficult side is the sender accepting an inbound connection through its router and firewalls. Reversing the route and asking the phone to host is less likely to work behind carrier NAT and is also vulnerable to Android background suspension, so it is a fallback rather than the normal join path. Carrier policy can still filter outbound destinations or suspend the app, so this is not a guarantee.
 
 ## When direct hosting cannot work
 
-No-server connectivity cannot be guaranteed when an ISP or enterprise firewall blocks inbound traffic, a provider/shared NAT cannot be configured, IPv6 inbound policy cannot be opened, or the router offers no usable mapping and cannot be manually configured. Nearby mode is explicit and works only on the same network; it will not work over cellular.
+No-server connectivity cannot be guaranteed when an ISP or enterprise firewall blocks inbound traffic, a provider/shared NAT cannot be configured, IPv6 inbound policy cannot be opened, or the router offers no usable mapping and cannot be manually configured. Two successful outbound network connections are not sufficient unless they meet at an explicitly configured Reticulum access point; Mesh Chat has no rendezvous service that pairs them. Nearby mode is explicit and works only on the same network; it will not work over cellular.
 
 The Internet fallback is an explicitly named, approved, participant-operated Reticulum access point. Selecting it is a separate per-invitation choice, and the recipient separately consents. Its operator can observe connection metadata but cannot decrypt or forge valid Mesh Chat content. Mesh Chat never silently selects it.
 

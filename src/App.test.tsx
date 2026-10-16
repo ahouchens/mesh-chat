@@ -726,6 +726,67 @@ describe("new chat invitations", () => {
     )).toBe(false);
   });
 
+  it("sends an access-free workspace join over existing Mesh routes before reverse hosting", async () => {
+    const current = snapshot();
+    const invitation = "MESHWORKSPACE4:outbound-first";
+    const joiningWorkspace: Workspace = { ...workspace, state: "joining", local_role: "member" };
+    let deliverInvitation: ((value: string) => void) | undefined;
+    api.runtimePlatform.mockResolvedValue("android");
+    api.initializeService.mockResolvedValue(current);
+    api.onInvitation.mockImplementation(async (callback) => {
+      deliverInvitation = callback;
+      return () => undefined;
+    });
+    api.onServiceEvent.mockResolvedValue(() => undefined);
+    api.serviceCommand.mockImplementation(async (command: string) => {
+      if (command === "snapshot") return current;
+      if (command === "preview_workspace_invitation") return {
+        name: "Lakewatcher",
+        description: "Field coordination",
+        owner_fingerprint: "AAAA BBBB CCCC DDDD",
+        member_count: 1,
+        retention_days: 90,
+        expires_at: 2_000_000_000,
+        connection_reply_available: true,
+      };
+      if (command === "submit_workspace_join") return joiningWorkspace;
+      if (command === "check_direct_connection") return {
+        summary: { phase: "precondition", result: "available", reason: "ready_to_prepare", recommended_action: "prepare_direct" },
+        checks: [{ phase: "precondition", result: "available", reason: "ready_to_prepare", recommended_action: "prepare_direct" }],
+      };
+      if (command === "create_connection_reply") return {
+        link: "meshchat://connect/reply",
+        text: "MESHCONNECT1:workspace-reply",
+        file: "{}",
+        expires_at: 2_000_000_000,
+      };
+      return {};
+    });
+
+    render(<App />);
+    await screen.findByRole("heading", { name: "Your private conversations" });
+    await act(async () => deliverInvitation?.(invitation));
+
+    const dialog = await screen.findByRole("dialog", { name: "Join a workspace" });
+    expect(within(dialog).queryByRole("button", { name: "Check this device for a return connection" })).toBeNull();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Send join request" }));
+
+    await waitFor(() => expect(api.serviceCommand).toHaveBeenCalledWith(
+      "submit_workspace_join",
+      { operation_id: expect.any(String), invitation },
+    ));
+    expect(api.serviceCommand.mock.calls.some(([command]) => command === "check_direct_connection")).toBe(false);
+    expect(api.serviceCommand.mock.calls.some(([command]) => command === "create_connection_reply")).toBe(false);
+    expect(await within(dialog).findByRole("heading", { name: "Join request saved" })).toBeTruthy();
+    expect(within(dialog).getByRole("button", { name: "View pending workspace" })).toBeTruthy();
+    expect(within(dialog).queryByRole("button", { name: "Send join request" })).toBeNull();
+
+    fireEvent.click(within(dialog).getByRole("button", { name: "Check this device for a return connection" }));
+    expect(await within(dialog).findByDisplayValue("MESHCONNECT1:workspace-reply")).toBeTruthy();
+    expect(api.serviceCommand.mock.calls.filter(([command]) => command === "submit_workspace_join")).toHaveLength(1);
+    expect(within(dialog).queryByRole("button", { name: "Send join request after sharing" })).toBeNull();
+  });
+
   it("creates an email-ready invitation without requiring an inbound path", async () => {
     const current = snapshot();
     api.runtimePlatform.mockResolvedValue("desktop");
@@ -756,7 +817,7 @@ describe("new chat invitations", () => {
     expect(screen.getByText(/never accesses either person’s email account/i)).toBeTruthy();
   });
 
-  it("creates a signed callback reply for a v4 invitation without approving the contact", async () => {
+  it("queues the contact request before creating a signed callback reply", async () => {
     const current = snapshot();
     api.runtimePlatform.mockResolvedValue("desktop");
     api.initializeService.mockResolvedValue(current);
@@ -773,6 +834,11 @@ describe("new chat invitations", () => {
         expires_at: 2_000_000_000,
         connection_reply_available: true,
       };
+      if (command === "accept_invitation") return { ...incoming, trust: "awaiting_consent" };
+      if (command === "check_direct_connection") return {
+        summary: { phase: "precondition", result: "available", reason: "ready_to_prepare", recommended_action: "prepare_direct" },
+        checks: [{ phase: "precondition", result: "available", reason: "ready_to_prepare", recommended_action: "prepare_direct" }],
+      };
       if (command === "create_connection_reply") return {
         link: "meshchat://connect/reply",
         text: "MESHCONNECT1:reply",
@@ -788,14 +854,120 @@ describe("new chat invitations", () => {
     fireEvent.click(await screen.findByRole("tab", { name: "Open an invite" }));
     fireEvent.change(screen.getByRole("textbox", { name: "Invitation" }), { target: { value: "MESHCHAT4:invitation" } });
     fireEvent.click(screen.getByRole("button", { name: "Check invitation" }));
-    fireEvent.click(await screen.findByRole("button", { name: "Create connection reply" }));
+    expect(await screen.findByRole("button", { name: "Send contact request" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Check this device for a return connection" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Send contact request" }));
+    expect(await screen.findByRole("heading", { name: "Contact request saved" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Check this device for a return connection" }));
 
+    await waitFor(() => expect(api.serviceCommand).toHaveBeenCalledWith("check_direct_connection"));
     await waitFor(() => expect(api.serviceCommand).toHaveBeenCalledWith("create_connection_reply", {
       invitation: "MESHCHAT4:invitation",
       purpose: "personal",
     }));
     expect(await screen.findByDisplayValue("MESHCONNECT1:reply")).toBeTruthy();
-    expect(api.serviceCommand.mock.calls.some(([command]) => command === "accept_invitation")).toBe(false);
+    expect(screen.getByText(/foregrounded until the inviter connects/i)).toBeTruthy();
+    expect(api.serviceCommand.mock.calls.filter(([command]) => command === "accept_invitation")).toHaveLength(1);
+  });
+
+  it("sends an access-free v4 contact request outbound before offering reverse hosting", async () => {
+    const current = snapshot();
+    api.runtimePlatform.mockResolvedValue("desktop");
+    api.initializeService.mockResolvedValue(current);
+    api.onInvitation.mockResolvedValue(() => undefined);
+    api.onServiceEvent.mockResolvedValue(() => undefined);
+    api.serviceCommand.mockImplementation(async (command: string) => {
+      if (command === "snapshot") return current;
+      if (command === "preview_invitation") return {
+        display_name: "Taylor",
+        identity_hash: "11".repeat(16),
+        destination_hash: "22".repeat(16),
+        fingerprint: "AAAA BBBB CCCC DDDD",
+        hints: [],
+        expires_at: 2_000_000_000,
+        connection_reply_available: true,
+      };
+      if (command === "accept_invitation") return { ...incoming, trust: "awaiting_consent" };
+      if (command === "check_direct_connection") return {
+        summary: { phase: "precondition", result: "available", reason: "ready_to_prepare", recommended_action: "prepare_direct" },
+        checks: [{ phase: "precondition", result: "available", reason: "ready_to_prepare", recommended_action: "prepare_direct" }],
+      };
+      if (command === "create_connection_reply") return {
+        link: "meshchat://connect/reply",
+        text: "MESHCONNECT1:queued-contact-reply",
+        file: "{}",
+        expires_at: 2_000_000_000,
+      };
+      return {};
+    });
+
+    render(<App />);
+    await screen.findByRole("heading", { name: "Your private conversations" });
+    fireEvent.click(screen.getAllByRole("button", { name: "New chat" })[0]);
+    fireEvent.click(await screen.findByRole("tab", { name: "Open an invite" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "Invitation" }), { target: { value: "MESHCHAT4:invitation" } });
+    fireEvent.click(screen.getByRole("button", { name: "Check invitation" }));
+    expect(await screen.findByRole("button", { name: "Send contact request" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Check this device for a return connection" })).toBeNull();
+    fireEvent.click(await screen.findByRole("button", { name: "Send contact request" }));
+
+    await waitFor(() => expect(api.serviceCommand).toHaveBeenCalledWith("accept_invitation", { invitation: "MESHCHAT4:invitation" }));
+    expect(api.serviceCommand.mock.calls.some(([command]) => command === "check_direct_connection")).toBe(false);
+    expect(api.serviceCommand.mock.calls.some(([command]) => command === "create_connection_reply")).toBe(false);
+    expect(await screen.findByRole("heading", { name: "Contact request saved" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Send contact request" })).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Check this device for a return connection" }));
+    expect(await screen.findByDisplayValue("MESHCONNECT1:queued-contact-reply")).toBeTruthy();
+    expect(api.serviceCommand.mock.calls.filter(([command]) => command === "accept_invitation")).toHaveLength(1);
+    expect(screen.queryByRole("button", { name: "Send contact request after sharing" })).toBeNull();
+  });
+
+  it("explains an inbound-blocked return path without trying to create a reply", async () => {
+    const current = snapshot();
+    api.runtimePlatform.mockResolvedValue("android");
+    api.initializeService.mockResolvedValue(current);
+    api.onInvitation.mockResolvedValue(() => undefined);
+    api.onServiceEvent.mockResolvedValue(() => undefined);
+    api.serviceCommand.mockImplementation(async (command: string) => {
+      if (command === "snapshot") return current;
+      if (command === "preview_invitation") return {
+        display_name: "Taylor",
+        identity_hash: "11".repeat(16),
+        destination_hash: "22".repeat(16),
+        fingerprint: "AAAA BBBB CCCC DDDD",
+        hints: [],
+        expires_at: 2_000_000_000,
+        connection_reply_available: true,
+      };
+      if (command === "accept_invitation") return { ...incoming, trust: "awaiting_consent" };
+      if (command === "check_direct_connection") return {
+        summary: { phase: "precondition", result: "unavailable", reason: "manual_setup_required", recommended_action: "set_up_manual_forward_or_choose_explicit_fallback" },
+        checks: [
+          { phase: "ipv6", result: "unsupported", reason: "no_global_ipv6", recommended_action: "try_router_mapping" },
+          { phase: "pcp", result: "unsupported", reason: "pcp_no_response", recommended_action: "try_another_method" },
+        ],
+      };
+      return {};
+    });
+
+    render(<App />);
+    await screen.findByRole("heading", { name: "Your private conversations" });
+    fireEvent.click(screen.getAllByRole("button", { name: "New chat" })[0]);
+    fireEvent.click(await screen.findByRole("tab", { name: "Open an invite" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "Invitation" }), { target: { value: "MESHCHAT4:invitation" } });
+    fireEvent.click(screen.getByRole("button", { name: "Check invitation" }));
+    expect(await screen.findByRole("button", { name: "Send contact request" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Check this device for a return connection" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Send contact request" }));
+    expect(await screen.findByRole("heading", { name: "Contact request saved" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Check this device for a return connection" }));
+
+    expect(await screen.findByRole("heading", { name: "Automatic return connection unavailable" })).toBeTruthy();
+    expect(screen.getByText(/invitation is valid/i)).toBeTruthy();
+    expect(screen.getByText(/Wi-Fi router or mobile carrier/i)).toBeTruthy();
+    expect(api.serviceCommand.mock.calls.some(([command]) => command === "create_connection_reply")).toBe(false);
+    expect(screen.queryByRole("button", { name: "Send contact request" })).toBeNull();
   });
 
   it("previews and imports a connection reply without presenting it as contact approval", async () => {
