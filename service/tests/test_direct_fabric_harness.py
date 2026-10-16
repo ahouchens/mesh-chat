@@ -29,7 +29,7 @@ def test_native_carrier_authorization_expiry_closes_process(activate):
     native = os.environ.get("MESH_DIRECT_PROOF_BINARY")
     if os.environ.get("MESH_CHAT_RUN_DIRECT_FABRIC_TESTS") != "1" or not native:
         pytest.skip("Requires the GitHub-built native carrier")
-    peers = [{"incoming": queue.Queue(maxsize=128), "outgoing": queue.Queue(maxsize=128), "revoked": threading.Event()} for _ in range(2)]
+    peers = [{"incoming": queue.Queue(maxsize=128), "outgoing": queue.Queue(maxsize=128), "revoked": threading.Event(), "carrier_lost": threading.Event()} for _ in range(2)]
     # Longer active-case lifetime permits handshake scheduling on CI. Neither
     # test closes stdin nor sends cancellation: exit must follow native expiry.
     carrier = PacketCarrier(peers, Path(native).resolve(), expires_at=time.time() + (6 if activate else 3))
@@ -41,14 +41,14 @@ def test_native_carrier_authorization_expiry_closes_process(activate):
         code = carrier.process.wait(timeout=10)
         assert (code == 0) == activate
         assert carrier.stop.wait(timeout=2)
-        assert all(peer["incoming"].get(timeout=2) is None for peer in peers)
+        assert all(peer["carrier_lost"].wait(timeout=2) for peer in peers)
     finally:
         carrier.close()
 
 
 def test_revocation_control_survives_full_packet_queues():
     peers = [{"incoming": queue.Queue(maxsize=1), "outgoing": queue.Queue(maxsize=1),
-              "revoked": threading.Event()} for _ in range(2)]
+              "revoked": threading.Event(), "carrier_lost": threading.Event()} for _ in range(2)]
     carrier = PacketCarrier(peers, expires_at=time.time() + 30)
     for peer in peers:
         peer["incoming"].put(b"queued packet")
@@ -58,5 +58,19 @@ def test_revocation_control_survives_full_packet_queues():
         peers[0]["revoked"].set()
         assert carrier.cancellation_requested.wait(timeout=2)
         assert carrier.stop.wait(timeout=2)
+        assert all(peer["carrier_lost"].wait(timeout=2) for peer in peers)
+        assert all(peer["incoming"].get_nowait() == b"queued packet" for peer in peers)
     finally:
         carrier.close()
+
+
+def test_carrier_close_signals_loss_without_packet_queue_capacity():
+    peers = [{"incoming": queue.Queue(maxsize=1), "outgoing": queue.Queue(maxsize=1),
+              "revoked": threading.Event(), "carrier_lost": threading.Event()} for _ in range(2)]
+    carrier = PacketCarrier(peers, expires_at=time.time() + 30)
+    for peer in peers:
+        peer["incoming"].put(b"queued packet")
+    carrier.close()
+    carrier.close()  # Repeated teardown remains terminal and safe.
+    assert all(peer["carrier_lost"].is_set() for peer in peers)
+    assert all(peer["incoming"].get_nowait() == b"queued packet" for peer in peers)

@@ -37,7 +37,7 @@ from tools.direct_packet_adapter import MeshDirectInterface, ProfileBudget, scop
 from tools.direct_packet_policy import PacketPolicy
 
 
-def _worker(name, root, commands, responses, incoming, outgoing, revoked):
+def _worker(name, root, commands, responses, incoming, outgoing, revoked, carrier_lost):
     store = VaultStore(Path(root), os.urandom(32), allow_unprotected_for_tests=True)
     store.put("settings", "network", NetworkSettings(nearby_discovery=False, lan_fallback=False).to_dict())
     service = MeshChatService(store, Path(root), lambda _: None)
@@ -66,6 +66,9 @@ def _worker(name, root, commands, responses, incoming, outgoing, revoked):
         def pump(interface, session):
             next_authority_check = 0
             while not stop.is_set():
+                if carrier_lost.is_set():
+                    interface.engine_lost(session)
+                    return
                 if interface.online and time.monotonic() >= next_authority_check:
                     with service._dispatch_lock:
                         if live_authority_check is not None:
@@ -193,6 +196,7 @@ def _worker(name, root, commands, responses, incoming, outgoing, revoked):
                     authorization_check = None
                     live_authority_check = None
                     revoked.clear()
+                    carrier_lost.clear()
                     session = object()
                     interface = MeshDirectInterface(RNS.Transport, budget=budget)
                     network.reticulum._add_interface(interface, mode=interface.MODE_POINT_TO_POINT)
@@ -298,12 +302,13 @@ class PacketCarrier:
                 else:
                     self.controls.put_nowait((peer, packet))
         except (EOFError, OSError, ValueError, queue.Full):
-            self.stop.set()
-            for peer in self.peers:
-                try:
-                    peer["incoming"].put(None, timeout=1)
-                except queue.Full:
-                    pass
+            self._mark_lost()
+
+    def _mark_lost(self):
+        # Lifecycle delivery must not compete with bounded packet capacity.
+        self.stop.set()
+        for peer in self.peers:
+            peer["carrier_lost"].set()
 
     def _forward(self, index):
         while not self.stop.is_set():
@@ -315,6 +320,7 @@ class PacketCarrier:
                 try:
                     self._write(index, packet)
                 except (OSError, ValueError):
+                    self._mark_lost()
                     return
             else:
                 try:
@@ -333,12 +339,7 @@ class PacketCarrier:
                 except (OSError, ValueError):
                     pass  # Process loss is also terminal; close validates exit.
                 finally:
-                    self.stop.set()
-                    for peer in self.peers:
-                        try:
-                            peer["incoming"].put(None, timeout=1)
-                        except queue.Full:
-                            pass
+                    self._mark_lost()
                 return
 
     def start(self, documents):
@@ -354,7 +355,7 @@ class PacketCarrier:
         self._thread(self._watch_revocation)
 
     def close(self, *, require_graceful=False):
-        self.stop.set()
+        self._mark_lost()
         forced = False
         if self.process and self.process.poll() is None:
             try:
@@ -365,11 +366,6 @@ class PacketCarrier:
                     forced = True
                     self.process.terminate()
                     self.process.wait(timeout=5)
-        for peer in self.peers:
-            try:
-                peer["incoming"].put(None, timeout=1)
-            except queue.Full:
-                pass
         for thread in self.threads:
             thread.join(timeout=2)
         if self.process:
@@ -388,12 +384,12 @@ def run(*, executable=None, timeout=45):
             for name in ("Owner", "Joiner"):
                 commands, responses = context.Queue(), context.Queue()
                 incoming, outgoing = context.Queue(maxsize=128), context.Queue(maxsize=128)
-                revoked = context.Event()
+                revoked, carrier_lost = context.Event(), context.Event()
                 process = context.Process(target=_worker, args=(name, str(Path(root) / name),
-                    commands, responses, incoming, outgoing, revoked))
+                    commands, responses, incoming, outgoing, revoked, carrier_lost))
                 process.start()
                 peer = dict(commands=commands, responses=responses, process=process,
-                            incoming=incoming, outgoing=outgoing, revoked=revoked)
+                            incoming=incoming, outgoing=outgoing, revoked=revoked, carrier_lost=carrier_lost)
                 peers.append(peer)
                 peer["profile"] = _receive(responses, "ready", 30)["profile"]
             owner, joiner = peers

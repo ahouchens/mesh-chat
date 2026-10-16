@@ -423,3 +423,11 @@ checks cancellation with full packet queues. Source validation passed (2 passed,
 passed at `7bce7d9` in
 [run 38929519471](https://github.com/ahouchens/mesh-chat/actions/runs/38929519471). This is private harness lifecycle wiring, not shipping
 service IPC or pending-invitation lifecycle integration.
+
+
+Carrier-loss notification now uses dedicated process events rather than packet
+queue sentinels. Native EOF, forwarding failure, explicit close and revocation
+all signal both workers even when packet queues are full. Workers check the event
+before processing more packets; replacement clears it only after the old pump has
+joined. Full-queue and repeated-close regressions accompany the topology. Native
+qualification is pending; this remains private harness lifecycle wiring.
