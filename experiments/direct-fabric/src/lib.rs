@@ -10,7 +10,7 @@ use rustls::pki_types::{CertificateDer, PrivatePkcs8KeyDer};
 use std::{
     collections::VecDeque,
     net::{SocketAddr, UdpSocket},
-    sync::Arc,
+    sync::{Arc, Mutex},
     time::Duration,
 };
 
@@ -236,7 +236,11 @@ impl Peer {
             connection.close(2u32.into(), b"datagram_size");
             return Err(Error::DatagramSize);
         }
-        Ok(Path { connection })
+        let submitted = connection.stats().frame_tx.datagram;
+        Ok(Path {
+            connection,
+            submitted: Mutex::new(submitted),
+        })
     }
 
     pub fn close(&self) {
@@ -252,6 +256,7 @@ impl Drop for Peer {
 
 pub struct Path {
     connection: quinn::Connection,
+    submitted: Mutex<u64>,
 }
 
 impl Path {
@@ -260,18 +265,26 @@ impl Path {
     }
     pub fn send(&self, packet: Bytes) -> Result<(), Error> {
         check_size(packet.len())?;
+        // Serialize admissions so concurrent senders cannot race either bound.
+        // Quinn's DATAGRAM transmit counter releases item credits when a frame
+        // leaves its queue; no delivery acknowledgment or retransmission is added.
+        let mut submitted = self.submitted.lock().map_err(|_| Error::Closed)?;
         if !self.is_open() {
             return Err(Error::Closed);
         }
         if self.connection.max_datagram_size().unwrap_or(0) < MAX_PACKET {
             return Err(Error::DatagramSize);
         }
-        if self.connection.datagram_send_buffer_space() < packet.len() {
+        if submitted.saturating_sub(self.connection.stats().frame_tx.datagram) >= QUEUE_ITEMS as u64
+            || self.connection.datagram_send_buffer_space() < packet.len()
+        {
             return Err(Error::QueueFull);
         }
         self.connection
             .send_datagram(packet)
-            .map_err(|_| Error::Closed)
+            .map_err(|_| Error::Closed)?;
+        *submitted = submitted.saturating_add(1);
+        Ok(())
     }
     pub async fn receive(&self) -> Result<Bytes, Error> {
         let packet = self
@@ -345,6 +358,29 @@ mod tests {
             .await
             .unwrap();
         assert!(!bp.is_open());
+    }
+
+    #[tokio::test]
+    async fn native_send_queue_bounds_tiny_packets_and_reclaims_items() {
+        let (a, b) = pair();
+        let (ap, bp) = tokio::join!(a.connect(b.address().unwrap()), b.accept());
+        let (ap, bp) = (ap.unwrap(), bp.unwrap());
+        // The current-thread runtime cannot drain Quinn while this synchronous
+        // loop runs, exposing item exhaustion well before the byte limit.
+        for _ in 0..QUEUE_ITEMS {
+            ap.send(Bytes::from_static(b"x")).unwrap();
+        }
+        assert_eq!(ap.send(Bytes::from_static(b"x")), Err(Error::QueueFull));
+        for _ in 0..QUEUE_ITEMS {
+            assert_eq!(
+                tokio::time::timeout(Duration::from_secs(5), bp.receive())
+                    .await
+                    .unwrap()
+                    .unwrap(),
+                Bytes::from_static(b"x")
+            );
+        }
+        ap.send(Bytes::from_static(b"reclaimed")).unwrap();
     }
 
     #[tokio::test]

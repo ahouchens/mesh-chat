@@ -4,6 +4,10 @@ on:
   push:
     branches:
       - 'codex/direct-connectivity'
+    paths:
+      - 'experiments/direct-fabric/**'
+      - 'service/**'
+      - '.github/workflows/direct-fabric-proof.yml'
   pull_request:
     paths:
       - 'experiments/direct-fabric/**'
