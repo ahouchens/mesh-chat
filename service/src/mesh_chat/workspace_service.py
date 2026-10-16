@@ -2062,6 +2062,54 @@ class WorkspaceServiceMixin:
             records.append(("workspace_due_work_index", record_id, current))
         return records
 
+    def _direct_join_binding_authority(self, workspace_id, expected):
+        """Authenticate an invitation authority from this joiner's saved request.
+
+        Used inside the vault transaction. This intentionally does not authorize
+        an owner's incoming responder: that requires a durable selected Answer.
+        """
+        from .direct_binding import BindingAuthority, _scope
+        _scope(expected.scope)
+        if expected.scope["kind"] != "invitation" or self._identity is None:
+            raise ValidationError("Direct join authorization is unavailable")
+        workspace = self._require_workspace(workspace_id)
+        if workspace.get("state") != "joining":
+            raise ValidationError("Direct invitation scope is no longer pending")
+        delivery_id = workspace.get("join_delivery_id")
+        delivery = self.store.get("workspace_delivery", delivery_id) if isinstance(delivery_id, str) else None
+        if (delivery is None or delivery.get("kind") != "workspace_join"
+                or delivery.get("workspace_id") != workspace_id):
+            raise ValidationError("Saved workspace join is unavailable")
+        join = verify_workspace_join(delivery["document"])
+        invite = join.invitation
+        record = self.store.get("workspace_invitation", self._workspace_invitation_record_id(invite.nonce))
+        scope = {"kind": "invitation", "digest": workspace_document_digest(invite.serialized),
+                 "expires_at": invite.expires_at}
+        owner = find_device(invite.offered_manifest, invite.offered_manifest.authority_device_id)
+        if (record is None or record.get("state") != "submitted"
+                or record.get("workspace_id") != workspace_id
+                or record.get("document") != invite.serialized
+                or record.get("join_document") != join.serialized
+                or join.workspace_id != workspace_id
+                or join.device.device_id != workspace.get("local_device_id")
+                or join.member_id != workspace.get("local_member_id")
+                or join.device.public_identity != self._identity.get_public_key()
+                or scope != expected.scope
+                or owner is None or owner[0].status != "active"
+                or owner[1].public_identity != expected.issuer_public_identity
+                or join.device.destination_hash != expected.audience_destination
+                or delivery.get("recipient_destination") != owner[1].destination_hash.hex()):
+            raise IdentityMismatch("Direct binding does not match the saved workspace join")
+        return BindingAuthority(owner[1].public_identity, join.device.destination_hash, scope,
+                                min(expected.expires_at, invite.expires_at), expected.challenge)
+
+    def _accept_direct_join_binding(self, workspace_id, raw, expected, certificate_der):
+        from .direct_binding import accept_binding
+        with self._dispatch_lock:
+            return accept_binding(self.store, raw, expected, certificate_der,
+                load_authority=lambda: self._direct_join_binding_authority(workspace_id, expected),
+                clock=lambda: int(time.time()))
+
     def _direct_workspace_binding_authority(self, expected):
         """Reload admitted peer authority; private native/service use only.
 

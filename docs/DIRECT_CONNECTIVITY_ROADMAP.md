@@ -58,9 +58,12 @@ The isolated harness uses this path. Admitted bindings now call a private servic
 loader within the transaction: it checks the current signed manifest, active
 workspace and members, exact local device/member and unlocked local identity,
 and the issuer identity and audience destination. It rejects foreign manifests
-and self-connections. Pending authorization and negotiation challenge/lease
-still come from the trusted test harness; their durable production loaders and
-activation/revocation reconciliation remain open.
+and self-connections. The joiner now reloads pending authority from its durable
+signed join and submitted invitation, checking exact local device/identity,
+invitation digest/expiry and authority destination before acceptance. The harness
+saves the join before authorizing its carrier. Owner-side selected-response
+authorization and negotiation challenge/lease still come from the trusted harness;
+their durable production loaders and activation/revocation reconciliation remain open.
 
 The Rust proof now owns a `BoundSocket` before peer authorization and consumes
 that exact socket when creating the QUIC endpoint. It exposes no clone/read API

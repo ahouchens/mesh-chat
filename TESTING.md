@@ -67,6 +67,17 @@ inactive workspace states, a foreign signed manifest, and member removal. The
 two-service source topology also passes using this service loader. GitHub runs
 this regression on Windows and Linux; no renderer command was added.
 
+The pending-join loader additionally rejects preview-only attempts, changed
+issuer/audience/scope, revoked/expired/consumed invitation records, an expired
+signed invitation, admission/decline/removal, substituted local identity, and a
+missing or misdirected join delivery. The full run passed 545 other tests;
+after correcting the expiry assertion to expect `InvitationExpired`, the new
+regression passed separately (7 skips and 6 integration deselections unchanged).
+The source topology passes with the join
+saved before carrier authorization. The prior admitted-workspace increment
+`41fb859` passed all native jobs in
+[run 38855759048](https://github.com/ahouchens/mesh-chat/actions/runs/38855759048).
+
 ## Commands
 
 Focused service and UI checks:

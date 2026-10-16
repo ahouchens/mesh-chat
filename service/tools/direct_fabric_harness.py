@@ -125,6 +125,8 @@ def _worker(name, root, commands, responses, incoming, outgoing):
                         # Pending authority still comes from this trusted harness.
                         if authority.scope["kind"] == "workspace":
                             service._accept_direct_workspace_binding(request["binding"], authority, cert)
+                        elif service._require_workspace(request["workspace_id"])["state"] == "joining":
+                            service._accept_direct_join_binding(request["workspace_id"], request["binding"], authority, cert)
                         else:
                             accept_binding(store, request["binding"], authority, cert,
                                 load_authority=load_authority, clock=lambda: int(time.time()))
@@ -327,8 +329,8 @@ def run(*, executable=None, timeout=45):
                 carrier.start()
                 for peer in peers:
                     _call(peer["commands"], peer["responses"], "activate")
-            authorize([scope, scope], 1)
             _framed(joiner, "submit_workspace_join", {"invitation": invitation["text"], "operation_id": op()})
+            authorize([scope, scope], 1)
             request = _wait(owner, "workspace_snapshot", {}, lambda snap: next((item
                 for item in snap.get("workspace_join_requests", []) if item["state"] == "pending"), None),
                 "direct join request", timeout)

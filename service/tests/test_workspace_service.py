@@ -344,6 +344,74 @@ def test_direct_workspace_binding_rechecks_admission_and_local_identity(tmp_path
         member.close()
 
 
+def test_direct_join_binding_requires_saved_pending_join(tmp_path, monkeypatch):
+    from dataclasses import replace
+    from mesh_chat.errors import InvitationExpired
+    from mesh_chat.direct_binding import BindingAuthority, create_binding
+    from mesh_chat.workspace_protocol import verify_workspace_invitation, workspace_document_digest
+    owner_identity, identity = RNS.Identity(), RNS.Identity()
+    owner, _ = _service(tmp_path / "owner", owner_identity, "Owner")
+    joiner, _ = _service(tmp_path / "joiner", identity, "Joiner")
+    try:
+        workspace = owner.create_workspace(_op(91000), "Pending", "")
+        invitation = owner.create_workspace_invitation_command(workspace["id"], _op(91001))
+        invite = verify_workspace_invitation(invitation["text"])
+        now = int(time.time())
+        authority = BindingAuthority(owner_identity.get_public_key(),
+            bytes.fromhex(joiner._require_profile()["destination_hash"]), {
+                "kind": "invitation", "digest": workspace_document_digest(invite.serialized),
+                "expires_at": invite.expires_at,
+            }, now + 300, b"c" * 32)
+        cert = b"public native cert"
+        raw = create_binding(owner_identity, authority, cert, session_id=str(uuid.uuid4()),
+            challenge=authority.challenge, generation=1,
+            candidates=[{"host": "8.8.8.8", "port": 12345, "expires_at": now + 300}],
+            issued_at=now, expires_at=now + 300)
+        def accept(expected=authority):
+            return joiner._accept_direct_join_binding(workspace["id"], raw, expected, cert)
+        with pytest.raises(ValidationError):
+            accept()  # Preview alone cannot authorize a path.
+        joiner.submit_workspace_join(invitation["text"], _op(91002))
+        assert accept().generation == 1
+        for changed in (replace(authority, issuer_public_identity=RNS.Identity().get_public_key()),
+                        replace(authority, audience_destination=b"x" * 16),
+                        replace(authority, scope={**authority.scope, "digest": "ab" * 32})):
+            with pytest.raises(IdentityMismatch):
+                accept(changed)
+        record_id = joiner._workspace_invitation_record_id(invite.nonce)
+        record = joiner.store.get("workspace_invitation", record_id)
+        for state in ("revoked", "expired", "consumed", "active"):
+            joiner.store.put("workspace_invitation", record_id, {**record, "state": state})
+            with pytest.raises(IdentityMismatch):
+                accept()
+        joiner.store.put("workspace_invitation", record_id, record)
+        with monkeypatch.context() as clock:
+            clock.setattr(time, "time", lambda: invite.expires_at + 1)
+            with pytest.raises(InvitationExpired):
+                accept()
+        local = joiner._require_workspace(workspace["id"])
+        for state in ("active", "declined", "removed"):
+            joiner.store.put("workspace", joiner._workspace_record_id(workspace["id"]), {**local, "state": state})
+            with pytest.raises(ValidationError):
+                accept()
+        joiner.store.put("workspace", joiner._workspace_record_id(workspace["id"]), local)
+        joiner._identity = RNS.Identity()
+        with pytest.raises(IdentityMismatch):
+            accept()
+        joiner._identity = identity
+        delivery = joiner.store.get("workspace_delivery", local["join_delivery_id"])
+        joiner.store.put("workspace_delivery", local["join_delivery_id"],
+                        {**delivery, "recipient_destination": "ab" * 16})
+        with pytest.raises(IdentityMismatch):
+            accept()
+        joiner.store.delete("workspace_delivery", local["join_delivery_id"])
+        with pytest.raises(ValidationError):
+            accept()
+    finally:
+        owner.close()
+        joiner.close()
+
+
 def _deliver_all(
     recipient: MeshChatService,
     packets: list[dict[str, Any]],

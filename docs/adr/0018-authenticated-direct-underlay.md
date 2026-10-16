@@ -45,7 +45,10 @@ validation, encryption or commit returns no acceptance. Record indexes are keyed
 opaque IDs, and expired replay history is retained. This primitive does not grant
 runtime activation. The service now reloads admitted workspace authority from
 the current signed manifest, verifying active state and exact local/remote device
-identities. Pending authority, durable negotiation state and lifecycle reconciliation
+identities. The joiner also reloads pending authority from the saved signed join
+and submitted invitation. It rejects missing/terminal records, expired invitations,
+changed identities and mismatched authority destinations. The owner still requires
+a durable selected Answer; durable negotiation state and lifecycle reconciliation
 remain open. No binding
 command or packet API is exposed to React. The initial unbound Offer remains a
 separate phase-2 document; this verifier requires an exact audience.
@@ -157,8 +160,10 @@ fresh workspace-scoped bindings checked against the local manifest, bidirectiona
 LXMF messages, ratchet readiness, endpoint receipts, and carrier-death teardown.
 It closes the pending carrier and creates fresh credentials after admission.
 The proof uses transactional binding acceptance before activation, including a
-private service workspace authority reload. Its pending scope is still supplied by the
-trusted harness. Production activation/revocation reconciliation and crash recovery
+private service workspace authority reload. Before carrier authorization the joiner
+saves its signed join, and its pending authority loader verifies that durable state.
+The owner's selected responder and both negotiation challenges/leases still come
+from the trusted harness. Production activation/revocation reconciliation and crash recovery
 remain unimplemented.
 
 The GitHub-only `packet_bridge` example carries the same private frames over two
