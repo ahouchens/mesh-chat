@@ -131,7 +131,12 @@ durable Answer commit `8c33b54` passed all native jobs in
 Native `PreparedAttempt` tests now cover exact session/generation/Answer matching,
 60-second windows, duplicate suppression, Ready generation conflicts, lifetime
 expiry, fresh-process rejection and same-socket/key QUIC packet transfer. These
-new Rust tests await GitHub execution; only rustfmt and diff checks ran locally.
+new Rust tests passed on Windows and Linux at `f797d01`, including the real
+RNS/LXMF topology; Android ARM64 compilation also passed in
+[run 38923294960](https://github.com/ahouchens/mesh-chat/actions/runs/38923294960).
+The first run failed the transfer test because a temporary outbound path was
+dropped immediately after sending. Both path handles now remain alive through
+reception. No native build or native test ran locally.
 The preceding Ready-acceptance commit `5ca44b5` passed all native jobs in
 [run 38920216664](https://github.com/ahouchens/mesh-chat/actions/runs/38920216664).
 

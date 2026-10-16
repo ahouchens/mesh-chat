@@ -348,7 +348,11 @@ and saved Answer digest. A verified Ready can re-arm that same Answer for at mos
 five minutes). Duplicate start/Ready calls do not extend the window; conflicting
 or older Ready generations and expired authorization fail. Activation consumes
 the original socket/key once. A new process cannot re-arm from saved Ready alone.
-Native tests are authored for these transitions and an authenticated QUIC packet
-transfer after activation; this increment awaits GitHub qualification. The gate
+Native tests pass for these transitions and an authenticated QUIC packet
+transfer after activation on Windows and Linux; Android ARM64 compilation also
+passes at `f797d01` in
+[run 38923294960](https://github.com/ahouchens/mesh-chat/actions/runs/38923294960).
+The initial transfer regression dropped its sender handle before reception;
+retaining both handles through the assertion fixed that test-lifetime failure. The gate
 is not yet connected to service IPC, scheduling, cancellation or post-activation
 teardown and is not part of the shipping app.
