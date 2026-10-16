@@ -89,6 +89,24 @@ fn check_size(size: usize) -> Result<(), Error> {
     }
 }
 
+/// Keeps the candidate's actual UDP socket alive while the service authorizes
+/// its mapping and peer. No read/clone/export API permits a competing receiver.
+pub struct BoundSocket {
+    socket: UdpSocket,
+}
+
+impl BoundSocket {
+    pub fn bind(address: SocketAddr) -> Result<Self, Error> {
+        let socket = UdpSocket::bind(address).map_err(|_| Error::Socket)?;
+        socket.set_nonblocking(true).map_err(|_| Error::Socket)?;
+        Ok(Self { socket })
+    }
+
+    pub fn address(&self) -> Result<SocketAddr, Error> {
+        self.socket.local_addr().map_err(|_| Error::Socket)
+    }
+}
+
 /// Owns exactly one UDP socket for discovery/advertising and QUIC. Only Quinn
 /// receives from this socket; there is no parallel probe receiver.
 pub struct Peer {
@@ -99,6 +117,15 @@ pub struct Peer {
 impl Peer {
     pub fn bind(
         address: SocketAddr,
+        key: SessionKey,
+        expected: CertificateDer<'static>,
+    ) -> Result<Self, Error> {
+        Self::from_bound_socket(BoundSocket::bind(address)?, key, expected)
+    }
+
+    /// Consume the still-owned candidate socket; never close and rebind it.
+    pub fn from_bound_socket(
+        bound: BoundSocket,
         key: SessionKey,
         expected: CertificateDer<'static>,
     ) -> Result<Self, Error> {
@@ -159,12 +186,10 @@ impl Peer {
         ));
         client.transport_config(transport);
 
-        let socket = UdpSocket::bind(address).map_err(|_| Error::Socket)?;
-        socket.set_nonblocking(true).map_err(|_| Error::Socket)?;
         let mut endpoint = quinn::Endpoint::new(
             quinn::EndpointConfig::default(),
             Some(server),
-            socket,
+            bound.socket,
             Arc::new(quinn::TokioRuntime),
         )
         .map_err(|_| Error::Socket)?;
@@ -270,14 +295,19 @@ mod tests {
     use super::*;
 
     fn pair() -> (Peer, Peer) {
+        let a_socket = BoundSocket::bind("127.0.0.1:0".parse().unwrap()).unwrap();
+        let b_socket = BoundSocket::bind("127.0.0.1:0".parse().unwrap()).unwrap();
+        let a_candidate = a_socket.address().unwrap();
+        let b_candidate = b_socket.address().unwrap();
         let a = SessionKey::generate().unwrap();
         let b = SessionKey::generate().unwrap();
         let ac = a.certificate();
         let bc = b.certificate();
-        (
-            Peer::bind("127.0.0.1:0".parse().unwrap(), a, bc).unwrap(),
-            Peer::bind("127.0.0.1:0".parse().unwrap(), b, ac).unwrap(),
-        )
+        let a = Peer::from_bound_socket(a_socket, a, bc).unwrap();
+        let b = Peer::from_bound_socket(b_socket, b, ac).unwrap();
+        assert_eq!(a.address().unwrap(), a_candidate);
+        assert_eq!(b.address().unwrap(), b_candidate);
+        (a, b)
     }
 
     #[tokio::test]
