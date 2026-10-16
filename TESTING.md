@@ -145,7 +145,9 @@ activation. Its private initialization frame binds session IDs, generations and
 a bounded remaining lifetime; authorization carries the accepted local document
 digests. Socket addresses must remain unchanged through activation. The updated
 source topology passed with the joiner's Offer/Answer durably saved. Native CI
-qualification of this bridge increment is pending.
+qualification passed on Windows/Linux (native tests and real RNS/LXMF topology)
+and Android ARM64 compilation at `7824fd2` in
+[run 38924221050](https://github.com/ahouchens/mesh-chat/actions/runs/38924221050).
 
 ## Commands
 

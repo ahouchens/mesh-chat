@@ -364,4 +364,6 @@ It checks socket addresses across activation. The joiner durably saves its own
 Offer/Answer chain in the source/native harness. This inherited-pipe integration
 is CI-only: public runtime IPC, Ready-driven re-arming, cancellation and teardown
 remain unimplemented. The updated source topology passes; native qualification
-for this bridge increment is pending.
+for this bridge increment passed on Windows/Linux, including real RNS/LXMF, and
+Android ARM64 compilation at `7824fd2` in
+[run 38924221050](https://github.com/ahouchens/mesh-chat/actions/runs/38924221050).
