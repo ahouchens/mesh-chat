@@ -22,7 +22,10 @@ canonical parsing, exact local scope/peer/certificate authorization, bounded
 numeric candidates and validity, and monotonic replay checks. Its source tests
 pass. A cross-language CI proof gives only native public certificates to Python
 for RNS authorization before mutual TLS and a DATAGRAM exchange. The native
-jobs have not run in this local change. The crate is not linked into the app;
+jobs now pass on Windows and Linux, including the real QUIC/LXMF topology, and
+Android ARM64 cross-compilation passes. See the
+[successful owned-socket proof run](https://github.com/ahouchens/mesh-chat/actions/runs/38854581893)
+at `cbcf659`. The crate is not linked into the app;
 durable binding transactions, the private runtime control channel, and a qualified
 production Reticulum adapter remain open. A socket-free adapter proof now uses
 bounded inherited packet channels, rejects retired/cross-peer callbacks, and
@@ -31,7 +34,7 @@ topology passed signed join acknowledgment before approval, admission, fresh
 workspace-scoped credential rotation, bidirectional LXMF messages, ratchets,
 endpoint receipts, and offline state after carrier death. The GitHub workflow
 now builds a native QUIC packet bridge and runs that same topology through it;
-this native variant remains unexecuted here. The adapter now filters exact RNS
+this native variant passes on both desktop CI platforms. The adapter filters exact RNS
 destinations and path requests, bounds Link/receipt tracking, and uses a shared
 profile session/adapter-queue budget. The source topology passes with those
 checks enabled. **Phase 1 is not complete. Phase 2 has UDP mapping groundwork;
@@ -45,6 +48,11 @@ cleanup. Legacy records still mean TCP; UDP results cannot become legacy TCP
 invitation endpoints. This has source-level protocol tests, not physical router
 or Internet traversal evidence. Native-owned socket candidate collection and
 advertisement are not yet connected to these mapping APIs.
+
+The Rust proof now owns a `BoundSocket` before peer authorization and consumes
+that exact socket when creating the QUIC endpoint. It exposes no clone/read API
+that could create a competing receiver. Tests compare its candidate address
+before authorization with the live endpoint address. No native build runs locally.
 
 Mesh Chat should use an email invitation to establish a lasting device relationship, then maintain and restore direct connections automatically wherever the network permits. Workspace membership, identity, and queued work survive a disconnected socket. A new address must not require a new workspace invitation or another membership approval.
 

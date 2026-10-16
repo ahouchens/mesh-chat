@@ -45,7 +45,12 @@ command or packet API is exposed to React. The initial unbound Offer remains a
 separate phase-2 document; this verifier requires an exact audience.
 
 The proof owns one UDP socket throughout bind, connect, and packet transfer.
-Only Quinn reads it. One DATAGRAM carries one packet; the accepted size is
+`BoundSocket` permits candidate preparation before peer authorization and is
+consumed by `Peer::from_bound_socket`; it never closes/rebinds the advertised
+port and exposes no socket clone or competing-reader API.
+Only Quinn reads it. Native send admission serializes concurrent callers and
+enforces a 128-item limit in addition to the byte budget. Quinn transmit counters
+release item credits without adding delivery acknowledgments or retransmission. One DATAGRAM carries one packet; the accepted size is
 1–516 bytes (RNS 1.5.5's 500-byte base MTU plus 16-byte IFAC, no application
 encapsulation). A peer negotiating less is rejected. This proof does not enable
 Reticulum's larger hardware MTUs. Item/byte queue limits are both tested.
@@ -152,9 +157,10 @@ The GitHub-only `packet_bridge` example carries the same private frames over two
 mutually authenticated native QUIC peers. Native TLS keys stay in Rust and RNS
 keys stay in their respective Python service processes. Only public certificate
 pins cross the inherited control pipe. The controller is a trusted test harness,
-not an app IPC implementation. The source topology is evidence for the adapter
-and service behavior, not evidence that the native topology compiles or passes;
-that workflow has not run here. Candidate values in binding fixtures are not
+not an app IPC implementation. The native topology now passes on Windows and
+Linux, and Android ARM64 cross-compilation passes in
+[GitHub run 38854581893](https://github.com/ahouchens/mesh-chat/actions/runs/38854581893)
+at `cbcf659`. These are controlled-peer results. Candidate values in binding fixtures are not
 discovery or reachability evidence.
 
 The proof now filters packets before they enter RNS. Only the exact local/peer
@@ -172,11 +178,11 @@ aggregate queued bytes at 512 KiB; per-adapter limits remain 128 items/64 KiB.
 Dequeuing and teardown release credits, including repeated teardown and failed
 replacement activation. This accounts for adapter queues, not all native,
 IPC and kernel buffers. Shared-context isolation, full pipeline resource
-accounting, platform embedding and native execution remain phase-1 gates.
+accounting and platform embedding remain production activation gates.
 
 Phase 2–3 runtime activation, optional phase-4 helpers, and phase-5 release
-qualification remain incomplete. The feasibility workflow has been authored,
-not run by this local change. Publishing/installing artifacts and physical
+qualification remain incomplete. The feasibility workflow passes on the tested
+commit; it is not a packaged application test. Publishing/installing artifacts and physical
 Windows/Android topology and battery evidence remain separate gates.
 
 ## References

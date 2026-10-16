@@ -5,11 +5,12 @@ receipts and evidence-based UI between desktop and Android. Restart retains the
 exact join, verified receipt and interrupted route-setup intent. It adds no
 background execution, push service or notification-delivery guarantee.
 
-The separate Quinn feasibility crate has an Android ARM64 GitHub compile job
+The separate Quinn feasibility crate passed its Android ARM64 GitHub compile job
+at `cbcf659` in [run 38854581893](https://github.com/ahouchens/mesh-chat/actions/runs/38854581893),
 but is not embedded in the mobile plugin. Native socket binding, network-change
 callbacks, Doze/resume behavior, real QUIC/LXMF traffic, battery measurements and
-physical Windows↔Android tests remain unqualified. An authored workflow or
-passing shared source test is not device evidence. See
+physical Windows↔Android tests remain unqualified. A cross-compile and
+passing desktop topology tests are not Android device evidence. See
 [ADR 0018](adr/0018-authenticated-direct-underlay.md).
 
 This document compares the Android client with the Windows desktop 0.2.45

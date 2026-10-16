@@ -2,88 +2,57 @@
 
 ## Direct connectivity increment, 2026-10-16
 
-The socket-free adapter follow-up adds `test_direct_packet_adapter.py` and the
-opt-in `test_direct_fabric_harness.py`. The source topology uses two real isolated
-RNS/LXMF service processes with bounded inherited packet queues, without TCP,
-LAN discovery, a relay, or public discovery. It verifies join acknowledgment
-before approval, admission, fresh workspace-scoped credentials, messages in both
-directions, ratchets, endpoint receipts, and offline state on carrier death.
-Run the source topology with `MESH_CHAT_RUN_DIRECT_FABRIC_TESTS=1`; set
-`MESH_DIRECT_PROOF_BINARY` only to the GitHub-built `packet_bridge` executable to
-exercise the QUIC variant. The workflow builds that example and runs the native
-variant on Windows and Linux. No native compilation or execution ran locally.
+Native qualification now runs in GitHub Actions. At `cbcf659`,
+[run 38854581893](https://github.com/ahouchens/mesh-chat/actions/runs/38854581893)
+passed all three jobs: controlled peers on Windows and Linux, and an Android
+ARM64 cross-compile with Rust 1.88.0. The desktop jobs include RNS-signed public
+certificate authorization, mutual TLS, DATAGRAM boundary checks, retained socket
+ownership, peer-key mismatch, engine death, queue limits, and real service traffic.
+The native send-path regression fills the 128-item budget with tiny DATAGRAMs,
+rejects the next send, drains the queue, and verifies that sending resumes.
+The initial run passed both desktop jobs but failed Android SDK setup because
+setup-android requested the obsolete `tools` package; selecting `platform-tools`
+resolved that setup failure.
 
-The adapter and binding checks passed 44 tests. The final combined source
-topology, adapter, binding, and join-receipt run passed 62 tests with unhandled
-thread warnings treated as errors. The proof rejects pending
-activation with another RNS interface or routing enabled, and retires itself if
-either changes. This demonstrates refusal in a shared context, not production
-support for simultaneous existing routes.
+The real topology uses two isolated RNS/LXMF service processes with bounded
+inherited packet channels and the GitHub-built native QUIC bridge. It verifies
+join acknowledgment before approval, admission, fresh workspace-scoped transport
+credentials, bidirectional messages, ratchets, endpoint receipts, and offline
+state after carrier death. It has no TCP carrier, LAN discovery, relay, or public
+discovery. Source mode replaces only the native packet carrier with inherited
+queues so service and adapter behavior can be checked locally.
 
-The subsequent packet-policy and budget run passed 13 source tests, and the real
-two-service topology passed with destination/path/Link/receipt filtering enabled.
-`test_udp_mapping.py` adds 15 checks for TCP/UDP create/renew/remove behavior,
-wrong-protocol/version/zero-lease rejection, legacy TCP records, and UDP fallback.
-The existing 36 connectivity/participant-invitation tests passed unchanged.
-Full pipeline resource accounting and native execution remain qualification work.
+Run source mode with `MESH_CHAT_RUN_DIRECT_FABRIC_TESTS=1`. Set
+`MESH_DIRECT_PROOF_BINARY` to the GitHub-built `packet_bridge` executable to run
+the native variant. `MESH_DIRECT_BINDING_PYTHON=python` supplies the protected
+service runtime for the Rust identity-binding integration test. RNS private keys
+stay in Python; TLS private keys stay in Rust.
 
-The full non-integration service suite subsequently passed 539 tests with
-unhandled-thread warnings treated as errors (7 skipped, 6 integration tests
-deselected). The skips require packaged artifacts or non-Windows paths.
+The adapter refuses pending activation with another RNS interface or transport
+routing enabled and retires itself if either changes. Tests cover exact RNS
+packet destinations, path requests, bounded Link/receipt tracking, stale session
+callbacks, per-peer queues and shared profile adapter budgets. This is isolated
+context evidence, not support for the shipping shared router. Full pipeline
+resource accounting, platform embedding, public-Internet topology, Android
+lifecycle/battery behavior, and physical device results remain release gates.
 
-The follow-up `test_direct_binding.py` covers canonical/schema bounds, wrong
-signers and TLS certificates, exact invitation/workspace scopes, expiry,
-candidate/lease bounds, replay conflicts, and certificate rotation. The CI-only
-helper `service/tools/direct_binding_proof.py` accepts public certificates,
-keeps RNS private keys within Python, and emits only verified public pins.
+Local non-integration validation passed 539 tests with unhandled-thread warnings
+treated as errors (7 skipped, 6 integration tests deselected). Skips require
+packaged artifacts or non-Windows paths. The final source topology passed after
+routed-packet filtering was tightened. UDP mapping tests cover TCP/UDP creation,
+renewal and removal, wrong-protocol/version/zero-lease rejection, old TCP records,
+and fallback. Existing connectivity and participant-invitation tests still pass.
 
-The Direct Fabric GitHub workflow installs the service and sets
-`MESH_DIRECT_BINDING_PYTHON=python` for the Rust integration test. That test
-generates native TLS keys, runs the Python authorization proof, and attempts
-mutual TLS plus a DATAGRAM exchange. It is authored but has not run here;
-source tests and rustfmt do not establish native qualification. Native builds
-continue to run only in GitHub Actions.
+Join-receipt tests cover atomic storage, forged/misbound receipts, replay, loss,
+expiry/revocation, restart, upgrade and persistence before route setup. The
+existing real RNS/LXMF remote-access harness also requires verified application
+receipt before approval. The frontend suite passed 176 tests; subsequent focused
+receipt checks and TypeScript `--noEmit` passed. `git diff --check` and native
+source formatting passed.
 
-Follow-up validation: the full non-integration Python run passed 510 tests
-(7 skipped, 5 deselected), with a Windows stock-UDP teardown-thread warning.
-The probe now stops its socketserver loop before detaching; the 37 adapter and
-binding checks then passed with unhandled-thread warnings treated as errors.
-This includes an additional negotiation-challenge mismatch case. Rust formatting
-and `git diff --check` passed; the native cross-language test remains unexecuted.
-
-`test_workspace_join_receipt.py` covers atomic request/receipt storage, replay,
-lost receipts, wrong bindings and signatures, expiry/revocation, restart,
-legacy upgrade, admission, and persistence before failed route setup. Existing
-workspace, email-routing, text/file/deep-link/QR normalization and renderer suites
-cover compatibility and visible evidence. The source RNS/LXMF remote-access
-harness now requires a verified join receipt **before** owner approval; it passed
-locally using its explicit isolated TCP access point. That is compatibility
-evidence, not QUIC or public-Internet traversal evidence.
-
-`test_direct_adapter_feasibility.py` confirms that the stock loopback UDP adapter
-is online without a peer and passes unauthenticated local bytes to RNS. The test
-substitutes only constructor defaults and the observation sink; the UDP socket
-and receive loop are real. It does not claim an IFAC bypass.
-
-The isolated native proof has controlled-peer tests for mutual TLS identity,
-DATAGRAM boundaries/MTU, same-socket ownership, teardown and queue limits.
-`.github/workflows/direct-fabric-proof.yml` runs native tests on Windows/Linux
-and checks Android ARM64 with Rust 1.88.0. Dependency metadata and the lockfile
-were resolved locally without compiling. The workflow has not been run by this
-local change. Full LXMF over QUIC, bootstrap isolation, local injection/DoS and
-physical-device/topology/battery results remain phase-1/release gates.
-
-For this roadmap, local validation is source tests and TypeScript `--noEmit`.
-Native, frontend/package and release builds, including `cargo check`/`cargo test`,
-run in GitHub Actions, as required by the roadmap.
-
-Recorded local results: the non-integration Python suite passed 472 tests
-(7 environment/package skips, 5 integration deselections); after adding upgrade
-and adapter probes, the final affected Python suites passed 77 tests. The full
-frontend suite passed 176 tests; subsequent receipt/failure-state checks passed.
-The real remote-access RNS/LXMF integration test passed, TypeScript `--noEmit`
-passed, and `git diff --check` and native proof formatting passed. None of these
-results is a native QUIC build or a physical-device test.
+Native, frontend/package and release builds run only in GitHub Actions, as
+required by the roadmap. No native build was performed locally. A successful
+proof or cross-compile is not a packaged application or physical-device test.
 
 ## Commands
 
