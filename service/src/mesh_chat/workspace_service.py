@@ -141,6 +141,10 @@ from .workspace_protocol import (
     workspace_device_link_formats,
     workspace_document_digest,
 )
+from .workspace_join_receipt import (
+    create_workspace_join_receipt,
+    verify_workspace_join_receipt,
+)
 from .workspace_wire import (
     DELIVERY_WINDOW_SECONDS,
     WorkspaceWirePayload,
@@ -3259,9 +3263,13 @@ class WorkspaceServiceMixin:
                 "last_event_digest",
                 "members",
                 "join_delivery_id",
+                "join_receipt",
+                "join_connection_invitation",
+                "join_receipt_tracking",
             }
         }
         if workspace.get("state") == "joining":
+            public["join_acknowledged"] = bool(workspace.get("join_receipt"))
             join_delivery_id = workspace.get("join_delivery_id")
             delivery = (
                 self.store.get("workspace_delivery", join_delivery_id)
@@ -3275,6 +3283,11 @@ class WorkspaceServiceMixin:
                 and isinstance(delivery.get("state"), str)
             ):
                 public["join_delivery_state"] = delivery["state"]
+                if delivery.get("endpoint_received_at") and delivery["state"] not in {
+                    DeliveryState.DELIVERED.value, DeliveryState.EXPIRED.value,
+                    DeliveryState.CANCELLED.value, DeliveryState.FAILED.value,
+                }:
+                    public["join_delivery_state"] = DeliveryState.RECEIVED_BY_ENDPOINT.value
         public["members"] = [
             {
                 **{
@@ -4541,24 +4554,7 @@ class WorkspaceServiceMixin:
         identity = self._identity
         if identity is None:
             raise ValidationError("Local identity is unavailable")
-        participant_connection_results: list[dict[str, Any]] = []
         email_access = email.inviter_access if email is not None else None
-        if participant is not None or email_access is not None:
-            participant_record = self.approve_participant_access(
-                participant.access if participant is not None else email_access,
-                scope_kind="workspace",
-                scope_id=invite.workspace_id,
-            )
-            participant_connection_results = [
-                dict(item) for item in participant_record.get("candidate_results", [])
-            ]
-        elif remote is not None:
-            self._approve_remote_document(
-                remote.profile,
-                origin="workspace_invitation",
-                scope_kind="workspace",
-                scope_id=invite.workspace_id,
-            )
         join_raw = create_workspace_join(
             identity,
             invite,
@@ -4577,6 +4573,7 @@ class WorkspaceServiceMixin:
             document=join.serialized,
             priority=0,
         )
+        delivery["expires_at"] = min(delivery["expires_at"], invite.expires_at)
         now = time.time()
         workspace = {
             "id": invite.workspace_id,
@@ -4584,6 +4581,8 @@ class WorkspaceServiceMixin:
             "description": invite.offered_manifest.description,
             "state": "joining",
             "join_delivery_id": delivery["id"],
+            "join_receipt_tracking": True,
+            "join_connection_invitation": invitation if participant or email_access or remote else None,
             "local_role": WorkspaceRole.MEMBER.value,
             "local_member_id": join.member_id,
             "local_device_id": join.device.device_id,
@@ -4655,8 +4654,6 @@ class WorkspaceServiceMixin:
         # The delivery is committed atomically with the joining workspace below,
         # so it is not available to `_public_workspace`'s direct lookup yet.
         outcome["join_delivery_state"] = delivery["state"]
-        if participant_connection_results:
-            outcome["connection_results"] = participant_connection_results
         records = [
             ("workspace", self._workspace_record_id(workspace["id"]), workspace),
             (
@@ -4679,11 +4676,44 @@ class WorkspaceServiceMixin:
         committed = self.store.commit_operation(
             operation_id, digest, outcome, records
         )
+        # The exact signed request survives a failed route setup or process
+        # interruption. Network work must never precede this durable commit.
+        committed.update(self._prepare_workspace_join_route(invite.workspace_id))
         network = getattr(self, "network", None)
         if network is not None:
             network.remember_contact(owner[1].public_identity, owner[1].destination_hash)
         self._workspace_changed(workspace["id"])
         return committed
+
+    def _prepare_workspace_join_route(self, workspace_id: str) -> dict[str, Any]:
+        record_id = self._workspace_record_id(workspace_id)
+        workspace = self.store.get("workspace", record_id)
+        raw = workspace.get("join_connection_invitation") if workspace else None
+        if not raw or workspace.get("state") != "joining":
+            return {}
+        try:
+            email = verify_email_invitation(raw, "workspace")
+            participant = None if email else verify_participant_invitation(raw, "workspace")
+            remote = None if email or participant else verify_remote_invitation(raw, "workspace")
+            access = participant.access if participant else email.inviter_access if email else None
+            outcome: dict[str, Any] = {}
+            if access is not None:
+                record = self.approve_participant_access(
+                    access, scope_kind="workspace", scope_id=workspace_id,
+                )
+                outcome["connection_results"] = [dict(item) for item in record.get("candidate_results", [])]
+            elif remote is not None:
+                self._approve_remote_document(
+                    remote.profile, origin="workspace_invitation",
+                    scope_kind="workspace", scope_id=workspace_id,
+                )
+            workspace.pop("join_connection_invitation", None)
+            self.store.put("workspace", record_id, workspace)
+            return outcome
+        except MeshChatError:
+            # Leave the sealed intent for the ordinary bounded outbox retry;
+            # a crash before interface activation must not lose route consent.
+            return {"connection_setup_failed": True}
 
     def _receive_workspace_join(
         self, wire: WorkspaceWirePayload, source_hash: Any = None
@@ -4711,23 +4741,56 @@ class WorkspaceServiceMixin:
             or float(invitation.get("expires_at", 0)) < time.time()
         ):
             return
+        request_id = self.store.opaque_id("workspace-join", join.digest)
+        existing = self.store.get("workspace_join_request", request_id)
+        if existing is not None and existing.get("join_attempt_id"):
+            # Retry the same receipt without another request, signature, or
+            # logical delivery. A bearer cannot rotate attempt IDs to amplify
+            # replies or replace the first accepted attempt.
+            if existing.get("state") != "pending" or existing.get("join_attempt_id") != wire.logical_id:
+                return
+            receipt_id = existing.get("receipt_delivery_id")
+            receipt = self.store.get("workspace_delivery", receipt_id) if isinstance(receipt_id, str) else None
+            now = time.time()
+            if receipt is not None and receipt.get("state") == DeliveryState.RECEIVED_BY_ENDPOINT.value and (
+                now >= float(receipt.get("last_attempt_at", 0)) + 30
+                and now < float(receipt.get("expires_at", 0))
+            ):
+                receipt["state"] = DeliveryState.QUEUED.value
+                receipt["next_attempt_at"] = now
+                receipt.pop("native_message_id", None)
+                self.store.put_many([
+                    ("workspace_delivery", receipt_id, receipt),
+                    *self._due_records(add=[receipt]),
+                ])
+            return
         pending = [
             item
             for item in self.store.list("workspace_join_request")
             if item.get("workspace_id") == join.workspace_id
             and item.get("state") == "pending"
         ]
-        if len(pending) >= MAX_PENDING_JOINS:
+        if existing is None and len(pending) >= MAX_PENDING_JOINS:
             return
-        if sum(
+        if existing is None and sum(
             1
             for item in pending
             if item.get("source_fingerprint") == join.device.fingerprint
         ) >= MAX_PENDING_JOINS_PER_SOURCE:
             return
-        request_id = self.store.opaque_id("workspace-join", join.digest)
-        if self.store.get("workspace_join_request", request_id) is not None:
+        if existing is not None and existing.get("state") != "pending":
             return
+        if self._identity is None:
+            return
+        receipt = self._workspace_delivery_record(
+            workspace_id=join.workspace_id,
+            recipient_member_id=join.member_id, recipient_device=join.device,
+            kind="workspace_join_receipt",
+            document=create_workspace_join_receipt(self._identity, join, wire.logical_id),
+            priority=0,
+        )
+        receipt["expires_at"] = min(receipt["expires_at"], join.invitation.expires_at)
+        receipt["join_request_id"] = request_id
         record = {
             "id": request_id,
             "workspace_id": join.workspace_id,
@@ -4740,14 +4803,46 @@ class WorkspaceServiceMixin:
             "public_identity": _b64(join.device.public_identity),
             "invitation_id": invitation_id,
             "document": join.serialized,
+            "join_attempt_id": wire.logical_id,
+            "receipt_delivery_id": receipt["id"],
             "state": "pending",
             "created_at": float(join.created_at),
         }
-        self.store.put("workspace_join_request", request_id, record)
+        self.store.put_many([
+            ("workspace_join_request", request_id, record),
+            ("workspace_delivery", receipt["id"], receipt),
+            *self._due_records(add=[receipt]),
+        ])
         network = getattr(self, "network", None)
         if network is not None:
             network.remember_contact(join.device.public_identity, join.device.destination_hash)
         self._workspace_changed(join.workspace_id, resource_kind="join_request")
+
+    def _receive_workspace_join_receipt(self, wire: WorkspaceWirePayload, source_hash: Any) -> None:
+        workspace_id = self._workspace_record_id(wire.workspace_id)
+        workspace = self.store.get("workspace", workspace_id)
+        if workspace is None or workspace.get("state") != "joining" or workspace.get("join_receipt"):
+            return
+        delivery_id = workspace.get("join_delivery_id")
+        delivery = self.store.get("workspace_delivery", delivery_id) if isinstance(delivery_id, str) else None
+        if (
+            delivery is None or delivery.get("kind") != "workspace_join"
+            or delivery.get("workspace_id") != wire.workspace_id
+            or not isinstance(source_hash, bytes)
+            or source_hash.hex() != delivery.get("recipient_destination")
+        ):
+            return
+        join = verify_workspace_join(delivery["document"])
+        verify_workspace_join_receipt(wire.document, join, delivery_id)
+        workspace["join_receipt"] = wire.document
+        workspace["updated_at"] = time.time()
+        delivery["state"] = DeliveryState.DELIVERED.value
+        self.store.put_many([
+            ("workspace", workspace_id, workspace),
+            ("workspace_delivery", delivery_id, delivery),
+            *self._due_records(remove=[delivery_id]),
+        ])
+        self._workspace_changed(wire.workspace_id, resource_kind="join_receipt")
 
     def _workspace_pending_callback(
         self,
@@ -16151,6 +16246,26 @@ class WorkspaceServiceMixin:
             return
         if float(delivery.get("next_attempt_at", 0)) > now:
             return
+        if delivery.get("kind") == "workspace_join_receipt":
+            request = self.store.get("workspace_join_request", str(delivery.get("join_request_id", "")))
+            invitation = self.store.get("workspace_invitation", request["invitation_id"]) if request else None
+            if request is None or request.get("state") != "pending" or invitation is None or invitation.get("state") != "active":
+                delivery["state"] = DeliveryState.CANCELLED.value
+                self.store.put_many([
+                    ("workspace_delivery", delivery_id, delivery),
+                    *self._due_records(remove=[delivery_id]),
+                ])
+                return
+        if delivery.get("kind") == "workspace_join":
+            workspace = self.store.get("workspace", self._workspace_record_id(delivery["workspace_id"]))
+            if workspace is None or workspace.get("state") != "joining":
+                delivery["state"] = DeliveryState.CANCELLED.value
+                self.store.put_many([
+                    ("workspace_delivery", delivery_id, delivery),
+                    *self._due_records(remove=[delivery_id]),
+                ])
+                return
+            self._prepare_workspace_join_route(delivery["workspace_id"])
         network = getattr(self, "network", None)
         if network is None:
             return
@@ -17892,10 +18007,24 @@ class WorkspaceServiceMixin:
         if state in {DeliveryState.RECEIVED_BY_ENDPOINT, DeliveryState.DELIVERED}:
             delivery["state"] = DeliveryState.RECEIVED_BY_ENDPOINT.value
             delivery["reached_at"] = time.time()
-            records = [
-                ("workspace_delivery", logical_id, delivery),
-                *self._due_records(remove=[logical_id]),
-            ]
+            if delivery.get("kind") == "workspace_join":
+                # LXMF proof can precede application validation or a crash.
+                # Retry this same signed join until its application receipt,
+                # admission, or existing expiry, with bounded outbox backoff.
+                delivery["endpoint_received_at"] = delivery["reached_at"]
+                delivery["state"] = DeliveryState.QUEUED.value
+                delivery["next_attempt_at"] = max(
+                    float(delivery.get("next_attempt_at", 0)), time.time() + 30,
+                )
+                records = [
+                    ("workspace_delivery", logical_id, delivery),
+                    *self._due_records(add=[delivery]),
+                ]
+            else:
+                records = [
+                    ("workspace_delivery", logical_id, delivery),
+                    *self._due_records(remove=[logical_id]),
+                ]
         elif state in {
             DeliveryState.EXPIRED,
             DeliveryState.FAILED,
@@ -17958,6 +18087,9 @@ class WorkspaceServiceMixin:
     ) -> None:
         if wire.kind == "workspace_join":
             self._receive_workspace_join(wire, getattr(native, "source_hash", None))
+            return
+        if wire.kind == "workspace_join_receipt":
+            self._receive_workspace_join_receipt(wire, getattr(native, "source_hash", None))
             return
         if wire.kind == "workspace_device_link":
             self._receive_workspace_device_transition(
@@ -18081,6 +18213,29 @@ class WorkspaceServiceMixin:
                 migrated_joining_ids.add(workspace_id)
         for item in stored_workspaces:
             changed = item.get("id") in migrated_joining_ids
+            if item.get("state") == "joining" and not item.get("join_receipt_tracking"):
+                # Older versions stopped at an LXMF proof. Resume the exact
+                # persisted request once after upgrade so a new owner version
+                # can return its application receipt; never author another join.
+                delivery_id = item.get("join_delivery_id")
+                delivery = self.store.get("workspace_delivery", delivery_id) if isinstance(delivery_id, str) else None
+                item["join_receipt_tracking"] = True
+                if (
+                    delivery is not None and delivery.get("kind") == "workspace_join"
+                    and delivery.get("workspace_id") == item.get("id")
+                    and delivery.get("state") in {DeliveryState.RECEIVED_BY_ENDPOINT.value, DeliveryState.DELIVERED.value}
+                    and not item.get("join_receipt") and float(delivery.get("expires_at", 0)) > now
+                ):
+                    delivery["endpoint_received_at"] = delivery.get("reached_at", now)
+                    delivery["state"] = DeliveryState.QUEUED.value
+                    delivery["next_attempt_at"] = now
+                    delivery.pop("native_message_id", None)
+                    self.store.put_many([
+                        ("workspace", self._workspace_record_id(item["id"]), item),
+                        ("workspace_delivery", delivery_id, delivery),
+                        *self._due_records(add=[delivery]),
+                    ])
+                changed = True
             if "mention_unread_count" not in item:
                 item["mention_unread_count"] = self._workspace_mention_unread_count(
                     item
@@ -18184,7 +18339,7 @@ class WorkspaceServiceMixin:
             {
                 key: value
                 for key, value in item.items()
-                if key not in {"document", "public_identity"}
+                if key not in {"document", "public_identity", "join_attempt_id", "receipt_delivery_id"}
             }
             for item in self.store.list("workspace_join_request")
             if item.get("state") == "pending"

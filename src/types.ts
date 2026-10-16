@@ -271,6 +271,8 @@ export interface Workspace {
   notification_preference?: WorkspaceNotificationPreference;
   /** Transport evidence for this device's initial join request. */
   join_delivery_state?: DeliveryState;
+  join_acknowledged?: boolean;
+  connection_setup_failed?: boolean;
   connection_results?: ParticipantCandidateResult[];
   created_at: number;
   updated_at: number;

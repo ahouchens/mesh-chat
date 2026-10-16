@@ -1,5 +1,26 @@
 # Architecture
 
+## Durable connectivity implementation boundary
+
+Workspace joining distinguishes local persistence, LXMF endpoint proof, a signed
+application receipt, and admission. The owner atomically saves the validated
+request and its receipt delivery in the encrypted vault. The receipt binds the
+canonical join digest, original delivery UUID, workspace, invitation authority
+and exact recipient device. Only a verified receipt produces approval-pending
+UI; the existing admitting manifest still creates membership.
+
+Signed joins and route-setup intent are committed before network work. Ordinary
+outbox retries retain the original request, including after native proof when
+the application receipt is lost. Legacy joining records resume the same saved
+request once after upgrade. Native callbacks cannot manufacture receipt evidence.
+
+[ADR 0018](docs/adr/0018-authenticated-direct-underlay.md) permits a Rust QUIC
+underlay for feasibility work. Rust owns native sockets and path upkeep; Python
+retains identity, authorization, RNS lifecycle and durable state. The isolated
+`experiments/direct-fabric` crate and GitHub workflow are not linked into the app.
+Shipping transport remains the existing RNS interfaces until identity binding,
+packet adapter and bootstrap-isolation qualification pass.
+
 ## Participant-hosted Internet invitations
 
 Internet invitation creation is direct-first on desktop and Android, but opening a dialog performs no hosting side effect. After explicit preparation, the protected Python service starts the real invitation-scoped listener, reads the active operating-system default routes, and attempts direct public IPv4/global IPv6 or a local-router mapping in PCP → UPnP IGD → NAT-PMP order. UPnP discovery is source-interface-bound; PCP/NAT-PMP use bounded retransmission; supported IGD2 routers receive an IPv6 firewall-pinhole request. No public discovery, rendezvous, STUN, TURN, account, signaling, key-directory, or Mesh Chat service participates. Failure is explicit; the app does not silently select nearby mode or a configured access point.

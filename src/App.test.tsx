@@ -3232,6 +3232,7 @@ describe("small private groups", () => {
 
 describe("desktop workspaces", () => {
   it("distinguishes a locally saved join request from one received by the owner", async () => {
+    let serviceEvent: ((event: ServiceEvent) => void) | undefined;
     const joiningWorkspace: Workspace = {
       ...workspace,
       state: "joining",
@@ -3252,7 +3253,10 @@ describe("desktop workspaces", () => {
     api.runtimePlatform.mockResolvedValue("desktop");
     api.initializeService.mockResolvedValue(current);
     api.onInvitation.mockResolvedValue(() => undefined);
-    api.onServiceEvent.mockResolvedValue(() => undefined);
+    api.onServiceEvent.mockImplementation(async (callback) => {
+      serviceEvent = callback;
+      return () => undefined;
+    });
     api.serviceCommand.mockImplementation(async (command: string) => {
       if (command === "snapshot" || command === "workspace_snapshot") return current;
       return {};
@@ -3262,10 +3266,14 @@ describe("desktop workspaces", () => {
     fireEvent.click(await screen.findByRole("button", { name: /Workspace Lakewatcher, Join request saved/ }));
 
     expect(screen.getAllByText("Join request saved · trying to reach owner").length).toBeGreaterThan(0);
-    expect(screen.getAllByText(/The owner has not received it yet/i).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/The owner app has not confirmed receipt/i).length).toBeGreaterThan(0);
     expect(screen.queryByText("Waiting for owner approval")).toBeNull();
     expect(screen.queryByText("Waiting for #general access")).toBeNull();
     expect(screen.getByText(/#general appears only after the owner receives, validates, and approves/i)).toBeTruthy();
+    current.workspaces = [{ ...joiningWorkspace, join_acknowledged: true, join_delivery_state: "delivered" }];
+    await act(async () => serviceEvent?.({ type: "event", event: "workspace_changed", workspace_id: workspace.id, resource_kind: "join_receipt", generation: 1 }));
+    await waitFor(() => expect(screen.getAllByText("Request received — waiting for approval").length).toBeGreaterThan(0));
+    expect(screen.queryByText("Join request saved · trying to reach owner")).toBeNull();
   });
 
   it("lets a terminal workspace join be removed before trying a fresh invitation", async () => {
@@ -3296,9 +3304,9 @@ describe("desktop workspaces", () => {
     });
 
     render(<App />);
-    fireEvent.click(await screen.findByRole("button", { name: /Workspace Lakewatcher, Join request was not delivered/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /Workspace Lakewatcher, Join request needs attention/ }));
 
-    expect(screen.getAllByText("Join request was not delivered").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Join request needs attention").length).toBeGreaterThan(0);
     expect(screen.getAllByText(/remove this failed join/i).length).toBeGreaterThan(0);
     expect(screen.queryByText(/#general appears only after/i)).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Open Workspace settings" }));

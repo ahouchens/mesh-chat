@@ -20,9 +20,17 @@ export interface WorkspaceJoinStatus {
 }
 
 export function workspaceJoinStatus(
-  workspace: Pick<Workspace, "state" | "join_delivery_state">,
+  workspace: Pick<Workspace, "state" | "join_delivery_state" | "join_acknowledged">,
 ): WorkspaceJoinStatus | null {
   if (workspace.state !== "joining") return null;
+  if (workspace.join_acknowledged === true) {
+    return {
+      headline: "Request received — waiting for approval",
+      detail: "The owner app validated and saved this exact request. Workspace membership begins only after the owner approves it.",
+      ownerReached: true,
+      terminal: false,
+    };
+  }
   if (
     workspace.join_delivery_state === "received_by_endpoint"
     || workspace.join_delivery_state === "delivered"
@@ -40,15 +48,15 @@ export function workspaceJoinStatus(
     || workspace.join_delivery_state === "cancelled"
   ) {
     return {
-      headline: "Join request was not delivered",
-      detail: "Delivery stopped before the owner received the request. Open Workspace settings to remove this failed join, then use a fresh invitation.",
+      headline: "Join request needs attention",
+      detail: "Delivery stopped without confirmation from the owner app. Open Workspace settings to remove this failed join, then use a fresh invitation.",
       ownerReached: false,
       terminal: true,
     };
   }
   return {
     headline: "Join request saved · trying to reach owner",
-    detail: "The owner has not received it yet. Mesh Chat will retry automatically when a route becomes available.",
+    detail: "The owner app has not confirmed receipt. Keep both apps open. Mesh Chat will retry automatically when a route becomes available.",
     ownerReached: false,
     terminal: false,
   };

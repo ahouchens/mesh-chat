@@ -1,0 +1,76 @@
+name: Direct Fabric feasibility
+
+on:
+  push:
+    branches:
+      - 'codex/direct-connectivity'
+  pull_request:
+    paths:
+      - 'experiments/direct-fabric/**'
+      - 'service/src/mesh_chat/**'
+      - 'service/pyproject.toml'
+      - 'service/tools/direct_binding_proof.py'
+      - 'service/tools/direct_fabric_harness.py'
+      - 'service/tools/direct_packet_adapter.py'
+      - 'service/tools/direct_packet_policy.py'
+      - 'service/tests/test_direct_binding.py'
+      - 'service/tests/test_direct_packet_adapter.py'
+      - 'service/tests/test_direct_packet_policy.py'
+      - 'service/tests/test_direct_fabric_harness.py'
+      - 'service/tests/test_udp_mapping.py'
+      - '.github/workflows/direct-fabric-proof.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  controlled-peers:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@1.88.0
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+      - name: Install protected service for identity binding proof
+        run: python -m pip install ./service pytest
+      - name: Validate service binding boundaries
+        run: python -m pytest service/tests/test_direct_binding.py service/tests/test_direct_packet_adapter.py service/tests/test_direct_packet_policy.py service/tests/test_udp_mapping.py -q
+      - name: Test controlled peers (no discovery service)
+        env:
+          MESH_DIRECT_BINDING_PYTHON: python
+        run: cargo test --locked --manifest-path experiments/direct-fabric/Cargo.toml
+      - name: Build isolated packet carrier in CI
+        run: cargo build --locked --manifest-path experiments/direct-fabric/Cargo.toml --example packet_bridge
+      - name: Real RNS and LXMF over native QUIC
+        shell: bash
+        env:
+          MESH_CHAT_RUN_DIRECT_FABRIC_TESTS: '1'
+        run: |
+          binary="$PWD/experiments/direct-fabric/target/debug/examples/packet_bridge"
+          if [[ "$RUNNER_OS" == "Windows" ]]; then binary="$binary.exe"; fi
+          export MESH_DIRECT_PROOF_BINARY="$binary"
+          python -m pytest service/tests/test_direct_fabric_harness.py -q
+
+  android-compile:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@1.88.0
+        with:
+          targets: aarch64-linux-android
+      - uses: android-actions/setup-android@v3
+      - run: sdkmanager "ndk;28.2.13676358"
+      - name: Check Android ARM64 compatibility
+        shell: bash
+        run: |
+          export CC_aarch64_linux_android="$ANDROID_HOME/ndk/28.2.13676358/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android24-clang"
+          export AR_aarch64_linux_android="$ANDROID_HOME/ndk/28.2.13676358/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar"
+          cargo check --locked --target aarch64-linux-android --manifest-path experiments/direct-fabric/Cargo.toml

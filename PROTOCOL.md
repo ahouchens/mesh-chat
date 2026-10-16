@@ -1,5 +1,41 @@
 # Mesh Chat protocol profile
 
+## Workspace join application receipt
+
+`workspace_join_receipt` is an additive workspace LXMF control kind. Existing
+v1–v4 invitation, join, manifest and connection-reply schemas remain unchanged.
+Old peers reject the unknown control but retain their existing admission flow.
+A new joiner with an old owner remains at unconfirmed/endpoint evidence until
+the admitting manifest; native proof alone never means approval is pending.
+
+The receipt is canonical sorted compact JSON, at most 2048 UTF-8 bytes, with
+exact fields: `v` (integer 1), `type` (`workspace_join_receipt`), `workspace_id`,
+`join_digest` (SHA-256 of the complete canonical signed join), `join_attempt_id`
+(original durable delivery UUID), `audience_device_id`, `audience_destination`,
+`authority_device_id`, `received_at`, `expires_at`, and `signature`. The authority
+from the verified invitation signs the canonical object without `signature`
+using the existing RNS signing primitive and URL-safe base64 encoding. No keys,
+endpoints, approval or admitting manifest are included.
+
+The joiner checks the native source and all fields against its saved join, then
+verifies the signature with the invitation authority key. Expiry must equal the
+invitation expiry; received time must be in the join/invitation window and use
+the existing workspace timestamp tolerance (at most 24 hours ahead). A slightly
+slower owner clock records at least the signed join's creation time. Previously verified evidence remains
+durable. It grants neither membership nor a human read receipt.
+
+Owner validation commits the request, one receipt delivery and due index
+atomically. Duplicates cannot create additional requests or change the accepted
+attempt UUID. After endpoint proof, a duplicate may requeue the same receipt at
+most once per 30 seconds within its original deadline. The joiner retries its
+same signed request under existing backoff until receipt, admission or expiry.
+Unsent receipts are cancelled when the request/invitation becomes inactive.
+Join delivery ends at the earlier of its seven-day window and invitation expiry.
+
+The future underlay design and hard limits are in
+[ADR 0018](docs/adr/0018-authenticated-direct-underlay.md). This increment accepts
+no new Internet connection-document prefix.
+
 ## Compact QR transport v1
 
 `MESHQR1:<base64url>` is a camera transport, not a new invitation or trust
@@ -822,3 +858,16 @@ Mobile linking continues to serialize the exact Increment 14 offer,
 acceptance, and authority manifest transition. No platform field or
 notification preference enters canonical bytes, and 0.2.34 peers require no
 compatibility branch.
+
+## Direct mapping protocol distinction (implementation groundwork)
+
+Internal encrypted mapping records now carry `protocol: "tcp" | "udp"`.
+Records without that field retain their historical TCP meaning. PCP and NAT-PMP
+mapping creation, renewal and deletion preserve the selected transport; UPnP
+mapping and IPv6-pinhole creation select it explicitly as well. A UDP mapping
+cannot be exported through the legacy TCP invitation-endpoint helper. Existing
+invitation schemas and user-facing flows are unchanged; native UDP candidates
+and the new email exchange are not enabled by this groundwork.
+
+Wire references: [NAT-PMP RFC 6886](https://www.rfc-editor.org/rfc/rfc6886.html#section-3.3)
+and [PCP RFC 6887](https://www.rfc-editor.org/rfc/rfc6887.html#section-11).

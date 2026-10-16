@@ -47,10 +47,18 @@ describe("plain-language status mapping", () => {
     (join_delivery_state) => {
       const status = workspaceJoinStatus({ state: "joining", join_delivery_state } as Workspace);
       expect(status?.headline).toContain("trying to reach owner");
-      expect(status?.detail).toContain("has not received it yet");
+      expect(status?.detail).toContain("has not confirmed receipt");
       expect(status?.headline).not.toContain("waiting for review");
     },
   );
+
+  it("requires an application acknowledgment before showing approval pending", () => {
+    const status = workspaceJoinStatus({ state: "joining", join_delivery_state: "delivered", join_acknowledged: true });
+    expect(status?.headline).toBe("Request received — waiting for approval");
+    expect(status?.detail).toContain("validated and saved this exact request");
+    expect(status?.terminal).toBe(false);
+    expect(workspaceJoinStatus({ state: "active", join_acknowledged: true })).toBeNull();
+  });
 
   it.each(["received_by_endpoint", "delivered"] as const)(
     "shows owner-device evidence for a workspace join after %s",
@@ -68,7 +76,7 @@ describe("plain-language status mapping", () => {
     "shows a terminal workspace join failure for %s",
     (join_delivery_state) => {
       const status = workspaceJoinStatus({ state: "joining", join_delivery_state } as Workspace);
-      expect(status?.headline).toBe("Join request was not delivered");
+      expect(status?.headline).toBe("Join request needs attention");
       expect(status?.detail).toContain("remove this failed join");
       expect(status?.terminal).toBe(true);
     },

@@ -1,5 +1,17 @@
 # Android feature parity
 
+The 2026-10-16 direct-connectivity increment shares signed workspace-join
+receipts and evidence-based UI between desktop and Android. Restart retains the
+exact join, verified receipt and interrupted route-setup intent. It adds no
+background execution, push service or notification-delivery guarantee.
+
+The separate Quinn feasibility crate has an Android ARM64 GitHub compile job
+but is not embedded in the mobile plugin. Native socket binding, network-change
+callbacks, Doze/resume behavior, real QUIC/LXMF traffic, battery measurements and
+physical Windows↔Android tests remain unqualified. An authored workflow or
+passing shared source test is not device evidence. See
+[ADR 0018](adr/0018-authenticated-direct-underlay.md).
+
 This document compares the Android client with the Windows desktop 0.2.45
 implementation. It is a source-and-evidence audit, not a claim that shared code
 automatically behaves the same on a phone. The Android client shares the React

@@ -1,5 +1,28 @@
 # Threat model
 
+## Join receipt and direct-underlay gate
+
+An LXMF proof is not durable application validation. The new join receipt is
+signed by the exact invitation authority and bound to the original join digest,
+delivery UUID, workspace and audience device/destination. Wrong sources,
+signatures, attempts, audiences, versions and expired controls cannot change
+approval-pending state. Request and receipt outbox commit together; a storage
+failure cannot leave an acknowledgment for an unsaved request. Duplicate replies
+reuse one logical delivery with bounded requeue timing. Admission still requires
+the existing manifest; the receipt is never a human read receipt.
+
+Canonical receipts and interrupted route-setup documents remain encrypted in
+service storage and excluded from renderer snapshots. The renderer receives
+only a verified-acknowledgment boolean in addition to existing delivery evidence.
+
+The isolated QUIC proof is not activated in the app. It uses ephemeral TLS keys,
+exact mutual certificate checks, no 0-RTT, packet/queue limits and no external
+discovery. RNS key binding, bootstrap isolation, adapter injection resistance,
+and physical traversal remain qualification requirements. Stock UDP `online`
+means a local listener exists; local bytes reach RNS before downstream IFAC
+validation. Engine health and remote liveness require separate evidence. See
+[ADR 0018](docs/adr/0018-authenticated-direct-underlay.md).
+
 ## Participant-hosted Internet invitations
 
 The default Internet flow introduces no third-party Mesh Chat or workspace entity. The inviter is both the authenticated invitation signer and temporary connection operator. Email, Slack, Teams, QR, clipboard, and file providers see or carry invitation data but receive no Reticulum role, contact trust, membership, message key, or routing authority.

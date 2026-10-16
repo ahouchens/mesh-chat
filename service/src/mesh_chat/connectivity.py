@@ -114,8 +114,14 @@ class MappingResult:
     internal_port: int
     lifetime: int
     cleanup: dict[str, Any]
+    protocol: str = "tcp"
+
+    def __post_init__(self) -> None:
+        _mapping_protocol(self.protocol)
 
     def endpoint(self) -> dict[str, Any]:
+        if self.protocol != "tcp":
+            raise ValueError("UDP mappings cannot be used as legacy TCP invitation endpoints")
         return {"host": self.external_host, "port": self.external_port, "path": self.method}
 
     def record(self) -> dict[str, Any]:
@@ -123,8 +129,14 @@ class MappingResult:
             "method": self.method, "external_host": self.external_host,
             "external_port": self.external_port, "internal_host": self.internal_host,
             "internal_port": self.internal_port, "lifetime": self.lifetime,
-            "cleanup": dict(self.cleanup),
+            "cleanup": dict(self.cleanup), "protocol": self.protocol,
         }
+
+
+def _mapping_protocol(protocol: str) -> int:
+    if protocol not in ("tcp", "udp"):
+        raise ValueError("Mapping protocol must be tcp or udp")
+    return 6 if protocol == "tcp" else 17
 
 
 def classify_address(value: str) -> str:
@@ -638,7 +650,9 @@ def map_upnp(
     internal_port: int, *, lifetime: int = DEFAULT_MAPPING_LIFETIME,
     timeout: float = 1.1, description: str = "MeshChat participant invite",
     routes: list[RouteInfo] | None = None, preferred_external_port: int = 0,
+    protocol: str = "tcp",
 ) -> MappingResult:
+    _mapping_protocol(protocol)
     local, service_type, control_url, external_host = _upnp_external(
         default_routes() if routes is None else routes, timeout
     )
@@ -646,7 +660,7 @@ def map_upnp(
         try:
             payload = _soap(
                 control_url, service_type, "AddAnyPortMapping", {
-                    "NewRemoteHost": "", "NewExternalPort": "0", "NewProtocol": "TCP",
+                    "NewRemoteHost": "", "NewExternalPort": "0", "NewProtocol": protocol.upper(),
                     "NewInternalPort": str(internal_port), "NewInternalClient": local,
                     "NewEnabled": "1", "NewPortMappingDescription": description[:48],
                     "NewLeaseDuration": str(lifetime),
@@ -665,7 +679,7 @@ def map_upnp(
                     cleanup["uptime"] = uptime
                 return MappingResult(
                     "upnp", external_host, reserved, local, internal_port, lifetime,
-                    cleanup,
+                    cleanup, protocol,
                 )
         except (ConnectivityError, ValueError):
             pass
@@ -680,7 +694,7 @@ def map_upnp(
             _soap(
                 control_url, service_type, "AddPortMapping", {
                     "NewRemoteHost": "", "NewExternalPort": str(external_port),
-                    "NewProtocol": "TCP", "NewInternalPort": str(internal_port),
+                    "NewProtocol": protocol.upper(), "NewInternalPort": str(internal_port),
                     "NewInternalClient": local, "NewEnabled": "1",
                     "NewPortMappingDescription": description[:48],
                     "NewLeaseDuration": str(lifetime),
@@ -697,7 +711,7 @@ def map_upnp(
                 cleanup["uptime"] = uptime
             return MappingResult(
                 "upnp", external_host, external_port, local, internal_port, lifetime,
-                cleanup,
+                cleanup, protocol,
             )
         except ConnectivityError as exc:
             last = exc
@@ -707,10 +721,11 @@ def map_upnp(
 def map_upnp_ipv6_pinhole(
     internal_host: str, internal_port: int, *,
     lifetime: int = DEFAULT_MAPPING_LIFETIME, timeout: float = 1.1,
-    routes: list[RouteInfo] | None = None,
+    routes: list[RouteInfo] | None = None, protocol: str = "tcp",
 ) -> MappingResult:
     """Open an IGD:2 IPv6 firewall pinhole when the router advertises it."""
 
+    ip_protocol = _mapping_protocol(protocol)
     if classify_address(internal_host) != "public_ipv6":
         raise ConnectivityError("ipv6", "no_global_ipv6", result="unsupported")
     selected = default_routes() if routes is None else routes
@@ -742,7 +757,7 @@ def map_upnp_ipv6_pinhole(
                 control_url, UPNP_IPV6_FIREWALL_SERVICE, "AddPinhole", {
                     "RemoteHost": "", "RemotePort": "0",
                     "InternalClient": internal_host,
-                    "InternalPort": str(internal_port), "Protocol": "6",
+                    "InternalPort": str(internal_port), "Protocol": str(ip_protocol),
                     "LeaseTime": str(lifetime),
                 }, timeout=timeout, source_address=source_address,
             )
@@ -756,7 +771,7 @@ def map_upnp_ipv6_pinhole(
                     "service_type": UPNP_IPV6_FIREWALL_SERVICE,
                     "source_address": source_address,
                     "unique_id": unique_id,
-                },
+                }, protocol,
             )
         except ConnectivityError as exc:
             last = exc
@@ -858,8 +873,10 @@ def inspect_nat_pmp(
 def map_nat_pmp(
     internal_port: int, *, lifetime: int = DEFAULT_MAPPING_LIFETIME,
     timeout: float | None = None, routes: list[RouteInfo] | None = None,
-    preferred_external_port: int = 0,
+    preferred_external_port: int = 0, protocol: str = "tcp",
 ) -> MappingResult:
+    _mapping_protocol(protocol)
+    mapping_opcode = 2 if protocol == "tcp" else 1
     delays = (timeout,) if timeout is not None else MAPPING_RETRY_DELAYS
     for route in _gateway_routes(routes):
         assert route.gateway is not None
@@ -874,23 +891,23 @@ def map_nat_pmp(
                     recommended_action="configure_upstream_router_or_bridge_mode",
                 )
             requested = preferred_external_port if 1 <= preferred_external_port <= 65535 else 0
-            request = struct.pack("!BBHHHI", 0, 2, 0, internal_port, requested, lifetime)
+            request = struct.pack("!BBHHHI", 0, mapping_opcode, 0, internal_port, requested, lifetime)
             response = _retry_gateway_exchange(
                 route.gateway, request, 16, source_address=route.local_address, delays=delays
             )
             version, opcode, result, epoch, returned, external_port, lease = struct.unpack(
                 "!BBHIHHI", response[:16]
             )
-            if version != 0 or opcode != 130 or returned != internal_port:
+            if version != 0 or opcode != 128 + mapping_opcode or returned != internal_port:
                 continue
             if result != 0:
                 raise ConnectivityError("nat_pmp", "nat_pmp_mapping_denied", result="blocked")
-            if external_port == 0:
+            if external_port == 0 or lease == 0:
                 continue
             internal_host = route.local_address or _local_address_for(route.gateway, GATEWAY_PORT)
             return MappingResult(
                 "nat_pmp", external_host, external_port, internal_host, internal_port,
-                int(lease), {"gateway": route.gateway, "epoch": min(public_epoch, epoch)},
+                int(lease), {"gateway": route.gateway, "epoch": min(public_epoch, epoch)}, protocol,
             )
         except ConnectivityError:
             raise
@@ -901,12 +918,12 @@ def map_nat_pmp(
 
 def _pcp_request(
     internal_host: str, internal_port: int, lifetime: int, nonce: bytes,
-    *, external_port: int = 0,
+    *, external_port: int = 0, protocol: str = "tcp",
 ) -> bytes:
     client_ip = b"\x00" * 10 + b"\xff\xff" + socket.inet_aton(internal_host)
     return (
         struct.pack("!BBHI", 2, 1, 0, lifetime) + client_ip + nonce
-        + struct.pack("!B3sHH", 6, b"\x00" * 3, internal_port, external_port)
+        + struct.pack("!B3sHH", _mapping_protocol(protocol), b"\x00" * 3, internal_port, external_port)
         + b"\x00" * 16
     )
 
@@ -933,8 +950,9 @@ def inspect_pcp(*, routes: list[RouteInfo] | None = None) -> dict[str, str]:
 def map_pcp(
     internal_port: int, *, lifetime: int = DEFAULT_MAPPING_LIFETIME,
     timeout: float | None = None, routes: list[RouteInfo] | None = None,
-    preferred_external_port: int = 0,
+    preferred_external_port: int = 0, protocol: str = "tcp",
 ) -> MappingResult:
+    ip_protocol = _mapping_protocol(protocol)
     delays = (timeout,) if timeout is not None else MAPPING_RETRY_DELAYS
     for route in _gateway_routes(routes):
         assert route.gateway is not None
@@ -943,7 +961,7 @@ def map_pcp(
             nonce = secrets.token_bytes(12)
             response = _retry_gateway_exchange(
                 route.gateway, _pcp_request(
-                    internal_host, internal_port, lifetime, nonce,
+                    internal_host, internal_port, lifetime, nonce, protocol=protocol,
                     external_port=(
                         preferred_external_port
                         if 1 <= preferred_external_port <= 65535 else 0
@@ -956,7 +974,7 @@ def map_pcp(
                 continue
             if result != 0:
                 raise ConnectivityError("pcp", "pcp_mapping_denied", result="blocked")
-            protocol = response[36]
+            returned_protocol = response[36]
             returned, external_port = struct.unpack("!HH", response[40:44])
             address = ipaddress.ip_address(response[44:60])
             if address.ipv4_mapped is not None:
@@ -968,12 +986,12 @@ def map_pcp(
                     "pcp", "upstream_nat_detected", result="blocked",
                     recommended_action="configure_upstream_router_or_bridge_mode",
                 )
-            if protocol != 6 or returned != internal_port or not external_port or not address_is_public(external_host):
+            if returned_protocol != ip_protocol or returned != internal_port or not external_port or not lease or not address_is_public(external_host):
                 continue
             epoch = struct.unpack("!I", response[8:12])[0]
             return MappingResult(
                 "pcp", external_host, external_port, internal_host, internal_port,
-                int(lease), {"gateway": route.gateway, "nonce": nonce.hex(), "epoch": epoch},
+                int(lease), {"gateway": route.gateway, "nonce": nonce.hex(), "epoch": epoch}, protocol,
             )
         except ConnectivityError:
             raise
@@ -985,13 +1003,15 @@ def map_pcp(
 def create_port_mapping(
     internal_port: int, *, lifetime: int = DEFAULT_MAPPING_LIFETIME,
     routes: list[RouteInfo] | None = None, preferred_external_port: int = 0,
+    protocol: str = "tcp",
 ) -> MappingResult:
+    _mapping_protocol(protocol)
     failures: list[ConnectivityError] = []
     for mapper in (map_pcp, map_upnp, map_nat_pmp):
         try:
             return mapper(
                 internal_port, lifetime=lifetime, routes=routes,
-                preferred_external_port=preferred_external_port,
+                preferred_external_port=preferred_external_port, protocol=protocol,
             )
         except ConnectivityError as exc:
             failures.append(exc)
@@ -1008,6 +1028,8 @@ def renew_port_mapping(
     record: dict[str, Any], *, lifetime: int = DEFAULT_MAPPING_LIFETIME
 ) -> MappingResult:
     method = str(record.get("method", ""))
+    protocol = record.get("protocol", "tcp")
+    ip_protocol = _mapping_protocol(protocol)
     internal_port = int(record["internal_port"])
     external_port = int(record["external_port"])
     external_host = str(record["external_host"])
@@ -1025,7 +1047,7 @@ def renew_port_mapping(
             )
             return MappingResult(
                 method, external_host, external_port, internal_host, internal_port,
-                lifetime, cleanup,
+                lifetime, cleanup, protocol,
             )
         if method == "upnp":
             control_url = str(cleanup["control_url"])
@@ -1048,7 +1070,7 @@ def renew_port_mapping(
             _soap(
                 control_url, service_type, "AddPortMapping", {
                     "NewRemoteHost": "", "NewExternalPort": str(external_port),
-                    "NewProtocol": "TCP", "NewInternalPort": str(internal_port),
+                    "NewProtocol": protocol.upper(), "NewInternalPort": str(internal_port),
                     "NewInternalClient": internal_host, "NewEnabled": "1",
                     "NewPortMappingDescription": "MeshChat participant invite",
                     "NewLeaseDuration": str(lifetime),
@@ -1058,7 +1080,7 @@ def renew_port_mapping(
                 cleanup["uptime"] = uptime
             return MappingResult(
                 method, external_host, external_port, internal_host, internal_port,
-                lifetime, cleanup,
+                lifetime, cleanup, protocol,
             )
         gateway = str(cleanup["gateway"])
         if _local_address_for(gateway, GATEWAY_PORT) != internal_host:
@@ -1069,14 +1091,15 @@ def renew_port_mapping(
             ))
             response = _retry_gateway_exchange(
                 gateway, struct.pack(
-                    "!BBHHHI", 0, 2, 0, internal_port, external_port, lifetime
+                    "!BBHHHI", 0, 2 if protocol == "tcp" else 1, 0, internal_port, external_port, lifetime
                 ), 16, source_address=internal_host,
             )
             _version, _opcode, result, epoch, returned, mapped_port, lease = struct.unpack(
                 "!BBHIHHI", response[:16]
             )
             if (
-                current != external_host or result != 0 or returned != internal_port
+                _version != 0 or _opcode != (130 if protocol == "tcp" else 129)
+                or lease == 0 or current != external_host or result != 0 or returned != internal_port
                 or mapped_port != external_port
                 or min(public_epoch, epoch) < int(cleanup.get("epoch", 0))
             ):
@@ -1084,14 +1107,14 @@ def renew_port_mapping(
             cleanup["epoch"] = min(public_epoch, epoch)
             return MappingResult(
                 method, external_host, external_port, internal_host, internal_port,
-                int(lease), cleanup,
+                int(lease), cleanup, protocol,
             )
         if method == "pcp":
             nonce = bytes.fromhex(str(cleanup["nonce"]))
             response = _retry_gateway_exchange(
                 gateway, _pcp_request(
                     internal_host, internal_port, lifetime, nonce,
-                    external_port=external_port,
+                    external_port=external_port, protocol=protocol,
                 ), 60, source_address=internal_host,
             )
             _version, _opcode, _reserved, result, lease = struct.unpack("!BBBBI", response[:8])
@@ -1101,7 +1124,8 @@ def renew_port_mapping(
                 address = address.ipv4_mapped
             epoch = struct.unpack("!I", response[8:12])[0]
             if (
-                result != 0 or response[24:36] != nonce or returned != internal_port
+                _version != 2 or _opcode != 0x81 or response[36] != ip_protocol or lease == 0
+                or result != 0 or response[24:36] != nonce or returned != internal_port
                 or mapped_port != external_port or address.compressed != external_host
                 or epoch < int(cleanup.get("epoch", 0))
             ):
@@ -1109,7 +1133,7 @@ def renew_port_mapping(
             cleanup["epoch"] = epoch
             return MappingResult(
                 method, external_host, external_port, internal_host, internal_port,
-                int(lease), cleanup,
+                int(lease), cleanup, protocol,
             )
     except ConnectivityError:
         raise
@@ -1120,6 +1144,8 @@ def renew_port_mapping(
 
 def remove_port_mapping(record: dict[str, Any], *, timeout: float = 0.5) -> None:
     try:
+        protocol = record.get("protocol", "tcp")
+        _mapping_protocol(protocol)
         method = record["method"]
         internal_port = int(record["internal_port"])
         external_port = int(record["external_port"])
@@ -1134,13 +1160,13 @@ def remove_port_mapping(record: dict[str, Any], *, timeout: float = 0.5) -> None
             _soap(
                 cleanup["control_url"], cleanup["service_type"], "DeletePortMapping",
                 {"NewRemoteHost": "", "NewExternalPort": str(external_port),
-                 "NewProtocol": "TCP"}, timeout=timeout,
+                 "NewProtocol": protocol.upper()}, timeout=timeout,
                 source_address=cleanup.get("source_address"),
             )
         elif method == "nat_pmp":
             _gateway_exchange(
                 cleanup["gateway"],
-                struct.pack("!BBHHHI", 0, 2, 0, internal_port, external_port, 0),
+                struct.pack("!BBHHHI", 0, 2 if protocol == "tcp" else 1, 0, internal_port, external_port, 0),
                 16, timeout, source_address=record.get("internal_host"),
             )
         elif method == "pcp":
@@ -1148,7 +1174,7 @@ def remove_port_mapping(record: dict[str, Any], *, timeout: float = 0.5) -> None
             _gateway_exchange(
                 cleanup["gateway"], _pcp_request(
                     internal_host, internal_port, 0, bytes.fromhex(cleanup["nonce"]),
-                    external_port=external_port,
+                    external_port=external_port, protocol=protocol,
                 ), 60, timeout, source_address=internal_host,
             )
     except Exception:

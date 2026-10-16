@@ -23,6 +23,7 @@ def test_real_personal_and_workspace_remote_access_topology() -> None:
     assert result["workspace_v2"] is True
     assert result["workspace_consent_disclosed"] is True
     assert result["workspace_joined"] is True
+    assert result["workspace_join_acknowledged"] is True
     assert result["workspace_received"] is True
     assert result["workspace_direct_received"] is True
     assert result["alex_route"] == "remote"

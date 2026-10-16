@@ -995,6 +995,7 @@ storage rather than weakening the requirement.
 - `scripts/` — repeatable packaging and verification commands
 - [ARCHITECTURE.md](ARCHITECTURE.md), [PROTOCOL.md](PROTOCOL.md), [THREAT_MODEL.md](THREAT_MODEL.md), [TESTING.md](TESTING.md) — security and integration record
 - [WORKSPACE_SPEC.md](WORKSPACE_SPEC.md) — proposed multi-channel workspace product and implementation specification
+- [Durable direct connectivity roadmap](docs/DIRECT_CONNECTIVITY_ROADMAP.md) — proposed email bootstrap, Reticulum underlay, automatic reconnection, and phased release criteria
 
 No external runtime service is needed or contacted. Installation downloads and package distribution are outside the messaging path.
 

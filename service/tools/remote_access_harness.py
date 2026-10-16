@@ -274,6 +274,16 @@ def run(timeout: float = 70) -> dict[str, Any]:
                 "workspace join request",
                 timeout,
             )
+            acknowledged = _wait(
+                blair, "workspace_snapshot", {},
+                lambda snap: next((
+                    item for item in snap.get("workspaces", [])
+                    if item.get("id") == workspace["id"]
+                    and item.get("state") == "joining"
+                    and item.get("join_acknowledged") is True
+                ), None),
+                "authenticated workspace join receipt before approval", timeout,
+            )
             _framed(
                 alex,
                 "approve_workspace_join",
@@ -406,6 +416,7 @@ def run(timeout: float = 70) -> dict[str, Any]:
                 "workspace_v2": workspace_invitation["text"].startswith("MESHWORKSPACE2:"),
                 "workspace_consent_disclosed": bool(workspace_preview.get("requires_network_consent")),
                 "workspace_joined": joined["state"] == "active",
+                "workspace_join_acknowledged": acknowledged["join_acknowledged"] is True,
                 "workspace_received": received["id"] == sent["id"],
                 "workspace_direct_received": direct_received["id"] == direct_sent["id"],
                 "alex_route": next(item["route_kind"] for item in alex_snapshot["contacts"] if item["id"] == pending["id"]),
@@ -446,6 +457,7 @@ def main() -> int:
         "workspace_v2",
         "workspace_consent_disclosed",
         "workspace_joined",
+        "workspace_join_acknowledged",
         "workspace_received",
         "workspace_direct_received",
     }
