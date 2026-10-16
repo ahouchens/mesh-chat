@@ -46,6 +46,7 @@ def _worker(name, root, commands, responses, incoming, outgoing):
     session = object()
     authorized = False
     authorization_check = None
+    live_authority_check = None
     pending = True
     peer_destination = None
     authorized_workspace = None
@@ -63,7 +64,19 @@ def _worker(name, root, commands, responses, incoming, outgoing):
         network.reticulum._add_interface(interface, mode=interface.MODE_POINT_TO_POINT)
 
         def pump(interface, session):
+            next_authority_check = 0
             while not stop.is_set():
+                if interface.online and time.monotonic() >= next_authority_check:
+                    with service._dispatch_lock:
+                        if live_authority_check is not None:
+                            try:
+                                live_authority_check()
+                            except Exception:
+                                # Fail closed on revoked or unavailable authority.
+                                # The controller still owns native carrier cleanup.
+                                interface.engine_lost(session)
+                                return
+                    next_authority_check = time.monotonic() + 0.25
                 try:
                     packet = incoming.get(timeout=0.01)
                     if packet is None:
@@ -154,6 +167,8 @@ def _worker(name, root, commands, responses, incoming, outgoing):
                             check = partial(service._accept_direct_answer, request["invitation_id"], request["answer"], authority, cert)
                         check()
                         authorization_check = check
+                        live_authority_check = (partial(service._direct_workspace_binding_authority, authority)
+                                                if authority.scope["kind"] == "workspace" else None)
                         authorized = True
                         pending = authority.scope["kind"] == "invitation"
                         peer_destination = _destination_for(_identity_from_public_key(authority.issuer_public_identity))
@@ -176,6 +191,7 @@ def _worker(name, root, commands, responses, incoming, outgoing):
                                 break
                     authorized = False
                     authorization_check = None
+                    live_authority_check = None
                     session = object()
                     interface = MeshDirectInterface(RNS.Transport, budget=budget)
                     network.reticulum._add_interface(interface, mode=interface.MODE_POINT_TO_POINT)
@@ -449,6 +465,17 @@ def run(*, executable=None, timeout=45):
                 peer=peers[1-index]["profile"]["destination_hash"]) for index, peer in enumerate(peers)]
             assert all(state["interfaces"] == 1 and not state["routing"] and state["online"]
                        and state["ratchet_ready"] and state["received_bytes"] > 0 for state in states)
+            _framed(owner, "remove_workspace_member", {"workspace_id": workspace["id"],
+                "member_id": workspaces[1]["local_member_id"], "operation_id": op()})
+            deadline = time.monotonic() + 5
+            while _call(owner["commands"], owner["responses"], "state",
+                        peer=joiner["profile"]["destination_hash"])["online"]:
+                if time.monotonic() > deadline:
+                    raise TimeoutError("Revoked peer adapter remained online")
+                time.sleep(0.05)
+            # No activation request or carrier shutdown triggered this retirement.
+            if carrier.stop.is_set() or (carrier.process and carrier.process.poll() is not None):
+                raise AssertionError("Carrier stopped before revocation was observed")
             carrier.close(require_graceful=True)
             carrier = None
             for index, peer in enumerate(peers):
@@ -464,7 +491,7 @@ def run(*, executable=None, timeout=45):
             return {"carrier": "quic" if executable else "source-pipes", "join_acknowledged": True,
                     "admitted": True, "bidirectional_messages": True, "ratchets": True,
                     "engine_death_offline": True, "isolated": True, "admitted_key_rotation": True,
-                    "endpoint_receipts": True, "stale_activation_rejected": True}
+                    "endpoint_receipts": True, "stale_activation_rejected": True, "live_revocation_offline": True}
         finally:
             if carrier:
                 carrier.close()

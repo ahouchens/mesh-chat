@@ -18,7 +18,7 @@ def test_real_services_over_private_direct_packet_carrier():
     assert all(result[key] for key in (
         "join_acknowledged", "admitted", "bidirectional_messages", "ratchets",
         "engine_death_offline", "isolated", "admitted_key_rotation", "endpoint_receipts",
-        "stale_activation_rejected",
+        "stale_activation_rejected", "live_revocation_offline",
     ))
 
 
