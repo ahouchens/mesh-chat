@@ -380,3 +380,11 @@ Source topology passes. Native cancellation and strict graceful teardown passed
 on Windows/Linux, and Android ARM64 compilation passed at `0c3884c` in
 [run 38925223083](https://github.com/ahouchens/mesh-chat/actions/runs/38925223083).
 Shipping lifecycle events, mapping cleanup and service IPC remain unintegrated.
+
+The controlled native bridge now applies the authorization deadline while waiting
+for service authorization and while handshaking, as well as during active traffic.
+A short remaining lifetime cannot be extended by the fixed authorization wait or
+handshake timeout. New native process tests leave stdin open and send no cancel,
+checking expiry both before authorization and after activation, including offline
+notification to both packet consumers. These tests await CI qualification; the
+source topology passes and does not substitute for native expiry evidence.

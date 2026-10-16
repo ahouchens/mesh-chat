@@ -80,7 +80,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
     frame(&mut std::io::stdout(), 3, ac.as_ref())?;
     frame(&mut std::io::stdout(), 4, bc.as_ref())?;
-    let Some((2, authorized)) = tokio::time::timeout(Duration::from_secs(30), input.recv()).await?
+    let Some((2, authorized)) = tokio::time::timeout_at(
+        authorization_deadline.min(tokio::time::Instant::now() + Duration::from_secs(30)),
+        input.recv(),
+    )
+    .await?
     else {
         return Err("missing trusted-harness authorization".into());
     };
@@ -100,7 +104,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     {
         return Err("candidate socket changed".into());
     }
-    let (ap, bp) = tokio::join!(a.connect(b.address().map_err(|_| "address")?), b.accept());
+    let remote_address = b.address().map_err(|_| "address")?;
+    let (ap, bp) = tokio::time::timeout_at(authorization_deadline, async {
+        tokio::join!(a.connect(remote_address), b.accept())
+    })
+    .await?;
     let ap = ap.map_err(|_| "connect")?;
     let bp = bp.map_err(|_| "accept")?;
     frame(&mut std::io::stdout(), 2, b"ready")?;

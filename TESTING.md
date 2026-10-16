@@ -158,6 +158,11 @@ and the strict teardown topology passed on Windows/Linux; Android ARM64 compilat
 passed at `0c3884c` in
 [run 38925223083](https://github.com/ahouchens/mesh-chat/actions/runs/38925223083).
 
+Native carrier expiry probes now exercise pre-authorization and active-session
+expiry without closing stdin or sending cancellation. They assert process exit
+and offline notification to both consumers. Source validation passed its topology
+and skipped these two native-only probes; GitHub qualification is pending.
+
 ## Commands
 
 Focused service and UI checks:
