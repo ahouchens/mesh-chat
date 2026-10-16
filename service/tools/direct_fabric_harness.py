@@ -37,7 +37,7 @@ from tools.direct_packet_adapter import MeshDirectInterface, ProfileBudget, scop
 from tools.direct_packet_policy import PacketPolicy
 
 
-def _worker(name, root, commands, responses, incoming, outgoing):
+def _worker(name, root, commands, responses, incoming, outgoing, revoked):
     store = VaultStore(Path(root), os.urandom(32), allow_unprotected_for_tests=True)
     store.put("settings", "network", NetworkSettings(nearby_discovery=False, lan_fallback=False).to_dict())
     service = MeshChatService(store, Path(root), lambda _: None)
@@ -73,8 +73,8 @@ def _worker(name, root, commands, responses, incoming, outgoing):
                                 live_authority_check()
                             except Exception:
                                 # Fail closed on revoked or unavailable authority.
-                                # The controller still owns native carrier cleanup.
                                 interface.engine_lost(session)
+                                revoked.set()
                                 return
                     next_authority_check = time.monotonic() + 0.25
                 try:
@@ -192,6 +192,7 @@ def _worker(name, root, commands, responses, incoming, outgoing):
                     authorized = False
                     authorization_check = None
                     live_authority_check = None
+                    revoked.clear()
                     session = object()
                     interface = MeshDirectInterface(RNS.Transport, budget=budget)
                     network.reticulum._add_interface(interface, mode=interface.MODE_POINT_TO_POINT)
@@ -237,6 +238,7 @@ class PacketCarrier:
     def __init__(self, peers, executable=None, *, generation=1, expires_at):
         self.peers = peers
         self.stop = threading.Event()
+        self.cancellation_requested = threading.Event()
         self.controls = queue.Queue(maxsize=8)
         self.lock = threading.Lock()
         self.process = None
@@ -320,6 +322,25 @@ class PacketCarrier:
                 except queue.Full:
                     pass
 
+    def _watch_revocation(self):
+        # A separate event cannot be dropped behind a full packet queue.
+        while not self.stop.wait(0.05):
+            if any(peer["revoked"].is_set() for peer in self.peers):
+                self.cancellation_requested.set()
+                try:
+                    if self.process:
+                        self._write(2, b"cancel")
+                except (OSError, ValueError):
+                    pass  # Process loss is also terminal; close validates exit.
+                finally:
+                    self.stop.set()
+                    for peer in self.peers:
+                        try:
+                            peer["incoming"].put(None, timeout=1)
+                        except queue.Full:
+                            pass
+                return
+
     def start(self, documents):
         if len(documents) != 2:
             raise ValueError("Expected two authorized local session documents")
@@ -330,6 +351,7 @@ class PacketCarrier:
                 raise RuntimeError("Native peers did not authenticate")
         for index in range(2):
             self._thread(self._forward, index)
+        self._thread(self._watch_revocation)
 
     def close(self, *, require_graceful=False):
         self.stop.set()
@@ -366,11 +388,12 @@ def run(*, executable=None, timeout=45):
             for name in ("Owner", "Joiner"):
                 commands, responses = context.Queue(), context.Queue()
                 incoming, outgoing = context.Queue(maxsize=128), context.Queue(maxsize=128)
+                revoked = context.Event()
                 process = context.Process(target=_worker, args=(name, str(Path(root) / name),
-                    commands, responses, incoming, outgoing))
+                    commands, responses, incoming, outgoing, revoked))
                 process.start()
                 peer = dict(commands=commands, responses=responses, process=process,
-                            incoming=incoming, outgoing=outgoing)
+                            incoming=incoming, outgoing=outgoing, revoked=revoked)
                 peers.append(peer)
                 peer["profile"] = _receive(responses, "ready", 30)["profile"]
             owner, joiner = peers
@@ -473,9 +496,11 @@ def run(*, executable=None, timeout=45):
                 if time.monotonic() > deadline:
                     raise TimeoutError("Revoked peer adapter remained online")
                 time.sleep(0.05)
-            # No activation request or carrier shutdown triggered this retirement.
-            if carrier.stop.is_set() or (carrier.process and carrier.process.poll() is not None):
-                raise AssertionError("Carrier stopped before revocation was observed")
+            # No explicit close or activation request triggers this cancellation.
+            if not carrier.cancellation_requested.wait(timeout=5):
+                raise AssertionError("Revocation did not request carrier cancellation")
+            if carrier.process and carrier.process.wait(timeout=5) != 0:
+                raise AssertionError("Revoked native carrier did not exit gracefully")
             carrier.close(require_graceful=True)
             carrier = None
             for index, peer in enumerate(peers):
@@ -491,7 +516,7 @@ def run(*, executable=None, timeout=45):
             return {"carrier": "quic" if executable else "source-pipes", "join_acknowledged": True,
                     "admitted": True, "bidirectional_messages": True, "ratchets": True,
                     "engine_death_offline": True, "isolated": True, "admitted_key_rotation": True,
-                    "endpoint_receipts": True, "stale_activation_rejected": True, "live_revocation_offline": True}
+                    "endpoint_receipts": True, "stale_activation_rejected": True, "live_revocation_offline": True, "revocation_cancels_carrier": True}
         finally:
             if carrier:
                 carrier.close()

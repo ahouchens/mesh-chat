@@ -411,5 +411,13 @@ bidirectional messaging and verifies the owner's adapter goes offline while the
 carrier is still running, without another activation request. Native topology
 qualification passed on Windows/Linux, with Android ARM64 compilation, at
 `88094ec` in [run 38928825216](https://github.com/ahouchens/mesh-chat/actions/runs/38928825216). This bounded polling proof does not provide instantaneous revocation,
-pending-invitation lifecycle monitoring, or automatic native carrier cancellation;
-the controller still owns carrier cleanup. Shipping lifecycle integration remains open.
+or pending-invitation lifecycle monitoring. Shipping lifecycle integration remains open.
+
+
+The controlled worker now signals admitted-authority loss through a dedicated
+process event, independent of bounded packet queues. The carrier controller watches
+these events and requests native cancellation automatically. The topology requires
+a successful native process exit before explicit cleanup; a source regression also
+checks cancellation with full packet queues. Source validation passed (2 passed,
+2 native-only skips); native CI qualification is pending. This is private harness lifecycle wiring, not shipping
+service IPC or pending-invitation lifecycle integration.
