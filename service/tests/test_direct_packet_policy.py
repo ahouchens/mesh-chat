@@ -1,6 +1,6 @@
 import RNS
 
-from tools.direct_packet_policy import PacketPolicy
+from mesh_chat.direct_packet_policy import PacketPolicy
 
 
 def packet(destination, *, destination_type=RNS.Destination.SINGLE,

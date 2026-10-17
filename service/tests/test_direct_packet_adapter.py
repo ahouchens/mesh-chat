@@ -4,7 +4,7 @@ import pytest
 import RNS
 from RNS.Interfaces.Interface import Interface
 
-from tools.direct_packet_adapter import MeshDirectInterface, ProfileBudget, scoped_message_allowed
+from mesh_chat.direct_packet_adapter import MeshDirectInterface, ProfileBudget, scoped_message_allowed
 
 
 @pytest.fixture

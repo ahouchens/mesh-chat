@@ -1,4 +1,4 @@
-"""Socket-free phase-1 adapter proof; never registered in shipping settings.
+"""Private socket-free service adapter; not registered in shipping settings.
 
 Only a private native/service packet pump holds the opaque session token. The
 token guards stale/cross-peer callbacks; it is not a replacement for native TLS

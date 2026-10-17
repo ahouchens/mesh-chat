@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import threading
+import queue
 import time
 from collections import deque
 from types import SimpleNamespace
@@ -9,6 +10,7 @@ import LXMF
 import RNS
 
 from mesh_chat.direct_runtime import SessionRegistry
+from mesh_chat.direct_packets import PacketRuntime
 from mesh_chat.models import DeliveryState
 from mesh_chat.network import ReticulumNetwork
 from mesh_chat.service import MeshChatService
@@ -310,6 +312,7 @@ def test_service_close_defers_vault_close_until_active_callback_finishes(
 
     service = MeshChatService.__new__(MeshChatService)
     service._direct_sessions = SessionRegistry()
+    service._direct_packets = PacketRuntime()
     lease = service._direct_sessions.open(30, lambda: None)
     service._shutdown = threading.Event()
     service._dispatch_lock = threading.RLock()
@@ -347,6 +350,7 @@ def test_service_close_defers_vault_close_until_active_callback_finishes(
 def test_service_close_closes_vault_after_workers_stop() -> None:
     service = MeshChatService.__new__(MeshChatService)
     service._direct_sessions = SessionRegistry()
+    service._direct_packets = PacketRuntime()
     lease = service._direct_sessions.open(30, lambda: None)
     service._shutdown = threading.Event()
     service._dispatch_lock = threading.RLock()
@@ -363,3 +367,36 @@ def test_service_close_closes_vault_after_workers_stop() -> None:
 
     assert closed.is_set()
     assert lease.cancelled and lease.reason == "closed"
+
+
+def test_service_close_keeps_vault_open_for_active_packet_authority() -> None:
+    service = MeshChatService.__new__(MeshChatService)
+    service._direct_sessions = SessionRegistry()
+    service._direct_packets = PacketRuntime()
+    service._shutdown = threading.Event()
+    service._dispatch_lock = threading.RLock()
+    service._close_lock = threading.Lock()
+    service._close_started = service._store_closed = False
+    service._close_finalizer = None
+    service._retry_thread = threading.Thread(target=lambda: None)
+    service.network = SimpleNamespace(shutdown=lambda: True)
+    closed, entered, release, retired = (threading.Event() for _ in range(4))
+    service.store = SimpleNamespace(close=closed.set)
+    def authority():
+        entered.set()
+        assert release.wait(3)
+        assert not closed.is_set()
+        return True
+    interface = SimpleNamespace(online=True, detached=False, check_health=lambda: True,
+        engine_lost=lambda _: retired.set())
+    pump = service._direct_packets.open(interface, object(), queue.Queue(maxsize=1),
+        queue.Queue(maxsize=1), threading.Event(), threading.Event(), authority)
+    try:
+        assert entered.wait(2)
+        service.close()
+        assert not closed.is_set()
+        assert service._close_finalizer is not None
+    finally:
+        release.set()
+        pump.join(2)
+    assert closed.wait(2) and retired.is_set()

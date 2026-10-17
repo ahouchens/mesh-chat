@@ -33,8 +33,8 @@ from mesh_chat.vault import VaultStore
 from mesh_chat.workspace_protocol import _destination_for, _identity_from_public_key, find_device, verify_workspace_invitation, workspace_document_digest
 from tools.direct_lan_harness import _call, _receive
 from tools.remote_access_harness import _framed, _wait
-from tools.direct_packet_adapter import MeshDirectInterface, ProfileBudget, scoped_message_allowed
-from tools.direct_packet_policy import PacketPolicy
+from mesh_chat.direct_packet_adapter import MeshDirectInterface, scoped_message_allowed
+from mesh_chat.direct_packet_policy import PacketPolicy
 
 
 def _worker(name, root, commands, responses, incoming, outgoing, revoked, carrier_lost, vault_key):
@@ -42,7 +42,6 @@ def _worker(name, root, commands, responses, incoming, outgoing, revoked, carrie
     store.put("settings", "network", NetworkSettings(nearby_discovery=False, lan_fallback=False).to_dict())
     service = MeshChatService(store, Path(root), lambda _: None)
     interface = None
-    stop = threading.Event()
     session = object()
     authorized = False
     authorization_check = None
@@ -52,7 +51,7 @@ def _worker(name, root, commands, responses, incoming, outgoing, revoked, carrie
     authorized_workspace = None
     lease_deadline = 0
     thread = None
-    budget = ProfileBudget()
+    budget = service._direct_packet_budget
     try:
         profile = service._require_profile() if store.get("profile", "local") else service.create_profile(name)
         network = service.network
@@ -63,34 +62,11 @@ def _worker(name, root, commands, responses, incoming, outgoing, revoked, carrie
         interface = MeshDirectInterface(RNS.Transport, budget=budget)
         network.reticulum._add_interface(interface, mode=interface.MODE_POINT_TO_POINT)
 
-        def pump(interface, session):
-            next_authority_check = 0
-            while not stop.is_set():
-                if carrier_lost.is_set():
-                    interface.engine_lost(session)
-                    return
-                if interface.online and time.monotonic() >= next_authority_check:
-                    if runtime_lease is not None and not runtime_lease.check():
-                        interface.engine_lost(session)
-                        revoked.set()
-                        return
-                    next_authority_check = time.monotonic() + 0.25
-                try:
-                    packet = incoming.get(timeout=0.01)
-                    if packet is None:
-                        interface.engine_lost(session)
-                        return
-                    interface.receive(session, packet)
-                except queue.Empty:
-                    pass
-                while (packet := interface.take_outgoing(session)) is not None:
-                    try:
-                        outgoing.put_nowait(packet)
-                    except queue.Full:
-                        break  # Unreliable DATAGRAM semantics; RNS owns retries.
+        def start_pump():
+            return service._open_direct_packet_pump(
+                interface, session, incoming, outgoing, carrier_lost, revoked,
+                lambda: runtime_lease is None or runtime_lease.check())
 
-        thread = threading.Thread(target=pump, args=(interface, session), daemon=True)
-        thread.start()
         responses.put({"ok": True, "action": "ready", "profile": profile})
         while True:
             request = commands.get()
@@ -185,9 +161,11 @@ def _worker(name, root, commands, responses, incoming, outgoing, revoked, carrie
                 elif action == "reset":
                     if interface.online:
                         raise ValueError("Old path must be closed before proof reset")
-                    thread.join(timeout=2)
-                    if thread.is_alive():
-                        raise RuntimeError("Old packet pump did not stop")
+                    if thread is not None:
+                        thread.join(timeout=2)
+                        if thread.is_alive():
+                            raise RuntimeError("Old packet pump did not stop")
+                    thread = None
                     RNS.Transport.interfaces.remove(interface)
                     for link in list(RNS.Transport.active_links) + list(RNS.Transport.pending_links):
                         link.teardown()
@@ -207,8 +185,6 @@ def _worker(name, root, commands, responses, incoming, outgoing, revoked, carrie
                     session = object()
                     interface = MeshDirectInterface(RNS.Transport, budget=budget)
                     network.reticulum._add_interface(interface, mode=interface.MODE_POINT_TO_POINT)
-                    thread = threading.Thread(target=pump, args=(interface, session), daemon=True)
-                    thread.start()
                 elif action == "activate":
                     if not authorized or authorization_check is None:
                         raise ValueError("No verified peer binding")
@@ -224,6 +200,11 @@ def _worker(name, root, commands, responses, incoming, outgoing, revoked, carrie
                             raise
                         interface.packet_policy = PacketPolicy(network.destination_hash, peer_destination)
                         interface.activate(session, expires_at=lease_deadline, pending=pending)
+                        try:
+                            thread = start_pump()
+                        except Exception:
+                            interface.engine_lost(session)
+                            raise
                     network.interface_start_failed = False
                     network.router.announce(network.destination_hash)
                 elif action == "state":
@@ -239,7 +220,8 @@ def _worker(name, root, commands, responses, incoming, outgoing, revoked, carrie
     except Exception as exc:
         responses.put({"ok": False, "action": "ready", "error": f"{type(exc).__name__}: {exc}"})
     finally:
-        stop.set()
+        if thread:
+            thread.stop()
         if interface:
             interface.detach()
         if thread:

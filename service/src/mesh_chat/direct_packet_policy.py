@@ -1,4 +1,4 @@
-"""Pinned-RNS packet routing bounds for the isolated direct adapter proof.
+"""Pinned-RNS packet routing bounds for the private direct service adapter.
 
 This filter does not authenticate RNS packets: RNS still validates signatures,
 Link proofs and encryption. It limits the destinations allowed to reach RNS.

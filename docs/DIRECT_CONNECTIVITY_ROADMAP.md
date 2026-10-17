@@ -514,3 +514,19 @@ passed (614 non-integration tests and 8 topology/controller tests). Native
 qualification passed on Windows/Linux with Android ARM64 compilation at `ec482d0`
 in [run 39042273906](https://github.com/ahouchens/mesh-chat/actions/runs/39042273906).
 No phase is complete.
+
+### Protected-service packet runtime
+
+The socket-free adapter and packet destination policy now live in the service
+package. The service owns the shared queue budget and a capped packet-pump registry;
+the controlled harness uses that runtime instead of its own packet loop. Pumps
+start only at authorized activation, poll authority and health, limit each outgoing
+batch, and signal cancellation on channel, carrier, health or authority failure.
+Suspension/shutdown stop pumps without waiting on channel capacity or an authority
+callback. Stopped-but-blocked pumps retain their registry slots until they exit;
+the deferred shutdown finalizer keeps the vault open until packet workers finish.
+The private pump entry point refuses activation while suspended or closing.
+This is service-side integration, not native-host embedding: no renderer command,
+public control listener or default direct interface is enabled. Owner pending
+authority wiring, isolated production bootstrap contexts, native IPC and automatic
+discovery/recovery remain open. Validation evidence is tracked in TESTING.md.

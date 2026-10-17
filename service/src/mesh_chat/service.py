@@ -36,6 +36,8 @@ from .invitations import (
     verify_invitation,
 )
 from .direct_runtime import SessionRegistry
+from .direct_packets import PacketRuntime
+from .direct_packet_adapter import ProfileBudget
 from .group_service import GroupServiceMixin
 from .models import Contact, DeliveryState, Message, MessageKind, Profile, TrustState
 from .network import ReticulumNetwork, select_lan_listener_port
@@ -334,6 +336,8 @@ class MeshChatService(
         self._shutdown = threading.Event()
         self._dispatch_lock = threading.RLock()
         self._direct_sessions = SessionRegistry()
+        self._direct_packets = PacketRuntime()
+        self._direct_packet_budget = ProfileBudget()
         self._close_lock = threading.Lock()
         self._close_started = False
         self._store_closed = False
@@ -3885,6 +3889,8 @@ class MeshChatService(
             self._close_started = True
         self._shutdown.set()
         self._direct_sessions.retire_all("closed", close=True)
+        self._direct_packets.retire_all(close=True)
+        packets_stopped = self._direct_packets.wait(timeout=0.1)
         try:
             self.close_participant_hosts()
         except Exception:
@@ -3903,7 +3909,7 @@ class MeshChatService(
         # callback or retry. If the bounded foreground shutdown expires, a
         # daemon finalizer waits for that worker and closes the vault exactly
         # once without delaying desktop's sidecar deadline.
-        workers_stopped = callbacks_stopped and not self._retry_thread.is_alive()
+        workers_stopped = packets_stopped and callbacks_stopped and not self._retry_thread.is_alive()
         if not workers_stopped:
             finalizer = threading.Thread(
                 target=self._finish_deferred_close,
@@ -3920,6 +3926,7 @@ class MeshChatService(
         """Close the vault after bounded shutdown had to leave a worker active."""
 
         try:
+            self._direct_packets.wait()
             if (
                 self._retry_thread.is_alive()
                 and self._retry_thread is not threading.current_thread()

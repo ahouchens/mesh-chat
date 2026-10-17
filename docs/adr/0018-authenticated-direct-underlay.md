@@ -167,7 +167,7 @@ and bootstrap isolation with transport enabled elsewhere. A constrained
 `MeshDirectInterface` or isolated bootstrap context is required if these cannot
 be enforced.
 
-The socket-free prototype in `service/tools/direct_packet_adapter.py` uses a
+The socket-free adapter in `service/src/mesh_chat/direct_packet_adapter.py` uses a
 private per-session token and a byte/item bounded queue instead of a loopback
 listener. Engine loss and expiry retire the interface and discard queued data.
 Pending mode enforces packet, byte, rate and five-minute budgets and refuses
@@ -176,6 +176,16 @@ requires a dedicated RNS context; it is not an adapter for the shipping shared
 context. The proof's post-LXMF gate accepts only its bound source and workspace,
 and only join/admission controls during pending bootstrap. Existing service
 signature and admission checks still run after that gate.
+
+The protected service now owns its packet-pump registry and shared queue budget.
+`direct_packets.py` bounds outgoing work between lifecycle checks, retires adapters
+on channel/authority failures, and signals native cancellation independently of
+packet queue capacity. Suspension and shutdown request retirement; registry slots
+remain occupied until the old workers exit. Shutdown defers vault closure for an
+in-flight packet authority callback. The harness starts these service-owned pumps
+only after private authorization and interface activation. The production native
+IPC boundary and bootstrap-context isolation are still required before enabling
+this adapter in the app.
 
 `service/tools/direct_fabric_harness.py` has passed with a source-only inherited
 queue carrier: actual join, signed acknowledgment before approval, admission,

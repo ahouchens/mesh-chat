@@ -1663,6 +1663,7 @@ class WorkspaceServiceMixin:
         )
         if state == "suspended":
             self._direct_sessions.retire_all("suspended")
+            self._direct_packets.retire_all()
         if state == "foreground":
             lifecycle["state"] = "reconciling"
             self.store.put(
@@ -2403,6 +2404,12 @@ class WorkspaceServiceMixin:
             raise ValidationError("Direct runtime is closing")
         if self._workspace_lifecycle_state().get("state") == "suspended":
             raise ValidationError("Direct runtime is suspended")
+
+    def _open_direct_packet_pump(self, *args, **kwargs):
+        """Private native boundary; never activates or authorizes an interface."""
+        with self._dispatch_lock:
+            self._check_direct_runtime_available()
+            return self._direct_packets.open(*args, **kwargs)
 
     def _track_direct_join_session(self, workspace_id, raw, certificate_der):
         """Lease the joiner's exact saved Ready chain; no interface attachment.

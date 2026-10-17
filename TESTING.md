@@ -2853,3 +2853,15 @@ qualification passed on Windows/Linux with Android ARM64 compilation at `ec482d0
 in [run 39042273906](https://github.com/ahouchens/mesh-chat/actions/runs/39042273906).
 Owner pending lifecycle and shipping
 IPC are still open; these results do not qualify physical mobile lifecycle behavior.
+
+The adapter/policy and packet-pump lifecycle now run from the protected service
+package. New tests cover authority rejection/errors, broken channels, EOF, carrier
+loss, health failure, full outgoing queues, competing readers, retained capacity
+for blocked workers, cancellation before queued-packet delivery, and deferred
+vault closure during a running authority callback. The controlled topology uses
+the service pump and profile budget. It creates pumps at activation, so reopening
+a suspended profile can complete startup before the explicit foreground transition.
+Local validation passed: 625 non-integration tests, 7 environment-dependent skips,
+19 integration deselections; source topology/controller suite 8 passed, 10
+native-only skips. Native qualification for this increment is pending. This does not enable shipping
+native IPC or default direct interfaces.
