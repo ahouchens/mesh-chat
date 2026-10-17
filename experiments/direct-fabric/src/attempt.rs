@@ -160,6 +160,16 @@ impl PreparedAttempt {
         }
     }
 
+    pub fn remaining_window(&self) -> Result<Duration, Error> {
+        let now = Instant::now();
+        self.check_at(now)?;
+        Ok(self
+            .deadline
+            .ok_or(Error::Timeout)?
+            .min(self.expires)
+            .saturating_duration_since(now))
+    }
+
     /// Consume ownership once. No socket rebind or separate receiver is created.
     pub fn into_peer(mut self, expected: CertificateDer<'static>) -> Result<Peer, Error> {
         self.check_at(Instant::now())?;

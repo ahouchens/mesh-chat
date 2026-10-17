@@ -5,6 +5,9 @@ use rand::{rngs::OsRng, RngCore};
 #[cfg(desktop)]
 use serde_json::json;
 use serde_json::Value;
+mod direct_native;
+#[cfg(target_os = "android")]
+mod mobile_direct;
 #[cfg(desktop)]
 use std::{
     collections::HashMap,
@@ -58,6 +61,7 @@ type PendingResult = Result<Value, String>;
 #[cfg(desktop)]
 #[derive(Clone, Default)]
 struct ServiceState {
+    direct_native: Arc<Mutex<Option<direct_native::NativeHost>>>,
     child: Arc<Mutex<Option<CommandChild>>>,
     sidecar_pid: Arc<Mutex<Option<u32>>>,
     pending: Arc<Mutex<HashMap<String, oneshot::Sender<PendingResult>>>>,
@@ -127,7 +131,27 @@ async fn request(
 }
 
 #[cfg(desktop)]
-fn handle_sidecar_value(app: &AppHandle, state: &ServiceState, value: Value) {
+fn handle_sidecar_value(
+    app: &AppHandle,
+    state: &ServiceState,
+    native: &direct_native::NativeHost,
+    pid: u32,
+    value: Value,
+) {
+    if value.get("type").and_then(Value::as_str) == Some("direct_native") {
+        let response = native.handle(value);
+        if let Ok(frame) = frame(&response) {
+            if let Ok(mut child) = state.child.lock() {
+                if let Some(child) = child.as_mut().filter(|child| child.pid() == pid) {
+                    if child.write(&frame).is_ok() {
+                        return;
+                    }
+                }
+            }
+        }
+        native.close();
+        return;
+    }
     if value.get("type").and_then(Value::as_str) == Some("response") {
         if let Some(id) = value.get("id").and_then(Value::as_str) {
             let sender = state.pending.lock().ok().and_then(|mut map| map.remove(id));
@@ -158,7 +182,13 @@ fn handle_sidecar_value(app: &AppHandle, state: &ServiceState, value: Value) {
 }
 
 #[cfg(desktop)]
-fn consume_stdout(app: &AppHandle, state: &ServiceState, buffer: &mut Vec<u8>) -> Result<(), ()> {
+fn consume_stdout(
+    app: &AppHandle,
+    state: &ServiceState,
+    native: &direct_native::NativeHost,
+    pid: u32,
+    buffer: &mut Vec<u8>,
+) -> Result<(), ()> {
     loop {
         if buffer.len() < 4 {
             return Ok(());
@@ -173,7 +203,7 @@ fn consume_stdout(app: &AppHandle, state: &ServiceState, buffer: &mut Vec<u8>) -
         let body = buffer[4..4 + size].to_vec();
         buffer.drain(0..4 + size);
         let value: Value = serde_json::from_slice(&body).map_err(|_| ())?;
-        handle_sidecar_value(app, state, value);
+        handle_sidecar_value(app, state, native, pid, value);
     }
 }
 
@@ -238,6 +268,11 @@ fn terminate_windows_process_tree(pid: u32) {
 
 #[cfg(desktop)]
 fn retire_service_child(state: &ServiceState) {
+    if let Ok(mut native) = state.direct_native.lock() {
+        if let Some(native) = native.take() {
+            native.close();
+        }
+    }
     // PID tracking is deliberately independent from the stdin writer mutex.
     // A blocked writer must not prevent the host from retiring the exact
     // sidecar process tree during shutdown.
@@ -303,6 +338,12 @@ fn spawn_service(app: &AppHandle, state: &ServiceState) -> Result<(), String> {
         .spawn()
         .map_err(|_| "service_start_failed".to_string())?;
     let sidecar_pid = child.pid();
+    let native = direct_native::NativeHost::default();
+    if let Ok(mut current) = state.direct_native.lock() {
+        if let Some(old) = current.replace(native.clone()) {
+            old.close();
+        }
+    }
     *state
         .child
         .lock()
@@ -319,8 +360,18 @@ fn spawn_service(app: &AppHandle, state: &ServiceState) -> Result<(), String> {
         while let Some(event) = receiver.recv().await {
             match event {
                 CommandEvent::Stdout(bytes) => {
+                    if event_state
+                        .sidecar_pid
+                        .lock()
+                        .ok()
+                        .is_none_or(|pid| *pid != Some(sidecar_pid))
+                    {
+                        break;
+                    }
                     buffer.extend_from_slice(&bytes);
-                    if consume_stdout(&app_handle, &event_state, &mut buffer).is_err() {
+                    if consume_stdout(&app_handle, &event_state, &native, sidecar_pid, &mut buffer)
+                        .is_err()
+                    {
                         fail_all_pending(&event_state, "service_protocol_error");
                         let _ = app_handle.emit(
                             "mesh-chat://service-event",
@@ -379,6 +430,7 @@ fn spawn_service(app: &AppHandle, state: &ServiceState) -> Result<(), String> {
                 _ => {}
             }
         }
+        native.close();
     });
     Ok(())
 }
@@ -1015,7 +1067,10 @@ async fn initialize_service(app: AppHandle, display_name: Option<String>) -> Pen
         .mesh_runtime()
         .initialize(InitializeRequest { display_name })
         .map_err(|_| "service_start_failed".to_string())?;
-    mobile_result(response)
+    let result = mobile_result(response)?;
+    #[cfg(target_os = "android")]
+    mobile_direct::start(&app);
+    Ok(result)
 }
 
 #[cfg(mobile)]
@@ -1067,6 +1122,8 @@ async fn lock_service(app: AppHandle) -> Result<(), String> {
         .mesh_runtime()
         .shutdown()
         .map_err(|_| "service_stopped".to_string())?;
+    #[cfg(target_os = "android")]
+    mobile_direct::stop(&app);
     mobile_result(response).map(|_| ())
 }
 
@@ -1224,6 +1281,8 @@ pub fn run() {
     let instance_state = state.clone();
 
     let builder = tauri::Builder::default();
+    #[cfg(target_os = "android")]
+    let builder = builder.manage(mobile_direct::MobileDirect::default());
     #[cfg(desktop)]
     let builder = builder
         // Must be first so a second desktop launch forwards deep links.
@@ -1357,6 +1416,19 @@ mod tests {
 
     #[test]
     fn renderer_can_delete_and_restore_local_conversations() {
+        for command in [
+            "direct_native",
+            "direct_native_reply",
+            "directExchange",
+            "direct_exchange",
+            "prepare",
+            "activate",
+            "poll",
+            "send",
+            "reset",
+        ] {
+            assert!(!allowed_renderer_command(command));
+        }
         assert!(allowed_renderer_command("delete_conversation"));
         assert!(allowed_renderer_command("restore_conversation"));
         assert!(allowed_renderer_command("set_message_reaction"));

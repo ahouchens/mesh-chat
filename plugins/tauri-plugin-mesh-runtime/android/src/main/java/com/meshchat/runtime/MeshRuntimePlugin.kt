@@ -58,6 +58,11 @@ class ThemeArgs {
     var theme: String? = null
 }
 
+@InvokeArg
+class DirectExchangeArgs {
+    var json: String? = null
+}
+
 /**
  * Result of opening and validating an invitation document in the host app.
  *
@@ -95,6 +100,23 @@ class MeshRuntimePlugin(private val activity: Activity) : Plugin(activity) {
     private var multicastLock: WifiManager.MulticastLock? = null
     private val pythonExecutor = Executors.newSingleThreadExecutor { runnable ->
         Thread(runnable, "mesh-chat-python").apply { isDaemon = true }
+    }
+    // Separate from commands which may be waiting on a private native result.
+    private val directExecutor = Executors.newSingleThreadExecutor { runnable ->
+        Thread(runnable, "mesh-chat-direct-private").apply { isDaemon = true }
+    }
+
+    @Command
+    fun directExchange(invoke: Invoke) {
+        val request = invoke.parseArgs(DirectExchangeArgs::class.java).json
+        if (request == null || request.toByteArray(Charsets.UTF_8).size > 65536) {
+            invoke.reject("invalid_request")
+            return
+        }
+        directExecutor.execute {
+            try { resolve(invoke, bridge("direct_exchange", request)) }
+            catch (error: Throwable) { reject(invoke, "direct exchange", error) }
+        }
     }
     private val notificationPump = Executors.newSingleThreadScheduledExecutor { runnable ->
         Thread(runnable, "mesh-chat-notifications").apply { isDaemon = true }

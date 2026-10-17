@@ -327,10 +327,11 @@ class MeshChatService(
         "acknowledge_native_notification",
     }
 
-    def __init__(self, store: VaultStore, profile_dir: Path, emit: EventCallback):
+    def __init__(self, store: VaultStore, profile_dir: Path, emit: EventCallback, *, direct_native=None):
         self.store = store
         self.profile_dir = profile_dir
         self.emit = emit
+        self._direct_native = direct_native
         self.network: ReticulumNetwork | None = None
         self._identity: RNS.Identity | None = None
         self._shutdown = threading.Event()
@@ -3888,6 +3889,8 @@ class MeshChatService(
                 return
             self._close_started = True
         self._shutdown.set()
+        if self._direct_native is not None:
+            self._direct_native.close()
         self._direct_sessions.retire_all("closed", close=True)
         self._direct_packets.retire_all(close=True)
         packets_stopped = self._direct_packets.wait(timeout=0.1)

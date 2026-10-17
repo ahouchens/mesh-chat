@@ -23,6 +23,9 @@ pub fn init<R: Runtime, C: DeserializeOwned>(
 pub struct MeshRuntime<R: Runtime>(PluginHandle<R>);
 
 impl<R: Runtime> MeshRuntime<R> {
+    pub fn direct_exchange(&self, payload: DirectExchangeRequest) -> Result<NativeResponse> {
+        Ok(self.0.run_mobile_plugin("directExchange", payload)?)
+    }
     pub fn initialize(&self, payload: InitializeRequest) -> Result<NativeResponse> {
         Ok(self.0.run_mobile_plugin("initialize", payload)?)
     }

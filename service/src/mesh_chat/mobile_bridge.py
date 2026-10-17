@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from .errors import MeshChatError, ValidationError
+from .direct_native import NativeChannel
 from .network import install_embedded_runtime_guards
 from .service import MeshChatService
 from .vault import VaultStore
@@ -25,6 +26,7 @@ MAX_JSON_BYTES = 64 * 1024
 _service_lock = threading.RLock()
 _events_lock = threading.Lock()
 _service: MeshChatService | None = None
+_native_channel: NativeChannel | None = None
 _events: deque[dict[str, Any]] = deque(maxlen=256)
 _event_overflow = False
 
@@ -73,7 +75,7 @@ def _emit(value: dict[str, Any]) -> None:
 def initialize(raw: str) -> str:
     """Start the shared service from a native app-private directory."""
 
-    global _service
+    global _service, _native_channel
     try:
         request = _loads(raw)
         if set(request) - {"profile_dir", "vault_key", "display_name", "platform"}:
@@ -108,13 +110,15 @@ def initialize(raw: str) -> str:
                 native_mobile_protection=platform_value,
             )
             try:
-                service = MeshChatService(store, profile_dir, _emit)
+                channel = NativeChannel()
+                service = MeshChatService(store, profile_dir, _emit, direct_native=channel)
                 if display_name is not None and service.store.get("profile", "local") is None:
                     service.create_profile(display_name)
             except Exception:
                 store.close()
                 raise
             _service = service
+            _native_channel = channel
             return _dumps({"ok": True, "result": service.snapshot()})
     except Exception as exc:
         return _error(exc)
@@ -161,13 +165,31 @@ def drain_events() -> str:
     return _dumps({"ok": True, "result": values})
 
 
+def direct_exchange(raw: str) -> str:
+    """Native-only pump; deliberately independent of a waiting command lock."""
+    try:
+        request = _loads(raw)
+        if (set(request) != {"responses"} or not isinstance(request["responses"], list)
+                or len(request["responses"]) > 8):
+            raise ValidationError("Direct exchange is invalid")
+        channel = _native_channel
+        if channel is None:
+            return _dumps({"ok": True, "result": []})
+        for response in request["responses"]:
+            channel.receive(response)
+        return _dumps({"ok": True, "result": channel.drain(limit=1)})
+    except Exception as exc:
+        return _error(exc)
+
+
 def shutdown() -> str:
-    global _service, _event_overflow
+    global _service, _event_overflow, _native_channel
     try:
         with _service_lock:
             if _service is not None:
                 _service.close()
                 _service = None
+            _native_channel = None
         with _events_lock:
             _events.clear()
             _event_overflow = False

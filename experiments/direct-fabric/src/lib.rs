@@ -1,11 +1,12 @@
-//! Controlled-peer feasibility proof, deliberately not linked into Mesh Chat.
+//! Native authenticated direct transport and controlled-peer qualification.
 //!
-//! Certificate authorization is supplied by the trusted test harness. This is
-//! NOT an implementation of RNS identity binding, email discovery, or admission.
-//! Those gates must pass before this transport can become an app interface.
+//! The protected service supplies certificate authorization. The app embeds the
+//! bounded host through private IPC; enabling an RNS interface still requires
+//! service-owned identity, scope, bootstrap isolation and lifecycle checks.
 
 use bytes::Bytes;
 pub mod attempt;
+pub mod host;
 pub mod traversal;
 use quinn::crypto::rustls::{QuicClientConfig, QuicServerConfig};
 use rustls::pki_types::{CertificateDer, PrivatePkcs8KeyDer};

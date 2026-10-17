@@ -72,8 +72,9 @@ def test_parent_watchdog_starts_before_vault_open(monkeypatch) -> None:
             events.append(("vault", profile_dir))
 
     class FakeService:
-        def __init__(self, store, profile_dir, emit):
+        def __init__(self, store, profile_dir, emit, *, direct_native=None):
             self.store = store
+            assert direct_native is not None
             events.append(("service", profile_dir))
 
     monkeypatch.setattr(service_main, "VaultStore", FakeStore)

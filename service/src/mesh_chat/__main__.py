@@ -19,6 +19,7 @@ from .connectivity import (
     DIAGNOSTIC_RESULTS,
 )
 from .errors import MeshChatError, ValidationError
+from .direct_native import NativeChannel, NativeFrameReader
 from .ipc import FrameWriter, IPC_VERSION, read_frame
 from .service import MeshChatService
 from .vault import VaultStore
@@ -258,7 +259,8 @@ def _initialize(request: dict[str, Any], writer: FrameWriter) -> MeshChatService
         raise ValidationError("Vault key is invalid") from exc
     _start_parent_watchdog(parent_pid)
     store = VaultStore(Path(profile_value), key)
-    service = MeshChatService(store, Path(profile_value).resolve(), writer.write)
+    service = MeshChatService(store, Path(profile_value).resolve(), writer.write,
+                              direct_native=NativeChannel(writer.write))
     display_name = payload.get("display_name")
     if display_name is not None and service.store.get("profile", "local") is None:
         service.create_profile(display_name)
@@ -269,6 +271,7 @@ def main() -> int:
     reader = sys.stdin.buffer
     writer = FrameWriter(sys.stdout.buffer)
     service: MeshChatService | None = None
+    requests = None
     try:
         initial = read_frame(reader)
         try:
@@ -285,8 +288,9 @@ def main() -> int:
             writer.write(_error_response(initial.get("id"), exc))
             return 2
 
+        requests = NativeFrameReader(reader, service._direct_native)
         while True:
-            request = read_frame(reader)
+            request = requests.read()
             command_id = request.get("id")
             try:
                 result, should_stop = service.dispatch(request)
@@ -302,6 +306,8 @@ def main() -> int:
         print("mesh-chat-service: fatal protocol error", file=sys.stderr)
         return 3
     finally:
+        if requests is not None:
+            requests.close()
         if service is not None:
             try:
                 service.close()

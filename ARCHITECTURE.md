@@ -16,13 +16,16 @@ request once after upgrade. Native callbacks cannot manufacture receipt evidence
 
 [ADR 0018](docs/adr/0018-authenticated-direct-underlay.md) permits a Rust QUIC
 underlay for feasibility work. Rust owns native sockets and path upkeep; Python
-retains identity, authorization, RNS lifecycle and durable state. The isolated
-`experiments/direct-fabric` crate and GitHub workflow are not linked into the app.
+retains identity, authorization, RNS lifecycle and durable state. The
+`experiments/direct-fabric` crate now supplies an app-embedded bounded native host.
+The app and mobile plugin explicitly adopt Rust 1.88. Desktop inherited frames and
+an Android native-only exchange carry requests independently of renderer commands.
+The host owns ephemeral socket/key handles, attempt windows and packet queues.
 The defined Phase-1 protocol/adapter proof is qualified at `de110a8`; its
 [evidence table](docs/DIRECT_CONNECTIVITY_PHASE1_EVIDENCE.md) includes real
 RNS/LXMF traffic, hostile local UDP injection, bounded lifecycle behavior and
 Linux syscall provenance with no external addresses. Shipping transport remains
-the existing RNS interfaces. Native embedding/private IPC, production bootstrap
+the existing RNS interfaces. Native host/package qualification, production bootstrap
 isolation and lifecycle wiring, candidate recovery and physical qualification are
 still required before enabling the new underlay in the app.
 

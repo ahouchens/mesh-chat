@@ -4,7 +4,7 @@ version = "0.2.47"
 description = "A private server-free Reticulum messenger"
 authors = ["Mesh Chat contributors"]
 edition = "2021"
-rust-version = "1.77.2"
+rust-version = "1.88"
 
 [lib]
 name = "mesh_chat_lib"
@@ -14,12 +14,13 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
+mesh-direct-proof = { path = "../experiments/direct-fabric" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tauri = { version = "2", features = [] }
 tauri-plugin-deep-link = "2"
 tokio = { version = "1", features = ["sync", "time"] }
-uuid = { version = "1", features = ["v4"] }
+uuid = { version = "1", features = ["v4", "serde"] }
 
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 base64 = "0.22.1"

@@ -2,6 +2,23 @@
 
 Status: **open**. No production or physical-device completion is claimed.
 
+## Native host integration checkpoint
+
+The app now links the transport crate and explicitly declares Rust 1.88 alongside
+the mobile plugin. An eight-session native owner retains exact socket/key handles,
+enforces preparation expiry and remaining attempt windows, and exposes only bounded
+private operations. Each running direction has a 32-packet application queue.
+Desktop frames have an independent service reader; Android uses a separate native
+exchange and worker, not renderer event polling. Private replies are correlated,
+bounded, fail closed on loss/timeout, and never forwarded to renderer events.
+Shutdown and suspension retire native work. Late replies cannot revive it.
+
+New tests cover correlation/reordering, late and duplicate replies, malformed and
+oversized frames, capacity, EOF, blocked writes, timeout, suspension, lock-free
+mobile response delivery, native expiry/cancellation and two native owned endpoints.
+Host compilation and exact Windows/Android package results are pending CI; linking
+source does not qualify the public setup flow or the remaining bootstrap adapter.
+
 ## Owner pending authorization
 
 The protected service can lease its exact persisted, selected Offer/Answer chain,

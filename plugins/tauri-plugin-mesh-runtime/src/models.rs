@@ -20,6 +20,11 @@ pub struct ThemeRequest {
     pub theme: String,
 }
 
+#[derive(Debug, Serialize)]
+pub struct DirectExchangeRequest {
+    pub json: String,
+}
+
 #[derive(Debug, Default, Deserialize)]
 pub struct NativeResponse {
     pub json: String,
