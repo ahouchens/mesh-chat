@@ -12,6 +12,7 @@ loss, changed exchange, suspension, shutdown and monotonic expiry retire the lea
 An identical import cannot allocate a second lease for the invitation.
 
 Source validation: 643 non-integration tests passed, 7 environment-dependent skips.
+The source topology/controller suite passed 11 tests, with 14 native-only skips.
 The five owner Ready lifecycle cases exercise real signed documents and admission,
 restart, failed persistence, certificate substitution, duplicate leases and refresh.
 
@@ -32,9 +33,18 @@ drop the endpoint. Success returns the same socket owner and authenticated path.
 The controlled packet bridge uses this operation for either deterministic client
 role. No address discovery, custom probes, mapping or TCP policy was added.
 
-Native builds and execution are restricted to GitHub Actions. Exact commit/run
-results will be recorded after qualification; source formatting alone is not
-compilation evidence.
+Native builds and execution are restricted to GitHub Actions. Qualification passed
+for `ac9d9810d066bfb80618e05da2cb98d88f84f36d` in
+[run 39073862971](https://github.com/ahouchens/mesh-chat/actions/runs/39073862971).
+Windows and Linux each passed 158 service-boundary tests, 14 workspace/pending
+authority tests, 16 native unit tests, one cross-language binding test and all
+25 native topology/controller cases. Android ARM64 compilation passed.
+Linux syscall observation of the full controlled topology and descendants recorded
+zero external addresses, 1276 loopback observations and 1052 network sends.
+The endpoint-free report is retained in
+[artifact 12115859003](https://github.com/ahouchens/mesh-chat/actions/runs/39073862971/artifacts/12115859003).
+These are isolated crate builds, not host app or plugin package builds, physical
+Windows/Android execution or Internet traversal measurements.
 
 ## Remaining implementation and qualification
 
