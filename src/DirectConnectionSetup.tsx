@@ -36,7 +36,10 @@ export function DirectConnectionSetup({ invitationId, initialDocument = "", onOp
     let active = true;
     const timer = setInterval(() => {
       void serviceCommand<Setup>("direct_setup_status", { setup_id: setup.setup_id }).then((value) => {
-        if (active) setSetup(value);
+        if (active) {
+          setSetup(value);
+          if (value.state === "refresh_required" || value.state === "cancelled") setOutgoing("");
+        }
       }).catch(() => { if (active) setError("Connection status is unavailable. Reopen Mesh Chat and refresh the setup details."); });
     }, 2000);
     return () => { active = false; clearInterval(timer); };

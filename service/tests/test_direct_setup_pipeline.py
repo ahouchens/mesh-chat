@@ -1,6 +1,7 @@
-"""Production setup/handoff with real isolated RNS; native I/O is a bounded fake.
+"""Production setup/handoff with real isolated RNS and two controlled carriers.
 
-This qualifies orchestration, not QUIC, router reachability or physical devices.
+Source pipes qualify orchestration; the CI-only shipping dispatcher adds real
+QUIC. Neither qualifies physical router reachability or Android devices.
 """
 import multiprocessing
 import os
@@ -15,10 +16,12 @@ import pytest
 
 
 class PipeNative:
-    def __init__(self, incoming, outgoing):
+    def __init__(self, incoming, outgoing, delay_admission=False):
         self.incoming, self.outgoing = incoming, outgoing
         self.lock = threading.RLock()
         self.owned, self.remote, self.next = {}, {}, 0
+        self.delay_admission = delay_admission
+        self.admission_visible_at = None
 
     def request(self, operation, **payload):
         with self.lock:
@@ -58,6 +61,14 @@ class PipeNative:
                 return None
             online = self.remote.get(record["peer"]) == payload["id"]
             if operation == "poll":
+                # The peer observes QUIC authentication before this service
+                # installs its admitted RNS adapter. Bootstrap must stay alive
+                # during that gap, or channel bootstrap never completes.
+                if online and self.delay_admission and payload["id"] == 2:
+                    if self.admission_visible_at is None:
+                        self.admission_visible_at = time.monotonic()+1.5
+                    if time.monotonic() < self.admission_visible_at:
+                        return {"state":0,"packets":[]}
                 state = 1 if online else 2 if record["online"] else 0
                 record["online"] = record["online"] or online
                 packets, record["packets"] = record["packets"], []
@@ -77,7 +88,7 @@ class PipeNative:
     retire = close
 
 
-def _service_worker(root, incoming, outgoing, commands, replies):
+def _service_worker(root, incoming, outgoing, commands, replies, native_binary=None, delay_admission=False):
     from mesh_chat import connectivity as c
     from mesh_chat.reticulum_config import NetworkSettings
     from mesh_chat.service import MeshChatService
@@ -85,7 +96,12 @@ def _service_worker(root, incoming, outgoing, commands, replies):
     c.default_routes = lambda: [c.RouteInfo(socket.AF_INET,"controlled","192.168.1.1","93.184.216.34",1)]
     store = VaultStore(Path(root), os.urandom(32), allow_unprotected_for_tests=True)
     store.put("settings","network",NetworkSettings(nearby_discovery=False,lan_fallback=False).to_dict())
-    service = MeshChatService(store,Path(root),lambda _:None,direct_native=PipeNative(incoming,outgoing))
+    if native_binary:
+        from direct_app_host_fixture import AppHostNative
+        native = AppHostNative(native_binary)
+    else:
+        native = PipeNative(incoming,outgoing,delay_admission)
+    service = MeshChatService(store,Path(root),lambda _:None,direct_native=native)
     try:
         service.create_profile("Controlled peer")
         replies.put({"ok":True})
@@ -114,11 +130,16 @@ def _service_worker(root, incoming, outgoing, commands, replies):
                 replies.put({"ok":False,"error":type(exc).__name__+":"+str(exc)})
     finally:
         service.close()
+        native.close()
 
 
 @pytest.mark.integration
 @pytest.mark.parametrize("retirement", ["cancel", "suspend", "revocation"])
-def test_production_setup_bootstrap_admission_and_fresh_workspace_path(tmp_path, retirement):
+@pytest.mark.parametrize("carrier_mode", ["source", "native"])
+def test_production_setup_bootstrap_admission_and_fresh_workspace_path(tmp_path, retirement, carrier_mode):
+    native_binary = os.environ.get("MESH_DIRECT_APP_HOST_BINARY") if carrier_mode == "native" else None
+    if carrier_mode == "native" and not native_binary:
+        pytest.skip("Requires the GitHub-built shipping native dispatcher harness")
     context = multiprocessing.get_context("spawn")
     pipes = [context.Queue(maxsize=128),context.Queue(maxsize=128)]
     commands, replies, processes = [], [], []
@@ -145,7 +166,7 @@ def test_production_setup_bootstrap_admission_and_fresh_workspace_path(tmp_path,
             commands.append(context.Queue(maxsize=2))
             replies.append(context.Queue(maxsize=2))
             process = context.Process(target=_service_worker,args=(str(tmp_path/str(index)),pipes[index],
-                pipes[1-index],commands[index],replies[index]))
+                pipes[1-index],commands[index],replies[index],native_binary,index == 1))
             process.start()
             processes.append(process)
             assert replies[index].get(timeout=15)["ok"]

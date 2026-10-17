@@ -80,6 +80,8 @@ it("shows socket loss as explicit refresh and cancels the opaque setup", async (
   await act(async () => { fireEvent.click(screen.getByText("Prepare direct offer")); });
   await act(async () => { await vi.advanceTimersByTimeAsync(2000); });
   expect(screen.getByText(/These connection details can no longer be used/)).toBeTruthy();
+  expect(screen.queryByText("Copy connection document")).toBeNull();
+  expect(screen.queryByLabelText("Complete direct connection document")).toBeNull();
   await act(async () => { fireEvent.click(screen.getByText("Cancel direct setup")); });
   expect(api.serviceCommand).toHaveBeenCalledWith("cancel_direct_setup", { setup_id: setup.setup_id });
   expect(screen.queryByLabelText("Complete direct connection document")).toBeNull();

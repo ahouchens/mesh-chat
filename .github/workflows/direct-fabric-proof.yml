@@ -6,6 +6,7 @@ on:
       - 'codex/direct-connectivity'
     paths:
       - 'experiments/direct-fabric/**'
+      - 'experiments/direct-app-host/**'
       - 'service/**'
       - 'src-tauri/**'
       - 'plugins/tauri-plugin-mesh-runtime/**'
@@ -13,6 +14,7 @@ on:
   pull_request:
     paths:
       - 'experiments/direct-fabric/**'
+      - 'experiments/direct-app-host/**'
       - 'service/src/mesh_chat/**'
       - 'service/pyproject.toml'
       - 'service/tools/direct_binding_proof.py'
@@ -72,6 +74,11 @@ jobs:
         run: cargo test --locked --manifest-path experiments/direct-fabric/Cargo.toml
       - name: Build isolated packet carrier in CI
         run: cargo build --locked --manifest-path experiments/direct-fabric/Cargo.toml --example packet_bridge
+      - uses: dtolnay/rust-toolchain@1.90.0
+      - name: Test and build shipping native dispatcher harness
+        run: |
+          cargo test --locked --manifest-path experiments/direct-app-host/Cargo.toml
+          cargo build --locked --manifest-path experiments/direct-app-host/Cargo.toml
       - name: Install Linux syscall observer
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y strace
@@ -94,6 +101,23 @@ jobs:
         with:
           name: direct-network-evidence
           path: direct-network-evidence.json
+      - name: Production setup through shipping native dispatcher and real QUIC
+        shell: bash
+        run: |
+          binary="$PWD/experiments/direct-app-host/target/debug/mesh-direct-app-host-proof"
+          if [[ "$RUNNER_OS" == "Windows" ]]; then binary="$binary.exe"; fi
+          export MESH_DIRECT_APP_HOST_BINARY="$binary"
+          if [[ "$RUNNER_OS" == "Linux" ]]; then
+            python service/tools/direct_network_audit.py --report direct-setup-network-evidence.json -- python -m pytest service/tests/test_direct_setup_pipeline.py -k native -q
+          else
+            python -m pytest service/tests/test_direct_setup_pipeline.py -k native -q
+          fi
+      - name: Retain production setup network provenance
+        if: runner.os == 'Linux' && success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: direct-setup-network-evidence
+          path: direct-setup-network-evidence.json
 
   android-compile:
     runs-on: ubuntu-latest

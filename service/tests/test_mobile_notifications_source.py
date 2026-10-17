@@ -131,7 +131,10 @@ def test_android_launch_ingress_is_bounded_durable_and_single_task_safe() -> Non
     assert "Intent(Intent.ACTION_MAIN)" in activity
     assert 'MAX_STANDARD_BYTES = 32 * 1024' in pending
     assert 'MAX_DEVICE_LINK_BYTES = 700 * 1024' in pending
-    assert 'MAX_DOCUMENT_BYTES = MAX_DEVICE_LINK_BYTES' in pending
+    assert 'MAX_DIRECT_BYTES = 2 * 1024 * 1024' in pending
+    assert 'MAX_DOCUMENT_BYTES = MAX_DIRECT_BYTES' in pending
+    assert 'compact.startsWith("mesh-direct:") -> "mesh-direct:" to MAX_DIRECT_BYTES' in pending
+    assert 'document.optString("type") == "direct_connection"' in pending
     assert 'MAX_WORKSPACE_INVITE_DOCUMENT_BYTES = 256 * 1024' in pending
     assert 'MAX_DEVICE_LINK_DOCUMENT_BYTES = 320 * 1024' in pending
     assert 'document.optString("type") == "workspace_invite"' in pending
