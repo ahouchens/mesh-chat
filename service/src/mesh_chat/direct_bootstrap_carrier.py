@@ -34,7 +34,8 @@ class BootstrapCarrier:
                 raise ValidationError("Another bootstrap connection is active")
             self._lease = service._direct_sessions.open(authority.expires_at-time.time(), authority.check,
                 key=("invitation", authority.checked.offer_authority.scope["digest"]))
-            factory = getattr(service, "_direct_bootstrap_factory", BootstrapProcess)
+            factory = getattr(service, "_direct_bootstrap_factory",
+                lambda: BootstrapProcess(directory=service.store.profile_dir))
             if factory is None:
                 raise ValidationError("Bootstrap process is unavailable on this platform")
             self._worker = factory()

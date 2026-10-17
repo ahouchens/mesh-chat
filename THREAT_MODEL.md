@@ -442,6 +442,9 @@ table. Desktop inherited frames and Android's private pump use capped messages,
 bounded pending work and timeouts. Android bootstrap IPC is a non-exported service
 with same-UID checks in a separate process. A timeout or lost owner retires work;
 persisted documents cannot resurrect sockets after restart or suspension.
+Desktop bootstrap RNS state is created beneath the verified protected profile,
+not the system temporary directory; Android uses its private app cache. Parent
+supervision removes the temporary state after the child exits, including failure.
 
 The bootstrap interpreter has one non-routing interface and one selected peer.
 Only join, receipt, admission-root and fresh-binding controls are permitted.

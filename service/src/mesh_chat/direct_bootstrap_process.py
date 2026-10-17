@@ -16,11 +16,13 @@ from .ipc import encode_frame, read_frame
 
 
 class BootstrapProcess:
-    def __init__(self):
+    def __init__(self, *, directory):
         command = ([sys.executable] if getattr(sys, "frozen", False)
                    else [sys.executable, "-m", "mesh_chat"])
         environment = os.environ.copy()
-        self._temporary = tempfile.TemporaryDirectory(prefix="mesh-bootstrap-parent-")
+        # RNS/LXMF persist ratchets and peer metadata. The caller supplies the
+        # already verified VaultStore workspace, never a generic OS temp root.
+        self._temporary = tempfile.TemporaryDirectory(prefix="mesh-bootstrap-parent-", dir=directory)
         environment["MESH_CHAT_BOOTSTRAP_DIRECTORY"] = self._temporary.name
         if not getattr(sys, "frozen", False):
             environment["PYTHONPATH"] = str(Path(__file__).resolve().parent.parent)

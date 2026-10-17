@@ -2,6 +2,7 @@ import base64
 import json
 import time
 import uuid
+from pathlib import Path
 
 import pytest
 import RNS
@@ -11,9 +12,11 @@ from mesh_chat.direct_bootstrap_worker import BootstrapWorker, MAX_BYTES
 from mesh_chat.errors import ValidationError
 
 
-def test_desktop_child_owns_dedicated_interpreter_and_retires_on_error():
+def test_desktop_child_owns_dedicated_interpreter_and_retires_on_error(tmp_path):
     local, peer = RNS.Identity(), RNS.Identity()
-    child = BootstrapProcess()
+    child = BootstrapProcess(directory=tmp_path)
+    temporary = Path(child._temporary.name)
+    assert temporary.parent == tmp_path
     try:
         assert child.request("initialize", private_identity=local.get_private_key().hex(),
             peer_identity=peer.get_public_key().hex(), workspace_id=str(uuid.uuid4()),
@@ -29,6 +32,27 @@ def test_desktop_child_owns_dedicated_interpreter_and_retires_on_error():
     finally:
         child.close()
         child._process.wait(timeout=5)
+    deadline = time.monotonic()+5
+    while temporary.exists() and time.monotonic() < deadline:
+        time.sleep(.01)  # Cleanup deliberately runs outside service dispatch.
+    assert not temporary.exists()
+
+
+def test_desktop_bootstrap_requires_explicit_protected_workspace():
+    with pytest.raises(TypeError):
+        BootstrapProcess()
+
+
+def test_desktop_spawn_failure_cleans_protected_temporary_directory(tmp_path, monkeypatch):
+    import mesh_chat.direct_bootstrap_process as module
+    def failed_spawn(*args, **kwargs):
+        temporary = Path(kwargs["env"]["MESH_CHAT_BOOTSTRAP_DIRECTORY"])
+        assert temporary.parent == tmp_path and temporary.is_dir()
+        raise OSError("controlled spawn failure")
+    monkeypatch.setattr(module.subprocess, "Popen", failed_spawn)
+    with pytest.raises(OSError, match="controlled spawn failure"):
+        BootstrapProcess(directory=tmp_path)
+    assert list(tmp_path.iterdir()) == []
 
 
 @pytest.mark.parametrize("raw", ["[]", "null", "{}", "{", "x"*(MAX_BYTES+1),
