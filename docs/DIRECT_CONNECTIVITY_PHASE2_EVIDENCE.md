@@ -16,8 +16,10 @@ Shutdown and suspension retire native work. Late replies cannot revive it.
 New tests cover correlation/reordering, late and duplicate replies, malformed and
 oversized frames, capacity, EOF, blocked writes, timeout, suspension, lock-free
 mobile response delivery, native expiry/cancellation and two native owned endpoints.
-Host compilation and exact Windows/Android package results are pending CI; linking
-source does not qualify the public setup flow or the remaining bootstrap adapter.
+Windows and Android app package builds passed at
+`9a75802958bba958213ade6483dff27ca40e3927` in
+[run 39075783663](https://github.com/ahouchens/mesh-chat/actions/runs/39075783663).
+This qualifies compilation, not physical operation or the remaining bootstrap adapter.
 The first package run at `ab01342` (run 39075386841) passed verification but rejected
 Rust 1.88: locked Tauri packages require 1.90 and UUID requires 1.89. App/plugin
 builds now pin 1.90; the transport-only workflow retains its 1.88 compatibility check.
@@ -68,6 +70,19 @@ Windows/Android execution or Internet traversal measurements.
 
 ## Remaining implementation and qualification
 
+The version-2 `mesh-direct:` document codec carries the original signed workspace
+invitation and independently signed Offer/Answer/Ready chain. Parsing checks the
+entire chain, canonical encoding, exact certificates, limits and expiry before any
+membership change. The protected setup controller persists each document before
+export, retains the Answer socket through Ready, replaces the owner's Offer socket,
+allows an empty-candidate reply, and reports refresh after suspension/socket loss.
+It is not yet registered as a renderer command or connected to the production
+bootstrap adapter. Its states do not claim connectivity or remote receipt.
+Focused document/setup/candidate validation passes 35 tests, including persistence
+failures, certificate/chain substitution, delayed mail, concurrent capacity,
+retirement during mapping and cleanup failure. Mapping lifetime also bounds the
+native cleanup timer.
+
 Candidate collection now prepares the native socket first, maps its exact source
 interface and port with UDP, and re-inspects ownership after router work and before
 document signing. Global IPv4/IPv6 and same-interface IPv6 pinholes are supported.
@@ -77,12 +92,11 @@ empty candidate replies while preserving version-1 behavior and rejecting mixed
 versions. The focused candidate/binding/Offer/exchange suite passes 118 tests.
 These are source-level checks; public setup and router/device qualification remain.
 
-- Native host/plugin embedding, explicit toolchain adoption and package builds.
-- Private production native/service IPC and isolated bootstrap contexts.
+- Isolated production bootstrap contexts using the embedded private native/service IPC.
 - Safe owner admission handoff and fresh admitted credentials.
 - Public versioned Offer/Answer/Ready import/export and setup states, including
   authoring a reply when phone hosting fails.
-- Public IPv4/IPv6 candidate collection and UDP mappings tied to native ownership.
+- Qualification of public IPv4/IPv6 and UDP mappings tied to native ownership.
 - Coordinated traversal, explicit delayed-email recovery and direct TCP fallback.
 - Supported Windows/Android topology execution and physical same-socket evidence.
 

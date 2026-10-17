@@ -1662,6 +1662,7 @@ class WorkspaceServiceMixin:
             "workspace_lifecycle_state", self._workspace_lifecycle_id(), lifecycle
         )
         if state == "suspended":
+            self._direct_setup.retire()
             if self._direct_native is not None:
                 self._direct_native.retire()
             self._direct_sessions.retire_all("suspended")

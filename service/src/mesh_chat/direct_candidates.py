@@ -78,6 +78,10 @@ class NativePreparation:
             self._check()
             self.expires_at = min(self.expires_at, expiry)
             self._deadline = min(self._deadline, self._monotonic()+max(0, self.expires_at-self._clock()))
+            self._timer.cancel()
+            self._timer = threading.Timer(max(0, self._deadline-self._monotonic()), self.close)
+            self._timer.daemon = True
+            self._timer.start()
             candidate = {"host": host, "port": port, "expires_at": self.expires_at}
             self._candidates = [candidate]
             self.reason = "candidates_prepared_unverified"
@@ -122,7 +126,7 @@ def prepare_candidates(native, *, generation, expires_at, family=None, routes=No
     try:
         if (not isinstance(owned, dict) or set(owned) != {"id", "session", "generation", "host", "port", "certificate"}
                 or type(owned["id"]) is not int or owned["id"] <= 0
-                or owned["generation"] != generation or owned["host"] != local
+                or type(owned["generation"]) is not int or owned["generation"] != generation or owned["host"] != local
                 or type(owned["port"]) is not int or not 1 <= owned["port"] <= 65535
                 or str(uuid.UUID(owned["session"])) != owned["session"]
                 or not isinstance(owned["certificate"], str)

@@ -50,6 +50,7 @@ def test_udp_mapping_uses_native_port_and_selected_interface(monkeypatch):
         fields = prepared.document_fields()
         assert fields["candidates"] == [{"host":"93.184.216.34","port":55000,"expires_at":1120}]
         assert fields["expires_at"] == 1120
+        assert prepared._timer.interval == 120
         fields["candidates"].clear()
         assert len(prepared.document_fields()["candidates"]) == 1
     finally:

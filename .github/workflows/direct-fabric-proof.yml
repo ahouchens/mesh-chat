@@ -21,6 +21,8 @@ on:
       - 'service/tests/test_direct_runtime.py'
       - 'service/tests/test_direct_native.py'
       - 'service/tests/test_direct_candidates.py'
+      - 'service/tests/test_direct_documents.py'
+      - 'service/tests/test_direct_setup.py'
       - 'service/tests/test_direct_packets.py'
       - 'service/tests/test_direct_network_audit.py'
       - 'service/tools/direct_network_audit.py'
@@ -58,6 +60,8 @@ jobs:
         run: python -m pytest service/tests/test_direct_binding.py service/tests/test_direct_runtime.py service/tests/test_direct_native.py service/tests/test_direct_candidates.py service/tests/test_direct_packets.py service/tests/test_direct_network_audit.py service/tests/test_network_callback_dispatch.py service/tests/test_direct_offer.py service/tests/test_direct_exchange.py service/tests/test_direct_packet_adapter.py service/tests/test_direct_packet_policy.py service/tests/test_udp_mapping.py -q
       - name: Validate workspace and pending join binding authority
         run: python -m pytest service/tests/test_workspace_service.py -k "direct_workspace_binding or direct_join_binding or direct_owner_binding or direct_ready" -q
+      - name: Validate public document codec and protected setup lifecycle
+        run: python -m pytest service/tests/test_direct_documents.py service/tests/test_direct_setup.py -q
       - name: Test controlled peers (no discovery service)
         env:
           MESH_DIRECT_BINDING_PYTHON: python

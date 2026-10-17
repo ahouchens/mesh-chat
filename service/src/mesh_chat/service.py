@@ -339,6 +339,8 @@ class MeshChatService(
         self._direct_sessions = SessionRegistry()
         self._direct_packets = PacketRuntime()
         self._direct_packet_budget = ProfileBudget()
+        from .direct_setup import DirectSetup
+        self._direct_setup = DirectSetup(self)
         self._close_lock = threading.Lock()
         self._close_started = False
         self._store_closed = False
@@ -3891,6 +3893,8 @@ class MeshChatService(
         self._shutdown.set()
         if self._direct_native is not None:
             self._direct_native.close()
+        if self._direct_setup is not None:
+            self._direct_setup.retire(close=True)
         self._direct_sessions.retire_all("closed", close=True)
         self._direct_packets.retire_all(close=True)
         packets_stopped = self._direct_packets.wait(timeout=0.1)
