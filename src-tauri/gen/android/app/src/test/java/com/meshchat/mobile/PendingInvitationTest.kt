@@ -8,6 +8,14 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class PendingInvitationTest {
+  @Test
+  fun acceptsVersionedDirectDocumentsWithoutReinterpretingLegacyFormats() {
+    assertEquals("mesh-direct:abc_DEF-123", PendingInvitation.validate("mesh-direct:abc_DEF-123"))
+    val document = """{"v":2,"type":"direct_connection","invitation":"signed","offer":{},"answer":null,"ready":null}"""
+    assertEquals(document, PendingInvitation.validate(document))
+    assertNull(PendingInvitation.validate(document.replace("\"v\":2", "\"v\":1")))
+    assertNull(PendingInvitation.validate(document.replace("\"ready\":null", "\"ready\":null,\"private_key\":\"forbidden\"")))
+  }
   private fun workspaceInvite(signature: String = "signed-owner-proof"): String = """
     {"v":1,"type":"workspace_invite","workspace_id":"11111111-1111-4111-8111-111111111111","genesis_digest":"${"a".repeat(64)}","offered_manifest_digest":"${"b".repeat(64)}","genesis":{"v":1,"type":"workspace_genesis","workspace_id":"11111111-1111-4111-8111-111111111111","name":"Lakewatcher Operations"},"offered_manifest":{"v":1,"type":"workspace_manifest_root","workspace_id":"11111111-1111-4111-8111-111111111111","epoch":1,"status":"active"},"authority_chain":[],"nonce":"aW52aXRhdGlvbi1ub25jZQ","created_at":1800000000,"expires_at":1800000900,"use_limit":1,"signature":"$signature"}
   """.trimIndent()

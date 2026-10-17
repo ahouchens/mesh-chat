@@ -6,8 +6,9 @@ Phase 2 increments and unmet gates are tracked in
 [the Phase 2 evidence record](DIRECT_CONNECTIVITY_PHASE2_EVIDENCE.md). Owner
 pending leases, embedded native ownership/private IPC, bounded candidate dialing,
 native-owned candidate collection and the protected email document controller are
-implemented. Windows/Android packages compile; production bootstrap isolation,
-admission handoff, renderer integration and physical qualification remain open.
+implemented. Isolated bootstrap processes, fresh admitted handoff and explicit
+renderer email/file setup are now connected. Windows/Android process-boundary
+packages compile; exact integrated-flow CI and physical qualification remain open.
 
 ### Phase 1 completion, 2026-10-17
 

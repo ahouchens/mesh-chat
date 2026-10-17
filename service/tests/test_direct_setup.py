@@ -225,3 +225,35 @@ def test_failed_child_persistence_releases_socket_and_exports_nothing(peers, mon
     with pytest.raises(OSError):
         operation()
     assert not service._direct_native.owned
+
+
+def test_public_setup_commands_do_not_replay_dead_exports_from_command_cache(peers):
+    owner, _, _, invite = peers
+    request = {"v":1,"id":"reused-request-id","command":"prepare_direct_offer","payload":{"invitation_id":invite["id"]}}
+    first, _ = owner.dispatch(request)
+    second, _ = owner.dispatch(request)
+    assert first["result"]["text"] != second["result"]["text"]
+    assert owner.store.command_response(request["id"]) is None
+    status, _ = owner.dispatch({"v":1,"id":"status","command":"direct_setup_status",
+                                "payload":{"setup_id":second["result"]["setup_id"]}})
+    assert set(status["result"]) == {"setup_id","state","kind","workspace_id","expires_at","candidate_count"}
+
+
+@pytest.mark.parametrize("field", ["id","packets","certificate","private_key","client"])
+def test_public_setup_payload_cannot_supply_private_native_controls(peers, field):
+    owner, _, _, invite = peers
+    with pytest.raises(ValidationError):
+        owner.dispatch({"v":1,"id":"bad","command":"prepare_direct_offer",
+                        "payload":{"invitation_id":invite["id"],field:"forbidden"}})
+
+
+def test_no_candidates_uses_existing_route_queue_without_claiming_direct_connection(peers):
+    owner, joiner, _, invite = peers
+    offer = owner._direct_setup.offer(invite["id"])
+    answer = joiner._direct_setup.answer(offer["text"],_op(98002))
+    ready = owner._direct_setup.ready(answer["text"])
+    joiner._direct_setup.accept_ready(ready["text"])
+    for service, setup in ((owner,ready),(joiner,answer)):
+        value = service._direct_setup.connect(setup["setup_id"],ready["text"])
+        assert value["state"] == "existing_routes_only"
+        assert not any(op == "activate" for op,_ in service._direct_native.calls)

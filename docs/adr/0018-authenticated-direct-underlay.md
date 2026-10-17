@@ -284,6 +284,24 @@ qualification remain incomplete. The feasibility workflow passes on the tested
 commit; it is not a packaged application test. Publishing/installing artifacts and physical
 Windows/Android topology and battery evidence remain separate gates.
 
+### Phase 2 version-2 role and isolation amendment
+
+Version 1 retains the smaller authenticated RNS destination as QUIC client.
+Version 2 permits an explicitly empty candidate set. When exactly one side has
+candidates in the verified Ready/Answer chain, the side without candidates is
+the QUIC client; otherwise destination ordering still decides. Both sides derive
+this from the same signed controls. This lets an unhosted phone dial a reachable
+owner regardless of identity ordering. Native certificate pins and scope checks
+are unchanged. The protected service supplies this role through private IPC;
+there is no renderer role override or custom probe framing.
+
+Pending RNS runs in a dedicated OS process, with one non-routing packet adapter.
+Desktop uses inherited framed pipes. Android uses a non-exported secondary-process
+service and bounded Binder messages. Existing app routes are not removed to obtain
+isolation. After admission a maximum 30-second isolated control handoff may deliver
+the admission root and exchange fresh admitted credentials; ordinary workspace and
+channel traffic still requires a separately authorized admitted carrier.
+
 ## References
 
 - [Quinn endpoint and same-socket ownership](https://docs.rs/quinn/0.11.12/quinn/struct.Endpoint.html)

@@ -470,6 +470,9 @@ class ReticulumNetwork:
         RNS.Transport.request_path(destination_hash)
 
     def recipient_ready(self, destination_hash: bytes) -> bool:
+        bootstrap = getattr(self, "_direct_bootstrap", None)
+        if bootstrap is not None and bootstrap.peer == destination_hash and bootstrap.ready:
+            return True
         return (
             RNS.Identity.recall(destination_hash) is not None
             and RNS.Identity.get_ratchet(destination_hash) is not None
@@ -499,7 +502,7 @@ class ReticulumNetwork:
             return "remote"
         if any(PARTICIPANT_CLIENT_PREFIX in name or PARTICIPANT_HOST_PREFIX in name for name in names):
             return "participant_direct"
-        if any("Private TCP peer " in name for name in names):
+        if any("Private TCP peer " in name or name == "Mesh Direct admitted" for name in names):
             return "signed_direct"
         return "nearby"
 
@@ -897,8 +900,18 @@ class ReticulumNetwork:
 
         if not isinstance(fields, dict):
             raise ValidationError("Application fields are invalid")
+        bootstrap = getattr(self, "_direct_bootstrap", None)
+        if bootstrap is not None and bootstrap.ready and bootstrap.handles(recipient_destination, fields, text):
+            return bootstrap.send(logical_id=logical_id, recipient_public_key=recipient_public_key,
+                recipient_destination=recipient_destination, text=text, fields=fields, propagated=propagated)
         with self._send_lock:
-            if not self.recipient_ready(recipient_destination):
+            ready = self.recipient_ready(recipient_destination)
+            if bootstrap is not None and bootstrap.peer == recipient_destination:
+                # A ratchet in the isolated engine cannot authorize a send in
+                # this interpreter, particularly an ordinary workspace message.
+                ready = (RNS.Identity.recall(recipient_destination) is not None
+                         and RNS.Identity.get_ratchet(recipient_destination) is not None)
+            if not ready:
                 self.request_path(recipient_destination)
                 raise RecipientKeysUnavailable("Recipient ratchet is not available")
             recipient_identity = RNS.Identity.recall(recipient_destination)

@@ -20,14 +20,15 @@ internal object PendingInvitation {
   private const val MAX_ROUTE_UPDATE_BYTES = 24 * 1024
   private const val MAX_WORKSPACE_BYTES = 600 * 1024
   private const val MAX_DEVICE_LINK_BYTES = 700 * 1024
+  private const val MAX_DIRECT_BYTES = 2 * 1024 * 1024
   internal const val MAX_WORKSPACE_INVITE_DOCUMENT_BYTES = 256 * 1024
   internal const val MAX_DEVICE_LINK_DOCUMENT_BYTES = 320 * 1024
   private const val MAX_AUTHORITY_TRANSITIONS = 8
   private const val MAX_DEVICE_BOOTSTRAP_MANIFESTS = 64
-  // A workspace device link is the largest supported invitation family. The
+  // A direct setup document is the largest supported invitation family. The
   // document reader must not impose the smaller workspace-invitation bound
   // before the family-specific validator gets to inspect the value.
-  internal const val MAX_DOCUMENT_BYTES = MAX_DEVICE_LINK_BYTES
+  internal const val MAX_DOCUMENT_BYTES = MAX_DIRECT_BYTES
 
   private val token = Regex("^[A-Za-z0-9_-]+$")
 
@@ -61,6 +62,7 @@ internal object PendingInvitation {
     }
 
     val prefixedMaximum = when {
+      compact.startsWith("mesh-direct:") -> "mesh-direct:" to MAX_DIRECT_BYTES
       lower.startsWith("meshchat1:") -> "meshchat1:" to MAX_STANDARD_BYTES
       lower.startsWith("meshchat2:") -> "meshchat2:" to MAX_STANDARD_BYTES
       lower.startsWith("meshchat3:") -> "meshchat3:" to MAX_STANDARD_BYTES
@@ -100,6 +102,11 @@ internal object PendingInvitation {
       "signature",
     )
     val fields = document.keys().asSequence().toSet()
+    if (documentBytes <= 768 * 1024 && fields == setOf("v", "type", "invitation", "offer", "answer", "ready") &&
+      (document.opt("v") == 2 || document.opt("v") == 2L) && document.optString("type") == "direct_connection" &&
+      document.opt("invitation") is String && document.optJSONObject("offer") != null &&
+      listOf("answer", "ready").all { document.isNull(it) || document.optJSONObject(it) != null }
+    ) return value
     if (
       documentBytes <= MAX_STANDARD_BYTES &&
       fields == expected &&

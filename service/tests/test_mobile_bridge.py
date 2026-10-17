@@ -39,6 +39,25 @@ def test_mobile_bridge_requires_initialization() -> None:
     assert response == {"ok": False, "error": {"code": "invalid_request"}}
 
 
+def test_only_public_document_commands_receive_larger_mobile_envelopes(monkeypatch):
+    calls = []
+    class Service:
+        def dispatch(self, request):
+            calls.append(request)
+            return {"ok":True,"result":{}}, False
+    monkeypatch.setattr(mobile_bridge,"_service",Service())
+    document = "x"*(80*1024)
+    for command in ("preview_direct_connection","prepare_direct_answer","prepare_direct_ready",
+                    "accept_direct_ready","connect_direct_setup"):
+        assert json.loads(mobile_bridge.command(json.dumps({"command":command,"payload":{"document":document}})))["ok"]
+    count = len(calls)
+    assert not json.loads(mobile_bridge.command(json.dumps({"command":"snapshot","payload":{"document":document}})))["ok"]
+    assert not json.loads(mobile_bridge.direct_exchange(json.dumps({"responses":[document]})))["ok"]
+    assert not json.loads(mobile_bridge.command(json.dumps({"command":"preview_direct_connection",
+        "payload":{"document":"x"*(2*1024*1024)}})))["ok"]
+    assert len(calls) == count
+
+
 def test_mobile_bridge_command_does_not_block_worker_event(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

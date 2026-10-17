@@ -31,8 +31,8 @@ _events: deque[dict[str, Any]] = deque(maxlen=256)
 _event_overflow = False
 
 
-def _loads(raw: str) -> dict[str, Any]:
-    if not isinstance(raw, str) or not 1 <= len(raw.encode("utf-8")) <= MAX_JSON_BYTES:
+def _loads(raw: str, *, maximum=MAX_JSON_BYTES) -> dict[str, Any]:
+    if not isinstance(raw, str) or not 1 <= len(raw.encode("utf-8")) <= maximum:
         raise ValidationError("Mobile bridge request is invalid")
     try:
         value = json.loads(raw)
@@ -112,6 +112,11 @@ def initialize(raw: str) -> str:
             try:
                 channel = NativeChannel()
                 service = MeshChatService(store, profile_dir, _emit, direct_native=channel)
+                if platform_value == "android":
+                    from .direct_bootstrap_mobile import AndroidBootstrapProcess
+                    service._direct_bootstrap_factory = AndroidBootstrapProcess
+                else:
+                    service._direct_bootstrap_factory = None
                 if display_name is not None and service.store.get("profile", "local") is None:
                     service.create_profile(display_name)
             except Exception:
@@ -129,7 +134,12 @@ def command(raw: str) -> str:
 
     global _service
     try:
-        request = _loads(raw)
+        request = _loads(raw, maximum=2*1024*1024)
+        if len(raw.encode("utf-8")) > MAX_JSON_BYTES and request.get("command") not in (
+            "preview_direct_connection", "prepare_direct_answer", "prepare_direct_ready",
+            "accept_direct_ready", "connect_direct_setup",
+        ):
+            raise ValidationError("Mobile command is too large")
         with _service_lock:
             if _service is None:
                 raise ValidationError("Mobile service is not initialized")

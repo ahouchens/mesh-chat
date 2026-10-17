@@ -61,6 +61,7 @@ def scoped_message_allowed(message, peer_destination, workspace_id, *, pending):
     return wire.workspace_id == workspace_id and (not pending or wire.kind in {
         "workspace_join", "workspace_join_receipt", "workspace_manifest_root",
         "workspace_channel_record", "workspace_channel_manifest",
+        "workspace_direct_binding",
     })
 
 

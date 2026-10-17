@@ -6,6 +6,7 @@ are not permission to attach the bootstrap adapter or claim remote receipt.
 from __future__ import annotations
 
 import hashlib
+import socket
 import threading
 import time
 
@@ -23,6 +24,7 @@ class DirectSetup:
         self.service = service
         self._lock = threading.Lock()
         self._prepared = {}
+        self._carriers = {}
         self._retiring = 0
         self._closed = False
         self._epoch = 0
@@ -39,15 +41,19 @@ class DirectSetup:
     def _id(self, role, identifier):
         return self.service.store.opaque_id("direct-setup", role+":"+identifier)
 
-    def _prepare(self, setup_id, generation, expires_at):
+    def _prepare(self, setup_id, generation, expires_at, family=None):
         self._available()
+        with self._lock:
+            active = setup_id in self._carriers
+        if active:
+            self.cancel(setup_id)
         with self._lock:
             if len(self._prepared)+self._retiring+self._inflight >= 8:
                 raise ValidationError("Direct setup capacity exhausted")
             epoch = self._epoch
             self._inflight += 1
         try:
-            prepared = prepare_candidates(self.service._direct_native, generation=generation, expires_at=expires_at)
+            prepared = prepare_candidates(self.service._direct_native, generation=generation, expires_at=expires_at, family=family)
         except BaseException:
             with self._lock:
                 self._inflight -= 1
@@ -88,6 +94,14 @@ class DirectSetup:
 
     def preview(self, document):
         return verify_connection_document(document).preview()
+
+    @staticmethod
+    def _family(checked):
+        from .direct_binding import _parse
+        candidates = _parse(checked.offer)["candidates"]
+        if not candidates:
+            return None
+        return socket.AF_INET6 if ":" in candidates[0]["host"] else socket.AF_INET
 
     def offer(self, invitation_id):
         self._available()
@@ -138,7 +152,7 @@ class DirectSetup:
         previous = service.store.get("direct_join_exchange", service._workspace_record_id(invite.workspace_id))
         generation = (previous or {}).get("answer_accepted", {}).get("generation", 0)+1
         setup_id = self._id("joiner", invite.workspace_id)
-        prepared = self._prepare(setup_id, generation, expected.expires_at)
+        prepared = self._prepare(setup_id, generation, expected.expires_at, self._family(checked))
         try:
             fields = prepared.document_fields()
             authority = BindingAuthority(service._identity.get_public_key(), owner, expected.scope,
@@ -173,7 +187,7 @@ class DirectSetup:
         # The owner refreshes its key; the joiner retains its exact Answer socket.
         from .direct_binding import _parse
         expiry = min(record["expires_at"], _parse(checked.answer)["binding"]["expires_at"], _parse(checked.offer)["expires_at"])
-        prepared = self._prepare(setup_id, generation, expiry)
+        prepared = self._prepare(setup_id, generation, expiry, self._family(checked))
         try:
             fields = prepared.document_fields()
             peer = _destination_for(_identity_from_public_key(checked.answer_authority.issuer_public_identity))
@@ -219,6 +233,9 @@ class DirectSetup:
             raise ValidationError("Direct setup identifier is invalid")
         with self._lock:
             prepared = self._prepared.pop(setup_id, None)
+            carrier = self._carriers.pop(setup_id, None)
+        if carrier is not None:
+            carrier.close()
         if prepared is not None:
             prepared.close()
         value = self.service.store.get("direct_setup", setup_id)
@@ -226,13 +243,99 @@ class DirectSetup:
             self.service.store.put("direct_setup", setup_id, {**value,"state":"cancelled"})
         return {"setup_id":setup_id,"state":"cancelled"}
 
+    def connect(self, setup_id, document):
+        from .direct_binding import _parse
+        from .direct_bootstrap_authority import BootstrapAuthority
+        from .direct_bootstrap_carrier import BootstrapCarrier
+        from .direct_path import native_parameters
+        from .direct_handoff import AdmissionHandoff
+        from .invitations import canonical_bytes
+        self._available()
+        checked = verify_connection_document(document)
+        if checked.kind != "ready":
+            raise ValidationError("A complete Ready chain is required")
+        service = self.service
+        public = service._identity.get_public_key()
+        owner = public == checked.offer_authority.issuer_public_identity
+        if not owner and public != checked.answer_authority.issuer_public_identity:
+            raise ValidationError("Direct documents address a different device")
+        expected_id = self._id("owner", service._workspace_invitation_record_id(checked.invitation.nonce)) if owner else self._id("joiner", checked.invitation.workspace_id)
+        if setup_id != expected_id:
+            raise ValidationError("Direct setup identifier does not match this exchange")
+        with self._lock:
+            prepared = self._prepared.get(setup_id)
+            existing = self._carriers.get(setup_id)
+        if existing is not None:
+            if existing.authority.checked.serialized != checked.serialized:
+                raise ValidationError("A different bootstrap exchange is active")
+            return self.status(setup_id)
+        if prepared is None:
+            raise ValidationError("Direct socket was not retained; refresh connection details")
+        fields = prepared.document_fields()
+        if fields["certificate"] != (checked.ready_certificate if owner else checked.answer_certificate):
+            raise ValidationError("Direct documents do not match the retained socket")
+        authority = BootstrapAuthority(service, checked, owner=owner)
+        peer_binding = _parse(checked.answer if owner else checked.ready)["binding"]
+        if not fields["candidates"] and not peer_binding["candidates"]:
+            return self._state(setup_id, "existing_routes_only", "ready", checked.invitation.workspace_id, fields)
+        parameters = native_parameters(service._identity, fields["candidates"],
+            canonical_bytes(peer_binding).decode(), checked.answer_certificate if owner else checked.ready_certificate)
+        parameters["remaining_ms"] = min(parameters["remaining_ms"], int((fields["expires_at"]-time.time())*1000))
+        def changed(state):
+            with service._dispatch_lock:
+                if service._shutdown.is_set():
+                    return
+                with self._lock:
+                    if self._carriers.get(setup_id) is not carrier:
+                        return
+                self._state(setup_id, state, "ready", checked.invitation.workspace_id, fields)
+        def promoted(admitted, state):
+            with service._dispatch_lock:
+                if state == "admitted_path":
+                    service._check_direct_runtime_available()
+                elif service._shutdown.is_set():
+                    return
+                with self._lock:
+                    current = self._carriers.get(setup_id)
+                    if state == "admitted_path":
+                        if current is not carrier:
+                            raise ValidationError("Bootstrap promotion was retired")
+                        self._carriers[setup_id] = admitted
+                        self._prepared[setup_id] = admitted.prepared
+                    elif current is not admitted:
+                        return
+                self._state(setup_id, state, "ready", checked.invitation.workspace_id,
+                    {"expires_at":admitted.prepared.expires_at,"candidates":admitted.prepared._candidates})
+        handoff = AdmissionHandoff(service, authority, promoted)
+        carrier = BootstrapCarrier(service, prepared, authority, parameters, state_changed=changed,
+                                   control_received=handoff.receive)
+        with self._lock:
+            if self._closed or self._prepared.get(setup_id) is not prepared:
+                retired = True
+            else:
+                retired = False
+                self._carriers[setup_id] = carrier
+        if retired:
+            carrier.close()
+            raise ValidationError("Direct setup was retired")
+        state = self._state(setup_id, "connecting", "ready", checked.invitation.workspace_id, fields)
+        carrier.start()
+        handoff.start(carrier)
+        return state
+
     def retire(self, *, close=False):
         with self._lock:
             self._closed = self._closed or close
             self._epoch += 1
             prepared, self._prepared = list(self._prepared.values()), {}
+            carriers, self._carriers = list(self._carriers.values()), {}
             self._retiring += len(prepared)
         def cleanup():
+            for carrier in carriers:
+                try:
+                    carrier.close()
+                except Exception:
+                    pass
             for item in prepared:
                 try:
                     item.close()

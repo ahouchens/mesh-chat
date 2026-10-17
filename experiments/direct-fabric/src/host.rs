@@ -136,6 +136,29 @@ impl Host {
         candidates: Vec<traversal::Candidate>,
         remaining: Duration,
     ) -> Result<(), Error> {
+        self.activate_with_role(
+            id,
+            certificate,
+            local,
+            remote,
+            candidates,
+            remaining,
+            local < remote,
+        )
+    }
+
+    /// Version-2 callers derive this role from both authenticated candidate sets.
+    /// With one public side, the side without a candidate must be the client.
+    pub fn activate_with_role(
+        &self,
+        id: u64,
+        certificate: Vec<u8>,
+        local: [u8; 16],
+        remote: [u8; 16],
+        candidates: Vec<traversal::Candidate>,
+        remaining: Duration,
+        client: bool,
+    ) -> Result<(), Error> {
         if certificate.is_empty()
             || certificate.len() > 16 * 1024
             || local == remote
@@ -168,7 +191,7 @@ impl Host {
         );
         tokio::spawn(async move {
             let deadline = Instant::now() + remaining;
-            let connected = if local < remote {
+            let connected = if client {
                 traversal::dial(peer, candidates, deadline, cancelled.clone()).await
             } else {
                 traversal::listen(peer, deadline, cancelled.clone()).await
@@ -184,7 +207,10 @@ impl Host {
                             None => break,
                         },
                         packet = path.receive() => match packet {
-                            Ok(packet) => { if received.try_send(packet).is_err() { break; } },
+                            Ok(packet) => match received.try_send(packet) {
+                                Ok(()) | Err(mpsc::error::TrySendError::Full(_)) => {},
+                                Err(mpsc::error::TrySendError::Closed(_)) => break,
+                            },
                             Err(_) => break,
                         },
                     }
@@ -311,6 +337,15 @@ mod tests {
 
     #[tokio::test]
     async fn host_owned_socket_carries_packets_and_cancels() {
+        host_socket(false).await;
+    }
+
+    #[tokio::test]
+    async fn unhosted_v2_peer_can_dial_despite_destination_ordering() {
+        host_socket(true).await;
+    }
+
+    async fn host_socket(reverse_destinations: bool) {
         let host = Host::new();
         let a = host
             .prepare(
@@ -331,25 +366,43 @@ mod tests {
         host.arm(a.id, [1; 16], 1, [3; 32]).unwrap();
         host.arm(b.id, [2; 16], 1, [3; 32]).unwrap();
         assert!(host.send(a.id, vec![Bytes::from_static(b"early")]).is_err());
-        host.activate(
+        host.activate_with_role(
             b.id,
             a.certificate,
-            [2; 16],
-            [1; 16],
+            if reverse_destinations {
+                [1; 16]
+            } else {
+                [2; 16]
+            },
+            if reverse_destinations {
+                [2; 16]
+            } else {
+                [1; 16]
+            },
             vec![],
             Duration::from_secs(5),
+            false,
         )
         .unwrap();
-        host.activate(
+        host.activate_with_role(
             a.id,
             b.certificate,
-            [1; 16],
-            [2; 16],
+            if reverse_destinations {
+                [2; 16]
+            } else {
+                [1; 16]
+            },
+            if reverse_destinations {
+                [1; 16]
+            } else {
+                [2; 16]
+            },
             vec![traversal::Candidate {
                 address: b.address,
                 expires: Instant::now() + Duration::from_secs(5),
             }],
             Duration::from_secs(5),
+            true,
         )
         .unwrap();
         tokio::time::timeout(Duration::from_secs(5), async {

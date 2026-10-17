@@ -24,10 +24,14 @@ The host owns ephemeral socket/key handles, attempt windows and packet queues.
 The defined Phase-1 protocol/adapter proof is qualified at `de110a8`; its
 [evidence table](docs/DIRECT_CONNECTIVITY_PHASE1_EVIDENCE.md) includes real
 RNS/LXMF traffic, hostile local UDP injection, bounded lifecycle behavior and
-Linux syscall provenance with no external addresses. Shipping transport remains
-the existing RNS interfaces. Native host/package qualification, production bootstrap
-isolation and lifecycle wiring, candidate recovery and physical qualification are
-still required before enabling the new underlay in the app.
+Linux syscall provenance with no external addresses. An explicit version-2
+email/file setup now connects the underlay to an isolated bootstrap interpreter
+(inherited desktop pipes or an Android non-exported secondary process). Admission
+allows a bounded control-only handoff to fresh workspace-scoped credentials;
+ordinary channel traffic then uses a separately leased main-context adapter.
+Existing routes remain available throughout. Native process-boundary packages
+compile, while exact integrated-flow CI and physical qualification remain open.
+Persistent automatic relationship recovery remains Phase 3 work.
 
 ## Participant-hosted Internet invitations
 

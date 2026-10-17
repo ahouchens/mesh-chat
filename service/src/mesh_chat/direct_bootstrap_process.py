@@ -90,7 +90,10 @@ class BootstrapProcess:
             except queue.Full:
                 pass
         if self._process.poll() is None:
-            self._process.kill()
+            try:
+                self._process.kill()
+            except OSError:
+                pass  # It may have exited between poll and termination.
         def reap():
             self._process.wait()
             for stream in (self._process.stdin, self._process.stdout):

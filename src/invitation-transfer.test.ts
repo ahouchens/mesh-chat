@@ -177,6 +177,8 @@ describe("invitation transfer classification", () => {
     ['{"v":4,"type":"email_invitation","purpose":"workspace"}', "workspace"],
     ["MESHWORKSPACEDEVICE1:device", "workspace_device"],
     ["MESHCONNECT1:reply", "connection_reply"],
+    ["mesh-direct:opaque", "direct_connection"],
+    ['{"v":2,"type":"direct_connection"}', "direct_connection"],
     ['{ "type": "connection_response", "purpose": "workspace" }', "connection_reply"],
     ["MESHROUTE1:route", "route_update"],
     ['{"type":"route_update","purpose":"workspace"}', "route_update"],

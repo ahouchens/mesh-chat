@@ -51,6 +51,7 @@ const IPC_VERSION: u64 = 1;
 // invalid sidecar length prefix from causing an unbounded allocation.
 const MAX_FRAME_BYTES: usize = 4 * 1024 * 1024;
 const MAX_RENDERER_PAYLOAD_BYTES: usize = 32 * 1024;
+const MAX_DIRECT_DOCUMENT_PAYLOAD_BYTES: usize = 2 * 1024 * 1024;
 const MAX_CONNECTION_RESPONSE_PAYLOAD_BYTES: usize = 40 * 1024;
 const MAX_ROUTE_UPDATE_PAYLOAD_BYTES: usize = 24 * 1024;
 const MAX_WORKSPACE_INVITATION_PAYLOAD_BYTES: usize = 600 * 1024;
@@ -501,6 +502,14 @@ fn allowed_renderer_command(command: &str) -> bool {
             | "create_workspace"
             | "create_workspace_invitation"
             | "preview_workspace_invitation"
+            | "preview_direct_connection"
+            | "prepare_direct_offer"
+            | "prepare_direct_answer"
+            | "prepare_direct_ready"
+            | "accept_direct_ready"
+            | "connect_direct_setup"
+            | "direct_setup_status"
+            | "cancel_direct_setup"
             | "revoke_workspace_invitation"
             | "submit_workspace_join"
             | "approve_workspace_join"
@@ -598,7 +607,9 @@ fn validated_invitation_value(raw: &str) -> Option<String> {
         .chars()
         .filter(|character| !character.is_whitespace())
         .collect();
-    let (prefix, maximum) = if compact.starts_with("meshchat://invite/") {
+    let (prefix, maximum) = if compact.starts_with("mesh-direct:") {
+        ("mesh-direct:", MAX_DIRECT_DOCUMENT_PAYLOAD_BYTES)
+    } else if compact.starts_with("meshchat://invite/") {
         ("meshchat://invite/", MAX_RENDERER_PAYLOAD_BYTES)
     } else if compact.starts_with("meshchat://workspace/") {
         (
@@ -644,11 +655,30 @@ fn validated_invitation_value(raw: &str) -> Option<String> {
         // contain a bounded manifest, while personal envelopes retain the
         // smaller renderer limit. Full validation remains in the service.
         let raw_bytes = value.len();
-        if raw_bytes > MAX_WORKSPACE_INVITATION_PAYLOAD_BYTES {
+        if raw_bytes > MAX_DIRECT_DOCUMENT_PAYLOAD_BYTES {
             return None;
         }
         let document = serde_json::from_str::<Value>(value).ok()?;
         let fields = document.as_object()?;
+        let direct_fields = ["v", "type", "invitation", "offer", "answer", "ready"];
+        if raw_bytes <= 768 * 1024
+            && fields.len() == direct_fields.len()
+            && direct_fields.iter().all(|key| fields.contains_key(*key))
+            && fields.get("v").and_then(Value::as_i64) == Some(2)
+            && fields.get("type").and_then(Value::as_str) == Some("direct_connection")
+            && fields.get("invitation").is_some_and(Value::is_string)
+            && fields.get("offer").is_some_and(Value::is_object)
+            && ["answer", "ready"].iter().all(|key| {
+                fields
+                    .get(*key)
+                    .is_some_and(|value| value.is_null() || value.is_object())
+            })
+        {
+            return Some(value.to_string());
+        }
+        if raw_bytes > MAX_WORKSPACE_DEVICE_LINK_PAYLOAD_BYTES {
+            return None;
+        }
         let expected = [
             "v",
             "label",
@@ -892,7 +922,7 @@ fn invitation_from_argument(argument: &str) -> Option<String> {
         return None;
     }
     let metadata = fs::metadata(path).ok()?;
-    if !metadata.is_file() || metadata.len() > MAX_WORKSPACE_DEVICE_LINK_PAYLOAD_BYTES as u64 {
+    if !metadata.is_file() || metadata.len() > MAX_DIRECT_DOCUMENT_PAYLOAD_BYTES as u64 {
         return None;
     }
     let contents = fs::read_to_string(path).ok()?;
@@ -991,6 +1021,15 @@ async fn service_command(
         .len();
     let maximum = if matches!(
         command.as_str(),
+        "preview_direct_connection"
+            | "prepare_direct_answer"
+            | "prepare_direct_ready"
+            | "accept_direct_ready"
+            | "connect_direct_setup"
+    ) {
+        MAX_DIRECT_DOCUMENT_PAYLOAD_BYTES
+    } else if matches!(
+        command.as_str(),
         "preview_workspace_device_link" | "submit_workspace_device_link"
     ) {
         MAX_WORKSPACE_DEVICE_LINK_PAYLOAD_BYTES
@@ -1083,6 +1122,15 @@ async fn service_command(app: AppHandle, command: String, payload: Value) -> Pen
         .map_err(|_| "invalid_request".to_string())?
         .len();
     let maximum = if matches!(
+        command.as_str(),
+        "preview_direct_connection"
+            | "prepare_direct_answer"
+            | "prepare_direct_ready"
+            | "accept_direct_ready"
+            | "connect_direct_setup"
+    ) {
+        MAX_DIRECT_DOCUMENT_PAYLOAD_BYTES
+    } else if matches!(
         command.as_str(),
         "preview_workspace_device_link" | "submit_workspace_device_link"
     ) {
@@ -1451,6 +1499,14 @@ mod tests {
     #[test]
     fn renderer_workspace_commands_are_cross_platform_and_native_work_is_private() {
         let commands = [
+            "preview_direct_connection",
+            "prepare_direct_offer",
+            "prepare_direct_answer",
+            "prepare_direct_ready",
+            "accept_direct_ready",
+            "connect_direct_setup",
+            "direct_setup_status",
+            "cancel_direct_setup",
             "workspace_snapshot",
             "create_workspace",
             "create_workspace_invitation",
@@ -1551,6 +1607,18 @@ mod tests {
 
     #[test]
     fn desktop_accepts_workspace_deep_links() {
+        assert_eq!(
+            validated_invitation_value("mesh-direct:abc_DEF-123"),
+            Some("mesh-direct:abc_DEF-123".to_string())
+        );
+        let direct = json!({"v":2,"type":"direct_connection","invitation":"signed","offer":{},"answer":null,"ready":null});
+        assert_eq!(
+            validated_invitation_value(&direct.to_string()),
+            Some(direct.to_string())
+        );
+        let mut wrong_direct = direct.clone();
+        wrong_direct["v"] = json!(1);
+        assert!(validated_invitation_value(&wrong_direct.to_string()).is_none());
         let link = "meshchat://workspace/fixture-token";
         assert_eq!(invitation_from_argument(link), Some(link.to_string()));
         assert_eq!(

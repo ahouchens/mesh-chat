@@ -27,7 +27,7 @@ class BootstrapEngine:
     MAX_EVENTS = 8
     # Admission root delivery is allowed, but channel or ordinary workspace
     # payloads require a subsequent admitted connection.
-    KINDS = frozenset({"workspace_join", "workspace_join_receipt", "workspace_manifest_root"})
+    KINDS = frozenset({"workspace_join", "workspace_join_receipt", "workspace_manifest_root", "workspace_direct_binding"})
 
     def __init__(self, private_identity, peer_identity, workspace_id, expires_at, *, directory=None):
         if RNS.Reticulum.get_instance() is not None:

@@ -1,10 +1,10 @@
 const COMPACT_QR_PREFIX = "MESHQR1:";
 
 // Keep renderer-side imports aligned with the strict native ingress bound for
-// the largest supported family (a workspace device link). The service applies
+// the largest supported family (a direct connection document). The service applies
 // each invitation family's smaller authoritative limit after this transport
 // layer has recovered the original signed text.
-export const MAX_INVITATION_DOCUMENT_BYTES = 700 * 1024;
+export const MAX_INVITATION_DOCUMENT_BYTES = 2 * 1024 * 1024;
 
 // Version 40-L holds 2,953 bytes in byte mode. Leave room for differences in
 // QR encoders and future transport labels instead of rendering a code at the
@@ -17,6 +17,7 @@ export type InvitationInputKind =
   | "workspace"
   | "workspace_device"
   | "connection_reply"
+  | "direct_connection"
   | "route_update"
   | "compact_qr"
   | "unknown";
@@ -62,6 +63,7 @@ export function classifyInvitationInput(raw: string): InvitationInputKind {
   const lower = value.toLowerCase();
   const markers = jsonDocumentMarkers(value);
   if (value.startsWith(COMPACT_QR_PREFIX)) return "compact_qr";
+  if (value.startsWith("mesh-direct:") || markers.type === "direct_connection") return "direct_connection";
   if (
     lower.startsWith("meshchat://workspace-device/")
     || /^meshworkspacedevice\d*(?::|$)/i.test(value)
@@ -188,6 +190,7 @@ export async function createInvitationQrValue(raw: string): Promise<string | nul
 /** Expand a compact camera transport into the exact original signed value. */
 export async function normalizeInvitationInput(raw: string): Promise<string> {
   const value = compact(raw);
+  if (value.startsWith("mesh-direct:")) return value.replace(/\s/gu, "");
   if (!value.startsWith(COMPACT_QR_PREFIX)) return value;
   const compressed = base64UrlToBytes(value.slice(COMPACT_QR_PREFIX.length));
   let expanded: Uint8Array | null;

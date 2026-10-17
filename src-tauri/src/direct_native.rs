@@ -54,6 +54,7 @@ enum Operation {
         remote: String,
         candidates: Vec<WireCandidate>,
         remaining_ms: u64,
+        client: Option<bool>,
     },
     Send {
         id: u64,
@@ -175,6 +176,7 @@ impl NativeHost {
                 remote,
                 candidates,
                 remaining_ms,
+                client,
             } => {
                 if candidates.len() > 8 {
                     return Err(());
@@ -193,13 +195,14 @@ impl NativeHost {
                     })
                     .collect::<Result<Vec<_>, ()>>()?;
                 self.0
-                    .activate(
+                    .activate_with_role(
                         id,
                         unhex(&certificate, 16 * 1024)?,
                         fixed(&local)?,
                         fixed(&remote)?,
                         candidates,
                         Duration::from_millis(remaining_ms),
+                        client.unwrap_or(fixed::<16>(&local)? < fixed::<16>(&remote)?),
                     )
                     .map_err(|_| ())?;
                 Ok(Value::Null)

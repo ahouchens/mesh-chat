@@ -36,6 +36,10 @@ class NativePreparation:
     def handle(self):
         return self._owned["id"]
 
+    @property
+    def family(self):
+        return socket.AF_INET6 if ":" in self._owned["host"] else socket.AF_INET
+
     def _check(self):
         if (self._closed or self._clock() >= self.expires_at
                 or self._monotonic() >= self._deadline):

@@ -63,7 +63,9 @@ jobs:
       - name: Validate public document codec and protected setup lifecycle
         run: python -m pytest service/tests/test_direct_documents.py service/tests/test_direct_setup.py -q
       - name: Validate isolated bootstrap process boundaries
-        run: python -m pytest service/tests/test_direct_bootstrap.py service/tests/test_direct_bootstrap_process.py -q
+        run: python -m pytest service/tests/test_direct_bootstrap.py service/tests/test_direct_bootstrap_process.py service/tests/test_direct_bootstrap_authority.py service/tests/test_direct_path.py service/tests/test_direct_admission.py -q
+      - name: Validate production setup and admission handoff with source packet pipes
+        run: python -m pytest service/tests/test_direct_setup_pipeline.py -q
       - name: Test controlled peers (no discovery service)
         env:
           MESH_DIRECT_BINDING_PYTHON: python

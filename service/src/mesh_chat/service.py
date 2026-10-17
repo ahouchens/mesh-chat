@@ -142,6 +142,9 @@ class MeshChatService(
     ParticipantAccessServiceMixin,
 ):
     COMMANDS = {
+        "preview_direct_connection", "prepare_direct_offer", "prepare_direct_answer",
+        "prepare_direct_ready", "accept_direct_ready", "connect_direct_setup",
+        "direct_setup_status", "cancel_direct_setup",
         "snapshot",
         "workspace_snapshot",
         "create_profile",
@@ -300,6 +303,9 @@ class MeshChatService(
     # allowed snapshot polling to grow the encrypted command table without a
     # useful bound.
     UNCACHED_COMMANDS = {
+        "preview_direct_connection", "prepare_direct_offer", "prepare_direct_answer",
+        "prepare_direct_ready", "accept_direct_ready", "connect_direct_setup",
+        "direct_setup_status", "cancel_direct_setup",
         "snapshot",
         "workspace_snapshot",
         "search",
@@ -2518,6 +2524,20 @@ class MeshChatService(
             return response, command == "shutdown"
 
     def _execute(self, command: str, value: Any) -> Any:
+        direct_commands = {
+            "preview_direct_connection": ("preview", {"document"}),
+            "prepare_direct_offer": ("offer", {"invitation_id"}),
+            "prepare_direct_answer": ("answer", {"document", "operation_id"}),
+            "prepare_direct_ready": ("ready", {"document"}),
+            "accept_direct_ready": ("accept_ready", {"document"}),
+            "connect_direct_setup": ("connect", {"setup_id", "document"}),
+            "direct_setup_status": ("status", {"setup_id"}),
+            "cancel_direct_setup": ("cancel", {"setup_id"}),
+        }
+        if command in direct_commands:
+            method, fields = direct_commands[command]
+            body = _payload(value, allowed=fields, required=fields)
+            return getattr(self._direct_setup, method)(**body)
         if command == "snapshot":
             _payload(value, allowed=set())
             return self.snapshot()

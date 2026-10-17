@@ -1,0 +1,105 @@
+"""Service-owned admitted packet adapter over an already authenticated native path."""
+import queue
+import threading
+import time
+
+import RNS
+
+from .direct_binding import _parse
+from .errors import ValidationError
+from .direct_packet_adapter import MeshDirectInterface
+from .direct_packet_policy import PacketPolicy
+from .workspace_protocol import _destination_for, _identity_from_public_key
+
+
+class AdmittedCarrier:
+    def __init__(self, service, prepared, raw, expected, certificate, bootstrap_authority, state_changed, initial_packets=()):
+        self.service, self.prepared, self.authority = service, prepared, bootstrap_authority
+        self._changed = state_changed
+        self._stop = threading.Event()
+        self._lost = threading.Event()
+        self.peer_seen = threading.Event()
+        self._peer = _destination_for(_identity_from_public_key(expected.issuer_public_identity))
+        self._incoming, self._outgoing = queue.Queue(maxsize=32), queue.Queue(maxsize=32)
+        self._lease = self._interface = self._pump = None
+        self._session = object()
+        try:
+            for packet in initial_packets:
+                data = bytes.fromhex(packet)
+                self._observe(data)
+                self._incoming.put_nowait(data)
+            self._lease = service._track_direct_workspace_session(raw, expected, certificate)
+            self._interface = MeshDirectInterface(RNS.Transport, budget=service._direct_packet_budget)
+            self._interface.name = "Mesh Direct admitted"
+            self._interface.packet_policy = PacketPolicy(service.network.destination_hash,
+                _destination_for(_identity_from_public_key(expected.issuer_public_identity)))
+            service.network.reticulum._add_interface(self._interface, mode=self._interface.MODE_POINT_TO_POINT)
+            self._interface.activate(self._session, expires_at=time.monotonic()+max(0,
+                min(_parse(raw)["expires_at"],prepared.expires_at)-time.time()))
+            self._pump = service._open_direct_packet_pump(self._interface, self._session,
+                self._incoming, self._outgoing, self._lost, self._stop, self._lease.check)
+            self._thread = threading.Thread(target=self._run, name="mesh-direct-admitted", daemon=True)
+        except BaseException:
+            self.close()
+            raise
+
+    def start(self):
+        self._thread.start()
+        self.service.network.router.announce(self.service.network.destination_hash)
+
+    def _observe(self, data):
+        if self.peer_seen.is_set():
+            return
+        packet = RNS.Packet(None,data)
+        if (packet.unpack() and packet.packet_type == RNS.Packet.ANNOUNCE
+                and packet.destination_hash == self._peer
+                and RNS.Identity.validate_announce(packet, only_validate_signature=True)):
+            self.peer_seen.set()
+
+    def _run(self):
+        try:
+            while not self._stop.is_set():
+                result = self.service._direct_native.request("poll", id=self.prepared.handle)
+                if (not isinstance(result,dict) or set(result) != {"state","packets"}
+                        or type(result["state"]) is not int or result["state"] not in (0,1,2)
+                        or not isinstance(result["packets"],list) or len(result["packets"]) > 32
+                        or any(not isinstance(packet,str) or not 2 <= len(packet) <= 1032 for packet in result["packets"])):
+                    raise ValidationError("Native admitted packet batch is invalid")
+                if result["state"] != 1:
+                    break
+                for packet in result["packets"]:
+                    data = bytes.fromhex(packet)
+                    self._observe(data)
+                    try:
+                        self._incoming.put_nowait(data)
+                    except queue.Full:
+                        pass  # RNS owns reliability; bound memory on overload.
+                outgoing = []
+                for _ in range(32):
+                    try:
+                        outgoing.append(self._outgoing.get_nowait().hex())
+                    except queue.Empty:
+                        break
+                if outgoing:
+                    self.service._direct_native.request("send", id=self.prepared.handle, packets=outgoing)
+                self._stop.wait(.025)
+        except Exception:
+            pass
+        finally:
+            self.close()
+            self._changed("refresh_required")
+
+    def close(self):
+        self._stop.set()
+        self._lost.set()
+        if self._pump is not None:
+            self._pump.stop()
+        if self._lease is not None:
+            self._lease.cancel()
+        if self._interface is not None:
+            self._interface.detach()
+            try:
+                RNS.Transport.interfaces.remove(self._interface)
+            except ValueError:
+                pass
+        self.prepared.close()
