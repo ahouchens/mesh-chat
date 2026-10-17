@@ -165,6 +165,15 @@ use these QUIC mechanisms within the stated attempt/probe budgets, or amend this
 ADR before introducing a separate check protocol. The retry/probe limits above
 are requirements for that future scheduler, not implemented discovery claims.
 
+The Phase-2 native dialing primitive now accepts at most eight distinct tuples
+from a protected caller and attempts standard QUIC handshakes sequentially within
+the caller's monotonic deadline (at most 60 seconds) and each candidate's expiry.
+It consumes the endpoint and returns the same socket owner only on authenticated
+success; cancellation, authority-channel loss and exhaustion drop ownership.
+The controlled bridge uses it with known loopback tuples. It does not yet import
+public candidates, discover addresses, perform coordinated hole punching, schedule
+backoff, or choose the existing TCP fallback.
+
 The controlled bridge now uses the smaller authenticated RNS destination as the
 client, independently of invitation ownership. Tests exercise either peer as
 client, including owner Ready refresh with the joiner's socket retained. Signed

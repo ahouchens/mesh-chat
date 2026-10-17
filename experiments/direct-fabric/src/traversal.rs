@@ -180,4 +180,72 @@ mod tests {
             Err(Error::Timeout)
         ));
     }
+
+    #[tokio::test]
+    async fn failed_candidate_advances_to_authenticated_peer() {
+        let (a, b) = pair();
+        let wrong_key = SessionKey::generate().unwrap();
+        let wrong = Peer::bind(
+            "127.0.0.1:0".parse().unwrap(),
+            wrong_key,
+            SessionKey::generate().unwrap().certificate(),
+        )
+        .unwrap();
+        let (_cancel, rx) = watch::channel(false);
+        let end = Instant::now() + Duration::from_secs(10);
+        let candidates = vec![
+            Candidate {
+                address: wrong.address().unwrap(),
+                expires: end,
+            },
+            Candidate {
+                address: b.address().unwrap(),
+                expires: end,
+            },
+        ];
+        let (out, bad, good) =
+            tokio::join!(dial(a, candidates, end, rx), wrong.accept(), b.accept());
+        assert!(bad.is_err());
+        assert!(out.is_ok());
+        assert!(good.is_ok());
+    }
+
+    #[tokio::test]
+    async fn in_flight_cancel_and_candidate_deadline_bound_handshakes() {
+        for cancel_in_flight in [false, true] {
+            let (a, _b) = pair();
+            // Retain a silent UDP socket so no ICMP refusal shortens this test.
+            let silent = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+            let (cancel, rx) = watch::channel(false);
+            let now = Instant::now();
+            let candidate_end = now + Duration::from_millis(150);
+            let operation = dial(
+                a,
+                vec![Candidate {
+                    address: silent.local_addr().unwrap(),
+                    expires: candidate_end,
+                }],
+                now + Duration::from_secs(10),
+                rx,
+            );
+            let signal = async {
+                tokio::time::sleep(Duration::from_millis(25)).await;
+                if cancel_in_flight {
+                    cancel.send(true).unwrap();
+                }
+                // Keep authority alive through the candidate's expiry case.
+                tokio::time::sleep(Duration::from_millis(200)).await;
+            };
+            let (result, ()) = tokio::time::timeout(Duration::from_secs(2), async {
+                tokio::join!(operation, signal)
+            })
+            .await
+            .unwrap();
+            if cancel_in_flight {
+                assert!(matches!(result, Err(Error::Closed)));
+            } else {
+                assert!(matches!(result, Err(Error::Timeout)));
+            }
+        }
+    }
 }
