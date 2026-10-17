@@ -25,7 +25,7 @@ def test_real_services_over_private_direct_packet_carrier(failure):
     assert all(result[key] for key in (
         "join_acknowledged", "admitted", "bidirectional_messages", "ratchets",
         "isolated", "admitted_key_rotation", "endpoint_receipts",
-        "stale_activation_rejected", "ready_retains_answer", "failure_retired_adapters",
+        "stale_activation_rejected", "ready_retains_answer", "failure_retired_adapters", "pending_admission_retired",
     ))
     assert result["failure"] == failure
     assert result["suspension_recovered"] == (failure == "suspend-resume")

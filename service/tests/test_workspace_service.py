@@ -721,9 +721,28 @@ def test_direct_ready_requires_saved_local_answer_and_current_join(tmp_path, mon
         assert "ready" not in joiner.store.get("direct_join_exchange", joiner._workspace_record_id(workspace["id"]))
         first = accept()
         assert accept() == first
+        joiner._retry_thread.join(timeout=2)
+        assert not joiner._retry_thread.is_alive()
+        joiner._shutdown.clear()
+        with pytest.raises(IdentityMismatch):
+            joiner._track_direct_join_session(workspace["id"], ready, b"wrong cert")
+        lease = joiner._track_direct_join_session(workspace["id"], ready, b"ready cert")
+        assert lease.check()
+        joiner.mobile_lifecycle_transition("suspended", "test")
+        assert lease.cancelled
+        with pytest.raises(ValidationError, match="suspended"):
+            joiner._track_direct_join_session(workspace["id"], ready, b"ready cert")
+        joiner.mobile_lifecycle_transition("foreground", "test")
+        lease = joiner._track_direct_join_session(workspace["id"], ready, b"ready cert")
         joiner.close()
+        assert lease.cancelled
         joiner, _ = _service(tmp_path / "joiner", local_identity, "Joiner", vault_key=key)
         assert accept() == first
+        joiner._retry_thread.join(timeout=2)
+        assert not joiner._retry_thread.is_alive()
+        joiner._shutdown.clear()
+        lease = joiner._track_direct_join_session(workspace["id"], ready, b"ready cert")
+        assert lease.check()
         different_binding = create_binding(owner_identity, authority, b"ready cert", challenge=b"c" * 32,
             **{**options, "generation": 2, "session_id": str(uuid.uuid4())})
         with pytest.raises(ValidationError):
@@ -732,19 +751,24 @@ def test_direct_ready_requires_saved_local_answer_and_current_join(tmp_path, mon
                                             **{**options, "generation": 2})
         new_answer = create_answer(local_identity, new_answer_binding, offer)
         joiner._save_direct_join_answer(workspace["id"], offer, b"offer cert", new_answer, b"answer cert", authority)
+        assert not lease.check() and lease.reason == "authority_unavailable"
         record = joiner.store.get("direct_join_exchange", joiner._workspace_record_id(workspace["id"]))
         assert "ready" not in record and record["ready_accepted"]["generation"] == 2
         with pytest.raises(IdentityMismatch):
             accept()
         fresh_binding = create_binding(owner_identity, authority, b"ready cert", challenge=b"c" * 32,
                                        **{**options, "generation": 3})
-        assert accept(create_ready(owner_identity, fresh_binding, new_answer)).generation == 3
+        fresh_ready = create_ready(owner_identity, fresh_binding, new_answer)
+        assert accept(fresh_ready).generation == 3
+        lease = joiner._track_direct_join_session(workspace["id"], fresh_ready, b"ready cert")
+        assert lease.check()
         with monkeypatch.context() as clock:
             clock.setattr(time, "time", lambda: now + 241)
             with pytest.raises(ValidationError):
                 accept()
         local = joiner._require_workspace(workspace["id"])
         joiner.store.put("workspace", joiner._workspace_record_id(workspace["id"]), {**local, "state": "active"})
+        assert not lease.check() and lease.reason == "authority_unavailable"
         with pytest.raises(ValidationError):
             accept()
     finally:

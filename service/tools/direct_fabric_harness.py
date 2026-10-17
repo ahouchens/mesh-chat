@@ -172,6 +172,8 @@ def _worker(name, root, commands, responses, incoming, outgoing, revoked, carrie
                             raise ValueError("Retire the active path before replacing authorization")
                         if authority.scope["kind"] == "workspace":
                             runtime_lease = service._track_direct_workspace_session(request["binding"], authority, cert)
+                        elif action == "verify_ready":
+                            runtime_lease = service._track_direct_join_session(request["workspace_id"], request["ready"], cert)
                         else:
                             check()
                         authorization_check = check
@@ -503,9 +505,14 @@ def run(*, executable=None, timeout=45, failure="revocation"):
                 "request_id": request["id"], "operation_id": op()})
             _wait(joiner, "workspace_snapshot", {}, lambda snap: next((item for item in snap["workspaces"]
                 if item["state"] == "active"), None), "workspace admission", timeout)
-            _wait(joiner, "workspace_snapshot", {}, lambda snap: next((item
-                for item in snap["workspace_channels"] if item["id"] == workspace["general_channel_id"]), None),
-                "admitted general-channel bootstrap", timeout)
+            # Receiving admission ends the joiner's pending authority. Require
+            # automatic carrier retirement before any explicit activation/close.
+            if not carrier.cancellation_requested.wait(timeout=5):
+                raise AssertionError("Admission did not retire the pending carrier")
+            if carrier.process and carrier.process.wait(timeout=5) != 0:
+                raise AssertionError("Pending carrier did not exit gracefully")
+            if not carrier.stop.wait(timeout=5):
+                raise AssertionError("Pending carrier did not stop")
             # Durable pending acceptance cannot be reused after admission.
             # Exercise the same activation command, without replacing its cache.
             for index, peer in enumerate(peers):
@@ -532,6 +539,9 @@ def run(*, executable=None, timeout=45, failure="revocation"):
                         "issuer_device_id": workspaces[index]["local_device_id"],
                         "audience_device_id": workspaces[1-index]["local_device_id"]}
                        for index in range(2)], 2)
+            _wait(joiner, "workspace_snapshot", {}, lambda snap: next((item
+                for item in snap["workspace_channels"] if item["id"] == workspace["general_channel_id"]), None),
+                "admitted general-channel bootstrap", timeout)
             for sender, recipient in ((owner, joiner), (joiner, owner)):
                 sent = _framed(sender, "send_workspace_message", {"workspace_id": workspace["id"],
                     "channel_id": workspace["general_channel_id"], "text": "Real LXMF over direct packets",
@@ -664,7 +674,8 @@ def run(*, executable=None, timeout=45, failure="revocation"):
                 carrier = None
             return {"carrier": "quic" if executable else "source-pipes", "failure": failure,
                     "failure_retired_adapters": True, "join_acknowledged": True,
-                    "admitted": True, "bidirectional_messages": True, "ratchets": True,
+                    "admitted": True, "pending_admission_retired": True,
+                    "bidirectional_messages": True, "ratchets": True,
                     "engine_death_offline": failure == "engine-crash",
                     "service_crash_cancels_carrier": failure == "service-crash",
                     "suspension_recovered": failure == "suspend-resume",

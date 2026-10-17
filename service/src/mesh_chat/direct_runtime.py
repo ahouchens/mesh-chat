@@ -60,16 +60,21 @@ class SessionRegistry:
         self._lock = threading.Lock()
         self._sessions = set()
         self._closed = False
+        self._epoch = 0
 
     def open(self, remaining, check_authority):
         if (isinstance(remaining, bool) or not isinstance(remaining, (int, float))
                 or not math.isfinite(remaining) or not 0 < remaining <= self.MAX_LIFETIME):
             raise ValidationError("Direct runtime lifetime is invalid")
         deadline = self.clock() + remaining
+        with self._lock:
+            epoch = self._epoch
         check_authority()
         with self._lock:
             if self._closed:
                 raise ValidationError("Direct runtime is closed")
+            if epoch != self._epoch:
+                raise ValidationError("Direct runtime was retired during registration")
             if len(self._sessions) >= self.MAX_SESSIONS:
                 raise ValidationError("Direct runtime session budget exhausted")
             if self.clock() >= deadline:
@@ -85,6 +90,7 @@ class SessionRegistry:
     def retire_all(self, reason="cancelled", *, close=False):
         with self._lock:
             self._closed = self._closed or close
+            self._epoch += 1
             sessions, self._sessions = self._sessions, set()
         # No authority callbacks or native I/O during teardown.
         for lease in sessions:

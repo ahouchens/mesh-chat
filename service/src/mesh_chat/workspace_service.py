@@ -2398,6 +2398,38 @@ class WorkspaceServiceMixin:
         return BindingAuthority(issuer[1].public_identity, audience[1].destination_hash,
                                 dict(scope), expected.expires_at, expected.challenge)
 
+    def _check_direct_runtime_available(self):
+        if self._shutdown.is_set():
+            raise ValidationError("Direct runtime is closing")
+        if self._workspace_lifecycle_state().get("state") == "suspended":
+            raise ValidationError("Direct runtime is suspended")
+
+    def _track_direct_join_session(self, workspace_id, raw, certificate_der):
+        """Lease the joiner's exact saved Ready chain; no interface attachment.
+
+        Admission retires this pending lease. The native owner must transition to
+        fresh admitted credentials before carrying any workspace traffic.
+        """
+        from .direct_binding import BindingAuthority, _parse
+        record_id = self._workspace_record_id(workspace_id)
+        with self._dispatch_lock:
+            self._check_direct_runtime_available()
+            self._accept_direct_ready(workspace_id, raw, certificate_der)
+            saved = self.store.get("direct_join_exchange", record_id)
+            expected = BindingAuthority(bytes.fromhex(saved["issuer"]), bytes.fromhex(saved["audience"]),
+                dict(saved["scope"]), saved["expires_at"], bytes.fromhex(saved["challenge"]))
+            def check_authority():
+                with self._dispatch_lock:
+                    self._check_direct_runtime_available()
+                    self._direct_join_binding_authority(workspace_id, expected)
+                    current = self.store.get("direct_join_exchange", record_id)
+                    if current != saved:
+                        raise ValidationError("Direct pending exchange changed")
+            expires_at = min(expected.expires_at, *(
+                _parse(saved[field])["binding"]["expires_at"] for field in ("answer", "ready")),
+                _parse(saved["offer"])["expires_at"])
+            return self._direct_sessions.open(expires_at - time.time(), check_authority)
+
     def _track_direct_workspace_session(self, raw, expected, certificate_der):
         """Private runtime lease after durable acceptance; creates no adapter."""
         from dataclasses import replace
@@ -2405,10 +2437,7 @@ class WorkspaceServiceMixin:
         expected = replace(expected, scope=dict(expected.scope))
         def check_authority():
             with self._dispatch_lock:
-                if self._shutdown.is_set():
-                    raise ValidationError("Direct runtime is closing")
-                if self._workspace_lifecycle_state().get("state") == "suspended":
-                    raise ValidationError("Direct runtime is suspended")
+                self._check_direct_runtime_available()
                 self._direct_workspace_binding_authority(expected)
         with self._dispatch_lock:
             check_authority()

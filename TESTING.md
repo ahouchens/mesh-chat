@@ -2834,3 +2834,20 @@ to retire adapters before cleanup. Native Ready rejects conflicting Answer diges
 wrong generations, repeated refresh, early packets and oversized frames. Source
 revocation/service-crash cases and controller tests passed (5 passed; 10 native-only
 cases skipped locally).
+
+Service-owned admitted leases, dead-process stream cleanup, and controlled fresh
+recovery after suspension/restart passed on Windows/Linux native CI and Android
+ARM64 compilation at `956e3c9` in
+[run 38934040766](https://github.com/ahouchens/mesh-chat/actions/runs/38934040766).
+These use known controlled paths and a test coordinator, not automatic discovery.
+
+Pending joiner leases now check the exact saved exchange and current join authority.
+Source tests cover certificate substitution, saved-chain replacement, admission,
+suspension, shutdown and a retirement race during registration. The non-integration
+suite passed: 614 passed, 7 environment-dependent skips, 19 integration deselections.
+The source topology/controller suite passed: 8 passed, 10 native-only skips,
+including revocation, service crash, suspension/resume and process restart.
+The real topology now requires automatic pending-carrier cancellation after
+admission and finishes channel bootstrap over fresh admitted credentials. Native
+qualification for this increment is pending. Owner pending lifecycle and shipping
+IPC are still open; these results do not qualify physical mobile lifecycle behavior.

@@ -485,7 +485,8 @@ plus 5 source topology/controller tests. At `8b8546b`, Linux native tests and
 Android compilation passed; Windows found an expected dead-pipe flush error during
 intentional engine-kill cleanup. Cleanup now continues through all dead-process
 stream handles, while strict graceful qualification still rejects a nonzero exit.
-The follow-up native qualification is pending.
+The follow-up passed on Windows/Linux with Android ARM64 compilation at
+`956e3c9` in [run 38934040766](https://github.com/ahouchens/mesh-chat/actions/runs/38934040766).
 
 
 Controlled suspension/resume and process-restart topologies now queue an ordinary
@@ -494,6 +495,19 @@ fresh native credentials and recover the same logical message and endpoint recei
 without another admission. The restart case reopens the encrypted profile with
 its Python-only test custodian key and fresh process channels; durable identity
 and member/device IDs must remain unchanged. Both new source cases pass, along
-with a dead-pipe cleanup regression. Native qualification is pending. These tests
+with a dead-pipe cleanup regression. Native qualification passed on Windows/Linux,
+with Android ARM64 compilation, at `956e3c9` in
+[run 38934040766](https://github.com/ahouchens/mesh-chat/actions/runs/38934040766). These tests
 use a trusted coordinator and known controlled paths; they do not implement
 shipping automatic candidate recovery or qualify physical Android lifecycle behavior.
+
+The joiner's pending Ready session now uses a protected-service lease bound to
+its exact durable Offer/Answer/Ready chain and the shortest document lifetime.
+Polling reloads pending join authority without rewriting acceptance records;
+admission, changed chain, suspension and shutdown retire the lease. The controlled
+adapter consumes that lease and requires automatic carrier cancellation after
+admission, then fresh admitted credentials before completing channel bootstrap.
+Registry retirement also invalidates registrations already checking authority,
+including suspension followed by resume. Owner-side pending lifecycle integration,
+atomic native credential handoff and shipping IPC remain open. Source and native
+qualification for this increment are recorded in TESTING.md; no phase is complete.

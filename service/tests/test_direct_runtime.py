@@ -84,3 +84,21 @@ def test_runtime_validation_time_cannot_extend_expiry():
         now[0] = 10
     with pytest.raises(ValidationError, match="expired"):
         registry.open(5, slow_authority)
+
+
+def test_runtime_suspension_wins_inflight_registration():
+    registry = SessionRegistry()
+    entered, release = threading.Event(), threading.Event()
+    def authority():
+        entered.set()
+        assert release.wait(5)
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        pending = pool.submit(registry.open, 30, authority)
+        try:
+            assert entered.wait(2)
+            registry.retire_all("suspended")
+        finally:
+            release.set()
+        with pytest.raises(ValidationError, match="retired during registration"):
+            pending.result(timeout=2)
+    assert registry.open(30, lambda: None).check()
