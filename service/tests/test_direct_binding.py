@@ -143,7 +143,7 @@ def test_binding_rotation_replay_and_conflict(binding):
 
 
 @pytest.mark.parametrize("field,value", [
-    ("v", True), ("v", 2), ("type", "workspace_join"), ("generation", True),
+    ("v", True), ("v", 3), ("type", "workspace_join"), ("generation", True),
     ("generation", 0), ("generation", 2**63), ("issued_at", 1101),
     ("expires_at", 1000), ("expires_at", 3001), ("alpn", "h3"),
     ("challenge", "ab"), ("challenge", "ab" * 32), ("session_id", "bad"), ("unknown", "extra"),

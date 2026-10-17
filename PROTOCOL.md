@@ -874,6 +874,15 @@ and [PCP RFC 6887](https://www.rfc-editor.org/rfc/rfc6887.html#section-11).
 
 ## Direct Offer codec (not enabled for import)
 
+Phase 2 adds an explicit version 2 for direct Offers, bindings, Answers and Ready.
+Version 2 permits zero public candidates: inability to host or discover a public
+tuple must not prevent authoring a signed reply. It conveys no reachability claim.
+Version 1 retains its one-to-eight candidate requirement and unchanged encoding.
+Response envelope, binding and parent versions must all match; mixed-version
+chains and implicit downgrades are rejected. Scope, signature, certificate,
+validity and durable replay checks are unchanged. Public setup integration remains
+separately qualified; creating a document does not activate a transport.
+
 The experimental canonical `direct_offer` version 1 carries `scope`,
 `issuer_public_identity`, `issuer_destination`, `certificate_sha256`, `alpn`,
 `session_id`, `challenge`, `generation`, `candidates`, `issued_at`, `expires_at`

@@ -52,7 +52,7 @@ def test_offer_generation_rotation_and_identical_replay(offer):
 
 
 @pytest.mark.parametrize("changes", [
-    {"v": True}, {"v": 2}, {"type": "direct_binding"}, {"audience_destination": "aa" * 16},
+    {"v": True}, {"v": 3}, {"type": "direct_binding"}, {"audience_destination": "aa" * 16},
     {"generation": True}, {"generation": 0}, {"generation": 2**63},
     {"issued_at": 1200}, {"expires_at": 1100}, {"expires_at": 2001},
     {"alpn": "h3"}, {"session_id": "bad"}, {"challenge": "ab" * 32},

@@ -171,7 +171,7 @@ def verify_binding(
         "challenge", "generation", "candidates", "issued_at", "expires_at", "signature",
     }:
         _fail()
-    if type(value["v"]) is not int or value["v"] != 1 or value["type"] != "direct_binding":
+    if type(value["v"]) is not int or value["v"] not in (1, 2) or value["type"] != "direct_binding":
         _fail()
     _scope(value["scope"])
     _scope(authority.scope)
@@ -216,7 +216,8 @@ def _verify_transport_fields(value, authority, certificate_der, *, now):
     if value["scope"]["kind"] == "invitation" and expiry > value["scope"]["expires_at"]:
         _fail("Direct binding exceeds invitation validity")
     candidates = value["candidates"]
-    if not isinstance(candidates, list) or not 1 <= len(candidates) <= 8:
+    minimum = 0 if value["v"] == 2 else 1
+    if not isinstance(candidates, list) or not minimum <= len(candidates) <= 8:
         _fail("Direct candidate count is invalid")
     seen = set()
     for candidate in candidates:
@@ -242,12 +243,12 @@ def _verify_transport_fields(value, authority, certificate_der, *, now):
 def create_binding(identity: RNS.Identity, authority: BindingAuthority,
                    certificate_der: bytes, *, session_id: str, challenge: bytes,
                    generation: int, candidates: list[dict[str, Any]],
-                   issued_at: int, expires_at: int) -> str:
+                   issued_at: int, expires_at: int, version: int = 1) -> str:
     """Sign public native session material without exporting the RNS private key."""
     if identity.get_public_key() != authority.issuer_public_identity:
         raise IdentityMismatch("Direct binding signer does not match authorization")
     raw = _sign(identity, {
-        "v": 1, "type": "direct_binding", "scope": authority.scope,
+        "v": version, "type": "direct_binding", "scope": authority.scope,
         "issuer_public_identity": identity.get_public_key().hex(),
         "issuer_destination": _destination_for(identity).hex(),
         "audience_destination": authority.audience_destination.hex(),

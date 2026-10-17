@@ -40,7 +40,7 @@ def verify_offer(raw: str, authority: OfferAuthority, certificate_der: bytes,
                       "certificate_sha256", "alpn", "session_id", "challenge", "generation",
                       "candidates", "issued_at", "expires_at", "signature"}:
         raise ValidationError("Direct Offer fields are invalid")
-    if type(value["v"]) is not int or value["v"] != 1 or value["type"] != "direct_offer":
+    if type(value["v"]) is not int or value["v"] not in (1, 2) or value["type"] != "direct_offer":
         raise ValidationError("Direct Offer version or purpose is invalid")
     _scope(value["scope"])
     _scope(authority.scope)
@@ -62,11 +62,11 @@ def verify_offer(raw: str, authority: OfferAuthority, certificate_der: bytes,
 
 def create_offer(identity: RNS.Identity, authority: OfferAuthority, certificate_der: bytes,
                  *, session_id: str, generation: int, candidates: list[dict[str, Any]],
-                 issued_at: int, expires_at: int) -> str:
+                 issued_at: int, expires_at: int, version: int = 1) -> str:
     if identity.get_public_key() != authority.issuer_public_identity:
         raise IdentityMismatch("Direct Offer signer does not match invitation authority")
     raw = _sign(identity, {
-        "v": 1, "type": "direct_offer", "scope": authority.scope,
+        "v": version, "type": "direct_offer", "scope": authority.scope,
         "issuer_public_identity": identity.get_public_key().hex(),
         "issuer_destination": _destination_for(identity).hex(),
         "certificate_sha256": hashlib.sha256(certificate_der).hexdigest(), "alpn": ALPN,

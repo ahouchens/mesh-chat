@@ -11,15 +11,15 @@ from mesh_chat.errors import IdentityMismatch, ValidationError
 from mesh_chat.workspace_protocol import _destination_for, _sign
 
 
-@pytest.fixture
-def chain():
+@pytest.fixture(params=[1, 2])
+def chain(request):
     owner, joiner = RNS.Identity(), RNS.Identity()
     scope = {"kind": "invitation", "digest": "ab" * 32, "expires_at": 3000}
     offer_authority = OfferAuthority(owner.get_public_key(), scope, 2000, b"c" * 32)
     answer_authority = BindingAuthority(joiner.get_public_key(), _destination_for(owner), scope, 2000, b"c" * 32)
     ready_authority = BindingAuthority(owner.get_public_key(), _destination_for(joiner), scope, 2000, b"c" * 32)
-    options = dict(session_id=str(uuid.uuid4()), generation=1,
-                   candidates=[{"host": "8.8.8.8", "port": 12345, "expires_at": 2000}],
+    options = dict(session_id=str(uuid.uuid4()), generation=1, version=request.param,
+                   candidates=[] if request.param == 2 else [{"host": "8.8.8.8", "port": 12345, "expires_at": 2000}],
                    issued_at=1000, expires_at=1500)
     offer = create_offer(owner, offer_authority, b"owner cert", **options)
     answer_binding = create_binding(joiner, answer_authority, b"joiner cert", challenge=b"c" * 32, **options)
@@ -99,3 +99,22 @@ def test_parent_certificate_substitution_and_response_conflict(chain):
     binding = resign(chain["joiner"], json.dumps(json.loads(chain["answer"])["binding"]), session_id=str(uuid.uuid4()))
     with pytest.raises(ValidationError):
         check(chain, "answer", create_answer(chain["joiner"], binding, chain["offer"]), previous=first)
+
+
+@pytest.mark.parametrize("kind", ["answer", "ready"])
+def test_response_cannot_mix_or_silently_downgrade_versions(chain, kind):
+    old = json.loads(chain[kind])["v"]
+    signer = chain["joiner" if kind == "answer" else "owner"]
+    with pytest.raises(ValidationError, match="versions"):
+        check(chain, kind, resign(signer, chain[kind], v=3-old))
+
+
+def test_v2_reply_without_phone_hosting_retains_identity_checks(chain):
+    if json.loads(chain["answer"])["v"] != 2:
+        return
+    assert json.loads(chain["answer"])["binding"]["candidates"] == []
+    assert check(chain, "answer").generation == 1
+    assert check(chain, "ready").generation == 2
+    binding = json.loads(chain["answer"])["binding"]
+    with pytest.raises(ValidationError, match="versions"):
+        create_answer(chain["joiner"], resign(chain["joiner"], json.dumps(binding), v=1), chain["offer"])

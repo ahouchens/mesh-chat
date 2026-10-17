@@ -25,7 +25,10 @@ def _create(identity, kind, binding_raw, parent_raw, parent_type):
         raise IdentityMismatch("Direct response signer does not own its binding")
     if binding.get("type") != "direct_binding" or parent.get("type") != parent_type:
         raise ValidationError("Direct response document purpose is invalid")
-    return _sign(identity, {"v": 1, "type": kind, "parent_digest": _digest(parent_raw),
+    if (type(binding.get("v")) is not int or binding["v"] not in (1, 2)
+            or type(parent.get("v")) is not int or binding["v"] != parent["v"]):
+        raise ValidationError("Direct response versions must match")
+    return _sign(identity, {"v": binding["v"], "type": kind, "parent_digest": _digest(parent_raw),
                            "binding": binding}, maximum=MAX_BYTES)
 
 
@@ -41,9 +44,11 @@ def create_ready(identity, binding_raw, answer_raw):
 def _verify(raw, kind, parent_raw, authority, certificate_der, now, previous):
     value = _parse(raw)
     if (set(value) != {"v", "type", "parent_digest", "binding", "signature"}
-            or type(value["v"]) is not int or value["v"] != 1 or value["type"] != kind
+            or type(value["v"]) is not int or value["v"] not in (1, 2) or value["type"] != kind
             or not isinstance(value["binding"], dict)):
         raise ValidationError("Direct response fields are invalid")
+    if value["v"] != value["binding"].get("v") or value["v"] != _parse(parent_raw).get("v"):
+        raise ValidationError("Direct response versions must match")
     if _hex(value["parent_digest"], 32).hex() != _digest(parent_raw):
         raise IdentityMismatch("Direct response references a different document")
     binding_raw = canonical_bytes(value["binding"]).decode("utf-8")

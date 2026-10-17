@@ -62,6 +62,9 @@ enum Operation {
     Poll {
         id: u64,
     },
+    Inspect {
+        id: u64,
+    },
     Close {
         id: u64,
     },
@@ -216,6 +219,13 @@ impl NativeHost {
                 let (state, packets) = self.0.poll(id).map_err(|_| ())?;
                 Ok(
                     json!({"state":state, "packets":packets.iter().map(|p| hex(p)).collect::<Vec<_>>()}),
+                )
+            }
+            Operation::Inspect { id } => {
+                let prepared = self.0.inspect(id).map_err(|_| ())?;
+                Ok(
+                    json!({"id":id,"host":prepared.address.ip().to_string(),"port":prepared.address.port(),
+                    "certificate":hex(&prepared.certificate)}),
                 )
             }
             Operation::Close { id } => {

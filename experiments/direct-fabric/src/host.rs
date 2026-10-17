@@ -247,6 +247,22 @@ impl Host {
             entries.sessions.remove(&id);
         }
     }
+
+    pub fn inspect(&self, id: u64) -> Result<Prepared, Error> {
+        let mut entries = self.entries.lock().map_err(|_| Error::Closed)?;
+        let Some(Session::Prepared(attempt)) = entries.sessions.get_mut(&id) else {
+            return Err(Error::Closed);
+        };
+        if attempt.expire() {
+            entries.sessions.remove(&id);
+            return Err(Error::Timeout);
+        }
+        Ok(Prepared {
+            id,
+            address: attempt.address()?,
+            certificate: attempt.certificate()?.to_vec(),
+        })
+    }
     pub fn close_all(&self) {
         if let Ok(mut entries) = self.entries.lock() {
             entries.sessions.clear();

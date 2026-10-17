@@ -68,6 +68,15 @@ Windows/Android execution or Internet traversal measurements.
 
 ## Remaining implementation and qualification
 
+Candidate collection now prepares the native socket first, maps its exact source
+interface and port with UDP, and re-inspects ownership after router work and before
+document signing. Global IPv4/IPv6 and same-interface IPv6 pinholes are supported.
+Cleanup covers mapping substitution, changed native tuples, expiry and failure.
+No global candidate is fabricated when local mapping fails. Version-2 chains permit
+empty candidate replies while preserving version-1 behavior and rejecting mixed
+versions. The focused candidate/binding/Offer/exchange suite passes 118 tests.
+These are source-level checks; public setup and router/device qualification remain.
+
 - Native host/plugin embedding, explicit toolchain adoption and package builds.
 - Private production native/service IPC and isolated bootstrap contexts.
 - Safe owner admission handoff and fresh admitted credentials.
