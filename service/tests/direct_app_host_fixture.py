@@ -34,7 +34,7 @@ class AppHostNative:
     def request(self, operation, **payload):
         if operation == "prepare":
             public_host = payload["address"].rsplit(":",1)[0].strip("[]")
-            assert public_host == "93.184.216.34"
+            assert public_host in {"93.184.216.34", "0.0.0.0"}
             payload = {**payload,"address":"127.0.0.1:0"}
         elif operation == "activate":
             assert all(candidate["host"] == "93.184.216.34" for candidate in payload["candidates"])

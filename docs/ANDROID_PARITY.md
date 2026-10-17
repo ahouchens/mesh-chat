@@ -5,12 +5,16 @@ receipts and evidence-based UI between desktop and Android. Restart retains the
 exact join, verified receipt and interrupted route-setup intent. It adds no
 background execution, push service or notification-delivery guarantee.
 
-The separate Quinn feasibility crate passed its Android ARM64 GitHub compile job
-at `cbcf659` in [run 38854581893](https://github.com/ahouchens/mesh-chat/actions/runs/38854581893),
-but is not embedded in the mobile plugin. Native socket binding, network-change
-callbacks, Doze/resume behavior, real QUIC/LXMF traffic, battery measurements and
-physical Windows↔Android tests remain unqualified. A cross-compile and
-passing desktop topology tests are not Android device evidence. See
+Phase 2 embeds Quinn in the native mobile plugin with private bounded IPC. Its
+bootstrap engine uses a non-exported Android service in a separate Python process;
+the renderer shares the version-2 Offer/Answer/Ready email/file flow with desktop.
+Process-boundary packages passed at `acdd868` in
+[run 39077271626](https://github.com/ahouchens/mesh-chat/actions/runs/39077271626).
+The fully integrated flow is tracked in the
+[Phase 2 evidence record](DIRECT_CONNECTIVITY_PHASE2_EVIDENCE.md).
+Native socket binding on real networks, Doze/resume, physical QUIC/LXMF traffic,
+battery measurements and Windows↔Android execution remain unqualified. Package
+compilation and desktop topology tests are not Android device evidence. See
 [ADR 0018](adr/0018-authenticated-direct-underlay.md).
 
 This document compares the Android client with the Windows desktop 0.2.45

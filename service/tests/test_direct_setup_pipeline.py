@@ -88,12 +88,14 @@ class PipeNative:
     retire = close
 
 
-def _service_worker(root, incoming, outgoing, commands, replies, native_binary=None, delay_admission=False):
+def _service_worker(root, incoming, outgoing, commands, replies, native_binary=None, delay_admission=False, unhosted=False):
     from mesh_chat import connectivity as c
     from mesh_chat.reticulum_config import NetworkSettings
     from mesh_chat.service import MeshChatService
     from mesh_chat.vault import VaultStore
     c.default_routes = lambda: [c.RouteInfo(socket.AF_INET,"controlled","192.168.1.1","93.184.216.34",1)]
+    if unhosted:
+        c.default_routes = lambda: []
     store = VaultStore(Path(root), os.urandom(32), allow_unprotected_for_tests=True)
     store.put("settings","network",NetworkSettings(nearby_discovery=False,lan_fallback=False).to_dict())
     if native_binary:
@@ -136,7 +138,8 @@ def _service_worker(root, incoming, outgoing, commands, replies, native_binary=N
 @pytest.mark.integration
 @pytest.mark.parametrize("retirement", ["cancel", "suspend", "revocation"])
 @pytest.mark.parametrize("carrier_mode", ["source", "native"])
-def test_production_setup_bootstrap_admission_and_fresh_workspace_path(tmp_path, retirement, carrier_mode):
+@pytest.mark.parametrize("unhosted_joiner", [False, True], ids=["both_hosted", "unhosted_joiner"])
+def test_production_setup_bootstrap_admission_and_fresh_workspace_path(tmp_path, retirement, carrier_mode, unhosted_joiner):
     native_binary = os.environ.get("MESH_DIRECT_APP_HOST_BINARY") if carrier_mode == "native" else None
     if carrier_mode == "native" and not native_binary:
         pytest.skip("Requires the GitHub-built shipping native dispatcher harness")
@@ -166,7 +169,7 @@ def test_production_setup_bootstrap_admission_and_fresh_workspace_path(tmp_path,
             commands.append(context.Queue(maxsize=2))
             replies.append(context.Queue(maxsize=2))
             process = context.Process(target=_service_worker,args=(str(tmp_path/str(index)),pipes[index],
-                pipes[1-index],commands[index],replies[index],native_binary,index == 1))
+                pipes[1-index],commands[index],replies[index],native_binary,index == 1,unhosted_joiner and index == 1))
             process.start()
             processes.append(process)
             assert replies[index].get(timeout=15)["ok"]
@@ -174,6 +177,7 @@ def test_production_setup_bootstrap_admission_and_fresh_workspace_path(tmp_path,
         invite = command(0,"create_workspace_invitation",operation_id=op(),workspace_id=workspace["id"])
         offer = call(0,"offer",invitation_id=invite["id"])
         answer = call(1,"answer",document=offer["text"],operation_id=op())
+        assert answer["candidate_count"] == (0 if unhosted_joiner else 1)
         ready = call(0,"ready",document=answer["text"])
         call(1,"accept_ready",document=ready["text"])
         for index, setup in enumerate((ready,answer)):

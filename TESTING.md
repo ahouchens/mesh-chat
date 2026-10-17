@@ -4,6 +4,24 @@ Phase 2 direct-connectivity work has a separate
 [evidence record](docs/DIRECT_CONNECTIVITY_PHASE2_EVIDENCE.md), distinguishing
 local service checks, native CI and unfulfilled production/physical gates.
 
+Production setup tests in `service/tests/test_direct_setup_pipeline.py` exercise
+public commands, real protected services and isolated RNS/LXMF bootstrap workers.
+The source carrier intentionally delays one admitted adapter after peer transport
+authentication, reproducing the bootstrap-retirement race. Both-hosted and
+unhosted-joiner cases require signed join acknowledgment, approval, fresh admitted
+credentials, channel bootstrap, messages and receipts in both directions, followed
+by cancellation, suspension or revocation with no remaining native handles/interfaces.
+
+GitHub Actions builds `experiments/direct-app-host`, which imports the shipping
+private native dispatcher directly. The same pipeline then uses real QUIC and
+native socket/key ownership. Its test adapter translates one signed synthetic
+public address to loopback while preserving the native port and certificate;
+this is controlled evidence, not router reachability. Linux runs under the syscall
+audit and retains endpoint-free provenance. Never build or run this native harness
+locally. Frontend/package/native tests and Windows/Android builds run in Actions.
+Physical execution follows the
+[Phase 2 device checklist](docs/DIRECT_CONNECTIVITY_PHASE2_DEVICE_TEST.md).
+
 ## Direct connectivity increment, 2026-10-16
 
 Native qualification now runs in GitHub Actions. At `cbcf659`,

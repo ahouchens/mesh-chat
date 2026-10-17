@@ -32,9 +32,9 @@ same signed request under existing backoff until receipt, admission or expiry.
 Unsent receipts are cancelled when the request/invitation becomes inactive.
 Join delivery ends at the earlier of its seven-day window and invitation expiry.
 
-The future underlay design and hard limits are in
-[ADR 0018](docs/adr/0018-authenticated-direct-underlay.md). This increment accepts
-no new Internet connection-document prefix.
+The direct underlay design and hard limits are in
+[ADR 0018](docs/adr/0018-authenticated-direct-underlay.md). The separately versioned
+Phase 2 email exchange below uses `mesh-direct:` without changing these receipts.
 
 ## Compact QR transport v1
 
@@ -859,20 +859,21 @@ acceptance, and authority manifest transition. No platform field or
 notification preference enters canonical bytes, and 0.2.34 peers require no
 compatibility branch.
 
-## Direct mapping protocol distinction (implementation groundwork)
+## Direct mapping protocol distinction
 
 Internal encrypted mapping records now carry `protocol: "tcp" | "udp"`.
 Records without that field retain their historical TCP meaning. PCP and NAT-PMP
 mapping creation, renewal and deletion preserve the selected transport; UPnP
 mapping and IPv6-pinhole creation select it explicitly as well. A UDP mapping
 cannot be exported through the legacy TCP invitation-endpoint helper. Existing
-invitation schemas and user-facing flows are unchanged; native UDP candidates
-and the new email exchange are not enabled by this groundwork.
+invitation schemas remain unchanged. The Phase 2 candidate collector binds the
+native UDP socket first and maps that exact interface and port. Ownership is
+rechecked before signing; mapping lifetime bounds the descriptor and cleanup.
 
 Wire references: [NAT-PMP RFC 6886](https://www.rfc-editor.org/rfc/rfc6886.html#section-3.3)
 and [PCP RFC 6887](https://www.rfc-editor.org/rfc/rfc6887.html#section-11).
 
-## Direct Offer codec (not enabled for import)
+## Direct Offer and version-2 email exchange
 
 Phase 2 adds an explicit version 2 for direct Offers, bindings, Answers and Ready.
 Version 2 permits zero public candidates: inability to host or discover a public
@@ -894,9 +895,9 @@ numbers. Transport validation shares direct-binding certificate, challenge,
 generation, validity and global numeric candidate rules. Equal generation and
 identical digest is idempotent; conflicting or lower generations fail.
 
-This codec has no public prefix, renderer command, import/export flow or network
-side effects. Its verified result does not select a responder, attach an RNS
-interface or grant membership.
+Version 1 remains an internal controlled-proof codec. Version 2 is exported in
+the wrapper below; verification alone does not attach an RNS interface or grant
+membership.
 
 Experimental `direct_answer` and `direct_ready` version 1 contain exactly `v`,
 `type`, `parent_digest`, `binding` and `signature`. `parent_digest` is the SHA-256
@@ -907,18 +908,49 @@ native certificates against independently supplied authority. Answer addresses
 the Offer signer; Ready is signed by that owner, addresses the Answer signer,
 and uses an owner generation greater than Offer's. Scope/challenge match and
 child validity stays within parent validity. The envelope's generation/digest
-provide replay evidence. These codecs do not persist acceptance, select a peer,
-start attempt timers or prove continued socket ownership. Import/export and
-runtime activation remain unimplemented.
+provide replay evidence. Codec validation alone does not persist acceptance,
+start attempt timers or prove continued socket ownership.
 
 Private owner acceptance now stores the exact signed Offer and public certificate
 in the encrypted pending negotiation. Answer acceptance reloads that Offer and
 current invitation authority under the same transaction that pins the responder
 and stores envelope/binding replay history. No imported caller-provided parent
-replaces the saved Offer. This is service groundwork used by the controlled
-harness; no renderer import command, join request or membership side effect is
-introduced. The joiner privately persists its own verified Offer/Answer chain
+replaces the saved Offer. The joiner privately persists its own verified Offer/Answer chain
 and accepts Ready against that saved chain while rechecking pending-join authority
 in the vault transaction. Replacing the Answer clears previous Ready evidence but
 retains replay history. These durable records confer no socket ownership or live
-readiness. Runtime re-arming and import/export integration remain unfinished.
+readiness. The production controller retains the exact native Answer socket/key
+through Ready re-arming; losing it requires a fresh exchange.
+
+The public wrapper is canonical JSON with exactly `v: 2`,
+`type: "direct_connection"`, `invitation`, `offer`, `answer`, and `ready`.
+Each present stage has exactly `document` and lowercase-hex `certificate`;
+absent Answer/Ready stages are null. The invitation is the original signed
+workspace invitation, unchanged. `mesh-direct:` carries unpadded base64url of
+these bytes; raw canonical JSON is also accepted. Decoded size is bounded at
+768 KiB; public import framing is capped at 2 MiB. The entire chain, authority,
+certificates, expiry and canonical encoding are verified before application.
+
+Explicit public commands preview, prepare Offer/Answer/Ready, accept Ready,
+connect, read status and cancel. They return opaque documents and summaries,
+never private native handles, keys or packet controls. They bypass durable
+command-response caching: a restarted process cannot replay a dead socket export.
+Creating Answer saves the ordinary signed join request; admission still requires
+the owner's normal approval. Both-empty candidate sets retain existing routes,
+including previously signed TCP routes, and report an explicit fallback state.
+
+Version 2 selects the unhosted peer as QUIC client when only one side has public
+candidates; otherwise the smaller authenticated RNS destination is client.
+Version 1's identity-order rule is unchanged. Only standard QUIC mechanisms are
+used, with bounded attempts and signed lifetimes. No public observer, rendezvous,
+STUN, TURN or relay is introduced.
+
+Bootstrap RNS/LXMF runs in an isolated process and permits only join, join receipt,
+admission root and `workspace_direct_binding` controls for the exact selected peer.
+Admission permits a maximum 30-second control transition. Fresh native credentials
+and current workspace-device bindings authorize the ordinary packet adapter;
+a signed peer announce on that path confirms adapter installation before the old
+bootstrap carrier retires. The `direct_admission` v2 control contains exactly
+`v`, `type`, `binding`, and `certificate`, is capped at 64 KiB, and passes durable
+binding acceptance. Transport authentication never substitutes for LXMF signature,
+recipient ratchet, membership, replay or application-receipt checks.

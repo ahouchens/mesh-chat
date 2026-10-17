@@ -56,7 +56,7 @@ it("does not offer an apply action for expired or unverified input", async () =>
   api.serviceCommand.mockRejectedValue(new Error("invalid_request"));
   render(<DirectConnectionSetup initialDocument="mesh-direct:expired" />);
   fireEvent.click(screen.getByText("Review connection document"));
-  expect(await screen.findByRole("alert")).toHaveTextContent("Ask the sender for a fresh document");
+  expect((await screen.findByRole("alert")).textContent).toContain("Ask the sender for a fresh document");
   expect(screen.queryByText("Create connection reply")).toBeNull();
 });
 

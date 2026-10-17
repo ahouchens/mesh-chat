@@ -427,6 +427,39 @@ Depending on configured interfaces, observers may learn local discovery presence
 - FCM, APNs remote delivery, hosted notification servers, background relays,
   and telemetry remain excluded because they add metadata authorities.
 
+## Direct email setup and native transport boundary
+
+The version-2 email document is untrusted until the protected service verifies
+the original invitation and complete signed Offer/Answer/Ready chain. Preview
+performs no network I/O. Explicit preparation may contact the local router and
+bind a native UDP socket; connection uses only signed public candidates.
+Portable documents reveal candidate addresses to their recipients and the chosen
+email/file channel. Ordinary status and diagnostics exclude those addresses.
+An empty-candidate reply grants no reachability or membership.
+
+Native keys, socket handles and packet operations never enter the renderer command
+table. Desktop inherited frames and Android's private pump use capped messages,
+bounded pending work and timeouts. Android bootstrap IPC is a non-exported service
+with same-UID checks in a separate process. A timeout or lost owner retires work;
+persisted documents cannot resurrect sockets after restart or suspension.
+
+The bootstrap interpreter has one non-routing interface and one selected peer.
+Only join, receipt, admission-root and fresh-binding controls are permitted.
+Admission opens at most a 30-second control transition with current authority
+rechecked; ordinary traffic requires fresh admitted credentials and a separately
+leased main-context adapter. The bootstrap ratchet cannot authorize ordinary
+messages in the main RNS context. Received LXMF controls are checked again in
+the parent service for signature, source, destination, scope and kind.
+
+QUIC certificates are pinned to signed bindings. Ownership checks tie advertised
+UDP mappings to the socket/key retained for activation. Failed mapping, stale
+candidates, lost sockets and incompatible address families fail explicitly.
+Standard QUIC retries are bounded. No public STUN/TURN, rendezvous, IP observer,
+custom probe or relay is added. Shared NAT, firewalls and mobile suspension can
+still prevent progress. This phase supplies short-lived setup paths, not persistent
+automatic recovery or background availability. See the
+[Phase 2 evidence record](docs/DIRECT_CONNECTIVITY_PHASE2_EVIDENCE.md).
+
 ## Open security blockers
 
 - Windows EFS has passed a native protected-workspace and packaged-sidecar run. The macOS FileVault and Linux fscrypt/dm-crypt adapters are implemented and fail closed, but still require native package, encrypted-volume, suspend/resume, and full-tree release-gate runs before those platform packages are labeled verified.
