@@ -268,6 +268,9 @@ def _initialize(request: dict[str, Any], writer: FrameWriter) -> MeshChatService
 
 
 def main() -> int:
+    if sys.argv[1:] == ["--direct-bootstrap"]:
+        from .direct_bootstrap_worker import main as bootstrap_main
+        return bootstrap_main(os.environ.get("MESH_CHAT_BOOTSTRAP_DIRECTORY"))
     reader = sys.stdin.buffer
     writer = FrameWriter(sys.stdout.buffer)
     service: MeshChatService | None = None

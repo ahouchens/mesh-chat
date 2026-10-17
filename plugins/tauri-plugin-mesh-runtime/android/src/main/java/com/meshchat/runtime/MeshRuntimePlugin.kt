@@ -85,6 +85,7 @@ interface InvitationDocumentHost {
     ],
 )
 class MeshRuntimePlugin(private val activity: Activity) : Plugin(activity) {
+    init { BootstrapClient.configure(activity.applicationContext) }
     companion object {
         private const val TAG = "MeshChatRuntime"
         private const val MESSAGE_CHANNEL = "mesh_chat_messages_v1"

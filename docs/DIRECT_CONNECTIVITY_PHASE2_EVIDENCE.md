@@ -70,6 +70,15 @@ Windows/Android execution or Internet traversal measurements.
 
 ## Remaining implementation and qualification
 
+An isolated bootstrap engine now refuses an existing RNS interpreter, starts only
+one non-routing packet adapter, and permits only join/receipt/admission-root LXMF
+payloads. A bounded desktop inherited-pipe supervisor and an Android non-exported
+secondary-process service keep its RNS globals separate from normal app routes.
+Sixteen source tests pass, including two real RNS/LXMF processes, pre-activation
+packet rejection, ordinary/channel payload rejection, process failure and bounded
+mobile serialization. These process boundaries are not yet attached to the setup
+controller; Android compilation of this increment and admission handoff are pending.
+
 The version-2 `mesh-direct:` document codec carries the original signed workspace
 invitation and independently signed Offer/Answer/Ready chain. Parsing checks the
 entire chain, canonical encoding, exact certificates, limits and expiry before any

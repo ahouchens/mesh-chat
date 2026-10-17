@@ -9,5 +9,8 @@
 
     <application
         android:allowBackup="false"
-        android:fullBackupContent="false" />
+        android:fullBackupContent="false">
+        <service android:name="com.meshchat.runtime.BootstrapService"
+            android:exported="false" android:process=":mesh_bootstrap" />
+    </application>
 </manifest>
