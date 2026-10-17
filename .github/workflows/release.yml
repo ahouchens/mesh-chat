@@ -109,7 +109,7 @@ jobs:
             service/requirements-dev.lock
 
       - name: Set up Rust
-        uses: dtolnay/rust-toolchain@1.88.0
+        uses: dtolnay/rust-toolchain@1.90.0
 
       - name: Restore Rust build cache
         uses: Swatinem/rust-cache@v2
@@ -202,7 +202,7 @@ jobs:
           echo "NDK_HOME=$ANDROID_SDK_ROOT/ndk/28.2.13676358" >> "$GITHUB_ENV"
 
       - name: Set up Rust for Android
-        uses: dtolnay/rust-toolchain@1.88.0
+        uses: dtolnay/rust-toolchain@1.90.0
         with:
           targets: aarch64-linux-android
 

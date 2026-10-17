@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "Embedded Reticulum/LXMF runtime for Mesh Chat mobile builds"
 authors = ["Mesh Chat contributors"]
 edition = "2021"
-rust-version = "1.88"
+rust-version = "1.90"
 links = "tauri-plugin-mesh-runtime"
 
 [dependencies]

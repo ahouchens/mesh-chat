@@ -18,7 +18,7 @@ request once after upgrade. Native callbacks cannot manufacture receipt evidence
 underlay for feasibility work. Rust owns native sockets and path upkeep; Python
 retains identity, authorization, RNS lifecycle and durable state. The
 `experiments/direct-fabric` crate now supplies an app-embedded bounded native host.
-The app and mobile plugin explicitly adopt Rust 1.88. Desktop inherited frames and
+The app and mobile plugin explicitly adopt Rust 1.90. Desktop inherited frames and
 an Android native-only exchange carry requests independently of renderer commands.
 The host owns ephemeral socket/key handles, attempt windows and packet queues.
 The defined Phase-1 protocol/adapter proof is qualified at `de110a8`; its

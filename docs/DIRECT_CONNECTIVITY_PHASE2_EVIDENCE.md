@@ -4,7 +4,7 @@ Status: **open**. No production or physical-device completion is claimed.
 
 ## Native host integration checkpoint
 
-The app now links the transport crate and explicitly declares Rust 1.88 alongside
+The app now links the transport crate and explicitly declares Rust 1.90 alongside
 the mobile plugin. An eight-session native owner retains exact socket/key handles,
 enforces preparation expiry and remaining attempt windows, and exposes only bounded
 private operations. Each running direction has a 32-packet application queue.
@@ -18,6 +18,9 @@ oversized frames, capacity, EOF, blocked writes, timeout, suspension, lock-free
 mobile response delivery, native expiry/cancellation and two native owned endpoints.
 Host compilation and exact Windows/Android package results are pending CI; linking
 source does not qualify the public setup flow or the remaining bootstrap adapter.
+The first package run at `ab01342` (run 39075386841) passed verification but rejected
+Rust 1.88: locked Tauri packages require 1.90 and UUID requires 1.89. App/plugin
+builds now pin 1.90; the transport-only workflow retains its 1.88 compatibility check.
 
 ## Owner pending authorization
 

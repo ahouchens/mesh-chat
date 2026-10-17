@@ -4,7 +4,7 @@ version = "0.2.47"
 description = "A private server-free Reticulum messenger"
 authors = ["Mesh Chat contributors"]
 edition = "2021"
-rust-version = "1.88"
+rust-version = "1.90"
 
 [lib]
 name = "mesh_chat_lib"
