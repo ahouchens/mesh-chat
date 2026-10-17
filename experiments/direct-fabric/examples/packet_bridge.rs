@@ -155,15 +155,42 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     {
         return Err("candidate socket changed".into());
     }
-    let (ap, bp) = tokio::time::timeout_at(authorization_deadline, async {
+    let (_dial_cancel, dial_cancelled) = tokio::sync::watch::channel(false);
+    let dial_deadline =
+        authorization_deadline.min(tokio::time::Instant::now() + Duration::from_secs(60));
+    let (a, b, ap, bp) = tokio::time::timeout_at(authorization_deadline, async {
         if a_is_client {
-            tokio::join!(a.connect(b_address), b.accept())
+            let (out, bp) = tokio::join!(
+                mesh_direct_proof::traversal::dial(
+                    a,
+                    vec![mesh_direct_proof::traversal::Candidate {
+                        address: b_address,
+                        expires: authorization_deadline
+                    }],
+                    dial_deadline,
+                    dial_cancelled
+                ),
+                b.accept()
+            );
+            out.map(|(a, ap)| (a, b, Ok(ap), bp))
         } else {
-            let (bp, ap) = tokio::join!(b.connect(a_address), a.accept());
-            (ap, bp)
+            let (out, ap) = tokio::join!(
+                mesh_direct_proof::traversal::dial(
+                    b,
+                    vec![mesh_direct_proof::traversal::Candidate {
+                        address: a_address,
+                        expires: authorization_deadline
+                    }],
+                    dial_deadline,
+                    dial_cancelled
+                ),
+                a.accept()
+            );
+            out.map(|(b, bp)| (a, b, ap, Ok(bp)))
         }
     })
-    .await?;
+    .await?
+    .map_err(|_| "candidate dialing exhausted")?;
     let ap = ap.map_err(|_| "owner handshake")?;
     let bp = bp.map_err(|_| "joiner handshake")?;
     frame(&mut std::io::stdout(), 2, b"ready")?;

@@ -1,5 +1,9 @@
 # Verification and release gates
 
+Phase 2 direct-connectivity work has a separate
+[evidence record](docs/DIRECT_CONNECTIVITY_PHASE2_EVIDENCE.md), distinguishing
+local service checks, native CI and unfulfilled production/physical gates.
+
 ## Direct connectivity increment, 2026-10-16
 
 Native qualification now runs in GitHub Actions. At `cbcf659`,

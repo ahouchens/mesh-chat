@@ -2,6 +2,11 @@
 
 Status: Phase 0 implemented; Phase 1 controlled proof complete; Phases 2–5 open. Date: 2026-10-15; updated 2026-10-17. Scope: Windows and Android first; iOS follows physical-device validation.
 
+Phase 2 increments and unmet gates are tracked in
+[the Phase 2 evidence record](DIRECT_CONNECTIVITY_PHASE2_EVIDENCE.md). Owner
+pending leases and bounded native candidate dialing are implemented as private
+building blocks; production embedding and bootstrap handoff remain open.
+
 ### Phase 1 completion, 2026-10-17
 
 The protocol-and-adapter proof meets the Phase-1 exit criteria below at `de110a8`

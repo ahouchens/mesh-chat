@@ -2411,6 +2411,39 @@ class WorkspaceServiceMixin:
             self._check_direct_runtime_available()
             return self._direct_packets.open(*args, **kwargs)
 
+    def _track_direct_owner_session(self, invitation_id, raw, expected, certificate_der):
+        """Lease the owner's selected Answer; never grants workspace traffic.
+
+        The selected identity must remain unadmitted. Changing any saved
+        negotiation evidence retires the lease, including a Ready refresh.
+        Native callers must acquire a fresh lease for the resulting chain.
+        """
+        from .direct_binding import _parse
+        with self._dispatch_lock:
+            self._check_direct_runtime_available()
+            self._accept_direct_answer(invitation_id, raw, expected, certificate_der)
+            saved = self.store.get("direct_pending", invitation_id)
+
+            def check_authority():
+                with self._dispatch_lock:
+                    self._check_direct_runtime_available()
+                    invite, _ = self._direct_owner_invitation(invitation_id)
+                    if self.store.get("direct_pending", invitation_id) != saved:
+                        raise ValidationError("Direct pending exchange changed")
+                    workspace = self._require_workspace(invite.workspace_id)
+                    manifest = self._workspace_current_manifest(workspace)
+                    if any(device.public_identity.hex() == saved["selected_identity"]
+                           for member in manifest.members for device in member.devices):
+                        raise ValidationError("Direct responder requires admitted credentials")
+
+            expires_at = min(saved["expires_at"], saved["scope"]["expires_at"],
+                _parse(saved["offer"])["expires_at"],
+                _parse(saved["answer"])["binding"]["expires_at"])
+            if saved.get("ready"):
+                expires_at = min(expires_at, _parse(saved["ready"])["binding"]["expires_at"])
+            return self._direct_sessions.open(expires_at - time.time(), check_authority,
+                key=("invitation", saved["scope"]["digest"]))
+
     def _track_direct_join_session(self, workspace_id, raw, certificate_der):
         """Lease the joiner's exact saved Ready chain; no interface attachment.
 

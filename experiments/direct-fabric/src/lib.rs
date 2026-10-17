@@ -6,6 +6,7 @@
 
 use bytes::Bytes;
 pub mod attempt;
+pub mod traversal;
 use quinn::crypto::rustls::{QuicClientConfig, QuicServerConfig};
 use rustls::pki_types::{CertificateDer, PrivatePkcs8KeyDer};
 use std::{

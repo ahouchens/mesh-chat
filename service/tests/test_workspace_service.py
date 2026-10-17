@@ -588,7 +588,8 @@ def test_direct_owner_binding_selects_one_responder_without_admission(tmp_path, 
 
 
 
-def test_direct_ready_owner_persistence_rechecks_selected_chain(tmp_path, monkeypatch):
+@pytest.mark.parametrize("terminal", ["revocation", "admission", "expiry", "identity", "ready"])
+def test_direct_ready_owner_persistence_rechecks_selected_chain(tmp_path, monkeypatch, terminal):
     from mesh_chat.direct_binding import BindingAuthority, create_binding
     from mesh_chat.direct_offer import OfferAuthority, create_offer
     from mesh_chat.direct_exchange import create_answer, create_ready
@@ -640,13 +641,37 @@ def test_direct_ready_owner_persistence_rechecks_selected_chain(tmp_path, monkey
         accepted = save()
         assert save() == accepted
         assert owner.store.list("workspace_join_request") == []
+        owner._retry_thread.join(timeout=2)
+        assert not owner._retry_thread.is_alive()
+        owner._shutdown.clear()
+        def track(certificate=b"answer cert"):
+            return owner._track_direct_owner_session(invitation["id"], answer, answer_authority, certificate)
+        with pytest.raises(IdentityMismatch):
+            track(b"wrong cert")
+        lease = track()
+        assert lease.check()
+        with pytest.raises(ValidationError, match="already owns"):
+            track()
+        owner.mobile_lifecycle_transition("suspended", "test")
+        assert lease.cancelled
+        with pytest.raises(ValidationError, match="suspended"):
+            track()
+        owner.mobile_lifecycle_transition("foreground", "test")
+        lease = track()
         owner.close()
+        assert lease.cancelled
         owner, _ = _service(tmp_path, identity, "Owner", vault_key=key)
         assert save() == accepted
+        owner._retry_thread.join(timeout=2)
+        assert not owner._retry_thread.is_alive()
+        owner._shutdown.clear()
+        lease = track()
+        assert lease.check()
         with pytest.raises(ValidationError):
             save(make_ready(answer, 2, session_id=str(uuid.uuid4())))
         fresh_answer = make_answer(2)
         owner._accept_direct_answer(invitation["id"], fresh_answer, answer_authority, b"answer cert")
+        assert not lease.check() and lease.reason == "authority_unavailable"
         record = owner.store.get("direct_pending", invitation["id"])
         assert "ready" not in record and "ready_certificate" not in record
         assert record["ready_accepted"]["generation"] == 2
@@ -669,13 +694,42 @@ def test_direct_ready_owner_persistence_rechecks_selected_chain(tmp_path, monkey
         owner._accept_direct_answer(invitation["id"], fresh_answer, answer_authority, b"answer cert")
         fresh_ready = make_ready(fresh_answer, 4)
         assert save(fresh_ready).generation == 4
+        lease = owner._track_direct_owner_session(invitation["id"], fresh_answer, answer_authority, b"answer cert")
+        assert lease.check()
         with monkeypatch.context() as clock:
             clock.setattr(time, "time", lambda: now + 241)
             with pytest.raises(ValidationError):
                 save(fresh_ready)
-        owner.revoke_workspace_invitation(workspace["id"], invitation["id"], _op(94002))
-        with pytest.raises(ValidationError):
-            save(fresh_ready)
+        if terminal == "revocation":
+            owner.revoke_workspace_invitation(workspace["id"], invitation["id"], _op(94002))
+            assert not lease.check()
+            with pytest.raises(ValidationError):
+                save(fresh_ready)
+        elif terminal == "admission":
+            joiner, network = _service(tmp_path / "joiner", peer, "Joiner")
+            try:
+                joiner.submit_workspace_join(invitation["text"], _op(94003))
+                for packet in _flush(joiner, network):
+                    _deliver(owner, packet, source_profile=joiner._require_profile(),
+                             recipient_profile=owner._require_profile())
+                request = owner.store.list("workspace_join_request")[0]
+                owner.approve_workspace_join(workspace["id"], request["id"], _op(94004))
+                assert not lease.check()
+                with pytest.raises(ValidationError):
+                    owner._track_direct_owner_session(invitation["id"], fresh_answer, answer_authority, b"answer cert")
+            finally:
+                joiner.close()
+        elif terminal == "expiry":
+            owner._direct_sessions.clock = lambda: time.monotonic() + 241
+            assert not lease.check() and lease.reason == "expired"
+        elif terminal == "identity":
+            owner._identity = RNS.Identity()
+            assert not lease.check()
+        else:
+            save(make_ready(fresh_answer, 5))
+            assert not lease.check()
+            replacement = owner._track_direct_owner_session(invitation["id"], fresh_answer, answer_authority, b"answer cert")
+            assert replacement.check()
     finally:
         owner.close()
 
