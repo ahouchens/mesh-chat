@@ -509,5 +509,8 @@ adapter consumes that lease and requires automatic carrier cancellation after
 admission, then fresh admitted credentials before completing channel bootstrap.
 Registry retirement also invalidates registrations already checking authority,
 including suspension followed by resume. Owner-side pending lifecycle integration,
-atomic native credential handoff and shipping IPC remain open. Source and native
-qualification for this increment are recorded in TESTING.md; no phase is complete.
+atomic native credential handoff and shipping IPC remain open. Source validation
+passed (614 non-integration tests and 8 topology/controller tests). Native
+qualification passed on Windows/Linux with Android ARM64 compilation at `ec482d0`
+in [run 39042273906](https://github.com/ahouchens/mesh-chat/actions/runs/39042273906).
+No phase is complete.

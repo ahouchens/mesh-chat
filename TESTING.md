@@ -2849,5 +2849,7 @@ The source topology/controller suite passed: 8 passed, 10 native-only skips,
 including revocation, service crash, suspension/resume and process restart.
 The real topology now requires automatic pending-carrier cancellation after
 admission and finishes channel bootstrap over fresh admitted credentials. Native
-qualification for this increment is pending. Owner pending lifecycle and shipping
+qualification passed on Windows/Linux with Android ARM64 compilation at `ec482d0`
+in [run 39042273906](https://github.com/ahouchens/mesh-chat/actions/runs/39042273906).
+Owner pending lifecycle and shipping
 IPC are still open; these results do not qualify physical mobile lifecycle behavior.

@@ -181,7 +181,12 @@ signature and admission checks still run after that gate.
 queue carrier: actual join, signed acknowledgment before approval, admission,
 fresh workspace-scoped bindings checked against the local manifest, bidirectional
 LXMF messages, ratchet readiness, endpoint receipts, and carrier-death teardown.
-It closes the pending carrier and creates fresh credentials after admission.
+The joiner's service-owned Ready lease now detects admission and signals carrier
+cancellation independently of packet queues. The proof requires this cancellation
+before explicit cleanup, then creates fresh admitted credentials and completes
+channel bootstrap over the replacement. The lease also rejects changes to its
+exact saved exchange and participates in suspension/shutdown retirement. Owner-side
+pending lifecycle wiring and an atomic production handoff remain open.
 The proof uses transactional binding acceptance before activation, including a
 private service workspace authority reload. Before carrier authorization the joiner
 saves its signed join, and its pending authority loader verifies that durable state.
