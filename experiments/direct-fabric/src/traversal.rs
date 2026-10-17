@@ -1,5 +1,5 @@
 //! Bounded dialing of service-authorized candidates on one native-owned socket.
-//! No discovery, custom probes, retries after exhaustion, or TCP policy here.
+//! No discovery, custom probes, retries after the window, or TCP policy here.
 use crate::{Error, Path, Peer};
 use std::{collections::HashSet, net::SocketAddr, time::Duration};
 use tokio::{sync::watch, time::Instant};
@@ -39,22 +39,73 @@ pub async fn dial(
     // Sequential handshakes cap native work at one outgoing attempt at a time.
     // Quinn alone receives and retransmits standard QUIC handshake packets.
     let attempts = async {
-        for candidate in candidates {
-            let until = deadline.min(candidate.expires);
-            if Instant::now() >= until {
-                continue;
+        let mut count = 0;
+        while count < 64 {
+            for candidate in &candidates {
+                let until = deadline.min(candidate.expires);
+                if Instant::now() >= until {
+                    continue;
+                }
+                count += 1;
+                if let Ok(Ok(path)) =
+                    tokio::time::timeout_at(until, peer.connect(candidate.address)).await
+                {
+                    return Ok(path);
+                }
+                if count == 64 {
+                    return Err(Error::Timeout);
+                }
             }
-            if let Ok(Ok(path)) =
-                tokio::time::timeout_at(until, peer.connect(candidate.address)).await
-            {
-                return Ok(path);
+            let latest = candidates
+                .iter()
+                .map(|c| c.expires)
+                .max()
+                .unwrap()
+                .min(deadline);
+            if Instant::now() >= latest {
+                break;
             }
+            // Email peers do not activate simultaneously. Retry standard QUIC
+            // handshakes, retaining this socket, with bounded work and pacing.
+            tokio::time::sleep_until(latest.min(Instant::now() + Duration::from_secs(1))).await;
         }
         Err(Error::Timeout)
     };
     let result = tokio::select! {
         biased;
         // A dropped service authority channel also cancels the endpoint.
+        _ = cancelled.wait_for(|value| *value) => Err(Error::Closed),
+        _ = tokio::time::sleep_until(deadline) => Err(Error::Timeout),
+        result = attempts => result,
+    };
+    result.map(|path| (peer, path))
+}
+
+/// Keep the server available throughout the same bounded overlap window.
+/// A silent interval or an unauthenticated handshake does not consume the window.
+pub async fn listen(
+    peer: Peer,
+    deadline: Instant,
+    mut cancelled: watch::Receiver<bool>,
+) -> Result<(Peer, Path), Error> {
+    let now = Instant::now();
+    if deadline <= now {
+        return Err(Error::Timeout);
+    }
+    if deadline - now > Duration::from_secs(60) {
+        return Err(Error::Configuration);
+    }
+    let attempts = async {
+        for _ in 0..64 {
+            if let Ok(path) = peer.accept().await {
+                return Ok(path);
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        Err(Error::Timeout)
+    };
+    let result = tokio::select! {
+        biased;
         _ = cancelled.wait_for(|value| *value) => Err(Error::Closed),
         _ = tokio::time::sleep_until(deadline) => Err(Error::Timeout),
         result = attempts => result,
@@ -76,6 +127,33 @@ mod tests {
             Peer::bind("127.0.0.1:0".parse().unwrap(), a, bc).unwrap(),
             Peer::bind("127.0.0.1:0".parse().unwrap(), b, ac).unwrap(),
         )
+    }
+
+    #[tokio::test]
+    async fn delayed_email_activation_keeps_exact_socket_until_overlap() {
+        let (a, b) = pair();
+        let original = a.address().unwrap();
+        let target = b.address().unwrap();
+        let (_cancel, rx) = watch::channel(false);
+        let end = Instant::now() + Duration::from_secs(15);
+        let accepting = async {
+            tokio::time::sleep(Duration::from_secs(6)).await;
+            listen(b, end, rx.clone()).await
+        };
+        let (out, incoming) = tokio::join!(
+            dial(
+                a,
+                vec![Candidate {
+                    address: target,
+                    expires: end
+                }],
+                end,
+                rx.clone()
+            ),
+            accepting
+        );
+        assert_eq!(out.unwrap().0.address().unwrap(), original);
+        assert!(incoming.is_ok());
     }
 
     #[tokio::test]

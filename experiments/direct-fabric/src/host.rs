@@ -171,13 +171,7 @@ impl Host {
             let connected = if local < remote {
                 traversal::dial(peer, candidates, deadline, cancelled.clone()).await
             } else {
-                let result = tokio::select! {
-                    biased;
-                    _ = cancelled.wait_for(|v| *v) => Err(Error::Closed),
-                    _ = tokio::time::sleep_until(deadline) => Err(Error::Timeout),
-                    result = peer.accept() => result,
-                };
-                result.map(|path| (peer, path))
+                traversal::listen(peer, deadline, cancelled.clone()).await
             };
             if let Ok((_peer, path)) = connected {
                 state.store(1, Ordering::Release);
