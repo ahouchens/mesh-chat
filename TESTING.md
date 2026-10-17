@@ -2863,5 +2863,8 @@ the service pump and profile budget. It creates pumps at activation, so reopenin
 a suspended profile can complete startup before the explicit foreground transition.
 Local validation passed: 625 non-integration tests, 7 environment-dependent skips,
 19 integration deselections; source topology/controller suite 8 passed, 10
-native-only skips. Native qualification for this increment is pending. This does not enable shipping
+native-only skips. Windows/Linux native qualification and Android ARM64 compilation
+passed at `b0f0962` in
+[run 39043434010](https://github.com/ahouchens/mesh-chat/actions/runs/39043434010).
+This does not enable shipping
 native IPC or default direct interfaces.

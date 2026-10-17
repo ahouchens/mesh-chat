@@ -529,4 +529,7 @@ The private pump entry point refuses activation while suspended or closing.
 This is service-side integration, not native-host embedding: no renderer command,
 public control listener or default direct interface is enabled. Owner pending
 authority wiring, isolated production bootstrap contexts, native IPC and automatic
-discovery/recovery remain open. Validation evidence is tracked in TESTING.md.
+discovery/recovery remain open. Local validation passed: 625 non-integration tests
+and 8 source topology/controller tests. Windows/Linux native qualification and
+Android ARM64 compilation passed at `b0f0962` in
+[run 39043434010](https://github.com/ahouchens/mesh-chat/actions/runs/39043434010).
