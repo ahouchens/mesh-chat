@@ -2,7 +2,9 @@
 //! or exposed through app commands. Python authorizes public certificate pins
 //! before the harness permits either native peer to establish its path.
 use bytes::Bytes;
-use mesh_direct_proof::{attempt::PreparedAttempt, BoundSocket, SessionKey, MAX_PACKET};
+use mesh_direct_proof::{
+    attempt::PreparedAttempt, BoundSocket, SessionKey, MAX_PACKET, QUEUE_BYTES, QUEUE_ITEMS,
+};
 use std::io::{Read, Write};
 use std::time::Duration;
 
@@ -22,7 +24,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let bc = b.certificate();
     // A bounded pipe receiver is the only input channel. No TCP/UDP control
     // listener exists, and input cannot select a remote socket address.
-    let (sender, mut input) = tokio::sync::mpsc::channel(128);
+    let channel_items = QUEUE_ITEMS.min(QUEUE_BYTES / MAX_PACKET);
+    let (sender, mut input) = tokio::sync::mpsc::channel(channel_items);
     std::thread::spawn(move || {
         let mut stdin = std::io::stdin().lock();
         loop {
@@ -49,7 +52,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let Some((2, init)) = tokio::time::timeout(Duration::from_secs(30), input.recv()).await? else {
         return Err("missing session initialization".into());
     };
-    if init.len() != 52 {
+    if init.len() != 53 || init[52] > 1 {
         return Err("invalid session initialization".into());
     }
     let mut a_session: [u8; 16] = init[..16].try_into()?;
@@ -57,6 +60,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let b_session: [u8; 16] = init[24..40].try_into()?;
     let b_generation = u64::from_be_bytes(init[40..48].try_into()?);
     let remaining = Duration::from_secs(u32::from_be_bytes(init[48..52].try_into()?) as u64);
+    // Trusted service selects the smaller authenticated RNS destination. Role
+    // is independent of invitation ownership and of which socket was refreshed.
+    let a_is_client = init[52] == 0;
     let authorization_deadline = tokio::time::Instant::now() + remaining;
     let mut a = PreparedAttempt::new(
         BoundSocket::bind("127.0.0.1:0".parse()?).map_err(|_| "bind")?,
@@ -149,15 +155,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     {
         return Err("candidate socket changed".into());
     }
-    let remote_address = b.address().map_err(|_| "address")?;
     let (ap, bp) = tokio::time::timeout_at(authorization_deadline, async {
-        tokio::join!(a.connect(remote_address), b.accept())
+        if a_is_client {
+            tokio::join!(a.connect(b_address), b.accept())
+        } else {
+            let (bp, ap) = tokio::join!(b.connect(a_address), a.accept());
+            (ap, bp)
+        }
     })
     .await?;
-    let ap = ap.map_err(|_| "connect")?;
-    let bp = bp.map_err(|_| "accept")?;
+    let ap = ap.map_err(|_| "owner handshake")?;
+    let bp = bp.map_err(|_| "joiner handshake")?;
     frame(&mut std::io::stdout(), 2, b"ready")?;
-    let (output, frames) = std::sync::mpsc::sync_channel::<(u8, Bytes)>(128);
+    let (output, frames) = std::sync::mpsc::sync_channel::<(u8, Bytes)>(channel_items);
     std::thread::spawn(move || {
         let mut stdout = std::io::stdout().lock();
         for (peer, packet) in frames {

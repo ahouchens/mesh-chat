@@ -399,6 +399,57 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn separate_local_process_cannot_inject_native_packets() {
+        let (a, b) = pair();
+        let inject = || {
+            let python = std::env::var("MESH_DIRECT_BINDING_PYTHON")
+                .expect("CI must configure Python for the local hostile-process test");
+            let status = std::process::Command::new(python)
+                .arg("-c")
+                .arg(concat!(
+                    "import socket,sys\n",
+                    "s=socket.socket(socket.AF_INET,socket.SOCK_DGRAM)\n",
+                    "for port in map(int,sys.argv[1:]):\n",
+                    " for packet in (b'forged RNS packet', b'\\xc0'+bytes(1199), bytes(8192)):\n",
+                    "  for _ in range(8): s.sendto(packet,('127.0.0.1',port))\n",
+                    "s.close()\n"
+                ))
+                .arg(a.address().unwrap().port().to_string())
+                .arg(b.address().unwrap().port().to_string())
+                .status()
+                .expect("start unprivileged local injector");
+            assert!(status.success());
+        };
+        // Knowing both ports grants no packet authority, before or after TLS.
+        // The attacker has no inherited private control or packet pipe handles.
+        inject();
+        let (ap, bp) = tokio::join!(a.connect(b.address().unwrap()), b.accept());
+        let (ap, bp) = (ap.unwrap(), bp.unwrap());
+        inject();
+        assert!(
+            tokio::time::timeout(Duration::from_millis(250), ap.receive())
+                .await
+                .is_err()
+        );
+        assert!(
+            tokio::time::timeout(Duration::from_millis(250), bp.receive())
+                .await
+                .is_err()
+        );
+        for (sender, receiver) in [(&ap, &bp), (&bp, &ap)] {
+            let packet = Bytes::from_static(b"authenticated after local injection");
+            sender.send(packet.clone()).unwrap();
+            assert_eq!(
+                tokio::time::timeout(Duration::from_secs(2), receiver.receive())
+                    .await
+                    .unwrap()
+                    .unwrap(),
+                packet
+            );
+        }
+    }
+
+    #[tokio::test]
     async fn authenticated_peer_sending_oversized_packet_closes_path() {
         let (a, b) = pair();
         let (ap, bp) = tokio::join!(a.connect(b.address().unwrap()), b.accept());

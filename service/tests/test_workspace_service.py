@@ -369,6 +369,8 @@ def test_direct_workspace_binding_runtime_lease_lifecycle(tmp_path, terminal):
             owner._track_direct_workspace_session(raw, authority, b"wrong cert")
         lease = owner._track_direct_workspace_session(raw, authority, b"cert")
         assert lease.check()
+        with pytest.raises(ValidationError, match="already owns"):
+            owner._track_direct_workspace_session(raw, authority, b"cert")
         scope["workspace_id"] = "changed caller input"
         assert lease.check()  # The service retains its own authority snapshot.
         if terminal == "revocation":
@@ -728,6 +730,8 @@ def test_direct_ready_requires_saved_local_answer_and_current_join(tmp_path, mon
             joiner._track_direct_join_session(workspace["id"], ready, b"wrong cert")
         lease = joiner._track_direct_join_session(workspace["id"], ready, b"ready cert")
         assert lease.check()
+        with pytest.raises(ValidationError, match="already owns"):
+            joiner._track_direct_join_session(workspace["id"], ready, b"ready cert")
         joiner.mobile_lifecycle_transition("suspended", "test")
         assert lease.cancelled
         with pytest.raises(ValidationError, match="suspended"):

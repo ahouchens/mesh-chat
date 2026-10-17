@@ -2435,7 +2435,8 @@ class WorkspaceServiceMixin:
             expires_at = min(expected.expires_at, *(
                 _parse(saved[field])["binding"]["expires_at"] for field in ("answer", "ready")),
                 _parse(saved["offer"])["expires_at"])
-            return self._direct_sessions.open(expires_at - time.time(), check_authority)
+            return self._direct_sessions.open(expires_at - time.time(), check_authority,
+                key=("invitation", expected.scope["digest"]))
 
     def _track_direct_workspace_session(self, raw, expected, certificate_der):
         """Private runtime lease after durable acceptance; creates no adapter."""
@@ -2450,7 +2451,9 @@ class WorkspaceServiceMixin:
             check_authority()
             self._accept_direct_workspace_binding(raw, expected, certificate_der)
             expires_at = min(expected.expires_at, _parse(raw)["expires_at"])
-            return self._direct_sessions.open(expires_at - time.time(), check_authority)
+            return self._direct_sessions.open(expires_at - time.time(), check_authority,
+                key=("workspace", expected.scope["workspace_id"],
+                     expected.scope["issuer_device_id"], expected.scope["audience_device_id"]))
 
     def _accept_direct_workspace_binding(self, raw, expected, certificate_der):
         """Commit admitted binding acceptance without creating network effects."""

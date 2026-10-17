@@ -13,13 +13,14 @@ from .errors import ValidationError
 
 
 class SessionLease:
-    def __init__(self, registry, deadline, check_authority):
+    def __init__(self, registry, deadline, check_authority, key):
         self._registry = registry
         self._deadline = deadline
         self._check_authority = check_authority
         self._cancelled = threading.Event()
         self._lock = threading.Lock()
         self._reason = None
+        self._key = key
 
     @property
     def cancelled(self):
@@ -62,7 +63,7 @@ class SessionRegistry:
         self._closed = False
         self._epoch = 0
 
-    def open(self, remaining, check_authority):
+    def open(self, remaining, check_authority, *, key=None):
         if (isinstance(remaining, bool) or not isinstance(remaining, (int, float))
                 or not math.isfinite(remaining) or not 0 < remaining <= self.MAX_LIFETIME):
             raise ValidationError("Direct runtime lifetime is invalid")
@@ -77,9 +78,11 @@ class SessionRegistry:
                 raise ValidationError("Direct runtime was retired during registration")
             if len(self._sessions) >= self.MAX_SESSIONS:
                 raise ValidationError("Direct runtime session budget exhausted")
+            if key is not None and any(lease._key == key for lease in self._sessions):
+                raise ValidationError("Direct scope already owns a runtime session")
             if self.clock() >= deadline:
                 raise ValidationError("Direct runtime authorization expired")
-            lease = SessionLease(self, deadline, check_authority)
+            lease = SessionLease(self, deadline, check_authority, key)
             self._sessions.add(lease)
             return lease
 

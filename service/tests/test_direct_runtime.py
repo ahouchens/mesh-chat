@@ -102,3 +102,20 @@ def test_runtime_suspension_wins_inflight_registration():
         with pytest.raises(ValidationError, match="retired during registration"):
             pending.result(timeout=2)
     assert registry.open(30, lambda: None).check()
+
+
+def test_scope_deduplication_has_one_concurrent_winner_and_allows_retired_replacement():
+    registry = SessionRegistry()
+    barrier = threading.Barrier(2)
+    def acquire():
+        try:
+            return registry.open(30, lambda: barrier.wait(timeout=3), key=("invitation", "digest"))
+        except ValidationError:
+            return None
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        futures = [pool.submit(acquire) for _ in range(2)]
+        leases = [lease for future in futures if (lease := future.result(timeout=4)) is not None]
+    assert len(leases) == 1
+    assert registry.open(30, lambda: None, key=("invitation", "other")).check()
+    leases[0].cancel()
+    assert registry.open(30, lambda: None, key=("invitation", "digest")).check()

@@ -12,6 +12,25 @@ import pytest
 from tools.direct_fabric_harness import PacketCarrier, run
 
 
+@pytest.mark.parametrize("destinations,expected", [(["11" * 16, "22" * 16], 0), (["22" * 16, "11" * 16], 1)])
+def test_native_client_role_follows_authenticated_destinations(destinations, expected):
+    peers = [{"profile": {"destination_hash": destination}, "carrier_lost": threading.Event()}
+             for destination in destinations]
+    carrier = PacketCarrier(peers, expires_at=time.time() + 30)
+    try:
+        assert carrier.client_index == expected
+        with pytest.raises(ValueError, match="conflicts"):
+            PacketCarrier(peers, expires_at=time.time() + 30, client_index=1-expected)
+    finally:
+        carrier.close()
+
+
+def test_native_client_role_rejects_same_destination():
+    peers = [{"profile": {"destination_hash": "11" * 16}} for _ in range(2)]
+    with pytest.raises(ValueError, match="distinct"):
+        PacketCarrier(peers, expires_at=time.time() + 30)
+
+
 @pytest.mark.integration
 @pytest.mark.parametrize("failure", ["revocation", "service-crash", "engine-crash", "suspend-resume", "restart"])
 def test_real_services_over_private_direct_packet_carrier(failure):
@@ -39,14 +58,16 @@ def test_real_services_over_private_direct_packet_carrier(failure):
 @pytest.mark.integration
 @pytest.mark.parametrize("activate", [False, True])
 @pytest.mark.parametrize("refresh", [False, True])
-def test_native_carrier_authorization_expiry_closes_process(activate, refresh):
+@pytest.mark.parametrize("client_index", [0, 1])
+def test_native_carrier_authorization_expiry_closes_process(activate, refresh, client_index):
     native = os.environ.get("MESH_DIRECT_PROOF_BINARY")
     if os.environ.get("MESH_CHAT_RUN_DIRECT_FABRIC_TESTS") != "1" or not native:
         pytest.skip("Requires the GitHub-built native carrier")
     peers = [{"incoming": queue.Queue(maxsize=128), "outgoing": queue.Queue(maxsize=128), "revoked": threading.Event(), "carrier_lost": threading.Event()} for _ in range(2)]
     # Longer active-case lifetime permits handshake scheduling on CI. Neither
     # test closes stdin nor sends cancellation: exit must follow native expiry.
-    carrier = PacketCarrier(peers, Path(native).resolve(), expires_at=time.time() + (6 if activate else 3))
+    carrier = PacketCarrier(peers, Path(native).resolve(), expires_at=time.time() + (6 if activate else 3),
+                            client_index=client_index)
     try:
         ready_generation = carrier.refresh_owner("authorized local descriptor B") if refresh else None
         if activate:

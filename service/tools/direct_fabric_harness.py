@@ -37,6 +37,11 @@ from mesh_chat.direct_packet_adapter import MeshDirectInterface, scoped_message_
 from mesh_chat.direct_packet_policy import PacketPolicy
 
 
+# Each inherited channel obeys the byte ceiling even if every frame is maximal.
+PACKET_CHANNEL_ITEMS = min(MeshDirectInterface.MAX_ITEMS,
+                           MeshDirectInterface.MAX_BYTES // MeshDirectInterface.MAX_PACKET)
+
+
 def _worker(name, root, commands, responses, incoming, outgoing, revoked, carrier_lost, vault_key):
     store = VaultStore(Path(root), vault_key, allow_unprotected_for_tests=True)
     store.put("settings", "network", NetworkSettings(nearby_discovery=False, lan_fallback=False).to_dict())
@@ -230,8 +235,19 @@ def _worker(name, root, commands, responses, incoming, outgoing, revoked, carrie
 
 
 class PacketCarrier:
-    def __init__(self, peers, executable=None, *, generation=1, expires_at):
+    def __init__(self, peers, executable=None, *, generation=1, expires_at, client_index=None):
         self.peers = peers
+        if all("profile" in peer for peer in peers):
+            destinations = [bytes.fromhex(peer["profile"]["destination_hash"]) for peer in peers]
+            if any(len(destination) != 16 for destination in destinations) or destinations[0] == destinations[1]:
+                raise ValueError("Direct roles require distinct authenticated destinations")
+            selected = 0 if destinations[0] < destinations[1] else 1
+            if client_index is not None and client_index != selected:
+                raise ValueError("Direct client role conflicts with authenticated destinations")
+            client_index = selected
+        self.client_index = 0 if client_index is None else client_index
+        if type(self.client_index) is not int or self.client_index not in (0, 1):
+            raise ValueError("Invalid direct client role")
         self.stop = threading.Event()
         self.cancellation_requested = threading.Event()
         self.controls = queue.Queue(maxsize=8)
@@ -251,7 +267,7 @@ class PacketCarrier:
             self._thread(self._read)
             try:
                 self._write(2, b"".join(session.bytes + struct.pack("!Q", generation) for session in self.session_ids)
-                            + struct.pack("!I", remaining))
+                            + struct.pack("!IB", remaining, self.client_index))
                 first, second = self.controls.get(timeout=20), self.controls.get(timeout=20)
                 if first[0] != 3 or second[0] != 4:
                     raise RuntimeError("Native proof did not provide certificates")
@@ -414,7 +430,7 @@ def run(*, executable=None, timeout=45, failure="revocation"):
         try:
             for name in ("Owner", "Joiner"):
                 commands, responses = context.Queue(), context.Queue()
-                incoming, outgoing = context.Queue(maxsize=128), context.Queue(maxsize=128)
+                incoming, outgoing = context.Queue(maxsize=PACKET_CHANNEL_ITEMS), context.Queue(maxsize=PACKET_CHANNEL_ITEMS)
                 revoked, carrier_lost = context.Event(), context.Event()
                 vault_key = os.urandom(32)  # Python-only test custodian; never sent to Rust.
                 process = context.Process(target=_worker, args=(name, str(Path(root) / name),
@@ -606,7 +622,7 @@ def run(*, executable=None, timeout=45, failure="revocation"):
                     for key in ("commands", "responses", "incoming", "outgoing"):
                         owner[key].cancel_join_thread()
                         owner[key].close()
-                        owner[key] = context.Queue(maxsize=128) if key in {"incoming", "outgoing"} else context.Queue()
+                        owner[key] = context.Queue(maxsize=PACKET_CHANNEL_ITEMS) if key in {"incoming", "outgoing"} else context.Queue()
                     owner["revoked"], owner["carrier_lost"] = context.Event(), context.Event()
                     owner["process"] = context.Process(target=_worker, args=(owner["name"], owner["root"],
                         owner["commands"], owner["responses"], owner["incoming"], owner["outgoing"],

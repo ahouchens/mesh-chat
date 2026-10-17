@@ -150,8 +150,38 @@ after both identities are known. Keep one winning session per scope and generati
 pair; close duplicate successes only after the winner is authenticated. Do not
 retire an existing usable path while a replacement is only a candidate. Explicit
 authenticated checks and QUIC must share one receiver; no separate discovery
-socket may supply an advertised tuple. The check framing remains a review gate,
-not an ad-hoc packet prefix in this proof.
+socket may supply an advertised tuple.
+
+### Phase-1 path-check and conflict decisions
+
+No custom unauthenticated check frame is accepted by this version. The sole UDP
+receiver is Quinn: establishment uses standard QUIC/TLS packets, and established
+path validation uses QUIC's authenticated PATH_CHALLENGE/PATH_RESPONSE frames.
+Only the negotiated DATAGRAM channel carries RNS packets after mutual TLS and
+exact certificate binding. Arbitrary UDP payloads cannot become RNS frames. The
+proof does not probe imported candidates or implement hole punching; Phase 2 must
+use these QUIC mechanisms within the stated attempt/probe budgets, or amend this
+ADR before introducing a separate check protocol. The retry/probe limits above
+are requirements for that future scheduler, not implemented discovery claims.
+
+The controlled bridge now uses the smaller authenticated RNS destination as the
+client, independently of invitation ownership. Tests exercise either peer as
+client, including owner Ready refresh with the joiner's socket retained. Signed
+generation conflicts still fail during durable acceptance. A service registry
+permits one pending lease per invitation digest and one admitted lease per exact
+workspace/device pair; concurrent duplicates have one winner, and cancellation
+releases the slot. Replay acceptance is idempotent but cannot allocate a second
+runtime session. Speculative multi-candidate replacement and winner selection
+across concurrent native attempts remain Phase-2 integration work; the controlled
+proof uses one candidate path and never claims to implement that scheduler.
+
+Inherited packet channels use at most 127 slots for 516-byte frames (65,532 payload
+bytes), independently of the adapter's 128-item/64-KiB limits. Native input/output
+channels use the same ceiling. Quinn receive buffers are separately capped at
+64 KiB; the 128-item application queue limit is not a claim about Quinn's internal
+receive metadata or OS kernel buffers. The shared 512-KiB profile budget accounts
+for adapter payload queues. Production-wide native/IPC/kernel accounting remains
+an activation gate.
 
 ## Adapter gate and outstanding evidence
 

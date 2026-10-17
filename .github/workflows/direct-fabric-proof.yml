@@ -18,6 +18,8 @@ on:
       - 'service/tests/test_direct_binding.py'
       - 'service/tests/test_direct_runtime.py'
       - 'service/tests/test_direct_packets.py'
+      - 'service/tests/test_direct_network_audit.py'
+      - 'service/tools/direct_network_audit.py'
       - 'service/tests/test_network_callback_dispatch.py'
       - 'service/tests/test_direct_offer.py'
       - 'service/tests/test_direct_exchange.py'
@@ -49,7 +51,7 @@ jobs:
       - name: Install protected service for identity binding proof
         run: python -m pip install ./service pytest
       - name: Validate service binding boundaries
-        run: python -m pytest service/tests/test_direct_binding.py service/tests/test_direct_runtime.py service/tests/test_direct_packets.py service/tests/test_network_callback_dispatch.py service/tests/test_direct_offer.py service/tests/test_direct_exchange.py service/tests/test_direct_packet_adapter.py service/tests/test_direct_packet_policy.py service/tests/test_udp_mapping.py -q
+        run: python -m pytest service/tests/test_direct_binding.py service/tests/test_direct_runtime.py service/tests/test_direct_packets.py service/tests/test_direct_network_audit.py service/tests/test_network_callback_dispatch.py service/tests/test_direct_offer.py service/tests/test_direct_exchange.py service/tests/test_direct_packet_adapter.py service/tests/test_direct_packet_policy.py service/tests/test_udp_mapping.py -q
       - name: Validate workspace and pending join binding authority
         run: python -m pytest service/tests/test_workspace_service.py -k "direct_workspace_binding or direct_join_binding or direct_owner_binding or direct_ready" -q
       - name: Test controlled peers (no discovery service)
@@ -58,6 +60,9 @@ jobs:
         run: cargo test --locked --manifest-path experiments/direct-fabric/Cargo.toml
       - name: Build isolated packet carrier in CI
         run: cargo build --locked --manifest-path experiments/direct-fabric/Cargo.toml --example packet_bridge
+      - name: Install Linux syscall observer
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y strace
       - name: Real RNS and LXMF over native QUIC
         shell: bash
         env:
@@ -66,7 +71,17 @@ jobs:
           binary="$PWD/experiments/direct-fabric/target/debug/examples/packet_bridge"
           if [[ "$RUNNER_OS" == "Windows" ]]; then binary="$binary.exe"; fi
           export MESH_DIRECT_PROOF_BINARY="$binary"
-          python -m pytest service/tests/test_direct_fabric_harness.py -q
+          if [[ "$RUNNER_OS" == "Linux" ]]; then
+            python service/tools/direct_network_audit.py --report direct-network-evidence.json -- python -m pytest service/tests/test_direct_fabric_harness.py -q
+          else
+            python -m pytest service/tests/test_direct_fabric_harness.py -q
+          fi
+      - name: Retain endpoint-free network provenance
+        if: runner.os == 'Linux' && success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: direct-network-evidence
+          path: direct-network-evidence.json
 
   android-compile:
     runs-on: ubuntu-latest
