@@ -99,6 +99,8 @@ class DirectSetup:
     def _family(checked):
         from .direct_binding import _parse
         candidates = _parse(checked.offer)["candidates"]
+        if not candidates and checked.answer is not None:
+            candidates = _parse(checked.answer)["binding"]["candidates"]
         if not candidates:
             return None
         return socket.AF_INET6 if ":" in candidates[0]["host"] else socket.AF_INET

@@ -1,6 +1,7 @@
 import time
 import threading
 import uuid
+import socket
 
 import pytest
 import RNS
@@ -83,6 +84,28 @@ def test_public_offer_answer_ready_retains_answer_socket_without_hosting(peers):
     assert owner.store.list("workspace_join_request") == []
     assert all(call[0] != "activate" for call in joiner._direct_native.calls)
     assert joiner._direct_setup.accept_ready(ready["text"])["setup_id"] == answer["setup_id"]
+
+
+def test_unhosted_owner_ready_uses_ipv6_reply_family_and_retains_answer(peers, monkeypatch):
+    from mesh_chat import connectivity as c
+    owner, joiner, _, invite = peers
+    offer = owner._direct_setup.offer(invite["id"])
+    assert offer["candidate_count"] == 0
+    def no_pinhole(*args, **kwargs):
+        raise OSError("Controlled unavailable router")
+    monkeypatch.setattr(c, "map_upnp_ipv6_pinhole", no_pinhole)
+    def prepare(native, **kw):
+        routes = [c.RouteInfo(socket.AF_INET6,"controlled",None,"2606:4700:4700::1111",1)] if native is joiner._direct_native else []
+        return prepare_candidates(native,routes=routes,**kw)
+    monkeypatch.setattr(direct_setup,"prepare_candidates",prepare)
+    answer = joiner._direct_setup.answer(offer["text"], _op(98002))
+    assert answer["candidate_count"] == 1
+    retained = dict(joiner._direct_native.owned)
+    ready = owner._direct_setup.ready(answer["text"])
+    assert ready["candidate_count"] == 0
+    assert next(iter(owner._direct_native.owned.values()))["host"] == "::"
+    joiner._direct_setup.accept_ready(ready["text"])
+    assert joiner._direct_native.owned == retained
 
 
 def test_restart_or_suspend_requires_fresh_answer_instead_of_recreating_socket(peers):
