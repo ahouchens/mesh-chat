@@ -1,7 +1,7 @@
 # ADR 0018: Authenticated direct underlay below Reticulum
 
-Status: accepted for feasibility work; production activation is gated.
-Date: 2026-10-16.
+Status: accepted; Phase-1 controlled proof qualified; production activation is gated.
+Date: 2026-10-16; qualification updated 2026-10-17.
 
 ## Decision
 
@@ -67,8 +67,9 @@ extend its parent's validity. The owner service now saves the signed Offer and
 public certificate against its prepared challenge, then atomically verifies and
 saves the exact Answer with selected peer and both replay records. A replacement
 challenge requires a fresh saved Offer before any new Answer is accepted. Public
-import/export, native socket reconciliation and monotonic attempt windows remain
-open. The joiner now saves its own verified Offer/Answer chain and accepts Ready
+import/export and production native socket reconciliation remain open. Controlled
+native ownership/monotonic-window tests are qualified in the Phase-1 evidence table.
+The joiner now saves its own verified Offer/Answer chain and accepts Ready
 under a vault transaction that reloads pending-join authority. It retains replay
 history across restarts and replacement Answers, clearing obsolete Ready evidence
 when the Answer changes. Acceptance does not establish native socket ownership
@@ -261,6 +262,13 @@ Dequeuing and teardown release credits, including repeated teardown and failed
 replacement activation. This accounts for adapter queues, not all native,
 IPC and kernel buffers. Shared-context isolation, full pipeline resource
 accounting and platform embedding remain production activation gates.
+
+Phase 1's defined protocol-and-adapter proof is complete at `de110a8` in
+[run 39072458622](https://github.com/ahouchens/mesh-chat/actions/runs/39072458622).
+The [evidence table](../DIRECT_CONNECTIVITY_PHASE1_EVIDENCE.md) records Windows/Linux
+functional and hostile-process tests, Android compilation and Linux observed
+network provenance. This does not qualify a hostile process with debugger access
+to the protected service/native process, or all possible deployment configurations.
 
 Phase 2–3 runtime activation, optional phase-4 helpers, and phase-5 release
 qualification remain incomplete. The feasibility workflow passes on the tested

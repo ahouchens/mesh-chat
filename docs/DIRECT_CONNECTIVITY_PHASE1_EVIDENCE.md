@@ -1,6 +1,6 @@
 # Direct connectivity Phase 1 evidence
 
-Status: final qualification pending. Scope: the roadmap's **protocol and adapter
+Status: **complete**, qualified 2026-10-17. Scope: the roadmap's **protocol and adapter
 proof with two controlled peers**. This is not a shipping direct-connectivity
 release, public email bootstrap, Internet traversal, or physical-device evidence.
 
@@ -33,9 +33,22 @@ candidate discovery and automatic recovery remain later implementation gates.
   both the topology command and trace audit succeed. The trace is temporary;
   packet payloads and endpoint tuples are not published in the report.
 
-Final tested commit/run and results will be recorded after CI completes. Earlier
-service-owned packet runtime qualification passed at `b0f0962` in
-[run 39043434010](https://github.com/ahouchens/mesh-chat/actions/runs/39043434010).
+The final tested implementation is **`de110a85318db2c8f314bf20c18f4c9587834661`**
+in [successful run 39072458622](https://github.com/ahouchens/mesh-chat/actions/runs/39072458622).
+
+| Evidence | Result |
+| --- | --- |
+| Windows native CI | 158 service-boundary tests, 10 workspace/pending-authority tests, 11 native unit tests, 1 cross-language binding test, and 25 native topology/controller tests passed. |
+| Linux native CI | The same test counts passed, with all 25 topology/controller tests beneath the syscall observer. |
+| Android ARM64 | Compilation passed; no physical Android execution is claimed. |
+| Local Python | 639 non-integration tests passed, 7 environment-dependent skips; source topology/controller suite 11 passed with 14 native-only skips. |
+| Network provenance | `external_addresses: 0`, `loopback_addresses: 1264`, `network_sends: 1040`. Counts include the complete controlled topology test runner and descendants; they are not physical-network measurements. |
+
+The endpoint-free JSON report is retained in
+[artifact 12115383045](https://github.com/ahouchens/mesh-chat/actions/runs/39072458622/artifacts/12115383045).
+The counts also appear in the successful Linux job log. Windows passed the same
+functional tests but did not run the Linux-only syscall observer. Subsequent
+documentation-only completion commits do not change this tested implementation.
 
 ## Explicit remaining gates
 

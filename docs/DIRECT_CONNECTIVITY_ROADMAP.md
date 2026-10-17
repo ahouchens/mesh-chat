@@ -1,6 +1,20 @@
 # Durable direct connectivity architecture and roadmap
 
-Status: implementation in progress. Date: 2026-10-15; updated 2026-10-16. Scope: Windows and Android first; iOS follows physical-device validation.
+Status: Phase 0 implemented; Phase 1 controlled proof complete; Phases 2–5 open. Date: 2026-10-15; updated 2026-10-17. Scope: Windows and Android first; iOS follows physical-device validation.
+
+### Phase 1 completion, 2026-10-17
+
+The protocol-and-adapter proof meets the Phase-1 exit criteria below at `de110a8`
+in [run 39072458622](https://github.com/ahouchens/mesh-chat/actions/runs/39072458622):
+Windows/Linux native functional and hostile-process tests passed; Android ARM64
+compilation passed; Linux syscall observation found no external addresses in the
+complete controlled topology. The [exit-criteria evidence table](DIRECT_CONNECTIVITY_PHASE1_EVIDENCE.md)
+records exact tests, counts, scope and the retained provenance artifact.
+This completes the controlled proof, not a shipping feature. Native host embedding,
+private production IPC, owner pending lifecycle and production bootstrap isolation,
+public email/candidate setup, traversal, persistent automatic recovery and physical
+release qualification remain open in Phases 2–5. Earlier incremental evidence below
+describes the progression to this gate and must not be read as shipping availability.
 
 ### Implementation evidence, 2026-10-16
 
@@ -37,7 +51,8 @@ now builds a native QUIC packet bridge and runs that same topology through it;
 this native variant passes on both desktop CI platforms. The adapter filters exact RNS
 destinations and path requests, bounds Link/receipt tracking, and uses a shared
 profile session/adapter-queue budget. The source topology passes with those
-checks enabled. **Phase 1 is not complete. Phase 2 has UDP mapping groundwork;
+checks enabled. **Phase 1's controlled proof is now complete; see the final evidence
+table above. Phase 2 has UDP mapping groundwork;
 phases 3–5 remain unimplemented.** Native embedding, new email controls, traversal, durable
 Direct Fabric relationships, optional helpers, and physical release qualification
 remain open. Existing TCP routes/reconnect updates remain available.
@@ -337,7 +352,12 @@ Public DHT rendezvous, external address observers, and advanced NAT prediction c
 
 Before adding advanced prediction, demonstrate a reproducible improvement on a named test matrix over ordinary direct paths and punching. Record socket counts, probe traffic, battery cost, mapping behavior, and failure rate. Do not infer a traversal guarantee from a NAT label or a single successful experiment.
 
-The remaining implementation decisions are the QUIC library and toolchain, final adapter, exact wire schema and budgets, platform socket-binding APIs, and whether optional participant assistance ships with the first release. Resolve these in phases 1–2 with small proofs and documented results; none requires introducing a public server as the baseline.
+Phase 1 selected Quinn/Rustls on Rust 1.88, the socket-free scoped adapter, canonical
+signed control schemas and bounded queues/attempts in ADR 0018. Remaining decisions
+include host/plugin toolchain adoption, production IPC and bootstrap contexts,
+platform socket-binding/candidate APIs, and whether optional participant assistance
+ships with the first release. Resolve these during production integration; none
+requires introducing a public server as the baseline.
 
 ### Native attempt gate increment
 
@@ -513,7 +533,7 @@ atomic native credential handoff and shipping IPC remain open. Source validation
 passed (614 non-integration tests and 8 topology/controller tests). Native
 qualification passed on Windows/Linux with Android ARM64 compilation at `ec482d0`
 in [run 39042273906](https://github.com/ahouchens/mesh-chat/actions/runs/39042273906).
-No phase is complete.
+That increment alone did not complete Phase 1; final qualification is recorded above.
 
 ### Protected-service packet runtime
 

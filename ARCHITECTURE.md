@@ -18,8 +18,13 @@ request once after upgrade. Native callbacks cannot manufacture receipt evidence
 underlay for feasibility work. Rust owns native sockets and path upkeep; Python
 retains identity, authorization, RNS lifecycle and durable state. The isolated
 `experiments/direct-fabric` crate and GitHub workflow are not linked into the app.
-Shipping transport remains the existing RNS interfaces until identity binding,
-packet adapter and bootstrap-isolation qualification pass.
+The defined Phase-1 protocol/adapter proof is qualified at `de110a8`; its
+[evidence table](docs/DIRECT_CONNECTIVITY_PHASE1_EVIDENCE.md) includes real
+RNS/LXMF traffic, hostile local UDP injection, bounded lifecycle behavior and
+Linux syscall provenance with no external addresses. Shipping transport remains
+the existing RNS interfaces. Native embedding/private IPC, production bootstrap
+isolation and lifecycle wiring, candidate recovery and physical qualification are
+still required before enabling the new underlay in the app.
 
 ## Participant-hosted Internet invitations
 

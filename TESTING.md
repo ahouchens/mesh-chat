@@ -2868,3 +2868,25 @@ passed at `b0f0962` in
 [run 39043434010](https://github.com/ahouchens/mesh-chat/actions/runs/39043434010).
 This does not enable shipping
 native IPC or default direct interfaces.
+
+### Direct-connectivity Phase 1 completion
+
+The roadmap's controlled protocol-and-adapter proof is complete at `de110a8` in
+[run 39072458622](https://github.com/ahouchens/mesh-chat/actions/runs/39072458622).
+Both Windows and Linux passed 158 service-boundary tests, 10 workspace/pending
+authority tests, 11 native unit tests, 1 cross-language certificate-binding test,
+and 25 native topology/controller tests. Android ARM64 compilation passed.
+Local validation passed 639 non-integration tests (7 environment-dependent skips)
+and 11 source topology/controller tests (14 native-only skips).
+
+New qualification includes an independent local UDP injector before/after TLS,
+both deterministic QUIC client roles including retained-Answer Ready refresh,
+per-scope runtime deduplication and inherited channels capped below 64 KiB payload.
+The full Linux native topology ran under `strace -f`: the endpoint-free report
+records 0 external addresses, 1264 loopback address observations and 1040 network
+send calls. The checker rejects non-loopback attempts even if they fail, undecoded
+Internet endpoints, raw network sockets and named local proxy connections.
+See [the retained report](https://github.com/ahouchens/mesh-chat/actions/runs/39072458622/artifacts/12115383045)
+and the [criterion-by-criterion evidence](docs/DIRECT_CONNECTIVITY_PHASE1_EVIDENCE.md).
+This is controlled-run evidence, not a shipping feature, Windows network capture,
+physical Android test, Internet traversal measurement or production IPC approval.
