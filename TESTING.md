@@ -22,6 +22,24 @@ locally. Frontend/package/native tests and Windows/Android builds run in Actions
 Physical execution follows the
 [Phase 2 device checklist](docs/DIRECT_CONNECTIVITY_PHASE2_DEVICE_TEST.md).
 
+## Copied workspace invitation regression, 2026-10-18
+
+`test_workspace_join_retry.py` covers a valid email-ready invitation followed by
+join submission, retry after a lost response, reopening the encrypted profile,
+and preservation of the original device, delivery, and signed receipt. Recovery
+rejects a different invitation, mismatched local identity, and terminal requests.
+Accepted profile names are normalized before signing the local join. Mobile bridge
+tests cover the former 64 KiB preview/submit size mismatch and native payload bounds.
+UI tests cover retaining the operation ID after a timeout and actionable errors
+for an existing workspace or the workspace limit. These are source regressions;
+the reported Android screenshot alone does not identify the exact validation
+failure, and a rebuilt APK still requires testing on the affected device.
+
+Local validation passed 195 tests across the join retry/receipt, workspace
+service/protocol, mobile bridge, and email routing suites, plus 147 frontend
+tests across App, invitation transfer, and API. TypeScript `--noEmit` and
+`git diff --check` passed. No native or release build was performed.
+
 ## Direct connectivity increment, 2026-10-16
 
 Native qualification now runs in GitHub Actions. At `cbcf659`,

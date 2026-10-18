@@ -20,6 +20,8 @@ from .errors import (
     MeshChatError,
     StaleCursor,
     ValidationError,
+    WorkspaceAlreadyKnown,
+    WorkspaceLimitReached,
 )
 from .invitations import canonical_bytes
 from .remote import (
@@ -70,6 +72,7 @@ from .workspace_protocol import (
     VerifiedWorkspaceDeviceRemoval,
     VerifiedWorkspaceEvent,
     VerifiedWorkspaceHistoryRequest,
+    VerifiedWorkspaceInvitation,
     VerifiedWorkspaceManifest,
     WorkspaceManifestMemberInput,
     active_members,
@@ -4968,6 +4971,94 @@ class WorkspaceServiceMixin:
         records.extend(self._due_records(remove=cancelled_ids))
         return records, outbound_ids
 
+    def _workspace_join_result(self, workspace: dict[str, Any]) -> dict[str, Any]:
+        """Read current join progress and the outcome of already-consented routes."""
+        outcome = self._public_workspace(workspace)
+        if workspace.get("state") != "joining" or workspace.get("join_receipt"):
+            return outcome
+        if workspace.get("join_connection_invitation"):
+            outcome["connection_setup_failed"] = True
+        scope = {"kind": "workspace", "id": workspace["id"]}
+        access = max(
+            (record for record in self.store.list("participant_access")
+             if scope in record.get("scopes", [])),
+            key=lambda record: float(record.get("consented_at", 0)),
+            default=None,
+        )
+        if access is not None and access.get("candidate_results"):
+            outcome["connection_results"] = [
+                dict(item) for item in access["candidate_results"]
+            ]
+        return outcome
+
+    def _resume_workspace_join(
+        self,
+        workspace: dict[str, Any],
+        invite: VerifiedWorkspaceInvitation,
+        operation_id: str,
+        digest: str,
+    ) -> dict[str, Any]:
+        """Recover a saved request after its result was lost or the dialog reopened."""
+        error = WorkspaceAlreadyKnown("This workspace is already known on this device")
+        if workspace.get("state") != "joining" or self._identity is None:
+            raise error
+        delivery_id = workspace.get("join_delivery_id")
+        delivery = (
+            self.store.get("workspace_delivery", delivery_id)
+            if isinstance(delivery_id, str) else None
+        )
+        record = self.store.get(
+            "workspace_invitation", self._workspace_invitation_record_id(invite.nonce)
+        )
+        owner = find_device(invite.offered_manifest, invite.offered_manifest.authority_device_id)
+        if (
+            delivery is None or record is None or owner is None
+            or delivery.get("id") != delivery_id
+            or delivery.get("kind") != "workspace_join"
+            or delivery.get("workspace_id") != invite.workspace_id
+            or delivery.get("state") not in {
+                DeliveryState.WAITING_FOR_KEYS.value, DeliveryState.QUEUED.value,
+                DeliveryState.SENDING.value, DeliveryState.STORED_FOR_DELIVERY.value,
+                DeliveryState.RECEIVED_BY_ENDPOINT.value, DeliveryState.DELIVERED.value,
+            }
+            or (delivery.get("state") == DeliveryState.DELIVERED.value
+                and not workspace.get("join_receipt"))
+            or float(delivery.get("expires_at", 0)) < time.time()
+            or record.get("state") != "submitted"
+            or record.get("workspace_id") != invite.workspace_id
+            or record.get("document") != invite.serialized
+            or record.get("join_document") != delivery.get("document")
+            or delivery.get("recipient_member_id") != owner[0].member_id
+            or delivery.get("recipient_device_id") != owner[1].device_id
+            or delivery.get("recipient_destination") != owner[1].destination_hash.hex()
+            or delivery.get("recipient_public_identity") != _b64(owner[1].public_identity)
+        ):
+            raise error
+        try:
+            join = verify_workspace_join(delivery["document"], invitation=invite)
+            if workspace.get("join_receipt"):
+                verify_workspace_join_receipt(workspace["join_receipt"], join, delivery_id)
+        except MeshChatError as exc:
+            raise error from exc
+        if (
+            join.member_id != workspace.get("local_member_id")
+            or join.device.device_id != workspace.get("local_device_id")
+            or join.device.public_identity != self._identity.get_public_key()
+        ):
+            raise error
+        # Preserve the exact signed request, delivery timing, and receipt. A new
+        # UI operation records its result without creating another member/device.
+        committed = self.store.commit_operation(
+            operation_id, digest, self._public_workspace(workspace), []
+        )
+        committed.update(self._prepare_workspace_join_route(invite.workspace_id))
+        committed.update(self._workspace_join_result(self._require_workspace(invite.workspace_id)))
+        network = getattr(self, "network", None)
+        if network is not None:
+            network.remember_contact(owner[1].public_identity, owner[1].destination_hash)
+        self._workspace_changed(invite.workspace_id)
+        return committed
+
     def submit_workspace_join(
         self, invitation: Any, operation_id: Any
     ) -> dict[str, Any]:
@@ -4976,6 +5067,16 @@ class WorkspaceServiceMixin:
             "submit_workspace_join", operation_id, payload
         )
         if replay is not None:
+            # A receipt or admission may arrive while the renderer recovers a
+            # lost response. Refresh presentation only; the original operation
+            # still authenticates the exact input and never repeats route work.
+            workspace_id = replay.get("id")
+            current = (
+                self.store.get("workspace", self._workspace_record_id(workspace_id))
+                if isinstance(workspace_id, str) else None
+            )
+            if current is not None:
+                return self._workspace_join_result(current)
             return replay
         if not isinstance(invitation, str):
             raise ValidationError("Workspace invitation must be text")
@@ -4985,10 +5086,11 @@ class WorkspaceServiceMixin:
         invite = verify_workspace_invitation(
             email.inner if email else participant.inner if participant else remote.inner if remote else invitation
         )
-        if self.store.get("workspace", self._workspace_record_id(invite.workspace_id)) is not None:
-            raise ValidationError("This workspace is already known on this device")
+        existing = self.store.get("workspace", self._workspace_record_id(invite.workspace_id))
+        if existing is not None:
+            return self._resume_workspace_join(existing, invite, operation_id, digest)
         if len(self.store.list("workspace")) >= MAX_WORKSPACES:
-            raise ValidationError("This profile already has 16 workspaces")
+            raise WorkspaceLimitReached("This profile already has 16 workspaces")
         profile = self._require_profile()
         identity = self._identity
         if identity is None:
@@ -4997,7 +5099,7 @@ class WorkspaceServiceMixin:
         join_raw = create_workspace_join(
             identity,
             invite,
-            profile["display_name"],
+            unicodedata.normalize("NFC", profile["display_name"]),
             hints=self._workspace_hints(),
         )
         join = verify_workspace_join(join_raw, invitation=invite)

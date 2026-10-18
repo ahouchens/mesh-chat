@@ -58,6 +58,88 @@ def test_only_public_document_commands_receive_larger_mobile_envelopes(monkeypat
     assert len(calls) == count
 
 
+def test_mobile_workspace_preview_and_submit_share_invitation_size_limit(monkeypatch):
+    dispatched = []
+
+    class Service:
+        def dispatch(self, request):
+            dispatched.append(request)
+            return {"ok": True, "result": {}}, False
+
+    monkeypatch.setattr(mobile_bridge, "_service", Service())
+    preview = {
+        "command": "preview_workspace_invitation",
+        "payload": {"invitation": "MESHWORKSPACE4:"},
+    }
+    overhead = len(json.dumps(preview, separators=(",", ":")).encode("utf-8"))
+    invitation = "MESHWORKSPACE4:" + "a" * (64 * 1024 - overhead)
+    preview["payload"]["invitation"] = invitation
+    submit = {
+        "command": "submit_workspace_join",
+        "payload": {"invitation": invitation, "operation_id": str(uuid.uuid4())},
+    }
+    preview_raw = json.dumps(preview, separators=(",", ":"))
+    submit_raw = json.dumps(submit, separators=(",", ":"))
+    assert len(preview_raw.encode("utf-8")) == 64 * 1024
+    assert len(submit_raw.encode("utf-8")) > 64 * 1024
+
+    assert json.loads(mobile_bridge.command(preview_raw))["ok"]
+    assert json.loads(mobile_bridge.command(submit_raw))["ok"]
+    assert [request["command"] for request in dispatched] == [
+        "preview_workspace_invitation", "submit_workspace_join",
+    ]
+    assert dispatched[0]["payload"] == preview["payload"]
+    assert dispatched[1]["payload"] == submit["payload"]
+
+
+@pytest.mark.parametrize(("command", "maximum"), [
+    ("preview_direct_connection", 2 * 1024 * 1024),
+    ("prepare_direct_answer", 2 * 1024 * 1024),
+    ("prepare_direct_ready", 2 * 1024 * 1024),
+    ("accept_direct_ready", 2 * 1024 * 1024),
+    ("connect_direct_setup", 2 * 1024 * 1024),
+    ("preview_workspace_device_link", 700 * 1024),
+    ("submit_workspace_device_link", 700 * 1024),
+    ("preview_workspace_invitation", 600 * 1024),
+    ("submit_workspace_join", 600 * 1024),
+    ("create_connection_reply", 600 * 1024),
+    ("preview_connection_reply", 41 * 1024),
+    ("connect_using_reply", 41 * 1024),
+    ("preview_route_update", 25 * 1024),
+    ("apply_route_update", 25 * 1024),
+    ("send_message", 32 * 1024),
+])
+def test_mobile_command_matches_native_payload_bounds(monkeypatch, command, maximum):
+    dispatched = []
+
+    class Service:
+        def dispatch(self, request):
+            dispatched.append(request)
+            return {"ok": True, "result": {}}, False
+
+    monkeypatch.setattr(mobile_bridge, "_service", Service())
+    # This boundary test isolates the bridge from the service's schema checks.
+    # Non-ASCII text ensures limits apply to UTF-8 bytes, not character counts.
+    overhead = len(json.dumps({"document": ""}, separators=(",", ":")).encode("utf-8"))
+    padding_bytes = maximum - overhead
+    payload = {"document": "é" * (padding_bytes // 2) + "x" * (padding_bytes % 2)}
+    assert len(json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")) == maximum
+    request = {"command": command, "payload": payload}
+    raw = json.dumps(request, ensure_ascii=False, separators=(",", ":"))
+    assert len(raw.encode("utf-8")) > maximum
+    assert json.loads(mobile_bridge.command(raw))["ok"]
+
+    payload["document"] += "x"
+    oversized = json.dumps(request, ensure_ascii=False, separators=(",", ":"))
+    assert json.loads(mobile_bridge.command(oversized)) == {
+        "ok": False, "error": {"code": "invalid_request"},
+    }
+    assert json.loads(mobile_bridge.command(raw + " " * 1024)) == {
+        "ok": False, "error": {"code": "invalid_request"},
+    }
+    assert len(dispatched) == 1
+
+
 def test_mobile_bridge_command_does_not_block_worker_event(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

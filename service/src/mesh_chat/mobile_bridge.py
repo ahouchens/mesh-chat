@@ -23,6 +23,28 @@ from .vault import VaultStore
 
 IPC_VERSION = 1
 MAX_JSON_BYTES = 64 * 1024
+# Match the renderer payload bounds in src-tauri/src/lib.rs. The native bridge
+# adds a command envelope around that payload, so reserve separate, bounded
+# headroom rather than applying the smaller default request limit to invitations.
+MAX_RENDERER_PAYLOAD_BYTES = 32 * 1024
+MAX_COMMAND_ENVELOPE_BYTES = 1024
+COMMAND_PAYLOAD_LIMITS = {
+    "preview_direct_connection": 2 * 1024 * 1024,
+    "prepare_direct_answer": 2 * 1024 * 1024,
+    "prepare_direct_ready": 2 * 1024 * 1024,
+    "accept_direct_ready": 2 * 1024 * 1024,
+    "connect_direct_setup": 2 * 1024 * 1024,
+    "preview_workspace_device_link": 700 * 1024,
+    "submit_workspace_device_link": 700 * 1024,
+    "preview_workspace_invitation": 600 * 1024,
+    "submit_workspace_join": 600 * 1024,
+    "create_connection_reply": 600 * 1024,
+    "preview_connection_reply": 41 * 1024,
+    "connect_using_reply": 41 * 1024,
+    "preview_route_update": 25 * 1024,
+    "apply_route_update": 25 * 1024,
+}
+MAX_COMMAND_JSON_BYTES = max(COMMAND_PAYLOAD_LIMITS.values()) + MAX_COMMAND_ENVELOPE_BYTES
 _service_lock = threading.RLock()
 _events_lock = threading.Lock()
 _service: MeshChatService | None = None
@@ -134,10 +156,15 @@ def command(raw: str) -> str:
 
     global _service
     try:
-        request = _loads(raw, maximum=2*1024*1024)
-        if len(raw.encode("utf-8")) > MAX_JSON_BYTES and request.get("command") not in (
-            "preview_direct_connection", "prepare_direct_answer", "prepare_direct_ready",
-            "accept_direct_ready", "connect_direct_setup",
+        request = _loads(raw, maximum=MAX_COMMAND_JSON_BYTES)
+        command_name = request.get("command")
+        if not isinstance(command_name, str):
+            raise ValidationError("Mobile command is invalid")
+        maximum = COMMAND_PAYLOAD_LIMITS.get(command_name, MAX_RENDERER_PAYLOAD_BYTES)
+        payload = request.get("payload", {})
+        if (
+            len(raw.encode("utf-8")) > maximum + MAX_COMMAND_ENVELOPE_BYTES
+            or len(_dumps(payload).encode("utf-8")) > maximum
         ):
             raise ValidationError("Mobile command is too large")
         with _service_lock:
@@ -146,8 +173,8 @@ def command(raw: str) -> str:
             envelope = {
                 "v": IPC_VERSION,
                 "id": str(uuid.uuid4()),
-                "command": request.get("command"),
-                "payload": request.get("payload", {}),
+                "command": command_name,
+                "payload": payload,
             }
             response, should_stop = _service.dispatch(envelope)
             if should_stop:

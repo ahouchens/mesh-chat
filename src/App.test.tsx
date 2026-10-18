@@ -787,6 +787,83 @@ describe("new chat invitations", () => {
     expect(within(dialog).queryByRole("button", { name: "Send join request after sharing" })).toBeNull();
   });
 
+  it("reuses the saved join operation after a timeout and replaces it for a changed invitation", async () => {
+    const current = snapshot();
+    const invitation = "MESHWORKSPACE4:copied-invitation";
+    const replacement = "MESHWORKSPACE4:another-invitation";
+    api.runtimePlatform.mockResolvedValue("android");
+    api.initializeService.mockResolvedValue(current);
+    api.onInvitation.mockResolvedValue(() => undefined);
+    api.onServiceEvent.mockResolvedValue(() => undefined);
+    api.serviceCommand.mockImplementation(async (command: string, payload?: Record<string, unknown>) => {
+      if (command === "snapshot") return current;
+      if (command === "preview_workspace_invitation") return {
+        name: "Lakewatcher", description: "", owner_fingerprint: "AAAA BBBB",
+        member_count: 1, retention_days: 90, expires_at: 2_000_000_000,
+        connection_reply_available: true,
+      };
+      if (command === "submit_workspace_join") {
+        if (payload?.invitation === invitation) throw new Error("service_timeout");
+        return { ...workspace, state: "joining", local_role: "member" };
+      }
+      return {};
+    });
+
+    render(<App />);
+    await screen.findByRole("heading", { name: "Your private conversations" });
+    fireEvent.click(screen.getAllByRole("button", { name: "New chat" })[0]);
+    fireEvent.click(await screen.findByRole("tab", { name: "Open an invite" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "Invitation" }), { target: { value: invitation } });
+    fireEvent.click(screen.getByRole("button", { name: "Check invitation" }));
+    const dialog = await screen.findByRole("dialog", { name: "Join a workspace" });
+    fireEvent.click(await within(dialog).findByRole("button", { name: "Send join request" }));
+    expect((await within(dialog).findByRole("alert")).textContent).toContain("did not respond in time");
+
+    const submissions = () => api.serviceCommand.mock.calls.filter(([command]) => command === "submit_workspace_join");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Send join request" }));
+    await waitFor(() => expect(submissions()).toHaveLength(2));
+    await within(dialog).findByRole("alert");
+    expect(submissions()[1][1]).toEqual(submissions()[0][1]);
+
+    fireEvent.click(within(dialog).getByRole("button", { name: "Back" }));
+    fireEvent.change(within(dialog).getByRole("textbox", { name: "Workspace invitation or device link" }), { target: { value: replacement } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Review" }));
+    fireEvent.click(await within(dialog).findByRole("button", { name: "Send join request" }));
+    expect(await within(dialog).findByRole("heading", { name: "Join request saved" })).toBeTruthy();
+    expect(submissions()).toHaveLength(3);
+    expect(submissions()[2][1]?.invitation).toBe(replacement);
+    expect(submissions()[2][1]?.operation_id).not.toBe(submissions()[0][1]?.operation_id);
+  });
+
+  it.each([
+    ["workspace_already_known", "This workspace is already saved on this device."],
+    ["workspace_limit_reached", "This device already has 16 workspaces."],
+  ])("explains %s after a valid workspace invitation preview", async (code, message) => {
+    const current = snapshot();
+    api.initializeService.mockResolvedValue(current);
+    api.onInvitation.mockResolvedValue(() => undefined);
+    api.onServiceEvent.mockResolvedValue(() => undefined);
+    api.serviceCommand.mockImplementation(async (command: string) => {
+      if (command === "snapshot") return current;
+      if (command === "preview_workspace_invitation") return {
+        name: "Test", description: "", owner_fingerprint: "AAAA BBBB",
+        member_count: 1, retention_days: 90, expires_at: 2_000_000_000,
+      };
+      if (command === "submit_workspace_join") throw new Error(code);
+      return {};
+    });
+
+    render(<App />);
+    await screen.findByRole("heading", { name: "Your private conversations" });
+    fireEvent.click(screen.getAllByRole("button", { name: "New chat" })[0]);
+    fireEvent.click(await screen.findByRole("tab", { name: "Open an invite" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "Invitation" }), { target: { value: "MESHWORKSPACE4:copied" } });
+    fireEvent.click(screen.getByRole("button", { name: "Check invitation" }));
+    const dialog = await screen.findByRole("dialog", { name: "Join a workspace" });
+    fireEvent.click(await within(dialog).findByRole("button", { name: "Send join request" }));
+    expect((await within(dialog).findByRole("alert")).textContent).toContain(message);
+  });
+
   it("creates an email-ready invitation without requiring an inbound path", async () => {
     const current = snapshot();
     api.runtimePlatform.mockResolvedValue("desktop");

@@ -360,6 +360,12 @@ function errorMessage(error: unknown): string {
   if (raw.includes("history_pruned")) {
     return "That history was pruned from this device under the active retention preference.";
   }
+  if (raw.includes("workspace_already_known")) {
+    return "This workspace is already saved on this device. Open it from the workspace switcher to check its status. A different invitation cannot replace an existing join request.";
+  }
+  if (raw.includes("workspace_limit_reached")) {
+    return "This device already has 16 workspaces. Remove a workspace you have left or closed before joining another.";
+  }
   if (raw.includes("invalid_request")) {
     return "That information could not be validated.";
   }
@@ -2520,6 +2526,7 @@ function JoinWorkspaceDialog({ initialValue = "", workspaces, onClose, onJoined 
   const replyHostSession = useRef<string | null>(null);
   const reviewGeneration = useRef(0);
   const lastInitialValue = useRef<string | null>(null);
+  const joinAttempt = useRef<{ command: string; document: string; operationId: string } | null>(null);
   const stopUnsharedReply = async () => {
     const hostId = replyHostSession.current;
     if (hostId && !replyShared) await serviceCommand("stop_participant_host", { access_id: hostId }).catch(() => undefined);
@@ -2583,9 +2590,17 @@ function JoinWorkspaceDialog({ initialValue = "", workspaces, onClose, onJoined 
     if ((!preview && !devicePreview) || busy) return;
     setBusy(true); setError("");
     try {
-      const workspace = devicePreview
-        ? await serviceCommand<Workspace>("submit_workspace_device_link", { operation_id: newOperationId(), device_link: value.trim() })
-        : await serviceCommand<Workspace>("submit_workspace_join", { operation_id: newOperationId(), invitation: value.trim() });
+      const document = value.trim();
+      const command = devicePreview ? "submit_workspace_device_link" : "submit_workspace_join";
+      // A lost response can follow a successful durable save. Retrying the same
+      // document must recover that operation instead of creating another one.
+      if (joinAttempt.current?.command !== command || joinAttempt.current.document !== document) {
+        joinAttempt.current = { command, document, operationId: newOperationId() };
+      }
+      const workspace = await serviceCommand<Workspace>(command, {
+        operation_id: joinAttempt.current.operationId,
+        ...(devicePreview ? { device_link: document } : { invitation: document }),
+      });
       if (workspace.connection_results?.length && !workspace.connection_results.some((item) => item.result === "connected")) {
         setConnectionResults(workspace.connection_results);
         setJoinedWorkspace(workspace);

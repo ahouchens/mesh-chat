@@ -8,6 +8,14 @@ class ValidationError(MeshChatError):
     code = "invalid_request"
 
 
+class WorkspaceAlreadyKnown(ValidationError):
+    code = "workspace_already_known"
+
+
+class WorkspaceLimitReached(ValidationError):
+    code = "workspace_limit_reached"
+
+
 class StaleCursor(ValidationError):
     """A sealed cursor belongs to an older authorization or retention view."""
 
