@@ -8,6 +8,10 @@ const mocks = vi.hoisted(() => ({
   pickInvitationFile: vi.fn(),
   qrCodeSvg: vi.fn((_props: Record<string, unknown>) => null),
   runtimePlatform: vi.fn(),
+  nativeScan: vi.fn(),
+  nativeCancel: vi.fn().mockResolvedValue(undefined),
+  checkPermissions: vi.fn(),
+  requestPermissions: vi.fn(),
 }));
 
 vi.mock("./api", () => ({
@@ -21,6 +25,11 @@ vi.mock("./invitation-transfer", async (importOriginal) => {
 });
 
 vi.mock("qrcode.react", () => ({ QRCodeSVG: mocks.qrCodeSvg }));
+vi.mock("@tauri-apps/plugin-barcode-scanner", () => ({
+  scan: mocks.nativeScan, cancel: mocks.nativeCancel,
+  checkPermissions: mocks.checkPermissions, requestPermissions: mocks.requestPermissions,
+  Format: { QRCode: "QR_CODE" },
+}));
 
 vi.mock("@zxing/browser", () => ({
   BrowserQRCodeReader: class {
@@ -38,6 +47,45 @@ afterEach(() => {
 });
 
 describe("InvitationImportActions", () => {
+  it("opens the native Android rear camera and imports a scanned invitation", async () => {
+    const invitation = `MESHWORKSPACE4:${"abc_DEF-123".repeat(430)}`;
+    mocks.runtimePlatform.mockResolvedValue("android");
+    mocks.checkPermissions.mockResolvedValue("prompt");
+    mocks.requestPermissions.mockResolvedValue("granted");
+    mocks.nativeScan.mockResolvedValue({ content: invitation });
+    const onValue = vi.fn();
+    render(<InvitationImportActions onValue={onValue} />);
+    fireEvent.click(screen.getByRole("button", { name: "Scan with camera" }));
+    await waitFor(() => expect(onValue).toHaveBeenCalledWith(invitation));
+    expect(mocks.nativeScan).toHaveBeenCalledWith({ windowed: true, cameraDirection: "back", formats: ["QR_CODE"] });
+    expect(mocks.decodeFromVideoDevice).not.toHaveBeenCalled();
+    await waitFor(() => expect(document.documentElement.classList.contains("native-qr-scanning")).toBe(false));
+  });
+
+  it("cancels an unfinished native scan when its dialog unmounts", async () => {
+    mocks.runtimePlatform.mockResolvedValue("android");
+    mocks.checkPermissions.mockResolvedValue("granted");
+    mocks.nativeScan.mockImplementation(() => new Promise(() => {}));
+    const { unmount } = render(<InvitationImportActions onValue={vi.fn()} />);
+    fireEvent.click(screen.getByRole("button", { name: "Scan with camera" }));
+    await waitFor(() => expect(mocks.nativeScan).toHaveBeenCalledTimes(1));
+    expect(document.documentElement.classList.contains("native-qr-scanning")).toBe(true);
+    unmount();
+    expect(mocks.nativeCancel).toHaveBeenCalledTimes(1);
+    expect(document.documentElement.classList.contains("native-qr-scanning")).toBe(false);
+  });
+
+  it("does not open a scanner when camera permission is denied", async () => {
+    mocks.runtimePlatform.mockResolvedValue("android");
+    mocks.checkPermissions.mockResolvedValue("denied");
+    mocks.requestPermissions.mockResolvedValue("denied");
+    render(<InvitationImportActions onValue={vi.fn()} />);
+    fireEvent.click(screen.getByRole("button", { name: "Scan with camera" }));
+    expect((await screen.findByRole("alert")).textContent).toContain("Camera access is off");
+    expect(mocks.nativeScan).not.toHaveBeenCalled();
+    expect(mocks.decodeFromVideoDevice).not.toHaveBeenCalled();
+  });
+
   it("opens Android's native invitation picker and returns the exact selected value", async () => {
     const invitation = `MESHWORKSPACE4:${"abc_DEF-123".repeat(430)}`;
     const onValue = vi.fn();

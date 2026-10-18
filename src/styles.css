@@ -669,6 +669,22 @@ html[data-theme="dark"] .workspace-message__actions > span { color: #d3978f; }
   *, *::before, *::after { scroll-behavior: auto !important; animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
 }
 
+/* Native camera preview sits behind the WebView. Keep only scan controls visible. */
+html.native-qr-scanning,
+.native-qr-scanning body { background: transparent !important; }
+.native-qr-scanning #root { visibility: hidden; }
+.native-qr-overlay {
+  position: fixed; inset: 0; z-index: 10000;
+  display: flex; flex-direction: column; align-items: center;
+  justify-content: space-between; gap: 16px;
+  padding: max(24px, env(safe-area-inset-top)) 24px max(24px, env(safe-area-inset-bottom));
+  color: white; background: transparent;
+}
+.native-qr-overlay p, .native-qr-overlay button {
+  background: #10251e; color: white; border-radius: 12px; padding: 16px;
+}
+.native-qr-overlay button { display: flex; align-items: center; gap: 8px; min-height: 48px; }
+
 @media (prefers-contrast: more) {
   :root { --line: #78817c; }.button--primary { background: #08271b; }.field input, .field textarea, .composer textarea { border-width: 2px; }
 }

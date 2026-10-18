@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { FileUp, QrCode, Settings, X } from "lucide-react";
 import { QRCodeSVG } from "qrcode.react";
 
@@ -59,6 +60,12 @@ export function InvitationImportActions({
   const textFileRef = useRef<HTMLInputElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const mobileCameraRef = useRef(false);
+  const cameraStarting = useRef(false);
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => { mounted.current = false; };
+  }, []);
 
   const acceptValue = async (raw: string, source: ImportSource) => {
     const value = await normalizeInvitationInput(raw);
@@ -120,6 +127,8 @@ export function InvitationImportActions({
       setScanning(false);
       return;
     }
+    if (cameraStarting.current) return;
+    cameraStarting.current = true;
     setError("");
     setStatus("");
     setCameraSettingsAvailable(false);
@@ -136,13 +145,12 @@ export function InvitationImportActions({
           return;
         }
       }
-      // Use the embedded continuous reader on every platform. The native
-      // scanner tears down after one result and has device-specific hangs;
-      // keeping the camera in this dialog gives users a visible cancel path.
-      setScanning(true);
+      if (mounted.current) setScanning(true);
     } catch {
       setCameraSettingsAvailable(mobileCameraRef.current);
       setError("Mesh Chat could not start the camera. Check Camera permission and try again.");
+    } finally {
+      cameraStarting.current = false;
     }
   };
 
@@ -156,7 +164,38 @@ export function InvitationImportActions({
   };
 
   useEffect(() => {
-    if (!scanning || !videoRef.current) return;
+    if (!scanning) return;
+    if (mobileCameraRef.current) {
+      let active = true;
+      let cancel: (() => Promise<void>) | undefined;
+      document.documentElement.classList.add("native-qr-scanning");
+      const timeout = setTimeout(() => {
+        if (!active) return;
+        setError("No QR code was read. Try again with the complete code visible and well lit.");
+        setScanning(false);
+      }, 60000);
+      void (async () => {
+        try {
+          const scanner = await import("@tauri-apps/plugin-barcode-scanner");
+          if (!active) return;
+          cancel = scanner.cancel;
+          const result = await scanner.scan({ windowed: true, cameraDirection: "back", formats: [scanner.Format.QRCode] });
+          if (!active) return;
+          await acceptValue(result.content, "camera");
+        } catch (reason) {
+          if (active) setError(transferMessage(reason, "The camera could not read a Mesh Chat QR code. Try again or open an invitation file."));
+        } finally {
+          if (active) setScanning(false);
+        }
+      })();
+      return () => {
+        active = false;
+        clearTimeout(timeout);
+        document.documentElement.classList.remove("native-qr-scanning");
+        void cancel?.().catch(() => {});
+      };
+    }
+    if (!videoRef.current) return;
     let active = true;
     let stop: (() => void) | undefined;
     void (async () => {
@@ -211,7 +250,12 @@ export function InvitationImportActions({
       <label className="file-action"><QrCode size={17} /> Read QR image<input type="file" accept="image/*" onChange={(event) => void scanImage(event.target.files?.[0])} /></label>
       <button className="file-action file-action--button" type="button" onClick={() => void startCamera()}>{scanning ? <X size={17} /> : <QrCode size={17} />} {scanning ? "Stop camera" : "Scan with camera"}</button>
       {cameraSettingsAvailable && <button className="file-action file-action--button" type="button" onClick={() => void openCameraSettings()}><Settings size={17} /> Camera settings</button>}
-      {scanning && <div className="camera-box"><video ref={videoRef} muted playsInline aria-label="Camera preview" /><span>Hold the full Mesh Chat QR code inside the frame.</span></div>}
+      {scanning && (mobileCameraRef.current ? createPortal(
+        <div className="native-qr-overlay" role="dialog" aria-modal="true" aria-label="Scan invitation QR code">
+          <p>Hold the full Mesh Chat QR code inside the camera view.</p>
+          <button type="button" autoFocus onClick={() => setScanning(false)}><X size={20} /> Stop camera</button>
+        </div>, document.body,
+      ) : <div className="camera-box"><video ref={videoRef} muted playsInline aria-label="Camera preview" /><span>Hold the full Mesh Chat QR code inside the frame.</span></div>)}
       {status && <span className="import-status" role="status">{status}</span>}
       {error && <span className="form-error" role="alert">{error}</span>}
     </div>
