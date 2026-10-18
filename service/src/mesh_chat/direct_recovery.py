@@ -462,14 +462,16 @@ class DirectRecovery:
             self._cursor = (start+1) % len(records)
             for identifier,record in (records[start:]+records[:start])[:128]:
                 state = self._state(identifier)
-                with self._lock:
-                    carrier = self._active.get(identifier)
-                    if identifier in self._pending or len(self._workers) >= MAX_ATTEMPTS: continue
                 if not state["enabled"]: continue
+                # Revocation must cancel owned sockets even while a handshake
+                # is pending or every worker slot is occupied.
                 try: self._authority(record)
                 except Exception:
                     self.pause(identifier,reason="authorization_unavailable")
                     continue
+                with self._lock:
+                    carrier = self._active.get(identifier)
+                    if identifier in self._pending or len(self._workers) >= MAX_ATTEMPTS: continue
                 live = carrier is not None and not carrier._stop.is_set()
                 if carrier is not None and not live:
                     with self._lock: self._active.pop(identifier,None)

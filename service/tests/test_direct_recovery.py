@@ -272,6 +272,38 @@ def test_scheduler_reserves_profile_capacity_and_rotates_fairly(monkeypatch):
     assert started==["0"]  # A saved planned refresh is never a restart delay.
 
 
+@pytest.mark.parametrize("busy", ["pending", "workers_full"])
+def test_revocation_retires_native_ownership_even_when_scheduler_busy(pair, busy, monkeypatch):
+    owner, member, record, authority, document = pair
+    raw, cert, _ = document()
+    owner._accept_direct_workspace_binding(raw, authority, cert)
+    recovery = owner._direct_recovery
+    monkeypatch.setattr(owner, "_direct_native", SimpleNamespace(retire=lambda: None, close=lambda: None))
+    identifier = relationship_id(owner.store, authority)
+    recovery._initialized = True
+    recovery._route_check_at = float("inf")
+    closed = []
+    recovery._prepared[identifier] = SimpleNamespace(close=lambda: closed.append("prepared"))
+    recovery._active[identifier] = SimpleNamespace(
+        _stop=threading.Event(), close=lambda: closed.append("carrier"))
+    if busy == "pending":
+        recovery._pending[identifier] = (recovery._epoch, object())
+    else:
+        recovery._workers = {object() for _ in range(4)}
+    workspace = member._require_workspace(record["scope"]["workspace_id"])
+    try:
+        owner.remove_workspace_member(record["scope"]["workspace_id"], workspace["local_member_id"], str(uuid.uuid4()))
+        recovery.tick()
+        assert sorted(closed) == ["carrier", "prepared"]
+        assert identifier not in recovery._pending
+        assert recovery._state(identifier)["state"] == "authorization_unavailable"
+    finally:
+        recovery._workers.clear()
+        recovery._active.clear()
+        recovery._prepared.clear()
+        recovery._pending.clear()
+
+
 def test_new_update_preserves_explicit_pause(pair):
     owner,_,record,authority,document=pair
     raw,cert,_=document(); owner._accept_direct_workspace_binding(raw,authority,cert)

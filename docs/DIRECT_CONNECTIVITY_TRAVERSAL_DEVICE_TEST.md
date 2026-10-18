@@ -1,38 +1,39 @@
 # Windows and mobile-carrier acceptance
 
-Status: not executed. Candidate build: **0.2.52**, Android versionCode **2052**,
-application commit `dec191bbea6c63967cfcf5073abd7acc052a3333`.
-[Artifact build](https://github.com/ahouchens/mesh-chat/actions/runs/39154321087)
-passed. Download the matching artifacts:
+Status: physical test not executed. **Wait for 0.2.55 (Android 2055): build and
+native qualification pending.** The 0.2.54 artifacts below are superseded due to
+a revocation-cleanup defect and are retained only as historical evidence.
 
-**Do not use 0.2.52 as the final acceptance build.** Its subsequent Windows
-native qualification failed the unhosted-peer restart scenario. The recovery
-fix and replacement version are undergoing qualification. The hashes below
-identify the superseded artifacts for debugging, not a release recommendation.
+Superseded build: **0.2.54**, Android
+versionCode **2054**, application commit `11b2b1f0a099082933da92f4e5fc0a262fd3121c`.
+[Artifact build](https://github.com/ahouchens/mesh-chat/actions/runs/39156577823)
+passed verification, signed Android packaging and Windows installer packaging.
+Use matching builds on both devices. Version 0.2.52 is superseded because its
+Windows unhosted-restart qualification failed; 0.2.53 was superseded by the
+active-owner resume fix. The 0.2.54 recovery regression passes on Windows/Linux.
 
-| Platform | Artifact | SHA-256 of the GitHub artifact archive |
+| Platform | Artifact | SHA-256 of GitHub artifact archive |
 | --- | --- | --- |
-| Windows | [mesh-chat-0.2.52-windows-desktop](https://github.com/ahouchens/mesh-chat/actions/runs/39154321087/artifacts/12146378265) | `ec0048c33f2041ae0006ce043c06ac81db51a5dc6ac1921c24fd4b6090e0f1eb` |
-| Android | [mesh-chat-0.2.52-android-arm64](https://github.com/ahouchens/mesh-chat/actions/runs/39154321087/artifacts/12146441968) | `2170e84161f418a287e415fb9b8953577a52cd90957732b0244bddca07c12cf2` |
+| Android | [mesh-chat-0.2.54-android-arm64](https://github.com/ahouchens/mesh-chat/actions/runs/39156577823/artifacts/12147276639) | `27ec931661f7b0c13f78e78ec539f9a67eec68730de531615240653afbe01689` |
+| Windows | [mesh-chat-0.2.54-windows-desktop](https://github.com/ahouchens/mesh-chat/actions/runs/39156577823/artifacts/12147476067) | `8c4ae021322f39907e197e485aaff462c603223f0db292e64a19822aaf78666b` |
 
-These are GitHub's archive digests, not the inner installer/APK hashes. Keep the
-packaging reports with the test record. The artifacts are test builds from the
-implementation branch; native qualification and protocol review remain separate
-gates, recorded in the acceptance ledger.
-
-Downloaded archives matched GitHub's digests. Inner files were hashed locally
-and matched their packaging manifests:
+Both downloaded archives matched GitHub's digests. All inner artifact files
+also matched their packaging manifests, including these installers:
 
 | File | SHA-256 |
 | --- | --- |
-| `Mesh Chat_0.2.52_x64-setup.exe` | `0d7899ac673a6d32c21543400d9fa38ad047c12e2cddb1a758b2b9d62132f6f6` |
-| `Mesh Chat_0.2.52_x64_en-US.msi` | `5ee4e3206f5ee9270aaa30f3ff3c2515af09834e32b157c4b4453719e3b1b504` |
-| `mesh-chat-0.2.52-android-arm64-release.apk` | `23fb5fba68be1447c8cdaf5784e6b4e767036e679209492ce0a60425440023bd` |
+| `mesh-chat-0.2.54-android-arm64-release.apk` | `2e37e7e5433bb3ed4987e1b4e596c67aa217fa734c05ed08a01a2f5686959d4b` |
+| `Mesh Chat_0.2.54_x64-setup.exe` | `6af491de68bcda67a69de7b5027d082d3cf2eaba073ea3a12b4afd7e84de2495` |
+| `Mesh Chat_0.2.54_x64_en-US.msi` | `a819c7cecc0549769565a74d7ddfa10d93527654f0ddc4ce8afaccc836fdede8` |
+
+Keep the packaging reports with the test record. These are implementation-branch
+test artifacts. Independent protocol review and physical qualification remain
+separate gates; see the [acceptance ledger](DIRECT_CONNECTIVITY_TRAVERSAL_EVIDENCE.md).
 
 ## Guided test
 
 1. Install the matching new build on **both Windows and Android**. In Settings,
-   confirm **Mesh Chat version 0.2.52** and copy version details on each device.
+   confirm **Mesh Chat version 0.2.55** and copy version details on each device.
    Preserve existing app data; do not clear the profile to work around a failure.
 2. Leave Windows on the home router. Turn Android Wi-Fi off and confirm mobile
    data is active. Keep both Mesh Chat apps unlocked and open.

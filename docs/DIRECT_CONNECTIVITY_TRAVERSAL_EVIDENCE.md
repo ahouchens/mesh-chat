@@ -6,7 +6,31 @@ in [the spec](DIRECT_CONNECTIVITY_TRAVERSAL_SPEC.md).
 
 ## Exact-commit evidence
 
-- Current application: **0.2.52**, Android **2052**,
+- Current source version **0.2.55**, Android **2055**: fixes revocation cleanup
+  while recovery has a pending handshake or all worker slots are occupied.
+  Both new regressions fail against 0.2.54 and pass with the fix; 54 targeted
+  recovery/candidate source tests pass. New build and full native qualification
+  are pending. Do not use the superseded 0.2.54 artifacts for acceptance.
+
+- Superseded application: **0.2.54**, Android **2054**,
+  `11b2b1f0a099082933da92f4e5fc0a262fd3121c`.
+  [CI passed](https://github.com/ahouchens/mesh-chat/actions/runs/39156568048),
+  [layout passed](https://github.com/ahouchens/mesh-chat/actions/runs/39156567932),
+  [Windows/Linux native red/green regression passed](https://github.com/ahouchens/mesh-chat/actions/runs/39156568335).
+  [Artifact build](https://github.com/ahouchens/mesh-chat/actions/runs/39156577823)
+  passed verification, signed Android packaging and Windows installer packaging.
+  Both archives were downloaded and their archive/inner-file hashes verified;
+  see the [device checklist](DIRECT_CONNECTIVITY_TRAVERSAL_DEVICE_TEST.md).
+  [Exact application native qualification](https://github.com/ahouchens/mesh-chat/actions/runs/39156568009)
+  is running. The earlier recovery-fix commit `78397ffd7bb0744c948abd4f72ae81a993133d70`
+  passed both Windows/Linux durable recovery pipelines in
+  [this run](https://github.com/ahouchens/mesh-chat/actions/runs/39155888744),
+  but its later Windows unhosted-joiner revocation scenario failed: one native
+  session remained allocated. The scheduler skipped authority checks during
+  pending work; 0.2.55 moves those checks ahead of capacity/pending guards.
+  The active-owner resume fix has three passing source regressions and a native
+  packet-queue regression; it reads native state without consuming DATAGRAMs.
+- Superseded **0.2.52**, Android **2052**,
   `dec191bbea6c63967cfcf5073abd7acc052a3333`.
   [CI passed](https://github.com/ahouchens/mesh-chat/actions/runs/39154322468),
   [18 browser layout cases passed](https://github.com/ahouchens/mesh-chat/actions/runs/39154322749)
@@ -15,11 +39,12 @@ in [the spec](DIRECT_CONNECTIVITY_TRAVERSAL_SPEC.md).
   lifecycle or human usability acceptance.
   [Windows/Android artifact build](https://github.com/ahouchens/mesh-chat/actions/runs/39154321087)
   passed all jobs and produced signed Android and Windows installer artifacts;
-  archive links and hashes are in the [device checklist](DIRECT_CONNECTIVITY_TRAVERSAL_DEVICE_TEST.md).
   [Latest native qualification](https://github.com/ahouchens/mesh-chat/actions/runs/39154322732)
   failed Windows `unhosted_restart` after eight passing scenarios; Linux recovery
   passed. Do not promote 0.2.52. Recovery's auxiliary-check/listening-round race
-  is being fixed with a delayed-listener native red/green regression.
+  was fixed at `78397ff`: the delayed-listener regression fails against the old
+  code and passes against the fix on both platforms. Initial setup retains
+  simultaneous checks; recovery checks use alternating dial rounds.
 - `b01572d0232e3980751638b2e91ba9051272f60b`:
   [expanded NAT fixture passed](https://github.com/ahouchens/mesh-chat/actions/runs/39154080619),
   artifact `direct-nat-evidence` ID `12146297270`. All seven trials passed:
@@ -33,10 +58,10 @@ in [the spec](DIRECT_CONNECTIVITY_TRAVERSAL_SPEC.md).
 - `e496b2e326ac38963428c16d787da9d2270f9d48`: [CI passed](https://github.com/ahouchens/mesh-chat/actions/runs/39152705420).
   [Native run](https://github.com/ahouchens/mesh-chat/actions/runs/39152703505):
   Windows/Linux dispatcher tests, Android compile and Linux NAT fixture passed;
-  the complete pipeline is still being checked. This adds multiple route sockets.
+  the complete pipeline passed. This adds multiple route sockets.
 - `12e25abbcfc6a4cdce42c115d8a11f3435655a04`: [CI passed](https://github.com/ahouchens/mesh-chat/actions/runs/39153126912).
   [Native qualification](https://github.com/ahouchens/mesh-chat/actions/runs/39153128711)
-  is pending. This bounds incoming checks across the entire socket group.
+  passed. This bounds incoming checks across the entire socket group.
 
 The NAT evidence artifact uses isolated Linux namespaces, SNAT and kernel
 outbound-dependent filters. Three coordinated trials connected and carried
