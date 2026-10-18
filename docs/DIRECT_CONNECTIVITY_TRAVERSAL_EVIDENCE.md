@@ -43,6 +43,27 @@ that path; do not describe the earlier run as passing or relax its assertions.
 
 Physical mobile-carrier acceptance and independent review remain pending.
 
+Final 0.2.58 application commit: `0bf9623a9d4c01042793f63d3ffb1fd984443308`.
+[TypeScript, wizard/diagnostic regressions and all 42 layout cases passed](https://github.com/ahouchens/mesh-chat/actions/runs/39160399583),
+including the readiness-service failure retry regression.
+[Full CI passed](https://github.com/ahouchens/mesh-chat/actions/runs/39160399832):
+928 service tests passed, 47 skipped; 215 frontend tests passed. TypeScript and
+the production web bundle passed. The downloaded verification artifact
+`12148577698` matched SHA-256
+`1ee12b53fc38223e4cc1b51ad68e54a2e9ce5fe69312b16515136536837b218f`.
+[native qualification](https://github.com/ahouchens/mesh-chat/actions/runs/39160399603)
+and [Windows/Android build](https://github.com/ahouchens/mesh-chat/actions/runs/39160414911)
+remain unqualified. Android packaging failed before compilation while
+downloading/unpacking NDK 28.2.13676358 (ZIP content error); Windows packaging
+and embedded native checks passed. Artifact `12149000861` was downloaded; its
+archive, manifest and all five packaged-file hashes match. Android-only retry
+was accepted by GitHub after Windows completed and is running on the same commit. The earlier same-backend native run `39159976022` failed
+Windows durable recovery `address_loss` at `native_wait` after four passing
+scenarios. This remains unresolved; do not infer a passing native gate from
+service/frontend tests. No merge or physical connectivity claim is authorized by these
+controlled results. The previously failing source-pipe Windows scenario passed
+locally on current source (1 passed, 11 deselected); full native CI remains required.
+
 ## Exact-commit evidence
 
 - Current source version **0.2.55**, Android **2055**: fixes revocation cleanup

@@ -1,34 +1,26 @@
 # Windows and mobile-carrier acceptance
 
-Status: physical test not executed. **Wait for 0.2.58 (Android 2058): build and
-native qualification pending.** The 0.2.54 artifacts below are superseded due to
-a revocation-cleanup defect and are retained only as historical evidence.
+Status: **not ready for physical acceptance yet**. Candidate **0.2.58**, Android
+versionCode **2058**, application commit `0bf9623a9d4c01042793f63d3ffb1fd984443308`.
+Use matching builds on both devices after qualification. Preserve app data.
 
-Superseded build: **0.2.54**, Android
-versionCode **2054**, application commit `11b2b1f0a099082933da92f4e5fc0a262fd3121c`.
-[Artifact build](https://github.com/ahouchens/mesh-chat/actions/runs/39156577823)
-passed verification, signed Android packaging and Windows installer packaging.
-Use matching builds on both devices. Version 0.2.52 is superseded because its
-Windows unhosted-restart qualification failed; 0.2.53 was superseded by the
-active-owner resume fix. The 0.2.54 recovery regression passes on Windows/Linux.
+[Build run](https://github.com/ahouchens/mesh-chat/actions/runs/39160414911): full
+verification and Windows packaging passed. Android's first attempt failed
+unpacking the NDK ZIP before compilation; an Android-only retry is running on
+the same commit. Native recovery qualification is still open: a preceding run
+failed Windows address-loss recovery. Independent review and physical tests remain
+separate gates. Do not substitute any superseded build.
 
-| Platform | Artifact | SHA-256 of GitHub artifact archive |
+| Platform | Current artifact | Archive SHA-256 |
 | --- | --- | --- |
-| Android | [mesh-chat-0.2.54-android-arm64](https://github.com/ahouchens/mesh-chat/actions/runs/39156577823/artifacts/12147276639) | `27ec931661f7b0c13f78e78ec539f9a67eec68730de531615240653afbe01689` |
-| Windows | [mesh-chat-0.2.54-windows-desktop](https://github.com/ahouchens/mesh-chat/actions/runs/39156577823/artifacts/12147476067) | `8c4ae021322f39907e197e485aaff462c603223f0db292e64a19822aaf78666b` |
+| Windows | [mesh-chat-0.2.58-windows-desktop](https://github.com/ahouchens/mesh-chat/actions/runs/39160414911/artifacts/12149000861) | `f96a01bf490a5a6a1b5a92ee68e9cf6b8c64565d10646e01d44d027e83c0cb36` |
+| Android | Retry pending; no qualified APK yet | Pending |
 
-Both downloaded archives matched GitHub's digests. All inner artifact files
-also matched their packaging manifests, including these installers:
-
-| File | SHA-256 |
-| --- | --- |
-| `mesh-chat-0.2.54-android-arm64-release.apk` | `2e37e7e5433bb3ed4987e1b4e596c67aa217fa734c05ed08a01a2f5686959d4b` |
-| `Mesh Chat_0.2.54_x64-setup.exe` | `6af491de68bcda67a69de7b5027d082d3cf2eaba073ea3a12b4afd7e84de2495` |
-| `Mesh Chat_0.2.54_x64_en-US.msi` | `a819c7cecc0549769565a74d7ddfa10d93527654f0ddc4ce8afaccc836fdede8` |
-
-Keep the packaging reports with the test record. These are implementation-branch
-test artifacts. Independent protocol review and physical qualification remain
-separate gates; see the [acceptance ledger](DIRECT_CONNECTIVITY_TRAVERSAL_EVIDENCE.md).
+The Windows archive, manifest and all five packaged files were hash-checked.
+NSIS installer SHA-256: `57541794d875d7eb764d4ea9b20e866da18514e18513114f02b31c7643fbdba9`.
+MSI SHA-256: `4f184472ea032cab49a8b7d2f7c98ed9fc156a013e81566f0b5031e1b9382464`.
+Nothing was installed or executed locally. See the
+[acceptance ledger](DIRECT_CONNECTIVITY_TRAVERSAL_EVIDENCE.md).
 
 ## Guided test
 
