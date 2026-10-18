@@ -7,6 +7,8 @@ no discovery and is not physical router evidence.
 import os
 import subprocess
 import threading
+import time
+from collections import deque
 
 from mesh_chat.direct_native import NativeChannel
 from mesh_chat.ipc import FrameWriter, read_frame
@@ -21,6 +23,8 @@ class AppHostNative:
         self._lock = threading.Lock()
         self._closed = False
         self.owned = {}
+        self.trace = deque(maxlen=64)
+        self._states = {}
         self.blocked = False
         self.migration_attempts = self.migrations = 0
         self._reader = threading.Thread(target=self._read,daemon=True,name="controlled-native-private")
@@ -53,10 +57,21 @@ class AppHostNative:
             payload = {**payload,"candidates":["127.0.0.1:9" for _ in payload["candidates"]]}
         result = self.channel.request(operation,**payload)
         with self._lock:
+            # Controlled fixture evidence only: no capsules, keys or packets.
+            event = {"at": round(time.time(), 3), "op": operation, "id": payload.get("id")}
+            if operation == "recover":
+                self.trace.append({**event, "client": payload["client"],
+                    "ports": [int(value.rsplit(":", 1)[1]) for value in payload["candidates"]]})
+            elif operation == "poll" and self._states.get(payload["id"]) != result["state"]:
+                self._states[payload["id"]] = result["state"]
+                self.trace.append({**event, "state": result["state"]})
+            elif operation in {"close", "authorize_recovery"}:
+                self.trace.append(event)
             if operation in {"prepare", "prepare_recovery"}:
                 actual = {key:result[key] for key in ("id","host","port","certificate")}
                 assert actual["host"] == "127.0.0.1"
                 self.owned[result["id"]] = (public_host,actual)
+                self.trace.append({**event, "id": result["id"], "port": actual["port"]})
                 result = {**result,"host":public_host}
             elif operation == "migrate":
                 self.migrations += 1

@@ -4,19 +4,23 @@ Status: implementation and qualification in progress, 2026-10-18. This is not a
 physical connectivity result or release approval. The detailed requirements are
 in [the spec](DIRECT_CONNECTIVITY_TRAVERSAL_SPEC.md).
 
-## Recovery timing candidate: 0.2.60 / Android 2060
+## Current candidate: 0.2.60 / Android 2060
 
 Full Windows run `39163214793` reproduced address-loss failure despite the five
 passing isolated repetitions. Both peers retained matching fresh port hints,
-with `native_wait` failure on both sides. Equal 1500ms recovery rounds plus 500ms
-pauses can align opposite preferred roles when their starts are one round apart.
-The candidate uses 1500ms client / 2500ms server slices to break that alignment,
-with the existing global deadline, check limits and service authorization intact.
-A staggered hosted-peer regression must fail on 0.2.59 and pass on this candidate
-in Windows/Linux CI before treating this hypothesis as a verified fix.
-0.2.59 packaging was cancelled; do not promote its artifacts. All ten diagnostic
-tests and its ordinary CI/layout/recovery regression passed, but its native
-reliability qualification was not complete.
+with `native_wait` failure on both sides. A proposed role-period change was
+rejected: the staggered regression also passed the old code, so it did not prove
+the hypothesis. Both the speculative production change and its red/green case
+were removed. Existing recovery behavior and regression assertions are retained.
+
+The controlled native fixture now retains a bounded, credential-free trace of
+prepare/recover/state-transition/authorization/close events to identify the failed
+attempt lifecycle on both peers. This is CI evidence, not production logging.
+0.2.59 packaging was cancelled; do not promote its artifacts. Its full verification
+passed 933 service tests (47 skipped) and 215 frontend tests. The verified report
+artifact `12149803730` has SHA-256
+`084eb80f892e4a282d400836d6d6acbf10b2468cee3af11bde4dc36a3b3f621a`.
+Current transport reliability remains unqualified; do not start physical acceptance.
 
 ## Diagnostic follow-up: 0.2.59 / Android 2059
 
