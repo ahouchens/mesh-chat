@@ -3223,6 +3223,10 @@ def create_workspace_join(
     )
     new_member_id = _validate_uuid(member_id or str(uuid.uuid4()), "Member ID")
     new_device_id = _validate_uuid(device_id or str(uuid.uuid4()), "Device ID")
+    # Invitation verification permits bounded clock skew. A freshly received
+    # invitation may therefore start after our wall clock; preserve its causal
+    # ordering without relaxing the verifier's timestamp or expiry checks.
+    joined_at = max(current, invite.created_at)
     card = create_workspace_device_card(
         identity,
         workspace_id=invite.workspace_id,
@@ -3230,7 +3234,7 @@ def create_workspace_join(
         device_id=new_device_id,
         display_name=display_name,
         hints=hints,
-        now=current,
+        now=joined_at,
     )
     unsigned = {
         "v": WORKSPACE_PROTOCOL_VERSION,
@@ -3242,7 +3246,7 @@ def create_workspace_join(
         "member_id": new_member_id,
         "device_card": json.loads(card),
         "invitation": json.loads(invite.serialized),
-        "created_at": current,
+        "created_at": joined_at,
     }
     return _sign(identity, unsigned)
 

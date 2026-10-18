@@ -828,6 +828,38 @@ def test_admin_decision_binds_request_result_and_rejects_unknown_fields() -> Non
         )
 
 
+@pytest.mark.parametrize("clock_offset", [-60, -1, 0, 1])
+def test_workspace_join_with_clock_skew(clock_offset: int) -> None:
+    owner, _, genesis, initial = _workspace()
+    invitation_raw = create_workspace_invitation(
+        owner, genesis=genesis.serialized, manifest=initial.serialized, now=NOW,
+    )
+    local_now = NOW + clock_offset
+    invitation = verify_workspace_invitation(invitation_raw, now=local_now)
+    join_raw = create_workspace_join(
+        RNS.Identity(), invitation, "Bailey", now=local_now,
+    )
+    join = verify_workspace_join(join_raw, invitation=invitation, now=local_now)
+    assert join.created_at == max(local_now, invitation.created_at)
+    assert verify_workspace_join(join_raw, now=NOW + 1).digest == join.digest
+
+
+def test_workspace_join_clock_skew_does_not_bypass_expiry() -> None:
+    owner, _, genesis, initial = _workspace()
+    invitation_raw = create_workspace_invitation(
+        owner, genesis=genesis.serialized, manifest=initial.serialized, now=NOW,
+    )
+    invitation = verify_workspace_invitation(invitation_raw, now=NOW)
+    late_now = invitation.expires_at + 1
+    join_raw = create_workspace_join(
+        RNS.Identity(), invitation, "Bailey", now=late_now,
+    )
+    with pytest.raises(InvitationExpired):
+        verify_workspace_join(join_raw, invitation=invitation, now=late_now)
+    with pytest.raises(ValidationError, match="date"):
+        verify_workspace_invitation(invitation_raw, now=NOW - 86401)
+
+
 def test_workspace_bootstrap_join_channel_and_event_round_trip() -> None:
     owner, created, genesis, initial = _workspace()
     invitee = RNS.Identity()
