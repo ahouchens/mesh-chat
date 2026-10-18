@@ -539,7 +539,9 @@ reserves outgoing generations and bounded jittered backoff before native work, a
 owns at most four relationships/attempt workers with room for authenticated
 replacement inside the eight-session native budget. Cancelled router workers keep
 their worker slots until they exit. Round-robin scheduling prevents a failing peer
-from monopolizing attempts. Suspension retires ownership; shutdown waits for workers
+from monopolizing attempts. Under contention, five-minute active slots yield to due
+peers with an explicit dormant state; idle capacity keeps healthy paths. Suspension
+retires ownership; shutdown waits for workers
 before closing the vault. A paused relationship stays paused when an update arrives.
 
 Recovery uses fresh native keys with the ADR's provisional TLS/RNS authorization.

@@ -126,6 +126,7 @@ def _service_worker(root, incoming, outgoing, commands, replies, native_binary=N
                         import hashlib
                         result = {"peers":service._direct_recovery.status(),
                             "identity":service.network.destination_hash.hex(),
+                            "migration_attempts":getattr(native,"migration_attempts",0),"migrations":getattr(native,"migrations",0),
                             "paths":[{"recovery":carrier.recovery,"certificate":hashlib.sha256(bytes.fromhex(carrier.prepared._owned["certificate"])).hexdigest()}
                                      for carrier in service._direct_recovery._active.values() if not carrier._stop.is_set()],
                             "pending":len(service._direct_recovery._pending),"native_count":len(native.owned),

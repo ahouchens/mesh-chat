@@ -14,8 +14,9 @@ from test_direct_setup_pipeline import _service_worker
 
 
 class Peers:
-    def __init__(self, root, binary):
+    def __init__(self, root, binary, unhosted=False):
         self.root, self.binary = root, binary
+        self.unhosted = unhosted
         self.context = multiprocessing.get_context("spawn")
         self.pipes = [self.context.Queue(maxsize=128) for _ in range(2)]
         self.commands, self.replies, self.processes = [None]*2, [None]*2, [None]*2
@@ -27,7 +28,7 @@ class Peers:
         self.channels.extend((self.commands[index], self.replies[index]))
         process = self.context.Process(target=_service_worker,args=(str(self.root/str(index)),
             self.pipes[index],self.pipes[1-index],self.commands[index],self.replies[index],
-            self.binary,False,False,self.keys[index]))
+            self.binary,False,self.unhosted and index==1,self.keys[index]))
         process.start()
         self.processes[index] = process
         assert self.replies[index].get(timeout=20)["ok"]
@@ -51,13 +52,18 @@ class Peers:
             time.sleep(.2)
         raise AssertionError((index,name,last,self.call(index,"recovery_diagnostic")))
 
-    def connected(self, index):
-        self.wait(index,"direct_recovery_status",lambda rows:rows and all(
-            r["state"]=="connected" and r["authenticated_peer_live"] and r["rns_ready"] for r in rows),timeout=100)
-        deadline=time.monotonic()+30
+    def connected(self, index, previous_certificate=None):
+        # One total bound includes the configured native attempt and retry window.
+        # A usable old Phase 2/path is not evidence that recovery has completed.
+        deadline=time.monotonic()+100
+        evidence=None
         while time.monotonic()<deadline:
+            rows=self.command(index,"direct_recovery_status")
             evidence=self.call(index,"recovery_diagnostic")
-            if evidence["pending"]==0 and len(evidence["paths"])==1 and evidence["paths"][0]["recovery"]:
+            if (rows and all(r["state"]=="connected" and r["authenticated_peer_live"] and r["rns_ready"] for r in rows)
+                    and evidence["pending"]==0 and len(evidence["paths"])==1
+                    and evidence["paths"][0]["recovery"]
+                    and evidence["paths"][0]["certificate"]!=previous_certificate):
                 return evidence
             time.sleep(.2)
         raise AssertionError(evidence)
@@ -105,21 +111,21 @@ class Peers:
 
 
 @pytest.mark.integration
-@pytest.mark.parametrize("scenario",["client_restart","server_restart","both_restart","suspend","replacement","route_change","blocked","address_loss"])
+@pytest.mark.parametrize("scenario",["client_restart","server_restart","both_restart","unhosted_restart","suspend","replacement","route_change","server_route_change","blocked","address_loss"])
 def test_production_durable_recovery(tmp_path,scenario):
     binary=os.environ.get("MESH_DIRECT_APP_HOST_BINARY")
     if not binary: pytest.skip("Requires the GitHub-built shipping dispatcher")
-    peers=Peers(tmp_path,binary)
+    peers=Peers(tmp_path,binary,unhosted=scenario=="unhosted_restart")
     try:
         for i in range(2): peers.start(i)
         before=peers.admit()
         identities=[item["identity"] for item in before]
         snapshots=[peers.command(i,"workspace_snapshot") for i in range(2)]
         memberships=[[(w["id"],w["local_member_id"],w["local_device_id"]) for w in s["workspaces"]] for s in snapshots]
-        client=0 if identities[0]<identities[1] else 1
+        client=1 if scenario=="unhosted_restart" else 0 if identities[0]<identities[1] else 1
         changed=[0,1]
         if scenario.endswith("restart"):
-            changed=[client] if scenario=="client_restart" else [1-client] if scenario=="server_restart" else [0,1]
+            changed=[client] if scenario in {"client_restart","unhosted_restart"} else [1-client] if scenario=="server_restart" else [0,1]
             for i in changed: peers.crash(i)
             if len(changed)==1: queued=(1-changed[0],peers.send(1-changed[0],"Queued across peer process death"))
             time.sleep(1)  # Native owner detects inherited-channel EOF and retires sockets.
@@ -130,8 +136,9 @@ def test_production_durable_recovery(tmp_path,scenario):
             queued=(0,peers.send(0,"Queued during suspension"))
             peers.command(1,"mobile_lifecycle_transition",state="foreground",reason="controlled_resume")
             changed=[1]
-        elif scenario=="route_change":
-            peers.call(client,"route_change")
+        elif scenario in {"route_change","server_route_change"}:
+            changed_peer=client if scenario=="route_change" else 1-client
+            peers.call(changed_peer,"route_change")
             time.sleep(6)
             changed=[]  # Successful client migration keeps its authenticated key.
         elif scenario in {"blocked","address_loss"}:
@@ -151,7 +158,13 @@ def test_production_durable_recovery(tmp_path,scenario):
         else:
             for i in range(2): peers.call(i,"force_recovery")
         if scenario=="replacement": time.sleep(2)
-        after=[peers.connected(i) for i in range(2)]
+        after=[peers.connected(i,before[i]["paths"][0]["certificate"] if i in changed else None) for i in range(2)]
+        if scenario in {"route_change","server_route_change"}:
+            assert after[changed_peer]["migration_attempts"]>before[changed_peer]["migration_attempts"]
+            if after[changed_peer]["migrations"]>before[changed_peer]["migrations"]:
+                assert after[changed_peer]["paths"][0]["certificate"]==before[changed_peer]["paths"][0]["certificate"]
+            else:
+                assert after[changed_peer]["paths"][0]["certificate"]!=before[changed_peer]["paths"][0]["certificate"]
         for i in range(2):
             assert after[i]["identity"]==identities[i]
             if i in changed: assert after[i]["paths"][0]["certificate"]!=before[i]["paths"][0]["certificate"]

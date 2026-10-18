@@ -255,6 +255,15 @@ def test_scheduler_reserves_profile_capacity_and_rotates_fairly(monkeypatch):
     # Cancelled-but-blocked router workers retain their worker budget.
     recovery._pending.clear(); started.clear(); recovery.tick()
     assert started==[]
+    recovery._workers.clear(); recovery._pending.clear()
+    retired=[]
+    recovery._active={str(i):SimpleNamespace(_stop=threading.Event(),recovery=False,
+        slot_started_at=time.time()-301,prepared=object(),close=lambda:retired.append(True)) for i in range(4)}
+    for identifier in recovery._active: recovery._write(identifier,next_at=float("inf"))
+    recovery.tick()
+    assert retired==[True]
+    assert len(recovery._active)==3 and len(recovery._pending)==1
+    assert started[0] in {"4","5","6","7"}
 
 
 def test_new_update_preserves_explicit_pause(pair):

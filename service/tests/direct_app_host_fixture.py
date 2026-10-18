@@ -22,6 +22,7 @@ class AppHostNative:
         self._closed = False
         self.owned = {}
         self.blocked = False
+        self.migration_attempts = self.migrations = 0
         self._reader = threading.Thread(target=self._read,daemon=True,name="controlled-native-private")
         self._reader.start()
 
@@ -41,6 +42,7 @@ class AppHostNative:
             assert all(candidate.startswith("93.184.216.34:") for candidate in payload["candidates"])
             payload = {**payload,"candidates":[candidate.replace("93.184.216.34:","127.0.0.1:") for candidate in payload["candidates"]]}
         elif operation == "migrate":
+            self.migration_attempts += 1
             public_host = payload["address"].rsplit(":",1)[0].strip("[]")
             assert public_host == "93.184.216.34"
             payload = {**payload,"address":"127.0.0.1:0"}
@@ -57,6 +59,7 @@ class AppHostNative:
                 self.owned[result["id"]] = (public_host,actual)
                 result = {**result,"host":public_host}
             elif operation == "migrate":
+                self.migrations += 1
                 _, actual = self.owned[payload["id"]]
                 self.owned[payload["id"]] = (public_host,{**actual,**result})
                 result = {**result,"host":public_host}

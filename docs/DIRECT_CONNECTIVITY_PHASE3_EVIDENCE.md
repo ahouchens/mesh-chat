@@ -1,6 +1,6 @@
 # Phase 3 persistent relationship recovery evidence
 
-Status: implementation in progress; Phase 3 is **not complete**.
+Status: recovery implementation integrated; expanded automated qualification is in progress. Phase 3 is **not complete** until those gates pass.
 Phase 2 physical Windows/Android qualification remains pending. The user
 authorized Phase 3 development independently of that gate.
 
@@ -26,16 +26,16 @@ the confirmation wait now follows the admitted carrier's lifecycle.
 
 | Required capability | Current evidence / remaining work |
 | --- | --- |
-| Encrypted exact workspace/device relationship | Implemented in production acceptance; current membership and identity rechecked transactionally |
-| Accepted generations, validity, successful route, retry and cleanup state | First three implemented; retry and cleanup state remain open |
-| Fresh sockets/keys and RNS-based reauthentication after restart | Open; existing native TLS still needs an exchanged certificate pin |
-| Signed updates over surviving paths and explicit no-route recovery | Atomic acceptance groundwork only; recovery protocol/controller/UI remain open |
-| Same-socket UDP lease renewal | Open; existing preparation remains bounded by its original lease |
-| Startup/resume, cancellation, fair bounded retries | Open for durable relationships |
-| Authenticate replacements before retiring old paths | Open; this increment only preserves acceptance and authenticated historical evidence |
-| Supported QUIC migration with reconnect fallback | Open |
-| Honest per-peer recovery/liveness states | Open; no new connected/recovered claim is exposed |
-| Preserve membership, queued messages and receipts during recovery | Existing setup pipeline retained; actual recovery scenarios remain open |
+| Encrypted exact workspace/device relationship | Production atomic acceptance, current membership and identity checks; existing replay keys retained |
+| Generations, validity, successful route, retry and cleanup state | Sealed recovery state; generation/backoff reservation before native effects; bounded crash cleanup evidence until lease expiry |
+| Fresh sockets/keys and RNS reauthentication | Separate recovery ALPN; actual TLS certificate possession plus peer-encrypted RNS binding and current membership before DATAGRAM approval |
+| Signed surviving-path updates and explicit no-route recovery | Workspace control, strict audience/scope import, owned-only opaque export and workspace settings UI implemented |
+| Same-socket UDP lease renewal | Actual returned tuple/lease persisted before export; ownership/persistence/retirement failure regressions pass locally |
+| Startup/resume, cancellation, fair bounded retries | Runtime epoch/token isolation, four workers/active relationships, eight native slots, fair scheduling and contention rotation implemented |
+| Replacement before old-path retirement | Native authorization, signed RNS confirmation and durable winner required; failures preserve old usable path; injected regressions pass |
+| QUIC migration and reconnect fallback | Client rebind and server rejection native tests; route watcher and explicit fallback implemented |
+| Honest per-peer states | Reconnecting/dormant/update-needed; recent native replies, authenticated peer announce and RNS readiness reported separately; receipts unchanged |
+| Preserve membership, queued messages and receipts | Expanded shipping-native recovery scenarios are running; no completion claim before exact-commit CI passes |
 
 ## Validation
 
@@ -86,3 +86,35 @@ The first local pipeline exposed asymmetric bootstrap retirement during admitted
 announce confirmation. The fix waits on the admitted carrier independently and
 retains the original timeout/assertions. All six subsequent source pipelines
 passed. No timeout was increased or assertion weakened.
+
+
+## Integrated recovery implementation and qualification in progress
+
+The implementation now includes the protected recovery coordinator, workspace-only
+binding v3, encrypted rotated-key channel, signed live/manual updates, renewal,
+route-change handling, lifecycle reconciliation, cancellation and renderer controls.
+The dedicated production harness uses independent service/native processes and
+reopens encrypted profiles with test-only custodian keys. It tests one-sided and
+simultaneous process death, unhosted restart, suspend/resume, concurrent replacement,
+client/server route changes, blocked targets, lost hints and explicit updates.
+
+Controlled failure injection uses synthetic public candidates translated to
+loopback at the native test boundary. Blocking redirects both peers' dial targets
+to an unused loopback port; address loss removes stored candidate hints. These are
+controlled reachability failures, not claims about physical firewalls or routers.
+The harness preserves ordinary signed join/application acknowledgment before the
+single admission, then requires the same queued message IDs and LXMF endpoint
+receipts after recovery. Recovery itself creates no application receipt.
+
+The initial expanded CI run failed before traffic because a harness `name` argument
+collided with the workspace payload. The next run exposed a diagnostic attempting
+to inspect an activated Phase 2 handle. Both test harness faults were corrected;
+production success predicates remain native recovery plus authenticated RNS evidence.
+A single 100-second test bound covers the configured native attempt/retry window;
+old Phase 2 connectivity is not accepted as completed persistent recovery.
+
+Local full non-integration validation after the integrated changes: 827 passed,
+7 environment-dependent skips. Exact final CI results will be recorded below.
+The earlier successful native increment at `2298996` in
+[run 39083931650](https://github.com/ahouchens/mesh-chat/actions/runs/39083931650)
+qualifies the provisional native channel only, not these new end-to-end scenarios.

@@ -15,8 +15,10 @@ hashes and the device checklist are linked from the evidence record.
 
 ### Phase 3 development
 
-Admitted relationship evidence and replay acceptance now commit atomically.
-Persistent reconnection is not complete. The [criterion-by-criterion record](DIRECT_CONNECTIVITY_PHASE3_EVIDENCE.md)
+Admitted relationship evidence and replay acceptance commit atomically. Persistent
+recovery, rotated-key authorization, signed updates, lease renewal, lifecycle
+reconciliation, migration fallback and per-peer controls are now integrated.
+Expanded shipping-native qualification is running; Phase 3 is not yet marked complete. The [criterion-by-criterion record](DIRECT_CONNECTIVITY_PHASE3_EVIDENCE.md)
 tracks implementation and remaining work separately from Phase 2 physical debt.
 
 ### Phase 1 completion, 2026-10-17

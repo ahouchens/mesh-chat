@@ -22,6 +22,7 @@ from .workspace_wire import build_workspace_fields
 
 MAX_ATTEMPTS = 4
 MAX_ACTIVE = 4
+CONTENDED_SLOT_SECONDS = 300
 
 
 def retry_delay(attempt, jitter):
@@ -71,7 +72,11 @@ class DirectRecovery:
         """Keep the Phase 2 path usable while negotiating durable recovery."""
         identifier = relationship_id(self.service.store, expected)
         with self._lock:
-            self._active[identifier] = carrier
+            old = self._active.get(identifier)
+            if old is not None or len(self._active) < MAX_ACTIVE:
+                carrier.slot_started_at = self.clock()
+                self._active[identifier] = carrier
+        if old is not None and old is not carrier: old.close()
         self._write(identifier, enabled=True, state="reconnecting", next_at=self.clock())
         self._wake.set()
 
@@ -292,6 +297,7 @@ class DirectRecovery:
                                     winner=accepted.digest,renew_at=self.clock()+min(1800,max(1,(fields["expires_at"]-self.clock())/2)))
                         with self._lock:
                             old = self._active.get(identifier)
+                            admitted.slot_started_at = getattr(old,"slot_started_at",self.clock())
                             admitted.route_signature = self._route_signature
                             self._active[identifier] = admitted
                         promoted = True
@@ -405,6 +411,21 @@ class DirectRecovery:
                         next_at=min(self.clock()+300,state["next_at"]))
                 self._initialized = True
             if not records: return
+            # Under contention, five-minute service slots rotate among due peers.
+            # A slot retirement is explicit dormancy, not successful replacement.
+            with self._lock:
+                occupied = set(self._active) | set(self._pending)
+                waiting = any(key not in occupied and self._state(key)["enabled"]
+                              and self._state(key)["next_at"] <= self.clock() for key,_ in records)
+                retiring = [(key,carrier) for key,carrier in self._active.items()
+                    if waiting and key not in self._pending
+                    and self.clock()-getattr(carrier,"slot_started_at",self.clock()) >= CONTENDED_SLOT_SECONDS]
+            for key,carrier in retiring[:1]:
+                self._write(key,state="dormant",next_at=self.clock()+30)
+                with self._lock:
+                    self._active.pop(key,None)
+                    if self._prepared.get(key) is carrier.prepared: self._prepared.pop(key,None)
+                carrier.close()
             start = self._cursor % len(records)
             self._cursor = (start+1) % len(records)
             for identifier,record in (records[start:]+records[:start])[:128]:
