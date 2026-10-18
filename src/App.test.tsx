@@ -860,6 +860,7 @@ describe("new chat invitations", () => {
           expires_at: 2_000_000_000, connection_reply_available: true,
           existing_workspace: saved,
           can_resume_join: state === "active",
+          join_resume_reason: delivery === "queued" ? "invitation_mismatch" : "request_stopped",
         };
       }
       return {};
@@ -878,6 +879,8 @@ describe("new chat invitations", () => {
     expect(within(dialog).queryByText("How this request will be sent")).toBeNull();
     expect(within(dialog).queryByRole("button", { name: "Continue saved request" })).toBeNull();
     if (delivery === "failed") expect(within(dialog).getByRole("status").textContent).toContain("remove this failed join");
+    if (delivery === "queued") expect(within(dialog).getByText(/This invitation does not match the invitation saved for this request/)).toBeTruthy();
+    if (delivery === "failed") expect(within(dialog).getByText(/This saved request has stopped/)).toBeTruthy();
     fireEvent.click(within(dialog).getByRole("button", { name: "Open saved workspace" }));
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "Join a workspace" })).toBeNull());
     expect(screen.getByRole("button", { name: /^Workspace Lakewatcher/ }).getAttribute("aria-current")).toBe("page");

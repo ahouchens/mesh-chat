@@ -4680,8 +4680,9 @@ class WorkspaceServiceMixin:
             preview["existing_workspace"] = self._public_workspace(existing)
             try:
                 self._saved_workspace_join_owner(existing, invitation)
-            except WorkspaceAlreadyKnown:
+            except WorkspaceAlreadyKnown as exc:
                 preview["can_resume_join"] = False
+                preview["join_resume_reason"] = exc.reason
             else:
                 preview["can_resume_join"] = True
         if email is not None:
@@ -5021,6 +5022,15 @@ class WorkspaceServiceMixin:
             "workspace_invitation", self._workspace_invitation_record_id(invite.nonce)
         )
         owner = find_device(invite.offered_manifest, invite.offered_manifest.authority_device_id)
+        if record is None or record.get("document") != invite.serialized:
+            raise WorkspaceAlreadyKnown(str(error), reason="invitation_mismatch")
+        if delivery is not None:
+            if delivery.get("state") in {
+                DeliveryState.FAILED.value, DeliveryState.EXPIRED.value, DeliveryState.CANCELLED.value,
+            }:
+                raise WorkspaceAlreadyKnown(str(error), reason="request_stopped")
+            if float(delivery.get("expires_at", 0)) < time.time():
+                raise WorkspaceAlreadyKnown(str(error), reason="request_expired")
         if (
             delivery is None or record is None or owner is None
             or delivery.get("id") != delivery_id
@@ -5055,7 +5065,7 @@ class WorkspaceServiceMixin:
             or join.device.device_id != workspace.get("local_device_id")
             or join.device.public_identity != self._identity.get_public_key()
         ):
-            raise error
+            raise WorkspaceAlreadyKnown(str(error), reason="identity_mismatch")
         return owner[1]
 
     def _resume_workspace_join(

@@ -2989,3 +2989,18 @@ restoration. Test each side moving independently, then both losing their known
 addresses and exchanging explicit connection updates. Capture router lease
 renewal/cleanup and foreground battery/traffic evidence; compilation and loopback
 tests cannot establish those results. Do not infer Android background availability.
+
+## Invitation recovery explanation — 0.2.49
+
+Saved-workspace invitation previews report why recovery is unavailable without
+replacing the original signed request. Backend regression cases cover changed
+invitations, stopped/expired delivery and identity mismatches; renderer cases
+check the changed-invitation and stopped-request explanations.
+
+Validation: 127 focused Python tests (workspace join retry, receipt, service and
+email direct routing), 151 renderer/API/invitation tests, TypeScript app check,
+and release version consistency check passed. A browser fixture using the actual
+stylesheet confirmed vertically stacked warning content and no section/dialog
+horizontal overflow at widths 360, 393 and 591px; the 393px render was inspected.
+This fixture is a layout check, not Android device qualification. Cellular join
+receipt and owner approval remain unverified on the physical devices.

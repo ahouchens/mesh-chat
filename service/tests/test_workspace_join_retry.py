@@ -312,7 +312,16 @@ def test_repeated_join_rejects_mismatched_or_terminal_saved_request(join_pair, c
     saved = _saved_join(joiner)
     operation_count = len(joiner.store.list("workspace_operation"))
 
-    assert joiner.preview_workspace_invitation(raw)["can_resume_join"] is False
+    preview = joiner.preview_workspace_invitation(raw)
+    assert preview["can_resume_join"] is False
+    reason = (
+        "invitation_mismatch" if change in {"other_invitation", "saved_invitation"}
+        else "request_stopped" if change in {"failed", "expired", "cancelled"}
+        else "request_expired" if change == "elapsed_delivery"
+        else "identity_mismatch" if change in {"identity", "member", "device"}
+        else "saved_request_invalid"
+    )
+    assert preview["join_resume_reason"] == reason
 
     with pytest.raises(WorkspaceAlreadyKnown) as error:
         joiner.submit_workspace_join(raw, _op(97003))

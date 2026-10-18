@@ -2523,6 +2523,13 @@ function JoinWorkspaceDialog({ initialValue = "", workspaces, onClose, onJoined 
   const existingJoinStatus = existingWorkspace ? workspaceJoinStatus(existingWorkspace) : null;
   const canResumeExisting = preview?.can_resume_join === true
     && existingWorkspace?.state === "joining" && existingJoinStatus?.terminal === false;
+  const resumeExplanation = preview?.join_resume_reason ? ({
+    invitation_mismatch: "This invitation does not match the invitation saved for this request. To continue it, reopen the exact original invitation.",
+    request_stopped: "This saved request has stopped. Open Workspace settings to review the failed join before starting again.",
+    request_expired: "The saved request’s delivery window has expired. Open the saved workspace to review its status.",
+    identity_mismatch: "The saved request belongs to a different local device identity. Mesh Chat cannot reuse it for this identity.",
+    saved_request_invalid: "The saved request could not be verified for recovery. Open the saved workspace to review its status.",
+  })[preview.join_resume_reason] : "This invitation cannot currently resume the saved request. Open the saved workspace to review its status.";
   const currentJoin = workspaces.find((item) => item.id === joinedWorkspace?.id) ?? joinedWorkspace;
   const currentJoinStatus = currentJoin ? workspaceJoinStatus(currentJoin) : null;
   const joinReceived = currentJoin?.join_acknowledged === true || currentJoin?.state === "active";
@@ -2659,6 +2666,7 @@ function JoinWorkspaceDialog({ initialValue = "", workspaces, onClose, onJoined 
           <p><strong>{workspaceStateLabel(existingWorkspace)}</strong></p>
           <p>{existingJoinStatus?.detail ?? "Open the saved workspace to view its current status and available actions."}</p>
           <p>This invitation will not replace the workspace or its saved join request.</p>
+          {existingWorkspace.state === "joining" && !canResumeExisting && <p>{resumeExplanation}</p>}
           {canResumeExisting && <Button variant="secondary" disabled={busy} onClick={() => void join()}>Continue saved request</Button>}
           <Button disabled={busy} onClick={() => void openExisting()}>{busy ? "Opening…" : "Open saved workspace"}</Button>
         </section> : <>

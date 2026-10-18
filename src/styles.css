@@ -382,6 +382,9 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .direct-host-status, .direct-host-warning { display: flex; align-items: flex-start; gap: 8px; margin: 0; padding: 10px 12px; border: 1px solid color-mix(in srgb, var(--green-700) 45%, var(--line)); border-radius: 10px; background: color-mix(in srgb, var(--green-700) 9%, var(--surface-raised)); color: var(--ink); font-size: .82rem; line-height: 1.45; }
 .direct-host-status svg, .direct-host-warning svg { flex: 0 0 auto; margin-top: 1px; }
 .direct-host-warning { border-color: color-mix(in srgb, #b88426 45%, var(--line)); background: color-mix(in srgb, #b88426 9%, var(--surface-raised)); }
+section.direct-host-warning { display: grid; grid-template-columns: minmax(0, 1fr); min-width: 0; overflow-wrap: anywhere; }
+section.direct-host-warning > * { min-width: 0; margin: 0; }
+section.direct-host-warning > .button { justify-self: start; max-width: 100%; white-space: normal; }
 .direct-fallback-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .direct-doctor, .manual-forward { display: grid; gap: 10px; padding: 12px; border: 1px solid var(--line); border-radius: 11px; background: var(--surface-raised); }
 .direct-doctor h3, .manual-forward h3 { margin: 0; font-size: .94rem; }

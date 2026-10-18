@@ -613,6 +613,7 @@ export interface WorkspaceInvitationPreview {
   workspace_id: string;
   existing_workspace?: Workspace;
   can_resume_join?: boolean;
+  join_resume_reason?: "invitation_mismatch" | "request_stopped" | "request_expired" | "identity_mismatch" | "saved_request_invalid";
   name: string;
   description: string;
   owner_fingerprint: string;

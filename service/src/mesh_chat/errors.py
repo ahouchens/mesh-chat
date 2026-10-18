@@ -11,6 +11,10 @@ class ValidationError(MeshChatError):
 class WorkspaceAlreadyKnown(ValidationError):
     code = "workspace_already_known"
 
+    def __init__(self, message: str, *, reason: str = "saved_request_invalid"):
+        super().__init__(message)
+        self.reason = reason
+
 
 class WorkspaceLimitReached(ValidationError):
     code = "workspace_limit_reached"
