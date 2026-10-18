@@ -294,7 +294,7 @@ impl Running {
                     .await
                     .map_err(|_| Error::Timeout)??;
                 if connection.max_datagram_size().unwrap_or(0) < MAX_PACKET {
-                    return Err(Error::DatagramSize);
+                    return Err::<(), Error>(Error::DatagramSize);
                 }
                 let auth = async {
                     let remote = exchange(&connection, &capsule, CAPSULE).await?;
@@ -342,7 +342,7 @@ impl Running {
                         },
                         packet = connection.read_datagram() => {
                             let p = packet.map_err(|_| Error::Closed)?;
-                            if p.is_empty() || p.len()>MAX_PACKET { return Err(Error::DatagramSize); }
+                            if p.is_empty() || p.len()>MAX_PACKET { return Err::<(), Error>(Error::DatagramSize); }
                             match incoming_tx.try_send(p) {
                                 Ok(()) | Err(mpsc::error::TrySendError::Full(_)) => {},
                                 Err(_) => return Err(Error::Closed),
@@ -389,7 +389,7 @@ impl Running {
             return Err(Error::Identity);
         }
         if packets.len() > 32 || packets.iter().any(|p| p.is_empty() || p.len() > MAX_PACKET) {
-            return Err(Error::DatagramSize);
+            return Err::<(), Error>(Error::DatagramSize);
         }
         let permits = self
             .outgoing
