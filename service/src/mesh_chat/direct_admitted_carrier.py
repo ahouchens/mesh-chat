@@ -13,12 +13,16 @@ from .workspace_protocol import _destination_for, _identity_from_public_key
 
 
 class AdmittedCarrier:
-    def __init__(self, service, prepared, raw, expected, certificate, bootstrap_authority, state_changed, initial_packets=()):
+    def __init__(self, service, prepared, raw, expected, certificate, bootstrap_authority, state_changed, initial_packets=(), runtime_lease=None):
         self.service, self.prepared, self.authority = service, prepared, bootstrap_authority
         self._changed = state_changed
         self._stop = threading.Event()
         self._lost = threading.Event()
         self.peer_seen = threading.Event()
+        self.expected = expected
+        self.binding, self.certificate = raw, certificate
+        self.recovery = runtime_lease is not None
+        self.peer_seen_at = 0.0
         self._peer = _destination_for(_identity_from_public_key(expected.issuer_public_identity))
         self._incoming, self._outgoing = queue.Queue(maxsize=32), queue.Queue(maxsize=32)
         self._lease = self._interface = self._pump = None
@@ -28,14 +32,14 @@ class AdmittedCarrier:
                 data = bytes.fromhex(packet)
                 self._observe(data)
                 self._incoming.put_nowait(data)
-            self._lease = service._track_direct_workspace_session(raw, expected, certificate)
+            self._lease = runtime_lease or service._track_direct_workspace_session(raw, expected, certificate)
             self._interface = MeshDirectInterface(RNS.Transport, budget=service._direct_packet_budget)
             self._interface.name = "Mesh Direct admitted"
             self._interface.packet_policy = PacketPolicy(service.network.destination_hash,
                 _destination_for(_identity_from_public_key(expected.issuer_public_identity)))
             service.network.reticulum._add_interface(self._interface, mode=self._interface.MODE_POINT_TO_POINT)
             self._interface.activate(self._session, expires_at=time.monotonic()+max(0,
-                min(_parse(raw)["expires_at"],prepared.expires_at)-time.time()))
+                (prepared.expires_at if self.recovery else min(_parse(raw)["expires_at"],prepared.expires_at))-time.time()))
             self._pump = service._open_direct_packet_pump(self._interface, self._session,
                 self._incoming, self._outgoing, self._lost, self._stop, self._lease.check)
             self._thread = threading.Thread(target=self._run, name="mesh-direct-admitted", daemon=True)
@@ -48,17 +52,20 @@ class AdmittedCarrier:
         self.service.network.router.announce(self.service.network.destination_hash)
 
     def _observe(self, data):
-        if self.peer_seen.is_set():
-            return
         packet = RNS.Packet(None,data)
         if (packet.unpack() and packet.packet_type == RNS.Packet.ANNOUNCE
                 and packet.destination_hash == self._peer
                 and RNS.Identity.validate_announce(packet, only_validate_signature=True)):
+            self.peer_seen_at = time.monotonic()
             self.peer_seen.set()
 
     def _run(self):
+        next_announce = time.monotonic()+3
         try:
             while not self._stop.is_set():
+                if self.recovery and time.monotonic() >= next_announce:
+                    self.service.network.router.announce(self.service.network.destination_hash)
+                    next_announce = time.monotonic()+5
                 result = self.service._direct_native.request("poll", id=self.prepared.handle)
                 if (not isinstance(result,dict) or set(result) != {"state","packets"}
                         or type(result["state"]) is not int or result["state"] not in (0,1,2)

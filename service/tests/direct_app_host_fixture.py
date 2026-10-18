@@ -21,6 +21,7 @@ class AppHostNative:
         self._lock = threading.Lock()
         self._closed = False
         self.owned = {}
+        self.blocked = False
         self._reader = threading.Thread(target=self._read,daemon=True,name="controlled-native-private")
         self._reader.start()
 
@@ -32,19 +33,32 @@ class AppHostNative:
             self.channel.close()
 
     def request(self, operation, **payload):
-        if operation == "prepare":
+        if operation in {"prepare", "prepare_recovery"}:
             public_host = payload["address"].rsplit(":",1)[0].strip("[]")
             assert public_host in {"93.184.216.34", "0.0.0.0"}
+            payload = {**payload,"address":"127.0.0.1:"+payload["address"].rsplit(":",1)[1]}
+        elif operation == "recover":
+            assert all(candidate.startswith("93.184.216.34:") for candidate in payload["candidates"])
+            payload = {**payload,"candidates":[candidate.replace("93.184.216.34:","127.0.0.1:") for candidate in payload["candidates"]]}
+        elif operation == "migrate":
+            public_host = payload["address"].rsplit(":",1)[0].strip("[]")
+            assert public_host == "93.184.216.34"
             payload = {**payload,"address":"127.0.0.1:0"}
         elif operation == "activate":
             assert all(candidate["host"] == "93.184.216.34" for candidate in payload["candidates"])
             payload = {**payload,"candidates":[{**candidate,"host":"127.0.0.1"} for candidate in payload["candidates"]]}
+        if operation == "recover" and self.blocked:
+            payload = {**payload,"candidates":["127.0.0.1:9" for _ in payload["candidates"]]}
         result = self.channel.request(operation,**payload)
         with self._lock:
-            if operation == "prepare":
+            if operation in {"prepare", "prepare_recovery"}:
                 actual = {key:result[key] for key in ("id","host","port","certificate")}
                 assert actual["host"] == "127.0.0.1"
                 self.owned[result["id"]] = (public_host,actual)
+                result = {**result,"host":public_host}
+            elif operation == "migrate":
+                _, actual = self.owned[payload["id"]]
+                self.owned[payload["id"]] = (public_host,{**actual,**result})
                 result = {**result,"host":public_host}
             elif operation == "inspect":
                 public_host, actual = self.owned[payload["id"]]

@@ -313,6 +313,8 @@ def test_service_close_defers_vault_close_until_active_callback_finishes(
     service = MeshChatService.__new__(MeshChatService)
     service._direct_native = None
     service._direct_setup = None
+    from mesh_chat.direct_recovery import DirectRecovery
+    service._direct_recovery = DirectRecovery(service)
     service._direct_sessions = SessionRegistry()
     service._direct_packets = PacketRuntime()
     lease = service._direct_sessions.open(30, lambda: None)
@@ -353,6 +355,8 @@ def test_service_close_closes_vault_after_workers_stop() -> None:
     service = MeshChatService.__new__(MeshChatService)
     service._direct_native = None
     service._direct_setup = None
+    from mesh_chat.direct_recovery import DirectRecovery
+    service._direct_recovery = DirectRecovery(service)
     service._direct_sessions = SessionRegistry()
     service._direct_packets = PacketRuntime()
     lease = service._direct_sessions.open(30, lambda: None)
@@ -377,6 +381,8 @@ def test_service_close_keeps_vault_open_for_active_packet_authority() -> None:
     service = MeshChatService.__new__(MeshChatService)
     service._direct_native = None
     service._direct_setup = None
+    from mesh_chat.direct_recovery import DirectRecovery
+    service._direct_recovery = DirectRecovery(service)
     service._direct_sessions = SessionRegistry()
     service._direct_packets = PacketRuntime()
     service._shutdown = threading.Event()

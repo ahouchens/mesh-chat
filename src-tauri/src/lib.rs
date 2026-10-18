@@ -508,6 +508,11 @@ fn allowed_renderer_command(command: &str) -> bool {
             | "prepare_direct_ready"
             | "accept_direct_ready"
             | "connect_direct_setup"
+            | "direct_recovery_status"
+            | "export_recovery_update"
+            | "import_recovery_update"
+            | "pause_direct_recovery"
+            | "resume_direct_recovery"
             | "direct_setup_status"
             | "cancel_direct_setup"
             | "revoke_workspace_invitation"
@@ -1505,6 +1510,11 @@ mod tests {
             "prepare_direct_ready",
             "accept_direct_ready",
             "connect_direct_setup",
+            "direct_recovery_status",
+            "export_recovery_update",
+            "import_recovery_update",
+            "pause_direct_recovery",
+            "resume_direct_recovery",
             "direct_setup_status",
             "cancel_direct_setup",
             "workspace_snapshot",

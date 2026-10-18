@@ -21,6 +21,7 @@ on:
       - 'service/tools/direct_fabric_harness.py'
       - 'service/tests/test_direct_binding.py'
       - 'service/tests/test_direct_relationship.py'
+      - 'service/tests/test_direct_recovery*.py'
       - 'service/tests/test_direct_runtime.py'
       - 'service/tests/test_direct_native.py'
       - 'service/tests/test_direct_candidates.py'
@@ -50,7 +51,7 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 25
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@1.88.0
@@ -64,7 +65,7 @@ jobs:
       - name: Validate workspace and pending join binding authority
         run: python -m pytest service/tests/test_workspace_service.py -k "direct_workspace_binding or direct_join_binding or direct_owner_binding or direct_ready" -q
       - name: Validate atomic durable admitted relationship evidence
-        run: python -m pytest service/tests/test_direct_relationship.py -q
+        run: python -m pytest service/tests/test_direct_relationship.py service/tests/test_direct_recovery.py service/tests/test_direct_recovery_candidates.py -q
       - name: Validate public document codec and protected setup lifecycle
         run: python -m pytest service/tests/test_direct_documents.py service/tests/test_direct_setup.py -q
       - name: Validate isolated bootstrap process boundaries
@@ -85,6 +86,23 @@ jobs:
       - name: Install Linux syscall observer
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y strace
+      - name: Production durable recovery through shipping dispatcher
+        shell: bash
+        run: |
+          binary="$PWD/experiments/direct-app-host/target/debug/mesh-direct-app-host-proof"
+          if [[ "$RUNNER_OS" == "Windows" ]]; then binary="$binary.exe"; fi
+          export MESH_DIRECT_APP_HOST_BINARY="$binary"
+          if [[ "$RUNNER_OS" == "Linux" ]]; then
+            python service/tools/direct_network_audit.py --report direct-recovery-network-evidence.json -- python -m pytest service/tests/test_direct_recovery_pipeline.py -x -q
+          else
+            python -m pytest service/tests/test_direct_recovery_pipeline.py -x -q
+          fi
+      - name: Retain production recovery network provenance
+        if: runner.os == 'Linux' && success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: direct-recovery-network-evidence
+          path: direct-recovery-network-evidence.json
       - name: Real RNS and LXMF over native QUIC
         shell: bash
         env:

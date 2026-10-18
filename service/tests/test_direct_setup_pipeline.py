@@ -88,7 +88,7 @@ class PipeNative:
     retire = close
 
 
-def _service_worker(root, incoming, outgoing, commands, replies, native_binary=None, delay_admission=False, unhosted=False):
+def _service_worker(root, incoming, outgoing, commands, replies, native_binary=None, delay_admission=False, unhosted=False, vault_key=None):
     from mesh_chat import connectivity as c
     from mesh_chat.reticulum_config import NetworkSettings
     from mesh_chat.service import MeshChatService
@@ -96,7 +96,7 @@ def _service_worker(root, incoming, outgoing, commands, replies, native_binary=N
     c.default_routes = lambda: [c.RouteInfo(socket.AF_INET,"controlled","192.168.1.1","93.184.216.34",1)]
     if unhosted:
         c.default_routes = lambda: []
-    store = VaultStore(Path(root), os.urandom(32), allow_unprotected_for_tests=True)
+    store = VaultStore(Path(root), vault_key or os.urandom(32), allow_unprotected_for_tests=True)
     store.put("settings","network",NetworkSettings(nearby_discovery=False,lan_fallback=False).to_dict())
     if native_binary:
         from direct_app_host_fixture import AppHostNative
@@ -111,6 +111,8 @@ def _service_worker(root, incoming, outgoing, commands, replies, native_binary=N
             operation, payload = commands.get()
             if operation == "close":
                 break
+            if operation == "crash":
+                os._exit(91)
             try:
                 with service._dispatch_lock:
                     if operation == "command":
@@ -120,6 +122,30 @@ def _service_worker(root, incoming, outgoing, commands, replies, native_binary=N
                         import RNS
                         result = {"native_count":len(service._direct_native.owned),
                                   "interfaces":len(RNS.Transport.interfaces)}
+                    elif operation == "recovery_diagnostic":
+                        import hashlib
+                        result = {"peers":service._direct_recovery.status(),
+                            "identity":service.network.destination_hash.hex(),
+                            "paths":[{"recovery":carrier.recovery,"certificate":hashlib.sha256(carrier.prepared.document_fields()["certificate"]).hexdigest()}
+                                     for carrier in service._direct_recovery._active.values() if not carrier._stop.is_set()],
+                            "pending":len(service._direct_recovery._pending),"native_count":len(native.owned)}
+                    elif operation == "force_recovery":
+                        if payload.get("retire"):
+                            service._direct_recovery.retire()
+                        if "blocked" in payload:
+                            native.blocked = payload["blocked"]
+                        for identifier, record in store.items("direct_relationship"):
+                            if payload.get("lose_hints"):
+                                record["candidates"]=[]
+                                store.put("direct_relationship",identifier,record)
+                            service._direct_recovery._write(identifier,next_at=time.time(),
+                                attempts=6 if payload.get("blocked") or payload.get("lose_hints") else 0,state="reconnecting")
+                        service._direct_recovery._wake.set()
+                        result = None
+                    elif operation == "route_change":
+                        c.default_routes = lambda: [c.RouteInfo(socket.AF_INET,"changed","192.168.2.1","93.184.216.34",1)]
+                        service._direct_recovery._route_check_at=0
+                        result = None
                     elif operation == "relationship_evidence":
                         records = store.list("direct_relationship")
                         result = [{"scope": item["scope"], "accepted": item["accepted"],
@@ -207,7 +233,10 @@ def test_production_setup_bootstrap_admission_and_fresh_workspace_path(tmp_path,
             assert len(evidence) == 1
             assert evidence[0]["scope"]["workspace_id"] == workspace["id"]
             assert evidence[0]["last_success"] is not None
-            assert evidence[0]["last_success"]["digest"] == evidence[0]["accepted"]["digest"]
+            # A newly accepted replacement can coexist with the authenticated old path.
+            assert evidence[0]["last_success"]["generation"] <= evidence[0]["accepted"]["generation"]
+            if evidence[0]["last_success"]["generation"] == evidence[0]["accepted"]["generation"]:
+                assert evidence[0]["last_success"]["digest"] == evidence[0]["accepted"]["digest"]
         if retirement == "cancel":
             command(0,"cancel_direct_setup",setup_id=ready["setup_id"])
         elif retirement == "suspend":

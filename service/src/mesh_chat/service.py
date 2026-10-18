@@ -145,6 +145,8 @@ class MeshChatService(
         "preview_direct_connection", "prepare_direct_offer", "prepare_direct_answer",
         "prepare_direct_ready", "accept_direct_ready", "connect_direct_setup",
         "direct_setup_status", "cancel_direct_setup",
+        "direct_recovery_status", "export_recovery_update", "import_recovery_update",
+        "pause_direct_recovery", "resume_direct_recovery",
         "snapshot",
         "workspace_snapshot",
         "create_profile",
@@ -306,6 +308,8 @@ class MeshChatService(
         "preview_direct_connection", "prepare_direct_offer", "prepare_direct_answer",
         "prepare_direct_ready", "accept_direct_ready", "connect_direct_setup",
         "direct_setup_status", "cancel_direct_setup",
+        "direct_recovery_status", "export_recovery_update", "import_recovery_update",
+        "pause_direct_recovery", "resume_direct_recovery",
         "snapshot",
         "workspace_snapshot",
         "search",
@@ -347,6 +351,8 @@ class MeshChatService(
         self._direct_packet_budget = ProfileBudget()
         from .direct_setup import DirectSetup
         self._direct_setup = DirectSetup(self)
+        from .direct_recovery import DirectRecovery
+        self._direct_recovery = DirectRecovery(self)
         self._close_lock = threading.Lock()
         self._close_started = False
         self._store_closed = False
@@ -372,6 +378,7 @@ class MeshChatService(
 
         self._retry_thread = threading.Thread(target=self._retry_loop, daemon=True)
         self._retry_thread.start()
+        self._direct_recovery.start()
 
     def _start_network(self, display_name: str) -> None:
         if self._identity is None or self.network is not None:
@@ -2524,6 +2531,17 @@ class MeshChatService(
             return response, command == "shutdown"
 
     def _execute(self, command: str, value: Any) -> Any:
+        recovery_commands = {
+            "direct_recovery_status": ("status",set()),
+            "export_recovery_update": ("export",{"identifier"}),
+            "import_recovery_update": ("receive",{"document","workspace_id"}),
+            "pause_direct_recovery": ("pause",{"identifier"}),
+            "resume_direct_recovery": ("resume",{"identifier"}),
+        }
+        if command in recovery_commands:
+            method, fields = recovery_commands[command]
+            body = _payload(value,allowed=fields,required=fields)
+            return getattr(self._direct_recovery,method)(**body)
         direct_commands = {
             "preview_direct_connection": ("preview", {"document"}),
             "prepare_direct_offer": ("offer", {"invitation_id"}),
@@ -3913,6 +3931,7 @@ class MeshChatService(
         self._shutdown.set()
         if self._direct_native is not None:
             self._direct_native.close()
+        self._direct_recovery.retire(close=True)
         if self._direct_setup is not None:
             self._direct_setup.retire(close=True)
         self._direct_sessions.retire_all("closed", close=True)
@@ -3936,7 +3955,7 @@ class MeshChatService(
         # callback or retry. If the bounded foreground shutdown expires, a
         # daemon finalizer waits for that worker and closes the vault exactly
         # once without delaying desktop's sidecar deadline.
-        workers_stopped = packets_stopped and callbacks_stopped and not self._retry_thread.is_alive()
+        workers_stopped = self._direct_recovery.wait(timeout=0.1) and packets_stopped and callbacks_stopped and not self._retry_thread.is_alive()
         if not workers_stopped:
             finalizer = threading.Thread(
                 target=self._finish_deferred_close,
@@ -3954,6 +3973,7 @@ class MeshChatService(
 
         try:
             self._direct_packets.wait()
+            self._direct_recovery.wait()
             if (
                 self._retry_thread.is_alive()
                 and self._retry_thread is not threading.current_thread()

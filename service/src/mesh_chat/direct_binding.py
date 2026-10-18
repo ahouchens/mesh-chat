@@ -26,6 +26,7 @@ from .workspace_protocol import (
 
 MAX_BYTES = 16 * 1024
 ALPN = "mesh-direct-proof/1"
+RECOVERY_ALPN = "mesh-direct-recovery/1"
 MAX_GENERATION = (1 << 63) - 1
 
 
@@ -171,10 +172,12 @@ def verify_binding(
         "challenge", "generation", "candidates", "issued_at", "expires_at", "signature",
     }:
         _fail()
-    if type(value["v"]) is not int or value["v"] not in (1, 2) or value["type"] != "direct_binding":
+    if type(value["v"]) is not int or value["v"] not in (1, 2, 3) or value["type"] != "direct_binding":
         _fail()
     _scope(value["scope"])
     _scope(authority.scope)
+    if value["v"] == 3 and value["scope"]["kind"] != "workspace":
+        _fail("Recovery requires admitted workspace authority")
     # Canonical bytes avoid Python's bool/int equality in nested scopes.
     if canonical_bytes(value["scope"]) != canonical_bytes(authority.scope):
         raise IdentityMismatch("Direct binding scope does not match authorization")
@@ -202,7 +205,7 @@ def _verify_transport_fields(value, authority, certificate_der, *, now):
         _fail("Transport certificate size is invalid")
     if _hex(value["certificate_sha256"], 32) != hashlib.sha256(certificate_der).digest():
         raise IdentityMismatch("Direct binding transport certificate does not match")
-    if value["alpn"] != ALPN:
+    if value["alpn"] != (RECOVERY_ALPN if value["v"] == 3 else ALPN):
         _fail("Direct binding ALPN is incompatible")
     _validate_uuid(value["session_id"], "Direct session ID")
     if _hex(value["challenge"], 32) != authority.challenge:
@@ -216,7 +219,7 @@ def _verify_transport_fields(value, authority, certificate_der, *, now):
     if value["scope"]["kind"] == "invitation" and expiry > value["scope"]["expires_at"]:
         _fail("Direct binding exceeds invitation validity")
     candidates = value["candidates"]
-    minimum = 0 if value["v"] == 2 else 1
+    minimum = 0 if value["v"] >= 2 else 1
     if not isinstance(candidates, list) or not minimum <= len(candidates) <= 8:
         _fail("Direct candidate count is invalid")
     seen = set()
@@ -253,7 +256,7 @@ def create_binding(identity: RNS.Identity, authority: BindingAuthority,
         "issuer_destination": _destination_for(identity).hex(),
         "audience_destination": authority.audience_destination.hex(),
         "certificate_sha256": hashlib.sha256(certificate_der).hexdigest(),
-        "alpn": ALPN, "session_id": session_id, "challenge": challenge.hex(),
+        "alpn": RECOVERY_ALPN if version == 3 else ALPN, "session_id": session_id, "challenge": challenge.hex(),
         "generation": generation, "candidates": candidates,
         "issued_at": issued_at, "expires_at": expires_at,
     }, maximum=MAX_BYTES)

@@ -12,7 +12,7 @@ use rustls::{
 use std::{
     net::SocketAddr,
     sync::{
-        atomic::{AtomicU8, Ordering},
+        atomic::{AtomicBool, AtomicU8, Ordering},
         Arc, Mutex,
     },
     time::Duration,
@@ -134,7 +134,7 @@ pub struct Running {
     incoming: mpsc::Receiver<Bytes>,
     endpoint: quinn::Endpoint,
     pub certificate: Vec<u8>,
-    client: bool,
+    client: Arc<AtomicBool>,
 }
 impl Drop for Running {
     fn drop(&mut self) {
@@ -258,14 +258,21 @@ impl Running {
         let (cancel, mut cancelled) = watch::channel(false);
         let (outgoing, mut outgoing_rx) = mpsc::channel::<Bytes>(32);
         let (incoming_tx, incoming) = mpsc::channel(32);
+        let actual_client = Arc::new(AtomicBool::new(false));
+        let worker_client = actual_client.clone();
         tokio::spawn(async move {
             let work = async {
                 let deadline = Instant::now() + attempt;
                 let connecting = async {
                     for index in 0..64 {
-                        let connected = if client {
+                        // Alternate standard connect/listen windows so a
+                        // changed server address can recover through a known
+                        // reachable client address. The preferred role orders
+                        // the first attempt; it is not discovery authority.
+                        let dial = client == (index % 2 == 0);
+                        let connected = if dial && !candidates.is_empty() {
                             match worker_endpoint.connect(
-                                candidates[index % candidates.len()],
+                                candidates[(index / 2) % candidates.len()],
                                 "mesh-direct.invalid",
                             ) {
                                 Ok(c) => tokio::time::timeout(Duration::from_secs(5), c)
@@ -275,15 +282,22 @@ impl Running {
                                 Err(_) => None,
                             }
                         } else {
-                            match worker_endpoint.accept().await {
-                                Some(c) => tokio::time::timeout(Duration::from_secs(5), c)
+                            match tokio::time::timeout(
+                                Duration::from_secs(5),
+                                worker_endpoint.accept(),
+                            )
+                            .await
+                            {
+                                Ok(Some(c)) => tokio::time::timeout(Duration::from_secs(5), c)
                                     .await
                                     .ok()
                                     .and_then(Result::ok),
-                                None => return Err(Error::Closed),
+                                Ok(None) => return Err(Error::Closed),
+                                Err(_) => None,
                             }
                         };
                         if let Some(connection) = connected {
+                            worker_client.store(dial && !candidates.is_empty(), Ordering::Release);
                             return Ok(connection);
                         }
                         tokio::time::sleep(Duration::from_millis(500)).await;
@@ -368,7 +382,7 @@ impl Running {
             incoming,
             endpoint,
             certificate,
-            client,
+            client: actual_client,
         })
     }
     pub fn authorize(&self, token: [u8; 32]) -> Result<(), Error> {
@@ -418,7 +432,7 @@ impl Running {
         self.endpoint.local_addr().map_err(|_| Error::Socket)
     }
     pub fn migrate(&self, bound: BoundSocket) -> Result<(), Error> {
-        if !self.client || self.state.load(Ordering::Acquire) != 1 {
+        if !self.client.load(Ordering::Acquire) || self.state.load(Ordering::Acquire) != 1 {
             return Err(Error::Configuration);
         }
         self.endpoint

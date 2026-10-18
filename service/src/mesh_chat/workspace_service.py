@@ -1665,6 +1665,7 @@ class WorkspaceServiceMixin:
             self._direct_setup.retire()
             if self._direct_native is not None:
                 self._direct_native.retire()
+            self._direct_recovery.retire()
             self._direct_sessions.retire_all("suspended")
             self._direct_packets.retire_all()
         if state == "foreground":
@@ -18537,6 +18538,9 @@ class WorkspaceServiceMixin:
         if not self._workspace_source_is_active(
             wire.workspace_id, getattr(native, "source_hash", None)
         ):
+            return
+        if wire.kind == "workspace_connection_update":
+            self._direct_recovery.receive(wire.document,source=getattr(native,"source_hash",None),workspace_id=wire.workspace_id)
             return
         if wire.kind == "workspace_manifest_root":
             self._receive_workspace_manifest(wire)

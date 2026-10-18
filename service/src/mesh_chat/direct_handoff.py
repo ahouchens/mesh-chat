@@ -149,6 +149,7 @@ class AdmissionHandoff:
                                 record_success(self.service.store, expected, accepted,
                                     load_authority=lambda: self.service._direct_workspace_binding_authority(expected),
                                     clock=lambda: int(time.time()))
+                                self.service._direct_recovery.adopt(expected,admitted)
                             self.carrier.close()
                             return
                 self.carrier._stop.wait(.1)

@@ -237,6 +237,9 @@ class DirectSetup:
             prepared = self._prepared.pop(setup_id, None)
             carrier = self._carriers.pop(setup_id, None)
         if carrier is not None:
+            if hasattr(carrier,"expected"):
+                from .direct_relationship import relationship_id
+                self.service._direct_recovery.pause(relationship_id(self.service.store,carrier.expected))
             carrier.close()
         if prepared is not None:
             prepared.close()

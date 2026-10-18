@@ -109,12 +109,14 @@ class NativePreparation:
 
 
 def prepare_candidates(native, *, generation, expires_at, family=None, routes=None,
-                       clock=time.time, monotonic=time.monotonic):
+                       clock=time.time, monotonic=time.monotonic, recovery=False, preferred_port=0, preferred_external_port=0):
+    if type(preferred_port) is not int or not 0 <= preferred_port <= 65535:
+        raise ValidationError("Invalid local port hint")
     if type(expires_at) is not int:
         raise ValidationError("Direct candidate preparation is invalid")
     remaining = expires_at-clock()
     if (type(generation) is not int or not 1 <= generation < 2**63
-            or type(expires_at) is not int or not 1 <= remaining <= 300
+            or type(expires_at) is not int or not 1 <= remaining <= (3600 if recovery else 300)
             or family not in (None, socket.AF_INET, socket.AF_INET6)):
         raise ValidationError("Direct candidate preparation is invalid")
     routes = c.default_routes() if routes is None else list(routes)
@@ -124,8 +126,15 @@ def prepare_candidates(native, *, generation, expires_at, family=None, routes=No
     eligible.sort(key=lambda route: (c.classify_address(route.local_address) != "public_ipv6", route.metric))
     route = eligible[0] if eligible else None
     local = route.local_address if route else ("::" if family == socket.AF_INET6 else "0.0.0.0")
-    address = f"[{local}]:0" if ":" in local else f"{local}:0"
-    owned = native.request("prepare", address=address, generation=generation, remaining_ms=int(remaining*1000))
+    address = f"[{local}]:{preferred_port}" if ":" in local else f"{local}:{preferred_port}"
+    operation = "prepare_recovery" if recovery else "prepare"
+    try:
+        owned = native.request(operation, address=address, generation=generation, remaining_ms=int(remaining*1000))
+    except ValidationError:
+        if not preferred_port:
+            raise
+        address = f"[{local}]:0" if ":" in local else f"{local}:0"
+        owned = native.request(operation, address=address, generation=generation, remaining_ms=int(remaining*1000))
     preparation = None
     try:
         if (not isinstance(owned, dict) or set(owned) != {"id", "session", "generation", "host", "port", "certificate"}
@@ -136,7 +145,7 @@ def prepare_candidates(native, *, generation, expires_at, family=None, routes=No
                 or not isinstance(owned["certificate"], str)
                 or not 1 <= len(bytes.fromhex(owned["certificate"])) <= 16384):
             raise ValidationError("Native socket preparation is invalid")
-        preparation = NativePreparation(native, owned, expires_at, clock=clock, monotonic=monotonic)
+        preparation = (RecoveryPreparation if recovery else NativePreparation)(native, owned, expires_at, clock=clock, monotonic=monotonic)
         kind = c.classify_address(local)
         lifetime = max(1, int(expires_at-clock()))
         if kind in {"public_ipv4", "public_ipv6"}:
@@ -152,7 +161,7 @@ def prepare_candidates(native, *, generation, expires_at, family=None, routes=No
                     pass  # Global address is a candidate, never a firewall-success claim.
         elif route is not None:
             try:
-                mapping = c.create_port_mapping(owned["port"], lifetime=lifetime, routes=[route], protocol="udp")
+                mapping = c.create_port_mapping(owned["port"], lifetime=lifetime, routes=[route], protocol="udp", **({"preferred_external_port": preferred_external_port} if recovery else {}))
                 preparation._add_mapping(mapping)
             except OSError:
                 preparation.reason = "no_public_candidate"
@@ -167,3 +176,110 @@ def prepare_candidates(native, *, generation, expires_at, family=None, routes=No
             except Exception:
                 pass
         raise
+
+
+class RecoveryPreparation(NativePreparation):
+    """Independent socket and candidate leases; renew only the still-owned UDP socket."""
+    def _add_candidate(self, host, port, expiry):
+        with self._lock:
+            self._check()
+            self._candidates = [{"host": host, "port": port, "expires_at": min(expiry, self.expires_at)}]
+            self.reason = "candidates_prepared_unverified"
+
+    def document_fields(self):
+        fields = super().document_fields()
+        # Expired hints are never re-signed as currently mapped candidates.
+        fields["candidates"] = [c for c in fields["candidates"] if c["expires_at"] > self._clock()]
+        fields["expires_at"] = min([fields["expires_at"]] + [c["expires_at"] for c in fields["candidates"]])
+        return fields
+
+    def cleanup_records(self):
+        with self._lock:
+            return deepcopy(self._mappings)
+
+    def renew(self, persist, *, lifetime=3600):
+        """Persist/sign the actual renewal result before returning it for export.
+
+        Caller serializes renewal per preparation. Failure invalidates the
+        advertised mapping; the still-authenticated connection may remain usable.
+        """
+        self.document_fields()
+        with self._lock:
+            old = deepcopy(self._mappings)
+        if not old:
+            return False
+        renewed = []
+        try:
+            for record in old:
+                renewed.append(c.renew_port_mapping(record, lifetime=min(lifetime, max(1,int(self.expires_at-self._clock())))))
+            self.document_fields()  # Ownership may have disappeared during router I/O.
+            with self._lock:
+                self._check()
+                self._mappings = []
+                self._candidates = []
+            for mapping in renewed:
+                self._add_mapping(mapping)
+            fields = self.document_fields()
+            persist(fields, self.cleanup_records())
+            # Do not remove a renewed tuple or IPv6 pinhole sharing the same ID.
+            for record in old:
+                if not any((record["method"], record["external_host"],record["external_port"],record.get("cleanup",{}).get("unique_id")) ==
+                           (r.method,r.external_host,r.external_port,r.cleanup.get("unique_id")) for r in renewed):
+                    try: c.remove_port_mapping(record)
+                    except OSError: pass
+            return True
+        except Exception:
+            if self._closed:
+                for mapping in renewed:
+                    try: c.remove_port_mapping(mapping.record())
+                    except OSError: pass
+                raise
+            with self._lock:
+                self._candidates = []
+                self.reason = "mapping_renewal_failed"
+                # Retain cleanup references until close, including failed renewals.
+                self._mappings = old + [r.record() for r in renewed if r.record() not in old]
+            try: persist(self.document_fields(), self.cleanup_records())
+            except Exception:
+                self.close()
+                raise
+            return False
+
+
+    def migrate(self, route, persist):
+        """Rebind a live QUIC client, then map and sign that exact new socket."""
+        self.document_fields()
+        old = self.cleanup_records()
+        address = f"[{route.local_address}]:0" if ":" in route.local_address else f"{route.local_address}:0"
+        owned = self._native.request("migrate",id=self.handle,address=address)
+        if (not isinstance(owned,dict) or set(owned) != {"host","port"}
+                or owned["host"] != route.local_address or type(owned["port"]) is not int
+                or not 1 <= owned["port"] <= 65535):
+            self.close()
+            raise ValidationError("Migration lost socket ownership")
+        with self._lock:
+            self._owned.update(owned)
+            self._candidates = []
+            self._mappings = []
+        try:
+            self.document_fields()
+            kind = c.classify_address(owned["host"])
+            lifetime = max(1,int(self.expires_at-self._clock()))
+            if kind in {"public_ipv4","public_ipv6"}:
+                self._add_candidate(owned["host"],owned["port"],self.expires_at)
+            else:
+                try:
+                    self._add_mapping(c.create_port_mapping(owned["port"],lifetime=lifetime,routes=[route],protocol="udp"))
+                except OSError:
+                    self.reason = "no_public_candidate"
+            persist(self.document_fields(),self.cleanup_records())
+        except Exception:
+            self.close()
+            raise
+        finally:
+            current=self.cleanup_records()
+            for record in old:
+                if not any((record["external_host"],record["external_port"]) ==
+                           (r["external_host"],r["external_port"]) for r in current):
+                    try: c.remove_port_mapping(record)
+                    except OSError: pass

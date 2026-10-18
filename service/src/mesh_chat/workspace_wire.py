@@ -34,6 +34,7 @@ WORKSPACE_WIRE_KINDS = frozenset(
         "workspace_join",
         "workspace_join_receipt",
         "workspace_direct_binding",
+        "workspace_connection_update",
         "workspace_device_link",
         "workspace_device_removal",
         "workspace_read_hint",
