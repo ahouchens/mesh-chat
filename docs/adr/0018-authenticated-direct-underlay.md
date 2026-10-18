@@ -342,3 +342,19 @@ Quinn's standard authenticated client migration and NAT rebinding are enabled
 only on this recovery transport. A private client rebind remains an optimization;
 server rebind is rejected and explicit reconnection is the fallback. Neither
 mechanism discovers two unknown endpoints. No custom UDP probes are introduced.
+
+
+The service coordinator reserves generations/backoff before native side effects and
+limits active relationships and attempt workers to four, including workers blocked
+in router I/O after cancellation. Native session capacity remains eight to permit
+old/new overlap. A replacement is selected only after current membership, durable
+binding acceptance, native approval, signed peer RNS confirmation and durable route
+confirmation. Epoch/token checks reject stale callbacks. Old paths survive failed
+replacement commits.
+
+Native dial/listen windows may reverse the preferred role when the preferred server
+has moved but the peer's numeric address is still known. The actual initiator alone
+may use client rebind. Server migration is rejected and schedules reconnection.
+Unknown peer addresses remain unknown; manual signed updates can restart a waiting
+listener without reusing its old key. Crash mapping references are retained in the
+encrypted vault until bounded lease expiry; only a live owner performs deletion.

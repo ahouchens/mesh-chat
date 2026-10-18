@@ -491,5 +491,30 @@ failed encryption or commit cannot leave one record advanced. Existing replay
 floors survive initialization of the new record. Invitation scopes are rejected.
 Stored public certificates and remote candidates do not authorize resurrecting
 a native session. Historical route evidence is generation-bound and distinct
-from present peer liveness and application receipts. Rotated-key reauthentication
-and persistent recovery still require implementation and qualification.
+from present peer liveness and application receipts. Phase 3 now implements
+rotated-key recovery under the additional boundary below; qualification status is
+recorded separately in the Phase 3 evidence document.
+
+
+### Recovery before transport-key authentication
+
+The recovery ALPN deliberately proves TLS key possession before RNS authorization.
+At that stage it exposes only bounded peer-encrypted control material: no RNS
+adapter, application plaintext, packet forwarding, early data or session resumption.
+Rustls verifies TLS 1.3 CertificateVerify; the protected service then verifies the
+RNS signature, actual certificate hash, audience, device scope, freshness and current
+membership, and commits the replay floor before native approval. Exporter tokens
+are private and connection-specific. A copied binding cannot authenticate another
+TLS key. Hostile provisional peers can consume only bounded connection/stream/queue
+time and must reauthenticate after ownership loss.
+
+Durable candidate hints do not prove reachability or continued router ownership.
+A crash can leave a router lease until expiry; stored cleanup records do not justify
+blind deletion of a tuple now used by another process. Every renewed mapping must
+match the exact still-owned UDP socket. Cancellation and vault failure prevent
+export/promotion, and old authenticated paths survive failed replacements.
+
+Direct recovery does not solve two unknown addresses or filtered networks. Those
+states retain membership and queued work and expose a fresh connection-update
+exchange. They do not enable a relay or helper. Physical mobile battery, lifecycle
+and router behavior still require the Phase 2/5 qualification gates.

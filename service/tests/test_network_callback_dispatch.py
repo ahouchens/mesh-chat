@@ -412,3 +412,36 @@ def test_service_close_keeps_vault_open_for_active_packet_authority() -> None:
         release.set()
         pump.join(2)
     assert closed.wait(2) and retired.is_set()
+
+
+def test_service_close_keeps_vault_open_for_inflight_recovery_worker():
+    from mesh_chat.direct_recovery import DirectRecovery
+    service = MeshChatService.__new__(MeshChatService)
+    service._direct_native = service._direct_setup = None
+    service._direct_sessions = SessionRegistry()
+    service._direct_packets = PacketRuntime()
+    service._shutdown = threading.Event()
+    service._dispatch_lock = threading.RLock()
+    service._close_lock = threading.Lock()
+    service._close_started = service._store_closed = False
+    service._close_finalizer = None
+    service._retry_thread = threading.Thread(target=lambda: None)
+    service.network = SimpleNamespace(shutdown=lambda: True)
+    closed, entered, release = (threading.Event() for _ in range(3))
+    service.store = SimpleNamespace(close=closed.set)
+    service._direct_recovery = DirectRecovery(service)
+    def work():
+        entered.set()
+        assert release.wait(3)
+        assert not closed.is_set()
+    worker=threading.Thread(target=work)
+    service._direct_recovery._workers.add(worker)
+    worker.start()
+    try:
+        assert entered.wait(2)
+        service.close()
+        assert not closed.is_set()
+        assert service._close_finalizer is not None
+    finally:
+        release.set(); worker.join(2)
+    assert closed.wait(2)

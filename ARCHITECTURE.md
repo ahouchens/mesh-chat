@@ -30,8 +30,8 @@ email/file setup now connects the underlay to an isolated bootstrap interpreter
 allows a bounded control-only handoff to fresh workspace-scoped credentials;
 ordinary channel traffic then uses a separately leased main-context adapter.
 Existing routes remain available throughout. Native process-boundary packages
-compile, while exact integrated-flow CI and physical qualification remain open.
-Persistent automatic relationship recovery remains Phase 3 work.
+compile and Phase 2 integrated-flow CI passes; physical qualification remains open.
+Phase 3 recovery is implemented below, with automated qualification tracked separately.
 
 ## Participant-hosted Internet invitations
 
@@ -532,6 +532,33 @@ its existing replay floor together, with current membership reloaded inside
 the transaction. A fresh authenticated native path plus a signed peer RNS
 announce records historical success. Bootstrap retirement does not prematurely
 cancel the opposite-direction admitted confirmation. Runtime sockets, keys and
-adapter ownership remain ephemeral. Automatic restart recovery, rotated-key
-reauthentication, renewal and migration remain open; see
+adapter ownership remain ephemeral.
+
+`DirectRecovery` reconciles encrypted device relationships on startup and foreground,
+reserves outgoing generations and bounded jittered backoff before native work, and
+owns at most four relationships/attempt workers with room for authenticated
+replacement inside the eight-session native budget. Cancelled router workers keep
+their worker slots until they exit. Round-robin scheduling prevents a failing peer
+from monopolizing attempts. Suspension retires ownership; shutdown waits for workers
+before closing the vault. A paused relationship stays paused when an update arrives.
+
+Recovery uses fresh native keys with the ADR's provisional TLS/RNS authorization.
+The service exchanges signed `mesh-recover:` updates over existing authorized LXMF
+paths or explicit import/export. Only the current owned preparation can be exported.
+A saved UDP source port is a rebinding preference, never a live socket or adapter
+port. Expired remote numeric tuples are bounded dialing hints; only fresh TLS key
+possession plus current RNS-signed authority can attach an adapter.
+
+Socket lifetime and router lease lifetime are separate. Renewal checks exact native
+ownership around router I/O, signs the actual returned tuple and lease, and commits
+cleanup references before export. Crash cleanup references remain sealed and bounded
+until lease expiry; startup never blindly deletes an unowned reused tuple. Live
+owners remove their own mappings on retirement. Supported client rebind uses QUIC
+path validation; server rebind failure schedules a fresh authenticated connection.
+
+A replacement must pass native authorization, signed RNS peer confirmation and
+vault confirmation before the old usable path is retired. Membership, application
+outbox entries, logical IDs and receipts stay in their existing service mechanisms.
+Engine replies, recent authenticated peer announces, RNS readiness and message
+receipts remain separate evidence. See
 [criterion tracking](docs/DIRECT_CONNECTIVITY_PHASE3_EVIDENCE.md).

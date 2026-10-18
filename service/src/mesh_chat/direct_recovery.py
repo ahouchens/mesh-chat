@@ -180,6 +180,7 @@ class DirectRecovery:
     def _attempt(self, identifier, record, token):
         prepared = admitted = None
         promoted = False
+        stage = "reserve"
         try:
             with self.service._dispatch_lock:
                 if not self._valid(identifier,token): return
@@ -192,6 +193,7 @@ class DirectRecovery:
                 # socket; restart may request the old port as a hint only.
                 port = 0 if old and not old._stop.is_set() else hint.get("port",0)
                 cleanup = saved.get("cleanup") or []
+            stage = "prepare"
             prepared = prepare_candidates(self.service._direct_native,generation=generation,
                 expires_at=int(self.clock())+3600,recovery=True,preferred_port=port,
                 preferred_external_port=cleanup[0]["external_port"] if cleanup else 0)
@@ -200,6 +202,7 @@ class DirectRecovery:
                 fields = prepared.document_fields()
                 local = self._save_local(identifier,record,prepared,fields,prepared.cleanup_records())
                 with self._lock: self._prepared[identifier] = prepared
+            stage = "update"
             self._send(record,local)
             # On the first upgrade, Phase 2 ALPN addresses cannot run recovery.
             # Keep the old carrier until a current recovery update arrives.
@@ -232,12 +235,14 @@ class DirectRecovery:
                 raise ValidationError("Both endpoint addresses are unknown")
             prepared.document_fields()
             raw = local["binding"]
+            stage = "native_start"
             self.service._direct_native.request("arm",id=prepared.handle,session=fields["session_id"],
                 generation=generation,digest=hashlib.sha256(raw.encode()).hexdigest())
             self.service._direct_native.request("recover",id=prepared.handle,
                 capsule=protocol.capsule(expected.issuer_public_identity,raw).hex(),
                 candidates=[f"[{c['host']}]:{c['port']}" if ':' in c['host'] else f"{c['host']}:{c['port']}" for c in candidates],
                 client=client,remaining_ms=60000,lifetime_ms=max(1,int((prepared.expires_at-self.clock())*1000)))
+            stage = "native_wait"
             end, approved = time.monotonic()+72, False
             peer_raw = peer_cert = accepted = None
             while self._valid(identifier,token) and time.monotonic() < end:
@@ -250,6 +255,7 @@ class DirectRecovery:
                     if not evidence: continue
                     if set(evidence) != {"capsule","certificate","token"}:
                         raise ValidationError("Invalid native recovery evidence")
+                    stage = "peer_authorization"
                     peer_raw = protocol.open_capsule(self.service._identity,bytes.fromhex(evidence["capsule"]))
                     peer_cert = bytes.fromhex(evidence["certificate"])
                     with self.service._dispatch_lock:
@@ -261,6 +267,7 @@ class DirectRecovery:
                 if polled["state"] == 1:
                     if not approved:
                         raise ValidationError("Native recovery bypassed authorization")
+                    stage = "rns_attach"
                     def check():
                         with self.service._dispatch_lock:
                             self._authority(record)
@@ -269,6 +276,7 @@ class DirectRecovery:
                     admitted = AdmittedCarrier(self.service,prepared,peer_raw,expected,peer_cert,None,
                         lambda _:self._wake.set(),initial_packets=polled["packets"],runtime_lease=lease)
                     admitted.start()
+                    stage = "rns_confirmation"
                     deadline = time.monotonic()+12
                     while not admitted.peer_seen.is_set() and time.monotonic()<deadline and self._valid(identifier,token):
                         if admitted._stop.wait(.05): break
@@ -277,6 +285,7 @@ class DirectRecovery:
                     with self.service._dispatch_lock:
                         if not self._valid(identifier,token): return
                         self._authority(record)
+                        stage = "winner_commit"
                         record_success(self.service.store,expected,accepted,
                             load_authority=lambda:self._authority(record),clock=lambda:int(self.clock()))
                         self._write(identifier,state="connected",attempts=0,next_at=self.clock()+3000,
@@ -290,12 +299,13 @@ class DirectRecovery:
                     return
                 self._stop.wait(.05)
             raise ValidationError("Recovery attempt was retired")
-        except Exception:
+        except Exception as exc:
             if not self._stop.is_set():
                 with self.service._dispatch_lock:
                     if self._valid(identifier,token):
                         state = self._state(identifier)
-                        self._write(identifier,state="connection_update_needed" if state["attempts"] >= 6 or not record["candidates"] else "reconnecting")
+                        self._write(identifier,state="connection_update_needed" if state["attempts"] >= 6 or not record["candidates"] else "reconnecting",
+                                    failure_stage=stage,failure_type=type(exc).__name__)
         finally:
             if admitted is not None and not promoted: admitted.close()
             elif prepared is not None and not promoted: prepared.close()

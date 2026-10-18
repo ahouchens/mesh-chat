@@ -126,9 +126,11 @@ def _service_worker(root, incoming, outgoing, commands, replies, native_binary=N
                         import hashlib
                         result = {"peers":service._direct_recovery.status(),
                             "identity":service.network.destination_hash.hex(),
-                            "paths":[{"recovery":carrier.recovery,"certificate":hashlib.sha256(carrier.prepared.document_fields()["certificate"]).hexdigest()}
+                            "paths":[{"recovery":carrier.recovery,"certificate":hashlib.sha256(bytes.fromhex(carrier.prepared._owned["certificate"])).hexdigest()}
                                      for carrier in service._direct_recovery._active.values() if not carrier._stop.is_set()],
-                            "pending":len(service._direct_recovery._pending),"native_count":len(native.owned)}
+                            "pending":len(service._direct_recovery._pending),"native_count":len(native.owned),
+                            "failures":[{key:value.get(key) for key in ("failure_stage","failure_type","attempts","state")}
+                                        for value in store.list("direct_recovery")]}
                     elif operation == "force_recovery":
                         if payload.get("retire"):
                             service._direct_recovery.retire()

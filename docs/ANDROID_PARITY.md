@@ -193,7 +193,11 @@ byte changes are outside this parity plan.
 ## Phase 3 relationship persistence boundary
 
 The shared protected service now atomically stores admitted relationship
-evidence with its replay floor. This does not yet implement Android process-death
-reconnection, resume recovery, UDP renewal or migration. Background availability
-is not promised. Physical Phase 2 Windows/Android qualification remains pending;
+evidence with its replay floor and implements fresh-key reconnection, foreground
+reconciliation, same-socket UDP renewal and supported QUIC client migration with
+reconnection fallback. Suspension retires all native ownership; an encrypted
+relationship does not preserve a process or socket. Controlled desktop service
+lifecycle tests and Android compilation are distinct from physical Android
+process-death, network-switch, battery and router qualification. Background
+availability is not promised. Physical Phase 2 Windows/Android qualification remains pending;
 see [Phase 3 criterion tracking](DIRECT_CONNECTIVITY_PHASE3_EVIDENCE.md).

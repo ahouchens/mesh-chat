@@ -2923,3 +2923,33 @@ relationship and signed-RNS route evidence after bidirectional message receipts.
 No test treats this as restart or network-switch recovery. Full remaining
 criteria and exact-commit results belong in the
 [Phase 3 evidence record](docs/DIRECT_CONNECTIVITY_PHASE3_EVIDENCE.md).
+
+
+## Phase 3 production recovery qualification
+
+The current suite extends the historical acceptance increment above:
+
+- `test_direct_recovery.py`: current RNS authority, encrypted capsules, replay and
+  pause, generation reservation failure, stale callbacks, bounded fair scheduling,
+  cleanup evidence, distinct liveness signals, and replacement failures before/after
+  native authorization and vault confirmation.
+- `test_direct_recovery_candidates.py`: same-socket renewal, changed actual tuples,
+  shortened leases, failed renewal, ownership loss, retirement during router I/O,
+  durable-write failure and cleanup.
+- `test_direct_recovery_pipeline.py`: CI-only real QUIC through the shipping native
+  dispatcher with separate RNS service processes and encrypted profile reopening.
+  Scenarios cover client/server/both process death, suspension/resume, concurrent
+  replacement, route change, blocked targets and lost hints/manual signed updates.
+  Tests check fresh keys where required, unchanged identities/member/device IDs,
+  no duplicate admission, queued logical IDs, bidirectional endpoint receipts and
+  zero retained native/interface resources after explicit pause.
+- Rust recovery tests enforce preauthorization packet rejection, wrong exporter
+  rejection, both-service approval, certificate rotation, client migration, server
+  migration rejection, bounded expiry and recovery via the remaining known address.
+- Renderer tests separate liveness from receipts and exercise workspace-bound import,
+  fresh-only export, verification failure and pause/resume controls.
+
+Native/frontend/package execution remains GitHub Actions only. Linux production
+recovery runs under the existing no-external-address syscall audit. Exact tested
+SHAs, results and unresolved limits are in
+[the Phase 3 evidence record](docs/DIRECT_CONNECTIVITY_PHASE3_EVIDENCE.md).

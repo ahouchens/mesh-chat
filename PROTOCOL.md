@@ -964,3 +964,33 @@ the existing monotonic replay record. An imported binding is not live-route
 evidence. Historical success requires native authentication and a validated
 peer RNS announce, and cannot be written by a superseded generation. The
 persistent reconnection/update exchange remains unimplemented.
+
+
+## Admitted direct recovery (Phase 3)
+
+Existing invitation and version-1/version-2 direct document schemas are unchanged.
+A workspace-only binding version 3 selects `mesh-direct-recovery/1`, retaining the
+exact canonical identity, audience, device-pair scope, generation, certificate hash,
+numeric candidate and one-hour validity bounds. Its deterministic challenge hashes
+canonical `{purpose, scope, issuer, audience}` with purpose equal to that ALPN;
+current signed membership is the authority, never an expired invitation challenge.
+The existing encrypted replay key spans transport versions and certificate rotation.
+
+`mesh-recover:` wraps canonical `{v:1,type:"direct_recovery",binding,certificate}`.
+The complete document is bounded to 16 KiB; the certificate is at most 4096 bytes.
+`workspace_connection_update` carries it in the ordinary active-workspace control
+envelope, with the source and envelope workspace checked against the inner binding.
+The isolated pending bootstrap whitelist does not admit this control. Explicit
+import requires the selected workspace and an already established relationship.
+
+Provisional QUIC exchanges only a peer-RNS-encrypted signed binding (20 KiB maximum).
+Both protected services bind the actual TLS leaf to current RNS membership and
+persist replay acceptance before approving that connection's exporter token.
+Only then may two approval streams complete and RNS DATAGRAMs cross. Attempts last
+at most 60 seconds, service authorization at most 10 seconds, and sessions at most
+one hour. Initial role ordering follows candidate availability and RNS destination;
+bounded alternating standard dial/listen windows permit role reversal when only the
+other endpoint's address remains known. No public observer or custom probe is used.
+
+Recovery updates and successes are transport controls. They never create joins,
+admissions, chat messages, delivery proofs or application receipts.
