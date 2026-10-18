@@ -1,4 +1,5 @@
 import json
+import os
 import time
 from types import SimpleNamespace
 
@@ -58,3 +59,28 @@ def test_capture_failure_does_not_change_operation_outcome():
         def put(self, *args):
             raise OSError("private-path-and-secret")
     diagnostics.record(SimpleNamespace(store=BrokenStore()), "action_failed", {"state":"failed"})
+
+
+def test_failure_survives_encrypted_vault_reopen_and_clear_preserves_workspace(tmp_path):
+    from mesh_chat.vault import VaultStore
+    key = os.urandom(32)
+    store = VaultStore(tmp_path / "profile", key, allow_unprotected_for_tests=True)
+    secret = "synthetic-secret-document-never-in-diagnostics"
+    try:
+        store.put("workspace", "saved", {"state":"joining", "request":"preserve-this-request"})
+        diagnostics.record(SimpleNamespace(store=store), "state", {
+            "setup_id":"attempt", "state":"existing_routes_only", "document":secret})
+    finally:
+        store.close()
+    reopened = VaultStore(tmp_path / "profile", key, allow_unprotected_for_tests=True)
+    try:
+        report = diagnostics.report(SimpleNamespace(store=reopened))
+        assert report["last_failure"]["phase"] == "existing_routes_only"
+        assert secret not in json.dumps(report)
+        before = reopened.get("workspace", "saved")
+        reopened.delete("connection_diagnostics", "history")
+        assert diagnostics.report(SimpleNamespace(store=reopened))["events"] == []
+        assert reopened.get("workspace", "saved") == before
+    finally:
+        reopened.close()
+    assert secret.encode() not in (tmp_path / "profile" / "mesh-chat.vault").read_bytes()

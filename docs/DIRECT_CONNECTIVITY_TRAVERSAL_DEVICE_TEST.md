@@ -1,8 +1,9 @@
 # Windows and mobile-carrier acceptance
 
 Status: not executed. Candidate build: **0.2.52**, Android versionCode **2052**,
-application commit and build run must be recorded from the successful artifact
-build before using its installers. Record artifact hashes
+application commit `dec191bbea6c63967cfcf5073abd7acc052a3333`.
+[Artifact build](https://github.com/ahouchens/mesh-chat/actions/runs/39154321087)
+must succeed before using its installers. Record artifact hashes
 from its reports; none are assumed here.
 
 ## Guided test

@@ -6,10 +6,27 @@ in [the spec](DIRECT_CONNECTIVITY_TRAVERSAL_SPEC.md).
 
 ## Exact-commit evidence
 
+- Current application: **0.2.52**, Android **2052**,
+  `dec191bbea6c63967cfcf5073abd7acc052a3333`.
+  [CI passed](https://github.com/ahouchens/mesh-chat/actions/runs/39154322468),
+  [18 browser layout cases passed](https://github.com/ahouchens/mesh-chat/actions/runs/39154322749)
+  at 360/393/1280px with normal/doubled text and clipboard denial. Phone screenshots
+  were downloaded and visually inspected. This is browser evidence, not Android
+  lifecycle or human usability acceptance.
+  [Windows/Android artifact build](https://github.com/ahouchens/mesh-chat/actions/runs/39154321087)
+  passed verification and is building artifacts.
+  [Latest native qualification](https://github.com/ahouchens/mesh-chat/actions/runs/39154322732)
+  is still running.
+- `b01572d0232e3980751638b2e91ba9051272f60b`:
+  [expanded NAT fixture passed](https://github.com/ahouchens/mesh-chat/actions/runs/39154080619),
+  artifact `direct-nat-evidence` ID `12146297270`. All seven trials passed:
+  three compatible NAT connections (1.264–1.267 seconds), passive negative
+  control, UDP blocked on one/both sides, and destination-dependent mapping with
+  a stale tuple (bounded failures at 10.234–10.254 seconds). Each successful
+  trial carried packets both ways. These are isolated kernel topology results.
 - `118329d17df022ff201b6693e137d2896f07cdd4`: [CI passed](https://github.com/ahouchens/mesh-chat/actions/runs/39151505158).
   [Native run](https://github.com/ahouchens/mesh-chat/actions/runs/39151507296):
-  Linux full job passed, Android compile passed, Windows recovery passed and
-  remaining Windows setup qualification was still running when this record was written.
+  all Windows, Linux and Android jobs passed.
 - `e496b2e326ac38963428c16d787da9d2270f9d48`: [CI passed](https://github.com/ahouchens/mesh-chat/actions/runs/39152705420).
   [Native run](https://github.com/ahouchens/mesh-chat/actions/runs/39152703505):
   Windows/Linux dispatcher tests, Android compile and Linux NAT fixture passed;
@@ -33,8 +50,8 @@ public address discovery nor behavior on every consumer or carrier NAT.
 | A4 | One-sided candidate/native accept tests and unhosted recovery pipeline; no general reachable address is inferred from an observed tuple. |
 | A5 | Empty-candidate setup regressions preserve the request and do not activate native transport. |
 | A6 | Multiple owned route sockets, silent-first-candidate native tests and mixed-family service tests added; latest native suite pending. |
-| A7 | Destination-dependent SNAT profile with a tuple learned for a different destination added; bounded failure expected, CI pending. No universal NAT claim. |
-| A8 | One-side/both-side UDP-block fixture added, awaiting CI. This fixture does not prove TCP fallback; existing authorized TCP remains separate. |
+| A7 | Destination-dependent SNAT profile with a tuple learned for a different destination passed its expected bounded failure at `b01572d`. No universal NAT claim. |
+| A8 | One-side/both-side UDP-block fixture passed at `b01572d`. This fixture does not prove TCP fallback; existing authorized TCP remains separate. |
 | A9 | Existing mapping renewal, migration, address-loss and manual recovery-update regressions retained. Recovery now rotates eligible interfaces on bounded retries with a source regression; latest native pipeline pending. Multiple simultaneous recovery route sockets are not implemented. |
 | A10 | Signed chain/replay tests retained; joiner and owner saved-message resume, expired/lost ownership and retry-ID regressions added. Latest UI run pending. |
 | A11 | Existing restart/suspend recovery pipeline; Android 45-second share grace implemented. Actual sharing, process death, Doze and network switch device tests pending. |
@@ -43,15 +60,18 @@ public address discovery nor behavior on every consumer or carrier NAT.
 | A14 | Pending physical Windows/home-router ↔ Android/mobile-carrier test on uniquely versioned artifacts. |
 | A15 | Deterministic client outgoing/server incoming path and auxiliary closure tests; independent review of boundary races still required. |
 | A16 | Default Invite invokes the guided controller; one outgoing item and shared import entry tested in frontend CI. Owner resume added in follow-up. Human end-to-end acceptance pending. |
-| A17 | Responsive wrapping styles added. 360/393px and large-text visual/device acceptance pending. |
+| A17 | Eighteen browser layout cases passed at `dec191b`; 360/393px doubled-text screenshots inspected. Actual Android and human usability acceptance pending. |
 | A18 | Allowlisted bounded diagnostics, real native check counters, candidate-source counts, offline/clipboard-denial tests. Receipt/approval are timestamped facts, never inferred from QUIC. |
 | A19 | Visible Settings/diagnostic version, actual Android package metadata and native commit command implemented. Installed Windows/Android artifact matching pending. |
-| A20 | Protected bounded history, last failure, storage retention and clear-preserves-request regressions; physical encrypted-profile restart acceptance pending. |
+| A20 | Protected bounded history, last failure, storage retention and clear-preserves-request regressions. A real encrypted VaultStore close/reopen regression passed locally; physical app restart acceptance pending. |
 
 ## Release gates
 
 Do not label the whole spec complete from the controlled NAT success. Remaining
-work includes the latest CI qualification, restrictive NAT coverage,
-independent protocol review, mobile visual/accessibility
+work includes the latest native/artifact qualification,
+independent protocol review, physical mobile usability/accessibility
 checks, uniquely versioned Windows/Android artifacts and physical acceptance.
-No merge or release has been performed for this implementation branch.
+No merge or public release has been performed. Draft PR #1 holds the implementation.
+The superseded 0.2.51 artifact workflow failed an existing administrator benchmark
+timing threshold; the same commit's ordinary CI passed. The threshold was not
+changed. The 0.2.52 release verification passed with that threshold intact.
