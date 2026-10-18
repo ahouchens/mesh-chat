@@ -726,7 +726,7 @@ describe("new chat invitations", () => {
     )).toBe(false);
   });
 
-  it("sends an access-free workspace join over existing Mesh routes before reverse hosting", async () => {
+  it.each([false, true])("sends an access-free workspace join before reverse hosting (saved: %s)", async (alreadySaved) => {
     const current = snapshot();
     const invitation = "MESHWORKSPACE4:outbound-first";
     const joiningWorkspace: Workspace = { ...workspace, state: "joining", local_role: "member" };
@@ -741,6 +741,8 @@ describe("new chat invitations", () => {
     api.serviceCommand.mockImplementation(async (command: string) => {
       if (command === "snapshot") return current;
       if (command === "preview_workspace_invitation") return {
+        workspace_id: joiningWorkspace.id,
+        ...(alreadySaved ? { existing_workspace: joiningWorkspace, can_resume_join: true } : {}),
         name: "Lakewatcher",
         description: "Field coordination",
         owner_fingerprint: "AAAA BBBB CCCC DDDD",
@@ -769,7 +771,7 @@ describe("new chat invitations", () => {
 
     const dialog = await screen.findByRole("dialog", { name: "Join a workspace" });
     expect(within(dialog).queryByRole("button", { name: "Check this device for a return connection" })).toBeNull();
-    fireEvent.click(within(dialog).getByRole("button", { name: "Send join request" }));
+    fireEvent.click(within(dialog).getByRole("button", { name: alreadySaved ? "Continue saved request" : "Send join request" }));
 
     await waitFor(() => expect(api.serviceCommand).toHaveBeenCalledWith(
       "submit_workspace_join",
@@ -833,6 +835,54 @@ describe("new chat invitations", () => {
     expect(submissions()).toHaveLength(3);
     expect(submissions()[2][1]?.invitation).toBe(replacement);
     expect(submissions()[2][1]?.operation_id).not.toBe(submissions()[0][1]?.operation_id);
+  });
+
+  it.each([
+    ["active", undefined, "Active"],
+    ["joining", "queued", "Join request saved · trying to reach owner"],
+    ["joining", "failed", "Join request needs attention"],
+  ] as const)("opens an already saved %s workspace from an invitation (%s)", async (state, delivery, status) => {
+    const initial = snapshot();
+    const saved: Workspace = { ...workspace, state, local_role: "member", join_delivery_state: delivery };
+    const current: Snapshot = { ...initial, workspaces: [saved], workspace_channels: [] };
+    let reviewed = false;
+    api.runtimePlatform.mockResolvedValue("android");
+    api.initializeService.mockResolvedValue(initial);
+    api.onInvitation.mockResolvedValue(() => undefined);
+    api.onServiceEvent.mockResolvedValue(() => undefined);
+    api.serviceCommand.mockImplementation(async (command: string) => {
+      if (command === "snapshot" || command === "workspace_snapshot") return reviewed ? current : initial;
+      if (command === "preview_workspace_invitation") {
+        reviewed = true;
+        return {
+          workspace_id: saved.id, name: saved.name, description: "",
+          owner_fingerprint: "AAAA BBBB", member_count: 1, retention_days: 90,
+          expires_at: 2_000_000_000, connection_reply_available: true,
+          existing_workspace: saved,
+          can_resume_join: state === "active",
+        };
+      }
+      return {};
+    });
+
+    render(<App />);
+    await screen.findByRole("heading", { name: "Your private conversations" });
+    fireEvent.click(screen.getAllByRole("button", { name: "New chat" })[0]);
+    fireEvent.click(await screen.findByRole("tab", { name: "Open an invite" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "Invitation" }), { target: { value: "MESHWORKSPACE4:new-invitation-same-workspace" } });
+    fireEvent.click(screen.getByRole("button", { name: "Check invitation" }));
+    const dialog = await screen.findByRole("dialog", { name: "Join a workspace" });
+    expect(await within(dialog).findByRole("heading", { name: "Workspace already saved" })).toBeTruthy();
+    expect(within(dialog).getByRole("status").textContent).toContain(status);
+    expect(within(dialog).queryByRole("button", { name: "Send join request" })).toBeNull();
+    expect(within(dialog).queryByText("How this request will be sent")).toBeNull();
+    expect(within(dialog).queryByRole("button", { name: "Continue saved request" })).toBeNull();
+    if (delivery === "failed") expect(within(dialog).getByRole("status").textContent).toContain("remove this failed join");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Open saved workspace" }));
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Join a workspace" })).toBeNull());
+    expect(screen.getByRole("button", { name: /^Workspace Lakewatcher/ }).getAttribute("aria-current")).toBe("page");
+    expect(api.serviceCommand.mock.calls.some(([command]) => ["submit_workspace_join", "create_connection_reply", "remove_workspace_data"].includes(command))).toBe(false);
+    if (delivery === "failed") expect(screen.getByRole("button", { name: "Open Workspace settings" })).toBeTruthy();
   });
 
   it.each([

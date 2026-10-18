@@ -24,6 +24,14 @@ Physical execution follows the
 
 ## Copied workspace invitation regression, 2026-10-18
 
+The follow-up already-saved-workspace screen includes the local public status in
+invitation previews and offers **Open saved workspace** instead of a duplicate
+join. The exact resumable request retains **Continue saved request** and return
+connection recovery. Preview uses the same read-only validation as submission;
+a fresh nonce or terminal request cannot overwrite the saved join. Regressions
+cover active, pending, and failed workspaces, navigation to existing settings,
+unchanged encrypted records, and rejection of mismatched saved requests.
+
 `test_workspace_join_retry.py` covers a valid email-ready invitation followed by
 join submission, retry after a lost response, reopening the encrypted profile,
 and preservation of the original device, delivery, and signed receipt. Recovery

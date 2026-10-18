@@ -611,6 +611,8 @@ export interface WorkspaceInvitation {
 
 export interface WorkspaceInvitationPreview {
   workspace_id: string;
+  existing_workspace?: Workspace;
+  can_resume_join?: boolean;
   name: string;
   description: string;
   owner_fingerprint: string;

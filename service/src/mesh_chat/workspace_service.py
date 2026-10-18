@@ -69,6 +69,7 @@ from .workspace_protocol import (
     VerifiedWorkspaceAdminRequest,
     VerifiedWorkspaceAuthorityAcceptance,
     VerifiedWorkspaceDeviceLinkAcceptance,
+    VerifiedWorkspaceDeviceCard,
     VerifiedWorkspaceDeviceRemoval,
     VerifiedWorkspaceEvent,
     VerifiedWorkspaceHistoryRequest,
@@ -4672,6 +4673,17 @@ class WorkspaceServiceMixin:
             email.inner if email else participant.inner if participant else remote.inner if remote else raw
         )
         preview = invitation.preview()
+        existing = self.store.get(
+            "workspace", self._workspace_record_id(invitation.workspace_id)
+        )
+        if existing is not None:
+            preview["existing_workspace"] = self._public_workspace(existing)
+            try:
+                self._saved_workspace_join_owner(existing, invitation)
+            except WorkspaceAlreadyKnown:
+                preview["can_resume_join"] = False
+            else:
+                preview["can_resume_join"] = True
         if email is not None:
             preview["connection_reply_available"] = True
             preview["invitation_digest"] = email.digest
@@ -4991,14 +5003,12 @@ class WorkspaceServiceMixin:
             ]
         return outcome
 
-    def _resume_workspace_join(
+    def _saved_workspace_join_owner(
         self,
         workspace: dict[str, Any],
         invite: VerifiedWorkspaceInvitation,
-        operation_id: str,
-        digest: str,
-    ) -> dict[str, Any]:
-        """Recover a saved request after its result was lost or the dialog reopened."""
+    ) -> VerifiedWorkspaceDeviceCard:
+        """Validate a resumable request without changing records or route consent."""
         error = WorkspaceAlreadyKnown("This workspace is already known on this device")
         if workspace.get("state") != "joining" or self._identity is None:
             raise error
@@ -5046,6 +5056,17 @@ class WorkspaceServiceMixin:
             or join.device.public_identity != self._identity.get_public_key()
         ):
             raise error
+        return owner[1]
+
+    def _resume_workspace_join(
+        self,
+        workspace: dict[str, Any],
+        invite: VerifiedWorkspaceInvitation,
+        operation_id: str,
+        digest: str,
+    ) -> dict[str, Any]:
+        """Recover a saved request after its result was lost or the dialog reopened."""
+        owner = self._saved_workspace_join_owner(workspace, invite)
         # Preserve the exact signed request, delivery timing, and receipt. A new
         # UI operation records its result without creating another member/device.
         committed = self.store.commit_operation(
@@ -5055,7 +5076,7 @@ class WorkspaceServiceMixin:
         committed.update(self._workspace_join_result(self._require_workspace(invite.workspace_id)))
         network = getattr(self, "network", None)
         if network is not None:
-            network.remember_contact(owner[1].public_identity, owner[1].destination_hash)
+            network.remember_contact(owner.public_identity, owner.destination_hash)
         self._workspace_changed(invite.workspace_id)
         return committed
 

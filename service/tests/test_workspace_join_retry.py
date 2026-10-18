@@ -37,6 +37,35 @@ def _saved_join(service):
     }
 
 
+@pytest.mark.parametrize("state", ["active", "joining", "failed"])
+def test_invitation_preview_reports_saved_workspace_without_replacing_join(join_pair, state):
+    owner, _onet, joiner, _jnet, workspace, formats, *_ = join_pair
+    assert "existing_workspace" not in joiner.preview_workspace_invitation(formats["text"])
+    joiner.submit_workspace_join(formats["text"], _op(97002))
+    stored = joiner._require_workspace(workspace["id"])
+    if state == "active":
+        stored["state"] = "active"
+        joiner.store.put("workspace", joiner._workspace_record_id(workspace["id"]), stored)
+    elif state == "failed":
+        delivery = joiner.store.get("workspace_delivery", stored["join_delivery_id"])
+        delivery["state"] = "failed"
+        joiner.store.put("workspace_delivery", delivery["id"], delivery)
+    # A fresh nonce for the same workspace must lead to the saved record too.
+    replacement = owner.create_workspace_invitation_command(workspace["id"], _op(97007))
+    saved = _saved_join(joiner)
+    operations = joiner.store.list("workspace_operation")
+    for invitation in (formats["text"], replacement["text"]):
+        preview = joiner.preview_workspace_invitation(invitation)
+        assert preview["existing_workspace"] == joiner._public_workspace(stored)
+        assert preview["can_resume_join"] is (state == "joining" and invitation == formats["text"])
+        assert "join_delivery_id" not in preview["existing_workspace"]
+        assert "genesis" not in preview["existing_workspace"]
+        if state == "failed":
+            assert preview["existing_workspace"]["join_delivery_state"] == "failed"
+    assert _saved_join(joiner) == saved
+    assert joiner.store.list("workspace_operation") == operations
+
+
 def _with_access(owner, formats):
     invitation = verify_email_invitation(formats["text"], "workspace")
     access = create_access_document(
@@ -282,6 +311,8 @@ def test_repeated_join_rejects_mismatched_or_terminal_saved_request(join_pair, c
     ])
     saved = _saved_join(joiner)
     operation_count = len(joiner.store.list("workspace_operation"))
+
+    assert joiner.preview_workspace_invitation(raw)["can_resume_join"] is False
 
     with pytest.raises(WorkspaceAlreadyKnown) as error:
         joiner.submit_workspace_join(raw, _op(97003))

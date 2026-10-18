@@ -2517,6 +2517,12 @@ function JoinWorkspaceDialog({ initialValue = "", workspaces, onClose, onJoined 
   const [remoteConsent, setRemoteConsent] = useState(false);
   const [connectionResults, setConnectionResults] = useState<ParticipantCandidateResult[]>([]);
   const [joinedWorkspace, setJoinedWorkspace] = useState<Workspace | null>(null);
+  const existingWorkspace = preview && !joinedWorkspace
+    ? workspaces.find((item) => item.id === preview.workspace_id) ?? preview.existing_workspace
+    : undefined;
+  const existingJoinStatus = existingWorkspace ? workspaceJoinStatus(existingWorkspace) : null;
+  const canResumeExisting = preview?.can_resume_join === true
+    && existingWorkspace?.state === "joining" && existingJoinStatus?.terminal === false;
   const currentJoin = workspaces.find((item) => item.id === joinedWorkspace?.id) ?? joinedWorkspace;
   const currentJoinStatus = currentJoin ? workspaceJoinStatus(currentJoin) : null;
   const joinReceived = currentJoin?.join_acknowledged === true || currentJoin?.state === "active";
@@ -2587,7 +2593,7 @@ function JoinWorkspaceDialog({ initialValue = "", workspaces, onClose, onJoined 
     if (initialValue.trim()) void reviewCandidate(initialValue);
   }, [initialValue, reviewCandidate]);
   const join = async () => {
-    if ((!preview && !devicePreview) || busy) return;
+    if ((!preview && !devicePreview) || (existingWorkspace && !canResumeExisting) || busy) return;
     setBusy(true); setError("");
     try {
       const document = value.trim();
@@ -2633,6 +2639,13 @@ function JoinWorkspaceDialog({ initialValue = "", workspaces, onClose, onJoined 
     finally { setBusy(false); }
   };
   const reviewed = preview !== null || devicePreview !== null;
+  const openExisting = async () => {
+    if (!existingWorkspace || busy) return;
+    setBusy(true); setError("");
+    try { await stopUnsharedReply(); await onJoined(existingWorkspace); }
+    catch (reason) { setError(errorMessage(reason)); }
+    finally { setBusy(false); }
+  };
   if (classifyInvitationInput(value) === "direct_connection") {
     return <Dialog title="Direct connection" onClose={() => void closeDialog()}><DirectConnectionSetup initialDocument={value} onOpenWorkspace={onJoined} /></Dialog>;
   }
@@ -2641,11 +2654,20 @@ function JoinWorkspaceDialog({ initialValue = "", workspaces, onClose, onJoined 
       {preview ? <>
         <div className="workspace-preview"><span className="workspace-preview__avatar">{initials(preview.name)}</span><div><h3>{preview.name}</h3><p>{preview.description || "No description"}</p></div></div>
         <dl className="security-list"><div><dt>Owner fingerprint</dt><dd>{preview.owner_fingerprint}</dd></div><div><dt>Current members</dt><dd>{preview.member_count}</dd></div><div><dt>History preference</dt><dd>{preview.retention_days === null ? "Indefinite" : `${preview.retention_days} days`}</dd></div></dl>
+        {existingWorkspace ? <section className="direct-host-warning" role="status">
+          <h3>Workspace already saved</h3>
+          <p><strong>{workspaceStateLabel(existingWorkspace)}</strong></p>
+          <p>{existingJoinStatus?.detail ?? "Open the saved workspace to view its current status and available actions."}</p>
+          <p>This invitation will not replace the workspace or its saved join request.</p>
+          {canResumeExisting && <Button variant="secondary" disabled={busy} onClick={() => void join()}>Continue saved request</Button>}
+          <Button disabled={busy} onClick={() => void openExisting()}>{busy ? "Opening…" : "Open saved workspace"}</Button>
+        </section> : <>
         <p className="muted">Joining does not approve a global contact. The owner must verify this device and approve your request.</p>
         {preview.participant_access && <section className="direct-consent" aria-labelledby="workspace-direct-connection"><h3 id="workspace-direct-connection">Direct connection to the workspace owner</h3><p>{preview.participant_access.privacy_disclosure}</p><p>The owner must keep Mesh Chat open until your request arrives.</p></section>}
         {preview.connection_reply_available && <section className="direct-consent"><h3>How this request will be sent</h3><p>{preview.participant_access ? "Mesh Chat will connect outbound to the owner’s signed route first. If every candidate fails, this device can be checked for an optional return connection." : "Mesh Chat will first save and try the signed join request over any existing or same-network Mesh route. If no route is confirmed, it will then offer to check this device for an optional return connection."}</p></section>}
         {preview.remote_profile && <section className="remote-consent" aria-labelledby="workspace-remote-consent"><h3 id="workspace-remote-consent">Remote connection requested</h3><p><strong>{preview.remote_profile.label}</strong> · {preview.remote_profile.endpoint_count} access-point {preview.remote_profile.endpoint_count === 1 ? "endpoint" : "endpoints"}</p><p>{preview.remote_profile.privacy_disclosure}</p><label className="checkbox-line"><input type="checkbox" checked={remoteConsent} onChange={(event) => setRemoteConsent(event.target.checked)} /> Connect outbound after I send the join request</label></section>}
         {replyFormats && <ConnectionDocumentShare formats={replyFormats} kind="reply" onShared={() => setReplyShared(true)} />}
+        </>}
       </> : devicePreview ? <>
         <div className="workspace-preview"><span className="workspace-preview__avatar">{initials(devicePreview.name)}</span><div><h3>{devicePreview.name}</h3><p>Link as {devicePreview.member_display_name}</p></div></div>
         <dl className="security-list"><div><dt>Sponsor fingerprint</dt><dd>{devicePreview.sponsor_fingerprint}</dd></div><div><dt>Existing devices</dt><dd>{devicePreview.device_count}</dd></div><div><dt>Expires</dt><dd>{formatExpiry(devicePreview.expires_at)}</dd></div></dl>
@@ -2660,7 +2682,7 @@ function JoinWorkspaceDialog({ initialValue = "", workspaces, onClose, onJoined 
       {error && <p className="form-error" role="alert">{error}</p>}
       <div className="dialog-actions">{!joinedWorkspace && <>
         <Button variant="ghost" onClick={reviewed ? () => { void stopUnsharedReply(); setPreview(null); setDevicePreview(null); setRemoteConsent(false); setReplyFormats(null); setReplyDoctor(null); } : () => void closeDialog()}>{reviewed ? "Back" : "Cancel"}</Button>
-        <Button disabled={busy || (!reviewed && !value.trim()) || Boolean(preview?.remote_profile) && !remoteConsent} onClick={() => void (reviewed ? join() : review())}>{busy ? "Working…" : devicePreview ? "Request device approval" : preview ? replyFormats ? "Send join request after sharing" : preview.remote_profile ? "Connect and send join request" : preview.participant_access ? "Connect directly and send join request" : "Send join request" : "Review"}</Button>
+        {!existingWorkspace && <Button disabled={busy || (!reviewed && !value.trim()) || Boolean(preview?.remote_profile) && !remoteConsent} onClick={() => void (reviewed ? join() : review())}>{busy ? "Working…" : devicePreview ? "Request device approval" : preview ? replyFormats ? "Send join request after sharing" : preview.remote_profile ? "Connect and send join request" : preview.participant_access ? "Connect directly and send join request" : "Send join request" : "Review"}</Button>}
       </>}</div>
     </div>
   </Dialog>;
