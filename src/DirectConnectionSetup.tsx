@@ -4,10 +4,8 @@ import { InvitationImportActions, InvitationQrCode } from "./InvitationTransfer"
 import { ConnectionDiagnostics } from "./ConnectionDiagnostics";
 import { normalizeInvitationInput } from "./invitation-transfer";
 import type { Workspace } from "./types";
-
 type Preview = { kind: "offer" | "answer" | "ready"; workspace_id: string; workspace_name: string; expires_at: number; candidate_count: number };
 type Setup = { setup_id: string; state: string; workspace_id: string; expires_at: number; candidate_count: number; text?: string; readiness?: string; can_share?: boolean; route?: string; socket?: string; mapping?: string; firewall?: string; peer_candidate_count?: number | null; peer_verified?: boolean; candidate_sources?: { ipv4?: number; ipv6?: number } };
-
 const states: Record<string, string> = {
   waiting_for_reply: "Send this invitation to the other person. Next, they open Join or connect and send a reply back to you.",
   waiting_for_ready: "Share this reply with the owner. Next, the owner opens Join or connect and sends you the final connection message.",
@@ -21,7 +19,6 @@ const states: Record<string, string> = {
   refresh_required: "These connection details can no longer be used. Ask the owner to refresh their saved invitation and send it through Join or connect. Your saved request is kept.",
   cancelled: "Connection attempt cancelled. Your saved request is kept; a request already received by the owner is not withdrawn.",
 };
-
 export function DirectConnectionSetup({ invitationId, workspaceId, autoStart = false, resumeExisting = false, onShared, initialDocument = "", onOpenWorkspace }: {
   invitationId?: string; workspaceId?: string; autoStart?: boolean; resumeExisting?: boolean; onShared?: () => void; initialDocument?: string; onOpenWorkspace?: (workspace: Workspace) => Promise<void>;
 }) {
@@ -36,6 +33,7 @@ export function DirectConnectionSetup({ invitationId, workspaceId, autoStart = f
   const [checkedAt, setCheckedAt] = useState(0);
   const [now, setNow] = useState(Date.now());
   const started = useRef(false);
+  const revision = useRef(0);
   const operation = useRef({ document: "", id: "" });
   const check = async (value: Setup) => {
     setSetup(value); setOutgoing(""); setCheckedAt(0);
@@ -56,20 +54,18 @@ export function DirectConnectionSetup({ invitationId, workspaceId, autoStart = f
         .finally(() => setBusy(false));
     }
   }, [invitationId, workspaceId, autoStart, resumeExisting]);
-
   useEffect(() => {
     if (!setup?.setup_id || setup.state === "cancelled") return;
     let active = true;
     const timer = setInterval(() => {
       void serviceCommand<Setup>("check_direct_setup", { setup_id: setup.setup_id }).then((value) => {
-        if (active) {
+        if (active && epoch === revision.current) {
           setSetup(value); setOutgoing(value.can_share ? value.text ?? "" : ""); setCheckedAt(Date.now());
         }
-      }).catch(() => { if (active) { setOutgoing(""); setCheckedAt(0); setError("Checks are unavailable. Retry checks before sharing."); } });
+      }).catch(() => { if (active && epoch === revision.current) { setOutgoing(""); setCheckedAt(0); setError("Checks are unavailable. Retry checks before sharing."); } });
     }, 2000);
     return () => { active = false; clearInterval(timer); };
   }, [setup?.setup_id, setup?.state === "cancelled"]);
-
   const edit = (value: string) => { setInput(value); setPreview(null); setError(""); setFeedback(""); };
   const review = async () => {
     setBusy(true); setError("");
@@ -82,7 +78,7 @@ export function DirectConnectionSetup({ invitationId, workspaceId, autoStart = f
   };
   const offer = async () => {
     if (!invitationId) return;
-    setBusy(true); setError(""); setFeedback("");
+    revision.current++; setBusy(true); setError(""); setFeedback("");
     try {
       const value = await serviceCommand<Setup>("prepare_direct_offer", { invitation_id: invitationId });
       await check(value); setBack(false);
@@ -91,7 +87,7 @@ export function DirectConnectionSetup({ invitationId, workspaceId, autoStart = f
   };
   const apply = async () => {
     if (!preview) return;
-    setBusy(true); setError(""); setFeedback("");
+    revision.current++; setBusy(true); setError(""); setFeedback("");
     if (operation.current.document !== input) operation.current = { document: input, id: crypto.randomUUID() };
     try {
       const command = preview.kind === "offer" ? "prepare_direct_answer" : preview.kind === "answer" ? "prepare_direct_ready" : "accept_direct_ready";
@@ -133,7 +129,7 @@ export function DirectConnectionSetup({ invitationId, workspaceId, autoStart = f
   const cancel = async () => {
     if (!setup?.setup_id) return;
     setBusy(true);
-    try { await serviceCommand("cancel_direct_setup", { setup_id: setup.setup_id }); setSetup({ ...setup, state: "cancelled" }); setOutgoing(""); }
+    try { await serviceCommand("cancel_direct_setup", { setup_id: setup.setup_id }); setSetup({ ...setup, state: "cancelled", readiness:"cancelled", can_share:false }); setOutgoing(""); }
     catch { setError("Could not cancel setup. Lock the app to retire its active connections."); }
     finally { setBusy(false); }
   };
@@ -145,30 +141,29 @@ export function DirectConnectionSetup({ invitationId, workspaceId, autoStart = f
       if (workspace) await onOpenWorkspace(workspace);
     } catch { setError("Could not open the workspace. Close this dialog and open it from the workspace list."); }
   };
-
   const retry = async () => {
     if (!setup?.setup_id) return;
-    setBusy(true); setError(""); setOutgoing(""); setBack(false);
+    revision.current++; setBusy(true); setError(""); setOutgoing(""); setBack(false);
     try { await check(await serviceCommand<Setup>("retry_direct_setup", { setup_id: setup.setup_id })); }
     catch { setError("Could not refresh this saved exchange. Ask the owner to refresh the same invitation and paste it here. Your join request stays saved."); }
     finally { setBusy(false); }
   };
   const readiness = busy ? "checking" : setup?.readiness;
   const guidance: Record<string, [string, string]> = {
-    checking: ["Checking this device", "Preparing the app’s UDP socket and checking local addresses and router mappings. This does not yet test the other device."],
+    checking: ["Checking this device", "Preparing the appâ€™s UDP socket and checking local addresses and router mappings. This does not yet test the other device."],
     no_route: ["Connect this device to the Internet", "No current Internet route was found. On Windows, restore the home-router connection. On Android, keep Wi-Fi off and restore mobile data. Then retry checks."],
-    address_prepared: ["Address prepared — waiting for the other device’s test", "The app owns the UDP socket and has a public address candidate. Only a connection from the intended other device can verify it. Continue with the message below."],
+    address_prepared: ["Address prepared â€” waiting for the other deviceâ€™s test", "The app owns the UDP socket and has a public address candidate. Only a connection from the intended other device can verify it. Continue with the message below."],
     no_local_address: ["No public address on this device", "The other device may still provide a usable address. Send this message so it can check its own network. A phone on mobile data can connect outward to a reachable Windows device, or the reverse."],
-    both_no_address: ["Neither device has a usable public address", "Automatic setup cannot connect these networks with the evidence available. Your request stays saved. Change one device’s network or review the optional router help, then retry. Copying again or waiting will not discover an address."],
+    both_no_address: ["Neither device has a usable public address", "Automatic setup cannot connect these networks with the evidence available. Your request stays saved. Change one deviceâ€™s network or review the optional router help, then retry. Copying again or waiting will not discover an address."],
     network_changed: ["The network changed", "The old connection details are no longer ready to share. Retry checks on this device, then exchange the refreshed message using the same invitation."],
     refresh_required: ["Refresh the connection details", "The socket or setup time is no longer valid. The owner can refresh this same invitation. Your saved request is kept."],
-    test_failed: ["The connection test did not succeed", "The intended peer did not establish a current connection. This does not prove a firewall or UDP block. Keep both apps open, check the other device’s diagnostics, and retry after a network or router change."],
+    test_failed: ["The connection test did not succeed", "The intended peer did not establish a current connection. This does not prove a firewall or UDP block. Keep both apps open, check the other deviceâ€™s diagnostics, and retry after a network or router change."],
     testing: ["Testing with the other device", "Keep both apps open. If this device has a message below, send it to the other device so it can connect. Receipt and workspace approval are separate steps."],
     peer_verified: ["Connection verified with the other device", "The current socket has an authenticated connection to the intended peer. Check the workspace for receipt and owner approval."],
     complete: ["Setup completed", "Open the workspace to check the current connection and message delivery. A completed setup is not a claim that the device is reachable now."],
     cancelled: ["Setup cancelled", "Your saved join request is kept."],
   };
-  const step = readiness === "peer_verified" || readiness === "complete" || readiness === "testing" ? 3 : setup?.can_share ? 2 : 1;
+  const step = back ? 1 : readiness === "peer_verified" || readiness === "complete" || readiness === "testing" ? 3 : setup?.can_share ? 2 : 1;
   const canExport = !!outgoing && !!setup?.can_share && !busy && !back && checkedAt > 0 && now - checkedAt < 5000;
   const remaining = setup ? Math.max(0, Math.ceil((setup.expires_at * 1000 - now) / 1000)) : 0;
   return <section className="form-stack guided-connection" aria-label="Direct connection setup">
@@ -176,14 +171,14 @@ export function DirectConnectionSetup({ invitationId, workspaceId, autoStart = f
     <p>First check this device, then exchange messages, then test the connection with the other device.</p>
     <p aria-label="Connection progress">Step {step} of 3: {step === 1 ? "Check this device" : step === 2 ? "Exchange messages" : "Test connection"}</p>
     {readiness && guidance[readiness] && <div className="direct-consent" role="status"><h4>{guidance[readiness][0]}</h4><p>{guidance[readiness][1]}</p>
-      {setup?.socket === "retained" && <p className="muted">UDP socket retained. Address candidates: IPv4 {setup.candidate_sources?.ipv4 ?? 0}; IPv6 {setup.candidate_sources?.ipv6 ?? 0}. These are candidates, not a successful peer test.</p>}
+      {setup?.socket === "retained" && !setup.peer_verified && <p className="muted">UDP socket retained. Address candidates: IPv4 {setup.candidate_sources?.ipv4 ?? 0}; IPv6 {setup.candidate_sources?.ipv6 ?? 0}. These are candidates, not a successful peer test.</p>}
       {setup?.mapping === "unavailable" && <p>The router did not provide a usable UDP mapping. This alone does not prove that incoming connections are blocked.</p>}
       {setup?.firewall && <p className="muted">UDP firewall permission has not been verified. {setup.firewall === "windows_profile_unavailable_udp_unverified" ? "Windows did not report an active Internet network profile. Check Windows network settings." : "The existing automatic firewall helper supports TCP only; it cannot approve this QUIC connection."}</p>}
     </div>}
     <ConnectionDiagnostics />
     {setup && ["no_route", "both_no_address", "network_changed", "refresh_required", "test_failed"].includes(readiness ?? "") && <>
       <button className="button button--primary" disabled={busy} onClick={() => void retry()}>Retry checks</button>
-      <details><summary>Other ways to proceed</summary><p>Try the other device as the reachable side, or recheck after changing one device’s Internet connection. You can keep Windows on the home router and Android on mobile data.</p><p>If you manage the home router, check whether it allows app-requested UDP mappings (PCP, UPnP or NAT-PMP), then retry. Optional manual router configuration requires a usable public address and the exact app-owned UDP endpoint; this wizard does not currently provide a manual UDP mapping editor. A carrier or upstream router may prevent inbound connections. Some networks cannot connect without a helper service, which this server-free mode does not use.</p><p>Keep the firewall enabled. This wizard has no supported automatic UDP firewall repair action. A TCP permission or mapping is not proof for this connection.</p></details>
+      <details><summary>Other ways to proceed</summary><p>Try the other device as the reachable side, or recheck after changing one deviceâ€™s Internet connection. You can keep Windows on the home router and Android on mobile data.</p><p>If you manage the home router, check whether it allows app-requested UDP mappings (PCP, UPnP or NAT-PMP), then retry. Optional manual router configuration requires a usable public address and the exact app-owned UDP endpoint; this wizard does not currently provide a manual UDP mapping editor. A carrier or upstream router may prevent inbound connections. Some networks cannot connect without a helper service, which this server-free mode does not use.</p><p>Keep the firewall enabled. This wizard has no supported automatic UDP firewall repair action. A TCP permission or mapping is not proof for this connection.</p></details>
     </>}
     {invitationId && (!setup || setup.state === "cancelled") && <button className="button button--primary" disabled={busy} onClick={() => void offer()}>{setup ? "Refresh connection details" : "Prepare invitation"}</button>}
     <label className="field"><span>Message from the other device</span><textarea aria-label="Message from the other device" rows={5} value={input} onChange={(event) => edit(event.target.value)} disabled={busy} /></label>

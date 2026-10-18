@@ -76,7 +76,7 @@ Recent development did implement the direct transport and substantial setup and 
 
 Useful existing regressions are [candidate tests](../service/tests/test_direct_candidates.py), [setup tests](../service/tests/test_direct_setup.py), [role/path tests](../service/tests/test_direct_path.py), [join receipt tests](../service/tests/test_workspace_join_receipt.py), [recovery tests](../service/tests/test_direct_recovery.py), and [renewal/port tests](../service/tests/test_direct_recovery_candidates.py). Use these as the baseline, adding tests for actual deltas instead of duplicating them under new names.
 
-Before implementation, produce a short delta checklist mapping each F1â€“F8 feature to existing functions/tests, the smallest missing behavior, and its acceptance evidence. A feature already satisfying the requirement needs verification and preservation, not a new implementation. In particular, F4 is mostly preservation, F5 is integration with an existing recovery system, and F3/F6 are improvements to a working but confusing setup flow. F7/F8 extend existing diagnostic-copy and version-display primitives. F2 and multi-candidate coverage in F1 contain the principal new transport work.
+Before implementation, produce a short delta checklist mapping each F1–F8 feature to existing functions/tests, the smallest missing behavior, and its acceptance evidence. A feature already satisfying the requirement needs verification and preservation, not a new implementation. In particular, F4 is mostly preservation, F5 is integration with an existing recovery system, and F3/F6 are improvements to a working but confusing setup flow. F7/F8 extend existing diagnostic-copy and version-display primitives. F2 and multi-candidate coverage in F1 contain the principal new transport work.
 
 ## Server free operation
 
@@ -296,7 +296,7 @@ A14 is an outstanding physical gate. Do not mark the physical connection passed 
 
 ## Implementation sequence and deliverables
 
-1. **Confirm implementation and architecture.** Recheck shipped paths against this baseline and produce the F1â€“F8 delta checklist. Preserve completed behavior and identify the smallest changes needed; do not rebuild Phases 2 or 3. The server-free policy is already decided. Write the ADR for permitted candidate sources, check protocol, manual/direct coordination, socket integration, and resource bounds. Update contradictory claims in the roadmap and troubleshooting guide.
+1. **Confirm implementation and architecture.** Recheck shipped paths against this baseline and produce the F1–F8 delta checklist. Preserve completed behavior and identify the smallest changes needed; do not rebuild Phases 2 or 3. The server-free policy is already decided. Write the ADR for permitted candidate sources, check protocol, manual/direct coordination, socket integration, and resource bounds. Update contradictory claims in the roadmap and troubleshooting guide.
 2. **Build the controlled NAT harness.** Establish the failing A2/A3 baseline against the shipping dispatcher before claiming new traversal. Keep all existing identity and transport tests.
 3. **Implement candidate collection and coordinated checks.** Add multiple paths and provenance, intended-peer observation, shared socket reception, fair scheduling, nomination, and authorization. Prove direct traversal under the server-free boundary.
 4. **Integrate coordination and recovery.** Improve manual exchange, automate refresh over surviving authenticated peer paths, preserve direct TCP fallback, and reuse the engine for admitted relationships.
