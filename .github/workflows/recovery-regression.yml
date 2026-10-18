@@ -2,7 +2,7 @@ name: Unhosted recovery regression
 on:
   workflow_dispatch:
   pull_request:
-    paths: ['experiments/direct-fabric/src/recovery.rs', 'service/tools/direct_recovery_regression.py', '.github/workflows/recovery-regression.yml']
+    paths: ['experiments/direct-fabric/src/recovery.rs', 'service/tools/direct_recovery_regression.py', 'service/tools/direct_hostile_probe.py', '.github/workflows/recovery-regression.yml']
 permissions:
   contents: read
 jobs:
@@ -23,3 +23,24 @@ jobs:
           python-version: '3.13'
       - name: Prove failure on previous code and success on the fix
         run: python service/tools/direct_recovery_regression.py
+  hostile-traffic:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@1.90.0
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+      - run: python -m pip install ./service
+      - run: cargo build --locked --manifest-path experiments/direct-app-host/Cargo.toml
+      - run: python service/tools/direct_hostile_probe.py --report hostile-traffic.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: hostile-traffic-${{ matrix.os }}
+          path: hostile-traffic.json
