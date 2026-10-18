@@ -75,9 +75,29 @@ class DirectSetup:
     def _state(self, setup_id, state, kind, workspace_id, fields, text=None):
         value = {"setup_id":setup_id,"state":state,"kind":kind,"workspace_id":workspace_id,
                  "expires_at":fields["expires_at"],"candidate_count":len(fields["candidates"])}
+        previous = self.service.store.get("direct_setup", setup_id)
+        if previous and previous.get("relationship_id"):
+            value["relationship_id"] = previous["relationship_id"]
         self.service.store.put("direct_setup", setup_id, value)
         self.service._changed()
         return {**value, **({"text":text} if text is not None else {})}
+
+    def relationship_ready(self, carrier, identifier):
+        """Persist completion after authenticated admitted RNS confirmation."""
+        with self._lock:
+            identifiers = [key for key,value in self._carriers.items() if value is carrier]
+        for setup_id in identifiers:
+            value = self.service.store.get("direct_setup",setup_id)
+            if value is not None and value["state"] != "cancelled":
+                self.service.store.put("direct_setup",setup_id,{**value,"relationship_id":identifier})
+
+    def release_carrier(self, carrier):
+        with self._lock:
+            for key,value in list(self._carriers.items()):
+                if value is carrier:
+                    self._carriers.pop(key,None)
+                    if self._prepared.get(key) is carrier.prepared:
+                        self._prepared.pop(key,None)
 
     def status(self, setup_id):
         if not isinstance(setup_id, str):
@@ -85,6 +105,8 @@ class DirectSetup:
         value = self.service.store.get("direct_setup", setup_id)
         if value is None:
             raise ValidationError("Direct setup is unavailable")
+        if value["state"] != "cancelled" and value.get("relationship_id"):
+            return {**value,"state":"relationship_active"}
         with self._lock:
             retained = setup_id in self._prepared
         if value["state"] != "cancelled" and (value["expires_at"] <= time.time() or not retained):
@@ -236,10 +258,14 @@ class DirectSetup:
         with self._lock:
             prepared = self._prepared.pop(setup_id, None)
             carrier = self._carriers.pop(setup_id, None)
+        value = self.service.store.get("direct_setup", setup_id)
+        relationship = value.get("relationship_id") if value else None
+        if relationship and self.service.store.get("direct_relationship",relationship) is not None:
+            self.service._direct_recovery.pause(relationship)
+        elif carrier is not None and hasattr(carrier,"expected"):
+            from .direct_relationship import relationship_id
+            self.service._direct_recovery.pause(relationship_id(self.service.store,carrier.expected))
         if carrier is not None:
-            if hasattr(carrier,"expected"):
-                from .direct_relationship import relationship_id
-                self.service._direct_recovery.pause(relationship_id(self.service.store,carrier.expected))
             carrier.close()
         if prepared is not None:
             prepared.close()

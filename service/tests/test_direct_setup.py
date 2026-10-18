@@ -280,3 +280,23 @@ def test_no_candidates_uses_existing_route_queue_without_claiming_direct_connect
         value = service._direct_setup.connect(setup["setup_id"],ready["text"])
         assert value["state"] == "existing_routes_only"
         assert not any(op == "activate" for op,_ in service._direct_native.calls)
+
+
+def test_completed_setup_survives_socket_expiry_and_cancel_pauses_saved_relationship(peers,monkeypatch):
+    owner,_,workspace,invite=peers
+    setup=owner._direct_setup
+    offer=setup.offer(invite["id"])
+    carrier=object()
+    setup._carriers[offer["setup_id"]]=carrier
+    identifier="opaque-relationship"
+    owner.store.put("direct_relationship",identifier,{"version":1})
+    setup.relationship_ready(carrier,identifier)
+    setup._carriers.clear(); setup._prepared.clear()  # Restart drops runtime ownership.
+    value=owner.store.get("direct_setup",offer["setup_id"])
+    owner.store.put("direct_setup",offer["setup_id"],{**value,"expires_at":1})
+    assert setup.status(offer["setup_id"])["state"]=="relationship_active"
+    paused=[]
+    monkeypatch.setattr(owner._direct_recovery,"pause",paused.append)
+    setup.cancel(offer["setup_id"])
+    assert paused==[identifier]
+    assert setup.status(offer["setup_id"])["state"]=="cancelled"

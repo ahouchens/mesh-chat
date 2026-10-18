@@ -297,7 +297,7 @@ def test_server_migration_failure_schedules_reconnection_instead_of_retrying_reb
     assert identifier not in recovery._pending
 
 
-@pytest.mark.parametrize("fault",[None,"wrong_leaf","success_commit","winner_commit","stale_callback"])
+@pytest.mark.parametrize("fault",[None,"renewed_same_key","newer_other_key","wrong_leaf","success_commit","winner_commit","stale_callback"])
 def test_replacement_requires_current_authentication_and_durable_winner_before_old_retirement(pair,monkeypatch,fault):
     from mesh_chat import direct_recovery as module
     owner,_,record,authority,document=pair
@@ -318,7 +318,9 @@ def test_replacement_requires_current_authentication_and_durable_winner_before_o
         def cleanup_records(self): return []
         def close(self): events.append("new_closed")
     prepared=Prepared()
-    def prepare(*args,**kwargs): prepared.generation=kwargs["generation"]; return prepared
+    def prepare(*args,**kwargs):
+        assert kwargs["preferred_port"]==0 and kwargs["preferred_external_port"]==0
+        prepared.generation=kwargs["generation"]; return prepared
     monkeypatch.setattr(module,"prepare_candidates",prepare)
     owner.network.destination_hash = _destination_for(owner._identity)
     class Native:
@@ -334,6 +336,8 @@ def test_replacement_requires_current_authentication_and_durable_winner_before_o
     owner._direct_native=Native()
     old=SimpleNamespace(_stop=threading.Event(),close=lambda:events.append("old_closed"))
     recovery._active[identifier]=old
+    recovery._write(identifier,local={"cleanup":[{"external_port":56789}],"expires_at":int(time.time())+300,
+        "socket_hint":{"host":"93.184.216.34","port":45679}})
     class Carrier:
         def __init__(self,*args,**kwargs):
             self.prepared=prepared; self._stop=threading.Event(); self.peer_seen=threading.Event()
@@ -341,6 +345,9 @@ def test_replacement_requires_current_authentication_and_durable_winner_before_o
         def start(self):
             events.append("peer_confirmed")
             if fault=="stale_callback": recovery._pending[identifier]=(recovery._epoch,object())
+            if fault in {"renewed_same_key","newer_other_key"}:
+                newer,new_cert,_=document(3,peer_cert if fault=="renewed_same_key" else b"other connection")
+                owner._accept_direct_workspace_binding(newer,authority,new_cert)
         def close(self): self._stop.set(); self.lease.cancel(); prepared.close()
     monkeypatch.setattr(module,"AdmittedCarrier",Carrier)
     recovery._send=lambda *args:False
@@ -357,7 +364,7 @@ def test_replacement_requires_current_authentication_and_durable_winner_before_o
         return original_write(identifier,**changes)
     recovery._write=write
     recovery._attempt(identifier,record,token)
-    if fault:
+    if fault not in {None,"renewed_same_key"}:
         assert "old_closed" not in events and "new_closed" in events
         assert recovery._active[identifier] is old
     else:

@@ -100,7 +100,8 @@ client/server route changes, blocked targets, lost hints and explicit updates.
 
 Controlled failure injection uses synthetic public candidates translated to
 loopback at the native test boundary. Blocking redirects both peers' dial targets
-to an unused loopback port; address loss removes stored candidate hints. These are
+to an unused loopback port; address loss discards both local port preferences so
+both peers move while retaining obsolete signed remote address hints. These are
 controlled reachability failures, not claims about physical firewalls or routers.
 The harness preserves ordinary signed join/application acknowledgment before the
 single admission, then requires the same queued message IDs and LXMF endpoint

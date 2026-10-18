@@ -78,6 +78,7 @@ class DirectRecovery:
                 self._active[identifier] = carrier
         if old is not None and old is not carrier: old.close()
         self._write(identifier, enabled=True, state="reconnecting", next_at=self.clock())
+        self.service._direct_setup.relationship_ready(carrier,identifier)
         self._wake.set()
 
     def _valid(self, identifier, token):
@@ -173,7 +174,10 @@ class DirectRecovery:
         # explicit signed update restarts only that pending attempt; it retains
         # the local port hint and always reauthenticates a fresh transport key.
         with self._lock:
-            waiting = self._state(identifier)["enabled"] and before["digest"] != accepted.digest and identifier in self._waiting_hints
+            waiting = (self._state(identifier)["enabled"] and before["digest"] != accepted.digest
+                       and (identifier in self._waiting_hints or
+                            source is None and identifier in self._pending and
+                            (current is None or current._stop.is_set())))
             if waiting:
                 self._pending.pop(identifier,None)
                 self._waiting_hints.discard(identifier)
@@ -201,7 +205,7 @@ class DirectRecovery:
             stage = "prepare"
             prepared = prepare_candidates(self.service._direct_native,generation=generation,
                 expires_at=int(self.clock())+3600,recovery=True,preferred_port=port,
-                preferred_external_port=cleanup[0]["external_port"] if cleanup else 0)
+                preferred_external_port=cleanup[0]["external_port"] if cleanup and not (old and not old._stop.is_set()) else 0)
             with self.service._dispatch_lock:
                 if not self._valid(identifier,token): return
                 fields = prepared.document_fields()
@@ -291,6 +295,13 @@ class DirectRecovery:
                         if not self._valid(identifier,token): return
                         self._authority(record)
                         stage = "winner_commit"
+                        latest = self.service.store.get("direct_relationship",identifier)
+                        if latest["accepted"]["digest"] != accepted.digest and latest["certificate"] == peer_cert.hex():
+                            # Same-key lease updates may arrive during RNS setup.
+                            # Reverify the newer signed generation against the
+                            # actual authenticated leaf; never promote another key.
+                            expected = self._authority(record)
+                            accepted = self.service._accept_direct_workspace_binding(latest["binding"],expected,peer_cert)
                         record_success(self.service.store,expected,accepted,
                             load_authority=lambda:self._authority(record),clock=lambda:int(self.clock()))
                         self._write(identifier,state="connected",attempts=0,next_at=self.clock()+3000,
@@ -301,7 +312,9 @@ class DirectRecovery:
                             admitted.route_signature = self._route_signature
                             self._active[identifier] = admitted
                         promoted = True
-                    if old and old is not admitted: old.close()
+                    if old and old is not admitted:
+                        old.close()
+                        self.service._direct_setup.release_carrier(old)
                     return
                 self._stop.wait(.05)
             raise ValidationError("Recovery attempt was retired")

@@ -5,7 +5,7 @@ type Peer = { relationship_id: string; workspace_id: string; peer_device_id: str
   native_engine_healthy: boolean; authenticated_peer_live: boolean; rns_ready: boolean };
 const labels: Record<string, string> = {
   connected: "Direct path connected", reconnecting: "Reconnecting",
-  connection_update_needed: "Connection update needed", dormant: "Direct recovery paused",
+  connection_update_needed: "Connection update needed", dormant: "Direct path dormant",
   authorization_unavailable: "This device relationship is no longer authorized",
 };
 export function DirectRecovery({ workspaceId }: { workspaceId: string }) {

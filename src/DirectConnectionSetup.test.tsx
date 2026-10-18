@@ -86,3 +86,17 @@ it("shows socket loss as explicit refresh and cancels the opaque setup", async (
   expect(api.serviceCommand).toHaveBeenCalledWith("cancel_direct_setup", { setup_id: setup.setup_id });
   expect(screen.queryByLabelText("Complete direct connection document")).toBeNull();
 });
+
+it("keeps completed admission separate from expired setup sockets", async () => {
+  vi.useFakeTimers();
+  api.serviceCommand.mockImplementation(async command => {
+    if (command === "prepare_direct_offer") return { ...setup, state: "waiting_for_reply", text: "mesh-direct:offer" };
+    return { ...setup, state: "relationship_active" };
+  });
+  render(<DirectConnectionSetup invitationId="invite" />);
+  await act(async () => { fireEvent.click(screen.getByText("Prepare direct offer")); });
+  await act(async () => { await vi.advanceTimersByTimeAsync(2000); });
+  expect(screen.getByText(/Your saved device relationship reconnects automatically/)).toBeTruthy();
+  expect(screen.queryByText(/Ask the owner for a fresh offer/)).toBeNull();
+  expect(screen.queryByLabelText("Complete direct connection document")).toBeNull();
+});

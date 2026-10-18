@@ -14,6 +14,7 @@ const states: Record<string, string> = {
   ready_received: "Ready document verified. Start the connection while the owner is online.",
   connecting: "Trying the signed direct paths. Share the ready document now if you created it.",
   bootstrap_connected: "Direct setup path established. The signed join request still needs acknowledgment and owner approval.",
+  relationship_active: "Direct setup is complete. Your saved device relationship reconnects automatically. Check Direct connections in workspace settings for current status.",
   admitted_path: "Direct workspace path established with fresh credentials. Workspace delivery and receipts appear in the conversation.",
   existing_routes_only: "Neither device supplied a public direct candidate. The saved join request continues over existing routes, including signed TCP routes. Refresh these details after changing networks.",
   refresh_required: "These connection details can no longer be used. Ask the owner for a fresh offer, then exchange a new reply and ready document.",
@@ -38,7 +39,7 @@ export function DirectConnectionSetup({ invitationId, initialDocument = "", onOp
       void serviceCommand<Setup>("direct_setup_status", { setup_id: setup.setup_id }).then((value) => {
         if (active) {
           setSetup(value);
-          if (value.state === "refresh_required" || value.state === "cancelled") setOutgoing("");
+          if (value.state === "refresh_required" || value.state === "cancelled" || value.state === "relationship_active") setOutgoing("");
         }
       }).catch(() => { if (active) setError("Connection status is unavailable. Reopen Mesh Chat and refresh the setup details."); });
     }, 2000);

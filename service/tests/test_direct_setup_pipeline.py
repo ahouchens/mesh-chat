@@ -124,9 +124,12 @@ def _service_worker(root, incoming, outgoing, commands, replies, native_binary=N
                                   "interfaces":len(RNS.Transport.interfaces)}
                     elif operation == "recovery_diagnostic":
                         import hashlib
+                        from mesh_chat.invitations import canonical_bytes
                         result = {"peers":service._direct_recovery.status(),
                             "identity":service.network.destination_hash.hex(),
                             "migration_attempts":getattr(native,"migration_attempts",0),"migrations":getattr(native,"migrations",0),
+                            "application_receipts":[hashlib.sha256(canonical_bytes(w["join_receipt"])).hexdigest()
+                                for w in store.list("workspace") if w.get("join_receipt")],
                             "paths":[{"recovery":carrier.recovery,"certificate":hashlib.sha256(bytes.fromhex(carrier.prepared._owned["certificate"])).hexdigest()}
                                      for carrier in service._direct_recovery._active.values() if not carrier._stop.is_set()],
                             "pending":len(service._direct_recovery._pending),"native_count":len(native.owned),
@@ -138,11 +141,13 @@ def _service_worker(root, incoming, outgoing, commands, replies, native_binary=N
                         if "blocked" in payload:
                             native.blocked = payload["blocked"]
                         for identifier, record in store.items("direct_relationship"):
-                            if payload.get("lose_hints"):
-                                record["candidates"]=[]
-                                store.put("direct_relationship",identifier,record)
+                            if payload.get("lose_addresses"):
+                                saved=service._direct_recovery._state(identifier).get("local")
+                                assert saved
+                                saved["socket_hint"]={**saved["socket_hint"],"port":0}
+                                service._direct_recovery._write(identifier,local=saved)
                             service._direct_recovery._write(identifier,next_at=time.time(),
-                                attempts=6 if payload.get("blocked") or payload.get("lose_hints") else 0,state="reconnecting")
+                                attempts=6 if payload.get("blocked") or payload.get("lose_addresses") else 0,state="reconnecting")
                         service._direct_recovery._wake.set()
                         result = None
                     elif operation == "route_change":
@@ -222,7 +227,7 @@ def test_production_setup_bootstrap_admission_and_fresh_workspace_path(tmp_path,
         wait(1,"workspace_snapshot",lambda snap:any(item["state"] == "active" for item in snap["workspaces"]))
         wait(1,"workspace_snapshot",lambda snap:any(item["id"] == workspace["general_channel_id"] for item in snap["workspace_channels"]))
         for index, setup in enumerate((ready,answer)):
-            assert call(index,"status",setup_id=setup["setup_id"])["state"] == "admitted_path"
+            assert call(index,"status",setup_id=setup["setup_id"])["state"] in {"admitted_path","relationship_active"}
         for sender, recipient in ((0,1),(1,0)):
             sent = command(sender,"send_workspace_message",operation_id=op(),event_id=op(),workspace_id=workspace["id"],
                 channel_id=workspace["general_channel_id"],text="Fresh admitted path")

@@ -120,6 +120,7 @@ def test_production_durable_recovery(tmp_path,scenario):
         for i in range(2): peers.start(i)
         before=peers.admit()
         identities=[item["identity"] for item in before]
+        assert len(before[1]["application_receipts"])==1
         snapshots=[peers.command(i,"workspace_snapshot") for i in range(2)]
         memberships=[[(w["id"],w["local_member_id"],w["local_device_id"]) for w in s["workspaces"]] for s in snapshots]
         client=1 if scenario=="unhosted_restart" else 0 if identities[0]<identities[1] else 1
@@ -142,7 +143,7 @@ def test_production_durable_recovery(tmp_path,scenario):
             time.sleep(6)
             changed=[]  # Successful client migration keeps its authenticated key.
         elif scenario in {"blocked","address_loss"}:
-            for i in range(2): peers.call(i,"force_recovery",retire=True,blocked=scenario=="blocked",lose_hints=scenario=="address_loss")
+            for i in range(2): peers.call(i,"force_recovery",retire=True,blocked=scenario=="blocked",lose_addresses=scenario=="address_loss")
             queued=(0,peers.send(0,"Queued without reachable path"))
             for i in range(2):
                 peers.wait(i,"direct_recovery_status",lambda rows:rows and rows[0]["state"]=="connection_update_needed" and not rows[0]["authenticated_peer_live"],timeout=90)
@@ -167,6 +168,7 @@ def test_production_durable_recovery(tmp_path,scenario):
                 assert after[changed_peer]["paths"][0]["certificate"]!=before[changed_peer]["paths"][0]["certificate"]
         for i in range(2):
             assert after[i]["identity"]==identities[i]
+            assert after[i]["application_receipts"]==before[i]["application_receipts"]
             if i in changed: assert after[i]["paths"][0]["certificate"]!=before[i]["paths"][0]["certificate"]
             snapshot=peers.command(i,"workspace_snapshot")
             assert [(w["id"],w["local_member_id"],w["local_device_id"]) for w in snapshot["workspaces"]]==memberships[i]
