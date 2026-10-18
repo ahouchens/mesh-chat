@@ -14,7 +14,7 @@ with sync_playwright() as playwright:
     try:
         for width in (360, 393, 1280):
             for scale in (1, 2):
-                for phase in ("waiting_for_ready", "existing_routes_only", "refresh_required"):
+                for phase in ("waiting_for_ready", "existing_routes_only", "refresh_required", "no_route", "test_failed", "address_prepared", "peer_verified"):
                     page = browser.new_page(viewport={"width":width,"height":900})
                     page.add_init_script("Object.defineProperty(navigator, 'clipboard', {value:{writeText:async()=>{throw new Error('denied')}}})")
                     page.goto("http://127.0.0.1:1421/?phase="+phase)
@@ -37,4 +37,4 @@ with sync_playwright() as playwright:
     finally:
         browser.close()
         (output/"results.json").write_text(json.dumps(results,indent=2))
-assert len(results) == 18 and not any(row["overflow"] for row in results), results
+assert len(results) == 42 and not any(row["overflow"] for row in results), results

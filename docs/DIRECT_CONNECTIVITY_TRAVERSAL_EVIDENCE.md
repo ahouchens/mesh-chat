@@ -4,6 +4,25 @@ Status: implementation and qualification in progress, 2026-10-18. This is not a
 physical connectivity result or release approval. The detailed requirements are
 in [the spec](DIRECT_CONNECTIVITY_TRAVERSAL_SPEC.md).
 
+## Wizard increment: 0.2.56 / Android 2056
+
+Preparation checks now precede every displayed sharing surface. The controller
+checks current route identity, exact retained UDP ownership, candidate families,
+mapping/lease evidence and available Windows profile evidence. No TCP rule is
+used as UDP proof. An actual intended-peer native connection is required for
+"verified". Polling uses connection_state and does not consume packets.
+
+Both-empty is stopped at answer preparation before the UI shares the reply.
+Unhosted one-sided exchanges remain allowed. Retry reuses the same invitation
+and request, and a network change invalidates the old export. Diagnostics include
+allowlisted route/socket/mapping/firewall facts. UDP firewall repair and manual
+UDP mapping UI are not supported; the wizard says so explicitly.
+
+52 targeted readiness/setup/candidate/diagnostic source tests passed locally.
+Frontend regressions and 42 browser layout cases are submitted to Actions,
+along with full native qualification and distinct Windows/Android builds.
+Physical mobile-carrier acceptance and independent review remain pending.
+
 ## Exact-commit evidence
 
 - Current source version **0.2.55**, Android **2055**: fixes revocation cleanup
@@ -48,9 +67,9 @@ in [the spec](DIRECT_CONNECTIVITY_TRAVERSAL_SPEC.md).
 - `b01572d0232e3980751638b2e91ba9051272f60b`:
   [expanded NAT fixture passed](https://github.com/ahouchens/mesh-chat/actions/runs/39154080619),
   artifact `direct-nat-evidence` ID `12146297270`. All seven trials passed:
-  three compatible NAT connections (1.264–1.267 seconds), passive negative
+  three compatible NAT connections (1.264â€“1.267 seconds), passive negative
   control, UDP blocked on one/both sides, and destination-dependent mapping with
-  a stale tuple (bounded failures at 10.234–10.254 seconds). Each successful
+  a stale tuple (bounded failures at 10.234â€“10.254 seconds). Each successful
   trial carried packets both ways. These are isolated kernel topology results.
 - `118329d17df022ff201b6693e137d2896f07cdd4`: [CI passed](https://github.com/ahouchens/mesh-chat/actions/runs/39151505158).
   [Native run](https://github.com/ahouchens/mesh-chat/actions/runs/39151507296):
@@ -74,7 +93,7 @@ public address discovery nor behavior on every consumer or carrier NAT.
 | Requirement | Evidence and remaining gate |
 | --- | --- |
 | A1 | Existing real-QUIC production setup/admission pipeline; latest full run and physical public-path qualification pending. |
-| A2–A3 | Native NAT fixture passed at `118329d` and `e496b2e`; passive negative control failed as expected. |
+| A2â€“A3 | Native NAT fixture passed at `118329d` and `e496b2e`; passive negative control failed as expected. |
 | A4 | One-sided candidate/native accept tests and unhosted recovery pipeline; no general reachable address is inferred from an observed tuple. |
 | A5 | Empty-candidate setup regressions preserve the request and do not activate native transport. |
 | A6 | Multiple owned route sockets, silent-first-candidate native tests and mixed-family service tests added; latest native suite pending. |
@@ -85,7 +104,7 @@ public address discovery nor behavior on every consumer or carrier NAT.
 | A11 | Existing restart/suspend recovery pipeline; Android 45-second share grace implemented. Actual sharing, process death, Doze and network switch device tests pending. |
 | A12 | Existing authority/cancellation/queue tests plus group socket cancellation and shared bounds. Adversarial packet-rate qualification and independent protocol review pending. |
 | A13 | Existing Linux network audit and isolated NAT topology; latest full audit pending. No runtime observer, rendezvous, relay or IP lookup added. |
-| A14 | Pending physical Windows/home-router ↔ Android/mobile-carrier test on uniquely versioned artifacts. |
+| A14 | Pending physical Windows/home-router â†” Android/mobile-carrier test on uniquely versioned artifacts. |
 | A15 | Deterministic client outgoing/server incoming path and auxiliary closure tests; independent review of boundary races still required. |
 | A16 | Default Invite invokes the guided controller; one outgoing item and shared import entry tested in frontend CI. Owner resume added in follow-up. Human end-to-end acceptance pending. |
 | A17 | Eighteen browser layout cases passed at `dec191b`; 360/393px doubled-text screenshots inspected. Actual Android and human usability acceptance pending. |

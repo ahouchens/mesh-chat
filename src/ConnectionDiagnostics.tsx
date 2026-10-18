@@ -5,7 +5,7 @@ import packageInfo from "../package.json";
 const unavailable = "unavailable";
 const phases = new Set(["waiting_for_reply", "waiting_for_ready", "ready_to_share", "ready_received", "connecting",
   "bootstrap_connected", "relationship_active", "admitted_path", "existing_routes_only", "refresh_required",
-  "cancelled", "failed", "verified", "recovery", "unavailable", "connected", "reconnecting", "connection_update_needed", "dormant"]);
+  "cancelled", "failed", "verified", "recovery", "unavailable", "connected", "reconnecting", "connection_update_needed", "dormant", "checking", "no_route", "network_changed", "test_failed", "both_no_address", "address_prepared", "no_local_address", "testing", "peer_verified", "complete"]);
 const events = new Set(["state", "import_verified", "import_rejected", "action_failed", "lifecycle_interrupted"]);
 const kinds = new Set(["offer", "answer", "ready", "recovery"]);
 function object(value: unknown): Record<string, unknown> {
@@ -34,7 +34,11 @@ export function diagnosticReport(build: unknown, raw: unknown, log = false) {
     const event = object(rawEvent);
     return { time: number(event.time, 2**53 - 1), attempt: token(event.attempt, /^[0-9a-f]{12}$/),
       event: choice(event.event, events), phase: choice(event.phase, phases), kind: choice(event.kind, kinds),
-      candidate_count: number(event.candidate_count, 8), expires_at: number(event.expires_at, 2**53 - 1),
+      candidate_count: number(event.candidate_count, 8),
+      route: choice(event.route, new Set(["available", "unavailable"])),
+      socket: choice(event.socket, new Set(["retained", "unavailable"])),
+      mapping: choice(event.mapping, new Set(["prepared_unverified", "unavailable", "not_needed"])),
+      firewall: choice(event.firewall, new Set(["udp_permission_unverified", "windows_profile_known_udp_unverified", "windows_profile_unavailable_udp_unverified"])), expires_at: number(event.expires_at, 2**53 - 1),
       receipt_status: choice(event.receipt_status, new Set(["confirmed", "not_confirmed"])),
       approval_status: choice(event.approval_status, new Set(["approved", "pending"])),
       candidate_sources: Object.fromEntries(["ipv4", "ipv6", "local_global", "pcp", "upnp", "upnp_ipv6", "nat_pmp"].map(key => [key, number(object(event.candidate_sources)[key], 8)])),

@@ -132,6 +132,102 @@ class DirectSetup:
             return status
         return value
 
+    def readiness(self, setup_id):
+        """Current capability evidence, never an Internet reachability guess.
+
+        This is the only UI export gate. No native handles or addresses leave it.
+        Polling connection_state cannot consume the carrier's application packets.
+        """
+        from . import connectivity as c
+        from .direct_candidates import route_signature
+        from .direct_binding import _parse
+        value = self.status(setup_id)
+        result = {**value, "readiness":"checking", "can_share":False,
+                  "route":"unavailable", "socket":"unavailable", "mapping":"unavailable",
+                  "firewall":"udp_permission_unverified", "peer_verified":False}
+        with self._lock:
+            prepared = self._prepared.get(setup_id)
+            carrier = self._carriers.get(setup_id)
+        if value["state"] == "cancelled":
+            return {**result, "readiness":"cancelled"}
+        if value["state"] == "relationship_active":
+            return {**result, "readiness":"complete"}
+        if prepared is None or value["expires_at"] <= time.time():
+            return {**result, "readiness":"refresh_required"}
+        routes = c.default_routes()
+        result["route"] = "available" if any(r.local_address for r in routes) else "unavailable"
+        if not routes:
+            return {**result, "readiness":"no_route"}
+        if prepared.route_signature != route_signature(routes):
+            return {**result, "readiness":"network_changed"}
+        saved = self.service.store.get("direct_setup_document", setup_id)
+        if not saved:
+            return {**result, "readiness":"refresh_required"}
+        checked = verify_connection_document(saved["text"])
+        owner = self.service._identity.get_public_key() == checked.offer_authority.issuer_public_identity
+        if owner:
+            self.service._direct_owner_invitation(self.service._workspace_invitation_record_id(checked.invitation.nonce))
+        else:
+            expected = BindingAuthority(checked.offer_authority.issuer_public_identity,
+                _destination_for(self.service._identity), checked.offer_authority.scope,
+                checked.offer_authority.expires_at, checked.offer_authority.challenge)
+            self.service._direct_join_binding_authority(checked.invitation.workspace_id, expected)
+        try:
+            prepared._check()
+            if carrier is not None:
+                if carrier.prepared is not prepared or carrier._stop.is_set():
+                    return {**result, "readiness":"test_failed"}
+                progress = self.service._direct_native.request("connection_state", id=prepared.handle)
+                if not isinstance(progress, dict) or type(progress.get("state")) is not int or progress["state"] not in {0,1,2}:
+                    raise ValidationError("Invalid native progress")
+                if progress["state"] == 2:
+                    return {**result, "readiness":"test_failed"}
+                if progress["state"] == 1:
+                    return {**result, "readiness":"peer_verified", "peer_verified":True, "socket":"retained"}
+            else:
+                prepared.document_fields()
+        except Exception:
+            return {**result, "readiness":"refresh_required"}
+        result["socket"] = "retained"
+        result["candidate_sources"] = prepared.diagnostic_counts()
+        import platform
+        result["platform"] = "windows" if platform.system().lower() == "windows" else "other"
+        if result["platform"] == "windows":
+            from .firewall import active_windows_profiles
+            if not hasattr(prepared, "firewall_profile_evidence"):
+                prepared.firewall_profile_evidence = bool(active_windows_profiles())
+            result["firewall"] = "windows_profile_known_udp_unverified" if prepared.firewall_profile_evidence else "windows_profile_unavailable_udp_unverified"
+        result["mapping"] = "prepared_unverified" if prepared._mappings else "unavailable" if prepared.mapping_attempted else "not_needed"
+        remote = None if checked.answer is None and owner else (
+            _parse(checked.answer)["binding"]["candidates"] if owner else _parse(checked.offer)["candidates"])
+        if not owner and checked.ready is not None:
+            remote = _parse(checked.ready)["binding"]["candidates"]
+        result["peer_candidate_count"] = None if remote is None else len(remote)
+        if not prepared._candidates and remote == []:
+            return {**result, "readiness":"both_no_address"}
+        phase = "address_prepared" if prepared._candidates else "no_local_address"
+        share = value["state"] in {"waiting_for_reply", "waiting_for_ready", "ready_to_share"} or (owner and value["state"] == "connecting")
+        return {**result, "readiness":"testing" if carrier else phase, "can_share":share,
+                **({"text":saved["text"]} if share else {})}
+
+    def retry(self, setup_id):
+        """Refresh the same invitation/request after the user's network repair."""
+        import uuid
+        self._available()
+        saved = self.service.store.get("direct_setup_document", setup_id)
+        if saved is None:
+            raise ValidationError("Ask the owner for refreshed connection details")
+        origin = self.service.store.get("direct_setup_origin", setup_id)
+        if origin and origin.get("invitation_id"):
+            return self.offer(origin["invitation_id"])
+        # Expired documents are not authority for a new joiner exchange.
+        checked = verify_connection_document(saved["text"])
+        if self.service._identity.get_public_key() == checked.offer_authority.issuer_public_identity:
+            invitation_id = self.service._workspace_invitation_record_id(checked.invitation.nonce)
+            return self.offer(invitation_id)
+        offer = export_connection_document(checked.invitation.serialized, checked.offer, checked.offer_certificate)
+        return self.answer(offer, str(uuid.uuid4()))
+
     def preview(self, document):
         return verify_connection_document(document).preview()
 
@@ -219,6 +315,7 @@ class DirectSetup:
             service._save_direct_offer(invitation_id, raw, fields["certificate"])
             prepared.document_fields()
             text = export_connection_document(invite.serialized, raw, fields["certificate"])
+            service.store.put("direct_setup_origin", setup_id, {"invitation_id":invitation_id})
             return self._state(setup_id, "waiting_for_reply", "offer", invite.workspace_id, fields, text)
         except Exception:
             self.cancel(setup_id)
@@ -316,6 +413,7 @@ class DirectSetup:
         accepted = service._accept_direct_ready(workspace_id, checked.ready, checked.ready_certificate)
         service._direct_native.request("rearm", id=prepared.handle,
             answer=hashlib.sha256(checked.answer.encode()).hexdigest(), generation=accepted.generation, ready=accepted.digest)
+        service.store.put("direct_setup_document", setup_id, {"text":document})
         return self._state(setup_id, "ready_received", "ready", workspace_id, fields)
 
     def cancel(self, setup_id):

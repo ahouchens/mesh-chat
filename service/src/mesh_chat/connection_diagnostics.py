@@ -16,7 +16,9 @@ RETENTION = 7 * 24 * 3600
 PHASES = frozenset({"waiting_for_reply", "waiting_for_ready", "ready_to_share", "ready_received",
     "connecting", "bootstrap_connected", "relationship_active", "admitted_path", "existing_routes_only",
     "refresh_required", "cancelled", "failed", "verified", "recovery", "unavailable",
-    "connected", "reconnecting", "connection_update_needed", "dormant"})
+    "connected", "reconnecting", "connection_update_needed", "dormant",
+    "checking", "no_route", "network_changed", "test_failed", "both_no_address",
+    "address_prepared", "no_local_address", "testing", "peer_verified", "complete"})
 EVENTS = frozenset({"state", "import_verified", "import_rejected", "action_failed", "lifecycle_interrupted"})
 KINDS = frozenset({"offer", "answer", "ready", "recovery", "unavailable"})
 SOURCES = ("ipv4", "ipv6", "local_global", "pcp", "upnp", "upnp_ipv6", "nat_pmp")
@@ -39,6 +41,10 @@ def sanitize(value):
         "phase":enum("phase", PHASES, "unavailable"),
         "kind":enum("kind", KINDS, "unavailable"),
         "candidate_count":integer("candidate_count", 8),
+        "route":enum("route", {"available", "unavailable"}, "unavailable"),
+        "socket":enum("socket", {"retained", "unavailable"}, "unavailable"),
+        "mapping":enum("mapping", {"prepared_unverified", "unavailable", "not_needed"}, "unavailable"),
+        "firewall":enum("firewall", {"udp_permission_unverified", "windows_profile_known_udp_unverified", "windows_profile_unavailable_udp_unverified"}, "unavailable"),
         "receipt_status":enum("receipt_status", {"confirmed", "not_confirmed"}, "unavailable"),
         "approval_status":enum("approval_status", {"approved", "pending"}, "unavailable"),
         "candidate_sources":{key:sources[key] if type(sources.get(key)) is int and 0 <= sources[key] <= 8 else None for key in SOURCES},
@@ -75,7 +81,7 @@ def record(service, event, state=None):
 
 def _record(service, event, state=None):
     state = state or {}
-    row = sanitize({**{key:state.get(key) for key in ("state", "kind", "candidate_count", "candidate_sources", "receipt_status", "approval_status", "expires_at", "checks_started", "checks_authenticated", "elapsed_ms")},
+    row = sanitize({**{key:state.get(key) for key in ("state", "kind", "route", "socket", "mapping", "firewall", "candidate_count", "candidate_sources", "receipt_status", "approval_status", "expires_at", "checks_started", "checks_authenticated", "elapsed_ms")},
         "phase":state.get("state"), "event":event, "time":int(time.time()),
         "attempt":hashlib.sha256(str(state.get("setup_id", "unknown")).encode()).hexdigest()[:12]})
     value = history(service)

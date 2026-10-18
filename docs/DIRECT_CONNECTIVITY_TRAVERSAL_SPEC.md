@@ -76,7 +76,7 @@ Recent development did implement the direct transport and substantial setup and 
 
 Useful existing regressions are [candidate tests](../service/tests/test_direct_candidates.py), [setup tests](../service/tests/test_direct_setup.py), [role/path tests](../service/tests/test_direct_path.py), [join receipt tests](../service/tests/test_workspace_join_receipt.py), [recovery tests](../service/tests/test_direct_recovery.py), and [renewal/port tests](../service/tests/test_direct_recovery_candidates.py). Use these as the baseline, adding tests for actual deltas instead of duplicating them under new names.
 
-Before implementation, produce a short delta checklist mapping each F1–F8 feature to existing functions/tests, the smallest missing behavior, and its acceptance evidence. A feature already satisfying the requirement needs verification and preservation, not a new implementation. In particular, F4 is mostly preservation, F5 is integration with an existing recovery system, and F3/F6 are improvements to a working but confusing setup flow. F7/F8 extend existing diagnostic-copy and version-display primitives. F2 and multi-candidate coverage in F1 contain the principal new transport work.
+Before implementation, produce a short delta checklist mapping each F1â€“F8 feature to existing functions/tests, the smallest missing behavior, and its acceptance evidence. A feature already satisfying the requirement needs verification and preservation, not a new implementation. In particular, F4 is mostly preservation, F5 is integration with an existing recovery system, and F3/F6 are improvements to a working but confusing setup flow. F7/F8 extend existing diagnostic-copy and version-display primitives. F2 and multi-candidate coverage in F1 contain the principal new transport work.
 
 ## Server free operation
 
@@ -222,7 +222,7 @@ Display separate invitation and connection-detail expiries. Offer Resume setup, 
 
 ### F7 Copyable diagnostics and connection logs
 
-Add **Copy diagnostics** to every setup, failure, pending-workspace, and recovery status surface. One click or tap on that control must copy a self-contained report without cancelling or restarting the attempt. Also provide **Settings → Help and diagnostics**, reachable within two navigational actions from the main app, for the current or most recent attempt. Reuse the older connection checker's sanitizer and report fields where appropriate; extend coverage to the newer controller, native checks, and application receipt stages.
+Add **Copy diagnostics** to every setup, failure, pending-workspace, and recovery status surface. One click or tap on that control must copy a self-contained report without cancelling or restarting the attempt. Also provide **Settings â†’ Help and diagnostics**, reachable within two navigational actions from the main app, for the current or most recent attempt. Reuse the older connection checker's sanitizer and report fields where appropriate; extend coverage to the newer controller, native checks, and application receipt stages.
 
 In the same view, offer **Copy connection log** for a chronological, bounded set of recent structured events. This is a distinct action from copying a summary. Users must not need filesystem access, developer mode, a terminal, or knowledge of where logs are stored. Preserve the latest sanitized failure report across an ordinary app restart so a crash or relaunch does not destroy the only debugging context. Apply the existing protected storage policy and a documented retention/size limit; provide **Clear diagnostic history** without deleting messages, identity, or workspace state.
 
@@ -296,7 +296,7 @@ A14 is an outstanding physical gate. Do not mark the physical connection passed 
 
 ## Implementation sequence and deliverables
 
-1. **Confirm implementation and architecture.** Recheck shipped paths against this baseline and produce the F1–F8 delta checklist. Preserve completed behavior and identify the smallest changes needed; do not rebuild Phases 2 or 3. The server-free policy is already decided. Write the ADR for permitted candidate sources, check protocol, manual/direct coordination, socket integration, and resource bounds. Update contradictory claims in the roadmap and troubleshooting guide.
+1. **Confirm implementation and architecture.** Recheck shipped paths against this baseline and produce the F1â€“F8 delta checklist. Preserve completed behavior and identify the smallest changes needed; do not rebuild Phases 2 or 3. The server-free policy is already decided. Write the ADR for permitted candidate sources, check protocol, manual/direct coordination, socket integration, and resource bounds. Update contradictory claims in the roadmap and troubleshooting guide.
 2. **Build the controlled NAT harness.** Establish the failing A2/A3 baseline against the shipping dispatcher before claiming new traversal. Keep all existing identity and transport tests.
 3. **Implement candidate collection and coordinated checks.** Add multiple paths and provenance, intended-peer observation, shared socket reception, fair scheduling, nomination, and authorization. Prove direct traversal under the server-free boundary.
 4. **Integrate coordination and recovery.** Improve manual exchange, automate refresh over surviving authenticated peer paths, preserve direct TCP fallback, and reuse the engine for admitted relationships.
@@ -322,3 +322,39 @@ Creating this spec does not start a new chat, implementation, deployment, merge,
 - [Existing roadmap](DIRECT_CONNECTIVITY_ROADMAP.md), [underlay ADR](adr/0018-authenticated-direct-underlay.md), [Phase 2 evidence](DIRECT_CONNECTIVITY_PHASE2_EVIDENCE.md), and [Phase 3 evidence](DIRECT_CONNECTIVITY_PHASE3_EVIDENCE.md).
 
 Use the standards to inform implementation; this spec does not claim that existing Mesh Chat implements ICE. Any selected implementation must support disabling external discovery and relay mechanisms completely. Check current maintained dependencies and relevant errata before choosing an implementation.
+
+## Preparation and remediation wizard (0.2.56)
+
+Before any Copy, Share, Save, QR or selectable connection message is offered,
+the same guided controller must check the retained native UDP socket, current
+route identity, candidate families and mapping evidence. Recheck export actions;
+withhold stale text on status failure, route change, lost ownership or expiry.
+Local preparation is never verified Internet reachability. Only a current
+native authenticated connection to the intended peer permits that wording.
+
+Show three steps: check this device, exchange messages, test the connection.
+Give one primary next action, Back/Cancel and immediately accessible diagnostics.
+No-route repair keeps Windows on its home router and Android on mobile data.
+An unhosted side may exchange details if the other side supplies a candidate.
+Stop both-empty exchanges on the joiner's reply preparation, before sharing a
+reply or asking for a final message. Retry must retain the invitation and saved
+join request. Unknown public tuples are not discovered by waiting or hole punching.
+
+Explicit states: checking; no route; local address prepared but unverified;
+no local address; both devices have no usable address; network changed; expired
+or lost socket; test failed without attributing a firewall/UDP cause; authenticated
+peer verified; completed setup without a claim of current reachability.
+
+Use only observed remediation capabilities. The existing firewall helper is
+TCP-only: do not invoke it for QUIC or infer UDP permission from a Windows network
+profile. Show its limitation and keep the firewall enabled. Optional router help
+may explain UDP PCP/UPnP/NAT-PMP and the limits of manual mapping; there is no
+manual UDP endpoint editor in this increment. Never require port forwarding as
+the default, switch the user's carrier test to same Wi-Fi, or introduce helpers.
+Some networks remain unsupported. Signed invitation expiry and membership
+checks remain mandatory on retries and export; expired joiner inputs require a
+fresh message from the same owner invitation.
+
+Acceptance includes service state transitions, frontend export guards and copy
+fallback, actual phone/doubled-text layouts, and a physical paired-device test.
+Synthetic readiness fixtures cannot qualify router or Android lifecycle behavior.

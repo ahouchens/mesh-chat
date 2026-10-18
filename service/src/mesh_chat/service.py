@@ -146,7 +146,7 @@ class MeshChatService(
         "connection_diagnostics", "clear_connection_diagnostics",
         "preview_direct_connection", "prepare_direct_offer", "prepare_direct_answer",
         "prepare_direct_ready", "accept_direct_ready", "connect_direct_setup",
-        "direct_setup_status", "cancel_direct_setup",
+        "direct_setup_status", "cancel_direct_setup", "check_direct_setup", "retry_direct_setup",
         "direct_recovery_status", "export_recovery_update", "import_recovery_update",
         "pause_direct_recovery", "resume_direct_recovery",
         "snapshot",
@@ -311,7 +311,7 @@ class MeshChatService(
         "connection_diagnostics", "clear_connection_diagnostics",
         "preview_direct_connection", "prepare_direct_offer", "prepare_direct_answer",
         "prepare_direct_ready", "accept_direct_ready", "connect_direct_setup",
-        "direct_setup_status", "cancel_direct_setup",
+        "direct_setup_status", "cancel_direct_setup", "check_direct_setup", "retry_direct_setup",
         "direct_recovery_status", "export_recovery_update", "import_recovery_update",
         "pause_direct_recovery", "resume_direct_recovery",
         "snapshot",
@@ -2560,6 +2560,8 @@ class MeshChatService(
             "accept_direct_ready": ("accept_ready", {"document"}),
             "connect_direct_setup": ("connect", {"setup_id", "document"}),
             "direct_setup_status": ("status", {"setup_id"}),
+            "check_direct_setup": ("readiness", {"setup_id"}),
+            "retry_direct_setup": ("retry", {"setup_id"}),
             "cancel_direct_setup": ("cancel", {"setup_id"}),
             "resume_direct_setup": ("resume", {"workspace_id", "invitation_id"}),
         }
@@ -2572,6 +2574,8 @@ class MeshChatService(
             except Exception:
                 record(self, "import_rejected" if method == "preview" else "action_failed", {"state":"failed"})
                 raise
+            if method == "readiness":
+                record(self, "state", {**result, "state":result["readiness"]})
             if method == "preview":
                 record(self, "import_verified", {"state":"verified", "kind":result.get("kind")})
             return result

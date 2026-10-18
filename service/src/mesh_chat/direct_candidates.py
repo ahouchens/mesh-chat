@@ -22,6 +22,9 @@ class NativePreparation:
         self._owned = dict(owned)
         self._sockets = [{key:owned[key] for key in ("id", "host", "port", "certificate")}]
         self._sources = {}
+        self.route_signature = None
+        self.route_available = False
+        self.mapping_attempted = False
         self._clock, self._monotonic = clock, monotonic
         self.expires_at = expires_at
         self._deadline = monotonic() + max(0, expires_at-clock())
@@ -132,6 +135,11 @@ class NativePreparation:
                 pass
 
 
+def route_signature(routes):
+    """Private route identity; never exported in diagnostics or documents."""
+    return tuple(sorted((str(r.family), r.interface or "", r.local_address or "", r.gateway or "") for r in routes))
+
+
 def prepare_candidates(native, *, generation, expires_at, family=None, routes=None,
                        clock=time.time, monotonic=time.monotonic, recovery=False, preferred_port=0, preferred_external_port=0,
                        sleep=time.sleep, multiple=False, preferred_host=None, route_offset=0):
@@ -200,6 +208,9 @@ def prepare_candidates(native, *, generation, expires_at, family=None, routes=No
                 or not 1 <= len(bytes.fromhex(owned["certificate"])) <= 16384):
             raise ValidationError("Native socket preparation is invalid")
         preparation = (RecoveryPreparation if recovery else NativePreparation)(native, owned, expires_at, clock=clock, monotonic=monotonic)
+        preparation.route_signature = route_signature(routes)
+        preparation.route_available = bool(eligible)
+        preparation.mapping_attempted = any(c.classify_address(r.local_address) in {"rfc1918", "shared"} for r in eligible)
         kind = c.classify_address(local)
         lifetime = max(1, int(expires_at-clock()))
         if kind in {"public_ipv4", "public_ipv6"}:

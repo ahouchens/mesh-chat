@@ -515,6 +515,8 @@ fn allowed_renderer_command(command: &str) -> bool {
             | "resume_direct_recovery"
             | "direct_setup_status"
             | "resume_direct_setup"
+            | "check_direct_setup"
+            | "retry_direct_setup"
             | "connection_diagnostics"
             | "clear_connection_diagnostics"
             | "cancel_direct_setup"
@@ -1546,6 +1548,8 @@ mod tests {
             "resume_direct_recovery",
             "direct_setup_status",
             "resume_direct_setup",
+            "check_direct_setup",
+            "retry_direct_setup",
             "connection_diagnostics",
             "clear_connection_diagnostics",
             "cancel_direct_setup",

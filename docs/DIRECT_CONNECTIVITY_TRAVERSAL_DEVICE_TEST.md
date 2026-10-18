@@ -1,6 +1,6 @@
 # Windows and mobile-carrier acceptance
 
-Status: physical test not executed. **Wait for 0.2.55 (Android 2055): build and
+Status: physical test not executed. **Wait for 0.2.56 (Android 2056): build and
 native qualification pending.** The 0.2.54 artifacts below are superseded due to
 a revocation-cleanup defect and are retained only as historical evidence.
 
@@ -33,11 +33,13 @@ separate gates; see the [acceptance ledger](DIRECT_CONNECTIVITY_TRAVERSAL_EVIDEN
 ## Guided test
 
 1. Install the matching new build on **both Windows and Android**. In Settings,
-   confirm **Mesh Chat version 0.2.55** and copy version details on each device.
+   confirm **Mesh Chat version 0.2.56** and copy version details on each device.
    Preserve existing app data; do not clear the profile to work around a failure.
 2. Leave Windows on the home router. Turn Android Wi-Fi off and confirm mobile
    data is active. Keep both Mesh Chat apps unlocked and open.
 3. On Windows, open the workspace, choose **Invite**, then **Prepare invitation**.
+   Follow the check-this-device step. A prepared address is not yet verified.
+   If checks need repair, follow the displayed action and Retry checks.
    Copy the current connection message and send it to the phone using the usual
    clipboard/file/message transfer method.
 4. On Android, open **Join or connect** (the arrow entering a door in the workspace
@@ -75,7 +77,7 @@ reappear. Expired or lost socket ownership should offer a refresh of the same
 invitation, keeping the saved request. Do not substitute a different invitation
 for the pending request.
 
-After any failure, use **Copy diagnostics** on both devices. In Settings →
+After any failure, use **Copy diagnostics** on both devices. In Settings â†’
 **Help and diagnostics**, copy the connection log and version details. If copying
 is denied, select the fallback text or save the diagnostics file. Reopen the app
 and verify the last failure is still available. Clear diagnostic history and
@@ -88,3 +90,15 @@ Do not include invitation contents, private keys, addresses or message contents.
 
 A truthful unsupported result is useful diagnostic evidence, but does not satisfy
 the successful physical direct-connection criterion. Keep those outcomes separate.
+
+## Wizard-specific acceptance
+
+- With no route, verify sharing/QR/raw text is withheld; restore the same device's
+  Internet connection and Retry checks without creating a new invitation.
+- If only one device has an address, follow the exchange. If both lack candidates,
+  stop at the explicit explanation; no final-copy/wait loop should be offered.
+- Change networks during setup: old sharing must disappear after the next check.
+- A prepared mapping must say unverified. Only an authenticated intended peer
+  connection may say verified; a timeout must not claim firewall/UDP blocking.
+- Copy diagnostics immediately from any wizard step, including failures. Check
+  clipboard-denial fallback, large text, Back and Cancel on both platforms.
