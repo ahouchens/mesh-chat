@@ -306,21 +306,34 @@ impl Running {
                             .ok()
                             .and_then(Result::ok);
                         if let Some(connection) = connected {
-                            worker_client.store(dial && !candidates.is_empty(), Ordering::Release);
-                            return Ok(connection);
+                            // A completed TLS handshake may belong to a peer
+                            // that already retired this attempt. Do not let its
+                            // closed channel consume the entire recovery window.
+                            // No service evidence or application data is exposed
+                            // until the encrypted capsule exchange completes.
+                            let remote = tokio::time::timeout_at(
+                                deadline.min(Instant::now() + Duration::from_secs(10)),
+                                exchange(&connection, &capsule, CAPSULE),
+                            )
+                            .await;
+                            if let Ok(Ok(remote)) = remote {
+                                worker_client
+                                    .store(dial && !candidates.is_empty(), Ordering::Release);
+                                return Ok((connection, remote));
+                            }
+                            connection.close(0u32.into(), b"incomplete recovery");
                         }
                         tokio::time::sleep(Duration::from_millis(500)).await;
                     }
                     Err(Error::Timeout)
                 };
-                let connection = tokio::time::timeout_at(deadline, connecting)
+                let (connection, remote) = tokio::time::timeout_at(deadline, connecting)
                     .await
                     .map_err(|_| Error::Timeout)??;
                 if connection.max_datagram_size().unwrap_or(0) < MAX_PACKET {
                     return Err::<(), Error>(Error::DatagramSize);
                 }
                 let auth = async {
-                    let remote = exchange(&connection, &capsule, CAPSULE).await?;
                     let certs = connection
                         .peer_identity()
                         .ok_or(Error::Identity)?
@@ -641,6 +654,81 @@ mod tests {
         }
         state(&client, 1).await;
         state(&server, 1).await;
+    }
+
+    #[tokio::test]
+    async fn closed_pre_authorization_connection_does_not_consume_recovery_window() {
+        let bound = BoundSocket::bind("127.0.0.1:0".parse().unwrap()).unwrap();
+        let target = bound.address().unwrap();
+        let mut server = Running::start(
+            bound,
+            SessionKey::generate().unwrap(),
+            vec![1],
+            vec![],
+            false,
+            Duration::from_secs(15),
+            Duration::from_secs(30),
+        )
+        .unwrap();
+        let stale = endpoint(
+            BoundSocket::bind("127.0.0.1:0".parse().unwrap()).unwrap(),
+            SessionKey::generate().unwrap(),
+        )
+        .unwrap();
+        let retired = stale
+            .connect(target, "mesh-direct.invalid")
+            .unwrap()
+            .await
+            .unwrap();
+        // Reproduce an old native attempt closing immediately after TLS, before
+        // either service has received or approved the recovery capsule.
+        retired.close(0u32.into(), b"retired attempt");
+        tokio::time::sleep(Duration::from_millis(250)).await;
+        assert_eq!(server.state.load(Ordering::Acquire), 0);
+        assert!(server.evidence.lock().unwrap().is_none());
+        let client = Running::start(
+            BoundSocket::bind("127.0.0.1:0".parse().unwrap()).unwrap(),
+            SessionKey::generate().unwrap(),
+            vec![2],
+            vec![target],
+            true,
+            Duration::from_secs(15),
+            Duration::from_secs(30),
+        )
+        .unwrap();
+        state(&client, 3).await;
+        state(&server, 3).await;
+        assert_eq!(
+            server.send(vec![Bytes::from_static(b"early")]),
+            Err(Error::Identity)
+        );
+        assert_eq!(
+            server
+                .evidence
+                .lock()
+                .unwrap()
+                .as_ref()
+                .unwrap()
+                .certificate,
+            client.certificate
+        );
+        for peer in [&client, &server] {
+            let token = peer.evidence.lock().unwrap().as_ref().unwrap().token;
+            peer.authorize(token).unwrap();
+        }
+        state(&client, 1).await;
+        state(&server, 1).await;
+        client.send(vec![Bytes::from_static(b"approved")]).unwrap();
+        tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                if !server.poll().1.is_empty() {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap();
     }
 
     #[tokio::test]

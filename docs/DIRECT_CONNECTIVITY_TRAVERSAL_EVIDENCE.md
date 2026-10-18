@@ -4,7 +4,7 @@ Status: implementation and qualification in progress, 2026-10-18. This is not a
 physical connectivity result or release approval. The detailed requirements are
 in [the spec](DIRECT_CONNECTIVITY_TRAVERSAL_SPEC.md).
 
-## Current candidate: 0.2.60 / Android 2060
+## Current candidate: 0.2.61 / Android 2061
 
 Full Windows run `39163214793` reproduced address-loss failure despite the five
 passing isolated repetitions. Both peers retained matching fresh port hints,
@@ -12,6 +12,14 @@ with `native_wait` failure on both sides. A proposed role-period change was
 rejected: the staggered regression also passed the old code, so it did not prove
 the hypothesis. Both the speculative production change and its red/green case
 were removed. Existing recovery behavior and regression assertions are retained.
+
+A separate source finding is now under native red/green qualification: a TLS
+peer closing before encrypted capsule exchange terminated the entire recovery
+attempt. The candidate retries that incomplete pre-authorization exchange within
+the original deadline and start budget. It exposes no service evidence or data
+until exchange succeeds and preserves the subsequent membership approval gate.
+A regression retires one TLS peer, then requires a fresh peer to authenticate,
+receive explicit service approval and deliver data within the same attempt.
 
 The controlled native fixture now retains a bounded, credential-free trace of
 prepare/recover/state-transition/authorization/close events to identify the failed
