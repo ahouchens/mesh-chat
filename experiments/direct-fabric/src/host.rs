@@ -39,6 +39,7 @@ impl Drop for Running {
 enum Session {
     Prepared(PreparedAttempt),
     Running(Running),
+    Recovery(crate::recovery::Running),
 }
 struct Entries {
     next: u64,
@@ -65,7 +66,20 @@ impl Host {
         generation: u64,
         lifetime: Duration,
     ) -> Result<Prepared, Error> {
-        if lifetime.is_zero() || lifetime > Duration::from_secs(300) {
+        if lifetime > Duration::from_secs(300) {
+            return Err(Error::Configuration);
+        }
+        self.prepare_recovery(address, session, generation, lifetime)
+    }
+
+    pub fn prepare_recovery(
+        self: &Arc<Self>,
+        address: SocketAddr,
+        session: [u8; 16],
+        generation: u64,
+        lifetime: Duration,
+    ) -> Result<Prepared, Error> {
+        if lifetime.is_zero() || lifetime > Duration::from_secs(3600) {
             return Err(Error::Configuration);
         }
         let mut entries = self.entries.lock().map_err(|_| Error::Closed)?;
@@ -91,7 +105,11 @@ impl Host {
         tokio::spawn(async move {
             tokio::time::sleep(lifetime).await;
             if let Some(host) = weak.upgrade() {
-                host.close(id);
+                if let Ok(mut entries) = host.entries.lock() {
+                    if !matches!(entries.sessions.get(&id), Some(Session::Recovery(_))) {
+                        entries.sessions.remove(&id);
+                    }
+                }
             }
         });
         Ok(result)
@@ -221,11 +239,64 @@ impl Host {
         Ok(())
     }
 
+    pub fn recover(
+        &self,
+        id: u64,
+        capsule: Vec<u8>,
+        candidates: Vec<SocketAddr>,
+        client: bool,
+        attempt: Duration,
+        lifetime: Duration,
+    ) -> Result<(), Error> {
+        let mut entries = self.entries.lock().map_err(|_| Error::Closed)?;
+        if !matches!(entries.sessions.get(&id), Some(Session::Prepared(_))) {
+            return Err(Error::Closed);
+        }
+        let Some(Session::Prepared(prepared)) = entries.sessions.remove(&id) else {
+            unreachable!()
+        };
+        let (bound, key) = prepared.into_recovery_parts()?;
+        let running = crate::recovery::Running::start(
+            bound, key, capsule, candidates, client, attempt, lifetime,
+        )?;
+        entries.sessions.insert(id, Session::Recovery(running));
+        Ok(())
+    }
+    pub fn recovery_evidence(&self, id: u64) -> Result<Option<crate::recovery::Evidence>, Error> {
+        let entries = self.entries.lock().map_err(|_| Error::Closed)?;
+        let Some(Session::Recovery(running)) = entries.sessions.get(&id) else {
+            return Err(Error::Closed);
+        };
+        let evidence = running.evidence.lock().map_err(|_| Error::Closed)?;
+        Ok(evidence.as_ref().map(|e| crate::recovery::Evidence {
+            certificate: e.certificate.clone(),
+            capsule: e.capsule.clone(),
+            token: e.token,
+        }))
+    }
+    pub fn authorize_recovery(&self, id: u64, token: [u8; 32]) -> Result<(), Error> {
+        let entries = self.entries.lock().map_err(|_| Error::Closed)?;
+        let Some(Session::Recovery(running)) = entries.sessions.get(&id) else {
+            return Err(Error::Closed);
+        };
+        running.authorize(token)
+    }
+    pub fn migrate(&self, id: u64, address: SocketAddr) -> Result<SocketAddr, Error> {
+        let entries = self.entries.lock().map_err(|_| Error::Closed)?;
+        let Some(Session::Recovery(running)) = entries.sessions.get(&id) else {
+            return Err(Error::Closed);
+        };
+        running.migrate(BoundSocket::bind(address)?)?;
+        running.address()
+    }
     pub fn send(&self, id: u64, packets: Vec<Bytes>) -> Result<(), Error> {
         if packets.len() > PACKETS || packets.iter().any(|p| p.is_empty() || p.len() > MAX_PACKET) {
             return Err(Error::DatagramSize);
         }
         let entries = self.entries.lock().map_err(|_| Error::Closed)?;
+        if let Some(Session::Recovery(session)) = entries.sessions.get(&id) {
+            return session.send(packets);
+        }
         let Some(Session::Running(session)) = entries.sessions.get(&id) else {
             return Err(Error::Closed);
         };
@@ -244,6 +315,13 @@ impl Host {
 
     pub fn poll(&self, id: u64) -> Result<(u8, Vec<Bytes>), Error> {
         let mut entries = self.entries.lock().map_err(|_| Error::Closed)?;
+        if let Some(Session::Recovery(session)) = entries.sessions.get_mut(&id) {
+            let result = session.poll();
+            if result.0 == 2 {
+                entries.sessions.remove(&id);
+            }
+            return Ok(result);
+        }
         let Some(Session::Running(session)) = entries.sessions.get_mut(&id) else {
             return Err(Error::Closed);
         };
@@ -270,6 +348,13 @@ impl Host {
 
     pub fn inspect(&self, id: u64) -> Result<Prepared, Error> {
         let mut entries = self.entries.lock().map_err(|_| Error::Closed)?;
+        if let Some(Session::Recovery(session)) = entries.sessions.get(&id) {
+            return Ok(Prepared {
+                id,
+                address: session.address()?,
+                certificate: session.certificate.clone(),
+            });
+        }
         let Some(Session::Prepared(attempt)) = entries.sessions.get_mut(&id) else {
             return Err(Error::Closed);
         };

@@ -6,7 +6,7 @@ use std::net::SocketAddr;
 use std::time::{Duration, Instant};
 
 const WINDOW: Duration = Duration::from_secs(60);
-const MAX_LIFETIME: Duration = Duration::from_secs(300);
+const MAX_LIFETIME: Duration = Duration::from_secs(3600);
 
 /// Non-cloneable owner of the exact socket/key described by one local Answer.
 /// Process restart drops this object; durable documents cannot recreate it.
@@ -168,6 +168,14 @@ impl PreparedAttempt {
             .ok_or(Error::Timeout)?
             .min(self.expires)
             .saturating_duration_since(now))
+    }
+
+    pub fn into_recovery_parts(mut self) -> Result<(BoundSocket, SessionKey), Error> {
+        self.check_at(Instant::now())?;
+        Ok((
+            self.socket.take().ok_or(Error::Closed)?,
+            self.key.take().ok_or(Error::Closed)?,
+        ))
     }
 
     /// Consume ownership once. No socket rebind or separate receiver is created.

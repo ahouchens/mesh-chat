@@ -322,3 +322,23 @@ may record historical route success for the current generation only. This
 amendment does not extend invitation authority or implement rotated-key TLS
 reauthentication, reconnection, renewal or migration. See the
 [Phase 3 evidence record](../DIRECT_CONNECTIVITY_PHASE3_EVIDENCE.md).
+
+### Phase 3 rotated-key recovery channel
+
+A separately negotiated `mesh-direct-recovery/1` ALPN establishes TLS 1.3 key
+possession without treating the old transport certificate as durable trust.
+Rustls still validates CertificateVerify signatures; early data and resumption
+are disabled. The channel initially permits only two bounded QUIC unidirectional
+control streams, never an RNS adapter. Each service encrypts its RNS-signed
+workspace binding to the exact durable peer RNS identity. The receiving service
+decrypts it, checks its certificate hash against the actual TLS leaf, reloads
+current membership/audience/scope, and atomically accepts its generation. Only
+a private approval tied to that connection's TLS exporter, followed by both
+services' acknowledgments, enables bounded DATAGRAM forwarding. Failure, expiry,
+service loss or cancellation closes the provisional channel. This is an admitted
+relationship mechanism; invitation authority cannot enter it.
+
+Quinn's standard authenticated client migration and NAT rebinding are enabled
+only on this recovery transport. A private client rebind remains an optimization;
+server rebind is rejected and explicit reconnection is the fallback. Neither
+mechanism discovers two unknown endpoints. No custom UDP probes are introduced.

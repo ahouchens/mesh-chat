@@ -35,6 +35,30 @@ enum Operation {
         generation: u64,
         remaining_ms: u64,
     },
+    PrepareRecovery {
+        address: SocketAddr,
+        generation: u64,
+        remaining_ms: u64,
+    },
+    Recover {
+        id: u64,
+        capsule: String,
+        candidates: Vec<SocketAddr>,
+        client: bool,
+        remaining_ms: u64,
+        lifetime_ms: u64,
+    },
+    RecoveryEvidence {
+        id: u64,
+    },
+    AuthorizeRecovery {
+        id: u64,
+        token: String,
+    },
+    Migrate {
+        id: u64,
+        address: SocketAddr,
+    },
     Arm {
         id: u64,
         session: Uuid,
@@ -146,6 +170,63 @@ impl NativeHost {
                     "host":prepared.address.ip().to_string(), "port":prepared.address.port(),
                     "certificate":hex(&prepared.certificate)}),
                 )
+            }
+            Operation::PrepareRecovery {
+                address,
+                generation,
+                remaining_ms,
+            } => {
+                let session = Uuid::new_v4();
+                let p = self
+                    .0
+                    .prepare_recovery(
+                        address,
+                        *session.as_bytes(),
+                        generation,
+                        Duration::from_millis(remaining_ms),
+                    )
+                    .map_err(|_| ())?;
+                Ok(
+                    json!({"id":p.id,"session":session,"generation":generation,"host":p.address.ip().to_string(),"port":p.address.port(),"certificate":hex(&p.certificate)}),
+                )
+            }
+            Operation::Recover {
+                id,
+                capsule,
+                candidates,
+                client,
+                remaining_ms,
+                lifetime_ms,
+            } => {
+                self.0
+                    .recover(
+                        id,
+                        unhex(&capsule, 20 * 1024)?,
+                        candidates,
+                        client,
+                        Duration::from_millis(remaining_ms),
+                        Duration::from_millis(lifetime_ms),
+                    )
+                    .map_err(|_| ())?;
+                Ok(Value::Null)
+            }
+            Operation::RecoveryEvidence { id } => {
+                Ok(match self.0.recovery_evidence(id).map_err(|_| ())? {
+                    Some(e) => {
+                        json!({"certificate":hex(&e.certificate),"capsule":hex(&e.capsule),"token":hex(&e.token)})
+                    }
+                    None => Value::Null,
+                })
+            }
+            Operation::AuthorizeRecovery { id, token } => {
+                self.0
+                    .authorize_recovery(id, fixed(&token)?)
+                    .map_err(|_| ())?;
+                Ok(Value::Null)
+            }
+            Operation::Migrate { id, address } => {
+                let a = self.0.migrate(id, address).map_err(|_| ())?;
+                Ok(json!({"host":a.ip().to_string(),"port":a.port()}))
             }
             Operation::Arm {
                 id,
