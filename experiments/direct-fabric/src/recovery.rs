@@ -301,7 +301,11 @@ impl Running {
                                 incoming.await
                             }
                         };
-                        let connected = tokio::time::timeout(Duration::from_millis(1500), selected)
+                        // Opposite preferred roles must not share an identical
+                        // period: a server starting one round before the client
+                        // would otherwise keep both dialing/listening together.
+                        let slice = Duration::from_millis(if client { 1500 } else { 2500 });
+                        let connected = tokio::time::timeout(slice, selected)
                             .await
                             .ok()
                             .and_then(Result::ok);
@@ -711,6 +715,67 @@ mod tests {
                 .unwrap()
                 .certificate,
             client.certificate
+        );
+        for peer in [&client, &server] {
+            let token = peer.evidence.lock().unwrap().as_ref().unwrap().token;
+            peer.authorize(token).unwrap();
+        }
+        state(&client, 1).await;
+        state(&server, 1).await;
+        client.send(vec![Bytes::from_static(b"approved")]).unwrap();
+        tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                if !server.poll().1.is_empty() {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn server_first_stagger_does_not_lock_recovery_roles_together() {
+        let a = BoundSocket::bind("127.0.0.1:0".parse().unwrap()).unwrap();
+        let client_address = a.address().unwrap();
+        let b = BoundSocket::bind("127.0.0.1:0".parse().unwrap()).unwrap();
+        let server_address = b.address().unwrap();
+        let mut server = Running::start(
+            b,
+            SessionKey::generate().unwrap(),
+            vec![1],
+            vec![client_address],
+            false,
+            Duration::from_secs(15),
+            Duration::from_secs(30),
+        )
+        .unwrap();
+        // Exact ordering observed in the paired Windows trace: the server
+        // begins first; the client starts about one old round later.
+        tokio::time::sleep(Duration::from_millis(2100)).await;
+        let client = Running::start(
+            a,
+            SessionKey::generate().unwrap(),
+            vec![2],
+            vec![server_address],
+            true,
+            Duration::from_secs(15),
+            Duration::from_secs(30),
+        )
+        .unwrap();
+        tokio::time::timeout(Duration::from_secs(10), async {
+            while client.state.load(Ordering::Acquire) != 3
+                || server.state.load(Ordering::Acquire) != 3
+            {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!(
+            client.send(vec![Bytes::from_static(b"early")]),
+            Err(Error::Identity)
         );
         for peer in [&client, &server] {
             let token = peer.evidence.lock().unwrap().as_ref().unwrap().token;

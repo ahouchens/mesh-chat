@@ -4,7 +4,22 @@ Status: implementation and qualification in progress, 2026-10-18. This is not a
 physical connectivity result or release approval. The detailed requirements are
 in [the spec](DIRECT_CONNECTIVITY_TRAVERSAL_SPEC.md).
 
-## Current candidate: 0.2.62 / Android 2062
+## Current candidate: 0.2.63 / Android 2063
+
+The fifth 0.2.62 Windows address-loss repetition failed in `39167069236` after
+four passes. Artifact `12151740266` retains both native lifecycle traces. The
+server began its final attempt at 1792358833.332 and the client at 1792358835.444:
+matching fresh ports, but a 2.112-second server-first stagger and no completed
+handshake for the full minute. This is the opposite start order from the earlier
+non-reproducing client-first timing test.
+
+The new native regression reproduces server-first/late-client startup. The
+candidate uses 1500ms client / 2500ms server round slices so the role schedules
+cannot remain locked together, retaining the 500ms pause, overall deadline,
+check budget and membership gate. Old-fails/new-passes Windows/Linux proof is
+pending. Do not promote the 0.2.62 artifacts based on their successful builds.
+
+## Pause ownership correction: 0.2.62 / Android 2062
 
 The earlier `39164119167` run failed Windows server-restart recovery at
 `native_wait` and Linux server-restart cleanup with one native handle remaining
@@ -21,8 +36,15 @@ lock; router discovery does not hold the service dispatch lock.
 
 The new test failed before the correction with handle 7 still allocated and
 passes afterward. All 75 recovery, candidate, runtime and packet source tests
-passed. Native qualification and matching 0.2.62 builds are pending. The 0.2.61
-packages below are historical evidence, not the final device-test pair.
+passed. [Build 39167070427](https://github.com/ahouchens/mesh-chat/actions/runs/39167070427)
+passed full verification (934 service tests, 47 skipped; 215 frontend tests),
+Windows packaging/embedded host checks and signed Android packaging. Both archives,
+manifests and packaged files were hash-verified; exact links and hashes are in the
+[device checklist](DIRECT_CONNECTIVITY_TRAVERSAL_DEVICE_TEST.md). Verification
+artifact `12151147432` matched SHA-256
+`03b436ba2d2e9db1ac2bdf4e66edbb8ba8c91d88fc763377dc32df24d455196b`.
+[Full native qualification](https://github.com/ahouchens/mesh-chat/actions/runs/39167069275)
+is still running. The 0.2.61 packages below are historical evidence.
 
 ## Recovery capsule correction: 0.2.61 / Android 2061
 

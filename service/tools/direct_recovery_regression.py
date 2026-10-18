@@ -12,6 +12,8 @@ cases = [
      "dec191bbea6c63967cfcf5073abd7acc052a3333"),
     ("closed_pre_authorization_connection_does_not_consume_recovery_window",
      "74976716d132f493dbb62101aaca824e6e96584b"),
+    ("server_first_stagger_does_not_lock_recovery_roles_together",
+     "d02c9cb3f2936459350825e9e482d355a2ebc31f"),
 ]
 for name, revision in cases:
     start = fixed.index("    #[tokio::test]\n    async fn " + name)

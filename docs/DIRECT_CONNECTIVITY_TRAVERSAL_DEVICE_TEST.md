@@ -1,34 +1,32 @@
 # Windows and mobile-carrier acceptance
 
-Status: **awaiting qualified 0.2.62 / Android 2062 packages**. This adds the
-regression-backed pause/allocation cleanup correction. The verified 0.2.61
-artifacts below remain historical evidence, not the final acceptance pair.
-Preserve app data. Independent review and physical acceptance remain release gates.
+Status: **awaiting qualified 0.2.63 / Android 2063 packages**. The fifth Windows
+address-loss repetition failed on 0.2.62; the exact native trace now has a targeted
+server-first timing regression. The 0.2.62 packages below are historical evidence,
+not the new acceptance pair. Preserve app data.
 
-[Build run](https://github.com/ahouchens/mesh-chat/actions/runs/39165181059) passed
+[Build run](https://github.com/ahouchens/mesh-chat/actions/runs/39167070427) passed
 full verification, Windows packaging/embedded native checks and signed Android
-packaging. The native old-fails/new-passes recovery regression passed on Windows
-and Linux; five Windows address-loss repetitions and five source-admission
-repetitions passed. [Full native qualification](https://github.com/ahouchens/mesh-chat/actions/runs/39165009596)
+packaging. Native old-fails/new-passes recovery regressions passed on Windows
+and Linux. [Full native qualification](https://github.com/ahouchens/mesh-chat/actions/runs/39167069275)
 is still running. Do not substitute a superseded version.
 
 | Platform | Matching artifact | Archive SHA-256 |
 | --- | --- | --- |
-| Windows | [mesh-chat-0.2.61-windows-desktop](https://github.com/ahouchens/mesh-chat/actions/runs/39165181059/artifacts/12150896027) | `4b2021678b93cc070513ff72205f97694403a8c9340c389b8256fe5e03ce33b3` |
-| Android | [mesh-chat-0.2.61-android-arm64](https://github.com/ahouchens/mesh-chat/actions/runs/39165181059/artifacts/12149649328) | `0a9139530a1d39fed672ff3eca5663e09c2dbe41eeebfb069dc742b984c25722` |
+| Windows | [mesh-chat-0.2.62-windows-desktop](https://github.com/ahouchens/mesh-chat/actions/runs/39167070427/artifacts/12151027377) | `7530a4bde0905e6bcd090d3e136eb925a8ae3d8ec1311cec63033025b983261d` |
+| Android | [mesh-chat-0.2.62-android-arm64](https://github.com/ahouchens/mesh-chat/actions/runs/39167070427/artifacts/12151287537) | `4f8ae52f6bc94b55050ffefda2c908ddcefde66a2d078d3fcd669a11e665acf7` |
 
 The Windows archive, manifest and all five packaged files were hash-checked.
-NSIS installer SHA-256: `cdb65c661f559b962fc13a52dafbf1650bd410bf70e13874a65562bdcab7ceac`.
-MSI SHA-256: `cde6b4cf52e36f4f5d6ad42147f6b1e95fea381df8b9948f159a7000d85d48f5`.
-Android APK SHA-256: `f1f9a7ed0f6682228be566f0ad30a3d5d1419ab465d899cb7793c2010e500876`.
-Both Android APK copies match; its manifest is 0.2.61 / 2061 with release signing.
-Nothing was installed or executed locally. See the
-[acceptance ledger](DIRECT_CONNECTIVITY_TRAVERSAL_EVIDENCE.md).
+NSIS installer SHA-256: `4e8224e75a6dfb617182a3c9fa6962c2b19531dbc95684a5663c1ca601bf3d9b`.
+MSI SHA-256: `6319e95c1ba0e9f9531e2e682732ec3b6272852dd7cd3260a898a80a94870c6e`.
+Android APK SHA-256: `3a5a17491dcae996fff7bd8072da36f0b1e94b5e1fe6e78805f46773e21172f1`.
+Its manifest is 0.2.62 / 2062 with release signing. Nothing was installed or
+executed locally. See the [acceptance ledger](DIRECT_CONNECTIVITY_TRAVERSAL_EVIDENCE.md).
 
 ## Guided test
 
 1. Install the matching new build on **both Windows and Android**. In Settings,
-   confirm **Mesh Chat version 0.2.62** and copy version details on each device.
+   confirm **Mesh Chat version 0.2.63** and copy version details on each device.
    Preserve existing app data; do not clear the profile to work around a failure.
 2. Leave Windows on the home router. Turn Android Wi-Fi off and confirm mobile
    data is active. Keep both Mesh Chat apps unlocked and open.
