@@ -49,7 +49,7 @@ export function DirectConnectionSetup({ invitationId, workspaceId, autoStart = f
     if (autoStart && invitationId) void offer();
     if (workspaceId || (invitationId && resumeExisting)) {
       setBusy(true);
-      void serviceCommand<Setup>("resume_direct_setup", invitationId ? { invitation_id: invitationId } : { workspace_id: workspaceId }).then(value => value.setup_id ? check(value) : setSetup(value))
+      void serviceCommand<Setup>("resume_direct_setup", invitationId ? { invitation_id: invitationId } : { workspace_id: workspaceId }).then(async value => { if (value.setup_id) await check(value); else setSetup({ ...value, readiness:"refresh_required", can_share:false }); })
         .catch(() => setError("Could not reopen setup. Paste fresh connection details from the owner below."))
         .finally(() => setBusy(false));
     }
@@ -58,6 +58,7 @@ export function DirectConnectionSetup({ invitationId, workspaceId, autoStart = f
     if (!setup?.setup_id || setup.state === "cancelled") return;
     let active = true;
     const timer = setInterval(() => {
+      const epoch = revision.current;
       void serviceCommand<Setup>("check_direct_setup", { setup_id: setup.setup_id }).then((value) => {
         if (active && epoch === revision.current) {
           setSetup(value); setOutgoing(value.can_share ? value.text ?? "" : ""); setCheckedAt(Date.now());
