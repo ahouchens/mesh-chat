@@ -111,7 +111,7 @@ class Peers:
 
 
 @pytest.mark.integration
-@pytest.mark.parametrize("scenario",["client_restart","server_restart","both_restart","unhosted_restart","suspend","replacement","route_change","server_route_change","blocked","address_loss"])
+@pytest.mark.parametrize("scenario",["replacement","route_change","server_route_change","blocked","address_loss","client_restart","server_restart","both_restart","unhosted_restart","suspend"])
 def test_production_durable_recovery(tmp_path,scenario):
     binary=os.environ.get("MESH_DIRECT_APP_HOST_BINARY")
     if not binary: pytest.skip("Requires the GitHub-built shipping dispatcher")

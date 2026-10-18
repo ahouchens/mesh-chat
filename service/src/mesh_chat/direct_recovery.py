@@ -194,7 +194,9 @@ class DirectRecovery:
             with self.service._dispatch_lock:
                 if not self._valid(identifier,token): return
                 expected, own, generation = self._reserve(identifier,record)
-                saved = self._state(identifier).get("local") or {}
+                state = self._state(identifier)
+                attempted_peer = state.get("attempted_peer")
+                saved = state.get("local") or {}
                 hint = saved.get("socket_hint") or {}
                 with self._lock:
                     old = self._active.get(identifier)
@@ -213,15 +215,19 @@ class DirectRecovery:
                 with self._lock: self._prepared[identifier] = prepared
             stage = "update"
             self._send(record,local)
-            # On the first upgrade, Phase 2 ALPN addresses cannot run recovery.
-            # Keep the old carrier until a current recovery update arrives.
+            # Wait for the peer's replacement, not just any saved v3 binding.
+            # A live old endpoint is still occupied by its old connection and
+            # cannot authenticate this new attempt. Keep that path for updates.
             end = time.monotonic()+15
             resend_at = time.monotonic()+2
             while True:
                 with self.service._dispatch_lock:
                     self._authority(record)
                     remote = self.service.store.get("direct_relationship",identifier)
-                    if _parse(remote["binding"])["v"] == 3 or time.monotonic() >= end:
+                    updated = (_parse(remote["binding"])["v"] == 3 and
+                               (old is None or old._stop.is_set() or
+                                remote["certificate"] != old.certificate.hex() and remote["accepted"]["digest"] != attempted_peer))
+                    if updated or time.monotonic() >= end:
                         break
                 if not self._valid(identifier,token): return
                 if time.monotonic() >= resend_at:
@@ -245,6 +251,9 @@ class DirectRecovery:
             prepared.document_fields()
             raw = local["binding"]
             stage = "native_start"
+            with self.service._dispatch_lock:
+                if not self._valid(identifier,token): return
+                self._write(identifier,attempted_peer=remote["accepted"]["digest"])
             self.service._direct_native.request("arm",id=prepared.handle,session=fields["session_id"],
                 generation=generation,digest=hashlib.sha256(raw.encode()).hexdigest())
             self.service._direct_native.request("recover",id=prepared.handle,

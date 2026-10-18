@@ -297,7 +297,7 @@ def test_server_migration_failure_schedules_reconnection_instead_of_retrying_reb
     assert identifier not in recovery._pending
 
 
-@pytest.mark.parametrize("fault",[None,"renewed_same_key","newer_other_key","wrong_leaf","success_commit","winner_commit","stale_callback"])
+@pytest.mark.parametrize("fault",[None,"delayed_update","renewed_same_key","newer_other_key","wrong_leaf","success_commit","winner_commit","stale_callback"])
 def test_replacement_requires_current_authentication_and_durable_winner_before_old_retirement(pair,monkeypatch,fault):
     from mesh_chat import direct_recovery as module
     owner,_,record,authority,document=pair
@@ -334,7 +334,7 @@ def test_replacement_requires_current_authentication_and_durable_winner_before_o
                 assert payload["token"]=="bound exporter"
                 self.authorized=True; events.append("native_authorized")
     owner._direct_native=Native()
-    old=SimpleNamespace(_stop=threading.Event(),close=lambda:events.append("old_closed"))
+    old=SimpleNamespace(_stop=threading.Event(),certificate=cert,close=lambda:events.append("old_closed"))
     recovery._active[identifier]=old
     recovery._write(identifier,local={"cleanup":[{"external_port":56789}],"expires_at":int(time.time())+300,
         "socket_hint":{"host":"93.184.216.34","port":45679}})
@@ -350,7 +350,13 @@ def test_replacement_requires_current_authentication_and_durable_winner_before_o
                 owner._accept_direct_workspace_binding(newer,authority,new_cert)
         def close(self): self._stop.set(); self.lease.cancel(); prepared.close()
     monkeypatch.setattr(module,"AdmittedCarrier",Carrier)
-    recovery._send=lambda *args:False
+    updates=[]
+    def send(*args):
+        updates.append(True)
+        if fault!="delayed_update" or len(updates)>1:
+            owner._accept_direct_workspace_binding(peer_raw,authority,peer_cert)
+        return True
+    recovery._send=send
     original_success=module.record_success
     def success(*args,**kwargs):
         if fault=="success_commit": raise OSError("vault unavailable")
@@ -364,7 +370,8 @@ def test_replacement_requires_current_authentication_and_durable_winner_before_o
         return original_write(identifier,**changes)
     recovery._write=write
     recovery._attempt(identifier,record,token)
-    if fault not in {None,"renewed_same_key"}:
+    if fault=="delayed_update": assert len(updates)>=2
+    if fault not in {None,"delayed_update","renewed_same_key"}:
         assert "old_closed" not in events and "new_closed" in events
         assert recovery._active[identifier] is old
     else:
