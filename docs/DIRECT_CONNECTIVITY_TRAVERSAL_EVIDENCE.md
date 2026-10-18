@@ -4,6 +4,8 @@ Status: implemented candidate and current automated qualification passed, 2026-1
 physical connectivity result or release approval. The detailed requirements are
 in [the spec](DIRECT_CONNECTIVITY_TRAVERSAL_SPEC.md).
 
+Repository status: merged and pushed to `main` on 2026-10-18 at the user's explicit direction after automated qualification. Independent protocol review, broader adversarial qualification and physical acceptance remain open; merging does not mark those gates passed. Earlier no-merge statements below describe the historical qualification checkpoints.
+
 ## Current candidate: 0.2.63 / Android 2063
 
 The fifth 0.2.62 Windows address-loss repetition failed in `39167069236` after

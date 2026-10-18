@@ -1271,6 +1271,40 @@ Workspace beta is ready only when:
    integrations, push delivery, owner-key recovery, and guaranteed remote
    deletion without hiding those limits in technical documentation.
 
+## Planned workspace extensions after connectivity
+
+This is future work after the connection issue is resolved, not implemented
+functionality or current release scope. Collaborative canvases, document
+editing, multiplayer games, and conference calls are examples of possible
+plug-ins, not committed implementations. An extension framework must:
+
+- use workspace-scoped manifests declaring plug-in identity, version, required
+  host API versions, and requested capabilities, with explicit grants;
+- isolate plug-in UI and execution, with no direct native, filesystem, private
+  key, or unrestricted network access; microphone and camera capabilities
+  require explicit host-mediated consent rather than raw device access;
+- keep identity, membership, authorization, and end-to-end encrypted transport
+  owned by the host; enforce every capability and audience check at the service
+  boundary, including revocation when grants, membership, or authority change;
+- expose a stable, versioned API and explicit peer plug-in/version compatibility
+  rules; missing, incompatible, or failed plug-ins must leave core workspace
+  chat and administration usable;
+- distinguish durable, offline collaboration with authorized retention and
+  catch-up from ephemeral, low-latency/game updates and live audio/video streams;
+  each class needs its own delivery, ordering, expiry, and recovery semantics;
+- enforce per-plug-in storage, compute, message, and bandwidth quotas with
+  backpressure so extension traffic cannot starve core workspace operations.
+
+The strict zero-external-server requirement remains in force. This proposal
+does not change existing networking requirements or authorize public relays,
+external signaling, or participant forwarding. Participant routing policy
+remains unresolved and needs an explicit decision. Realtime behavior and media
+quality depend on available authorized routes, bandwidth, and latency; these
+examples promise neither a NAT solution nor a supported conference scale.
+Realtime/media transport and APIs require separate design and qualification;
+this proposal does not replace or bypass the current Reticulum/LXMF policy.
+Protocol, isolation, compatibility, and release gates require separate review.
+
 ## Deferred decisions
 
 The following work requires its own protocol decision and release gates:
