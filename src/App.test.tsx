@@ -4375,6 +4375,7 @@ describe("desktop workspaces", () => {
       if (command === "list_workspace_messages") return { messages:[], next_cursor:null, high_water:0 };
       if (command === "create_workspace_invitation") return { id:"guided-invite", workspace_id:workspace.id, text:"MESHWORKSPACE-legacy", value:"legacy", expires_at:2_000_000_000, connection_mode:"email" };
       if (command === "prepare_direct_offer") return { setup_id:"setup", workspace_id:workspace.id, state:"waiting_for_reply", kind:"offer", expires_at:2_000_000_000, candidate_count:0, text:"mesh-direct:current" };
+      if (command === "check_direct_setup") return { setup_id:"setup", workspace_id:workspace.id, state:"waiting_for_reply", kind:"offer", expires_at:2_000_000_000, candidate_count:0, readiness:"no_local_address", can_share:true, text:"mesh-direct:current" };
       return {};
     });
     render(<App />);
@@ -4383,7 +4384,7 @@ describe("desktop workspaces", () => {
     fireEvent.click(screen.getByRole("button", { name:"Prepare invitation" }));
     await waitFor(() => expect(api.serviceCommand).toHaveBeenCalledWith("prepare_direct_offer", { invitation_id:"guided-invite" }));
     const dialog = screen.getByRole("dialog");
-    expect(await within(dialog).findByText(/Next, they open Join or connect/)).toBeTruthy();
+    expect(await within(dialog).findByText("No public address on this device")).toBeTruthy();
     expect(within(dialog).queryByText("Copy complete invitation")).toBeNull();
     expect(within(dialog).queryByDisplayValue("MESHWORKSPACE-legacy")).toBeNull();
     expect(within(dialog).getAllByRole("button", { name:"Copy connection message" })).toHaveLength(1);
