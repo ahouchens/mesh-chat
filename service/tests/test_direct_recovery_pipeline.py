@@ -66,7 +66,7 @@ class Peers:
                     and evidence["paths"][0]["certificate"]!=previous_certificate):
                 return evidence
             time.sleep(.2)
-        raise AssertionError(evidence)
+        raise AssertionError({"failed_peer":index,"peers":[self.call(i,"recovery_diagnostic") for i in range(2)]})
 
     def admit(self):
         op=lambda:str(uuid.uuid4())

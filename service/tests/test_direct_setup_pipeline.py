@@ -150,6 +150,10 @@ def _service_worker(root, incoming, outgoing, commands, replies, native_binary=N
                             "paths":[{"recovery":carrier.recovery,"certificate":hashlib.sha256(bytes.fromhex(carrier.prepared._owned["certificate"])).hexdigest()}
                                      for carrier in service._direct_recovery._active.values() if not carrier._stop.is_set()],
                             "pending":len(service._direct_recovery._pending),"native_count":len(native.owned),
+                            # CI-controlled loopback ports only, never production diagnostics.
+                            "test_owned_ports":[value[1]["port"] for value in native.owned.values()] if native_binary else [],
+                            "test_local_ports":[(value.get("local") or {}).get("socket_hint",{}).get("port") for value in store.list("direct_recovery")],
+                            "test_remote_ports":[[c["port"] for c in value.get("candidates",[])] for value in store.list("direct_relationship")],
                             "failures":[{key:value.get(key) for key in ("failure_stage","failure_type","attempts","state")}
                                         for value in store.list("direct_recovery")]}
                     elif operation == "force_recovery":

@@ -1,0 +1,47 @@
+name: Windows connectivity repetition
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  repeat:
+    strategy:
+      fail-fast: false
+      matrix:
+        scenario: [source-admission, address-loss]
+    runs-on: windows-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+      - run: python -m pip install ./service pytest
+      - uses: dtolnay/rust-toolchain@1.90.0
+        if: matrix.scenario == 'address-loss'
+      - name: Build shipping dispatcher
+        if: matrix.scenario == 'address-loss'
+        run: cargo build --locked --manifest-path experiments/direct-app-host/Cargo.toml
+      - name: Repeat unchanged acceptance assertions five times
+        shell: pwsh
+        env:
+          SCENARIO: ${{ matrix.scenario }}
+        run: |
+          New-Item -ItemType Directory -Force -Path stress-evidence | Out-Null
+          if ($env:SCENARIO -eq 'address-loss') {
+            $env:MESH_DIRECT_APP_HOST_BINARY = Join-Path $PWD 'experiments/direct-app-host/target/debug/mesh-direct-app-host-proof.exe'
+            $testFile = 'service/tests/test_direct_recovery_pipeline.py'
+            $selection = 'address_loss'
+          } else {
+            $testFile = 'service/tests/test_direct_setup_pipeline.py'
+            $selection = 'both_hosted-source-revocation'
+          }
+          for ($trial = 1; $trial -le 5; $trial++) {
+            python -m pytest $testFile -q -k $selection --junitxml="stress-evidence/trial-$trial.xml" 2>&1 | Tee-Object -FilePath "stress-evidence/trial-$trial.log"
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: windows-${{ matrix.scenario }}-evidence
+          path: stress-evidence/**
