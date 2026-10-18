@@ -4,22 +4,47 @@ Status: implementation and qualification in progress, 2026-10-18. This is not a
 physical connectivity result or release approval. The detailed requirements are
 in [the spec](DIRECT_CONNECTIVITY_TRAVERSAL_SPEC.md).
 
-## Current candidate: 0.2.61 / Android 2061
+## Current candidate: 0.2.62 / Android 2062
+
+The earlier `39164119167` run failed Windows server-restart recovery at
+`native_wait` and Linux server-restart cleanup with one native handle remaining
+after pause. The capsule correction addresses premature native attempt failure;
+a separate source regression now reproduces the pause allocation race.
+
+Previously, a new native socket was not registered with recovery until router
+candidate discovery completed. Pause could return during that gap. Pending
+ownership now registers each local allocation atomically with cancellation,
+before slow discovery. Pause closes that ownership immediately; a retired worker
+cannot allocate again, and exporting during discovery returns preparing instead
+of exposing stale details. Only native allocation/close share the cancellation
+lock; router discovery does not hold the service dispatch lock.
+
+The new test failed before the correction with handle 7 still allocated and
+passes afterward. All 75 recovery, candidate, runtime and packet source tests
+passed. Native qualification and matching 0.2.62 builds are pending. The 0.2.61
+packages below are historical evidence, not the final device-test pair.
+
+## Recovery capsule correction: 0.2.61 / Android 2061
 
 Full Windows run `39163214793` reproduced address-loss failure despite the five
 passing isolated repetitions. Both peers retained matching fresh port hints,
 with `native_wait` failure on both sides. A proposed role-period change was
 rejected: the staggered regression also passed the old code, so it did not prove
 the hypothesis. Both the speculative production change and its red/green case
-were removed. Existing recovery behavior and regression assertions are retained.
+were removed. Existing role periods and regression assertions are retained.
 
-A separate source finding is now under native red/green qualification: a TLS
+A separate source finding passed native red/green qualification: a TLS
 peer closing before encrypted capsule exchange terminated the entire recovery
 attempt. The candidate retries that incomplete pre-authorization exchange within
 the original deadline and start budget. It exposes no service evidence or data
 until exchange succeeds and preserves the subsequent membership approval gate.
 A regression retires one TLS peer, then requires a fresh peer to authenticate,
 receive explicit service approval and deliver data within the same attempt.
+[Windows and Linux red/green passed](https://github.com/ahouchens/mesh-chat/actions/runs/39165009599)
+at `ed25af6fcb8f13d423ffd2d71478d7037b11746e`: the old implementation fails
+the behavioral assertion and the fix passes, with the existing unhosted restart
+regression retained. Full recovery qualification is running; matching builds passed.
+This does not yet prove that every preceding pipeline failure has the same cause.
 
 The controlled native fixture now retains a bounded, credential-free trace of
 prepare/recover/state-transition/authorization/close events to identify the failed
@@ -30,13 +55,27 @@ artifact `12149803730` has SHA-256
 `084eb80f892e4a282d400836d6d6acbf10b2468cee3af11bde4dc36a3b3f621a`.
 Current transport reliability remains unqualified; do not start physical acceptance.
 
+### Matching artifact and repetition results
+
+[Build `39165181059`](https://github.com/ahouchens/mesh-chat/actions/runs/39165181059)
+passed full verification (933 service tests, 47 skipped; 215 frontend tests),
+Windows packaging/embedded native tests and signed Android packaging. Both
+archives, manifests and inner files were verified; the [device checklist](DIRECT_CONNECTIVITY_TRAVERSAL_DEVICE_TEST.md)
+records exact downloads and hashes. Verification artifact `12150362873` matched
+SHA-256 `46ad61b2e08d7c20d99615e8fed5820e933c418a2cbd8b7542e983753a433a9b`.
+[Windows repetition](https://github.com/ahouchens/mesh-chat/actions/runs/39165009612)
+passed all five source-admission and all five address-loss trials. Address-loss
+artifact `12150358580` was downloaded and each JUnit record checked.
+The [full native pipeline](https://github.com/ahouchens/mesh-chat/actions/runs/39165009596)
+is still running. Independent review and physical acceptance remain open.
+
 ## Diagnostic follow-up: 0.2.59 / Android 2059
 
 Readiness failures (no route, network changed, failed checks, and neither device
 having an address) now update the retained last failure. Four regressions verify
 that subsequent success and history rollover cannot discard that evidence; a
 fifth verifies that one-sided preparation is not mislabeled as failure. All ten
-diagnostic source tests passed. The new matching platform build is pending.
+diagnostic source tests passed. The 0.2.59 package run was superseded by 0.2.61.
 The 0.2.58 results below remain exact-version evidence, not 0.2.59 qualification.
 
 ## Wizard increment: 0.2.58 / Android 2058

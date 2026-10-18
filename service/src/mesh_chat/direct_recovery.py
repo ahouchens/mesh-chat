@@ -29,6 +29,44 @@ def retry_delay(attempt, jitter):
     return min(300, 2 ** min(8, max(1, attempt))) * (.75 + .5*jitter)
 
 
+class _PendingNativeOwnership:
+    """Publish each local allocation before slow candidate discovery can start.
+
+    Only local native allocation shares the cancellation lock. Router discovery
+    stays outside it, so pause can close ownership without waiting for a router
+    or for the worker to reacquire the service dispatch lock.
+    """
+    def __init__(self, recovery, identifier, token):
+        self.recovery, self.identifier, self.token = recovery, identifier, token
+        self.native = recovery.service._direct_native
+        self.handles = set()
+        self.closed = False
+
+    def request(self, operation, **payload):
+        if operation == "prepare_recovery":
+            with self.recovery._lock:
+                if self.closed or not self.recovery._valid(self.identifier, self.token):
+                    raise ValidationError("Recovery allocation was retired")
+                result = self.native.request(operation, **payload)
+                if isinstance(result, dict) and type(result.get("id")) is int:
+                    self.handles.add(result["id"])
+                    self.recovery._prepared[self.identifier] = self
+                return result
+        if operation == "close":
+            with self.recovery._lock:
+                result = self.native.request(operation, **payload)
+                self.handles.discard(payload["id"])
+                return result
+        return self.native.request(operation, **payload)
+
+    def close(self):
+        with self.recovery._lock:
+            self.closed = True
+            for handle in list(self.handles):
+                self.native.request("close", id=handle)
+                self.handles.discard(handle)
+
+
 class DirectRecovery:
     def __init__(self, service, *, clock=time.time, jitter=None):
         self.service, self.clock = service, clock
@@ -193,6 +231,7 @@ class DirectRecovery:
 
     def _attempt(self, identifier, record, token):
         prepared = admitted = None
+        allocation = _PendingNativeOwnership(self, identifier, token)
         promoted = False
         stage = "reserve"
         try:
@@ -210,7 +249,7 @@ class DirectRecovery:
                 port = 0 if old and not old._stop.is_set() else hint.get("port",0)
                 cleanup = saved.get("cleanup") or []
             stage = "prepare"
-            prepared = prepare_candidates(self.service._direct_native,generation=generation,
+            prepared = prepare_candidates(allocation,generation=generation,
                 expires_at=int(self.clock())+3600,recovery=True,preferred_port=port,
                 preferred_host=hint.get("host"), route_offset=max(0,state["attempts"]-1),
                 preferred_external_port=cleanup[0]["external_port"] if cleanup and not (old and not old._stop.is_set()) else 0)
@@ -344,8 +383,10 @@ class DirectRecovery:
         finally:
             if admitted is not None and not promoted: admitted.close()
             elif prepared is not None and not promoted: prepared.close()
+            if not promoted: allocation.close()
             with self._lock:
-                if self._prepared.get(identifier) is prepared and not promoted:
+                owned = self._prepared.get(identifier)
+                if (owned is prepared or owned is allocation) and not promoted:
                     self._prepared.pop(identifier,None)
                 if self._pending.get(identifier) == token:
                     self._pending.pop(identifier,None)
@@ -542,7 +583,7 @@ class DirectRecovery:
         self._authority(record)
         with self._lock: prepared=self._prepared.get(identifier)
         local=self._state(identifier).get("local")
-        if prepared is None or not local or local["expires_at"] <= self.clock():
+        if prepared is None or isinstance(prepared, _PendingNativeOwnership) or not local or local["expires_at"] <= self.clock():
             self.resume(identifier)
             return {"relationship_id":identifier,"state":"preparing","text":None}
         prepared.document_fields()

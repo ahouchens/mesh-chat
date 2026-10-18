@@ -63,3 +63,38 @@ Version 0.2.59 adds the four blocking readiness states to retained last-failure
 capture. Regression cases cover later success, history rollover and the valid
 one-sided preparation state. All ten diagnostic tests pass. This changes no
 transport or authorization behavior; matching package qualification is pending.
+
+## Recovery follow-up: 0.2.61
+
+The proposed unequal role-period change was rejected and removed because its
+regression passed against the previous code. The actual follow-up retries TLS
+connections that close or fail before completing the encrypted capsule exchange.
+It keeps the same overall monotonic attempt deadline and iteration budget, closes
+the incomplete connection, and exposes neither service evidence nor application
+traffic from it. Once a capsule is received, existing certificate binding and
+mutual service authorization remain mandatory. Invalid authority is not retried
+as successful authentication.
+
+The new native regression closes a first TLS connection before capsule exchange,
+then requires the fresh peer certificate, rejection of early data, mutual service
+approval and successful packet delivery. The old code fails and the fix passes
+on both Windows and Linux in run `39165009599`, commit
+`ed25af6fcb8f13d423ffd2d71478d7037b11746e`. Existing delayed-listener red/green
+coverage also passes. Full pipeline reliability, independent protocol review and
+physical acceptance remain separate gates.
+
+## Pause ownership follow-up: 0.2.62
+
+A second concrete race was reproduced in a source test: pause could return while
+a native allocation was hidden inside candidate discovery. A private pending
+ownership wrapper now publishes each native handle under the same lock that
+retires the attempt token. Native allocation and close are serialized with
+cancellation; router discovery remains outside that lock. The completed
+preparation replaces the pending wrapper only while the attempt token is current.
+A retired worker cannot allocate again or remove a newer worker's ownership.
+Export treats the pending wrapper as preparing, never as a shareable document.
+
+The regression fails before the fix with a remaining native handle and passes
+afterward while holding the public service dispatch lock and leaving discovery
+blocked. All 75 focused recovery/candidate/runtime/packet tests passed. Full native
+qualification and matching packages remain required.

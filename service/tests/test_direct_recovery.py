@@ -143,6 +143,57 @@ def test_restart_export_never_replays_a_saved_document_without_socket_ownership(
         "native_engine_healthy","authenticated_peer_live","rns_ready"}
 
 
+def test_pause_closes_native_allocation_while_candidate_discovery_is_inflight(pair, monkeypatch):
+    from mesh_chat import direct_recovery as module
+    owner, _, _, authority, document = pair
+    raw, certificate, _ = document()
+    owner._accept_direct_workspace_binding(raw, authority, certificate)
+    identifier = relationship_id(owner.store, authority)
+    owner._direct_recovery.retire(close=True)
+    owner._direct_recovery.wait(2)
+    recovery = DirectRecovery(owner)
+    owner._direct_recovery = recovery
+    token = (recovery._epoch, object())
+    recovery._pending[identifier] = token
+    recovery._write(identifier, local={"document": "stale", "expires_at": time.time()+100})
+    allocated, finish_discovery = threading.Event(), threading.Event()
+    handles = set()
+    class Native:
+        def request(self, operation, **payload):
+            if operation == "prepare_recovery":
+                handles.add(7)
+                return {"id": 7}
+            assert operation == "close"
+            handles.discard(payload["id"])
+    owner._direct_native = Native()
+    def prepare(native, **kwargs):
+        native.request("prepare_recovery")
+        allocated.set()
+        assert finish_discovery.wait(3)
+        with pytest.raises(ValidationError):
+            native.request("prepare_recovery")
+        return SimpleNamespace(close=lambda: native.request("close", id=7))
+    monkeypatch.setattr(module, "prepare_candidates", prepare)
+    worker = threading.Thread(target=recovery._attempt, args=(identifier,
+        owner.store.get("direct_relationship", identifier), token))
+    worker.start()
+    try:
+        assert allocated.wait(3)
+        assert recovery.export(identifier)["state"] == "preparing"
+        # Match the public dispatch lock: pausing must not wait for discovery
+        # or require its worker to acquire this lock before closing ownership.
+        with owner._dispatch_lock:
+            recovery.pause(identifier)
+            assert handles == set()
+        assert not finish_discovery.is_set()
+    finally:
+        finish_discovery.set()
+        worker.join(3)
+        owner._direct_native = None
+    assert not worker.is_alive()
+    assert not recovery._prepared
+
+
 @pytest.mark.parametrize("attempt",[1,2,6,8,1000000])
 def test_retry_jitter_is_bounded(attempt):
     assert 1.5<=retry_delay(attempt,0)<=retry_delay(attempt,.5)<=retry_delay(attempt,1)<=320

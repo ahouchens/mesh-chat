@@ -1,34 +1,34 @@
 # Windows and mobile-carrier acceptance
 
-Status: **awaiting qualified 0.2.61 / Android 2061 artifacts**. Recovery timing qualification is open after another Windows address-loss failure.
-The diagnostic follow-up preserves readiness failures across later successful checks and history
-rollover. The 0.2.58 downloads below are retained as historical evidence, not the
-new acceptance pair. Preserve app data.
+Status: **awaiting qualified 0.2.62 / Android 2062 packages**. This adds the
+regression-backed pause/allocation cleanup correction. The verified 0.2.61
+artifacts below remain historical evidence, not the final acceptance pair.
+Preserve app data. Independent review and physical acceptance remain release gates.
 
-[Build run](https://github.com/ahouchens/mesh-chat/actions/runs/39160414911): full
-verification, Windows packaging and signed Android packaging passed. Android's first attempt failed
-unpacking the NDK ZIP before compilation; the Android-only retry passed on
-the same commit. The exact-version full native suite passed. A preceding Windows
-address-loss failure is still under repetition testing; independent review and
-physical tests remain separate gates. Do not substitute any superseded build.
+[Build run](https://github.com/ahouchens/mesh-chat/actions/runs/39165181059) passed
+full verification, Windows packaging/embedded native checks and signed Android
+packaging. The native old-fails/new-passes recovery regression passed on Windows
+and Linux; five Windows address-loss repetitions and five source-admission
+repetitions passed. [Full native qualification](https://github.com/ahouchens/mesh-chat/actions/runs/39165009596)
+is still running. Do not substitute a superseded version.
 
-| Platform | Current artifact | Archive SHA-256 |
+| Platform | Matching artifact | Archive SHA-256 |
 | --- | --- | --- |
-| Windows | [mesh-chat-0.2.58-windows-desktop](https://github.com/ahouchens/mesh-chat/actions/runs/39160414911/artifacts/12149000861) | `f96a01bf490a5a6a1b5a92ee68e9cf6b8c64565d10646e01d44d027e83c0cb36` |
-| Android | [mesh-chat-0.2.58-android-arm64](https://github.com/ahouchens/mesh-chat/actions/runs/39160414911/artifacts/12148713355) | `08a35383f5301a17880ae4cb2ec0aaecd2d1aebb8107d0c2e302e7f788cf16f0` |
+| Windows | [mesh-chat-0.2.61-windows-desktop](https://github.com/ahouchens/mesh-chat/actions/runs/39165181059/artifacts/12150896027) | `4b2021678b93cc070513ff72205f97694403a8c9340c389b8256fe5e03ce33b3` |
+| Android | [mesh-chat-0.2.61-android-arm64](https://github.com/ahouchens/mesh-chat/actions/runs/39165181059/artifacts/12149649328) | `0a9139530a1d39fed672ff3eca5663e09c2dbe41eeebfb069dc742b984c25722` |
 
 The Windows archive, manifest and all five packaged files were hash-checked.
-NSIS installer SHA-256: `57541794d875d7eb764d4ea9b20e866da18514e18513114f02b31c7643fbdba9`.
-MSI SHA-256: `4f184472ea032cab49a8b7d2f7c98ed9fc156a013e81566f0b5031e1b9382464`.
-Android APK SHA-256: `904369a0af6cdbcc843ec5e03b67a692e6513891c9effe258c2268ede41c1f4b`.
-Its archive, manifest and APK hashes were verified; manifest version is 0.2.58 /
-2058 with release signing. Nothing was installed or executed locally. See the
+NSIS installer SHA-256: `cdb65c661f559b962fc13a52dafbf1650bd410bf70e13874a65562bdcab7ceac`.
+MSI SHA-256: `cde6b4cf52e36f4f5d6ad42147f6b1e95fea381df8b9948f159a7000d85d48f5`.
+Android APK SHA-256: `f1f9a7ed0f6682228be566f0ad30a3d5d1419ab465d899cb7793c2010e500876`.
+Both Android APK copies match; its manifest is 0.2.61 / 2061 with release signing.
+Nothing was installed or executed locally. See the
 [acceptance ledger](DIRECT_CONNECTIVITY_TRAVERSAL_EVIDENCE.md).
 
 ## Guided test
 
 1. Install the matching new build on **both Windows and Android**. In Settings,
-   confirm **Mesh Chat version 0.2.61** and copy version details on each device.
+   confirm **Mesh Chat version 0.2.62** and copy version details on each device.
    Preserve existing app data; do not clear the profile to work around a failure.
 2. Leave Windows on the home router. Turn Android Wi-Fi off and confirm mobile
    data is active. Keep both Mesh Chat apps unlocked and open.
