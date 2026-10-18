@@ -201,8 +201,9 @@ def _windows_default_routes(
 ) -> list[RouteInfo]:
     command = [
         "powershell.exe", "-NoLogo", "-NoProfile", "-NonInteractive", "-Command",
-        "$ErrorActionPreference='Stop'; Get-NetRoute -DestinationPrefix '0.0.0.0/0','::/0' "
-        "| Where-Object {$_.State -eq 'Alive'} | Sort-Object RouteMetric,InterfaceMetric "
+        "$ErrorActionPreference='Stop'; Get-NetRoute "
+        "| Where-Object {$_.DestinationPrefix -in @('0.0.0.0/0','::/0') -and $_.State -eq 'Alive'} "
+        "| Sort-Object RouteMetric,InterfaceMetric "
         "| Select-Object AddressFamily,InterfaceAlias,NextHop,RouteMetric,InterfaceMetric "
         "| ConvertTo-Json -Compress",
     ]

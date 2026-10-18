@@ -68,6 +68,40 @@ def test_direct_public_ipv4_candidate_comes_only_from_the_selected_route() -> No
     assert connectivity.public_ipv4_addresses(routes=routes) == ["93.184.216.34"]
 
 
+@pytest.mark.skipif(os.name != "nt", reason="Exercises Windows PowerShell route filtering")
+@pytest.mark.parametrize("prefix,family,gateway", [
+    ("0.0.0.0/0", "IPv4", "192.168.50.1"),
+    ("::/0", "IPv6", "fe80::1"),
+])
+def test_windows_single_stack_route_survives_missing_other_family(prefix, family, gateway):
+    # Windows Get-NetRoute errors on a requested prefix with no matching route.
+    # Execute the production pipeline against that behavior, including unrelated
+    # and inactive routes so filtering cannot accidentally accept either.
+    rows = [
+        dict(DestinationPrefix=prefix, AddressFamily=family, InterfaceAlias="Wi-Fi",
+             NextHop=gateway, State="Alive", RouteMetric=0, InterfaceMetric=25),
+        dict(DestinationPrefix="10.0.0.0/8", AddressFamily="IPv4", InterfaceAlias="VPN",
+             NextHop="10.8.0.1", State="Alive", RouteMetric=0, InterfaceMetric=1),
+        dict(DestinationPrefix=prefix, AddressFamily=family, InterfaceAlias="Disconnected",
+             NextHop=gateway, State="Dead", RouteMetric=0, InterfaceMetric=1),
+    ]
+    fixture = json.dumps(rows)
+    def runner(command, **kwargs):
+        stub = (
+            "function Get-NetRoute { param([string[]]$DestinationPrefix) "
+            f"$rows = '{fixture}' | ConvertFrom-Json; "
+            "foreach ($prefix in $DestinationPrefix) { "
+            "if (-not ($rows | Where-Object {$_.DestinationPrefix -eq $prefix})) "
+            "{ throw 'No matching route' } }; $rows }; "
+        )
+        return subprocess.run([*command[:-1], stub + command[-1]], **kwargs)
+
+    routes = connectivity.default_routes(rns_module=_rns(), system="Windows", runner=runner)
+    assert len(routes) == 1
+    assert routes[0].interface == "Wi-Fi"
+    assert routes[0].gateway == gateway
+
+
 @pytest.mark.parametrize(
     ("address", "classification"),
     [

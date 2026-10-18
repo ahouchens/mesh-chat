@@ -3004,3 +3004,16 @@ stylesheet confirmed vertically stacked warning content and no section/dialog
 horizontal overflow at widths 360, 393 and 591px; the 393px render was inspected.
 This fixture is a layout check, not Android device qualification. Cellular join
 receipt and owner approval remain unverified on the physical devices.
+
+## Windows single-stack route detection — 0.2.50
+
+Query all Windows routes and filter active default prefixes in the pipeline.
+Get-NetRoute's multi-prefix lookup previously terminated when IPv6 had no default
+route, discarding a working IPv4 route. Reproduced the original missing-IPv6
+error on Windows; the corrected query returned the active Wi-Fi IPv4 route.
+
+Validation: 38 connectivity-roadmap and participant-invitation tests passed,
+including two Windows PowerShell regressions for IPv4-only and IPv6-only route
+tables with unrelated and inactive routes. Tests execute the production pipeline
+against a Get-NetRoute fixture reproducing absent-prefix errors. This establishes
+route detection, not successful router mapping or physical cellular delivery.
