@@ -554,6 +554,29 @@ class VaultStore:
             )
         return value
 
+    def update_records(self, keys, update):
+        """Atomically reload and replace a bounded set of sealed records.
+
+        Like update_record, the callback may read current authorization but
+        must not write or perform network effects. Seal all values before any
+        write. A failed callback, seal, or commit leaves every record unchanged.
+        """
+        keys = tuple(keys)
+        if not 1 <= len(keys) <= 16 or len(set(keys)) != len(keys):
+            raise ValidationError("Atomic record set is invalid")
+        with self._transaction():
+            values = update({key: self.get(*key) for key in keys})
+            if not isinstance(values, dict) or set(values) != set(keys):
+                raise ValidationError("Atomic record update changed its keys")
+            now = time.time()
+            prepared = [(kind, record_id, self._seal(kind, record_id, values[(kind, record_id)]), now, now)
+                        for kind, record_id in keys]
+            self._db.executemany(
+                """INSERT INTO records(kind, record_id, sealed, created_at, updated_at)
+                   VALUES(?, ?, ?, ?, ?) ON CONFLICT(kind, record_id) DO UPDATE SET
+                   sealed=excluded.sealed, updated_at=excluded.updated_at""", prepared)
+        return values
+
     def opaque_id(self, namespace: str, *parts: str) -> str:
         """Return a local keyed identifier safe to expose to SQLite indexes."""
 

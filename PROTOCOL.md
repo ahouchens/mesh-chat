@@ -954,3 +954,13 @@ bootstrap carrier retires. The `direct_admission` v2 control contains exactly
 `v`, `type`, `binding`, and `certificate`, is capped at 64 KiB, and passes durable
 binding acceptance. Transport authentication never substitutes for LXMF signature,
 recipient ratchet, membership, replay or application-receipt checks.
+
+## Durable admitted binding storage
+
+Phase 3 groundwork preserves all invitation and direct-document wire schemas.
+Workspace binding acceptance stores the signed public binding/certificate,
+candidates/validity and exact identity/audience/device scope atomically with
+the existing monotonic replay record. An imported binding is not live-route
+evidence. Historical success requires native authentication and a validated
+peer RNS announce, and cannot be written by a superseded generation. The
+persistent reconnection/update exchange remains unimplemented.

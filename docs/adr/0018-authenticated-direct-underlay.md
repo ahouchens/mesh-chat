@@ -308,3 +308,17 @@ channel traffic still requires a separately authorized admitted carrier.
 - [QUIC DATAGRAM requirements](https://www.rfc-editor.org/rfc/rfc9221.html#section-5)
 - [Patched Quinn datagram accounting](https://rustsec.org/advisories/RUSTSEC-2026-0343.html)
 - [Patched Rustls certificate decompression](https://rustsec.org/advisories/RUSTSEC-2026-0348.html)
+
+### Phase 3 durable acceptance amendment
+
+Admitted acceptance commits the existing replay floor and a versioned encrypted
+relationship record in one vault transaction. Authorization still reloads the
+current signed manifest and exact local/remote device identities. Retaining the
+old replay key prevents an upgrade from resetting accepted generations. Public
+certificates and signed remote candidates are historical evidence, not socket
+ownership or permission to activate. Native handles and private keys stay out
+of durable records. A verified admitted RNS announce after native authentication
+may record historical route success for the current generation only. This
+amendment does not extend invitation authority or implement rotated-key TLS
+reauthentication, reconnection, renewal or migration. See the
+[Phase 3 evidence record](../DIRECT_CONNECTIVITY_PHASE3_EVIDENCE.md).

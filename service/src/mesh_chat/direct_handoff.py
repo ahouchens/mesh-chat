@@ -130,18 +130,31 @@ class AdmissionHandoff:
                             # announces to tolerate unreliable DATAGRAM loss.
                             end = min(time.monotonic()+10, self.authority.transition_deadline)
                             next_announce = time.monotonic()+1
-                            while not admitted.peer_seen.is_set() and not self.carrier._stop.is_set():
+                            # The peer may retire bootstrap as soon as it sees
+                            # our admitted announce. That is independent of our
+                            # confirmation in the opposite direction.
+                            while not admitted.peer_seen.is_set():
                                 if admitted._stop.is_set() or time.monotonic() >= end:
                                     admitted.close()
                                     raise ValidationError("Admitted peer adapter was not confirmed")
                                 if time.monotonic() >= next_announce:
                                     self.service.network.router.announce(self.service.network.destination_hash)
                                     next_announce = time.monotonic()+1
-                                self.carrier._stop.wait(.05)
+                                admitted._stop.wait(.05)
+                            if not admitted.peer_seen.is_set() or admitted._stop.is_set():
+                                raise ValidationError("Admitted path retired before confirmation")
+                            from .direct_relationship import record_success
+                            with self.service._dispatch_lock:
+                                self.service._check_direct_runtime_available()
+                                record_success(self.service.store, expected, accepted,
+                                    load_authority=lambda: self.service._direct_workspace_binding_authority(expected),
+                                    clock=lambda: int(time.time()))
                             self.carrier.close()
                             return
                 self.carrier._stop.wait(.1)
         except Exception:
+            if promoted:
+                admitted.close()
             self.carrier.close()
         finally:
             if prepared is not None and not promoted:

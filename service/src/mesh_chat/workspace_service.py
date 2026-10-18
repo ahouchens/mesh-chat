@@ -2493,9 +2493,9 @@ class WorkspaceServiceMixin:
 
     def _accept_direct_workspace_binding(self, raw, expected, certificate_der):
         """Commit admitted binding acceptance without creating network effects."""
-        from .direct_binding import accept_binding
+        from .direct_relationship import accept_relationship
         with self._dispatch_lock:
-            return accept_binding(self.store, raw, expected, certificate_der,
+            return accept_relationship(self.store, raw, expected, certificate_der,
                                   load_authority=lambda: self._direct_workspace_binding_authority(expected),
                                   clock=lambda: int(time.time()))
 

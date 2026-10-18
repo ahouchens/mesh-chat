@@ -120,6 +120,10 @@ def _service_worker(root, incoming, outgoing, commands, replies, native_binary=N
                         import RNS
                         result = {"native_count":len(service._direct_native.owned),
                                   "interfaces":len(RNS.Transport.interfaces)}
+                    elif operation == "relationship_evidence":
+                        records = store.list("direct_relationship")
+                        result = [{"scope": item["scope"], "accepted": item["accepted"],
+                                   "last_success": item["last_success"]} for item in records]
                     else:
                         names = {"offer":"prepare_direct_offer", "answer":"prepare_direct_answer",
                             "ready":"prepare_direct_ready", "accept_ready":"accept_direct_ready",
@@ -198,6 +202,12 @@ def test_production_setup_bootstrap_admission_and_fresh_workspace_path(tmp_path,
             wait(sender,"list_workspace_messages",lambda page:any(item["id"] == sent["id"] and
                 item.get("delivery_summary",{}).get("devices_reached") == 1 for item in page["messages"]),
                 workspace_id=workspace["id"],channel_id=workspace["general_channel_id"],limit=50)
+        for index in range(2):
+            evidence = call(index, "relationship_evidence")
+            assert len(evidence) == 1
+            assert evidence[0]["scope"]["workspace_id"] == workspace["id"]
+            assert evidence[0]["last_success"] is not None
+            assert evidence[0]["last_success"]["digest"] == evidence[0]["accepted"]["digest"]
         if retirement == "cancel":
             command(0,"cancel_direct_setup",setup_id=ready["setup_id"])
         elif retirement == "suspend":

@@ -13,6 +13,12 @@ packages and exact integrated-flow CI pass at `200614a` (777 service tests,
 Physical Windows/Android qualification remains open; exact artifacts, package
 hashes and the device checklist are linked from the evidence record.
 
+### Phase 3 development
+
+Admitted relationship evidence and replay acceptance now commit atomically.
+Persistent reconnection is not complete. The [criterion-by-criterion record](DIRECT_CONNECTIVITY_PHASE3_EVIDENCE.md)
+tracks implementation and remaining work separately from Phase 2 physical debt.
+
 ### Phase 1 completion, 2026-10-17
 
 The protocol-and-adapter proof meets the Phase-1 exit criteria below at `de110a8`

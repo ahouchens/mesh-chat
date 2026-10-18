@@ -189,3 +189,11 @@ Introducing a permanent foreground service or requesting a battery-optimization
 exemption requires explicit product/security approval. Cloud push, hosted
 relays, analytics, telemetry, cloud storage, identity/vault copying, or protocol
 byte changes are outside this parity plan.
+
+## Phase 3 relationship persistence boundary
+
+The shared protected service now atomically stores admitted relationship
+evidence with its replay floor. This does not yet implement Android process-death
+reconnection, resume recovery, UDP renewal or migration. Background availability
+is not promised. Physical Phase 2 Windows/Android qualification remains pending;
+see [Phase 3 criterion tracking](DIRECT_CONNECTIVITY_PHASE3_EVIDENCE.md).

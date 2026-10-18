@@ -524,3 +524,14 @@ invalidation generations. Resume processes bounded controls, pending events,
 and due-work indexes, never full event or delivery collections. Bridge overflow
 forces this bounded authoritative path. Suspended or terminated processes have
 no availability guarantee; reopening reconciles.
+
+## Phase 3 durable relationship acceptance
+
+Admitted binding acceptance now commits a versioned encrypted relationship and
+its existing replay floor together, with current membership reloaded inside
+the transaction. A fresh authenticated native path plus a signed peer RNS
+announce records historical success. Bootstrap retirement does not prematurely
+cancel the opposite-direction admitted confirmation. Runtime sockets, keys and
+adapter ownership remain ephemeral. Automatic restart recovery, rotated-key
+reauthentication, renewal and migration remain open; see
+[criterion tracking](docs/DIRECT_CONNECTIVITY_PHASE3_EVIDENCE.md).

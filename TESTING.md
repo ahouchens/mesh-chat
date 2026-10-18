@@ -2912,3 +2912,14 @@ See [the retained report](https://github.com/ahouchens/mesh-chat/actions/runs/39
 and the [criterion-by-criterion evidence](docs/DIRECT_CONNECTIVITY_PHASE1_EVIDENCE.md).
 This is controlled-run evidence, not a shipping feature, Windows network capture,
 physical Android test, Internet traversal measurement or production IPC approval.
+
+## Phase 3 atomic relationship increment
+
+`service/tests/test_direct_relationship.py` exercises encrypted atomic
+acceptance, restart/rotation/replay, prior-floor migration, concurrent conflicts,
+revocation/scope/expiry checks, storage failure and stale success callbacks.
+The source and shipping-native setup pipelines assert matching durable
+relationship and signed-RNS route evidence after bidirectional message receipts.
+No test treats this as restart or network-switch recovery. Full remaining
+criteria and exact-commit results belong in the
+[Phase 3 evidence record](docs/DIRECT_CONNECTIVITY_PHASE3_EVIDENCE.md).

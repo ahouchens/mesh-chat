@@ -483,3 +483,13 @@ automatic recovery or background availability. See the
   physical-device LAN, suspend/resume, camera, battery, or upgrade test. The
   iOS source path requires a Mac/Xcode build, multicast-enabled provisioning
   profile, signed device run, and App Store validation.
+
+## Durable admitted relationship evidence
+
+Current membership is reloaded within the atomic replay/relationship mutation;
+failed encryption or commit cannot leave one record advanced. Existing replay
+floors survive initialization of the new record. Invitation scopes are rejected.
+Stored public certificates and remote candidates do not authorize resurrecting
+a native session. Historical route evidence is generation-bound and distinct
+from present peer liveness and application receipts. Rotated-key reauthentication
+and persistent recovery still require implementation and qualification.
