@@ -1,15 +1,16 @@
 # Windows and mobile-carrier acceptance
 
-Status: **not ready for physical acceptance yet**. Candidate **0.2.58**, Android
-versionCode **2058**, application commit `0bf9623a9d4c01042793f63d3ffb1fd984443308`.
-Use matching builds on both devices after qualification. Preserve app data.
+Status: **awaiting matching 0.2.59 / Android 2059 artifacts**. The diagnostic
+follow-up preserves readiness failures across later successful checks and history
+rollover. The 0.2.58 downloads below are retained as historical evidence, not the
+new acceptance pair. Preserve app data.
 
 [Build run](https://github.com/ahouchens/mesh-chat/actions/runs/39160414911): full
 verification, Windows packaging and signed Android packaging passed. Android's first attempt failed
 unpacking the NDK ZIP before compilation; the Android-only retry passed on
-the same commit. Native recovery qualification is still open: a preceding run
-failed Windows address-loss recovery. Independent review and physical tests remain
-separate gates. Do not substitute any superseded build.
+the same commit. The exact-version full native suite passed. A preceding Windows
+address-loss failure is still under repetition testing; independent review and
+physical tests remain separate gates. Do not substitute any superseded build.
 
 | Platform | Current artifact | Archive SHA-256 |
 | --- | --- | --- |
@@ -27,7 +28,7 @@ Its archive, manifest and APK hashes were verified; manifest version is 0.2.58 /
 ## Guided test
 
 1. Install the matching new build on **both Windows and Android**. In Settings,
-   confirm **Mesh Chat version 0.2.58** and copy version details on each device.
+   confirm **Mesh Chat version 0.2.59** and copy version details on each device.
    Preserve existing app data; do not clear the profile to work around a failure.
 2. Leave Windows on the home router. Turn Android Wi-Fi off and confirm mobile
    data is active. Keep both Mesh Chat apps unlocked and open.

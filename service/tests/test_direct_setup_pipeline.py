@@ -221,7 +221,15 @@ def test_production_setup_bootstrap_admission_and_fresh_workspace_path(tmp_path,
             if result:
                 return result
             time.sleep(.1)
-        raise AssertionError((name,last))
+        # Preserve the original assertion and deadline, but retain both sides
+        # of intermittent admission failures instead of only one snapshot.
+        diagnostics = []
+        for peer in range(2):
+            try:
+                diagnostics.append(call(peer, "recovery_diagnostic"))
+            except Exception as error:
+                diagnostics.append({"unavailable": type(error).__name__})
+        raise AssertionError((name, last, {"peers": diagnostics}))
     op = lambda: str(uuid.uuid4())
     try:
         for index in range(2):

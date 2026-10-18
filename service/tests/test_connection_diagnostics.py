@@ -3,6 +3,8 @@ import os
 import time
 from types import SimpleNamespace
 
+import pytest
+
 from mesh_chat import connection_diagnostics as diagnostics
 
 
@@ -41,6 +43,24 @@ def test_history_bounded_and_latest_failure_survives_new_service_instance():
     assert value["truncated"] is True
     assert value["last_failure"]["phase"] == "failed"
     assert len(json.dumps(value).encode()) < 65536
+
+
+@pytest.mark.parametrize("phase", ["no_route", "network_changed", "test_failed", "both_no_address"])
+def test_readiness_failure_survives_later_success_and_history_rollover(phase):
+    service = SimpleNamespace(store=Store())
+    diagnostics.record(service, "state", {"state": phase, "setup_id": "failed-attempt"})
+    for index in range(diagnostics.LIMIT + 1):
+        diagnostics.record(service, "state", {"state": "peer_verified", "setup_id": str(index)})
+    reopened = SimpleNamespace(store=service.store)
+    report = diagnostics.report(reopened)
+    assert all(row["phase"] == "peer_verified" for row in report["events"])
+    assert report["last_failure"]["phase"] == phase
+
+
+def test_one_sided_preparation_is_not_saved_as_a_failure():
+    service = SimpleNamespace(store=Store())
+    diagnostics.record(service, "state", {"state": "no_local_address"})
+    assert diagnostics.report(service)["last_failure"] is None
 
 
 def test_expired_diagnostics_are_not_exported(monkeypatch):

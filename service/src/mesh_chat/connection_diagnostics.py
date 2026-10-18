@@ -22,6 +22,8 @@ PHASES = frozenset({"waiting_for_reply", "waiting_for_ready", "ready_to_share", 
 EVENTS = frozenset({"state", "import_verified", "import_rejected", "action_failed", "lifecycle_interrupted"})
 KINDS = frozenset({"offer", "answer", "ready", "recovery", "unavailable"})
 SOURCES = ("ipv4", "ipv6", "local_global", "pcp", "upnp", "upnp_ipv6", "nat_pmp")
+FAILURE_PHASES = frozenset({"failed", "existing_routes_only", "refresh_required",
+    "connection_update_needed", "no_route", "network_changed", "test_failed", "both_no_address"})
 
 
 def sanitize(value):
@@ -89,7 +91,7 @@ def _record(service, event, state=None):
         return
     value["truncated"] = value["truncated"] or len(value["events"]) >= LIMIT
     value["events"] = (value["events"] + [row])[-LIMIT:]
-    if row["phase"] in {"failed", "existing_routes_only", "refresh_required", "connection_update_needed"} or event in {"import_rejected", "action_failed"}:
+    if row["phase"] in FAILURE_PHASES or event in {"import_rejected", "action_failed"}:
         value["last_failure"] = row
     service.store.put("connection_diagnostics", "history", value)
 
