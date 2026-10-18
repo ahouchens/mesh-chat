@@ -199,4 +199,8 @@ Desktop installers must be built on their target operating system. Android build
 | [docs/ANDROID_PARITY.md](docs/ANDROID_PARITY.md) | Android capability status and the physical test matrix |
 | [deploy/remote-access](deploy/remote-access/README.md) | Running an access point or propagation node without becoming a Mesh Chat service |
 
-Third-party artwork, emoji data, and their licenses are listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). The repository does not currently include a license file.
+Third-party artwork, emoji data, and their licenses are listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+
+## License
+
+Mesh Chat is released under the [MIT License](LICENSE). Third-party artwork and data remain under their own licenses, listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md); the bundled Reticulum, LXMF, Python, and JavaScript dependencies keep their upstream licenses. The license does not grant rights to the Mesh Chat name or logo.
