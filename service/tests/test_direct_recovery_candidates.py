@@ -9,6 +9,30 @@ class RecoveryNative(Native):
         return super().request("prepare" if operation=="prepare_recovery" else operation,**payload)
 
 
+@pytest.mark.parametrize("busy",[3,100])
+def test_saved_port_waits_for_local_quic_drain_with_bounded_fallback(monkeypatch,busy):
+    native=RecoveryNative()
+    original=native.request
+    addresses=[]
+    sleeps=[]
+    def request(operation,**payload):
+        if operation=="prepare_recovery":
+            addresses.append(payload["address"])
+            if payload["address"].endswith(":45678") and len(addresses)<=busy:
+                raise ValidationError("Socket is still draining")
+        return original(operation,**payload)
+    native.request=request
+    monkeypatch.setattr(c,"create_port_mapping",lambda *a,**k: (_ for _ in ()).throw(OSError()))
+    prepared=prepare_candidates(native,generation=1,expires_at=4600,routes=[V4],recovery=True,
+        preferred_port=45678,clock=lambda:1000,monotonic=lambda:100,sleep=sleeps.append)
+    try:
+        assert len(sleeps)==min(busy,20)
+        assert sum(sleeps)<=5
+        assert addresses[-1].endswith(":45678" if busy==3 else ":0")
+        assert len(addresses)==(4 if busy==3 else 22)
+    finally: prepared.close()
+
+
 def setup(monkeypatch):
     native=RecoveryNative(); removed=[]
     old=c.MappingResult("pcp","93.184.216.34",55000,V4.local_address,45678,120,{"nonce":"old"},"udp")

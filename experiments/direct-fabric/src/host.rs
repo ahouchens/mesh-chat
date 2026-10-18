@@ -106,9 +106,7 @@ impl Host {
             tokio::time::sleep(lifetime).await;
             if let Some(host) = weak.upgrade() {
                 if let Ok(mut entries) = host.entries.lock() {
-                    if !matches!(entries.sessions.get(&id), Some(Session::Recovery(_))) {
-                        entries.sessions.remove(&id);
-                    }
+                    entries.sessions.remove(&id);
                 }
             }
         });
@@ -248,6 +246,13 @@ impl Host {
         attempt: Duration,
         lifetime: Duration,
     ) -> Result<(), Error> {
+        if attempt.is_zero()
+            || attempt > Duration::from_secs(60)
+            || lifetime < attempt
+            || lifetime > Duration::from_secs(3600)
+        {
+            return Err(Error::Configuration);
+        }
         let mut entries = self.entries.lock().map_err(|_| Error::Closed)?;
         if !matches!(entries.sessions.get(&id), Some(Session::Prepared(_))) {
             return Err(Error::Closed);
@@ -255,6 +260,7 @@ impl Host {
         let Some(Session::Prepared(prepared)) = entries.sessions.remove(&id) else {
             unreachable!()
         };
+        let attempt = attempt.min(prepared.remaining_window()?);
         let (bound, key) = prepared.into_recovery_parts()?;
         let running = crate::recovery::Running::start(
             bound, key, capsule, candidates, client, attempt, lifetime,
@@ -349,6 +355,10 @@ impl Host {
     pub fn inspect(&self, id: u64) -> Result<Prepared, Error> {
         let mut entries = self.entries.lock().map_err(|_| Error::Closed)?;
         if let Some(Session::Recovery(session)) = entries.sessions.get(&id) {
+            if session.state.load(Ordering::Acquire) == 2 {
+                entries.sessions.remove(&id);
+                return Err(Error::Closed);
+            }
             return Ok(Prepared {
                 id,
                 address: session.address()?,
@@ -378,6 +388,32 @@ impl Host {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test]
+    async fn recovery_cannot_extend_prepared_socket_ownership() {
+        let host = Host::new();
+        let prepared = host
+            .prepare_recovery(
+                "127.0.0.1:0".parse().unwrap(),
+                [1; 16],
+                1,
+                Duration::from_millis(200),
+            )
+            .unwrap();
+        host.arm(prepared.id, [1; 16], 1, [2; 32]).unwrap();
+        host.recover(
+            prepared.id,
+            vec![1],
+            vec![],
+            false,
+            Duration::from_secs(1),
+            Duration::from_secs(2),
+        )
+        .unwrap();
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        assert!(host.inspect(prepared.id).is_err());
+        assert!(host.poll(prepared.id).is_err());
+    }
+
     #[tokio::test]
     async fn budget_expiry_and_stale_handles() {
         let host = Host::new();

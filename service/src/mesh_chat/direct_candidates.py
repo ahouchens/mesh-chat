@@ -109,7 +109,8 @@ class NativePreparation:
 
 
 def prepare_candidates(native, *, generation, expires_at, family=None, routes=None,
-                       clock=time.time, monotonic=time.monotonic, recovery=False, preferred_port=0, preferred_external_port=0):
+                       clock=time.time, monotonic=time.monotonic, recovery=False, preferred_port=0, preferred_external_port=0,
+                       sleep=time.sleep):
     if type(preferred_port) is not int or not 0 <= preferred_port <= 65535:
         raise ValidationError("Invalid local port hint")
     if type(expires_at) is not int:
@@ -128,13 +129,25 @@ def prepare_candidates(native, *, generation, expires_at, family=None, routes=No
     local = route.local_address if route else ("::" if family == socket.AF_INET6 else "0.0.0.0")
     address = f"[{local}]:{preferred_port}" if ":" in local else f"{local}:{preferred_port}"
     operation = "prepare_recovery" if recovery else "prepare"
-    try:
-        owned = native.request(operation, address=address, generation=generation, remaining_ms=int(remaining*1000))
-    except ValidationError:
-        if not preferred_port:
-            raise
-        address = f"[{local}]:0" if ":" in local else f"{local}:0"
-        owned = native.request(operation, address=address, generation=generation, remaining_ms=int(remaining*1000))
+    # QUIC close drains asynchronously. Give an owned port hint a bounded
+    # chance to become free before changing the only address the peer knows.
+    # These are local bind attempts, never network probes.
+    for retry in range(21):
+        remaining = expires_at-clock()
+        if remaining <= 0:
+            raise ValidationError("Direct candidate preparation expired")
+        try:
+            owned = native.request(operation, address=address, generation=generation, remaining_ms=int(remaining*1000))
+            break
+        except ValidationError:
+            if not preferred_port:
+                raise
+            if recovery and retry < 20:
+                sleep(.25)
+                continue
+            address = f"[{local}]:0" if ":" in local else f"{local}:0"
+            owned = native.request(operation, address=address, generation=generation, remaining_ms=int(remaining*1000))
+            break
     preparation = None
     try:
         if (not isinstance(owned, dict) or set(owned) != {"id", "session", "generation", "host", "port", "certificate"}
