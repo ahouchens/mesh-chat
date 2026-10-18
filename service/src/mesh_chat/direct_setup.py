@@ -306,6 +306,7 @@ class DirectSetup:
         value = self.service.store.get("direct_setup", setup_id)
         if value is not None:
             self.service.store.put("direct_setup", setup_id, {**value,"state":"cancelled"})
+        self.service.store.delete("direct_setup_document", setup_id)
         return {"setup_id":setup_id,"state":"cancelled"}
 
     def connect(self, setup_id, document):

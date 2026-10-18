@@ -49,7 +49,11 @@ def history(service):
     failure = sanitize(failure) if isinstance(failure, dict) else None
     if failure and failure["time"] < cutoff:
         failure = None
-    return {"events":events, "last_failure":failure, "truncated":record.get("truncated") is True}
+    value = {"events":events, "last_failure":failure, "truncated":record.get("truncated") is True}
+    # Retention applies to protected storage too, not only the exported view.
+    if record and value != record:
+        service.store.put("connection_diagnostics", "history", value)
+    return value
 
 
 def record(service, event, state=None):

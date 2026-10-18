@@ -5,7 +5,10 @@ use crate::{
     Error, Path, Peer,
 };
 use std::{
-    sync::{atomic::Ordering, Arc},
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    },
     time::Duration,
 };
 use tokio::{sync::watch, task::JoinSet, time::Instant};
@@ -38,11 +41,18 @@ pub async fn connect(
         }
     }
     let mut incoming = JoinSet::new();
+    let incoming_budget = Arc::new(AtomicUsize::new(64));
     for (index, peer) in peers.iter().enumerate() {
         let peer = peer.clone();
         let statistics = statistics.clone();
+        let incoming_budget = incoming_budget.clone();
         incoming.spawn(async move {
-            for _ in 0..64 {
+            while incoming_budget
+                .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |left| {
+                    left.checked_sub(1)
+                })
+                .is_ok()
+            {
                 if let Ok(path) = peer.accept().await {
                     statistics.authenticated.fetch_add(1, Ordering::Relaxed);
                     if !client {

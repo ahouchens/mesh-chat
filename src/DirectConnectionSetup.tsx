@@ -14,9 +14,9 @@ const states: Record<string, string> = {
   ready_to_share: "Send this connection message to the other person now. Next, they paste it into Join or connect and choose Connect.",
   ready_received: "Connection message checked. Both devices need to stay open while connecting.",
   connecting: "Trying to connect. Keep both apps open. Send the connection message below to the other person now if you created it.",
-  bootstrap_connected: "Direct setup path established. The signed join request still needs acknowledgment and owner approval.",
+  bootstrap_connected: "The devices are connected. Waiting for the owner to receive and approve your request. Check the workspace for progress.",
   relationship_active: "Direct setup is complete. Your saved device relationship reconnects automatically. Check Direct connections in workspace settings for current status.",
-  admitted_path: "Direct workspace path established with fresh credentials. Workspace delivery and receipts appear in the conversation.",
+  admitted_path: "Your workspace connection is ready. Open the workspace to send a message and check its delivery status.",
   existing_routes_only: "Neither device found a public address it can share. This connection cannot start on the current networks. Your request stays saved and can use an existing authorized route. Waiting or copying these details again will not discover an address.",
   refresh_required: "These connection details can no longer be used. Ask the owner to refresh their saved invitation and send it through Join or connect. Your saved request is kept.",
   cancelled: "Connection attempt cancelled. Your saved request is kept; a request already received by the owner is not withdrawn.",
@@ -95,6 +95,7 @@ export function DirectConnectionSetup({ invitationId, workspaceId, autoStart = f
           setup_id: value.setup_id, document: preview.kind === "answer" ? value.text : input,
         }));
       }
+      setInput("");
     } catch { setError("These details could not start the next step. Your saved request is kept. If either app restarted or the details expired, ask the owner to refresh the connection details."); }
     finally { setBusy(false); }
   };
@@ -117,7 +118,7 @@ export function DirectConnectionSetup({ invitationId, workspaceId, autoStart = f
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   };
   const cancel = async () => {
-    if (!setup) return;
+    if (!setup?.setup_id) return;
     setBusy(true);
     try { await serviceCommand("cancel_direct_setup", { setup_id: setup.setup_id }); setSetup({ ...setup, state: "cancelled" }); setOutgoing(""); }
     catch { setError("Could not cancel setup. Lock the app to retire its active connections."); }
@@ -136,14 +137,14 @@ export function DirectConnectionSetup({ invitationId, workspaceId, autoStart = f
   return <section className="form-stack guided-connection" aria-label="Direct connection setup">
     <h3>Connect your devices</h3>
     <p>Send each message using your preferred app. On the receiving device, open <strong>Join or connect</strong> and paste it there. Both apps need to be open while connecting.</p>
-    {invitationId && <button className="button button--secondary" disabled={busy} onClick={() => void offer()}>{setup ? "Refresh connection details" : "Prepare invitation"}</button>}
+    {invitationId && (!setup || !remaining || setup.state === "refresh_required" || setup.state === "cancelled") && <button className="button button--primary" disabled={busy} onClick={() => void offer()}>{setup ? "Refresh connection details" : "Prepare invitation"}</button>}
     <label className="field"><span>Message from the other device</span><textarea aria-label="Message from the other device" rows={5} value={input} onChange={(event) => edit(event.target.value)} disabled={busy} /></label>
     <InvitationImportActions onValue={edit} />
     <button className="button button--secondary" disabled={busy || !input.trim()} onClick={() => void review()}>Check received message</button>
     {preview && <div className="direct-consent"><h4>{preview.workspace_name}</h4><p>Message checked. {preview.kind === "offer" ? "Save your request and prepare a reply for the owner." : preview.kind === "answer" ? "Prepare the final connection message for the other person." : "Both devices need to stay open for this step."}</p><button className="button button--primary" disabled={busy} onClick={() => void apply()}>{preview.kind === "offer" ? "Prepare reply" : preview.kind === "answer" ? "Prepare connection message" : "Connect"}</button></div>}
     {setup && <div role="status"><p>{states[setup.state] ?? "Connection setup is in progress."}</p><p className="muted">Connection details: {remaining ? `${Math.floor(remaining / 60)}m ${remaining % 60}s remaining` : "expired"}. This short setup timer is separate from invitation expiry. Check the workspace for owner receipt and approval.</p></div>}
     {outgoing && remaining > 0 && <><details><summary>Message details and QR code</summary><InvitationQrCode document={outgoing} destination="workspace" /><label className="field"><span>Complete message to share</span><textarea aria-label="Complete connection message" readOnly rows={5} value={outgoing} onFocus={(event) => event.currentTarget.select()} /></label></details><div className="dialog-actions"><button className="button button--secondary" onClick={() => void copy()}>Copy connection message</button><button className="button button--secondary" onClick={() => void share()}>Share connection message</button><button className="button button--ghost" onClick={save}>Save connection file</button></div></>}
-    {setup && setup.state !== "cancelled" && <button className="button button--ghost" disabled={busy} onClick={() => void cancel()}>Cancel connection attempt</button>}
+    {setup?.setup_id && setup.state !== "cancelled" && <button className="button button--ghost" disabled={busy} onClick={() => void cancel()}>Cancel connection attempt</button>}
     {setup && onOpenWorkspace && <button className="button button--secondary" onClick={() => void openWorkspace()}>View workspace</button>}
     {feedback && <p aria-live="polite">{feedback}</p>}
     {error && <p className="form-error" role="alert">{error}</p>}

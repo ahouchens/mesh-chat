@@ -20,6 +20,7 @@ it("authors a reply with no public candidate and does not start a path before Re
   fireEvent.click(await screen.findByText("Prepare reply"));
   expect(await screen.findByDisplayValue("mesh-direct:answer")).toBeTruthy();
   expect(screen.getByText(/Share this reply with the owner/)).toBeTruthy();
+  expect((screen.getByLabelText("Message from the other device") as HTMLTextAreaElement).value).toBe("");
   expect(api.serviceCommand).toHaveBeenCalledWith("prepare_direct_answer", { document: "mesh-direct:offer", operation_id: expect.any(String) });
   expect(api.serviceCommand.mock.calls.some(([command]) => command === "connect_direct_setup" || command === "create_connection_reply")).toBe(false);
 });

@@ -351,6 +351,15 @@ impl Host {
             return Err(Error::Configuration);
         }
         let mut entries = self.entries.lock().map_err(|_| Error::Closed)?;
+        // Recovery currently owns one socket. Never silently discard advertised
+        // alternatives if a caller accidentally passes an initial setup group.
+        if entries
+            .extra
+            .get(&id)
+            .is_some_and(|paths| !paths.is_empty())
+        {
+            return Err(Error::Configuration);
+        }
         if !matches!(entries.sessions.get(&id), Some(Session::Prepared(_))) {
             return Err(Error::Closed);
         }

@@ -48,6 +48,8 @@ def test_expired_diagnostics_are_not_exported(monkeypatch):
     monkeypatch.setattr(diagnostics.time, "time", lambda:future)
     assert diagnostics.report(service)["events"] == []
     assert diagnostics.report(service)["last_failure"] is None
+    assert service.store.get("connection_diagnostics", "history")["events"] == []
+    assert service.store.get("connection_diagnostics", "history")["last_failure"] is None
 
 
 def test_capture_failure_does_not_change_operation_outcome():
