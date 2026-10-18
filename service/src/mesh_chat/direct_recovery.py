@@ -35,10 +35,13 @@ class DirectRecovery:
         self._lock = threading.RLock()
         self._wake, self._stop = threading.Event(), threading.Event()
         self._active, self._pending, self._prepared = {}, {}, {}
+        self._waiting_hints = set()
+        self._native_seen = {}
         self._workers = set()
         self._epoch, self._cursor = 0, 0
         self._initialized = False
         self._route_signature = None
+        self._route = None
         self._route_check_at = 0
         self._thread = threading.Thread(target=self._run, daemon=True, name="mesh-direct-recovery")
 
@@ -115,7 +118,17 @@ class DirectRecovery:
                      "expires_at":fields["expires_at"], "cleanup":cleanup,
                      "socket_hint":{"host":prepared._owned["host"],"port":prepared._owned["port"]},
                      "logical_id":str(uuid.uuid4())}
-            self._write(identifier,local=local)
+            state = self._state(identifier)
+            previous = state.get("local") or {}
+            orphans = [item for item in state.get("orphan_cleanup",[]) if item["expires_at"] > self.clock()]
+            for mapping in previous.get("cleanup",[]):
+                if mapping not in cleanup:
+                    item = {"mapping":mapping,"expires_at":previous.get("cleanup_expires_at",previous["expires_at"])}
+                    if item not in orphans: orphans.append(item)
+            if len(orphans)>32:
+                raise ValidationError("Outstanding router cleanup budget exhausted")
+            local["cleanup_expires_at"] = int(self.clock())+max([0]+[m["lifetime"] for m in cleanup])
+            self._write(identifier,local=local,orphan_cleanup=orphans)
             return local
 
     def _send(self, record, local):
@@ -149,8 +162,18 @@ class DirectRecovery:
         before = self.service.store.get("direct_relationship",identifier)["accepted"]
         accepted = self.service._accept_direct_workspace_binding(raw,expected,certificate)
         with self._lock: current = self._active.get(identifier)
-        if before["digest"] != accepted.digest and not (current and not current._stop.is_set() and current.certificate == certificate):
+        if self._state(identifier)["enabled"] and before["digest"] != accepted.digest and not (current and not current._stop.is_set() and current.certificate == certificate):
             self._write(identifier,next_at=self.clock(),state="reconnecting")
+        # A listener with no peer hint cannot discover a second listener. An
+        # explicit signed update restarts only that pending attempt; it retains
+        # the local port hint and always reauthenticates a fresh transport key.
+        with self._lock:
+            waiting = self._state(identifier)["enabled"] and before["digest"] != accepted.digest and identifier in self._waiting_hints
+            if waiting:
+                self._pending.pop(identifier,None)
+                self._waiting_hints.discard(identifier)
+                prepared = self._prepared.pop(identifier,None)
+        if waiting and prepared is not None: prepared.close()
         self._wake.set()
         return {"relationship_id":identifier,"state":self._state(identifier)["state"]}
 
@@ -181,6 +204,7 @@ class DirectRecovery:
             # On the first upgrade, Phase 2 ALPN addresses cannot run recovery.
             # Keep the old carrier until a current recovery update arrives.
             end = time.monotonic()+15
+            resend_at = time.monotonic()+2
             while True:
                 with self.service._dispatch_lock:
                     self._authority(record)
@@ -188,8 +212,14 @@ class DirectRecovery:
                     if _parse(remote["binding"])["v"] == 3 or time.monotonic() >= end:
                         break
                 if not self._valid(identifier,token): return
+                if time.monotonic() >= resend_at:
+                    self._send(record,local)
+                    resend_at = time.monotonic()+2
                 self._stop.wait(.1)
             candidates = remote["candidates"]
+            with self._lock:
+                if not candidates and self._pending.get(identifier) == token:
+                    self._waiting_hints.add(identifier)
             # Previously authenticated numeric addresses remain bounded hints
             # even when their advertised lease expires. New TLS/RNS authority is
             # mandatory; no application data or plaintext document is sent there.
@@ -212,6 +242,7 @@ class DirectRecovery:
             peer_raw = peer_cert = accepted = None
             while self._valid(identifier,token) and time.monotonic() < end:
                 polled = self.service._direct_native.request("poll",id=prepared.handle)
+                with self._lock: self._native_seen[identifier] = time.monotonic()
                 if polled["state"] == 2:
                     raise ValidationError("Recovery path unavailable")
                 if polled["state"] == 3 and not approved:
@@ -252,6 +283,7 @@ class DirectRecovery:
                                     winner=accepted.digest,renew_at=self.clock()+min(1800,max(1,(fields["expires_at"]-self.clock())/2)))
                         with self._lock:
                             old = self._active.get(identifier)
+                            admitted.route_signature = self._route_signature
                             self._active[identifier] = admitted
                         promoted = True
                     if old and old is not admitted: old.close()
@@ -270,7 +302,9 @@ class DirectRecovery:
             with self._lock:
                 if self._prepared.get(identifier) is prepared and not promoted:
                     self._prepared.pop(identifier,None)
-                if self._pending.get(identifier) == token: self._pending.pop(identifier,None)
+                if self._pending.get(identifier) == token:
+                    self._pending.pop(identifier,None)
+                    self._waiting_hints.discard(identifier)
                 self._workers.discard(threading.current_thread())
             self._wake.set()
 
@@ -291,7 +325,9 @@ class DirectRecovery:
             self._wake.set()
         finally:
             with self._lock:
-                if self._pending.get(identifier) == token: self._pending.pop(identifier,None)
+                if self._pending.get(identifier) == token:
+                    self._pending.pop(identifier,None)
+                    self._waiting_hints.discard(identifier)
                 self._workers.discard(threading.current_thread())
 
     def _migrate(self, identifier, record, carrier, route, token):
@@ -305,6 +341,7 @@ class DirectRecovery:
                 if not self._valid(identifier,token): return
                 self._write(identifier,state="reconnecting")
             carrier.prepared.migrate(route,persist)
+            carrier.route_signature = (route.interface,route.local_address,route.gateway)
             carrier.peer_seen.clear()
             carrier.peer_seen_at=0
             self.service.network.router.announce(self.service.network.destination_hash)
@@ -318,7 +355,9 @@ class DirectRecovery:
                         next_at=min(carrier.prepared.expires_at-60,self.clock()+3000) if recovered else self.clock())
         except Exception:
             with self.service._dispatch_lock:
-                if self._valid(identifier,token): self._write(identifier,state="reconnecting",next_at=self.clock())
+                if self._valid(identifier,token):
+                    carrier.route_signature = (route.interface,route.local_address,route.gateway)
+                    self._write(identifier,state="reconnecting",next_at=self.clock())
         finally:
             with self._lock:
                 if self._pending.get(identifier)==token: self._pending.pop(identifier,None)
@@ -336,16 +375,15 @@ class DirectRecovery:
     def tick(self):
         service = self.service
         if service._direct_native is None or service.network is None: return
-        route_changed=False
-        route=None
+        route=self._route
         if time.monotonic() >= self._route_check_at:
             routes=[r for r in c.default_routes() if r.local_address and c.classify_address(r.local_address)
                     in {"public_ipv4","public_ipv6","rfc1918","shared"}]
             routes.sort(key=lambda r:(c.classify_address(r.local_address)!="public_ipv6",r.metric))
             route=routes[0] if routes else None
             signature=None if route is None else (route.interface,route.local_address,route.gateway)
-            route_changed=self._route_signature is not None and self._route_signature!=signature
             self._route_signature=signature
+            self._route=route
             self._route_check_at=time.monotonic()+5
         with service._dispatch_lock:
             service._check_direct_runtime_available()
@@ -363,7 +401,7 @@ class DirectRecovery:
                 state = self._state(identifier)
                 with self._lock:
                     carrier = self._active.get(identifier)
-                    if identifier in self._pending or len(self._pending) >= MAX_ATTEMPTS: continue
+                    if identifier in self._pending or len(self._workers) >= MAX_ATTEMPTS: continue
                 if not state["enabled"]: continue
                 try: self._authority(record)
                 except Exception:
@@ -374,7 +412,7 @@ class DirectRecovery:
                     with self._lock: self._active.pop(identifier,None)
                     if state["state"] == "connected":
                         state=self._write(identifier,state="reconnecting",next_at=self.clock())
-                if live and carrier.recovery and route_changed and route is not None:
+                if live and carrier.recovery and getattr(carrier,"route_signature",None) != self._route_signature and route is not None:
                     token=(self._epoch,object())
                     thread=threading.Thread(target=self._migrate,args=(identifier,record,carrier,route,token),daemon=True,name="mesh-direct-migrate")
                 elif live and carrier.recovery and self.clock() >= state.get("renew_at",float("inf")):
@@ -382,7 +420,8 @@ class DirectRecovery:
                     thread=threading.Thread(target=self._renew,args=(identifier,record,carrier,token),daemon=True,name="mesh-direct-renew")
                 elif self.clock() >= state["next_at"]:
                     with self._lock:
-                        if not live and sum(not c._stop.is_set() for c in self._active.values()) >= MAX_ACTIVE: continue
+                        reserved = {key for key,c in self._active.items() if not c._stop.is_set()} | set(self._pending)
+                        if identifier not in reserved and len(reserved) >= MAX_ACTIVE: continue
                     token=(self._epoch,object())
                     thread=threading.Thread(target=self._attempt,args=(identifier,record,token),daemon=True,name="mesh-direct-reconnect")
                 else: continue
@@ -393,7 +432,9 @@ class DirectRecovery:
 
     def status(self):
         result=[]
-        with self._lock: active=dict(self._active)
+        with self._lock:
+            active=dict(self._active)
+            native_seen=dict(self._native_seen)
         for identifier,record in self.service.store.items("direct_relationship")[:128]:
             state=self._state(identifier)
             carrier=active.get(identifier)
@@ -402,7 +443,8 @@ class DirectRecovery:
             result.append({"relationship_id":identifier,"workspace_id":record["scope"]["workspace_id"],
                 "peer_device_id":record["scope"]["issuer_device_id"],
                 "state":"connected" if live and peer_live and state["enabled"] else state["state"] if state["state"] != "connected" else "reconnecting",
-                "native_engine_healthy":live,"authenticated_peer_live":peer_live,
+                "native_engine_healthy":time.monotonic()-max(native_seen.get(identifier,0),getattr(carrier,"native_seen_at",0)) < 3,
+                "authenticated_peer_live":peer_live,
                 "rns_ready":bool(peer_live and self.service.network and self.service.network.recipient_ready(carrier._peer))})
         return result
 
@@ -412,6 +454,7 @@ class DirectRecovery:
         self._write(identifier,enabled=False,state=reason)
         with self._lock:
             self._pending.pop(identifier,None)
+            self._waiting_hints.discard(identifier)
             carrier=self._active.pop(identifier,None)
             prepared=self._prepared.pop(identifier,None)
         if carrier: carrier.close()
@@ -444,6 +487,8 @@ class DirectRecovery:
             active,self._active=list(self._active.values()),{}
             prepared,self._prepared=list(self._prepared.values()),{}
             self._pending.clear()
+            self._waiting_hints.clear()
+            self._native_seen.clear()
             self._initialized=False
         if close: self._stop.set()
         for carrier in active: carrier.close()

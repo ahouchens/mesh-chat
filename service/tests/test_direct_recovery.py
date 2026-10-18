@@ -169,3 +169,195 @@ def test_unknown_document_shape_is_rejected(pair):
     with pytest.raises(ValidationError): p.decode(p.PREFIX+canonical_bytes(value).decode())
     with pytest.raises(ValidationError): p.decode(text+" ")
     with pytest.raises(ValidationError): p.decode("mesh-direct:"+text)
+
+
+def test_retired_renewal_cannot_reserve_or_overwrite_new_generation(pair):
+    owner,_,record,authority,document=pair
+    raw,cert,_=document(); owner._accept_direct_workspace_binding(raw,authority,cert)
+    recovery=owner._direct_recovery; identifier=relationship_id(owner.store,authority)
+    token=(recovery._epoch,object()); recovery._pending[identifier]=token
+    recovery._reserve(identifier,record)
+    before=recovery._state(identifier)
+    recovery.retire()
+    with pytest.raises(ValidationError,match="retired"):
+        recovery._save_local(identifier,record,None,{},[],reserve=True,token=token)
+    assert recovery._state(identifier)==before
+
+
+def test_manual_hint_interrupts_only_waiting_listener_not_authenticated_path(pair):
+    owner,_,record,authority,document=pair
+    raw,cert,_=document(); owner._accept_direct_workspace_binding(raw,authority,cert)
+    recovery=owner._direct_recovery; identifier=relationship_id(owner.store,authority)
+    token=(recovery._epoch,object()); recovery._pending[identifier]=token
+    recovery._waiting_hints.add(identifier)
+    closed=[]
+    recovery._prepared[identifier]=SimpleNamespace(close=lambda:closed.append(True))
+    _,_,text=document(2)
+    recovery.receive(text)
+    assert closed==[True] and not recovery._valid(identifier,token)
+    assert identifier not in recovery._waiting_hints
+
+
+def test_crash_cleanup_references_remain_bounded_until_lease_expiry(pair):
+    owner,_,record,authority,document=pair
+    raw,cert,_=document(); owner._accept_direct_workspace_binding(raw,authority,cert)
+    recovery=owner._direct_recovery; identifier=relationship_id(owner.store,authority)
+    prepared=SimpleNamespace(_owned={"host":"192.168.1.2","port":45000})
+    fields={"certificate":cert,"session_id":str(uuid.uuid4()),"generation":1,
+        "candidates":[],"expires_at":int(time.time())+100}
+    mapping={"lifetime":50,"protocol":"udp","cleanup":{"nonce":"owned-only"}}
+    recovery._save_local(identifier,record,prepared,fields,[mapping])
+    recovery._save_local(identifier,record,prepared,fields,[],reserve=True)
+    state=recovery._state(identifier)
+    assert state["orphan_cleanup"][0]["mapping"]==mapping
+    assert state["orphan_cleanup"][0]["expires_at"]<=int(time.time())+50
+    # A restart retains evidence, never sends blind deletion for an unowned tuple.
+    fresh=DirectRecovery(owner)
+    assert fresh._state(identifier)["orphan_cleanup"]==state["orphan_cleanup"]
+    recovery.clock=lambda:time.time()+60
+    fields["expires_at"]=int(time.time())+100
+    recovery._save_local(identifier,record,prepared,fields,[],reserve=True)
+    assert recovery._state(identifier)["orphan_cleanup"]==[]
+
+
+def test_scheduler_reserves_profile_capacity_and_rotates_fairly(monkeypatch):
+    from copy import deepcopy
+    from mesh_chat import direct_recovery as module
+    class Store:
+        def __init__(self): self.values={}
+        def get(self,kind,key): return deepcopy(self.values.get((kind,key)))
+        def update_record(self,kind,key,update):
+            value=update(self.get(kind,key)); self.values[kind,key]=deepcopy(value); return value
+        def items(self,kind): return [(str(i),{}) for i in range(8)]
+    service=SimpleNamespace(store=Store(),_dispatch_lock=threading.RLock(),_direct_native=object(),network=object(),_check_direct_runtime_available=lambda:None)
+    recovery=DirectRecovery(service); recovery._initialized=True
+    recovery._authority=lambda record:None
+    recovery._route_check_at=float("inf")
+    started=[]
+    class Worker:
+        def __init__(self,*,target,args,**kwargs): self.args=args
+        def start(self): started.append(self.args[0])
+    monkeypatch.setattr(module.threading,"Thread",Worker)
+    carrier=lambda:SimpleNamespace(_stop=threading.Event(),recovery=False)
+    recovery._active={str(i):carrier() for i in range(3)}
+    for identifier in recovery._active: recovery._write(identifier,next_at=float("inf"))
+    recovery.tick()
+    assert len(started)==1 and len(recovery._pending)==1  # Three active + one reserved.
+    recovery._active.clear()
+    for i in range(8): recovery._write(str(i),next_at=0)
+    seen=set()
+    for _ in range(8):
+        recovery._pending.clear(); recovery._workers.clear(); started.clear()
+        recovery.tick()
+        assert len(started)==4
+        seen.update(started)
+    assert seen=={str(i) for i in range(8)}
+    # Cancelled-but-blocked router workers retain their worker budget.
+    recovery._pending.clear(); started.clear(); recovery.tick()
+    assert started==[]
+
+
+def test_new_update_preserves_explicit_pause(pair):
+    owner,_,record,authority,document=pair
+    raw,cert,_=document(); owner._accept_direct_workspace_binding(raw,authority,cert)
+    recovery=owner._direct_recovery; identifier=relationship_id(owner.store,authority)
+    recovery.pause(identifier)
+    _,_,text=document(2)
+    recovery.receive(text)
+    assert recovery.status()[0]["state"]=="dormant"
+    assert not recovery._state(identifier)["enabled"]
+
+
+def test_server_migration_failure_schedules_reconnection_instead_of_retrying_rebind(pair):
+    owner,_,record,authority,document=pair
+    raw,cert,_=document(); owner._accept_direct_workspace_binding(raw,authority,cert)
+    recovery=owner._direct_recovery; identifier=relationship_id(owner.store,authority)
+    token=(recovery._epoch,object()); recovery._pending[identifier]=token
+    def unsupported(*args): raise ValidationError("server rebind unsupported")
+    carrier=SimpleNamespace(prepared=SimpleNamespace(migrate=unsupported),route_signature=None)
+    route=SimpleNamespace(interface="new",local_address="192.168.2.2",gateway="192.168.2.1")
+    recovery._migrate(identifier,record,carrier,route,token)
+    assert carrier.route_signature==("new","192.168.2.2","192.168.2.1")
+    assert recovery._state(identifier)["next_at"]<=time.time()
+    assert identifier not in recovery._pending
+
+
+@pytest.mark.parametrize("fault",[None,"wrong_leaf","success_commit","winner_commit","stale_callback"])
+def test_replacement_requires_current_authentication_and_durable_winner_before_old_retirement(pair,monkeypatch,fault):
+    from mesh_chat import direct_recovery as module
+    owner,_,record,authority,document=pair
+    raw,cert,_=document(); owner._accept_direct_workspace_binding(raw,authority,cert)
+    identifier=relationship_id(owner.store,authority)
+    owner._direct_recovery.retire(close=True); owner._direct_recovery.wait(2)
+    recovery=DirectRecovery(owner); owner._direct_recovery=recovery
+    token=(recovery._epoch,object()); recovery._pending[identifier]=token
+    record=owner.store.get("direct_relationship",identifier)
+    peer_raw,peer_cert,_=document(2,b"fresh peer key")
+    events=[]
+    class Prepared:
+        handle=7
+        expires_at=time.time()+300
+        _owned={"host":"93.184.216.34","port":45678}
+        def document_fields(self): return {"certificate":b"our fresh key","session_id":str(uuid.uuid4()),
+            "generation":self.generation,"expires_at":int(self.expires_at),"candidates":[{"host":"93.184.216.34","port":45678,"expires_at":int(self.expires_at)}]}
+        def cleanup_records(self): return []
+        def close(self): events.append("new_closed")
+    prepared=Prepared()
+    def prepare(*args,**kwargs): prepared.generation=kwargs["generation"]; return prepared
+    monkeypatch.setattr(module,"prepare_candidates",prepare)
+    owner.network.destination_hash = _destination_for(owner._identity)
+    class Native:
+        authorized=False
+        def close(self): pass
+        def request(self,name,**payload):
+            if name=="poll": return {"state":1 if self.authorized else 3,"packets":[]}
+            if name=="recovery_evidence": return {"capsule":p.capsule(owner._identity.get_public_key(),peer_raw).hex(),
+                "certificate":(b"wrong leaf" if fault=="wrong_leaf" else peer_cert).hex(),"token":"bound exporter"}
+            if name=="authorize_recovery":
+                assert payload["token"]=="bound exporter"
+                self.authorized=True; events.append("native_authorized")
+    owner._direct_native=Native()
+    old=SimpleNamespace(_stop=threading.Event(),close=lambda:events.append("old_closed"))
+    recovery._active[identifier]=old
+    class Carrier:
+        def __init__(self,*args,**kwargs):
+            self.prepared=prepared; self._stop=threading.Event(); self.peer_seen=threading.Event()
+            self.peer_seen.set(); self.lease=kwargs["runtime_lease"]
+        def start(self):
+            events.append("peer_confirmed")
+            if fault=="stale_callback": recovery._pending[identifier]=(recovery._epoch,object())
+        def close(self): self._stop.set(); self.lease.cancel(); prepared.close()
+    monkeypatch.setattr(module,"AdmittedCarrier",Carrier)
+    recovery._send=lambda *args:False
+    original_success=module.record_success
+    def success(*args,**kwargs):
+        if fault=="success_commit": raise OSError("vault unavailable")
+        result=original_success(*args,**kwargs); events.append("success_saved"); return result
+    monkeypatch.setattr(module,"record_success",success)
+    original_write=recovery._write
+    def write(identifier,**changes):
+        if "winner" in changes:
+            if fault=="winner_commit": raise OSError("vault unavailable")
+            events.append("winner_saved")
+        return original_write(identifier,**changes)
+    recovery._write=write
+    recovery._attempt(identifier,record,token)
+    if fault:
+        assert "old_closed" not in events and "new_closed" in events
+        assert recovery._active[identifier] is old
+    else:
+        assert events==["native_authorized","peer_confirmed","success_saved","winner_saved","old_closed"]
+        assert recovery._active[identifier] is not old
+    # Test native is deliberately minimal; ordinary profile cleanup has no IPC.
+    owner._direct_native=None
+
+
+def test_native_reply_does_not_claim_peer_liveness_or_application_receipt(pair):
+    owner,_,_,authority,document=pair
+    raw,cert,_=document(); owner._accept_direct_workspace_binding(raw,authority,cert)
+    recovery=owner._direct_recovery; identifier=relationship_id(owner.store,authority)
+    recovery._native_seen[identifier]=time.monotonic()
+    status=recovery.status()[0]
+    assert status["native_engine_healthy"]
+    assert not status["authenticated_peer_live"] and not status["rns_ready"]
+    assert status["state"]!="connected"

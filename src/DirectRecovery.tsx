@@ -49,7 +49,7 @@ export function DirectRecovery({ workspaceId }: { workspaceId: string }) {
     <p>Membership and queued messages survive disconnection. If both known addresses stop working, exchange fresh connection updates while both apps are open. No new invitation is needed.</p>
     {peers.map(peer => <div key={peer.relationship_id}>
       <p>Device {peer.peer_device_id.slice(0, 8)} · <strong>{labels[peer.state] ?? "Connection unavailable"}</strong></p>
-      <p className="muted">Native engine: {peer.native_engine_healthy ? "running" : "unavailable"} · Authenticated peer: {peer.authenticated_peer_live ? "recently seen" : "not confirmed"} · RNS: {peer.rns_ready ? "ready" : "waiting"}. Message receipts remain in the conversation.</p>
+      <p className="muted">Native engine: {peer.native_engine_healthy ? "responding" : "not confirmed"} · Authenticated peer: {peer.authenticated_peer_live ? "recently seen" : "not confirmed"} · RNS: {peer.rns_ready ? "ready" : "waiting"}. Message receipts remain in the conversation.</p>
       <div className="dialog-actions"><button disabled={busy} onClick={() => void action("export_recovery_update", peer.relationship_id)}>Share connection update</button>
       <button disabled={busy} onClick={() => void action(peer.state === "dormant" ? "resume_direct_recovery" : "pause_direct_recovery", peer.relationship_id)}>{peer.state === "dormant" ? "Resume direct recovery" : "Pause direct recovery"}</button></div>
     </div>)}

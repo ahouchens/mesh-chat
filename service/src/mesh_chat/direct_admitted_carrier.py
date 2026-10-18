@@ -23,6 +23,7 @@ class AdmittedCarrier:
         self.binding, self.certificate = raw, certificate
         self.recovery = runtime_lease is not None
         self.peer_seen_at = 0.0
+        self.native_seen_at = 0.0
         self._peer = _destination_for(_identity_from_public_key(expected.issuer_public_identity))
         self._incoming, self._outgoing = queue.Queue(maxsize=32), queue.Queue(maxsize=32)
         self._lease = self._interface = self._pump = None
@@ -72,6 +73,7 @@ class AdmittedCarrier:
                         or not isinstance(result["packets"],list) or len(result["packets"]) > 32
                         or any(not isinstance(packet,str) or not 2 <= len(packet) <= 1032 for packet in result["packets"])):
                     raise ValidationError("Native admitted packet batch is invalid")
+                self.native_seen_at = time.monotonic()
                 if result["state"] != 1:
                     break
                 for packet in result["packets"]:

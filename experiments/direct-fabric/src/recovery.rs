@@ -542,6 +542,55 @@ mod tests {
         assert!(client.send(vec![Bytes::from_static(b"retired")]).is_err());
     }
     #[tokio::test]
+    async fn lost_server_address_uses_known_peer_address_with_fresh_authority() {
+        let a = BoundSocket::bind("127.0.0.1:0".parse().unwrap()).unwrap();
+        let known_client = a.address().unwrap();
+        let b = BoundSocket::bind("127.0.0.1:0".parse().unwrap()).unwrap();
+        let wrong = BoundSocket::bind("127.0.0.1:0".parse().unwrap()).unwrap();
+        let server = Running::start(
+            b,
+            SessionKey::generate().unwrap(),
+            vec![1],
+            vec![known_client],
+            false,
+            Duration::from_secs(20),
+            Duration::from_secs(30),
+        )
+        .unwrap();
+        let client = Running::start(
+            a,
+            SessionKey::generate().unwrap(),
+            vec![2],
+            vec![wrong.address().unwrap()],
+            true,
+            Duration::from_secs(20),
+            Duration::from_secs(30),
+        )
+        .unwrap();
+        tokio::time::timeout(Duration::from_secs(18), async {
+            while client.state.load(Ordering::Acquire) != 3
+                || server.state.load(Ordering::Acquire) != 3
+            {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap();
+        assert!(!client.client.load(Ordering::Acquire));
+        assert!(server.client.load(Ordering::Acquire));
+        // Merely reaching a changed peer still cannot forward RNS packets.
+        assert_eq!(
+            server.send(vec![Bytes::from_static(b"unapproved")]),
+            Err(Error::Identity)
+        );
+        for peer in [&client, &server] {
+            let token = peer.evidence.lock().unwrap().as_ref().unwrap().token;
+            peer.authorize(token).unwrap();
+        }
+        state(&client, 1).await;
+        state(&server, 1).await;
+    }
+    #[tokio::test]
     async fn unauthenticated_channels_expire_without_packets() {
         let mut peer = Running::start(
             BoundSocket::bind("127.0.0.1:0".parse().unwrap()).unwrap(),
