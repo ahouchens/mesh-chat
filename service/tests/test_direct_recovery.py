@@ -348,6 +348,7 @@ def test_replacement_requires_current_authentication_and_durable_winner_before_o
             if fault in {"renewed_same_key","newer_other_key"}:
                 newer,new_cert,_=document(3,peer_cert if fault=="renewed_same_key" else b"other connection")
                 owner._accept_direct_workspace_binding(newer,authority,new_cert)
+        def refresh_path(self): pass
         def close(self): self._stop.set(); self.lease.cancel(); prepared.close()
     monkeypatch.setattr(module,"AdmittedCarrier",Carrier)
     updates=[]
@@ -390,3 +391,42 @@ def test_native_reply_does_not_claim_peer_liveness_or_application_receipt(pair):
     assert status["native_engine_healthy"]
     assert not status["authenticated_peer_live"] and not status["rns_ready"]
     assert status["state"]!="connected"
+
+
+def test_cached_recipient_keys_do_not_claim_rns_path_readiness(pair,monkeypatch):
+    owner,_,_,authority,document=pair
+    raw,cert,_=document(); owner._accept_direct_workspace_binding(raw,authority,cert)
+    recovery=owner._direct_recovery; identifier=relationship_id(owner.store,authority)
+    monkeypatch.setattr(owner.network,"recipient_ready",lambda peer:True,raising=False)
+    monkeypatch.setattr(owner.network,"path_known",lambda peer:False,raising=False)
+    recovery._active[identifier]=SimpleNamespace(_stop=threading.Event(),peer_seen_at=time.monotonic(),
+        native_seen_at=time.monotonic(),_peer=b"p"*16,close=lambda:None)
+    status=recovery.status()[0]
+    assert status["native_engine_healthy"] and status["authenticated_peer_live"]
+    assert not status["rns_ready"]
+
+
+def test_zero_evidence_timestamps_are_not_health_proof_on_new_system_boot(pair,monkeypatch):
+    owner,_,_,authority,document=pair
+    raw,cert,_=document(); owner._accept_direct_workspace_binding(raw,authority,cert)
+    recovery=owner._direct_recovery; identifier=relationship_id(owner.store,authority)
+    recovery._active[identifier]=SimpleNamespace(_stop=threading.Event(),peer_seen_at=0,native_seen_at=0,close=lambda:None)
+    monkeypatch.setattr("mesh_chat.direct_recovery.time.monotonic",lambda:.5)
+    status=recovery.status()[0]
+    assert not status["native_engine_healthy"] and not status["authenticated_peer_live"] and not status["rns_ready"]
+
+
+@pytest.mark.parametrize("selected_old",[False,True])
+def test_carrier_retirement_closes_only_links_owned_by_that_interface(monkeypatch,selected_old):
+    from mesh_chat.direct_admitted_carrier import retire_interface_links
+    old,new=object(),object(); closed=[]; expired=[]
+    stale=SimpleNamespace(attached_interface=old,teardown=lambda:closed.append("stale"))
+    pending=SimpleNamespace(attached_interface=old,teardown=lambda:closed.append("pending"))
+    retained=SimpleNamespace(attached_interface=new,teardown=lambda:closed.append("unrelated"))
+    monkeypatch.setattr(RNS.Transport,"active_links",[stale,retained])
+    monkeypatch.setattr(RNS.Transport,"pending_links",[stale,pending])
+    monkeypatch.setattr(RNS.Transport,"next_hop_interface",lambda peer:old if selected_old else new)
+    monkeypatch.setattr(RNS.Transport,"expire_path",expired.append)
+    retire_interface_links(old,b"p"*16)
+    assert closed==["stale","pending"]
+    assert expired==([b"p"*16] if selected_old else [])

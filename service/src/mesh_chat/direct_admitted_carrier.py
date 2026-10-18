@@ -12,11 +12,29 @@ from .direct_packet_policy import PacketPolicy
 from .workspace_protocol import _destination_for, _identity_from_public_key
 
 
+def retire_interface_links(interface, peer):
+    """RNS links bind to an interface; a new QUIC path must establish new links."""
+    seen=set()
+    for link in list(RNS.Transport.active_links)+list(RNS.Transport.pending_links):
+        if id(link) in seen or getattr(link,"attached_interface",None) is not interface:
+            continue
+        seen.add(id(link))
+        try: link.teardown()
+        except Exception: pass
+    try:
+        if RNS.Transport.next_hop_interface(peer) is interface:
+            RNS.Transport.expire_path(peer)
+    except Exception:
+        pass
+
+
 class AdmittedCarrier:
     def __init__(self, service, prepared, raw, expected, certificate, bootstrap_authority, state_changed, initial_packets=(), runtime_lease=None):
         self.service, self.prepared, self.authority = service, prepared, bootstrap_authority
         self._changed = state_changed
         self._stop = threading.Event()
+        self._close_lock = threading.Lock()
+        self._closed = False
         self._lost = threading.Event()
         self.peer_seen = threading.Event()
         self.expected = expected
@@ -37,7 +55,8 @@ class AdmittedCarrier:
             self._interface = MeshDirectInterface(RNS.Transport, budget=service._direct_packet_budget)
             self._interface.name = "Mesh Direct admitted"
             self._interface.packet_policy = PacketPolicy(service.network.destination_hash,
-                _destination_for(_identity_from_public_key(expected.issuer_public_identity)))
+                _destination_for(_identity_from_public_key(expected.issuer_public_identity)),
+                link_lifetime=min(3600,max(1,prepared.expires_at-time.time())) if self.recovery else 300)
             service.network.reticulum._add_interface(self._interface, mode=self._interface.MODE_POINT_TO_POINT)
             self._interface.activate(self._session, expires_at=time.monotonic()+max(0,
                 (prepared.expires_at if self.recovery else min(_parse(raw)["expires_at"],prepared.expires_at))-time.time()))
@@ -51,6 +70,10 @@ class AdmittedCarrier:
     def start(self):
         self._thread.start()
         self.service.network.router.announce(self.service.network.destination_hash)
+        self.refresh_path()
+
+    def refresh_path(self):
+        RNS.Transport.request_path(self._peer,on_interface=self._interface)
 
     def _observe(self, data):
         packet = RNS.Packet(None,data)
@@ -99,6 +122,9 @@ class AdmittedCarrier:
             self._changed("refresh_required")
 
     def close(self):
+        with self._close_lock:
+            if self._closed: return
+            self._closed = True
         self._stop.set()
         self._lost.set()
         if self._pump is not None:
@@ -106,6 +132,7 @@ class AdmittedCarrier:
         if self._lease is not None:
             self._lease.cancel()
         if self._interface is not None:
+            retire_interface_links(self._interface,self._peer)
             self._interface.detach()
             try:
                 RNS.Transport.interfaces.remove(self._interface)

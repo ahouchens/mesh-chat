@@ -73,3 +73,21 @@ def test_packet_tracking_tables_are_bounded():
         assert policy.allow(packet(policy.peer, data=index.to_bytes(2, "big")), "out")
     assert not policy.allow(packet(policy.peer, data=b"overflow"), "out")
     assert len(policy.links) == 32 and len(policy.receipts) == 256
+
+
+def test_recovery_link_tracking_outlives_setup_but_never_its_bounded_session():
+    import pytest
+    clock=[100.0]
+    policy=PacketPolicy(b"a"*16,b"b"*16,clock=lambda:clock[0],link_lifetime=3600)
+    raw=packet(policy.local,kind=RNS.Packet.LINKREQUEST,data=b"x"*RNS.Link.ECPUBSIZE)
+    parsed=RNS.Packet(None,raw); assert parsed.unpack()
+    data=packet(RNS.Link.link_id_from_lr_packet(parsed),destination_type=RNS.Destination.LINK)
+    assert policy.allow(raw,"in")
+    clock[0]=500
+    assert policy.allow(data,"in")
+    clock[0]=3699
+    assert policy.allow(raw,"in")  # Replay still cannot extend the bounded lease.
+    clock[0]=3700
+    assert not policy.allow(data,"in")
+    for invalid in (0,3601,float("inf"),float("nan"),True):
+        with pytest.raises(ValueError): PacketPolicy(b"a"*16,b"b"*16,link_lifetime=invalid)

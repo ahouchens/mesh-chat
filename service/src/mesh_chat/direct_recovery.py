@@ -130,7 +130,7 @@ class DirectRecovery:
             for mapping in previous.get("cleanup",[]):
                 if mapping not in cleanup:
                     item = {"mapping":mapping,"expires_at":previous.get("cleanup_expires_at",previous["expires_at"])}
-                    if item not in orphans: orphans.append(item)
+                    if item["expires_at"] > self.clock() and item not in orphans: orphans.append(item)
             if len(orphans)>32:
                 raise ValidationError("Outstanding router cleanup budget exhausted")
             local["cleanup_expires_at"] = int(self.clock())+max([0]+[m["lifetime"] for m in cleanup])
@@ -324,6 +324,7 @@ class DirectRecovery:
                     if old and old is not admitted:
                         old.close()
                         self.service._direct_setup.release_carrier(old)
+                        admitted.refresh_path()
                     return
                 self._stop.wait(.05)
             raise ValidationError("Recovery attempt was retired")
@@ -495,13 +496,15 @@ class DirectRecovery:
             state=self._state(identifier)
             carrier=active.get(identifier)
             live=bool(carrier and not carrier._stop.is_set())
-            peer_live=bool(live and time.monotonic()-carrier.peer_seen_at < 15)
+            peer_live=bool(live and carrier.peer_seen_at > 0 and time.monotonic()-carrier.peer_seen_at < 15)
+            native_at=max(native_seen.get(identifier,0),getattr(carrier,"native_seen_at",0))
             result.append({"relationship_id":identifier,"workspace_id":record["scope"]["workspace_id"],
                 "peer_device_id":record["scope"]["issuer_device_id"],
                 "state":"connected" if live and peer_live and state["enabled"] else state["state"] if state["state"] != "connected" else "reconnecting",
-                "native_engine_healthy":time.monotonic()-max(native_seen.get(identifier,0),getattr(carrier,"native_seen_at",0)) < 3,
+                "native_engine_healthy":native_at > 0 and time.monotonic()-native_at < 3,
                 "authenticated_peer_live":peer_live,
-                "rns_ready":bool(peer_live and self.service.network and self.service.network.recipient_ready(carrier._peer))})
+                "rns_ready":bool(peer_live and self.service.network and self.service.network.recipient_ready(carrier._peer)
+                                 and self.service.network.path_known(carrier._peer))})
         return result
 
     def pause(self, identifier, *, reason="dormant"):

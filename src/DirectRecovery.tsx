@@ -54,7 +54,7 @@ export function DirectRecovery({ workspaceId }: { workspaceId: string }) {
       <button disabled={busy} onClick={() => void action(peer.state === "dormant" ? "resume_direct_recovery" : "pause_direct_recovery", peer.relationship_id)}>{peer.state === "dormant" ? "Resume direct recovery" : "Pause direct recovery"}</button></div>
     </div>)}
     {!peers.length && <p>No saved direct device relationships in this workspace.</p>}
-    <label>Received connection update<textarea aria-label="Received connection update" value={input} onChange={event => setInput(event.target.value)} rows={4} maxLength={24576} /></label>
+    <label>Received connection update<textarea aria-label="Received connection update" value={input} onChange={event => setInput(event.target.value)} rows={4} maxLength={16384} /></label>
     <button disabled={busy || !input.trim()} onClick={() => void apply()}>Apply connection update</button>
     {output && <><label>Complete connection update to share<textarea aria-label="Complete connection update to share" readOnly value={output} rows={4} onFocus={event => event.target.select()} /></label><button onClick={() => void copy()}>Copy connection update</button></>}
     {feedback && <p role="status">{feedback}</p>}{error && <p role="alert">{error}</p>}

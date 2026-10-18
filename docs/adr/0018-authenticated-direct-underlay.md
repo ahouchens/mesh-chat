@@ -358,3 +358,14 @@ may use client rebind. Server migration is rejected and schedules reconnection.
 Unknown peer addresses remain unknown; manual signed updates can restart a waiting
 listener without reusing its old key. Crash mapping references are retained in the
 encrypted vault until bounded lease expiry; only a live owner performs deletion.
+
+
+RNS Links remain bound to their original interface. Retiring a carrier therefore
+uses standard RNS Link teardown only for links attached to that exact interface,
+expires the peer path only if it still selects that interface, and requests the
+peer path on the authenticated replacement. Unrelated and replacement links remain
+untouched. This preserves LXMF/outbox retry semantics and prevents queued controls
+from using an apparently active Link over a dead carrier. Recovery packet-policy
+Link entries use the bounded native session lifetime (at most one hour); replayed
+Link requests never extend it. The adapter and current-membership lease still gate
+every packet and retain the existing Link/queue caps.

@@ -160,6 +160,8 @@ def test_production_durable_recovery(tmp_path,scenario):
             for i in range(2): peers.call(i,"force_recovery")
         if scenario=="replacement": time.sleep(2)
         after=[peers.connected(i,before[i]["paths"][0]["certificate"] if i in changed else None) for i in range(2)]
+        if scenario=="replacement":
+            assert all(after[i]["controls"]["received"]>before[i]["controls"]["received"] for i in range(2))
         if scenario in {"route_change","server_route_change"}:
             assert after[changed_peer]["migration_attempts"]>before[changed_peer]["migration_attempts"]
             if after[changed_peer]["migrations"]>before[changed_peer]["migrations"]:

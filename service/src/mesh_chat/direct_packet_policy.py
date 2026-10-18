@@ -11,9 +11,12 @@ import RNS
 
 
 class PacketPolicy:
-    def __init__(self, local, peer, *, clock=time.monotonic):
+    def __init__(self, local, peer, *, clock=time.monotonic, link_lifetime=300):
         if len(local) != 16 or len(peer) != 16 or local == peer:
             raise ValueError("Expected two distinct RNS destinations")
+        if isinstance(link_lifetime,bool) or not isinstance(link_lifetime,(int,float)) or not 0 < link_lifetime <= 3600:
+            raise ValueError("Invalid authorized link lifetime")
+        self.link_lifetime = link_lifetime
         self.local, self.peer, self.clock = local, peer, clock
         self.links = OrderedDict()
         self.receipts = OrderedDict()
@@ -56,7 +59,7 @@ class PacketPolicy:
             if link_id not in self.links and len(self.links) >= 32:
                 return False
             # Replaying the same request must not extend authorization.
-            self.links.setdefault(link_id, self.clock() + 300)
+            self.links.setdefault(link_id, self.clock() + self.link_lifetime)
             return True
         if packet.destination_hash in self.links:
             return (packet.destination_type == RNS.Destination.LINK

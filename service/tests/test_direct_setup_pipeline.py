@@ -104,6 +104,23 @@ def _service_worker(root, incoming, outgoing, commands, replies, native_binary=N
     else:
         native = PipeNative(incoming,outgoing,delay_admission)
     service = MeshChatService(store,Path(root),lambda _:None,direct_native=native)
+    controls={"sent":0,"send_failed":0,"received":0,"rejected":0}
+    original_send=service._direct_recovery._send
+    original_receive=service._direct_recovery.receive
+    def tracked_send(*args,**kwargs):
+        result=original_send(*args,**kwargs)
+        controls["sent" if result else "send_failed"]+=1
+        return result
+    def tracked_receive(*args,**kwargs):
+        try:
+            result=original_receive(*args,**kwargs)
+            controls["received"]+=1
+            return result
+        except Exception:
+            controls["rejected"]+=1
+            raise
+    service._direct_recovery._send=tracked_send
+    service._direct_recovery.receive=tracked_receive
     try:
         service.create_profile("Controlled peer")
         replies.put({"ok":True})
@@ -126,7 +143,7 @@ def _service_worker(root, incoming, outgoing, commands, replies, native_binary=N
                         import hashlib
                         from mesh_chat.invitations import canonical_bytes
                         result = {"peers":service._direct_recovery.status(),
-                            "identity":service.network.destination_hash.hex(),
+                            "identity":service.network.destination_hash.hex(),"controls":dict(controls),
                             "migration_attempts":getattr(native,"migration_attempts",0),"migrations":getattr(native,"migrations",0),
                             "application_receipts":[hashlib.sha256(canonical_bytes(w["join_receipt"])).hexdigest()
                                 for w in store.list("workspace") if w.get("join_receipt")],
