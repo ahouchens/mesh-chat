@@ -15,7 +15,7 @@ from concurrent.futures import Future, TimeoutError
 from .errors import ValidationError
 
 MAX_BYTES = 64 * 1024
-OPERATIONS = frozenset({"prepare", "prepare_path", "inspect_paths", "inspect", "arm", "rearm", "activate", "send", "poll", "close", "reset", "prepare_recovery", "recover", "recovery_evidence", "authorize_recovery", "migrate"})
+OPERATIONS = frozenset({"prepare", "prepare_path", "inspect_paths", "inspect", "arm", "rearm", "activate", "send", "poll", "connection_state", "close", "reset", "prepare_recovery", "recover", "recovery_evidence", "authorize_recovery", "migrate"})
 
 
 class NativeChannel:

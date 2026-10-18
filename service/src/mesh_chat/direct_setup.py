@@ -157,7 +157,24 @@ class DirectSetup:
                 prepared = self._prepared.get(setup_id)
             if prepared is None:
                 return {**status, "state":"refresh_required", "reason":"socket_not_retained"}
-            prepared.document_fields()
+            if status["state"] == "connecting":
+                # Activation consumes PreparedAttempt. Inspecting it again is
+                # invalid, and polling here would steal the carrier's packets.
+                # Only the owner needs to resend the already-signed final item.
+                if invitation_id is None:
+                    return status
+                with self._lock:
+                    carrier = self._carriers.get(setup_id)
+                if carrier is None or carrier.prepared is not prepared or carrier._stop.is_set():
+                    return {**status, "state":"refresh_required", "reason":"socket_not_retained"}
+                prepared._check()
+                progress = self.service._direct_native.request("connection_state", id=prepared.handle)
+                if not isinstance(progress, dict) or set(progress) != {"state"} or type(progress["state"]) is not int or progress["state"] not in {0,1,2}:
+                    raise ValidationError("Native connection state is invalid")
+                if progress["state"] != 0:
+                    return {**status, "state":"bootstrap_connected" if progress["state"] == 1 else "refresh_required"}
+            else:
+                prepared.document_fields()
             document = self.service.store.get("direct_setup_document", setup_id)
             if document:
                 verify_connection_document(document["text"])

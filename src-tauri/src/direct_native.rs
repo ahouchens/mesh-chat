@@ -94,6 +94,9 @@ enum Operation {
     Poll {
         id: u64,
     },
+    ConnectionState {
+        id: u64,
+    },
     Inspect {
         id: u64,
     },
@@ -315,6 +318,9 @@ impl NativeHost {
                     .collect::<Result<Vec<_>, ()>>()?;
                 self.0.send(id, packets).map_err(|_| ())?;
                 Ok(Value::Null)
+            }
+            Operation::ConnectionState { id } => {
+                Ok(json!({"state":self.0.connection_state(id).map_err(|_| ())?}))
             }
             Operation::Poll { id } => {
                 let statistics = self.0.statistics(id);

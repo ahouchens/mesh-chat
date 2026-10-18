@@ -439,6 +439,15 @@ impl Host {
         }
     }
 
+    /// Read connection progress without draining application DATAGRAMs.
+    pub fn connection_state(&self, id: u64) -> Result<u8, Error> {
+        let entries = self.entries.lock().map_err(|_| Error::Closed)?;
+        match entries.sessions.get(&id) {
+            Some(Session::Running(session)) => Ok(session.state.load(Ordering::Acquire)),
+            _ => Err(Error::Closed),
+        }
+    }
+
     pub fn poll(&self, id: u64) -> Result<(u8, Vec<Bytes>), Error> {
         let mut entries = self.entries.lock().map_err(|_| Error::Closed)?;
         if let Some(Session::Recovery(session)) = entries.sessions.get_mut(&id) {
@@ -682,7 +691,9 @@ mod tests {
         )
         .unwrap();
         tokio::time::timeout(Duration::from_secs(5), async {
-            while host.poll(a.id).unwrap().0 != 1 || host.poll(b.id).unwrap().0 != 1 {
+            while host.connection_state(a.id).unwrap() != 1
+                || host.connection_state(b.id).unwrap() != 1
+            {
                 tokio::time::sleep(Duration::from_millis(10)).await;
             }
         })
@@ -692,6 +703,7 @@ mod tests {
             .unwrap();
         tokio::time::timeout(Duration::from_secs(2), async {
             loop {
+                assert_eq!(host.connection_state(b.id).unwrap(), 1);
                 let (_, packets) = host.poll(b.id).unwrap();
                 if !packets.is_empty() {
                     assert_eq!(packets[0], Bytes::from_static(b"private"));

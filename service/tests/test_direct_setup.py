@@ -310,6 +310,36 @@ def test_owner_resume_keeps_the_exact_live_offer_and_rejects_mixed_identifiers(p
     assert "text" not in restored
 
 
+@pytest.mark.parametrize("native_state", [0, 1, 2])
+def test_owner_resume_after_activation_reads_state_without_inspecting_or_draining_packets(peers, native_state):
+    from types import SimpleNamespace
+    owner, joiner, _, invite = peers
+    offer = owner._direct_setup.offer(invite["id"])
+    answer = joiner._direct_setup.answer(offer["text"], _op(98002))
+    ready = owner._direct_setup.ready(answer["text"])
+    setup = owner._direct_setup
+    identifier = ready["setup_id"]
+    prepared = setup._prepared[identifier]
+    setup._state(identifier, "connecting", "ready", ready["workspace_id"], prepared.document_fields())
+    setup._carriers[identifier] = SimpleNamespace(prepared=prepared, _stop=threading.Event())
+    original = owner._direct_native.request
+    def request(operation, **payload):
+        assert operation not in {"inspect", "inspect_paths", "poll"}
+        if operation == "connection_state": return {"state":native_state}
+        return original(operation, **payload)
+    owner._direct_native.request = request
+    try:
+        restored = setup.resume(invitation_id=invite["id"])
+        if native_state == 0:
+            assert restored["text"] == ready["text"]
+        else:
+            assert "text" not in restored
+            assert restored["state"] == ("bootstrap_connected" if native_state == 1 else "refresh_required")
+    finally:
+        setup._carriers.pop(identifier)
+        owner._direct_native.request = original
+
+
 def test_diagnostic_clear_preserves_request_and_encrypted_state(peers):
     owner, joiner, workspace, invite = peers
     offer = owner._direct_setup.offer(invite["id"])
