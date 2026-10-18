@@ -133,3 +133,14 @@ it("keeps the operation identifier after losing a reply response", async () => {
   const calls=api.serviceCommand.mock.calls.filter(([c]) => c === "prepare_direct_answer");
   expect(calls[0][1].operation_id).toBe(calls[1][1].operation_id);
 });
+
+
+it("keeps a retry action when the readiness service becomes unavailable", async () => {
+  render(<DirectConnectionSetup workspaceId="workspace" />);
+  await screen.findByText("Copy connection message");
+  api.serviceCommand.mockRejectedValue(new Error("offline"));
+  fireEvent.click(screen.getByText("Copy connection message"));
+  expect(await screen.findByText("Retry checks")).toBeTruthy();
+  expect(screen.queryByText("Connection QR")).toBeNull();
+  expect(navigator.clipboard.writeText).not.toHaveBeenCalled();
+});

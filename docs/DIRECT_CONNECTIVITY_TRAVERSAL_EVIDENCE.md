@@ -4,7 +4,7 @@ Status: implementation and qualification in progress, 2026-10-18. This is not a
 physical connectivity result or release approval. The detailed requirements are
 in [the spec](DIRECT_CONNECTIVITY_TRAVERSAL_SPEC.md).
 
-## Wizard increment: 0.2.57 / Android 2057
+## Wizard increment: 0.2.58 / Android 2058
 
 Preparation checks now precede every displayed sharing surface. The controller
 checks current route identity, exact retained UDP ownership, candidate families,
@@ -24,6 +24,23 @@ the primary action above diagnostics and collapsing technical evidence. The
 0.2.56 packaging run was cancelled before promotion. Final frontend regressions
 and 42 browser layout cases are submitted to Actions,
 along with full native qualification and distinct Windows/Android builds.
+Preceding 0.2.57 application commit: `b4a804b00a5467e4712df524bc39cafbe8576333`.
+[TypeScript, wizard/diagnostic frontend regressions and all 42 layouts passed](https://github.com/ahouchens/mesh-chat/actions/runs/39159976026).
+Artifact `connection-layout-evidence` ID `12148845444` was downloaded; 360px
+normal and doubled-text screenshots were inspected after the action-first layout
+change. [Windows/Linux recovery red/green passed](https://github.com/ahouchens/mesh-chat/actions/runs/39159975993).
+[Full CI passed](https://github.com/ahouchens/mesh-chat/actions/runs/39159975995).
+[native qualification](https://github.com/ahouchens/mesh-chat/actions/runs/39159976022)
+is still running. [0.2.57 packaging](https://github.com/ahouchens/mesh-chat/actions/runs/39160105646)
+was cancelled to add a regression-backed retry action when readiness checks are
+unavailable. Version 0.2.58 / Android 2058 includes that correction; its final
+qualification is pending. No installable wizard build is qualified yet.
+
+The preceding 0.2.55 native run `39158158182` passed Linux and Android but failed
+Windows `both_hosted-source-revocation` while waiting for channel discovery after
+membership became active, before revocation itself. The current run must qualify
+that path; do not describe the earlier run as passing or relax its assertions.
+
 Physical mobile-carrier acceptance and independent review remain pending.
 
 ## Exact-commit evidence

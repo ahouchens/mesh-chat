@@ -37,10 +37,15 @@ export function DirectConnectionSetup({ invitationId, workspaceId, autoStart = f
   const operation = useRef({ document: "", id: "" });
   const check = async (value: Setup) => {
     setSetup(value); setOutgoing(""); setCheckedAt(0);
-    const current = await serviceCommand<Setup>("check_direct_setup", { setup_id: value.setup_id });
-    if (!current?.readiness) throw new Error("Readiness unavailable");
-    setSetup(current); setOutgoing(current.can_share ? current.text ?? "" : ""); setCheckedAt(Date.now());
-    return current;
+    try {
+      const current = await serviceCommand<Setup>("check_direct_setup", { setup_id: value.setup_id });
+      if (!current?.readiness) throw new Error("Readiness unavailable");
+      setSetup(current); setOutgoing(current.can_share ? current.text ?? "" : ""); setCheckedAt(Date.now());
+      return current;
+    } catch (reason) {
+      setSetup({ ...value, readiness:"checks_unavailable", can_share:false });
+      throw reason;
+    }
   };
   useEffect(() => { const timer = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(timer); }, []);
   useEffect(() => {
@@ -63,7 +68,7 @@ export function DirectConnectionSetup({ invitationId, workspaceId, autoStart = f
         if (active && epoch === revision.current) {
           setSetup(value); setOutgoing(value.can_share ? value.text ?? "" : ""); setCheckedAt(Date.now());
         }
-      }).catch(() => { if (active && epoch === revision.current) { setOutgoing(""); setCheckedAt(0); setError("Checks are unavailable. Retry checks before sharing."); } });
+      }).catch(() => { if (active && epoch === revision.current) { setOutgoing(""); setCheckedAt(0); setSetup(previous => previous ? { ...previous, readiness:"checks_unavailable", can_share:false } : previous); setError("Checks are unavailable. Retry checks before sharing."); } });
     }, 2000);
     return () => { active = false; clearInterval(timer); };
   }, [setup?.setup_id, setup?.state === "cancelled"]);
@@ -152,6 +157,7 @@ export function DirectConnectionSetup({ invitationId, workspaceId, autoStart = f
   const readiness = busy ? "checking" : setup?.readiness;
   const guidance: Record<string, [string, string]> = {
     checking: ["Checking this device", "Preparing the app’s UDP socket and checking local addresses and router mappings. This does not yet test the other device."],
+    checks_unavailable: ["Checks are unavailable", "Keep the app unlocked and retry checks. No connection details are ready to share until these checks succeed."],
     no_route: ["Connect this device to the Internet", "No current Internet route was found. On Windows, restore the home-router connection. On Android, keep Wi-Fi off and restore mobile data. Then retry checks."],
     address_prepared: ["Address prepared — waiting for the other device’s test", "A public address is prepared, but it has not been tested by the other device. Send the message below to start that test."],
     no_local_address: ["No public address on this device", "The other device may still provide a usable address. Send the message below so it can check its own network."],
@@ -179,7 +185,7 @@ export function DirectConnectionSetup({ invitationId, workspaceId, autoStart = f
       </details>
     </div>}
     {canExport && remaining > 0 && <><p>On the other device, open <strong>Join or connect</strong>, paste this message and follow its next step. {setup?.state === "waiting_for_reply" || setup?.state === "waiting_for_ready" ? "Bring its reply back here." : "Choose Connect there and keep both apps open; no further reply is needed."}</p><details><summary>Message details and QR code</summary><InvitationQrCode document={outgoing} destination="workspace" /><label className="field"><span>Complete message to share</span><textarea aria-label="Complete connection message" onCopy={(event) => { if (!canExport || !setup || setup.expires_at * 1000 <= Date.now()) event.preventDefault(); else onShared?.(); }} readOnly rows={5} value={outgoing} onFocus={(event) => event.currentTarget.select()} /></label></details><div className="dialog-actions"><button className={preview ? "button button--secondary" : "button button--primary"} onClick={() => void copy()}>Copy connection message</button><button className="button button--secondary" onClick={() => void share()}>Share connection message</button><button className="button button--ghost" onClick={() => void save()}>Save connection file</button></div></>}
-    {setup && ["no_route", "both_no_address", "network_changed", "refresh_required", "test_failed"].includes(readiness ?? "") && <>
+    {setup && ["checks_unavailable", "no_route", "both_no_address", "network_changed", "refresh_required", "test_failed"].includes(readiness ?? "") && <>
       <button className="button button--primary" disabled={busy} onClick={() => void retry()}>Retry checks</button>
       <details><summary>Other ways to proceed</summary><p>Try the other device as the reachable side, or recheck after changing one device’s Internet connection. You can keep Windows on the home router and Android on mobile data.</p><p>If you manage the home router, check whether it allows app-requested UDP mappings (PCP, UPnP or NAT-PMP), then retry. Optional manual router configuration requires a usable public address and the exact app-owned UDP endpoint; this wizard does not currently provide a manual UDP mapping editor. A carrier or upstream router may prevent inbound connections. Some networks cannot connect without a helper service, which this server-free mode does not use.</p><p>Keep the firewall enabled. This wizard has no supported automatic UDP firewall repair action. A TCP permission or mapping is not proof for this connection.</p></details>
     </>}

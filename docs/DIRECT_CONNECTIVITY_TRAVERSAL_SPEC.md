@@ -323,7 +323,7 @@ Creating this spec does not start a new chat, implementation, deployment, merge,
 
 Use the standards to inform implementation; this spec does not claim that existing Mesh Chat implements ICE. Any selected implementation must support disabling external discovery and relay mechanisms completely. Check current maintained dependencies and relevant errata before choosing an implementation.
 
-## Preparation and remediation wizard (0.2.57)
+## Preparation and remediation wizard (0.2.58)
 
 Before any Copy, Share, Save, QR or selectable connection message is offered,
 the same guided controller must check the retained native UDP socket, current

@@ -1,6 +1,6 @@
 # Windows and mobile-carrier acceptance
 
-Status: physical test not executed. **Wait for 0.2.57 (Android 2057): build and
+Status: physical test not executed. **Wait for 0.2.58 (Android 2058): build and
 native qualification pending.** The 0.2.54 artifacts below are superseded due to
 a revocation-cleanup defect and are retained only as historical evidence.
 
@@ -33,7 +33,7 @@ separate gates; see the [acceptance ledger](DIRECT_CONNECTIVITY_TRAVERSAL_EVIDEN
 ## Guided test
 
 1. Install the matching new build on **both Windows and Android**. In Settings,
-   confirm **Mesh Chat version 0.2.57** and copy version details on each device.
+   confirm **Mesh Chat version 0.2.58** and copy version details on each device.
    Preserve existing app data; do not clear the profile to work around a failure.
 2. Leave Windows on the home router. Turn Android Wi-Fi off and confirm mobile
    data is active. Keep both Mesh Chat apps unlocked and open.
