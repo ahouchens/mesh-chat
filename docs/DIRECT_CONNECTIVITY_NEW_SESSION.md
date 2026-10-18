@@ -1,0 +1,31 @@
+# Mesh Chat direct connectivity session handoff
+
+Paste the following prompt into a new chat opened on this repository. It points to the full specification and preserves the distinction between implemented QUIC features and missing NAT traversal.
+
+```text
+Implement the outcomes in docs/DIRECT_CONNECTIVITY_TRAVERSAL_SPEC.md in this repository. Read the entire spec, the current repository instructions, and the relevant protocol, architecture, threat-model, and testing documents before editing. Recheck the current branch; the audited baseline was 0.2.50 at 509a2822d5f8ff20e995bcc7f2e52b92d970bb96.
+
+My target is Windows behind a home router communicating with Android on mobile data, without making manual port forwarding or same-Wi-Fi testing the default solution. I explicitly require fully server-free operation and accept that some networks cannot connect. The latest test completed the Offer/Answer/Ready exchange but reported that neither device supplied a public direct candidate. Do not treat that as proof the network pair is impossible to hole-punch.
+
+Preserve the existing Reticulum identity and workspace admission, LXMF messaging, signed join receipts, same-socket QUIC integration, and relationship recovery. Implement the missing candidate discovery and genuine coordinated two-sided checks. The shipping initial code currently makes one side dial while the other listens; the no-candidate branch stops before native activation. Alternating roles during admitted recovery does not close that initial setup gap.
+
+This is incremental work. The recent implementation already delivered native QUIC, socket ownership, public/mapped UDP candidates, Offer/Answer/Ready, unhosted replies, expiry/replay/suspension handling, durable joins/receipts, direct TCP fallback, and extensive relationship recovery. Read the spec's existing-work matrix and Phase 2/3 evidence. First map F1–F8 to current functions/tests and identify the smallest missing behavior. Do not rebuild completed features or mistake missing physical evidence for missing code. Preserve passing regressions; extend them for actual gaps.
+
+First establish the actual implementation gap and a controlled NAT test that requires both endpoints to send checks. Its negative control must fail when punching is disabled. Existing real-QUIC loopback tests are integration evidence, not NAT traversal evidence. Then carry the specification through implementation, regressions, workflow integration, and accurate documentation.
+
+Audit the actual default invitation flow before adding transport code. New setup commands are wired, but the UI still presents older invitation/callback and newer connection-document routes separately. Prove the user-visible entry point reaches the intended controller, signed owner receipt, and approval on a supported topology. Do not confuse a correct no-candidate failure-state test with a successful join test, or claim a UI fix alone discovers two unknown public mappings.
+
+The server-free requirement is settled; do not ask me to choose again. Add no public or self-hosted STUN observer, IP lookup, rendezvous/signaling server, relay, DHT/bootstrap node, VPN service, or third-device dependency. Peer-to-peer authenticated STUN-formatted checks are allowed; calling a separately operated STUN observation service is not. User-mediated email/file/clipboard sharing and automatic controls over an existing authenticated peer path remain allowed. If both tuples are unknown and no permitted source exists, report the limitation honestly. Test-only NAT ground truth must not become a production discovery shortcut.
+
+Provide one guided manual invitation/connection exchange, actionable and redacted diagnostics, safe refresh of the existing pending request, and Android lifecycle handling that does not secretly depend on split-screen. Automate subsequent coordination only over an existing authenticated peer path. Keep connection establishment, signed request receipt, and owner approval separate.
+
+Make the UX extremely easy to follow: one Invite flow, one paste/import entry point, one current outgoing item, plain-language steps that identify which device acts next, and one primary next action. Do not make users understand Offer/Answer/Ready, candidates, QUIC, or the old/new internal flows. Preserve Resume setup and explain short-lived connection expiry separately from invitation expiry. Prove this with user-level flow tests and phone layout/accessibility checks.
+
+Add one-tap Copy diagnostics on setup/error/pending/recovery screens and a Settings Help and diagnostics view with Copy connection log. Include current phase, attempted checks, failure codes, receipt/approval state, timestamps, and actual build identity. Keep logs bounded and sanitized, retain the last failure across restart, exclude pasted documents/credentials/messages/addresses, and handle unavailable services and clipboard failures without losing the request. No automatic uploads.
+
+Show Mesh Chat version X.Y.Z near the top of Settings on both Windows and Android, in Help and diagnostics, and in connection detail/error views. Provide Copy version details including Android versionCode or Windows build identity, commit, and available runtime component versions. Reuse and improve the existing Settings version footer and older diagnostic-copy feature. Metadata must match the installed artifact, remain available offline, and report any component mismatch accurately.
+
+Use GitHub Actions for native execution, frontend/package qualification, and Windows/Android builds according to TESTING.md. Increment the release version and Android versionCode for every distinct user-test release; select the next unused version rather than reusing 0.2.50. Do not modify unrelated work or local attachments.
+
+Report each acceptance criterion with its exact evidence. Keep physical Windows-to-cellular qualification pending until it is actually performed. Do not declare this solved because tests compile, a candidate is prepared, or a document verifies. An unsupported physical topology is an accepted limitation, not a successful connection test. Deliver implemented features, meaningful tests, documentation, and a concise list of any remaining gates.
+```

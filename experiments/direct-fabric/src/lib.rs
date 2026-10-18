@@ -264,6 +264,9 @@ pub struct Path {
 }
 
 impl Path {
+    pub fn close(&self) {
+        self.connection.close(0u32.into(), b"check_complete");
+    }
     pub fn is_open(&self) -> bool {
         self.connection.close_reason().is_none()
     }

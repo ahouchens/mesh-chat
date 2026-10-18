@@ -68,6 +68,18 @@ jobs:
       - name: Install Linux syscall observer
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y strace
+      - name: Qualify two-sided checks behind isolated real NAT filters
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          sudo apt-get install -y iproute2 iptables
+          sudo --preserve-env=GITHUB_ACTIONS "$(command -v python)" service/tools/direct_nat_harness.py --binary "$PWD/experiments/direct-app-host/target/debug/mesh-direct-app-host-proof" --report direct-nat-evidence.json
+      - name: Retain NAT evidence and negative control
+        if: runner.os == 'Linux' && always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: direct-nat-evidence
+          path: direct-nat-evidence.json
       - name: Production durable recovery through shipping dispatcher
         shell: bash
         run: |

@@ -210,7 +210,7 @@ impl Host {
             let connected = if client {
                 traversal::dial(peer, candidates, deadline, cancelled.clone()).await
             } else {
-                traversal::listen(peer, deadline, cancelled.clone()).await
+                traversal::listen_with_checks(peer, candidates, deadline, cancelled.clone()).await
             };
             if let Ok((_peer, path)) = connected {
                 state.store(1, Ordering::Release);
