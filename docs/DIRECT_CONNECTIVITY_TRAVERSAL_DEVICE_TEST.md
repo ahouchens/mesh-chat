@@ -5,8 +5,8 @@ versionCode **2058**, application commit `0bf9623a9d4c01042793f63d3ffb1fd9844433
 Use matching builds on both devices after qualification. Preserve app data.
 
 [Build run](https://github.com/ahouchens/mesh-chat/actions/runs/39160414911): full
-verification and Windows packaging passed. Android's first attempt failed
-unpacking the NDK ZIP before compilation; an Android-only retry is running on
+verification, Windows packaging and signed Android packaging passed. Android's first attempt failed
+unpacking the NDK ZIP before compilation; the Android-only retry passed on
 the same commit. Native recovery qualification is still open: a preceding run
 failed Windows address-loss recovery. Independent review and physical tests remain
 separate gates. Do not substitute any superseded build.
@@ -14,12 +14,14 @@ separate gates. Do not substitute any superseded build.
 | Platform | Current artifact | Archive SHA-256 |
 | --- | --- | --- |
 | Windows | [mesh-chat-0.2.58-windows-desktop](https://github.com/ahouchens/mesh-chat/actions/runs/39160414911/artifacts/12149000861) | `f96a01bf490a5a6a1b5a92ee68e9cf6b8c64565d10646e01d44d027e83c0cb36` |
-| Android | Retry pending; no qualified APK yet | Pending |
+| Android | [mesh-chat-0.2.58-android-arm64](https://github.com/ahouchens/mesh-chat/actions/runs/39160414911/artifacts/12148713355) | `08a35383f5301a17880ae4cb2ec0aaecd2d1aebb8107d0c2e302e7f788cf16f0` |
 
 The Windows archive, manifest and all five packaged files were hash-checked.
 NSIS installer SHA-256: `57541794d875d7eb764d4ea9b20e866da18514e18513114f02b31c7643fbdba9`.
 MSI SHA-256: `4f184472ea032cab49a8b7d2f7c98ed9fc156a013e81566f0b5031e1b9382464`.
-Nothing was installed or executed locally. See the
+Android APK SHA-256: `904369a0af6cdbcc843ec5e03b67a692e6513891c9effe258c2268ede41c1f4b`.
+Its archive, manifest and APK hashes were verified; manifest version is 0.2.58 /
+2058 with release signing. Nothing was installed or executed locally. See the
 [acceptance ledger](DIRECT_CONNECTIVITY_TRAVERSAL_EVIDENCE.md).
 
 ## Guided test

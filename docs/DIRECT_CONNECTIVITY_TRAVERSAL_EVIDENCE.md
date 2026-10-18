@@ -141,14 +141,14 @@ public address discovery nor behavior on every consumer or carrier NAT.
 | A7 | Destination-dependent SNAT profile with a tuple learned for a different destination passed its expected bounded failure at `b01572d`. No universal NAT claim. |
 | A8 | One-side/both-side UDP-block fixture passed at `b01572d`. This fixture does not prove TCP fallback; existing authorized TCP remains separate. |
 | A9 | Existing mapping renewal, migration, address-loss and manual recovery-update regressions retained. Recovery now rotates eligible interfaces on bounded retries with a source regression; latest native pipeline pending. Multiple simultaneous recovery route sockets are not implemented. |
-| A10 | Signed chain/replay tests retained; joiner and owner saved-message resume, expired/lost ownership and retry-ID regressions added. Latest UI run pending. |
+| A10 | Signed chain/replay tests retained; joiner and owner saved-message resume, expired/lost ownership and retry-ID regressions added. Latest wizard TypeScript/frontend run passed at `0bf9623`. |
 | A11 | Existing restart/suspend recovery pipeline; Android 45-second share grace implemented. Actual sharing, process death, Doze and network switch device tests pending. |
 | A12 | Existing authority/cancellation/queue tests plus group socket cancellation and shared bounds. Adversarial packet-rate qualification and independent protocol review pending. |
 | A13 | Existing Linux network audit and isolated NAT topology; latest full audit pending. No runtime observer, rendezvous, relay or IP lookup added. |
 | A14 | Pending physical Windows/home-router ↔ Android/mobile-carrier test on uniquely versioned artifacts. |
 | A15 | Deterministic client outgoing/server incoming path and auxiliary closure tests; independent review of boundary races still required. |
 | A16 | Default Invite invokes the guided controller; one outgoing item and shared import entry tested in frontend CI. Owner resume added in follow-up. Human end-to-end acceptance pending. |
-| A17 | Eighteen browser layout cases passed at `dec191b`; 360/393px doubled-text screenshots inspected. Actual Android and human usability acceptance pending. |
+| A17 | Forty-two browser layout cases passed at `0bf9623`; 360/393px doubled-text screenshots inspected on the equivalent preceding layout. Actual Android and human usability acceptance pending. |
 | A18 | Allowlisted bounded diagnostics, real native check counters, candidate-source counts, offline/clipboard-denial tests. Receipt/approval are timestamped facts, never inferred from QUIC. |
 | A19 | Visible Settings/diagnostic version, actual Android package metadata and native commit command implemented. Installed Windows/Android artifact matching pending. |
 | A20 | Protected bounded history, last failure, storage retention and clear-preserves-request regressions. A real encrypted VaultStore close/reopen regression passed locally; physical app restart acceptance pending. |
@@ -163,3 +163,16 @@ No merge or public release has been performed. Draft PR #1 holds the implementat
 The superseded 0.2.51 artifact workflow failed an existing administrator benchmark
 timing threshold; the same commit's ordinary CI passed. The threshold was not
 changed. The 0.2.52 release verification passed with that threshold intact.
+
+
+## Final artifact verification
+
+Build `39160414911` passed verification, Windows packaging/embedded native checks,
+and signed Android packaging after retrying the NDK download. Both archives and
+inner installer/APK hashes were checked; the paired-device checklist records the
+URLs and hashes. Application commit is `0bf9623a9d4c01042793f63d3ffb1fd984443308`,
+version 0.2.58 / Android 2058. Nothing was installed or executed locally.
+Exact-version native run `39160399603` has passed durable recovery on both Windows
+and Linux and is continuing through setup/admission qualification. This does not
+erase the preceding intermittent Windows failures; independent review and
+physical acceptance remain required before promotion.
