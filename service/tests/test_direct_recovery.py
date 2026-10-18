@@ -264,6 +264,12 @@ def test_scheduler_reserves_profile_capacity_and_rotates_fairly(monkeypatch):
     assert retired==[True]
     assert len(recovery._active)==3 and len(recovery._pending)==1
     assert started[0] in {"4","5","6","7"}
+    recovery._active.clear(); recovery._pending.clear(); recovery._workers.clear(); started.clear()
+    for i in range(8): recovery._write(str(i),enabled=False)
+    recovery._write("0",enabled=True,state="connected",next_at=time.time()+3000)
+    recovery._initialized=False; recovery.jitter=lambda:0
+    recovery.tick()
+    assert started==["0"]  # A saved planned refresh is never a restart delay.
 
 
 def test_new_update_preserves_explicit_pause(pair):

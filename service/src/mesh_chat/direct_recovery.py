@@ -407,8 +407,11 @@ class DirectRecovery:
             if not self._initialized:
                 for identifier,_ in records:
                     state = self._state(identifier)
-                    self._write(identifier,state="reconnecting" if state["enabled"] else "dormant",
-                        next_at=min(self.clock()+300,state["next_at"]))
+                    # A planned refresh for a formerly live socket is not a
+                    # reconnect backoff. Ownership vanished on restart/resume.
+                    next_at = (self.clock()+2*self.jitter() if state["state"] == "connected"
+                               else min(self.clock()+300,state["next_at"]))
+                    self._write(identifier,state="reconnecting" if state["enabled"] else "dormant",next_at=next_at)
                 self._initialized = True
             if not records: return
             # Under contention, five-minute service slots rotate among due peers.
