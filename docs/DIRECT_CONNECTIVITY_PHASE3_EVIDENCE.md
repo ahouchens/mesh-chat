@@ -54,4 +54,35 @@ and [verification/packages](https://github.com/ahouchens/mesh-chat/actions/runs/
 These are baseline evidence, not Phase 3 qualification.
 
 No release was published, artifact installed, or native build executed locally.
-Exact increment commits and CI outcomes will be recorded after qualification.
+
+## Exact-commit automated evidence
+
+Implementation: `fe4a45ca7247c501a4427f3f083ef0aacd7e7264`.
+
+- Local non-integration suite: 788 passed, 7 environment-dependent skips,
+  35 integration deselections. Local source production pipelines: all six passed.
+- [Verification and package run 39082284816](https://github.com/ahouchens/mesh-chat/actions/runs/39082284816):
+  795 service tests passed (35 environment/native-only skips); 184 frontend tests
+  passed. Windows desktop and signed Android ARM64 package builds passed. The
+  release-publication job was skipped.
+- [Native run 39082265280](https://github.com/ahouchens/mesh-chat/actions/runs/39082265280):
+  Windows/Linux native qualification and Android ARM64 compilation passed.
+  Each desktop platform passed 205 service-boundary tests, 14 authority
+  tests, 18 relationship tests, 32 document/setup tests, 47 bootstrap/path tests,
+  six source pipelines, 20 native unit tests, one cross-language binding test,
+  one shipping-dispatcher test, 25 native topology tests and six shipping-native
+  production pipelines over real QUIC.
+- Linux production network audit: zero external addresses, 1180 loopback
+  observations, 48 wildcard binds and 952 sends in
+  [artifact 12118933496](https://github.com/ahouchens/mesh-chat/actions/runs/39082265280/artifacts/12118933496).
+  The separate legacy topology audit also found zero external addresses.
+
+Package artifacts are compilation evidence only:
+[Windows 12119187357](https://github.com/ahouchens/mesh-chat/actions/runs/39082284816/artifacts/12119187357)
+and [Android 12119925407](https://github.com/ahouchens/mesh-chat/actions/runs/39082284816/artifacts/12119925407).
+No physical result or Phase 3 recovery exit criterion is inferred from them.
+
+The first local pipeline exposed asymmetric bootstrap retirement during admitted
+announce confirmation. The fix waits on the admitted carrier independently and
+retains the original timeout/assertions. All six subsequent source pipelines
+passed. No timeout was increased or assertion weakened.
