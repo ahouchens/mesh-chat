@@ -8,20 +8,34 @@ The design accepts real trade-offs. Delivery depends on peers being reachable, h
 
 > **Status — security-sensitive prototype.** The source tree is at 0.2.63. It has not been independently audited, and several physical-device and packaging gates are still open. Read [Status and verification](#status-and-verification) before relying on it.
 
-## What it enables
+## What problem it solves
 
-| Capability | What you get | How it stays server-free |
+Mesh Chat addresses a specific gap: **private small-group messaging without an account provider, signaling service, key directory, hosted relay, or always-on server.**
+
+Reticulum and LXMF already provide identities, routing, and encryption. Mesh Chat adds the messenger/application layer those protocols do not: consent, invitations, group and workspace authority, durable local state, and delivery evidence.
+
+In short, it solves **“how do a few people message and coordinate privately without trusting or paying for a messaging service?”** — while accepting weaker reachability, recovery, and metadata-privacy guarantees than a hosted messenger.
+
+| Problem | What Mesh Chat provides | How it stays server-free |
 | --- | --- | --- |
-| **One-to-one chat** | A signed invitation, a contact request, and an explicit acceptance per person. Every message is one ratchet-encrypted LXMF delivery. | Both devices talk directly; a receipt means the other app committed the message, not that a person read it. |
-| **Private groups** | Up to eight people, owner-signed membership, an announcement-channel mode, per-recipient delivery state. | One logical message becomes one separately encrypted copy per member. There is no group server and no shared group key. |
-| **Shared workspaces** | Up to eight people, 32 public/private channels including `#general`, workspace DMs, one-level threads, mentions, edits, deletion tombstones, reactions, local search, and cooperative retention. | One authority-signed manifest chain describes membership; every device receives its own signed copy of each event. |
-| **First contact over the Internet** | A default "direct to this device" invitation opens a temporary listener on the inviter's device, asks their router for a mapping, and signs the resulting endpoint and credential into the invitation. | PCP → UPnP IGD → NAT-PMP on the participant's router. No rendezvous, STUN, TURN, or Mesh Chat service is contacted. |
-| **Explicit fallback paths** | Nearby discovery, signed direct TCP, an operator-run access point, an email/reverse handshake, and an experimental QUIC underlay. | Each path is a visible choice, never a silent downgrade. See [Reaching another device](#reaching-another-device). |
-| **Offline-tolerant delivery** | An optional LXMF propagation node stores recipient-encrypted objects until the recipient fetches them. | The node is separately consented and never becomes an identity, member, or delivery receipt. |
-| **Local-only privacy** | Encrypted vault, sealed local search, no telemetry, no analytics, no crash upload, no CDN or remote artwork fetch. | Search and history stay on the device; there is no hosted index to query. |
-| **Desktop and mobile** | Tauri 2 shell with a bundled Python service on desktop; embedded CPython on Android and iOS. | Same Rust/Python/React stack and the same data model, with no platform-specific server. |
+| **Accounts, phone numbers, or a vendor service** | **One-to-one chat.** A signed invitation, a contact request, and an explicit acceptance per person. Every message is one ratchet-encrypted LXMF delivery. | Each installation creates its own Reticulum identity. Both devices talk directly; a receipt means the other app committed the message, not that a person read it. |
+| **Unsolicited contact and unclear trust** | **Explicit consent.** Invitations are signed and single-use; the recipient reviews the inviter, fingerprint, and workspace details before approving. | Trust is established peer-to-peer. Delivery never implies approval. |
+| **Group chat normally needs a hosted room** | **Private groups.** Up to eight people, owner-signed membership, an announcement-channel mode, and per-recipient delivery state. | One logical message becomes one separately encrypted copy per member. There is no group server and no shared group key. |
+| **Workspace collaboration normally needs a server** | **Shared workspaces.** Up to eight people, 32 public/private channels including `#general`, workspace DMs, one-level threads, mentions, edits, deletion tombstones, reactions, local search, and cooperative retention. | One authority-signed manifest chain describes membership; every device receives its own signed copy of each event. |
+| **First contact usually needs STUN, TURN, or a rendezvous service** | **Direct Internet invitations.** A temporary listener on the inviter's device asks their router for a mapping, then signs the resulting endpoint and credential into the invitation. | PCP → UPnP IGD → NAT-PMP on the participant's router. No rendezvous, STUN, TURN, or Mesh Chat service is contacted. |
+| **One network path is not enough** | **Explicit fallbacks.** Nearby discovery, signed direct TCP, an operator-run access point, an email/reverse handshake, and an experimental QUIC underlay. | Each path is a visible choice, never a silent downgrade. See [Reaching another device](#reaching-another-device). |
+| **Cloud chat means cloud-held history and metadata** | **Local-only privacy.** Encrypted vault, sealed local search, no telemetry, analytics, crash upload, CDN, or remote artwork fetch. | Search and history stay on the device; there is no hosted index to query. |
+| **Offline peers and unclear delivery** | **Offline-tolerant delivery.** An optional LXMF propagation node stores recipient-encrypted objects until the recipient fetches them. A durable outbox, deduplication, and per-device evidence cover the rest. | The propagation node is separately consented and never becomes an identity, member, or delivery receipt. |
+| **Desktop and mobile implementations diverge** | **Desktop and mobile.** Tauri 2 shell with a bundled Python service on desktop; embedded CPython on Android and iOS. | Same Rust/Python/React stack and the same data model, with no platform-specific server. |
 
-Attachments, calls, discoverable public channels, cloud backup, remote push, and multi-owner membership are deliberately out of scope in this increment.
+### What it deliberately does not solve
+
+- **Universal reachability.** If neither side can accept inbound traffic and no shared path exists, setup fails and says so. It is not a guaranteed NAT-traversal system.
+- **Asynchronous delivery without infrastructure.** An offline recipient needs an explicitly approved propagation node; there is no push service.
+- **Identity or authority-key recovery.** Lost keys are not recoverable, and lost workspace authority freezes administration.
+- **Anonymity.** IP endpoints, timing, and traffic analysis remain exposed; there is no anonymity claim.
+- **Broad messenger scope.** Attachments, calls, discoverable public channels, cloud backup, remote push, and multi-owner membership are out of scope.
+- **Production assurance.** The project describes itself as a security-sensitive prototype: it has not been independently audited, and physical-device, packaging, and platform gates remain open. See [Status and verification](#status-and-verification) and [THREAT_MODEL.md](THREAT_MODEL.md).
 
 ## Architecture
 
