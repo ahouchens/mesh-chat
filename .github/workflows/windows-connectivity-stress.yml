@@ -1,6 +1,8 @@
 name: Windows connectivity repetition
 on:
   workflow_dispatch:
+  pull_request:
+    paths: ['.github/workflows/windows-connectivity-stress.yml']
 permissions:
   contents: read
 jobs:
