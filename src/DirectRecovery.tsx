@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { ConnectionDiagnostics } from "./ConnectionDiagnostics";
 import { serviceCommand } from "./api";
 
 type Peer = { relationship_id: string; workspace_id: string; peer_device_id: string; state: string;
@@ -58,5 +59,6 @@ export function DirectRecovery({ workspaceId }: { workspaceId: string }) {
     <button disabled={busy || !input.trim()} onClick={() => void apply()}>Apply connection update</button>
     {output && <><label>Complete connection update to share<textarea aria-label="Complete connection update to share" readOnly value={output} rows={4} onFocus={event => event.target.select()} /></label><button onClick={() => void copy()}>Copy connection update</button></>}
     {feedback && <p role="status">{feedback}</p>}{error && <p role="alert">{error}</p>}
+    <ConnectionDiagnostics />
   </section>;
 }

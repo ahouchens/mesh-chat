@@ -514,6 +514,9 @@ fn allowed_renderer_command(command: &str) -> bool {
             | "pause_direct_recovery"
             | "resume_direct_recovery"
             | "direct_setup_status"
+            | "resume_direct_setup"
+            | "connection_diagnostics"
+            | "clear_connection_diagnostics"
             | "cancel_direct_setup"
             | "revoke_workspace_invitation"
             | "submit_workspace_join"
@@ -1322,6 +1325,29 @@ fn open_notification_settings(app: AppHandle) -> PendingResult {
     )
 }
 
+#[tauri::command]
+fn app_build_info(app: AppHandle) -> serde_json::Value {
+    let mut info = serde_json::json!({
+        "installed_version": app.package_info().version.to_string(),
+        "native_version": env!("CARGO_PKG_VERSION"),
+        "build_commit": env!("MESH_BUILD_COMMIT"),
+        "platform": std::env::consts::OS,
+        "os_version": "unavailable",
+        "android_version_code": null
+    });
+    #[cfg(target_os = "android")]
+    if let Ok(response) = app.mesh_runtime().build_info() {
+        if let Ok(android) = mobile_result(response) {
+            for key in ["installed_version", "android_version_code", "os_version"] {
+                if let Some(value) = android.get(key) { info[key] = value.clone(); }
+            }
+        }
+    }
+    // No service, identity, network, or filesystem path is needed for this call.
+    let _ = &mut info;
+    info
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     #[cfg(desktop)]
@@ -1406,6 +1432,7 @@ pub fn run() {
             pick_invitation_file,
             poll_mobile_events,
             runtime_platform,
+            app_build_info,
             set_native_theme,
             notification_capability,
             request_notification_permission,
@@ -1516,6 +1543,9 @@ mod tests {
             "pause_direct_recovery",
             "resume_direct_recovery",
             "direct_setup_status",
+            "resume_direct_setup",
+            "connection_diagnostics",
+            "clear_connection_diagnostics",
             "cancel_direct_setup",
             "workspace_snapshot",
             "create_workspace",

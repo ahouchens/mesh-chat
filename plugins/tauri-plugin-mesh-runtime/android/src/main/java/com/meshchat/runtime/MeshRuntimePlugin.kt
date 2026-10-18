@@ -14,6 +14,8 @@ import android.net.wifi.WifiManager
 import android.graphics.Color
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.provider.Settings
@@ -85,6 +87,22 @@ interface InvitationDocumentHost {
     ],
 )
 class MeshRuntimePlugin(private val activity: Activity) : Plugin(activity) {
+    // Brief user-mediated sharing is a background transition, not immediate
+    // socket loss. This grants no background execution guarantee: process death
+    // and the existing native ownership checks still require fresh details.
+    private val sharingHandler = Handler(Looper.getMainLooper())
+    private val suspendAfterSharing = Runnable { lifecycle("suspended", "background_grace_expired") }
+    @Command
+    fun buildInfo(invoke: Invoke) {
+        val info = activity.packageManager.getPackageInfo(activity.packageName, 0)
+        val result = JSONObject()
+            .put("installed_version", info.versionName)
+            .put("android_version_code", if (Build.VERSION.SDK_INT >= 28) info.longVersionCode else info.versionCode.toLong())
+            .put("os_version", Build.VERSION.RELEASE)
+        val response = JSObject()
+        response.put("json", JSONObject().put("ok", true).put("result", result).toString())
+        invoke.resolve(response)
+    }
     init { BootstrapClient.configure(activity.applicationContext) }
     companion object {
         private const val TAG = "MeshChatRuntime"
@@ -287,11 +305,22 @@ class MeshRuntimePlugin(private val activity: Activity) : Plugin(activity) {
                 override fun onActivityStarted(value: Activity) = Unit
                 override fun onActivitySaveInstanceState(value: Activity, state: Bundle) = Unit
                 override fun onActivityStopped(value: Activity) {
-                    if (value === activity) lifecycle("suspended", "activity_stopped")
+                    if (value === activity) {
+                        sharingHandler.removeCallbacks(suspendAfterSharing)
+                        sharingHandler.postDelayed(suspendAfterSharing, 45_000)
+                    }
                 }
-                override fun onActivityDestroyed(value: Activity) = Unit
+                override fun onActivityDestroyed(value: Activity) {
+                    if (value === activity) {
+                        sharingHandler.removeCallbacks(suspendAfterSharing)
+                        lifecycle("suspended", "activity_destroyed")
+                    }
+                }
                 override fun onActivityResumed(value: Activity) {
-                    if (value === activity) lifecycle("foreground", "activity_resumed")
+                    if (value === activity) {
+                        sharingHandler.removeCallbacks(suspendAfterSharing)
+                        lifecycle("foreground", "activity_resumed")
+                    }
                 }
                 override fun onActivityPaused(value: Activity) {
                     if (value === activity) lifecycle("background", "activity_paused")

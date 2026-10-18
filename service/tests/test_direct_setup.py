@@ -282,6 +282,32 @@ def test_no_candidates_uses_existing_route_queue_without_claiming_direct_connect
         assert not any(op == "activate" for op,_ in service._direct_native.calls)
 
 
+def test_resume_uses_saved_reply_and_refuses_to_export_after_socket_loss(peers):
+    owner, joiner, workspace, invite = peers
+    offer = owner._direct_setup.offer(invite["id"])
+    answer = joiner._direct_setup.answer(offer["text"], _op(98002))
+    before = joiner.store.list("workspace_join_delivery")
+    restored = joiner._direct_setup.resume(workspace["id"])
+    assert restored["text"] == answer["text"]
+    joiner._direct_setup.retire()
+    restored = joiner._direct_setup.resume(workspace["id"])
+    assert restored["state"] == "refresh_required"
+    assert "text" not in restored
+    assert joiner.store.list("workspace_join_delivery") == before
+
+
+def test_diagnostic_clear_preserves_request_and_encrypted_state(peers):
+    owner, joiner, workspace, invite = peers
+    offer = owner._direct_setup.offer(invite["id"])
+    joiner._direct_setup.answer(offer["text"], _op(98002))
+    before = {kind:joiner.store.list(kind) for kind in ("workspace", "workspace_join_delivery", "direct_join_exchange")}
+    report = joiner._execute("connection_diagnostics", {})
+    assert report["events"]
+    assert offer["text"] not in str(report)
+    assert not joiner._execute("clear_connection_diagnostics", {})["events"]
+    assert {kind:joiner.store.list(kind) for kind in before} == before
+
+
 def test_completed_setup_survives_socket_expiry_and_cancel_pauses_saved_relationship(peers,monkeypatch):
     owner,_,workspace,invite=peers
     setup=owner._direct_setup

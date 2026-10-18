@@ -79,6 +79,17 @@ class Topology:
             self.cmd(side, "ip", "route", "add", "default", "via", subnet + ".2")
             router = "r" + side
             self.cmd(router, "sysctl", "-qw", "net.ipv4.ip_forward=1")
+            # Drop unsolicited Internet packets BEFORE conntrack. Otherwise a
+            # packet addressed to the router itself can create a competing local
+            # conntrack entry before the other endpoint has emitted anything.
+            # This kernel filter opens only when the LAN host sends to that peer.
+            self.cmd(router, "iptables", "-t", "raw", "-A", "PREROUTING", "-s", subnet + ".0/24",
+                     "-p", "udp", "-m", "recent", "--name", "mesh_nat", "--set", "--rdest")
+            public_link = self.prefix + "2" + side
+            self.cmd(router, "iptables", "-t", "raw", "-A", "PREROUTING", "-i", public_link,
+                     "-p", "udp", "-m", "recent", "--name", "mesh_nat", "--rcheck", "--rsource", "--seconds", "30", "-j", "ACCEPT")
+            self.cmd(router, "iptables", "-t", "raw", "-A", "PREROUTING", "-i", public_link,
+                     "-p", "udp", "-j", "DROP")
             self.cmd(router, "iptables", "-P", "FORWARD", "DROP")
             self.cmd(router, "iptables", "-A", "FORWARD", "-s", subnet + ".0/24", "-j", "ACCEPT")
             self.cmd(router, "iptables", "-A", "FORWARD", "-m", "conntrack", "--ctstate", "ESTABLISHED,RELATED", "-j", "ACCEPT")
@@ -141,7 +152,7 @@ def trial(binary, coordinated):
                         break
                     time.sleep(.02)
         counts = [topology.counts(side) for side in "ab"]
-        assert connected == coordinated, ("unexpected topology result", coordinated, connected)
+        assert connected == coordinated, ("unexpected topology result", coordinated, connected, counts)
         if coordinated:
             assert len(delivered) == 2
             assert all(row[0] > 0 and row[1] > 0 for row in counts)

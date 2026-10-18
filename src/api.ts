@@ -53,6 +53,10 @@ export function runtimePlatform(): Promise<"desktop" | "android" | "ios"> {
   return platformPromise;
 }
 
+export function appBuildInfo(): Promise<unknown> {
+  return invoke("app_build_info");
+}
+
 export function setNativeTheme(theme: "dark" | "light"): Promise<void> {
   return invoke<void>("set_native_theme", { theme });
 }

@@ -436,7 +436,7 @@ describe("first-run remote invitation consent", () => {
       "create_profile",
       { display_name: "Alex" },
     ));
-    const dialog = await screen.findByRole("dialog", { name: "Join a workspace" });
+    const dialog = await screen.findByRole("dialog", { name: "Join or connect" });
     expect(await within(dialog).findByRole("heading", { name: "Lakewatcher" })).toBeTruthy();
     const workspacePreviews = api.serviceCommand.mock.calls.filter(([command]) => command === "preview_workspace_invitation");
     expect(workspacePreviews.at(-1)?.[1]).toEqual({ invitation });
@@ -612,7 +612,7 @@ describe("new chat invitations", () => {
 
     await act(async () => deliverInvitation?.(invitation));
 
-    const dialog = await screen.findByRole("dialog", { name: "Join a workspace" });
+    const dialog = await screen.findByRole("dialog", { name: "Join or connect" });
     expect(await within(dialog).findByRole("heading", { name: "Lakewatcher" })).toBeTruthy();
     expect(screen.queryByRole("dialog", { name: "New chat" })).toBeNull();
     expect(screen.getAllByRole("dialog")).toHaveLength(1);
@@ -652,7 +652,7 @@ describe("new chat invitations", () => {
     render(<App />);
     await screen.findByRole("heading", { name: "Your private conversations" });
     await act(async () => deliverInvitation?.(firstInvitation));
-    const dialog = await screen.findByRole("dialog", { name: "Join a workspace" });
+    const dialog = await screen.findByRole("dialog", { name: "Join or connect" });
     expect(await within(dialog).findByRole("heading", { name: "Lakewatcher" })).toBeTruthy();
 
     await act(async () => deliverInvitation?.(secondInvitation));
@@ -692,7 +692,7 @@ describe("new chat invitations", () => {
     fireEvent.change(screen.getByRole("textbox", { name: "Invitation" }), { target: { value: invitation } });
     fireEvent.click(screen.getByRole("button", { name: "Check invitation" }));
 
-    const dialog = await screen.findByRole("dialog", { name: "Join a workspace" });
+    const dialog = await screen.findByRole("dialog", { name: "Join or connect" });
     expect(await within(dialog).findByRole("heading", { name: "Lakewatcher" })).toBeTruthy();
     expect(api.serviceCommand.mock.calls.some(([command]) => command === "preview_invitation")).toBe(false);
     expect(api.serviceCommand).toHaveBeenCalledWith(
@@ -717,7 +717,7 @@ describe("new chat invitations", () => {
     fireEvent.change(screen.getByRole("textbox", { name: "Invitation" }), { target: { value: "MESHWORKSPACE4" } });
     fireEvent.click(screen.getByRole("button", { name: "Check invitation" }));
 
-    const dialog = await screen.findByRole("dialog", { name: "Join a workspace" });
+    const dialog = await screen.findByRole("dialog", { name: "Join or connect" });
     expect((await within(dialog).findByRole("alert")).textContent).toBe(
       "This is only the MESHWORKSPACE4 prefix. Copy the complete invitation, including the colon and all signed text after it.",
     );
@@ -769,7 +769,7 @@ describe("new chat invitations", () => {
     await screen.findByRole("heading", { name: "Your private conversations" });
     await act(async () => deliverInvitation?.(invitation));
 
-    const dialog = await screen.findByRole("dialog", { name: "Join a workspace" });
+    const dialog = await screen.findByRole("dialog", { name: "Join or connect" });
     expect(within(dialog).queryByRole("button", { name: "Check this device for a return connection" })).toBeNull();
     fireEvent.click(within(dialog).getByRole("button", { name: alreadySaved ? "Continue saved request" : "Send join request" }));
 
@@ -817,7 +817,7 @@ describe("new chat invitations", () => {
     fireEvent.click(await screen.findByRole("tab", { name: "Open an invite" }));
     fireEvent.change(screen.getByRole("textbox", { name: "Invitation" }), { target: { value: invitation } });
     fireEvent.click(screen.getByRole("button", { name: "Check invitation" }));
-    const dialog = await screen.findByRole("dialog", { name: "Join a workspace" });
+    const dialog = await screen.findByRole("dialog", { name: "Join or connect" });
     fireEvent.click(await within(dialog).findByRole("button", { name: "Send join request" }));
     expect((await within(dialog).findByRole("alert")).textContent).toContain("did not respond in time");
 
@@ -872,7 +872,7 @@ describe("new chat invitations", () => {
     fireEvent.click(await screen.findByRole("tab", { name: "Open an invite" }));
     fireEvent.change(screen.getByRole("textbox", { name: "Invitation" }), { target: { value: "MESHWORKSPACE4:new-invitation-same-workspace" } });
     fireEvent.click(screen.getByRole("button", { name: "Check invitation" }));
-    const dialog = await screen.findByRole("dialog", { name: "Join a workspace" });
+    const dialog = await screen.findByRole("dialog", { name: "Join or connect" });
     expect(await within(dialog).findByRole("heading", { name: "Workspace already saved" })).toBeTruthy();
     expect(within(dialog).getByRole("status").textContent).toContain(status);
     expect(within(dialog).queryByRole("button", { name: "Send join request" })).toBeNull();
@@ -882,7 +882,7 @@ describe("new chat invitations", () => {
     if (delivery === "queued") expect(within(dialog).getByText(/This invitation does not match the invitation saved for this request/)).toBeTruthy();
     if (delivery === "failed") expect(within(dialog).getByText(/This saved request has stopped/)).toBeTruthy();
     fireEvent.click(within(dialog).getByRole("button", { name: "Open saved workspace" }));
-    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Join a workspace" })).toBeNull());
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Join or connect" })).toBeNull());
     expect(screen.getByRole("button", { name: /^Workspace Lakewatcher/ }).getAttribute("aria-current")).toBe("page");
     expect(api.serviceCommand.mock.calls.some(([command]) => ["submit_workspace_join", "create_connection_reply", "remove_workspace_data"].includes(command))).toBe(false);
     if (delivery === "failed") expect(screen.getByRole("button", { name: "Open Workspace settings" })).toBeTruthy();
@@ -912,7 +912,7 @@ describe("new chat invitations", () => {
     fireEvent.click(await screen.findByRole("tab", { name: "Open an invite" }));
     fireEvent.change(screen.getByRole("textbox", { name: "Invitation" }), { target: { value: "MESHWORKSPACE4:copied" } });
     fireEvent.click(screen.getByRole("button", { name: "Check invitation" }));
-    const dialog = await screen.findByRole("dialog", { name: "Join a workspace" });
+    const dialog = await screen.findByRole("dialog", { name: "Join or connect" });
     fireEvent.click(await within(dialog).findByRole("button", { name: "Send join request" }));
     expect((await within(dialog).findByRole("alert")).textContent).toContain(message);
   });
@@ -3542,7 +3542,7 @@ describe("desktop workspaces", () => {
     await screen.findByRole("heading", { name: "Your private conversations" });
     await act(async () => deliverInvitation?.("MESHWORKSPACE3:participant"));
 
-    const dialog = await screen.findByRole("dialog", { name: "Join a workspace" });
+    const dialog = await screen.findByRole("dialog", { name: "Join or connect" });
     expect(await within(dialog).findByRole("heading", { name: "Lakewatcher" })).toBeTruthy();
     expect(api.serviceCommand).toHaveBeenCalledWith("preview_workspace_invitation", {
       invitation: "MESHWORKSPACE3:participant",
@@ -4347,8 +4347,10 @@ describe("desktop workspaces", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Workspace Lakewatcher" }));
     fireEvent.click(await screen.findByRole("button", { name: "Invite people to Lakewatcher" }));
     const dialog = screen.getByRole("dialog");
-    expect((within(dialog).getByRole("combobox", { name: "How should they connect?" }) as HTMLSelectElement).value).toBe("participant");
-    expect(within(dialog).getByRole("option", { name: "Over the Internet — directly to this owner device (default)" })).toBeTruthy();
+    fireEvent.click(within(dialog).getByText("Other connection options"));
+    expect((within(dialog).getByRole("combobox", { name: "How should they connect?" }) as HTMLSelectElement).value).toBe("guided");
+    fireEvent.change(within(dialog).getByRole("combobox", { name: "How should they connect?" }), { target: { value: "participant" } });
+    expect(within(dialog).getByRole("option", { name: "Advanced: direct TCP hosting" })).toBeTruthy();
     expect(within(dialog).getByText(/Direct participant hosting stays on this owner device/i)).toBeTruthy();
     expect(within(dialog).getAllByText(/One-use invitation · expires/i)).toHaveLength(2);
     fireEvent.click(within(dialog).getAllByRole("button", { name: "Revoke" })[0]);
@@ -4360,6 +4362,32 @@ describe("desktop workspaces", () => {
     expect(workspaceInvitationCall?.[1]).not.toHaveProperty("remote_profile_id");
     expect((await within(dialog).findByRole("textbox", { name: "Workspace invitation text" }) as HTMLTextAreaElement).value).toBe("MESHWORKSPACE3:three");
     expect(within(dialog).getByText(/effective direct-host expiry/i)).toBeTruthy();
+  });
+
+  it("starts the guided controller from Invite and exposes only its current message", async () => {
+    const current: Snapshot = { ...snapshot(), workspaces:[workspace], workspace_channels:[workspaceChannel], workspace_join_requests:[], workspace_invitations:[], workspace_drafts:[] };
+    api.runtimePlatform.mockResolvedValue("desktop");
+    api.initializeService.mockResolvedValue(current);
+    api.onInvitation.mockResolvedValue(() => undefined);
+    api.onServiceEvent.mockResolvedValue(() => undefined);
+    api.serviceCommand.mockImplementation(async (command: string) => {
+      if (command === "snapshot") return current;
+      if (command === "list_workspace_messages") return { messages:[], next_cursor:null, high_water:0 };
+      if (command === "create_workspace_invitation") return { id:"guided-invite", workspace_id:workspace.id, text:"MESHWORKSPACE-legacy", value:"legacy", expires_at:2_000_000_000, connection_mode:"email" };
+      if (command === "prepare_direct_offer") return { setup_id:"setup", workspace_id:workspace.id, state:"waiting_for_reply", kind:"offer", expires_at:2_000_000_000, candidate_count:0, text:"mesh-direct:current" };
+      return {};
+    });
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name:"Workspace Lakewatcher" }));
+    fireEvent.click(await screen.findByRole("button", { name:"Invite people to Lakewatcher" }));
+    fireEvent.click(screen.getByRole("button", { name:"Prepare invitation" }));
+    await waitFor(() => expect(api.serviceCommand).toHaveBeenCalledWith("prepare_direct_offer", { invitation_id:"guided-invite" }));
+    const dialog = screen.getByRole("dialog");
+    expect(await within(dialog).findByText(/Next, they open Join or connect/)).toBeTruthy();
+    expect(within(dialog).queryByText("Copy complete invitation")).toBeNull();
+    expect(within(dialog).queryByDisplayValue("MESHWORKSPACE-legacy")).toBeNull();
+    expect(within(dialog).getAllByRole("button", { name:"Copy connection message" })).toHaveLength(1);
+    expect(api.serviceCommand).toHaveBeenCalledWith("create_workspace_invitation", expect.objectContaining({ connection_mode:"email" }));
   });
 
   it("allows an owner to replace a removed member at the eight-person history limit", async () => {

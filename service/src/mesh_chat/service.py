@@ -142,6 +142,8 @@ class MeshChatService(
     ParticipantAccessServiceMixin,
 ):
     COMMANDS = {
+        "resume_direct_setup",
+        "connection_diagnostics", "clear_connection_diagnostics",
         "preview_direct_connection", "prepare_direct_offer", "prepare_direct_answer",
         "prepare_direct_ready", "accept_direct_ready", "connect_direct_setup",
         "direct_setup_status", "cancel_direct_setup",
@@ -305,6 +307,8 @@ class MeshChatService(
     # allowed snapshot polling to grow the encrypted command table without a
     # useful bound.
     UNCACHED_COMMANDS = {
+        "resume_direct_setup",
+        "connection_diagnostics", "clear_connection_diagnostics",
         "preview_direct_connection", "prepare_direct_offer", "prepare_direct_answer",
         "prepare_direct_ready", "accept_direct_ready", "connect_direct_setup",
         "direct_setup_status", "cancel_direct_setup",
@@ -2531,6 +2535,12 @@ class MeshChatService(
             return response, command == "shutdown"
 
     def _execute(self, command: str, value: Any) -> Any:
+        if command in {"connection_diagnostics", "clear_connection_diagnostics"}:
+            _payload(value, allowed=set())
+            from .connection_diagnostics import report
+            if command == "clear_connection_diagnostics":
+                self.store.delete("connection_diagnostics", "history")
+            return report(self)
         recovery_commands = {
             "direct_recovery_status": ("status",set()),
             "export_recovery_update": ("export",{"identifier"}),
@@ -2551,11 +2561,20 @@ class MeshChatService(
             "connect_direct_setup": ("connect", {"setup_id", "document"}),
             "direct_setup_status": ("status", {"setup_id"}),
             "cancel_direct_setup": ("cancel", {"setup_id"}),
+            "resume_direct_setup": ("resume", {"workspace_id"}),
         }
         if command in direct_commands:
             method, fields = direct_commands[command]
             body = _payload(value, allowed=fields, required=fields)
-            return getattr(self._direct_setup, method)(**body)
+            from .connection_diagnostics import record
+            try:
+                result = getattr(self._direct_setup, method)(**body)
+            except Exception:
+                record(self, "import_rejected" if method == "preview" else "action_failed", {"state":"failed"})
+                raise
+            if method == "preview":
+                record(self, "import_verified", {"state":"verified", "kind":result.get("kind")})
+            return result
         if command == "snapshot":
             _payload(value, allowed=set())
             return self.snapshot()

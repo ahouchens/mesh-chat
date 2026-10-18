@@ -1,6 +1,7 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { serviceCommand } from "./api";
-import { InvitationImportActions } from "./InvitationTransfer";
+import { InvitationImportActions, InvitationQrCode } from "./InvitationTransfer";
+import { ConnectionDiagnostics } from "./ConnectionDiagnostics";
 import { normalizeInvitationInput } from "./invitation-transfer";
 import type { Workspace } from "./types";
 
@@ -8,21 +9,21 @@ type Preview = { kind: "offer" | "answer" | "ready"; workspace_id: string; works
 type Setup = { setup_id: string; state: string; workspace_id: string; expires_at: number; candidate_count: number; text?: string };
 
 const states: Record<string, string> = {
-  waiting_for_reply: "Share this offer with the recipient and wait for their reply.",
-  waiting_for_ready: "Share this reply with the owner. Keep Mesh Chat open while waiting for their ready document.",
-  ready_to_share: "Share this ready document with the recipient while both apps are open.",
-  ready_received: "Ready document verified. Start the connection while the owner is online.",
-  connecting: "Trying the signed direct paths. Share the ready document now if you created it.",
+  waiting_for_reply: "Send this invitation to the other person. Next, they open Join or connect and send a reply back to you.",
+  waiting_for_ready: "Share this reply with the owner. Next, the owner opens Join or connect and sends you the final connection message.",
+  ready_to_share: "Send this connection message to the other person now. Next, they paste it into Join or connect and choose Connect.",
+  ready_received: "Connection message checked. Both devices need to stay open while connecting.",
+  connecting: "Trying to connect. Keep both apps open. Send the connection message below to the other person now if you created it.",
   bootstrap_connected: "Direct setup path established. The signed join request still needs acknowledgment and owner approval.",
   relationship_active: "Direct setup is complete. Your saved device relationship reconnects automatically. Check Direct connections in workspace settings for current status.",
   admitted_path: "Direct workspace path established with fresh credentials. Workspace delivery and receipts appear in the conversation.",
-  existing_routes_only: "Neither device supplied a public direct candidate. The saved join request continues over existing routes, including signed TCP routes. Refresh these details after changing networks.",
-  refresh_required: "These connection details can no longer be used. Ask the owner for a fresh offer, then exchange a new reply and ready document.",
-  cancelled: "Direct setup cancelled. Your saved workspace request and existing routes remain available.",
+  existing_routes_only: "Neither device found a public address it can share. This connection cannot start on the current networks. Your request stays saved and can use an existing authorized route. Waiting or copying these details again will not discover an address.",
+  refresh_required: "These connection details can no longer be used. Ask the owner to refresh their saved invitation and send it through Join or connect. Your saved request is kept.",
+  cancelled: "Connection attempt cancelled. Your saved request is kept; a request already received by the owner is not withdrawn.",
 };
 
-export function DirectConnectionSetup({ invitationId, initialDocument = "", onOpenWorkspace }: {
-  invitationId?: string; initialDocument?: string; onOpenWorkspace?: (workspace: Workspace) => Promise<void>;
+export function DirectConnectionSetup({ invitationId, workspaceId, autoStart = false, onShared, initialDocument = "", onOpenWorkspace }: {
+  invitationId?: string; workspaceId?: string; autoStart?: boolean; onShared?: () => void; initialDocument?: string; onOpenWorkspace?: (workspace: Workspace) => Promise<void>;
 }) {
   const [input, setInput] = useState(initialDocument);
   const [preview, setPreview] = useState<Preview | null>(null);
@@ -31,6 +32,21 @@ export function DirectConnectionSetup({ invitationId, initialDocument = "", onOp
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [feedback, setFeedback] = useState("");
+  const [now, setNow] = useState(Date.now());
+  const started = useRef(false);
+  const operation = useRef({ document: "", id: "" });
+  useEffect(() => { const timer = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(timer); }, []);
+  useEffect(() => {
+    if (started.current) return;
+    started.current = true;
+    if (autoStart && invitationId) void offer();
+    if (workspaceId) {
+      setBusy(true);
+      void serviceCommand<Setup>("resume_direct_setup", { workspace_id: workspaceId }).then(value => { setSetup(value); setOutgoing(value.text ?? ""); })
+        .catch(() => setError("Could not reopen setup. Paste fresh connection details from the owner below."))
+        .finally(() => setBusy(false));
+    }
+  }, [invitationId, workspaceId, autoStart]);
 
   useEffect(() => {
     if (!setup?.setup_id || setup.state === "cancelled") return;
@@ -53,7 +69,7 @@ export function DirectConnectionSetup({ invitationId, initialDocument = "", onOp
       const document = await normalizeInvitationInput(input);
       const checked = await serviceCommand<Preview>("preview_direct_connection", { document });
       setInput(document); setPreview(checked);
-    } catch { setError("Could not verify these connection details. They may be incomplete, changed or expired. Ask the sender for a fresh document."); }
+    } catch { setError("Could not verify these connection details. They may be incomplete, changed or expired. Ask the sender to refresh the connection details and send the complete message."); }
     finally { setBusy(false); }
   };
   const offer = async () => {
@@ -68,32 +84,36 @@ export function DirectConnectionSetup({ invitationId, initialDocument = "", onOp
   const apply = async () => {
     if (!preview) return;
     setBusy(true); setError(""); setFeedback("");
+    if (operation.current.document !== input) operation.current = { document: input, id: crypto.randomUUID() };
     try {
       const command = preview.kind === "offer" ? "prepare_direct_answer" : preview.kind === "answer" ? "prepare_direct_ready" : "accept_direct_ready";
       const value = await serviceCommand<Setup>(command, { document: input,
-        ...(preview.kind === "offer" ? { operation_id: crypto.randomUUID() } : {}) });
+        ...(preview.kind === "offer" ? { operation_id: operation.current.id } : {}) });
       setSetup(value); setOutgoing(value.text ?? ""); setPreview(null);
       if (preview.kind !== "offer") {
         setSetup(await serviceCommand<Setup>("connect_direct_setup", {
           setup_id: value.setup_id, document: preview.kind === "answer" ? value.text : input,
         }));
       }
-    } catch { setError("These details could not start the next step. If either app restarted, the network changed or the details expired, exchange a fresh offer and reply."); }
+    } catch { setError("These details could not start the next step. Your saved request is kept. If either app restarted or the details expired, ask the owner to refresh the connection details."); }
     finally { setBusy(false); }
   };
   const copy = async () => {
-    try { await navigator.clipboard.writeText(outgoing); setFeedback("Complete connection document copied."); }
+    if (setup && setup.expires_at * 1000 <= Date.now()) return;
+    try { await navigator.clipboard.writeText(outgoing); onShared?.(); setFeedback("Copied. Send this message to the other device."); }
     catch { setFeedback("Select the complete document below and copy it manually."); }
   };
   const share = async () => {
+    if (setup && setup.expires_at * 1000 <= Date.now()) return;
     if (!navigator.share) { await copy(); return; }
-    try { await navigator.share({ title: "Mesh Chat direct connection", text: outgoing }); setFeedback("Connection document shared."); }
+    try { await navigator.share({ title: "Mesh Chat connection", text: outgoing }); onShared?.(); setFeedback("Shared. Return to Mesh Chat promptly to keep setup available."); }
     catch (reason) { if (!(reason instanceof DOMException && reason.name === "AbortError")) await copy(); }
   };
   const save = () => {
+    if (setup && setup.expires_at * 1000 <= Date.now()) return;
     const url = URL.createObjectURL(new Blob([outgoing], { type: "text/plain;charset=utf-8" }));
     const anchor = document.createElement("a");
-    anchor.href = url; anchor.download = "mesh-chat-direct.meshchat-invite"; anchor.click();
+    anchor.href = url; anchor.download = "mesh-chat-direct.meshchat-invite"; anchor.click(); onShared?.();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   };
   const cancel = async () => {
@@ -112,19 +132,21 @@ export function DirectConnectionSetup({ invitationId, initialDocument = "", onOp
     } catch { setError("Could not open the workspace. Close this dialog and open it from the workspace list."); }
   };
 
-  return <section className="form-stack" aria-label="Direct connection setup">
-    <h3>Direct connection setup</h3>
-    <p>Exchange an offer, reply and ready document by email or file. Keep both apps open and exchange them promptly: setup details last only a few minutes. A phone can create a reply even when it cannot host an inbound connection.</p>
-    {invitationId && <button className="button button--secondary" disabled={busy} onClick={() => void offer()}>{setup ? "Refresh direct offer" : "Prepare direct offer"}</button>}
-    <label className="field"><span>Received direct connection document</span><textarea aria-label="Received direct connection document" rows={5} value={input} onChange={(event) => edit(event.target.value)} disabled={busy} /></label>
+  const remaining = setup ? Math.max(0, Math.ceil((setup.expires_at * 1000 - now) / 1000)) : 0;
+  return <section className="form-stack guided-connection" aria-label="Direct connection setup">
+    <h3>Connect your devices</h3>
+    <p>Send each message using your preferred app. On the receiving device, open <strong>Join or connect</strong> and paste it there. Both apps need to be open while connecting.</p>
+    {invitationId && <button className="button button--secondary" disabled={busy} onClick={() => void offer()}>{setup ? "Refresh connection details" : "Prepare invitation"}</button>}
+    <label className="field"><span>Message from the other device</span><textarea aria-label="Message from the other device" rows={5} value={input} onChange={(event) => edit(event.target.value)} disabled={busy} /></label>
     <InvitationImportActions onValue={edit} />
-    <button className="button button--secondary" disabled={busy || !input.trim()} onClick={() => void review()}>Review connection document</button>
-    {preview && <div className="direct-consent"><h4>{preview.workspace_name}</h4><p>Verified {preview.kind === "answer" ? "reply" : preview.kind} · expires {new Date(preview.expires_at * 1000).toLocaleTimeString()}. {preview.candidate_count ? "Candidate paths still need a live connection check." : "No public candidate was supplied; a reply can still be created."}</p><button className="button button--primary" disabled={busy} onClick={() => void apply()}>{preview.kind === "offer" ? "Create connection reply" : preview.kind === "answer" ? "Create ready document" : "Use ready document"}</button></div>}
-    {setup && <div role="status"><p>{states[setup.state] ?? "Connection setup is in progress."}</p><p className="muted">Setup expiry: {new Date(setup.expires_at * 1000).toLocaleTimeString()}. Workspace approval and receipt status are shown in the workspace.</p></div>}
-    {outgoing && <><label className="field"><span>Complete document to share</span><textarea aria-label="Complete direct connection document" readOnly rows={5} value={outgoing} onFocus={(event) => event.currentTarget.select()} /></label><div className="dialog-actions"><button className="button button--secondary" onClick={() => void copy()}>Copy connection document</button><button className="button button--secondary" onClick={() => void share()}>Share connection document</button><button className="button button--ghost" onClick={save}>Save connection file</button></div></>}
-    {setup && setup.state !== "cancelled" && <button className="button button--ghost" disabled={busy} onClick={() => void cancel()}>Cancel direct setup</button>}
+    <button className="button button--secondary" disabled={busy || !input.trim()} onClick={() => void review()}>Check received message</button>
+    {preview && <div className="direct-consent"><h4>{preview.workspace_name}</h4><p>Message checked. {preview.kind === "offer" ? "Save your request and prepare a reply for the owner." : preview.kind === "answer" ? "Prepare the final connection message for the other person." : "Both devices need to stay open for this step."}</p><button className="button button--primary" disabled={busy} onClick={() => void apply()}>{preview.kind === "offer" ? "Prepare reply" : preview.kind === "answer" ? "Prepare connection message" : "Connect"}</button></div>}
+    {setup && <div role="status"><p>{states[setup.state] ?? "Connection setup is in progress."}</p><p className="muted">Connection details: {remaining ? `${Math.floor(remaining / 60)}m ${remaining % 60}s remaining` : "expired"}. This short setup timer is separate from invitation expiry. Check the workspace for owner receipt and approval.</p></div>}
+    {outgoing && remaining > 0 && <><details><summary>Message details and QR code</summary><InvitationQrCode document={outgoing} destination="workspace" /><label className="field"><span>Complete message to share</span><textarea aria-label="Complete connection message" readOnly rows={5} value={outgoing} onFocus={(event) => event.currentTarget.select()} /></label></details><div className="dialog-actions"><button className="button button--secondary" onClick={() => void copy()}>Copy connection message</button><button className="button button--secondary" onClick={() => void share()}>Share connection message</button><button className="button button--ghost" onClick={save}>Save connection file</button></div></>}
+    {setup && setup.state !== "cancelled" && <button className="button button--ghost" disabled={busy} onClick={() => void cancel()}>Cancel connection attempt</button>}
     {setup && onOpenWorkspace && <button className="button button--secondary" onClick={() => void openWorkspace()}>View workspace</button>}
     {feedback && <p aria-live="polite">{feedback}</p>}
     {error && <p className="form-error" role="alert">{error}</p>}
+    <ConnectionDiagnostics />
   </section>;
 }

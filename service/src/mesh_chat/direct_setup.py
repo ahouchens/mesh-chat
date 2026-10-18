@@ -79,6 +79,11 @@ class DirectSetup:
         if previous and previous.get("relationship_id"):
             value["relationship_id"] = previous["relationship_id"]
         self.service.store.put("direct_setup", setup_id, value)
+        if text is not None:
+            self.service.store.put("direct_setup_document", setup_id, {"text":text})
+        if previous != value:
+            from .connection_diagnostics import record
+            record(self.service, "state", value)
         self.service._changed()
         return {**value, **({"text":text} if text is not None else {})}
 
@@ -116,6 +121,28 @@ class DirectSetup:
 
     def preview(self, document):
         return verify_connection_document(document).preview()
+
+    def resume(self, workspace_id):
+        """Reopen a saved join without clipboard data; never revive a lost socket."""
+        if not isinstance(workspace_id, str):
+            raise ValidationError("Workspace identifier is invalid")
+        setup_id = self._id("joiner", workspace_id)
+        saved = self.service.store.get("direct_setup", setup_id)
+        if saved is None:
+            return {"state":"refresh_required", "workspace_id":workspace_id,
+                    "expires_at":0, "candidate_count":0, "reason":"no_saved_connection_details"}
+        status = self.status(setup_id)
+        if status["state"] == "waiting_for_ready":
+            with self._lock:
+                prepared = self._prepared.get(setup_id)
+            if prepared is None:
+                return {**status, "state":"refresh_required", "reason":"socket_not_retained"}
+            prepared.document_fields()
+            document = self.service.store.get("direct_setup_document", setup_id)
+            if document:
+                verify_connection_document(document["text"])
+                return {**status, "text":document["text"]}
+        return status
 
     @staticmethod
     def _family(checked):
