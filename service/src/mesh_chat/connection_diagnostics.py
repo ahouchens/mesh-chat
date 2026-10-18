@@ -15,7 +15,8 @@ LIMIT = 200
 RETENTION = 7 * 24 * 3600
 PHASES = frozenset({"waiting_for_reply", "waiting_for_ready", "ready_to_share", "ready_received",
     "connecting", "bootstrap_connected", "relationship_active", "admitted_path", "existing_routes_only",
-    "refresh_required", "cancelled", "failed", "verified", "recovery", "unavailable"})
+    "refresh_required", "cancelled", "failed", "verified", "recovery", "unavailable",
+    "connected", "reconnecting", "connection_update_needed", "dormant"})
 EVENTS = frozenset({"state", "import_verified", "import_rejected", "action_failed", "lifecycle_interrupted"})
 KINDS = frozenset({"offer", "answer", "ready", "recovery", "unavailable"})
 SOURCES = ("ipv4", "ipv6", "local_global", "pcp", "upnp", "upnp_ipv6", "nat_pmp")
@@ -38,6 +39,8 @@ def sanitize(value):
         "phase":enum("phase", PHASES, "unavailable"),
         "kind":enum("kind", KINDS, "unavailable"),
         "candidate_count":integer("candidate_count", 8),
+        "receipt_status":enum("receipt_status", {"confirmed", "not_confirmed"}, "unavailable"),
+        "approval_status":enum("approval_status", {"approved", "pending"}, "unavailable"),
         "candidate_sources":{key:sources[key] if type(sources.get(key)) is int and 0 <= sources[key] <= 8 else None for key in SOURCES},
         "checks_started":integer("checks_started", 64, None),
         "checks_authenticated":integer("checks_authenticated", 128, None),
@@ -72,7 +75,7 @@ def record(service, event, state=None):
 
 def _record(service, event, state=None):
     state = state or {}
-    row = sanitize({**{key:state.get(key) for key in ("state", "kind", "candidate_count", "candidate_sources", "expires_at", "checks_started", "checks_authenticated", "elapsed_ms")},
+    row = sanitize({**{key:state.get(key) for key in ("state", "kind", "candidate_count", "candidate_sources", "receipt_status", "approval_status", "expires_at", "checks_started", "checks_authenticated", "elapsed_ms")},
         "phase":state.get("state"), "event":event, "time":int(time.time()),
         "attempt":hashlib.sha256(str(state.get("setup_id", "unknown")).encode()).hexdigest()[:12]})
     value = history(service)
@@ -80,7 +83,7 @@ def _record(service, event, state=None):
         return
     value["truncated"] = value["truncated"] or len(value["events"]) >= LIMIT
     value["events"] = (value["events"] + [row])[-LIMIT:]
-    if row["phase"] in {"failed", "existing_routes_only", "refresh_required"} or event in {"import_rejected", "action_failed"}:
+    if row["phase"] in {"failed", "existing_routes_only", "refresh_required", "connection_update_needed"} or event in {"import_rejected", "action_failed"}:
         value["last_failure"] = row
     service.store.put("connection_diagnostics", "history", value)
 
@@ -95,7 +98,7 @@ def report(service):
         installed = "unavailable"
     result = {"format_version":1, "service_version":installed, "captured_at":int(time.time()),
         "retention_days":7, "event_limit":LIMIT, "native_check_counts":"unavailable",
-        "receipt_status":"unavailable", "approval_status":"unavailable", **value}
+        "receipt_status":"see_event_timestamp", "approval_status":"see_event_timestamp", **value}
     while len(json.dumps(result).encode()) >= 65536 and result["events"]:
         result["events"] = result["events"][1:]
         result["truncated"] = True

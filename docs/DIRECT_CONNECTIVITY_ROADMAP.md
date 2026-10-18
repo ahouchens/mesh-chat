@@ -1,5 +1,14 @@
 # Durable direct connectivity architecture and roadmap
 
+2026-10-18 implementation update: the server-free traversal increment preserves
+the existing native transport, signed exchange, admission and recovery machinery.
+It adds coordinated checks and a default guided flow; it does not solve discovery
+of two unknown public mappings. See [ADR 0019](adr/0019-server-free-traversal.md)
+and the [acceptance evidence](DIRECT_CONNECTIVITY_TRAVERSAL_EVIDENCE.md) for the
+implemented delta and remaining qualification gates. Older phase headings below
+must not be interpreted as either absence of those implementations or proof of
+physical Windows-to-carrier success.
+
 Status: Phase 0 implemented; Phase 1 controlled proof complete; Phases 2–5 open. Date: 2026-10-15; updated 2026-10-17. Scope: Windows and Android first; iOS follows physical-device validation.
 
 Phase 2 increments and unmet gates are tracked in

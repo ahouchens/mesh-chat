@@ -86,7 +86,14 @@ class DirectSetup:
             with self._lock:
                 prepared = self._prepared.get(setup_id)
             counts = prepared.diagnostic_counts() if hasattr(prepared, "diagnostic_counts") else {}
-            record(self.service, "state", {**value, "candidate_sources":counts, **getattr(prepared, "statistics", {})})
+            workspace = self.service.store.get("workspace", self.service._workspace_record_id(workspace_id)) or {}
+            receipt = "unavailable"
+            approval = "unavailable"
+            if workspace.get("local_role") != "owner" and workspace.get("state") in {"joining", "active"}:
+                receipt = "confirmed" if workspace.get("join_receipt") else "not_confirmed"
+                approval = "approved" if workspace["state"] == "active" else "pending"
+            record(self.service, "state", {**value, "candidate_sources":counts,
+                "receipt_status":receipt, "approval_status":approval, **getattr(prepared, "statistics", {})})
         self.service._changed()
         return {**value, **({"text":text} if text is not None else {})}
 

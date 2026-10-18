@@ -95,10 +95,15 @@ class Topology:
             self.cmd(router, "iptables", "-A", "FORWARD", "-m", "conntrack", "--ctstate", "ESTABLISHED,RELATED", "-j", "ACCEPT")
             self.cmd(router, "iptables", "-A", "FORWARD", "-j", "DROP")
 
-    def map(self, side, port):
+    def map(self, side, port, destination_dependent=False):
         subnet, public = ("10.201.1", "198.18.0.1") if side == "a" else ("10.201.2", "198.18.0.2")
         # SNAT only: this is not DNAT or an inbound port forward. An unsolicited
         # inbound datagram has no conntrack mapping and cannot reach either host.
+        if destination_dependent:
+            peer = "198.18.0.2" if side == "a" else "198.18.0.1"
+            mapped_port = port + 1 if port < 65535 else port - 1
+            self.cmd("r" + side, "iptables", "-t", "nat", "-A", "POSTROUTING", "-s", subnet + ".0/24",
+                     "-d", peer, "-p", "udp", "-j", "SNAT", "--to-source", f"{public}:{mapped_port}")
         self.cmd("r" + side, "iptables", "-t", "nat", "-A", "POSTROUTING", "-s", subnet + ".0/24",
                  "-p", "udp", "-j", "SNAT", "--to-source", f"{public}:{port}")
 
@@ -106,22 +111,28 @@ class Topology:
         lines = self.cmd("r" + side, "iptables", "-L", "FORWARD", "-nvx").splitlines()[2:]
         return [int(line.split()[0]) for line in lines if line.strip()]
 
+    def block_udp(self, side):
+        self.cmd("r" + side, "iptables", "-t", "raw", "-I", "PREROUTING", "1",
+                 "-i", self.prefix + "2" + side, "-p", "udp", "-j", "DROP")
+
     def close(self):
         for namespace in reversed(self.names):
             run("ip", "netns", "delete", namespace)
 
 
-def trial(binary, coordinated):
+def trial(binary, coordinated, blocked="", destination_dependent=False):
     topology, hosts = Topology(), []
     started = time.monotonic()
     try:
         topology.create()
+        for side in blocked:
+            topology.block_udp(side)
         hosts = [Native(topology.ns(side), binary) for side in ("a", "b")]
         prepared = [host.channel.request("prepare", address=f"10.201.{i+1}.1:0", generation=1,
                     remaining_ms=60000) for i, host in enumerate(hosts)]
         for i, host in enumerate(hosts):
             p = prepared[i]
-            topology.map("ab"[i], p["port"])
+            topology.map("ab"[i], p["port"], destination_dependent)
             host.channel.request("arm", id=p["id"], session=p["session"], generation=1, digest="ab" * 32)
         for i, host in enumerate(hosts):
             other = prepared[1-i]
@@ -152,17 +163,19 @@ def trial(binary, coordinated):
                         break
                     time.sleep(.02)
         counts = [topology.counts(side) for side in "ab"]
-        assert connected == coordinated, ("unexpected topology result", coordinated, connected, counts)
-        if coordinated:
+        expected = coordinated and not blocked and not destination_dependent
+        assert connected == expected, ("unexpected topology result", coordinated, blocked, connected, counts)
+        if expected:
             assert len(delivered) == 2
             assert all(row[0] > 0 and row[1] > 0 for row in counts)
-        else:
+        elif not coordinated:
             assert counts[0][0] > 0 and counts[1][0] == 0
-        return {"profile":"endpoint-independent mapping, outbound-dependent UDP filtering",
+        return {"profile":"destination-dependent mapping with stale destination-specific tuple" if destination_dependent else "endpoint-independent mapping, outbound-dependent UDP filtering",
                 "coordinated_checks":coordinated, "connected":connected,
+                "udp_blocked_sides":len(blocked), "expected_connection":bool(expected),
                 "bidirectional_packets":len(delivered), "router_forward_counters":counts,
                 "elapsed_seconds":round(time.monotonic()-started, 3),
-                "candidate_source":"test-only NAT ground truth", "retained_native_ports":True}
+                "candidate_source":"test-only tuple for a different destination" if destination_dependent else "test-only NAT ground truth", "retained_native_ports":True}
     finally:
         for host in hosts:
             host.close()
@@ -176,9 +189,17 @@ def main():
     args = parser.parse_args()
     if os.name != "posix" or os.geteuid() != 0 or os.environ.get("GITHUB_ACTIONS") != "true":
         raise SystemExit("Run only in the isolated GitHub Linux qualification job")
-    results = [trial(str(Path(args.binary).resolve()), enabled) for enabled in (False, True, True, True)]
-    Path(args.report).write_text(json.dumps({"schema":1, "trials":results,
-        "physical_evidence":False, "discovery_evidence":False}, indent=2) + "\n")
+    results = []
+    scenarios = [(False,"",False), (True,"",False), (True,"",False), (True,"",False),
+                 (True,"a",False), (True,"ab",False), (True,"",True)]
+    for enabled, blocked, destination_dependent in scenarios:
+        try:
+            results.append(trial(str(Path(args.binary).resolve()), enabled, blocked, destination_dependent))
+        finally:
+            # Preserve completed controls even if a subsequent trial fails.
+            Path(args.report).write_text(json.dumps({"schema":1, "trials":results,
+                "expected_trial_count":len(scenarios), "physical_evidence":False, "discovery_evidence":False,
+                "tcp_fallback_evidence":False}, indent=2) + "\n")
 
 
 if __name__ == "__main__":

@@ -5,7 +5,7 @@ import packageInfo from "../package.json";
 const unavailable = "unavailable";
 const phases = new Set(["waiting_for_reply", "waiting_for_ready", "ready_to_share", "ready_received", "connecting",
   "bootstrap_connected", "relationship_active", "admitted_path", "existing_routes_only", "refresh_required",
-  "cancelled", "failed", "verified", "recovery", "unavailable"]);
+  "cancelled", "failed", "verified", "recovery", "unavailable", "connected", "reconnecting", "connection_update_needed", "dormant"]);
 const events = new Set(["state", "import_verified", "import_rejected", "action_failed", "lifecycle_interrupted"]);
 const kinds = new Set(["offer", "answer", "ready", "recovery"]);
 function object(value: unknown): Record<string, unknown> {
@@ -35,6 +35,8 @@ export function diagnosticReport(build: unknown, raw: unknown, log = false) {
     return { time: number(event.time, 2**53 - 1), attempt: token(event.attempt, /^[0-9a-f]{12}$/),
       event: choice(event.event, events), phase: choice(event.phase, phases), kind: choice(event.kind, kinds),
       candidate_count: number(event.candidate_count, 8), expires_at: number(event.expires_at, 2**53 - 1),
+      receipt_status: choice(event.receipt_status, new Set(["confirmed", "not_confirmed"])),
+      approval_status: choice(event.approval_status, new Set(["approved", "pending"])),
       candidate_sources: Object.fromEntries(["ipv4", "ipv6", "local_global", "pcp", "upnp", "upnp_ipv6", "nat_pmp"].map(key => [key, number(object(event.candidate_sources)[key], 8)])),
       checks_started: number(event.checks_started, 64), checks_authenticated: number(event.checks_authenticated, 128), elapsed_ms: number(event.elapsed_ms, 3600_000) };
   };
@@ -44,7 +46,7 @@ export function diagnosticReport(build: unknown, raw: unknown, log = false) {
     ...versionDetails(build), service_version: serviceVersion,
     service_version_mismatch: serviceVersion !== unavailable && serviceVersion !== packageInfo.version,
     service_status: value.format_version === 1 ? "available" : unavailable,
-    native_check_counts: rows.at(-1)?.checks_started !== null && rows.length ? "see_event_counts" : unavailable, receipt_status: unavailable, approval_status: unavailable,
+    native_check_counts: rows.at(-1)?.checks_started !== null && rows.length ? "see_event_counts" : unavailable, receipt_status: "see_event_timestamp", approval_status: "see_event_timestamp",
     retention_days: 7, event_limit: 200, truncated: value.truncated === true,
     last_failure: value.last_failure ? cleanEvent(value.last_failure) : null,
     events: log ? rows : rows.slice(-1) };

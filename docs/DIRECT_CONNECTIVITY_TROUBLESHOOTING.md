@@ -1,5 +1,37 @@
 # Direct Internet connection troubleshooting
 
+## Guided connection update (implementation branch)
+
+The server-free traversal update uses **Invite → Prepare invitation** and one
+**Join or connect** paste/import entry point on either device. Send each current
+message to the other device and follow the displayed next action. The exchange
+is invitation, reply, final connection message; keep both apps open for the
+connection attempt. Return promptly after Android sharing: the temporary
+background grace is 45 seconds, not a guarantee of background execution.
+
+To resume, use **Continue setup** in the pending workspace or beside an active
+invitation in the owner's Invite dialog. A live saved message is reused. Lost
+socket ownership or expired details require a refresh of that same invitation;
+creating a different invitation cannot replace a saved join request.
+
+Coordinated QUIC checks can open compatible NAT filters when usable peer tuples
+are known. They cannot discover two unknown public mappings. If neither device
+finds a usable public address, waiting or exchanging the same text again will
+not solve discovery. Use a permitted router mapping, usable global IPv6, another
+network, or an existing authorized direct route. No external helper is contacted.
+
+Connection success, signed owner receipt, and owner approval are separate facts.
+A pending request alone does not imply a Windows notification. Use **Copy
+diagnostics** on the setup/pending/recovery screen; Settings → **Help and
+diagnostics** also provides the bounded connection log and version details.
+Clipboard denial offers a selectable report and file download. Reports omit
+addresses and invitation contents; timestamps identify when each fact was seen.
+
+This update is not yet a qualified release. See the
+[acceptance evidence](DIRECT_CONNECTIVITY_TRAVERSAL_EVIDENCE.md). The older
+TCP-hosting options described below remain available under **Other connection
+options**; their diagnostics do not measure the new QUIC check path.
+
 Mesh Chat is direct-first: a new Internet invitation asks the sender's own device to host a short-lived, authenticated connection, and the recipient first tries an outbound connection to that signed route. There is no Mesh Chat account, rendezvous service, public-IP lookup, STUN/TURN service, managed relay, or silent transport operator. Email, Slack, Teams, QR, clipboard, and invitation files carry only the signed invitation.
 
 When a signed invitation is too dense for a reliable ordinary QR, Mesh Chat may

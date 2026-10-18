@@ -2,7 +2,25 @@ import pytest
 from mesh_chat import connectivity as c
 from mesh_chat.direct_candidates import prepare_candidates
 from mesh_chat.errors import ValidationError
-from test_direct_candidates import Native, V4
+from test_direct_candidates import Native, V4, V6
+
+
+def test_recovery_retries_another_route_without_reusing_foreign_port_hints(monkeypatch):
+    native = RecoveryNative()
+    seen = []
+    original = native.request
+    def request(operation, **payload):
+        if operation == "prepare_recovery": seen.append(payload["address"])
+        return original(operation, **payload)
+    native.request = request
+    monkeypatch.setattr(c,"map_upnp_ipv6_pinhole",lambda *a,**k: (_ for _ in ()).throw(OSError()))
+    prepared = prepare_candidates(native,generation=1,expires_at=4600,routes=[V4,V6],recovery=True,
+        preferred_host=V4.local_address, preferred_port=45000, route_offset=1,
+        clock=lambda:1000,monotonic=lambda:100)
+    try:
+        assert seen == [f"[{V6.local_address}]:0"]
+        assert prepared.document_fields()["candidates"][0]["host"] == V6.local_address
+    finally: prepared.close()
 
 class RecoveryNative(Native):
     def request(self,operation,**payload):

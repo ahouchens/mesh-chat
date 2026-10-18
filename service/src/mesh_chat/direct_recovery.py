@@ -66,7 +66,12 @@ class DirectRecovery:
             if value.get("version") != 1:
                 raise ValidationError("Unsupported recovery state version")
             return {**value, **changes}
-        return self.service.store.update_record("direct_recovery", identifier, update)
+        result = self.service.store.update_record("direct_recovery", identifier, update)
+        if "state" in changes:
+            from .connection_diagnostics import record
+            record(self.service, "state", {"setup_id":identifier, "kind":"recovery",
+                "state":result["state"], "expires_at":(result.get("local") or {}).get("expires_at",0)})
+        return result
 
     def adopt(self, expected, carrier):
         """Keep the Phase 2 path usable while negotiating durable recovery."""
@@ -207,6 +212,7 @@ class DirectRecovery:
             stage = "prepare"
             prepared = prepare_candidates(self.service._direct_native,generation=generation,
                 expires_at=int(self.clock())+3600,recovery=True,preferred_port=port,
+                preferred_host=hint.get("host"), route_offset=max(0,state["attempts"]-1),
                 preferred_external_port=cleanup[0]["external_port"] if cleanup and not (old and not old._stop.is_set()) else 0)
             with self.service._dispatch_lock:
                 if not self._valid(identifier,token): return

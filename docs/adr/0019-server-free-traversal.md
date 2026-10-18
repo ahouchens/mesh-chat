@@ -44,8 +44,10 @@ public control format. Older version-1/version-2 inputs remain readable.
 
 Recovery keeps its existing rotated-certificate/service-approval protocol and
 role reversal, with two-sided outbound checks and shorter fair candidate slices.
-Its single selected local socket and migration path are retained for now; adding
-simultaneous recovery socket groups remains a separate qualification item.
+Its single selected local socket and migration path are retained. Bounded retry
+attempts rotate eligible interfaces after trying the saved interface, and reset
+port hints when changing interfaces. Each replacement is signed through the
+existing protocol. Simultaneous recovery socket groups are not implemented.
 
 Android activity switching retains current socket ownership for a bounded
 45-second background grace period. Returning cancels the suspension callback;

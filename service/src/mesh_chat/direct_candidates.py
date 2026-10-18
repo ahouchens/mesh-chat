@@ -134,7 +134,9 @@ class NativePreparation:
 
 def prepare_candidates(native, *, generation, expires_at, family=None, routes=None,
                        clock=time.time, monotonic=time.monotonic, recovery=False, preferred_port=0, preferred_external_port=0,
-                       sleep=time.sleep, multiple=False):
+                       sleep=time.sleep, multiple=False, preferred_host=None, route_offset=0):
+    if type(route_offset) is not int or not 0 <= route_offset <= 8:
+        raise ValidationError("Invalid route retry offset")
     if type(preferred_port) is not int or not 0 <= preferred_port <= 65535:
         raise ValidationError("Invalid local port hint")
     if type(expires_at) is not int:
@@ -150,6 +152,15 @@ def prepare_candidates(native, *, generation, expires_at, family=None, routes=No
         and c.classify_address(route.local_address) in {"public_ipv4", "public_ipv6", "rfc1918", "shared"}]
     eligible.sort(key=lambda route: (c.classify_address(route.local_address) != "public_ipv6", route.metric))
     eligible = list({(r.local_address,r.interface):r for r in reversed(eligible)}.values())[::-1][:4]
+    if recovery and eligible:
+        # Retain a still-present prior interface on the first attempt, then
+        # rotate bounded retries so one unusable family does not monopolize
+        # relationship recovery. Every change is newly signed before dialing.
+        eligible.sort(key=lambda item:item.local_address != preferred_host)
+        offset = route_offset % len(eligible)
+        eligible = eligible[offset:] + eligible[:offset]
+        if preferred_host is not None and eligible[0].local_address != preferred_host:
+            preferred_port = preferred_external_port = 0
     route = eligible[0] if eligible else None
     local = route.local_address if route else ("::" if family == socket.AF_INET6 else "0.0.0.0")
     address = f"[{local}]:{preferred_port}" if ":" in local else f"{local}:{preferred_port}"
@@ -166,6 +177,11 @@ def prepare_candidates(native, *, generation, expires_at, family=None, routes=No
             break
         except ValidationError:
             if not preferred_port:
+                if multiple and not recovery and len(eligible) > 1:
+                    remaining_routes = [item for item in routes if (item.local_address, item.interface) != (route.local_address, route.interface)]
+                    return prepare_candidates(native, generation=generation, expires_at=expires_at,
+                        family=family, routes=remaining_routes, clock=clock, monotonic=monotonic,
+                        sleep=sleep, multiple=True)
                 raise
             if recovery and retry < 20:
                 sleep(.25)

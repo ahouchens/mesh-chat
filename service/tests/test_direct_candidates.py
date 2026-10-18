@@ -186,3 +186,17 @@ def test_failed_additional_bind_preserves_existing_owned_candidate(monkeypatch):
         assert len(prepared.document_fields()["candidates"]) == 1
     finally:
         prepared.close()
+
+
+def test_failed_preferred_bind_tries_another_eligible_route(monkeypatch):
+    route4 = c.RouteInfo(socket.AF_INET, "wired", None, "93.184.216.34", 2)
+    class FallbackNative(Native):
+        def request(self, operation, **payload):
+            if operation == "prepare" and payload["address"].startswith("["):
+                raise ValidationError("interface no longer available")
+            return super().request(operation, **payload)
+    prepared = prepare(FallbackNative(), routes=[V6,route4], multiple=True)
+    try:
+        assert prepared.document_fields()["candidates"][0]["host"] == route4.local_address
+    finally:
+        prepared.close()
