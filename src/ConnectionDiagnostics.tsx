@@ -93,11 +93,11 @@ export function ConnectionDiagnostics({ full = false }: { full?: boolean }) {
   return <section className="connection-diagnostics form-stack" aria-label="Connection diagnostics">
     <p className="muted">Mesh Chat version {packageInfo.version}</p>
     {details.version_mismatch && <p role="alert">App components have different versions. Copy version details before updating.</p>}
-    <div className="dialog-actions"><button disabled={busy} onClick={() => void copy("summary")}>Copy diagnostics</button>
-      {full && <><button disabled={busy} onClick={() => void copy("log")}>Copy connection log</button><button disabled={busy} onClick={() => void copy("version")}>Copy version details</button></>}
+    <div className="dialog-actions"><button className="button button--secondary" disabled={busy} onClick={() => void copy("summary")}>Copy diagnostics</button>
+      {full && <><button className="button button--secondary" disabled={busy} onClick={() => void copy("log")}>Copy connection log</button><button className="button button--secondary" disabled={busy} onClick={() => void copy("version")}>Copy version details</button></>}
     </div>
-    {full && <><p className="muted">Recent connection events are kept on this device for 7 days, up to 200 events. Reports exclude addresses, invitation contents and messages. Nothing is uploaded.</p><button disabled={busy} onClick={() => void clear()}>Clear diagnostic history</button></>}
+    {full && <><p className="muted">Recent connection events are kept on this device for 7 days, up to 200 events. Reports exclude addresses, invitation contents and messages. Nothing is uploaded.</p><button className="button button--secondary" disabled={busy} onClick={() => void clear()}>Clear diagnostic history</button></>}
     {feedback && <p role="status">{feedback}</p>}
-    {fallback && <><label>Diagnostic report<textarea readOnly value={fallback} rows={8} onFocus={event => event.currentTarget.select()} /></label><button onClick={save}>Save diagnostics</button></>}
+    {fallback && <><label>Diagnostic report<textarea readOnly value={fallback} rows={8} onFocus={event => event.currentTarget.select()} /></label><button className="button button--secondary" onClick={save}>Save diagnostics</button></>}
   </section>;
 }
