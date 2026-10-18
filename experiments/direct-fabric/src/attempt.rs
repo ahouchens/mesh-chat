@@ -22,6 +22,23 @@ pub struct PreparedAttempt {
 }
 
 impl PreparedAttempt {
+    /// Additional local route for this same signed session. Keys stay native;
+    /// all route sockets share the same authority deadline and certificate.
+    pub fn additional_socket(&self, address: SocketAddr) -> Result<Self, Error> {
+        if self.answer.is_some() || Instant::now() >= self.expires {
+            return Err(Error::Closed);
+        }
+        Ok(Self {
+            socket: Some(BoundSocket::bind(address)?),
+            key: Some(self.key.as_ref().ok_or(Error::Closed)?.duplicate()),
+            session: self.session,
+            generation: self.generation,
+            expires: self.expires,
+            answer: None,
+            deadline: None,
+            ready: None,
+        })
+    }
     pub fn new(
         socket: BoundSocket,
         key: SessionKey,

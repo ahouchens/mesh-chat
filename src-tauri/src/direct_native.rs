@@ -30,6 +30,13 @@ struct Envelope {
 #[derive(Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
 enum Operation {
+    PreparePath {
+        id: u64,
+        address: SocketAddr,
+    },
+    InspectPaths {
+        id: u64,
+    },
     Prepare {
         address: SocketAddr,
         generation: u64,
@@ -150,6 +157,16 @@ impl NativeHost {
             return Err(());
         }
         match request.request {
+            Operation::PreparePath { id, address } => {
+                let prepared = self.0.prepare_path(id, address).map_err(|_| ())?;
+                Ok(
+                    json!({"id":id,"host":prepared.address.ip().to_string(),"port":prepared.address.port(),"certificate":hex(&prepared.certificate)}),
+                )
+            }
+            Operation::InspectPaths { id } => {
+                let paths = self.0.inspect_paths(id).map_err(|_| ())?;
+                Ok(Value::Array(paths.iter().map(|p| json!({"id":id,"host":p.address.ip().to_string(),"port":p.address.port(),"certificate":hex(&p.certificate)})).collect()))
+            }
             Operation::Prepare {
                 address,
                 generation,
@@ -300,10 +317,13 @@ impl NativeHost {
                 Ok(Value::Null)
             }
             Operation::Poll { id } => {
+                let statistics = self.0.statistics(id);
                 let (state, packets) = self.0.poll(id).map_err(|_| ())?;
-                Ok(
-                    json!({"state":state, "packets":packets.iter().map(|p| hex(p)).collect::<Vec<_>>()}),
-                )
+                let mut value = json!({"state":state, "packets":packets.iter().map(|p| hex(p)).collect::<Vec<_>>()});
+                if let Some((started, authenticated, elapsed)) = statistics {
+                    value["statistics"] = json!({"checks_started":started,"checks_authenticated":authenticated,"elapsed_ms":elapsed});
+                }
+                Ok(value)
             }
             Operation::Inspect { id } => {
                 let prepared = self.0.inspect(id).map_err(|_| ())?;

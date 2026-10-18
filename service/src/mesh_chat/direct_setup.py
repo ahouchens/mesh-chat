@@ -53,7 +53,7 @@ class DirectSetup:
             epoch = self._epoch
             self._inflight += 1
         try:
-            prepared = prepare_candidates(self.service._direct_native, generation=generation, expires_at=expires_at, family=family)
+            prepared = prepare_candidates(self.service._direct_native, generation=generation, expires_at=expires_at, family=family, multiple=True)
         except BaseException:
             with self._lock:
                 self._inflight -= 1
@@ -83,7 +83,9 @@ class DirectSetup:
             self.service.store.put("direct_setup_document", setup_id, {"text":text})
         if previous != value:
             from .connection_diagnostics import record
-            record(self.service, "state", value)
+            with self._lock:
+                prepared = self._prepared.get(setup_id)
+            record(self.service, "state", {**value, **getattr(prepared, "statistics", {})})
         self.service._changed()
         return {**value, **({"text":text} if text is not None else {})}
 
@@ -115,8 +117,11 @@ class DirectSetup:
         with self._lock:
             retained = setup_id in self._prepared
         if value["state"] != "cancelled" and (value["expires_at"] <= time.time() or not retained):
-            return {**value, "state":"refresh_required",
-                    "reason":"details_expired" if value["expires_at"] <= time.time() else "socket_not_retained"}
+            status = {**value, "state":"refresh_required",
+                      "reason":"details_expired" if value["expires_at"] <= time.time() else "socket_not_retained"}
+            from .connection_diagnostics import record
+            record(self.service, "state", status)
+            return status
         return value
 
     def preview(self, document):
@@ -151,6 +156,8 @@ class DirectSetup:
         if not candidates and checked.answer is not None:
             candidates = _parse(checked.answer)["binding"]["candidates"]
         if not candidates:
+            return None
+        if len({":" in candidate["host"] for candidate in candidates}) > 1:
             return None
         return socket.AF_INET6 if ":" in candidates[0]["host"] else socket.AF_INET
 
@@ -337,7 +344,8 @@ class DirectSetup:
         if not fields["candidates"] and not peer_binding["candidates"]:
             return self._state(setup_id, "existing_routes_only", "ready", checked.invitation.workspace_id, fields)
         parameters = native_parameters(service._identity, fields["candidates"],
-            canonical_bytes(peer_binding).decode(), checked.answer_certificate if owner else checked.ready_certificate)
+            canonical_bytes(peer_binding).decode(), checked.answer_certificate if owner else checked.ready_certificate,
+            allow_multiple_families=True)
         parameters["remaining_ms"] = min(parameters["remaining_ms"], int((fields["expires_at"]-time.time())*1000))
         def changed(state):
             with service._dispatch_lock:

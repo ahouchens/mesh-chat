@@ -34,18 +34,24 @@ export function diagnosticReport(build: unknown, raw: unknown, log = false) {
     const event = object(rawEvent);
     return { time: number(event.time, 2**53 - 1), attempt: token(event.attempt, /^[0-9a-f]{12}$/),
       event: choice(event.event, events), phase: choice(event.phase, phases), kind: choice(event.kind, kinds),
-      candidate_count: number(event.candidate_count, 8), expires_at: number(event.expires_at, 2**53 - 1) };
+      candidate_count: number(event.candidate_count, 8), expires_at: number(event.expires_at, 2**53 - 1),
+      checks_started: number(event.checks_started, 64), checks_authenticated: number(event.checks_authenticated, 128), elapsed_ms: number(event.elapsed_ms, 3600_000) };
   };
   const rows = Array.isArray(value.events) ? value.events.slice(-200).map(cleanEvent) : [];
   const serviceVersion = version(value.service_version);
-  return JSON.stringify({ report_format: 1, captured_at: new Date().toISOString(), timezone_offset_minutes: new Date().getTimezoneOffset(),
+  const report = { report_format: 1, captured_at: new Date().toISOString(), timezone_offset_minutes: new Date().getTimezoneOffset(),
     ...versionDetails(build), service_version: serviceVersion,
     service_version_mismatch: serviceVersion !== unavailable && serviceVersion !== packageInfo.version,
     service_status: value.format_version === 1 ? "available" : unavailable,
-    native_check_counts: unavailable, receipt_status: unavailable, approval_status: unavailable,
+    native_check_counts: rows.at(-1)?.checks_started !== null && rows.length ? "see_event_counts" : unavailable, receipt_status: unavailable, approval_status: unavailable,
     retention_days: 7, event_limit: 200, truncated: value.truncated === true,
     last_failure: value.last_failure ? cleanEvent(value.last_failure) : null,
-    events: log ? rows : rows.slice(-1) }, null, 2);
+    events: log ? rows : rows.slice(-1) };
+  let text = JSON.stringify(report, null, 2);
+  while (new TextEncoder().encode(text).length > 65536 && report.events.length) {
+    report.events.shift(); report.truncated = true; text = JSON.stringify(report, null, 2);
+  }
+  return text;
 }
 
 export function ConnectionDiagnostics({ full = false }: { full?: boolean }) {

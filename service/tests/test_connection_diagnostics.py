@@ -31,8 +31,8 @@ def test_allowlist_excludes_seeded_secrets_and_unexpected_structures():
 def test_history_bounded_and_latest_failure_survives_new_service_instance():
     service = SimpleNamespace(store=Store())
     diagnostics.record(service, "action_failed", {"state":"failed"})
-    for _ in range(220):
-        diagnostics.record(service, "state", {"state":"connecting"})
+    for index in range(220):
+        diagnostics.record(service, "state", {"state":"connecting", "setup_id":str(index)})
     reopened = SimpleNamespace(store=service.store)
     value = diagnostics.report(reopened)
     assert len(value["events"]) == 200

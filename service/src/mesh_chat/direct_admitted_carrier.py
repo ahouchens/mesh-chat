@@ -91,7 +91,7 @@ class AdmittedCarrier:
                     self.service.network.router.announce(self.service.network.destination_hash)
                     next_announce = time.monotonic()+5
                 result = self.service._direct_native.request("poll", id=self.prepared.handle)
-                if (not isinstance(result,dict) or set(result) != {"state","packets"}
+                if (not isinstance(result,dict) or set(result) not in ({"state","packets"}, {"state","packets","statistics"})
                         or type(result["state"]) is not int or result["state"] not in (0,1,2)
                         or not isinstance(result["packets"],list) or len(result["packets"]) > 32
                         or any(not isinstance(packet,str) or not 2 <= len(packet) <= 1032 for packet in result["packets"])):

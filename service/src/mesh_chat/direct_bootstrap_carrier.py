@@ -120,10 +120,12 @@ class BootstrapCarrier:
                         return
                     next_check = time.monotonic()+.25
                 native = self.service._direct_native.request("poll", id=self.prepared.handle)
-                if (not isinstance(native, dict) or set(native) != {"state", "packets"}
+                if (not isinstance(native, dict) or set(native) not in ({"state", "packets"}, {"state", "packets", "statistics"})
                         or type(native["state"]) is not int or native["state"] not in (0,1,2)
                         or not isinstance(native["packets"], list) or len(native["packets"]) > 32):
                     raise ValidationError("Native bootstrap response is invalid")
+                if isinstance(native.get("statistics"), dict):
+                    self.prepared.statistics = native["statistics"]
                 if native["state"] == 2:
                     return
                 if native["state"] == 1:

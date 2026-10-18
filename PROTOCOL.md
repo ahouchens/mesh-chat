@@ -994,3 +994,15 @@ other endpoint's address remains known. No public observer or custom probe is us
 
 Recovery updates and successes are transport controls. They never create joins,
 admissions, chat messages, delivery proofs or application receipts.
+# Server-free traversal increment (implementation qualification pending)
+
+The current connection implementation extends the signed version-2 candidate
+list to a bounded group of retained native route sockets with a common native
+certificate. The existing invitation, audience, generation, expiry and exact
+certificate checks remain authoritative. Both endpoints may initiate standard
+QUIC/TLS checks; only the deterministic client's outgoing connection and the
+server's incoming connection can reach bootstrap traffic. Auxiliary connections
+carry no RNS packets. There are no new unauthenticated UDP frames or observer
+services. See [ADR 0019](docs/adr/0019-server-free-traversal.md) for bounds and
+the remaining review and qualification gates. No-address discovery failures do
+not become reachable merely because both peers can initiate checks.

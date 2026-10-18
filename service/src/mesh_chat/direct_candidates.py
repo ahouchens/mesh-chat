@@ -20,6 +20,8 @@ class NativePreparation:
     def __init__(self, native, owned, expires_at, *, clock=time.time, monotonic=time.monotonic):
         self._native = native
         self._owned = dict(owned)
+        self._sockets = [{key:owned[key] for key in ("id", "host", "port", "certificate")}]
+        self._sources = {}
         self._clock, self._monotonic = clock, monotonic
         self.expires_at = expires_at
         self._deadline = monotonic() + max(0, expires_at-clock())
@@ -38,6 +40,8 @@ class NativePreparation:
 
     @property
     def family(self):
+        if len({":" in item["host"] for item in self._sockets}) > 1:
+            return None
         return socket.AF_INET6 if ":" in self._owned["host"] else socket.AF_INET
 
     def _check(self):
@@ -53,29 +57,36 @@ class NativePreparation:
         if current != expected:
             self.close()
             raise ValidationError("Direct candidate socket ownership changed")
+        if len(self._sockets) > 1:
+            paths = self._native.request("inspect_paths", id=self.handle)
+            if paths != self._sockets:
+                self.close()
+                raise ValidationError("Direct route socket ownership changed")
         with self._lock:
             self._check()
             return {"session_id": self._owned["session"], "generation": self._owned["generation"],
                     "certificate": bytes.fromhex(self._owned["certificate"]),
                     "candidates": deepcopy(self._candidates), "expires_at": self.expires_at}
 
-    def _add_mapping(self, mapping):
+    def _add_mapping(self, mapping, owned=None):
+        owned = self._owned if owned is None else owned
         with self._lock:
             if self._closed:
                 c.remove_port_mapping(mapping.record())
                 raise ValidationError("Direct native preparation expired")
             self._mappings.append(mapping.record())
-        if (mapping.protocol != "udp" or mapping.internal_port != self._owned["port"]
-                or mapping.internal_host != self._owned["host"]
+        if (mapping.protocol != "udp" or mapping.internal_port != owned["port"]
+                or mapping.internal_host != owned["host"]
                 or c.classify_address(mapping.external_host) not in {"public_ipv4", "public_ipv6"}
                 or type(mapping.lifetime) is not int or mapping.lifetime <= 0
                 or type(mapping.external_port) is not int or not 1 <= mapping.external_port <= 65535):
             raise ValidationError("Direct mapping does not match native socket")
         if (str(ipaddress.ip_address(mapping.external_host)) != mapping.external_host
-                or ipaddress.ip_address(mapping.external_host).version != ipaddress.ip_address(self._owned["host"]).version):
+                or ipaddress.ip_address(mapping.external_host).version != ipaddress.ip_address(owned["host"]).version):
             raise ValidationError("Direct mapping address family changed")
         expiry = min(self.expires_at, int(self._clock()) + mapping.lifetime)
         self._add_candidate(mapping.external_host, mapping.external_port, expiry)
+        self._sources[(mapping.external_host, mapping.external_port)] = mapping.method
 
     def _add_candidate(self, host, port, expiry):
         with self._lock:
@@ -87,7 +98,9 @@ class NativePreparation:
             self._timer.daemon = True
             self._timer.start()
             candidate = {"host": host, "port": port, "expires_at": self.expires_at}
-            self._candidates = [candidate]
+            self._candidates = [item for item in self._candidates if (item["host"],item["port"]) != (host,port)] + [candidate]
+            self._candidates = [{**item,"expires_at":min(item["expires_at"],self.expires_at)} for item in self._candidates]
+            self._sources.setdefault((host,port), "local_global")
             self.reason = "candidates_prepared_unverified"
 
     def close(self):
@@ -110,7 +123,7 @@ class NativePreparation:
 
 def prepare_candidates(native, *, generation, expires_at, family=None, routes=None,
                        clock=time.time, monotonic=time.monotonic, recovery=False, preferred_port=0, preferred_external_port=0,
-                       sleep=time.sleep):
+                       sleep=time.sleep, multiple=False):
     if type(preferred_port) is not int or not 0 <= preferred_port <= 65535:
         raise ValidationError("Invalid local port hint")
     if type(expires_at) is not int:
@@ -125,6 +138,7 @@ def prepare_candidates(native, *, generation, expires_at, family=None, routes=No
         and (family is None or route.family == family)
         and c.classify_address(route.local_address) in {"public_ipv4", "public_ipv6", "rfc1918", "shared"}]
     eligible.sort(key=lambda route: (c.classify_address(route.local_address) != "public_ipv6", route.metric))
+    eligible = list({(r.local_address,r.interface):r for r in reversed(eligible)}.values())[::-1][:4]
     route = eligible[0] if eligible else None
     local = route.local_address if route else ("::" if family == socket.AF_INET6 else "0.0.0.0")
     address = f"[{local}]:{preferred_port}" if ":" in local else f"{local}:{preferred_port}"
@@ -179,6 +193,44 @@ def prepare_candidates(native, *, generation, expires_at, family=None, routes=No
             except OSError:
                 preparation.reason = "no_public_candidate"
         preparation.document_fields()  # Recheck after potentially slow router operations.
+        if multiple and not recovery:
+            seen = {(local, route.interface if route else None)}
+            for alternative in eligible[1:]:
+                if len(preparation._sockets) >= 4:
+                    break
+                key = (alternative.local_address, alternative.interface)
+                if key in seen:
+                    continue
+                seen.add(key)
+                preparation.document_fields()
+                host = alternative.local_address
+                address = f"[{host}]:0" if ":" in host else f"{host}:0"
+                try:
+                    extra = native.request("prepare_path", id=preparation.handle, address=address)
+                except ValidationError:
+                    continue  # A failed local bind/capacity must not discard a usable path.
+                if (not isinstance(extra,dict) or set(extra) != {"id","host","port","certificate"}
+                        or extra["id"] != preparation.handle or extra["host"] != host
+                        or extra["certificate"] != owned["certificate"]
+                        or type(extra["port"]) is not int or not 1 <= extra["port"] <= 65535):
+                    raise ValidationError("Additional native route ownership is invalid")
+                preparation._sockets.append(dict(extra))
+                lifetime = max(1,int(preparation.expires_at-clock()))
+                kind = c.classify_address(host)
+                if kind in {"public_ipv4","public_ipv6"}:
+                    preparation._add_candidate(host, extra["port"], preparation.expires_at)
+                    if kind == "public_ipv6":
+                        try:
+                            preparation._add_mapping(c.map_upnp_ipv6_pinhole(host,extra["port"],lifetime=lifetime,
+                                routes=[r for r in routes if r.interface == alternative.interface],protocol="udp"), extra)
+                        except OSError:
+                            pass
+                else:
+                    try:
+                        preparation._add_mapping(c.create_port_mapping(extra["port"],lifetime=lifetime,routes=[alternative],protocol="udp"), extra)
+                    except OSError:
+                        pass
+            preparation.document_fields()
         return preparation
     except Exception:
         if preparation is not None:

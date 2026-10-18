@@ -1339,7 +1339,9 @@ fn app_build_info(app: AppHandle) -> serde_json::Value {
     if let Ok(response) = app.mesh_runtime().build_info() {
         if let Ok(android) = mobile_result(response) {
             for key in ["installed_version", "android_version_code", "os_version"] {
-                if let Some(value) = android.get(key) { info[key] = value.clone(); }
+                if let Some(value) = android.get(key) {
+                    info[key] = value.clone();
+                }
             }
         }
     }

@@ -138,3 +138,50 @@ def test_direct_public_ipv4_does_not_map_or_select_an_unowned_port(monkeypatch):
         assert prepared.document_fields()["candidates"] == [{"host":route.local_address,"port":45678,"expires_at":1300}]
     finally:
         prepared.close()
+
+
+def test_all_eligible_route_sockets_are_owned_and_mixed_family_candidates_retained(monkeypatch):
+    class PathsNative(Native):
+        def request(self, operation, **payload):
+            if operation == "prepare":
+                value = super().request(operation, **payload)
+                self.paths = [{key:value[key] for key in ("id","host","port","certificate")}]
+                return value
+            if operation == "prepare_path":
+                self.calls.append((operation,payload))
+                value = {"id":1,"host":payload["address"].rsplit(":",1)[0].strip("[]"),
+                         "port":45678+len(self.paths),"certificate":self.owned["certificate"]}
+                self.paths.append(value)
+                return dict(value)
+            if operation == "inspect_paths":
+                return [dict(value) for value in self.paths]
+            return super().request(operation, **payload)
+    native = PathsNative()
+    route4 = c.RouteInfo(socket.AF_INET, "wired", None, "93.184.216.34", 2)
+    monkeypatch.setattr(c,"map_upnp_ipv6_pinhole",lambda *a,**k: (_ for _ in ()).throw(OSError()))
+    prepared = prepare(native, routes=[V6,route4], multiple=True)
+    try:
+        fields = prepared.document_fields()
+        assert {row["host"] for row in fields["candidates"]} == {V6.local_address,route4.local_address}
+        assert {row["port"] for row in fields["candidates"]} == {45678,45679}
+        assert len(prepared._sockets) == 2
+        native.paths[1]["port"] += 1
+        with pytest.raises(ValidationError, match="ownership"):
+            prepared.document_fields()
+    finally:
+        prepared.close()
+
+
+def test_failed_additional_bind_preserves_existing_owned_candidate(monkeypatch):
+    class UnavailableNative(Native):
+        def request(self, operation, **payload):
+            if operation == "prepare_path":
+                raise ValidationError("unavailable")
+            return super().request(operation, **payload)
+    monkeypatch.setattr(c,"map_upnp_ipv6_pinhole",lambda *a,**k: (_ for _ in ()).throw(OSError()))
+    native = UnavailableNative()
+    prepared = prepare(native, routes=[V6,V4], multiple=True)
+    try:
+        assert len(prepared.document_fields()["candidates"]) == 1
+    finally:
+        prepared.close()

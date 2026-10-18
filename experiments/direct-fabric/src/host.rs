@@ -30,6 +30,9 @@ struct Running {
     outgoing: mpsc::Sender<Bytes>,
     incoming: mpsc::Receiver<Bytes>,
     state: Arc<AtomicU8>,
+    statistics: Arc<traversal::Statistics>,
+    started: Instant,
+    reserved_sockets: usize,
 }
 impl Drop for Running {
     fn drop(&mut self) {
@@ -44,17 +47,62 @@ enum Session {
 struct Entries {
     next: u64,
     sessions: HashMap<u64, Session>,
+    extra: HashMap<u64, Vec<PreparedAttempt>>,
 }
 pub struct Host {
     entries: Mutex<Entries>,
 }
 
+fn socket_count(entries: &Entries) -> usize {
+    entries
+        .sessions
+        .values()
+        .map(|session| match session {
+            Session::Running(running) => running.reserved_sockets,
+            _ => 1,
+        })
+        .sum::<usize>()
+        + entries.extra.values().map(Vec::len).sum::<usize>()
+}
+
 impl Host {
+    pub fn prepare_path(&self, id: u64, address: SocketAddr) -> Result<Prepared, Error> {
+        let mut entries = self.entries.lock().map_err(|_| Error::Closed)?;
+        if socket_count(&entries) >= CAPACITY || entries.extra.get(&id).map_or(0, Vec::len) >= 3 {
+            return Err(Error::QueueFull);
+        }
+        let Some(Session::Prepared(first)) = entries.sessions.get(&id) else {
+            return Err(Error::Closed);
+        };
+        let extra = first.additional_socket(address)?;
+        let prepared = Prepared {
+            id,
+            address: extra.address()?,
+            certificate: extra.certificate()?.to_vec(),
+        };
+        entries.extra.entry(id).or_default().push(extra);
+        Ok(prepared)
+    }
+
+    pub fn inspect_paths(&self, id: u64) -> Result<Vec<Prepared>, Error> {
+        let first = self.inspect(id)?;
+        let entries = self.entries.lock().map_err(|_| Error::Closed)?;
+        let mut result = vec![first];
+        for extra in entries.extra.get(&id).into_iter().flatten() {
+            result.push(Prepared {
+                id,
+                address: extra.address()?,
+                certificate: extra.certificate()?.to_vec(),
+            });
+        }
+        Ok(result)
+    }
     pub fn new() -> Arc<Self> {
         Arc::new(Self {
             entries: Mutex::new(Entries {
                 next: 1,
                 sessions: HashMap::new(),
+                extra: HashMap::new(),
             }),
         })
     }
@@ -83,7 +131,7 @@ impl Host {
             return Err(Error::Configuration);
         }
         let mut entries = self.entries.lock().map_err(|_| Error::Closed)?;
-        if entries.sessions.len() >= CAPACITY {
+        if socket_count(&entries) >= CAPACITY {
             return Err(Error::QueueFull);
         }
         let attempt = PreparedAttempt::new(
@@ -107,6 +155,7 @@ impl Host {
             if let Some(host) = weak.upgrade() {
                 if let Ok(mut entries) = host.entries.lock() {
                     entries.sessions.remove(&id);
+                    entries.extra.remove(&id);
                 }
             }
         });
@@ -121,6 +170,11 @@ impl Host {
         digest: [u8; 32],
     ) -> Result<(), Error> {
         let mut entries = self.entries.lock().map_err(|_| Error::Closed)?;
+        if let Some(extra) = entries.extra.get_mut(&id) {
+            for attempt in extra {
+                attempt.start(session, generation, digest)?;
+            }
+        }
         match entries.sessions.get_mut(&id) {
             Some(Session::Prepared(attempt)) => attempt.start(session, generation, digest),
             _ => Err(Error::Closed),
@@ -135,6 +189,11 @@ impl Host {
         ready: [u8; 32],
     ) -> Result<(), Error> {
         let mut entries = self.entries.lock().map_err(|_| Error::Closed)?;
+        if let Some(extra) = entries.extra.get_mut(&id) {
+            for attempt in extra {
+                attempt.rearm(answer, generation, ready)?;
+            }
+        }
         match entries.sessions.get_mut(&id) {
             Some(Session::Prepared(attempt)) => attempt.rearm(answer, generation, ready),
             _ => Err(Error::Closed),
@@ -190,12 +249,19 @@ impl Host {
         let Some(Session::Prepared(attempt)) = entries.sessions.remove(&id) else {
             unreachable!()
         };
+        let extra_paths = entries.extra.remove(&id).unwrap_or_default();
         let remaining = remaining.min(attempt.remaining_window()?);
-        let peer = attempt.into_peer(CertificateDer::from(certificate))?;
+        let certificate = CertificateDer::from(certificate);
+        let mut peers = vec![attempt.into_peer(certificate.clone())?];
+        for extra in extra_paths {
+            peers.push(extra.into_peer(certificate.clone())?);
+        }
+        let reserved_sockets = peers.len();
         let (cancel, mut cancelled) = watch::channel(false);
         let (outgoing, mut packets) = mpsc::channel::<Bytes>(PACKETS);
         let (received, incoming) = mpsc::channel::<Bytes>(PACKETS);
         let state = Arc::new(AtomicU8::new(0));
+        let statistics = Arc::new(traversal::Statistics::default());
         entries.sessions.insert(
             id,
             Session::Running(Running {
@@ -203,14 +269,45 @@ impl Host {
                 outgoing,
                 incoming,
                 state: state.clone(),
+                statistics: statistics.clone(),
+                started: Instant::now(),
+                reserved_sockets,
             }),
         );
         tokio::spawn(async move {
             let deadline = Instant::now() + remaining;
-            let connected = if client {
-                traversal::dial(peer, candidates, deadline, cancelled.clone()).await
+            let connected = if peers.len() > 1 {
+                crate::paths::connect(
+                    peers,
+                    candidates,
+                    client,
+                    deadline,
+                    cancelled.clone(),
+                    statistics,
+                )
+                .await
             } else {
-                traversal::listen_with_checks(peer, candidates, deadline, cancelled.clone()).await
+                let peer = peers.remove(0);
+                let result = if client {
+                    traversal::dial_measured(
+                        peer,
+                        candidates,
+                        deadline,
+                        cancelled.clone(),
+                        statistics,
+                    )
+                    .await
+                } else {
+                    traversal::listen_measured(
+                        peer,
+                        candidates,
+                        deadline,
+                        cancelled.clone(),
+                        statistics,
+                    )
+                    .await
+                };
+                result.map(|(peer, path)| (Arc::new(peer), path))
             };
             if let Ok((_peer, path)) = connected {
                 state.store(1, Ordering::Release);
@@ -260,6 +357,7 @@ impl Host {
         let Some(Session::Prepared(prepared)) = entries.sessions.remove(&id) else {
             unreachable!()
         };
+        entries.extra.remove(&id);
         let attempt = attempt.min(prepared.remaining_window()?);
         let (bound, key) = prepared.into_recovery_parts()?;
         let running = crate::recovery::Running::start(
@@ -319,6 +417,19 @@ impl Host {
         Ok(())
     }
 
+    pub fn statistics(&self, id: u64) -> Option<(u64, u64, u64)> {
+        let entries = self.entries.lock().ok()?;
+        if let Some(Session::Running(session)) = entries.sessions.get(&id) {
+            Some((
+                session.statistics.started.load(Ordering::Relaxed),
+                session.statistics.authenticated.load(Ordering::Relaxed),
+                session.started.elapsed().as_millis().min(u64::MAX as u128) as u64,
+            ))
+        } else {
+            None
+        }
+    }
+
     pub fn poll(&self, id: u64) -> Result<(u8, Vec<Bytes>), Error> {
         let mut entries = self.entries.lock().map_err(|_| Error::Closed)?;
         if let Some(Session::Recovery(session)) = entries.sessions.get_mut(&id) {
@@ -349,6 +460,7 @@ impl Host {
     pub fn close(&self, id: u64) {
         if let Ok(mut entries) = self.entries.lock() {
             entries.sessions.remove(&id);
+            entries.extra.remove(&id);
         }
     }
 
@@ -370,6 +482,7 @@ impl Host {
         };
         if attempt.expire() {
             entries.sessions.remove(&id);
+            entries.extra.remove(&id);
             return Err(Error::Timeout);
         }
         Ok(Prepared {
@@ -381,6 +494,7 @@ impl Host {
     pub fn close_all(&self) {
         if let Ok(mut entries) = self.entries.lock() {
             entries.sessions.clear();
+            entries.extra.clear();
         }
     }
 }
@@ -388,6 +502,38 @@ impl Host {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test]
+    async fn route_group_shares_certificate_and_releases_all_sockets_on_cancel() {
+        let host = Host::new();
+        let first = host
+            .prepare(
+                "127.0.0.1:0".parse().unwrap(),
+                [3; 16],
+                1,
+                Duration::from_secs(30),
+            )
+            .unwrap();
+        let mut addresses = vec![first.address];
+        for _ in 0..3 {
+            let extra = host
+                .prepare_path(first.id, "127.0.0.1:0".parse().unwrap())
+                .unwrap();
+            assert_eq!(extra.certificate, first.certificate);
+            addresses.push(extra.address);
+        }
+        assert!(host
+            .prepare_path(first.id, "127.0.0.1:0".parse().unwrap())
+            .is_err());
+        assert_eq!(host.inspect_paths(first.id).unwrap().len(), 4);
+        host.arm(first.id, [3; 16], 1, [4; 32]).unwrap();
+        assert!(host
+            .prepare_path(first.id, "127.0.0.1:0".parse().unwrap())
+            .is_err());
+        host.close(first.id);
+        for address in addresses {
+            assert!(std::net::UdpSocket::bind(address).is_ok());
+        }
+    }
     #[tokio::test]
     async fn recovery_cannot_extend_prepared_socket_ownership() {
         let host = Host::new();

@@ -34,6 +34,9 @@ def sanitize(value):
         "phase":enum("phase", PHASES, "unavailable"),
         "kind":enum("kind", KINDS, "unavailable"),
         "candidate_count":integer("candidate_count", 8),
+        "checks_started":integer("checks_started", 64, None),
+        "checks_authenticated":integer("checks_authenticated", 128, None),
+        "elapsed_ms":integer("elapsed_ms", 3600_000, None),
         "expires_at":integer("expires_at", 2**53)}
 
 
@@ -60,10 +63,12 @@ def record(service, event, state=None):
 
 def _record(service, event, state=None):
     state = state or {}
-    row = sanitize({**{key:state.get(key) for key in ("state", "kind", "candidate_count", "expires_at")},
+    row = sanitize({**{key:state.get(key) for key in ("state", "kind", "candidate_count", "expires_at", "checks_started", "checks_authenticated", "elapsed_ms")},
         "phase":state.get("state"), "event":event, "time":int(time.time()),
         "attempt":hashlib.sha256(str(state.get("setup_id", "unknown")).encode()).hexdigest()[:12]})
     value = history(service)
+    if value["events"] and {k:v for k,v in value["events"][-1].items() if k != "time"} == {k:v for k,v in row.items() if k != "time"}:
+        return
     value["truncated"] = value["truncated"] or len(value["events"]) >= LIMIT
     value["events"] = (value["events"] + [row])[-LIMIT:]
     if row["phase"] in {"failed", "existing_routes_only", "refresh_required"} or event in {"import_rejected", "action_failed"}:

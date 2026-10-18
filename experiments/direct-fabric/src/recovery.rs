@@ -270,32 +270,59 @@ impl Running {
                         // reachable client address. The preferred role orders
                         // the first attempt; it is not discovery authority.
                         let dial = client == (index % 2 == 0);
-                        let connected = if dial && !candidates.is_empty() {
-                            match worker_endpoint.connect(
-                                candidates[(index / 2) % candidates.len()],
-                                "mesh-direct.invalid",
-                            ) {
-                                Ok(c) => tokio::time::timeout(Duration::from_secs(5), c)
-                                    .await
-                                    .ok()
-                                    .and_then(Result::ok),
-                                Err(_) => None,
-                            }
-                        } else {
-                            match tokio::time::timeout(
-                                Duration::from_secs(5),
-                                worker_endpoint.accept(),
-                            )
-                            .await
-                            {
-                                Ok(Some(c)) => tokio::time::timeout(Duration::from_secs(5), c)
-                                    .await
-                                    .ok()
-                                    .and_then(Result::ok),
-                                Ok(None) => return Err(Error::Closed),
-                                Err(_) => None,
+                        // Both peers send from their retained endpoint. Only the
+                        // deterministic connection for this round reaches the
+                        // existing encrypted capsule and service approval gate.
+                        let target = candidates
+                            .get((index / 2) % candidates.len().max(1))
+                            .copied();
+                        let outgoing = async {
+                            let address = target.ok_or(Error::Timeout)?;
+                            crate::traversal::pace(deadline).await?;
+                            let pending = worker_endpoint
+                                .connect(address, "mesh-direct.invalid")
+                                .map_err(|_| Error::Handshake)?;
+                            pending.await.map_err(|_| Error::Handshake)
+                        };
+                        let incoming = async {
+                            let pending = worker_endpoint.accept().await.ok_or(Error::Closed)?;
+                            pending.await.map_err(|_| Error::Handshake)
+                        };
+                        let is_client = dial && target.is_some();
+                        let selected = async {
+                            if is_client {
+                                let auxiliary = async {
+                                    for _ in 0..16 {
+                                        if let Some(pending) = worker_endpoint.accept().await {
+                                            if let Ok(connection) = pending.await {
+                                                connection.close(0u32.into(), b"auxiliary_check");
+                                            }
+                                        }
+                                        tokio::time::sleep(Duration::from_millis(100)).await;
+                                    }
+                                    std::future::pending::<()>().await;
+                                };
+                                tokio::select! {
+                                    result = outgoing => result,
+                                    _ = auxiliary => Err(Error::Timeout),
+                                }
+                            } else {
+                                let auxiliary = async {
+                                    if let Ok(connection) = outgoing.await {
+                                        connection.close(0u32.into(), b"auxiliary_check");
+                                    }
+                                    std::future::pending::<()>().await;
+                                };
+                                tokio::select! {
+                                    result = incoming => result,
+                                    _ = auxiliary => Err(Error::Timeout),
+                                }
                             }
                         };
+                        let connected = tokio::time::timeout(Duration::from_millis(1500), selected)
+                            .await
+                            .ok()
+                            .and_then(Result::ok);
                         if let Some(connection) = connected {
                             worker_client.store(dial && !candidates.is_empty(), Ordering::Release);
                             return Ok(connection);

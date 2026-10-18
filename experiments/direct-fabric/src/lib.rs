@@ -7,6 +7,7 @@
 use bytes::Bytes;
 pub mod attempt;
 pub mod host;
+pub mod paths;
 pub mod recovery;
 pub mod traversal;
 use quinn::crypto::rustls::{QuicClientConfig, QuicServerConfig};
@@ -45,6 +46,12 @@ pub struct SessionKey {
 }
 
 impl SessionKey {
+    pub(crate) fn duplicate(&self) -> Self {
+        Self {
+            cert: self.cert.clone(),
+            key: self.key.clone_key(),
+        }
+    }
     pub fn generate() -> Result<Self, Error> {
         let key = rcgen::generate_simple_self_signed(vec!["mesh-direct.invalid".into()])
             .map_err(|_| Error::Configuration)?;

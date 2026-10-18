@@ -50,7 +50,7 @@ class AdmissionHandoff:
             previous = service.store.get("direct_outgoing", key)
             generation = (previous or {}).get("generation",0)+1
         prepared = prepare_candidates(service._direct_native, generation=generation,
-            expires_at=min(int(time.time())+240,expected.expires_at), family=self.carrier.prepared.family)
+            expires_at=min(int(time.time())+240,expected.expires_at), family=self.carrier.prepared.family, multiple=True)
         try:
             with service._dispatch_lock:
                 self.authority.admitted_authority()
@@ -100,7 +100,7 @@ class AdmissionHandoff:
                         prepared.document_fields()
                         self.service._direct_native.request("arm", id=prepared.handle, session=fields["session_id"],
                             generation=fields["generation"], digest=accepted.digest)
-                        parameters = native_parameters(self.service._identity, fields["candidates"], peer_binding, peer_certificate)
+                        parameters = native_parameters(self.service._identity, fields["candidates"], peer_binding, peer_certificate, allow_multiple_families=True)
                         parameters["remaining_ms"] = min(parameters["remaining_ms"], 30_000,
                             int((fields["expires_at"]-time.time())*1000))
                         self.service._direct_native.request("activate", id=prepared.handle, **parameters)

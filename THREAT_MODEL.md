@@ -518,3 +518,23 @@ Direct recovery does not solve two unknown addresses or filtered networks. Those
 states retain membership and queued work and expose a fresh connection-update
 exchange. They do not enable a relay or helper. Physical mobile battery, lifecycle
 and router behavior still require the Phase 2/5 qualification gates.
+# Server-free traversal and diagnostic boundaries
+
+The traversal increment retains up to four exact route sockets per attempt and
+eight sockets per native host. Multiple routes share one native-only ephemeral
+key under the same signed session; no private key is exported. Service-verified
+candidates constrain outgoing checks. The endpoint's mutual TLS and exact peer
+certificate check precede bootstrap traffic. Auxiliary simultaneous checks must
+never deliver DATAGRAMs to RNS, and cancellation must retire every group socket.
+Standard QUIC anti-amplification remains in effect; handshake-start pacing is not
+a claim that individual retransmitted packet counts equal the start count.
+
+Diagnostic exports use allowlisted enums and bounded numbers, never raw errors,
+invitation documents, endpoint addresses or identity material. The protected
+vault retains the last failure and at most 200 recent events for seven days;
+renderer exports are capped at 64 KiB. Clear diagnostic history deletes only that
+record. Offline reports identify missing service/component data rather than
+substituting source-tree metadata. Nothing is uploaded automatically.
+
+See [ADR 0019](docs/adr/0019-server-free-traversal.md); its independent review and
+physical qualification are still distinct from controlled native test results.

@@ -15,7 +15,7 @@ def client_role(local, remote, local_candidates, remote_candidates):
     return local < remote
 
 
-def native_parameters(local_identity, local_candidates, remote_binding, certificate, *, now=None):
+def native_parameters(local_identity, local_candidates, remote_binding, certificate, *, now=None, allow_multiple_families=False):
     now = time.time() if now is None else now
     fields = _parse(remote_binding)
     local = _destination_for(local_identity)
@@ -30,7 +30,7 @@ def native_parameters(local_identity, local_candidates, remote_binding, certific
     if not local_candidates and not remote_candidates:
         raise ValidationError("No public candidate; use an existing TCP route or refresh connection details")
     families = {ipaddress.ip_address(candidate["host"]).version for candidate in local_candidates+remote_candidates}
-    if len(families) > 1:
+    if len(families) > 1 and not allow_multiple_families:
         raise ValidationError("Direct candidate address families differ; refresh connection details")
     remaining = min(60, fields["expires_at"]-now)
     if remaining <= 0:

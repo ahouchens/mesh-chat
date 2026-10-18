@@ -32,6 +32,27 @@ handshake starts, not individual QUIC packets: retransmissions remain Quinn-owne
 Packet-rate evidence and the existing profile resource gate must be qualified
 before release. Authority loss, cancellation and deadline drop all temporary work.
 
+Initial setup and admission replacement can retain up to four local route sockets
+under one native-only certificate/key and signed session. The service inspects
+every socket before exporting all candidate tuples. Native capacity counts sockets
+(eight profile-wide), not just group handles. Family-compatible local/remote pairs
+receive sequential slices; the deterministic client has only one outgoing attempt
+at a time. Every local endpoint uses Quinn as its sole receiver. Losing route
+endpoints close after the selected authenticated connection is established.
+This extends the existing signed candidate-list contract without adding a new
+public control format. Older version-1/version-2 inputs remain readable.
+
+Recovery keeps its existing rotated-certificate/service-approval protocol and
+role reversal, with two-sided outbound checks and shorter fair candidate slices.
+Its single selected local socket and migration path are retained for now; adding
+simultaneous recovery socket groups remains a separate qualification item.
+
+Android activity switching retains current socket ownership for a bounded
+45-second background grace period. Returning cancels the suspension callback;
+remaining away or destroying the activity retires ownership. This is not a
+foreground-service or Doze execution guarantee. Process death still requires
+fresh controls, and the UI never exports an expired or unowned saved reply.
+
 ## Evidence required
 
 An isolated Linux network-namespace fixture must put both native hosts behind
