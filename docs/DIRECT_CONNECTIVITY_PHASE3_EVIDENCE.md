@@ -1,6 +1,6 @@
 # Phase 3 persistent relationship recovery evidence
 
-Status: recovery implementation integrated; expanded automated qualification is in progress. Phase 3 is **not complete** until those gates pass.
+Status: **Phase 3 implementation and required automated qualification are complete** at `5ba2b4460c760d7184776679a691ffcdb8489d45`. All controlled recovery exit criteria pass on Windows and Linux; Windows/Android package builds pass at the same commit. Physical qualification is separate and remains pending.
 Phase 2 physical Windows/Android qualification remains pending. The user
 authorized Phase 3 development independently of that gate.
 
@@ -24,18 +24,18 @@ the confirmation wait now follows the admitted carrier's lifecycle.
 
 ## Criterion tracking
 
-| Required capability | Current evidence / remaining work |
+| Required capability | Completed implementation / automated evidence |
 | --- | --- |
 | Encrypted exact workspace/device relationship | Production atomic acceptance, current membership and identity checks; existing replay keys retained |
 | Generations, validity, successful route, retry and cleanup state | Sealed recovery state; generation/backoff reservation before native effects; bounded crash cleanup evidence until lease expiry |
 | Fresh sockets/keys and RNS reauthentication | Separate recovery ALPN; actual TLS certificate possession plus peer-encrypted RNS binding and current membership before DATAGRAM approval |
 | Signed surviving-path updates and explicit no-route recovery | Workspace control, strict audience/scope import, owned-only opaque export and workspace settings UI implemented |
-| Same-socket UDP lease renewal | Actual returned tuple/lease persisted before export; ownership/persistence/retirement failure regressions pass locally |
+| Same-socket UDP lease renewal | Actual returned tuple/lease persisted before export; ownership/persistence/retirement failure regressions pass locally and in CI; physical router behavior remains unqualified |
 | Startup/resume, cancellation, fair bounded retries | Runtime epoch/token isolation, four workers/active relationships, eight native slots, fair scheduling and contention rotation implemented |
-| Replacement before old-path retirement | Native authorization, signed RNS confirmation and durable winner required; failures preserve old usable path; injected regressions pass |
+| Replacement before old-path retirement | Native authorization, signed RNS confirmation and durable winner required; failures preserve old usable path; injected failures and simultaneous real-QUIC replacement pass |
 | QUIC migration and reconnect fallback | Client rebind and server rejection native tests; route watcher and explicit fallback implemented |
 | Honest per-peer states | Reconnecting/dormant/update-needed; recent native replies, authenticated peer announce and RNS readiness reported separately; receipts unchanged |
-| Preserve membership, queued messages and receipts | Expanded shipping-native recovery scenarios are running; no completion claim before exact-commit CI passes |
+| Preserve membership, queued messages and receipts | All ten shipping-native recovery scenarios pass on Windows/Linux with unchanged admission, identities and queued logical IDs, signed join acknowledgments retained, bidirectional endpoint receipts and zero native/interface resources after pause |
 
 ## Validation
 
@@ -55,7 +55,7 @@ These are baseline evidence, not Phase 3 qualification.
 
 No release was published, artifact installed, or native build executed locally.
 
-## Exact-commit automated evidence
+## Historical durable-acceptance increment evidence
 
 Implementation: `fe4a45ca7247c501a4427f3f083ef0aacd7e7264`.
 
@@ -88,7 +88,7 @@ retains the original timeout/assertions. All six subsequent source pipelines
 passed. No timeout was increased or assertion weakened.
 
 
-## Integrated recovery implementation and qualification in progress
+## Integrated recovery implementation and qualification history
 
 The implementation now includes the protected recovery coordinator, workspace-only
 binding v3, encrypted rotated-key channel, signed live/manual updates, renewal,
@@ -114,8 +114,53 @@ production success predicates remain native recovery plus authenticated RNS evid
 A single 100-second test bound covers the configured native attempt/retry window;
 old Phase 2 connectivity is not accepted as completed persistent recovery.
 
-Local full non-integration validation after the integrated changes: 827 passed,
-7 environment-dependent skips. Exact final CI results will be recorded below.
+Local full non-integration validation at `5ba2b4460c760d7184776679a691ffcdb8489d45`: 838 passed,
+7 environment-dependent skips. Exact final CI results are recorded below.
 The earlier successful native increment at `2298996` in
 [run 39083931650](https://github.com/ahouchens/mesh-chat/actions/runs/39083931650)
 qualifies the provisional native channel only, not these new end-to-end scenarios.
+
+Expanded CI exposed two production lifecycle issues: startup had treated a
+formerly connected socket's scheduled refresh as failure backoff, and RNS Links
+could retain the retired carrier interface. Startup now schedules fresh ownership
+promptly; carrier retirement tears down only its own Links and refreshes the peer
+path. Recovery Link policy lasts for the bounded session rather than the old
+five-minute setup window. Controlled Linux replacement and both client/server
+route-change scenarios passed at `a47aa9c`; blocked-path restoration still failed
+in that run. The next increment gives a saved local port bounded bind retries
+while QUIC drains and tightens native ownership/arming expiry. These intermediate
+results do not replace the required complete final matrix.
+
+## Final recovery implementation verification
+
+Implementation commit: `5ba2b4460c760d7184776679a691ffcdb8489d45`.
+
+- Local non-integration tests: 838 passed, 7 environment-dependent skips and
+  45 integration deselections. All six source production pipelines passed.
+- [Verification/packages 39087493337](https://github.com/ahouchens/mesh-chat/actions/runs/39087493337):
+  845 service tests passed, 45 environment/native-only skips; 190 frontend tests
+  passed across 11 files. Windows desktop and signed Android ARM64 package builds
+  passed. Release publication was skipped.
+- [Native qualification 39087411424](https://github.com/ahouchens/mesh-chat/actions/runs/39087411424):
+  Windows and Linux completed successfully; Android ARM64 compilation passed.
+  Each desktop platform passed ten production recovery scenarios,
+  207 service-boundary tests, 14 authority tests, 65 relationship/recovery tests,
+  33 document/setup tests, 47 bootstrap/path tests, six source pipelines,
+  24 native unit tests, one cross-language binding test, one shipping-dispatcher
+  test, 25 native topology tests and six shipping-native production setup pipelines.
+- Linux recovery syscall audit: zero external addresses, 4253 loopback address
+  observations, 170 wildcard binds and 3527 sends across the controlled topology
+  and all child processes, retained in
+  [artifact 12122065171](https://github.com/ahouchens/mesh-chat/actions/runs/39087411424/artifacts/12122065171).
+- The separate Linux legacy topology and production setup audits also found zero
+  external addresses: [12121727140](https://github.com/ahouchens/mesh-chat/actions/runs/39087411424/artifacts/12121727140)
+  (1267 loopback observations, 64 wildcard binds, 1043 sends) and
+  [12121687753](https://github.com/ahouchens/mesh-chat/actions/runs/39087411424/artifacts/12121687753)
+  (1896 loopback observations, 72 wildcard binds, 1578 sends).
+
+Retained package archives (GitHub artifact SHA-256; compilation evidence only):
+
+| Platform | Artifact | Archive SHA-256 |
+| --- | --- | --- |
+| Windows | [12120484918](https://github.com/ahouchens/mesh-chat/actions/runs/39087493337/artifacts/12120484918) | `c4b21b289f933fd8733872031d87b875aafa42b008c250a15d5b532eba6537ed` |
+| Android ARM64 | [12121627094](https://github.com/ahouchens/mesh-chat/actions/runs/39087493337/artifacts/12121627094) | `a1c3869eb1d6e6bf0f225e2ef01eb73651141c2edacd43dff344a13404a70e1c` |

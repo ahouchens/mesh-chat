@@ -369,3 +369,9 @@ from using an apparently active Link over a dead carrier. Recovery packet-policy
 Link entries use the bounded native session lifetime (at most one hour); replayed
 Link requests never extend it. The adapter and current-membership lease still gate
 every packet and retain the existing Link/queue caps.
+
+Native recovery cannot extend the original prepared socket deadline, and its
+connection attempt is clamped to the remaining armed window. Closed recovery
+handles cannot export ownership evidence. Reopening a saved UDP port permits
+at most twenty quarter-second delays for local QUIC drain before ephemeral
+fallback; this performs only local binds, not additional network probes.

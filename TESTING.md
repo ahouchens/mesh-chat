@@ -2935,7 +2935,7 @@ The current suite extends the historical acceptance increment above:
   native authorization and vault confirmation.
 - `test_direct_recovery_candidates.py`: same-socket renewal, changed actual tuples,
   shortened leases, failed renewal, ownership loss, retirement during router I/O,
-  durable-write failure and cleanup.
+  durable-write failure, cleanup, and bounded saved-port binding during QUIC drain.
 - `test_direct_recovery_pipeline.py`: CI-only real QUIC through the shipping native
   dispatcher with separate RNS service processes and encrypted profile reopening.
   Scenarios cover client/server/both process death, suspension/resume, concurrent
@@ -2945,7 +2945,8 @@ The current suite extends the historical acceptance increment above:
   zero retained native/interface resources after explicit pause.
 - Rust recovery tests enforce preauthorization packet rejection, wrong exporter
   rejection, both-service approval, certificate rotation, client migration, server
-  migration rejection, bounded expiry and recovery via the remaining known address.
+  migration rejection, original ownership/arming expiry and recovery via the
+  remaining known address.
 - Renderer tests separate liveness from receipts and exercise workspace-bound import,
   fresh-only export, verification failure and pause/resume controls.
 
@@ -2953,3 +2954,12 @@ Native/frontend/package execution remains GitHub Actions only. Linux production
 recovery runs under the existing no-external-address syscall audit. Exact tested
 SHAs, results and unresolved limits are in
 [the Phase 3 evidence record](docs/DIRECT_CONNECTIVITY_PHASE3_EVIDENCE.md).
+
+Physical qualification remains separate. On the Windows/Android pair, preserve
+the existing admission and queue a message before restart, sleep, process kill,
+and each network switch. Record the unchanged member/device and message IDs,
+fresh authentication after ownership loss, and actual endpoint receipts after
+restoration. Test each side moving independently, then both losing their known
+addresses and exchanging explicit connection updates. Capture router lease
+renewal/cleanup and foreground battery/traffic evidence; compilation and loopback
+tests cannot establish those results. Do not infer Android background availability.

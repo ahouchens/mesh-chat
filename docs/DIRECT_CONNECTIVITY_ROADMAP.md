@@ -13,13 +13,18 @@ packages and exact integrated-flow CI pass at `200614a` (777 service tests,
 Physical Windows/Android qualification remains open; exact artifacts, package
 hashes and the device checklist are linked from the evidence record.
 
-### Phase 3 development
+### Phase 3 implementation and automated qualification complete
 
 Admitted relationship evidence and replay acceptance commit atomically. Persistent
 recovery, rotated-key authorization, signed updates, lease renewal, lifecycle
 reconciliation, migration fallback and per-peer controls are now integrated.
-Expanded shipping-native qualification is running; Phase 3 is not yet marked complete. The [criterion-by-criterion record](DIRECT_CONNECTIVITY_PHASE3_EVIDENCE.md)
-tracks implementation and remaining work separately from Phase 2 physical debt.
+All ten controlled recovery scenarios and the existing native/production regression
+suites pass on Windows and Linux at `5ba2b4460c760d7184776679a691ffcdb8489d45`.
+Windows/Android package builds pass at that same commit. Phase 3's implementation
+and required automated qualification are complete. The
+[criterion-by-criterion record](DIRECT_CONNECTIVITY_PHASE3_EVIDENCE.md) records
+exact CI evidence and keeps physical Windows/Android, router, network-switch and
+battery qualification explicitly pending. Phase 2 physical debt is not closed.
 
 ### Phase 1 completion, 2026-10-17
 
