@@ -39,7 +39,8 @@ Two preceding Windows failures are retained as open reliability observations:
 channel discovery after admission, and address-loss recovery at `native_wait`.
 The latter has paired controlled-fixture port evidence added to failures. The
 [Windows repetition workflow](https://github.com/ahouchens/mesh-chat/actions/runs/39163212934)
-uses five fresh processes per scenario and unchanged assertions. A later passing
+passed five fresh processes per scenario with unchanged assertions. All ten
+JUnit records were checked and had no failures or errors. A later passing
 run is not a root-cause explanation for an earlier intermittent failure.
 
 ## Required reviewer and device follow-up

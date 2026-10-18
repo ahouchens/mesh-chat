@@ -4,6 +4,20 @@ Status: implementation and qualification in progress, 2026-10-18. This is not a
 physical connectivity result or release approval. The detailed requirements are
 in [the spec](DIRECT_CONNECTIVITY_TRAVERSAL_SPEC.md).
 
+## Recovery timing candidate: 0.2.60 / Android 2060
+
+Full Windows run `39163214793` reproduced address-loss failure despite the five
+passing isolated repetitions. Both peers retained matching fresh port hints,
+with `native_wait` failure on both sides. Equal 1500ms recovery rounds plus 500ms
+pauses can align opposite preferred roles when their starts are one round apart.
+The candidate uses 1500ms client / 2500ms server slices to break that alignment,
+with the existing global deadline, check limits and service authorization intact.
+A staggered hosted-peer regression must fail on 0.2.59 and pass on this candidate
+in Windows/Linux CI before treating this hypothesis as a verified fix.
+0.2.59 packaging was cancelled; do not promote its artifacts. All ten diagnostic
+tests and its ordinary CI/layout/recovery regression passed, but its native
+reliability qualification was not complete.
+
 ## Diagnostic follow-up: 0.2.59 / Android 2059
 
 Readiness failures (no route, network changed, failed checks, and neither device
@@ -55,7 +69,9 @@ discovery after membership became active, before revocation; `39159976022`
 failed address-loss recovery at `native_wait`. The focused
 [Windows repetition run](https://github.com/ahouchens/mesh-chat/actions/runs/39163212934)
 uses five fresh processes per scenario without relaxing assertions. Source
-admission passed all five; address-loss repetition is still running.
+admission and address-loss recovery each passed all five. Downloaded JUnit
+evidence confirms ten tests with no failures or errors (source artifact
+`12149013640`, native address-loss artifact `12149836987`).
 Paired test-only recovery evidence now records both peers on failure.
 
 No merge or public release has been performed. A passing controlled run is not

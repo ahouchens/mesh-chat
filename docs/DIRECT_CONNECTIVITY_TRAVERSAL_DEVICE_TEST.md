@@ -1,7 +1,7 @@
 # Windows and mobile-carrier acceptance
 
-Status: **awaiting matching 0.2.59 / Android 2059 artifacts**. The diagnostic
-follow-up preserves readiness failures across later successful checks and history
+Status: **awaiting qualified 0.2.60 / Android 2060 artifacts**. Recovery timing qualification is open after another Windows address-loss failure.
+The diagnostic follow-up preserves readiness failures across later successful checks and history
 rollover. The 0.2.58 downloads below are retained as historical evidence, not the
 new acceptance pair. Preserve app data.
 
@@ -28,7 +28,7 @@ Its archive, manifest and APK hashes were verified; manifest version is 0.2.58 /
 ## Guided test
 
 1. Install the matching new build on **both Windows and Android**. In Settings,
-   confirm **Mesh Chat version 0.2.59** and copy version details on each device.
+   confirm **Mesh Chat version 0.2.60** and copy version details on each device.
    Preserve existing app data; do not clear the profile to work around a failure.
 2. Leave Windows on the home router. Turn Android Wi-Fi off and confirm mobile
    data is active. Keep both Mesh Chat apps unlocked and open.
