@@ -1,6 +1,6 @@
 # Server-free traversal implementation evidence
 
-Status: implementation and qualification in progress, 2026-10-18. This is not a
+Status: implemented candidate and current automated qualification passed, 2026-10-18. This is not a
 physical connectivity result or release approval. The detailed requirements are
 in [the spec](DIRECT_CONNECTIVITY_TRAVERSAL_SPEC.md).
 
@@ -16,10 +16,19 @@ non-reproducing client-first timing test.
 The new native regression reproduces server-first/late-client startup. The
 candidate uses 1500ms client / 2500ms server round slices so the role schedules
 cannot remain locked together, retaining the 500ms pause, overall deadline,
-check budget and membership gate. Old-fails/new-passes Windows/Linux proof is
-pending. Do not promote the 0.2.62 artifacts based on their successful builds.
+check budget and membership gate. [Old-fails/new-passes qualification](https://github.com/ahouchens/mesh-chat/actions/runs/39168424539) passed on Windows and Linux, including both earlier recovery regressions. Full CI and all 42 layout cases passed. Both platform packages in build `39168607399` passed and were hash-verified. All five address-loss and all five source-admission Windows trials passed in `39168424542`; both artifacts (`12151951927`, `12151725812`) were downloaded and all ten JUnit records checked. [Full native qualification](https://github.com/ahouchens/mesh-chat/actions/runs/39168424723) passed all Windows, Linux and Android jobs at `34d9927f76d27c037e5a2d727bb75167fff3c8e0`, including production setup/admission, durable recovery, real RNS/LXMF traffic and Linux network/NAT audits. Do not promote the 0.2.62 artifacts based on their successful builds.
 
-## Pause ownership correction: 0.2.62 / Android 2062
+The same regression workflow passed the controlled hostile-traffic profile on both platforms. Each native target received 500 unsupported-version QUIC packets (600,000 bytes) and returned 500 version-negotiation packets (27,500 bytes); no unauthorized application packets were exposed. A separate authenticated session still delivered in both directions, and target close completed below the five-second bound. Archives `12151985214` (Windows) and `12151249247` (Linux) were downloaded and SHA-256 verified. This is a defined loopback parser/amplification/isolation profile, not a universal packet-rate limit, NAT result or physical-device test.
+
+Release verification for 0.2.63 passed 934 service tests (47 environment-specific skips), 215 frontend tests, and bundle validation. Verification artifact `12151493935` matched archive SHA-256 `a0ad045592b9c8c00004ff76ca2e2c1aca79bc83cfb310c81a5f05c167b94875`; its source record is the exact application commit `34d9927f76d27c037e5a2d727bb75167fff3c8e0`. Native tests excluded from that generic run are qualified in their separate workflows.
+
+Current Linux native qualification passed all stages. Its seven-trial NAT artifact `12151329034` was downloaded and hash-verified: three compatible NAT connections delivered in both directions in 1.257-1.265 seconds; the passive negative control, UDP-blocked profiles and destination-dependent stale tuple failed as expected in 10.219-10.236 seconds. Candidate tuples are fixture ground truth, not production discovery. The network, recovery and setup audit artifacts (`12152475678`, `12152465004`, `12151309300`) were also hash-verified; each reports zero external addresses across the controlled topology and descendants.
+
+## Historical qualification notes
+
+The following version sections retain the status and evidence collected during development. Use the current-candidate section and acceptance ledger for the present recommendation; historical successful builds do not supersede later failing tests.
+
+### Pause ownership correction: 0.2.62 / Android 2062
 
 The earlier `39164119167` run failed Windows server-restart recovery at
 `native_wait` and Linux server-restart cleanup with one native handle remaining
@@ -39,7 +48,7 @@ passes afterward. All 75 recovery, candidate, runtime and packet source tests
 passed. [Build 39167070427](https://github.com/ahouchens/mesh-chat/actions/runs/39167070427)
 passed full verification (934 service tests, 47 skipped; 215 frontend tests),
 Windows packaging/embedded host checks and signed Android packaging. Both archives,
-manifests and packaged files were hash-verified; exact links and hashes are in the
+manifests and packaged files were hash-verified. Those packages are superseded by the current pair in the
 [device checklist](DIRECT_CONNECTIVITY_TRAVERSAL_DEVICE_TEST.md). Verification
 artifact `12151147432` matched SHA-256
 `03b436ba2d2e9db1ac2bdf4e66edbb8ba8c91d88fc763377dc32df24d455196b`.
@@ -65,7 +74,7 @@ receive explicit service approval and deliver data within the same attempt.
 [Windows and Linux red/green passed](https://github.com/ahouchens/mesh-chat/actions/runs/39165009599)
 at `ed25af6fcb8f13d423ffd2d71478d7037b11746e`: the old implementation fails
 the behavioral assertion and the fix passes, with the existing unhosted restart
-regression retained. Full recovery qualification is running; matching builds passed.
+regression retained. Full recovery qualification and matching builds passed for 0.2.61.
 This does not yet prove that every preceding pipeline failure has the same cause.
 
 The controlled native fixture now retains a bounded, credential-free trace of
@@ -75,21 +84,20 @@ attempt lifecycle on both peers. This is CI evidence, not production logging.
 passed 933 service tests (47 skipped) and 215 frontend tests. The verified report
 artifact `12149803730` has SHA-256
 `084eb80f892e4a282d400836d6d6acbf10b2468cee3af11bde4dc36a3b3f621a`.
-Current transport reliability remains unqualified; do not start physical acceptance.
+Those artifacts are superseded; use the current qualification status at the top of this record.
 
 ### Matching artifact and repetition results
 
 [Build `39165181059`](https://github.com/ahouchens/mesh-chat/actions/runs/39165181059)
 passed full verification (933 service tests, 47 skipped; 215 frontend tests),
 Windows packaging/embedded native tests and signed Android packaging. Both
-archives, manifests and inner files were verified; the [device checklist](DIRECT_CONNECTIVITY_TRAVERSAL_DEVICE_TEST.md)
-records exact downloads and hashes. Verification artifact `12150362873` matched
+archives, manifests and inner files were verified. Those packages are superseded by the current pair in the [device checklist](DIRECT_CONNECTIVITY_TRAVERSAL_DEVICE_TEST.md). Verification artifact `12150362873` matched
 SHA-256 `46ad61b2e08d7c20d99615e8fed5820e933c418a2cbd8b7542e983753a433a9b`.
 [Windows repetition](https://github.com/ahouchens/mesh-chat/actions/runs/39165009612)
 passed all five source-admission and all five address-loss trials. Address-loss
 artifact `12150358580` was downloaded and each JUnit record checked.
 The [full native pipeline](https://github.com/ahouchens/mesh-chat/actions/runs/39165009596)
-is still running. Independent review and physical acceptance remain open.
+passed all jobs. Independent review and physical acceptance remain open.
 
 ## Diagnostic follow-up: 0.2.59 / Android 2059
 
@@ -116,7 +124,7 @@ UDP mapping UI are not supported; the wizard says so explicitly.
 
 ## Current qualification
 
-Current application: **0.2.58 / Android 2058**, commit
+Historical application: **0.2.58 / Android 2058**, commit
 `0bf9623a9d4c01042793f63d3ffb1fd984443308`.
 
 - [Full CI passed](https://github.com/ahouchens/mesh-chat/actions/runs/39160399832):
@@ -147,6 +155,7 @@ evidence confirms ten tests with no failures or errors (source artifact
 `12149013640`, native address-loss artifact `12149836987`).
 Paired test-only recovery evidence now records both peers on failure.
 
+The reproduced recovery failures have regression-backed corrections and the current full native/repetition runs passed. Earlier failures remain recorded; finite CI runs are not a universal reliability guarantee.
 No merge or public release has been performed. A passing controlled run is not
 physical mobile-carrier evidence.
 
@@ -219,39 +228,40 @@ public address discovery nor behavior on every consumer or carrier NAT.
 
 | Requirement | Evidence and remaining gate |
 | --- | --- |
-| A1 | Exact 0.2.58 real-QUIC production setup/admission passed; physical public-path qualification pending. |
-| A2–A3 | Native NAT fixture passed at `118329d` and `e496b2e`; passive negative control failed as expected. |
+| A1 | Exact 0.2.63 real-QUIC production setup/admission passed; physical public-path qualification pending. |
+| A2–A3 | Seven-trial native NAT fixture passed at `34d9927`, including three successful coordinated connections and a failing passive negative control. Exact timings and artifact are above. |
 | A4 | One-sided candidate/native accept tests and unhosted recovery pipeline; no general reachable address is inferred from an observed tuple. |
 | A5 | Empty-candidate setup regressions preserve the request and do not activate native transport. |
-| A6 | Multiple owned route sockets, silent-first-candidate native tests and mixed-family service tests added; exact 0.2.58 native suite passed. |
-| A7 | Destination-dependent SNAT profile with a tuple learned for a different destination passed its expected bounded failure at `b01572d`. No universal NAT claim. |
-| A8 | One-side/both-side UDP-block fixture passed at `b01572d`. This fixture does not prove TCP fallback; existing authorized TCP remains separate. |
-| A9 | Existing mapping renewal, migration, address-loss and manual recovery-update regressions retained. Recovery now rotates eligible interfaces on bounded retries with a source regression; exact 0.2.58 native pipeline passed, with preceding intermittent address-loss failure still under investigation. Multiple simultaneous recovery route sockets are not implemented. |
-| A10 | Signed chain/replay tests retained; joiner and owner saved-message resume, expired/lost ownership and retry-ID regressions added. Latest wizard TypeScript/frontend run passed at `0bf9623`. |
+| A6 | Multiple owned route sockets, silent-first-candidate native tests and mixed-family service tests added; exact 0.2.63 native suite passed. |
+| A7 | Destination-dependent SNAT profile with a tuple learned for a different destination passed its expected bounded failure at `34d9927`. No universal NAT claim. |
+| A8 | One-side/both-side UDP-block fixture passed at `34d9927`. This fixture does not prove TCP fallback; existing authorized TCP remains separate. |
+| A9 | Existing mapping renewal, migration, address-loss and manual recovery-update regressions retained. Recovery now rotates eligible interfaces on bounded retries with a source regression; 0.2.63 durable recovery passed on Windows/Linux and all five focused Windows address-loss repetitions passed. The server-first timing trace has an old-fails/new-passes native regression; earlier cleanup and incomplete-capsule failures have separate regression-backed fixes. Multiple simultaneous recovery route sockets are not implemented. |
+| A10 | Signed chain/replay tests retained; joiner and owner saved-message resume, expired/lost ownership and retry-ID regressions added. Latest wizard TypeScript/frontend run passed at `34d9927`. |
 | A11 | Existing restart/suspend recovery pipeline; Android 45-second share grace implemented. Actual sharing, process death, Doze and network switch device tests pending. |
-| A12 | Existing authority/cancellation/queue tests plus group socket cancellation and shared bounds. Adversarial packet-rate qualification and independent protocol review pending. |
-| A13 | Existing Linux network audit and isolated NAT topology; exact 0.2.58 full audit passed. No runtime observer, rendezvous, relay or IP lookup added. |
+| A12 | Existing authority/cancellation/queue tests plus group socket cancellation and shared bounds. The 500-packet unsupported-version profile passed on Windows/Linux at `34d9927`, with measured amplification, unauthorized-data rejection and separate-session isolation. Broader adversarial profiles and independent protocol review remain open. |
+| A13 | Existing Linux network audit and isolated NAT topology; exact 0.2.63 Linux full audit passed; downloaded reports record zero external addresses. No runtime observer, rendezvous, relay or IP lookup added. |
 | A14 | Pending physical Windows/home-router ↔ Android/mobile-carrier test on uniquely versioned artifacts. |
 | A15 | Deterministic client outgoing/server incoming path and auxiliary closure tests; independent review of boundary races still required. |
 | A16 | Default Invite invokes the guided controller; one outgoing item and shared import entry tested in frontend CI. Owner resume added in follow-up. Human end-to-end acceptance pending. |
-| A17 | Forty-two browser layout cases passed at `0bf9623`; 360/393px doubled-text screenshots inspected on the equivalent preceding layout. Actual Android and human usability acceptance pending. |
+| A17 | Forty-two browser layout cases passed at `34d9927`; Current 393px normal/doubled-text and 360px doubled-text screenshots were visually inspected; artifact `12151940099` was hash-verified and all 42 overflow records checked. Actual Android and human usability acceptance pending. |
 | A18 | Allowlisted bounded diagnostics, real native check counters, candidate-source counts, offline/clipboard-denial tests. Receipt/approval are timestamped facts, never inferred from QUIC. |
-| A19 | Visible Settings/diagnostic version, actual Android package metadata and native commit command implemented. Installed Windows/Android artifact matching pending. |
+| A19 | Visible Settings/diagnostic version, actual Android package metadata and native commit command implemented. Both 0.2.63 artifacts and manifests were hash-verified; installed-device metadata matching remains a physical check. |
 | A20 | Protected bounded history, last failure, storage retention and clear-preserves-request regressions. A real encrypted VaultStore close/reopen regression passed locally; physical app restart acceptance pending. |
 
 ## Release gates
 
 Do not label the whole spec complete from the controlled NAT success. Remaining
-work includes intermittent Windows reliability investigation,
-independent protocol review, physical mobile usability/accessibility
+work includes independent protocol review, broader adversarial traffic qualification,
+physical mobile usability/accessibility
 checks and physical acceptance using the verified matching Windows/Android artifacts.
+The reproduced recovery failures have regression-backed corrections and the current full native/repetition runs passed. Earlier failures remain recorded; finite CI runs are not a universal reliability guarantee.
 No merge or public release has been performed. Draft PR #1 holds the implementation.
 The superseded 0.2.51 artifact workflow failed an existing administrator benchmark
 timing threshold; the same commit's ordinary CI passed. The threshold was not
 changed. The 0.2.52 release verification passed with that threshold intact.
 
 
-## Final artifact verification
+## Historical artifact verification: 0.2.58
 
 Build `39160414911` passed verification, Windows packaging/embedded native checks,
 and signed Android packaging after retrying the NDK download. Both archives and

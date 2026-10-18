@@ -67,6 +67,8 @@ remaining away or destroying the activity retires ownership. This is not a
 foreground-service or Doze execution guarantee. Process death still requires
 fresh controls, and the UI never exports an expired or unowned saved reply.
 
+Recovery alternates roles using different round slices (client 1500ms, server 2500ms) and the existing 500ms pause. This breaks the server-first phase lock reproduced from a Windows address-loss trace while preserving the overall attempt deadline and check budget. A native old-fails/new-passes test on Windows and Linux covers the 2100ms server-first stagger, rejection of early data and delivery after mutual authorization.
+
 ## Evidence required
 
 An isolated Linux network-namespace fixture must put both native hosts behind

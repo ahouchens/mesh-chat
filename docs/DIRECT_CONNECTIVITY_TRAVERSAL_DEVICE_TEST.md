@@ -1,27 +1,19 @@
 # Windows and mobile-carrier acceptance
 
-Status: **awaiting qualified 0.2.63 / Android 2063 packages**. The fifth Windows
-address-loss repetition failed on 0.2.62; the exact native trace now has a targeted
-server-first timing regression. The 0.2.62 packages below are historical evidence,
-not the new acceptance pair. Preserve app data.
+Status: **matching 0.2.63 / Android 2063 packages built and hash-verified**. Full native qualification passed on Windows and Linux, with Android native compilation also passing; see the [evidence record](DIRECT_CONNECTIVITY_TRAVERSAL_EVIDENCE.md). This is the matching pair for the controlled physical acceptance test, not a public-release approval. Preserve app data. Independent protocol review and actual device acceptance remain open.
 
-[Build run](https://github.com/ahouchens/mesh-chat/actions/runs/39167070427) passed
-full verification, Windows packaging/embedded native checks and signed Android
-packaging. Native old-fails/new-passes recovery regressions passed on Windows
-and Linux. [Full native qualification](https://github.com/ahouchens/mesh-chat/actions/runs/39167069275)
-is still running. Do not substitute a superseded version.
+[Build run](https://github.com/ahouchens/mesh-chat/actions/runs/39168607399) passed full verification, Windows packaging/embedded native checks and signed Android packaging. Application commit: `34d9927f76d27c037e5a2d727bb75167fff3c8e0`. Windows/Linux old-fails/new-passes recovery regressions and all ten Windows repetition trials passed. Do not substitute a superseded version.
 
 | Platform | Matching artifact | Archive SHA-256 |
 | --- | --- | --- |
-| Windows | [mesh-chat-0.2.62-windows-desktop](https://github.com/ahouchens/mesh-chat/actions/runs/39167070427/artifacts/12151027377) | `7530a4bde0905e6bcd090d3e136eb925a8ae3d8ec1311cec63033025b983261d` |
-| Android | [mesh-chat-0.2.62-android-arm64](https://github.com/ahouchens/mesh-chat/actions/runs/39167070427/artifacts/12151287537) | `4f8ae52f6bc94b55050ffefda2c908ddcefde66a2d078d3fcd669a11e665acf7` |
+| Windows | [mesh-chat-0.2.63-windows-desktop](https://github.com/ahouchens/mesh-chat/actions/runs/39168607399/artifacts/12151891183) | `b424d0ffd343f452e48cb79492a30a24fc5289a05cdb587d1c0ed8c65f6f8716` |
+| Android | [mesh-chat-0.2.63-android-arm64](https://github.com/ahouchens/mesh-chat/actions/runs/39168607399/artifacts/12151726555) | `e7952764d9a6caa119c55c9ecd80e4c25b4fe5597d4257145503ad280c2b2445` |
 
 The Windows archive, manifest and all five packaged files were hash-checked.
-NSIS installer SHA-256: `4e8224e75a6dfb617182a3c9fa6962c2b19531dbc95684a5663c1ca601bf3d9b`.
-MSI SHA-256: `6319e95c1ba0e9f9531e2e682732ec3b6272852dd7cd3260a898a80a94870c6e`.
-Android APK SHA-256: `3a5a17491dcae996fff7bd8072da36f0b1e94b5e1fe6e78805f46773e21172f1`.
-Its manifest is 0.2.62 / 2062 with release signing. Nothing was installed or
-executed locally. See the [acceptance ledger](DIRECT_CONNECTIVITY_TRAVERSAL_EVIDENCE.md).
+NSIS installer SHA-256: `9147e7836e974026bfb0c749918ffd2069c10ac40245943c08528ae7ea63f348`.
+MSI SHA-256: `55a22b9e44b76c06ffbe87cbebc2ed4b4e0d5825f3a66c7567e947e540d0c270`.
+Android APK SHA-256: `a1c3e7223ee60213629b5b3c1618bd9c610c7d1aa8dd521c6d8415fc319d1c25`.
+Its manifest is 0.2.63 / 2063 with release signing; the current manifest pointer and both APK copies were also verified. Nothing was installed or executed locally.
 
 ## Guided test
 
@@ -70,7 +62,7 @@ reappear. Expired or lost socket ownership should offer a refresh of the same
 invitation, keeping the saved request. Do not substitute a different invitation
 for the pending request.
 
-After any failure, use **Copy diagnostics** on both devices. In Settings â†’
+After any failure, use **Copy diagnostics** on both devices. In Settings →
 **Help and diagnostics**, copy the connection log and version details. If copying
 is denied, select the fallback text or save the diagnostics file. Reopen the app
 and verify the last failure is still available. Clear diagnostic history and

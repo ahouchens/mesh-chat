@@ -1,7 +1,7 @@
 # Traversal implementation review
 
-Reviewed application: `0bf9623a9d4c01042793f63d3ffb1fd984443308`, version
-0.2.58 / Android 2058. Review date: 2026-10-18.
+Initial reviewed application: `0bf9623a9d4c01042793f63d3ffb1fd984443308`, version
+0.2.58 / Android 2058. Follow-up reviews below extend through `34d9927f76d27c037e5a2d727bb75167fff3c8e0`, version 0.2.63 / Android 2063. Review date: 2026-10-18.
 
 This is an author-side source review, not independent protocol approval. F2 of
 the [specification](DIRECT_CONNECTIVITY_TRAVERSAL_SPEC.md) requires independent
@@ -15,7 +15,7 @@ reachability, carrier compatibility, or release approval follows from this recor
 | Preview versus connection | Signed-control preview performs validation without dialing or granting membership. Preparation and connection are separate public commands. Private native controls cannot be supplied through public setup payloads. |
 | Candidate provenance | `direct_candidates.py` exports only inspected native-owned sockets, matching UDP mappings, and permitted public addresses. Mapping lifetime clips the preparation deadline. Additional route failure preserves an already usable route. There is no public observer or address-guessing service. |
 | Initial authentication | `traversal.rs` and `paths.rs` use mutually pinned QUIC checks. Deterministic client-outgoing/server-incoming selection keeps auxiliary connections out of application delivery. Losing local endpoints close. The retained socket/key owns the advertised tuple. |
-| Resource limits | Four local sockets per initial setup, eight profile sockets, eight remote candidates, shared incoming/check bounds, a global start pacer, bounded queues and monotonic deadlines constrain work. Handshake-start limits are not packet-rate limits; Quinn owns retransmission. Adversarial packet-rate qualification remains open. |
+| Resource limits | Four local sockets per initial setup, eight profile sockets, eight remote candidates, shared incoming/check bounds, a global start pacer, bounded queues and monotonic deadlines constrain work. Handshake-start limits are not packet-rate limits; Quinn owns retransmission. A measured unsupported-version traffic profile is recorded below; broader adversarial profiles remain open. |
 | Recovery authority | `recovery.rs` establishes TLS key possession before exchanging encrypted capsules. `direct_recovery.py` then validates current workspace authority, the actual TLS certificate and native authorization token before application delivery. Old invitation authority cannot authorize an admitted recovery. |
 | Cancellation and revocation | `direct_runtime.py` checks registration epochs after authority callbacks. Packet pumps retain their resource reservation until their threads exit. Recovery checks authority before pending/full-worker shortcuts. Pending and saturated scheduler regressions cover the previously observed revocation leak. |
 | Handoff | `direct_handoff.py` waits for the admitted peer's signed RNS announcement before retiring bootstrap. The isolated bootstrap carrier permits only join, receipt, manifest-root and direct-binding controls; channel discovery uses the admitted path. The source-admission timeout therefore is not evidence of channel controls being discarded from the bootstrap queue. |
@@ -62,7 +62,7 @@ loopback, synthetic candidates or a same-Wi-Fi result.
 Version 0.2.59 adds the four blocking readiness states to retained last-failure
 capture. Regression cases cover later success, history rollover and the valid
 one-sided preparation state. All ten diagnostic tests pass. This changes no
-transport or authorization behavior; matching package qualification is pending.
+transport or authorization behavior; subsequent matching packages include it.
 
 ## Recovery follow-up: 0.2.61
 
@@ -98,3 +98,17 @@ The regression fails before the fix with a remaining native handle and passes
 afterward while holding the public service dispatch lock and leaving discovery
 blocked. All 75 focused recovery/candidate/runtime/packet tests passed. Full native
 qualification and matching packages remain required.
+
+## Server-first recovery timing: 0.2.63
+
+A later Windows address-loss trace established the missing start order: the server began 2.112 seconds before the client, with matching fresh candidate ports, but neither completed TLS during the entire attempt. Equal role periods could keep both peers dialing or listening together. Recovery now uses a 1500ms client slice and 2500ms server slice; the existing 500ms pause, total monotonic deadline, bounded iterations and authorization boundary remain unchanged.
+
+The server-first 2100ms-stagger regression fails against 0.2.62 and passes against `34d9927f76d27c037e5a2d727bb75167fff3c8e0` on Windows and Linux in run `39168424539`. It checks rejection of early data, mutual service approval and packet delivery. This is distinct from the earlier rejected client-first test, which did not reproduce the problem.
+
+The same run measured a defined hostile-traffic profile through the shipping dispatcher: 500 unsupported-version QUIC packets, positive parser responses, 27,500 response bytes for 600,000 input bytes, zero unauthorized application packets, prompt close, and uninterrupted bidirectional delivery on a separate authenticated session. Both platform reports were downloaded and hash-verified. This does not establish a universal packet-rate cap or exhaust adversarial traffic profiles. Independent protocol review remains outstanding.
+
+## Current automated qualification
+
+At application commit `34d9927f76d27c037e5a2d727bb75167fff3c8e0`, all Windows/Linux native pipeline jobs and Android compilation passed in `39168424723`. The full pipeline includes setup/admission, durable recovery, real RNS/LXMF transport and Linux network/NAT audits. All ten Windows repetition trials passed in `39168424542`, with downloaded JUnit records checked. Full CI, 42 layout cases, native old-fails/new-passes recovery cases and the defined hostile-traffic profile also passed. Matching 0.2.63 Windows and Android 2063 packages in `39168607399` were downloaded and hash-verified.
+
+These results close the current automated runs, not the independent-review or physical gates. The initial review and historical failures above remain evidence of what was checked and corrected; a finite set of passing trials does not prove every router, carrier or timing combination.
