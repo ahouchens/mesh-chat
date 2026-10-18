@@ -13,6 +13,13 @@ and coarse network topology. Keep both apps open and unlocked. Use a test worksp
 and two separate networks; disable nearby/LAN fallback for the isolated direct
 case so its success cannot be attributed to a local route. Preserve existing data.
 
+Android retires prepared sockets when its activity is stopped. Keep Mesh Chat
+visible in split-screen while using email, or transfer documents through a second
+device. A full-screen email app or file picker can stop Mesh Chat and invalidate
+the retained reply socket; returning must show refresh rather than revive it.
+This phase does not promise background setup. Record this usability limitation
+and whether split-screen sharing/import works on the tested phone.
+
 For a reachable-host case, Windows needs public IPv6 with permitted inbound UDP
 or public IPv4 behind a router that supports the app's UDP mapping request.
 Android may remain unhosted on cellular. Candidate preparation is not a successful

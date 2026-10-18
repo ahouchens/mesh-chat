@@ -8,7 +8,10 @@ pending leases, embedded native ownership/private IPC, bounded candidate dialing
 native-owned candidate collection and the protected email document controller are
 implemented. Isolated bootstrap processes, fresh admitted handoff and explicit
 renderer email/file setup are now connected. Windows/Android process-boundary
-packages compile; exact integrated-flow CI and physical qualification remain open.
+packages and exact integrated-flow CI pass at `200614a` (777 service tests,
+184 frontend tests, and Windows/Linux production pipelines over real QUIC).
+Physical Windows/Android qualification remains open; exact artifacts, package
+hashes and the device checklist are linked from the evidence record.
 
 ### Phase 1 completion, 2026-10-17
 

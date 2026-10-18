@@ -2,6 +2,102 @@
 
 Status: **open**. No production or physical-device completion is claimed.
 
+## Current qualification gates
+
+The production email setup, private native IPC, isolated bootstrap, admitted
+handoff and renderer flow are implemented. Latest implementation:
+`200614ad31ec1ce16cd395701b7284bda3d67879`.
+It includes protected desktop bootstrap storage and IPv6 Ready socket selection
+for an unhosted owner. No release has
+been published or device package installed by this work.
+
+Exact-commit verification in
+[run 39080404932](https://github.com/ahouchens/mesh-chat/actions/runs/39080404932)
+passes 777 service tests (35 environment/native-only skips), 184 frontend tests
+and the repository validation checks. This count includes the six source pipeline
+cases. Both Windows desktop and signed Android ARM64 package jobs passed in that
+run; release publication was skipped. Compilation is separate from physical execution.
+
+| Phase 2 exit gate | Evidence | Remaining requirement |
+| --- | --- | --- |
+| Windows/Android connect in supported topologies | Shipping dispatcher + real QUIC pipeline passes on Windows/Linux at `200614a`; exact Windows/Android packages pass | Physical Windows↔Android run |
+| Delayed email/stale candidates recover explicitly | Codec expiry, lost-socket/restart, uncached exports, UI refresh and native delayed-peer tests | Physical expired-document and suspended/restarted-phone exchange |
+| Same-socket ownership | Native prepare/inspect/arm/activate; mapping tuple substitution tests; actual shipping-host pipeline preserves port/certificate | Successful guarded path on physical mapped/public network |
+| Failed phone hosting does not prevent a reply | Empty-candidate signed round trip; six source pipeline cases across both-hosted/unhosted joiners; deterministic client role | Unhosted Android reply and successful connection to reachable Windows |
+| IPv4/IPv6/mapping and existing TCP fallback | Protocol mapping tests, family/expiry rejection, existing-route queue and legacy topology coverage | Record available physical topology results and TCP fallback |
+
+The tester confirmed an Android device and second network are available. Actual
+execution remains pending. Follow the
+[device checklist](DIRECT_CONNECTIVITY_PHASE2_DEVICE_TEST.md); record unavailable
+topologies honestly and keep addresses/documents out of evidence summaries.
+
+## Exact packages for device qualification
+
+Built from `200614ad31ec1ce16cd395701b7284bda3d67879`, version 0.2.47:
+
+- [Windows artifact 12118444662](https://github.com/ahouchens/mesh-chat/actions/runs/39080404932/artifacts/12118444662)
+- [Android artifact 12119295311](https://github.com/ahouchens/mesh-chat/actions/runs/39080404932/artifacts/12119295311)
+
+SHA-256 values below were independently computed from package streams inside the
+CI archives without installing or executing them:
+
+| File | SHA-256 |
+| --- | --- |
+| `Mesh Chat_0.2.47_x64-setup.exe` | `b35b13adcbc9d4247ce8e99f42fe9998b4d2c084b4aab28d2540722ffeb4a1e0` |
+| `Mesh Chat_0.2.47_x64_en-US.msi` | `84b5a2796e3e6dceb280697c4def71ae77988f2e7dcc1ac53b35a88ffd213fb0` |
+| `mesh-chat.exe` | `8e67a96f112de755e67cdc61ce96409961ee10e7bd11c05de8c4b8678905ec3d` |
+| `mesh-chat-service.exe` | `9e7d7e29dc9259aa39ebb4ae06b166c48db7a991cab2ee546a2ff0e9f962b33a` |
+| `mesh-chat-0.2.47-android-arm64-release.apk` | `7e508603fc043c01243fce104eeb99793b80b8c381231d41ff4aac6c2f613420` |
+
+## Final implementation CI qualification
+
+At `200614ad31ec1ce16cd395701b7284bda3d67879`,
+[run 39080401782](https://github.com/ahouchens/mesh-chat/actions/runs/39080401782)
+qualifies Windows/Linux and Android ARM64 compilation. Each desktop platform runs
+205 service-boundary tests, 14 workspace-authority tests, 32 document/setup tests,
+47 isolated-bootstrap/path/control tests, six source pipeline cases, 20 native
+unit tests, one cross-language binding test, one shipping-dispatcher unit test,
+25 legacy native topology cases and six production pipeline cases over real QUIC.
+Both-hosted and unhosted-joiner cases cover cancellation, suspension and revocation.
+
+The final Linux production pipeline observes zero external addresses, 1158
+loopback address observations, 48 wildcard binds and 930 network sends in
+[artifact 12119250318](https://github.com/ahouchens/mesh-chat/actions/runs/39080401782/artifacts/12119250318).
+The separate legacy topology also observes zero external addresses, with 1272
+loopback observations and 1048 sends in
+[artifact 12119080991](https://github.com/ahouchens/mesh-chat/actions/runs/39080401782/artifacts/12119080991).
+These reports cover controlled processes and descendants, not a physical router.
+
+Earlier verification failures were an obsolete Android size-limit assertion and
+an unsupported frontend matcher; both are corrected. The `76ae138` Windows
+legacy topology run also timed out waiting five seconds for a rejected activation
+response in its service-crash scenario; final exact-commit qualification passes
+that scenario. No timeout was relaxed in that test. Superseded package runs were
+cancelled to build the protected-storage/socket-family corrections.
+
+## Earlier shipping-dispatcher integration checkpoint
+
+At `ed6030dfa5cbe6179e586d95b8d08fe9bde35cb1`,
+[run 39079842232](https://github.com/ahouchens/mesh-chat/actions/runs/39079842232)
+passed Windows/Linux native qualification and Android ARM64 compilation. The
+CI-only inherited-pipe executable imports the exact shipping `direct_native.rs`.
+Three production pipeline cases exercise public commands, real QUIC/native
+ownership, isolated RNS/LXMF, signed join acknowledgment, owner approval, fresh
+admitted credentials, channel bootstrap, bidirectional messages/receipts, and
+cancel/suspend/revocation cleanup. Linux observed zero external addresses, 587
+loopback address observations and 473 network sends in
+[artifact 12118711768](https://github.com/ahouchens/mesh-chat/actions/runs/39079842232/artifacts/12118711768).
+The test adapter translates a synthetic public candidate to loopback, preserving
+native port/certificate; it does not establish public reachability.
+
+Later source qualification passes all six lifecycle/topology cases with one
+admitted adapter deliberately delayed after transport authentication. At
+`a8c1ae2`, 769 non-integration tests pass with 7 environment-dependent skips;
+the subsequent IPv6 correction passes all 18 setup tests. Frontend verification
+passed at `76ae138` in
+[run 39080052749](https://github.com/ahouchens/mesh-chat/actions/runs/39080052749);
+its superseded package builds were cancelled in favor of the storage-fixed build.
+
 ## Native host integration checkpoint
 
 The app now links the transport crate and explicitly declares Rust 1.90 alongside
@@ -110,17 +206,16 @@ empty candidate replies while preserving version-1 behavior and rejecting mixed
 versions. The focused candidate/binding/Offer/exchange suite passes 118 tests.
 These are source-level checks; router/device qualification remains.
 
-The production-controller source pipeline passes three cases: cancellation,
-suspension and revocation after admission. Each uses real protected services and
+The initial production-controller source pipeline passed three cases: cancellation,
+suspension and revocation after admission. Each used real protected services and
 isolated RNS/LXMF processes, verifies signed join acknowledgment, approval, fresh
 admitted credentials, channel bootstrap, bidirectional messages and endpoint
 receipts, then checks native-handle/interface retirement. Its native I/O is a
 bounded in-memory pipe simulation; this is not QUIC or physical reachability
 evidence. The complete local non-integration checkpoint passed 750 tests with
 7 environment-dependent skips; subsequent focused validation passed 79 tests.
-Current renderer, native-role and combined package changes await exact-commit CI.
+The later six-case and exact-commit native/package qualification is recorded above.
 
-- Exact-commit renderer/native/Windows/Android package qualification of the integrated flow.
 - Qualification of public IPv4/IPv6 and UDP mappings tied to native ownership.
 - Physical delayed-email recovery, unhosted replies and existing TCP fallback.
 - Supported Windows/Android topology execution and physical same-socket evidence.
