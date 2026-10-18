@@ -270,9 +270,9 @@ impl Running {
                         // reachable client address. The preferred role orders
                         // the first attempt; it is not discovery authority.
                         let dial = client == (index % 2 == 0);
-                        // Both peers send from their retained endpoint. Only the
-                        // deterministic connection for this round reaches the
-                        // existing encrypted capsule and service approval gate.
+                        // Both peers may dial from the retained endpoint during
+                        // alternating rounds. Every selected connection still
+                        // crosses the capsule and service approval gate.
                         let target = candidates
                             .get((index / 2) % candidates.len().max(1))
                             .copied();
@@ -289,34 +289,16 @@ impl Running {
                             pending.await.map_err(|_| Error::Handshake)
                         };
                         let is_client = dial && target.is_some();
+                        // Recovery alternates roles. A listening round must not
+                        // create an auxiliary connection: an unhosted peer has
+                        // no candidate and always listens, so it could select
+                        // that auxiliary handshake just before we close it.
+                        // Outbound checks occur in the next dial round instead.
                         let selected = async {
                             if is_client {
-                                let auxiliary = async {
-                                    for _ in 0..16 {
-                                        if let Some(pending) = worker_endpoint.accept().await {
-                                            if let Ok(connection) = pending.await {
-                                                connection.close(0u32.into(), b"auxiliary_check");
-                                            }
-                                        }
-                                        tokio::time::sleep(Duration::from_millis(100)).await;
-                                    }
-                                    std::future::pending::<()>().await;
-                                };
-                                tokio::select! {
-                                    result = outgoing => result,
-                                    _ = auxiliary => Err(Error::Timeout),
-                                }
+                                outgoing.await
                             } else {
-                                let auxiliary = async {
-                                    if let Ok(connection) = outgoing.await {
-                                        connection.close(0u32.into(), b"auxiliary_check");
-                                    }
-                                    std::future::pending::<()>().await;
-                                };
-                                tokio::select! {
-                                    result = incoming => result,
-                                    _ = auxiliary => Err(Error::Timeout),
-                                }
+                                incoming.await
                             }
                         };
                         let connected = tokio::time::timeout(Duration::from_millis(1500), selected)
@@ -617,6 +599,50 @@ mod tests {
         state(&client, 1).await;
         state(&server, 1).await;
     }
+    #[tokio::test]
+    async fn unhosted_restart_survives_listener_starting_during_a_listen_round() {
+        let bound = BoundSocket::bind("127.0.0.1:0".parse().unwrap()).unwrap();
+        let target = bound.address().unwrap();
+        let client = Running::start(
+            BoundSocket::bind("127.0.0.1:0".parse().unwrap()).unwrap(),
+            SessionKey::generate().unwrap(),
+            vec![1],
+            vec![target],
+            true,
+            Duration::from_secs(15),
+            Duration::from_secs(30),
+        )
+        .unwrap();
+        // The first outgoing check times out. The owner starts while this
+        // restarted unhosted device is in its next (listening) round.
+        tokio::time::sleep(Duration::from_millis(2100)).await;
+        let server = Running::start(
+            bound,
+            SessionKey::generate().unwrap(),
+            vec![2],
+            vec![],
+            false,
+            Duration::from_secs(15),
+            Duration::from_secs(30),
+        )
+        .unwrap();
+        tokio::time::timeout(Duration::from_secs(10), async {
+            while client.state.load(Ordering::Acquire) != 3
+                || server.state.load(Ordering::Acquire) != 3
+            {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap();
+        for peer in [&client, &server] {
+            let token = peer.evidence.lock().unwrap().as_ref().unwrap().token;
+            peer.authorize(token).unwrap();
+        }
+        state(&client, 1).await;
+        state(&server, 1).await;
+    }
+
     #[tokio::test]
     async fn unauthenticated_channels_expire_without_packets() {
         let mut peer = Running::start(

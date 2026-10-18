@@ -1,0 +1,25 @@
+name: Unhosted recovery regression
+on:
+  workflow_dispatch:
+  pull_request:
+    paths: ['experiments/direct-fabric/src/recovery.rs', 'service/tools/direct_recovery_regression.py', '.github/workflows/recovery-regression.yml']
+permissions:
+  contents: read
+jobs:
+  regression:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@1.88.0
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+      - name: Prove failure on previous code and success on the fix
+        run: python service/tools/direct_recovery_regression.py

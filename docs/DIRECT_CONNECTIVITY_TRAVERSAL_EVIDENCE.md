@@ -14,9 +14,12 @@ in [the spec](DIRECT_CONNECTIVITY_TRAVERSAL_SPEC.md).
   were downloaded and visually inspected. This is browser evidence, not Android
   lifecycle or human usability acceptance.
   [Windows/Android artifact build](https://github.com/ahouchens/mesh-chat/actions/runs/39154321087)
-  passed verification and is building artifacts.
+  passed all jobs and produced signed Android and Windows installer artifacts;
+  archive links and hashes are in the [device checklist](DIRECT_CONNECTIVITY_TRAVERSAL_DEVICE_TEST.md).
   [Latest native qualification](https://github.com/ahouchens/mesh-chat/actions/runs/39154322732)
-  is still running.
+  failed Windows `unhosted_restart` after eight passing scenarios; Linux recovery
+  passed. Do not promote 0.2.52. Recovery's auxiliary-check/listening-round race
+  is being fixed with a delayed-listener native red/green regression.
 - `b01572d0232e3980751638b2e91ba9051272f60b`:
   [expanded NAT fixture passed](https://github.com/ahouchens/mesh-chat/actions/runs/39154080619),
   artifact `direct-nat-evidence` ID `12146297270`. All seven trials passed:

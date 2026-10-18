@@ -43,7 +43,13 @@ This extends the existing signed candidate-list contract without adding a new
 public control format. Older version-1/version-2 inputs remain readable.
 
 Recovery keeps its existing rotated-certificate/service-approval protocol and
-role reversal, with two-sided outbound checks and shorter fair candidate slices.
+role reversal and shorter fair candidate slices. Recovery sends outbound checks
+in alternating dial rounds, not auxiliary connections during listening rounds.
+An unhosted peer always listens; otherwise it can select an auxiliary handshake
+which its sender immediately closes, terminating that recovery attempt. The
+Windows unhosted-restart failure at `dec191b` exposed this race. A delayed-listener
+native regression now covers it. Initial setup retains simultaneous auxiliary
+checks because its client/server roles do not alternate.
 Its single selected local socket and migration path are retained. Bounded retry
 attempts rotate eligible interfaces after trying the saved interface, and reset
 port hints when changing interfaces. Each replacement is signed through the

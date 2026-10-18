@@ -3,8 +3,31 @@
 Status: not executed. Candidate build: **0.2.52**, Android versionCode **2052**,
 application commit `dec191bbea6c63967cfcf5073abd7acc052a3333`.
 [Artifact build](https://github.com/ahouchens/mesh-chat/actions/runs/39154321087)
-must succeed before using its installers. Record artifact hashes
-from its reports; none are assumed here.
+passed. Download the matching artifacts:
+
+**Do not use 0.2.52 as the final acceptance build.** Its subsequent Windows
+native qualification failed the unhosted-peer restart scenario. The recovery
+fix and replacement version are undergoing qualification. The hashes below
+identify the superseded artifacts for debugging, not a release recommendation.
+
+| Platform | Artifact | SHA-256 of the GitHub artifact archive |
+| --- | --- | --- |
+| Windows | [mesh-chat-0.2.52-windows-desktop](https://github.com/ahouchens/mesh-chat/actions/runs/39154321087/artifacts/12146378265) | `ec0048c33f2041ae0006ce043c06ac81db51a5dc6ac1921c24fd4b6090e0f1eb` |
+| Android | [mesh-chat-0.2.52-android-arm64](https://github.com/ahouchens/mesh-chat/actions/runs/39154321087/artifacts/12146441968) | `2170e84161f418a287e415fb9b8953577a52cd90957732b0244bddca07c12cf2` |
+
+These are GitHub's archive digests, not the inner installer/APK hashes. Keep the
+packaging reports with the test record. The artifacts are test builds from the
+implementation branch; native qualification and protocol review remain separate
+gates, recorded in the acceptance ledger.
+
+Downloaded archives matched GitHub's digests. Inner files were hashed locally
+and matched their packaging manifests:
+
+| File | SHA-256 |
+| --- | --- |
+| `Mesh Chat_0.2.52_x64-setup.exe` | `0d7899ac673a6d32c21543400d9fa38ad047c12e2cddb1a758b2b9d62132f6f6` |
+| `Mesh Chat_0.2.52_x64_en-US.msi` | `5ee4e3206f5ee9270aaa30f3ff3c2515af09834e32b157c4b4453719e3b1b504` |
+| `mesh-chat-0.2.52-android-arm64-release.apk` | `23fb5fba68be1447c8cdaf5784e6b4e767036e679209492ce0a60425440023bd` |
 
 ## Guided test
 
