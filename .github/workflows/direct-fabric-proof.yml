@@ -60,24 +60,6 @@ jobs:
           python-version: '3.13'
       - name: Install protected service for identity binding proof
         run: python -m pip install ./service pytest
-      - name: Validate service binding boundaries
-        run: python -m pytest service/tests/test_direct_binding.py service/tests/test_direct_runtime.py service/tests/test_direct_native.py service/tests/test_direct_candidates.py service/tests/test_direct_packets.py service/tests/test_direct_network_audit.py service/tests/test_network_callback_dispatch.py service/tests/test_direct_offer.py service/tests/test_direct_exchange.py service/tests/test_direct_packet_adapter.py service/tests/test_direct_packet_policy.py service/tests/test_udp_mapping.py -q
-      - name: Validate workspace and pending join binding authority
-        run: python -m pytest service/tests/test_workspace_service.py -k "direct_workspace_binding or direct_join_binding or direct_owner_binding or direct_ready" -q
-      - name: Validate atomic durable admitted relationship evidence
-        run: python -m pytest service/tests/test_direct_relationship.py service/tests/test_direct_recovery.py service/tests/test_direct_recovery_candidates.py -q
-      - name: Validate public document codec and protected setup lifecycle
-        run: python -m pytest service/tests/test_direct_documents.py service/tests/test_direct_setup.py -q
-      - name: Validate isolated bootstrap process boundaries
-        run: python -m pytest service/tests/test_direct_bootstrap.py service/tests/test_direct_bootstrap_process.py service/tests/test_direct_bootstrap_authority.py service/tests/test_direct_path.py service/tests/test_direct_admission.py -q
-      - name: Validate production setup and admission handoff with source packet pipes
-        run: python -m pytest service/tests/test_direct_setup_pipeline.py -q
-      - name: Test controlled peers (no discovery service)
-        env:
-          MESH_DIRECT_BINDING_PYTHON: python
-        run: cargo test --locked --manifest-path experiments/direct-fabric/Cargo.toml
-      - name: Build isolated packet carrier in CI
-        run: cargo build --locked --manifest-path experiments/direct-fabric/Cargo.toml --example packet_bridge
       - uses: dtolnay/rust-toolchain@1.90.0
       - name: Test and build shipping native dispatcher harness
         run: |
@@ -103,6 +85,25 @@ jobs:
         with:
           name: direct-recovery-network-evidence
           path: direct-recovery-network-evidence.json
+      - uses: dtolnay/rust-toolchain@1.88.0
+      - name: Validate service binding boundaries
+        run: python -m pytest service/tests/test_direct_binding.py service/tests/test_direct_runtime.py service/tests/test_direct_native.py service/tests/test_direct_candidates.py service/tests/test_direct_packets.py service/tests/test_direct_network_audit.py service/tests/test_network_callback_dispatch.py service/tests/test_direct_offer.py service/tests/test_direct_exchange.py service/tests/test_direct_packet_adapter.py service/tests/test_direct_packet_policy.py service/tests/test_udp_mapping.py -q
+      - name: Validate workspace and pending join binding authority
+        run: python -m pytest service/tests/test_workspace_service.py -k "direct_workspace_binding or direct_join_binding or direct_owner_binding or direct_ready" -q
+      - name: Validate atomic durable admitted relationship evidence
+        run: python -m pytest service/tests/test_direct_relationship.py service/tests/test_direct_recovery.py service/tests/test_direct_recovery_candidates.py -q
+      - name: Validate public document codec and protected setup lifecycle
+        run: python -m pytest service/tests/test_direct_documents.py service/tests/test_direct_setup.py -q
+      - name: Validate isolated bootstrap process boundaries
+        run: python -m pytest service/tests/test_direct_bootstrap.py service/tests/test_direct_bootstrap_process.py service/tests/test_direct_bootstrap_authority.py service/tests/test_direct_path.py service/tests/test_direct_admission.py -q
+      - name: Validate production setup and admission handoff with source packet pipes
+        run: python -m pytest service/tests/test_direct_setup_pipeline.py -q
+      - name: Test controlled peers (no discovery service)
+        env:
+          MESH_DIRECT_BINDING_PYTHON: python
+        run: cargo test --locked --manifest-path experiments/direct-fabric/Cargo.toml
+      - name: Build isolated packet carrier in CI
+        run: cargo build --locked --manifest-path experiments/direct-fabric/Cargo.toml --example packet_bridge
       - name: Real RNS and LXMF over native QUIC
         shell: bash
         env:

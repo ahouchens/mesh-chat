@@ -38,8 +38,8 @@ class Peers:
         assert response["ok"], response
         return response.get("result")
 
-    def command(self, index, name, **payload):
-        return self.call(index,"command",command=name,payload=payload)
+    def command(self, index, command_name, **payload):
+        return self.call(index,"command",command=command_name,payload=payload)
 
     def wait(self, index, name, predicate, *, timeout=45, **payload):
         deadline=time.monotonic()+timeout
