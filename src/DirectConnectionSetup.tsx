@@ -152,8 +152,8 @@ export function DirectConnectionSetup({ invitationId, workspaceId, autoStart = f
   const guidance: Record<string, [string, string]> = {
     checking: ["Checking this device", "Preparing the app’s UDP socket and checking local addresses and router mappings. This does not yet test the other device."],
     no_route: ["Connect this device to the Internet", "No current Internet route was found. On Windows, restore the home-router connection. On Android, keep Wi-Fi off and restore mobile data. Then retry checks."],
-    address_prepared: ["Address prepared — waiting for the other device’s test", "The app owns the UDP socket and has a public address candidate. Only a connection from the intended other device can verify it. Continue with the message below."],
-    no_local_address: ["No public address on this device", "The other device may still provide a usable address. Send this message so it can check its own network. A phone on mobile data can connect outward to a reachable Windows device, or the reverse."],
+    address_prepared: ["Address prepared — waiting for the other device’s test", "A public address is prepared, but it has not been tested by the other device. Send the message below to start that test."],
+    no_local_address: ["No public address on this device", "The other device may still provide a usable address. Send the message below so it can check its own network."],
     both_no_address: ["Neither device has a usable public address", "Automatic setup cannot connect these networks with the evidence available. Your request stays saved. Change one device’s network or review the optional router help, then retry. Copying again or waiting will not discover an address."],
     network_changed: ["The network changed", "The old connection details are no longer ready to share. Retry checks on this device, then exchange the refreshed message using the same invitation."],
     refresh_required: ["Refresh the connection details", "The socket or setup time is no longer valid. The owner can refresh this same invitation. Your saved request is kept."],
@@ -168,25 +168,30 @@ export function DirectConnectionSetup({ invitationId, workspaceId, autoStart = f
   const remaining = setup ? Math.max(0, Math.ceil((setup.expires_at * 1000 - now) / 1000)) : 0;
   return <section className="form-stack guided-connection" aria-label="Direct connection setup">
     <h3>Connect your devices</h3>
-    <p>First check this device, then exchange messages, then test the connection with the other device.</p>
+    <p>Check this device before sharing. Keep both Mesh Chat apps open.</p>
     <p aria-label="Connection progress">Step {step} of 3: {step === 1 ? "Check this device" : step === 2 ? "Exchange messages" : "Test connection"}</p>
     {readiness && guidance[readiness] && <div className="direct-consent" role="status"><h4>{guidance[readiness][0]}</h4><p>{guidance[readiness][1]}</p>
+      <details><summary>What was checked</summary>
       {setup?.socket === "retained" && !setup.peer_verified && <p className="muted">UDP socket retained. Address candidates: IPv4 {setup.candidate_sources?.ipv4 ?? 0}; IPv6 {setup.candidate_sources?.ipv6 ?? 0}. These are candidates, not a successful peer test.</p>}
       {setup?.mapping === "unavailable" && <p>The router did not provide a usable UDP mapping. This alone does not prove that incoming connections are blocked.</p>}
       {setup?.firewall && <p className="muted">UDP firewall permission has not been verified. {setup.firewall === "windows_profile_unavailable_udp_unverified" ? "Windows did not report an active Internet network profile. Check Windows network settings." : "The existing automatic firewall helper supports TCP only; it cannot approve this QUIC connection."}</p>}
+      </details>
     </div>}
-    <ConnectionDiagnostics />
+    {canExport && remaining > 0 && <><details><summary>Message details and QR code</summary><InvitationQrCode document={outgoing} destination="workspace" /><label className="field"><span>Complete message to share</span><textarea aria-label="Complete connection message" onCopy={(event) => { if (!canExport || !setup || setup.expires_at * 1000 <= Date.now()) event.preventDefault(); else onShared?.(); }} readOnly rows={5} value={outgoing} onFocus={(event) => event.currentTarget.select()} /></label></details><div className="dialog-actions"><button className={preview ? "button button--secondary" : "button button--primary"} onClick={() => void copy()}>Copy connection message</button><button className="button button--secondary" onClick={() => void share()}>Share connection message</button><button className="button button--ghost" onClick={() => void save()}>Save connection file</button></div></>}
     {setup && ["no_route", "both_no_address", "network_changed", "refresh_required", "test_failed"].includes(readiness ?? "") && <>
       <button className="button button--primary" disabled={busy} onClick={() => void retry()}>Retry checks</button>
       <details><summary>Other ways to proceed</summary><p>Try the other device as the reachable side, or recheck after changing one device’s Internet connection. You can keep Windows on the home router and Android on mobile data.</p><p>If you manage the home router, check whether it allows app-requested UDP mappings (PCP, UPnP or NAT-PMP), then retry. Optional manual router configuration requires a usable public address and the exact app-owned UDP endpoint; this wizard does not currently provide a manual UDP mapping editor. A carrier or upstream router may prevent inbound connections. Some networks cannot connect without a helper service, which this server-free mode does not use.</p><p>Keep the firewall enabled. This wizard has no supported automatic UDP firewall repair action. A TCP permission or mapping is not proof for this connection.</p></details>
     </>}
-    {invitationId && (!setup || setup.state === "cancelled") && <button className="button button--primary" disabled={busy} onClick={() => void offer()}>{setup ? "Refresh connection details" : "Prepare invitation"}</button>}
+    <ConnectionDiagnostics />
+    {invitationId && (!setup?.setup_id || setup.state === "cancelled") && <button className="button button--primary" disabled={busy} onClick={() => void offer()}>{setup ? "Refresh connection details" : "Prepare invitation"}</button>}
+    <details open={!canExport || !!preview}><summary>I have a message from the other device</summary>
     <label className="field"><span>Message from the other device</span><textarea aria-label="Message from the other device" rows={5} value={input} onChange={(event) => edit(event.target.value)} disabled={busy} /></label>
     <InvitationImportActions onValue={edit} />
     <button className="button button--secondary" disabled={busy || !input.trim()} onClick={() => void review()}>Check received message</button>
     {preview && <div className="direct-consent"><h4>{preview.workspace_name}</h4><p>Message checked. {preview.kind === "offer" ? "Save your request and prepare a reply for the owner." : preview.kind === "answer" ? "Prepare the final connection message for the other person." : "Both devices need to stay open for this step."}</p><button className="button button--primary" disabled={busy} onClick={() => void apply()}>{preview.kind === "offer" ? "Prepare reply" : preview.kind === "answer" ? "Prepare connection message" : "Connect"}</button></div>}
+    </details>
     {setup && <div><p>{!setup.readiness ? states[setup.state] ?? "Connection setup is in progress." : ""}</p><p className="muted">Connection details: {remaining ? `${Math.floor(remaining / 60)}m ${remaining % 60}s remaining` : "expired"}. This short setup timer is separate from invitation expiry. Check the workspace for owner receipt and approval.</p></div>}
-    {canExport && remaining > 0 && <><details><summary>Message details and QR code</summary><InvitationQrCode document={outgoing} destination="workspace" /><label className="field"><span>Complete message to share</span><textarea aria-label="Complete connection message" onCopy={(event) => { if (!canExport || !setup || setup.expires_at * 1000 <= Date.now()) event.preventDefault(); else onShared?.(); }} readOnly rows={5} value={outgoing} onFocus={(event) => event.currentTarget.select()} /></label></details><div className="dialog-actions"><button className={preview ? "button button--secondary" : "button button--primary"} onClick={() => void copy()}>Copy connection message</button><button className="button button--secondary" onClick={() => void share()}>Share connection message</button><button className="button button--ghost" onClick={() => void save()}>Save connection file</button></div></>}
+
     {setup?.setup_id && setup.state !== "cancelled" && <button className="button button--ghost" disabled={busy} onClick={() => void cancel()}>Cancel connection attempt</button>}
     {setup && onOpenWorkspace && <button className="button button--secondary" onClick={() => void openWorkspace()}>View workspace</button>}
     {feedback && <p aria-live="polite">{feedback}</p>}

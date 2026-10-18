@@ -4,7 +4,7 @@ Status: implementation and qualification in progress, 2026-10-18. This is not a
 physical connectivity result or release approval. The detailed requirements are
 in [the spec](DIRECT_CONNECTIVITY_TRAVERSAL_SPEC.md).
 
-## Wizard increment: 0.2.56 / Android 2056
+## Wizard increment: 0.2.57 / Android 2057
 
 Preparation checks now precede every displayed sharing surface. The controller
 checks current route identity, exact retained UDP ownership, candidate families,
@@ -19,7 +19,10 @@ allowlisted route/socket/mapping/firewall facts. UDP firewall repair and manual
 UDP mapping UI are not supported; the wizard says so explicitly.
 
 52 targeted readiness/setup/candidate/diagnostic source tests passed locally.
-Frontend regressions and 42 browser layout cases are submitted to Actions,
+42 browser layout cases passed at `4992904`; phone inspection led to moving
+the primary action above diagnostics and collapsing technical evidence. The
+0.2.56 packaging run was cancelled before promotion. Final frontend regressions
+and 42 browser layout cases are submitted to Actions,
 along with full native qualification and distinct Windows/Android builds.
 Physical mobile-carrier acceptance and independent review remain pending.
 

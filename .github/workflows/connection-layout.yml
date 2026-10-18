@@ -20,6 +20,10 @@ jobs:
         with:
           python-version: '3.13'
       - run: pnpm install --frozen-lockfile
+      - name: Check wizard types and behavior before browser layout
+        run: |
+          pnpm exec tsc -b
+          pnpm exec vitest run src/DirectConnectionSetup.test.tsx src/ConnectionDiagnostics.test.tsx
       - run: python -m pip install playwright==1.55.0
       - run: python -m playwright install --with-deps chromium
       - name: Check production connection components at phone and desktop widths
