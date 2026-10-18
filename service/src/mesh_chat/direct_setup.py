@@ -85,7 +85,8 @@ class DirectSetup:
             from .connection_diagnostics import record
             with self._lock:
                 prepared = self._prepared.get(setup_id)
-            record(self.service, "state", {**value, **getattr(prepared, "statistics", {})})
+            counts = prepared.diagnostic_counts() if hasattr(prepared, "diagnostic_counts") else {}
+            record(self.service, "state", {**value, "candidate_sources":counts, **getattr(prepared, "statistics", {})})
         self.service._changed()
         return {**value, **({"text":text} if text is not None else {})}
 
@@ -127,17 +128,24 @@ class DirectSetup:
     def preview(self, document):
         return verify_connection_document(document).preview()
 
-    def resume(self, workspace_id):
+    def resume(self, workspace_id=None, invitation_id=None):
         """Reopen a saved join without clipboard data; never revive a lost socket."""
+        if invitation_id is not None:
+            if workspace_id is not None or not isinstance(invitation_id, str):
+                raise ValidationError("Choose one saved setup")
+            invite, _ = self.service._direct_owner_invitation(invitation_id)
+            workspace_id = invite.workspace_id
+            setup_id = self._id("owner", invitation_id)
+        else:
+            setup_id = self._id("joiner", workspace_id) if isinstance(workspace_id, str) else None
         if not isinstance(workspace_id, str):
             raise ValidationError("Workspace identifier is invalid")
-        setup_id = self._id("joiner", workspace_id)
         saved = self.service.store.get("direct_setup", setup_id)
         if saved is None:
             return {"state":"refresh_required", "workspace_id":workspace_id,
                     "expires_at":0, "candidate_count":0, "reason":"no_saved_connection_details"}
         status = self.status(setup_id)
-        if status["state"] == "waiting_for_ready":
+        if status["state"] in {"waiting_for_ready", "waiting_for_reply", "ready_to_share", "connecting"}:
             with self._lock:
                 prepared = self._prepared.get(setup_id)
             if prepared is None:

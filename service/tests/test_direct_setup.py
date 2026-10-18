@@ -296,6 +296,20 @@ def test_resume_uses_saved_reply_and_refuses_to_export_after_socket_loss(peers):
     assert joiner.store.list("workspace_join_delivery") == before
 
 
+def test_owner_resume_keeps_the_exact_live_offer_and_rejects_mixed_identifiers(peers):
+    owner, _, workspace, invite = peers
+    offer = owner._direct_setup.offer(invite["id"])
+    restored = owner._execute("resume_direct_setup", {"invitation_id":invite["id"]})
+    assert restored["text"] == offer["text"]
+    assert restored["setup_id"] == offer["setup_id"]
+    with pytest.raises(ValidationError):
+        owner._execute("resume_direct_setup", {"workspace_id":workspace["id"], "invitation_id":invite["id"]})
+    owner._direct_setup.retire()
+    restored = owner._execute("resume_direct_setup", {"invitation_id":invite["id"]})
+    assert restored["state"] == "refresh_required"
+    assert "text" not in restored
+
+
 def test_diagnostic_clear_preserves_request_and_encrypted_state(peers):
     owner, joiner, workspace, invite = peers
     offer = owner._direct_setup.offer(invite["id"])

@@ -110,6 +110,15 @@ it("reopens a pending request without needing its original clipboard", async () 
   expect(api.serviceCommand.mock.calls.some(([command]) => command === "submit_workspace_join")).toBe(false);
 });
 
+it("reopens the owner's exact saved message without refreshing live sockets", async () => {
+  api.serviceCommand.mockResolvedValue({ ...setup, state:"waiting_for_reply", text:"mesh-direct:saved-owner" });
+  render(<DirectConnectionSetup invitationId="invite" resumeExisting />);
+  expect(await screen.findByDisplayValue("mesh-direct:saved-owner")).toBeTruthy();
+  expect(api.serviceCommand).toHaveBeenCalledWith("resume_direct_setup", { invitation_id:"invite" });
+  expect(api.serviceCommand.mock.calls.some(([command]) => command === "prepare_direct_offer")).toBe(false);
+  expect(screen.queryByText("Refresh connection details")).toBeNull();
+});
+
 it("keeps the operation identifier when reply creation loses its response", async () => {
   api.serviceCommand.mockImplementation(async command => {
     if (command === "preview_direct_connection") return { kind:"offer", workspace_name:"Team", ...setup };

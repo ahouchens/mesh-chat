@@ -35,7 +35,8 @@ def test_history_bounded_and_latest_failure_survives_new_service_instance():
         diagnostics.record(service, "state", {"state":"connecting", "setup_id":str(index)})
     reopened = SimpleNamespace(store=service.store)
     value = diagnostics.report(reopened)
-    assert len(value["events"]) == 200
+    assert 0 < len(value["events"]) <= 200
+    assert len(service.store.get("connection_diagnostics", "history")["events"]) == 200
     assert value["truncated"] is True
     assert value["last_failure"]["phase"] == "failed"
     assert len(json.dumps(value).encode()) < 65536

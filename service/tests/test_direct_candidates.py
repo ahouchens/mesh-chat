@@ -165,6 +165,7 @@ def test_all_eligible_route_sockets_are_owned_and_mixed_family_candidates_retain
         assert {row["host"] for row in fields["candidates"]} == {V6.local_address,route4.local_address}
         assert {row["port"] for row in fields["candidates"]} == {45678,45679}
         assert len(prepared._sockets) == 2
+        assert prepared.diagnostic_counts() == {"ipv4":1, "ipv6":1, "local_global":2, "pcp":0, "upnp":0, "upnp_ipv6":0, "nat_pmp":0}
         native.paths[1]["port"] += 1
         with pytest.raises(ValidationError, match="ownership"):
             prepared.document_fields()

@@ -35,6 +35,7 @@ export function diagnosticReport(build: unknown, raw: unknown, log = false) {
     return { time: number(event.time, 2**53 - 1), attempt: token(event.attempt, /^[0-9a-f]{12}$/),
       event: choice(event.event, events), phase: choice(event.phase, phases), kind: choice(event.kind, kinds),
       candidate_count: number(event.candidate_count, 8), expires_at: number(event.expires_at, 2**53 - 1),
+      candidate_sources: Object.fromEntries(["ipv4", "ipv6", "local_global", "pcp", "upnp", "upnp_ipv6", "nat_pmp"].map(key => [key, number(object(event.candidate_sources)[key], 8)])),
       checks_started: number(event.checks_started, 64), checks_authenticated: number(event.checks_authenticated, 128), elapsed_ms: number(event.elapsed_ms, 3600_000) };
   };
   const rows = Array.isArray(value.events) ? value.events.slice(-200).map(cleanEvent) : [];

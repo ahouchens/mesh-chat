@@ -6,6 +6,7 @@ Never accept exception text, documents, network addresses or user labels.
 from __future__ import annotations
 
 import hashlib
+import json
 from importlib.metadata import PackageNotFoundError, version
 import re
 import time
@@ -17,6 +18,7 @@ PHASES = frozenset({"waiting_for_reply", "waiting_for_ready", "ready_to_share", 
     "refresh_required", "cancelled", "failed", "verified", "recovery", "unavailable"})
 EVENTS = frozenset({"state", "import_verified", "import_rejected", "action_failed", "lifecycle_interrupted"})
 KINDS = frozenset({"offer", "answer", "ready", "recovery", "unavailable"})
+SOURCES = ("ipv4", "ipv6", "local_global", "pcp", "upnp", "upnp_ipv6", "nat_pmp")
 
 
 def sanitize(value):
@@ -25,6 +27,8 @@ def sanitize(value):
         item = value.get(key)
         return item if type(item) is int and 0 <= item <= maximum else default
     reference = value.get("attempt")
+    sources = value.get("candidate_sources")
+    sources = sources if isinstance(sources, dict) else {}
     def enum(key, allowed, default):
         item = value.get(key)
         return item if isinstance(item, str) and item in allowed else default
@@ -34,6 +38,7 @@ def sanitize(value):
         "phase":enum("phase", PHASES, "unavailable"),
         "kind":enum("kind", KINDS, "unavailable"),
         "candidate_count":integer("candidate_count", 8),
+        "candidate_sources":{key:sources[key] if type(sources.get(key)) is int and 0 <= sources[key] <= 8 else None for key in SOURCES},
         "checks_started":integer("checks_started", 64, None),
         "checks_authenticated":integer("checks_authenticated", 128, None),
         "elapsed_ms":integer("elapsed_ms", 3600_000, None),
@@ -67,7 +72,7 @@ def record(service, event, state=None):
 
 def _record(service, event, state=None):
     state = state or {}
-    row = sanitize({**{key:state.get(key) for key in ("state", "kind", "candidate_count", "expires_at", "checks_started", "checks_authenticated", "elapsed_ms")},
+    row = sanitize({**{key:state.get(key) for key in ("state", "kind", "candidate_count", "candidate_sources", "expires_at", "checks_started", "checks_authenticated", "elapsed_ms")},
         "phase":state.get("state"), "event":event, "time":int(time.time()),
         "attempt":hashlib.sha256(str(state.get("setup_id", "unknown")).encode()).hexdigest()[:12]})
     value = history(service)
@@ -88,6 +93,10 @@ def report(service):
         installed = "unavailable"
     if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+(?:[-+.][A-Za-z0-9.]+)?", installed):
         installed = "unavailable"
-    return {"format_version":1, "service_version":installed, "captured_at":int(time.time()),
+    result = {"format_version":1, "service_version":installed, "captured_at":int(time.time()),
         "retention_days":7, "event_limit":LIMIT, "native_check_counts":"unavailable",
         "receipt_status":"unavailable", "approval_status":"unavailable", **value}
+    while len(json.dumps(result).encode()) >= 65536 and result["events"]:
+        result["events"] = result["events"][1:]
+        result["truncated"] = True
+    return result

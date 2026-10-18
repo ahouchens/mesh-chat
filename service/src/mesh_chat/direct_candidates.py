@@ -38,6 +38,17 @@ class NativePreparation:
     def handle(self):
         return self._owned["id"]
 
+    def diagnostic_counts(self):
+        """Coarse provenance only; never export sockets, addresses or keys."""
+        with self._lock:
+            counts = {key:0 for key in ("ipv4", "ipv6", "local_global", "pcp", "upnp", "upnp_ipv6", "nat_pmp")}
+            for candidate in self._candidates:
+                counts["ipv6" if ":" in candidate["host"] else "ipv4"] += 1
+                source = self._sources.get((candidate["host"], candidate["port"]))
+                if source in counts:
+                    counts[source] += 1
+            return counts
+
     @property
     def family(self):
         if len({":" in item["host"] for item in self._sockets}) > 1:

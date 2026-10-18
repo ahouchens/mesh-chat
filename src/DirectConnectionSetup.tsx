@@ -22,8 +22,8 @@ const states: Record<string, string> = {
   cancelled: "Connection attempt cancelled. Your saved request is kept; a request already received by the owner is not withdrawn.",
 };
 
-export function DirectConnectionSetup({ invitationId, workspaceId, autoStart = false, onShared, initialDocument = "", onOpenWorkspace }: {
-  invitationId?: string; workspaceId?: string; autoStart?: boolean; onShared?: () => void; initialDocument?: string; onOpenWorkspace?: (workspace: Workspace) => Promise<void>;
+export function DirectConnectionSetup({ invitationId, workspaceId, autoStart = false, resumeExisting = false, onShared, initialDocument = "", onOpenWorkspace }: {
+  invitationId?: string; workspaceId?: string; autoStart?: boolean; resumeExisting?: boolean; onShared?: () => void; initialDocument?: string; onOpenWorkspace?: (workspace: Workspace) => Promise<void>;
 }) {
   const [input, setInput] = useState(initialDocument);
   const [preview, setPreview] = useState<Preview | null>(null);
@@ -40,13 +40,13 @@ export function DirectConnectionSetup({ invitationId, workspaceId, autoStart = f
     if (started.current) return;
     started.current = true;
     if (autoStart && invitationId) void offer();
-    if (workspaceId) {
+    if (workspaceId || (invitationId && resumeExisting)) {
       setBusy(true);
-      void serviceCommand<Setup>("resume_direct_setup", { workspace_id: workspaceId }).then(value => { setSetup(value); setOutgoing(value.text ?? ""); })
+      void serviceCommand<Setup>("resume_direct_setup", invitationId ? { invitation_id: invitationId } : { workspace_id: workspaceId }).then(value => { setSetup(value); setOutgoing(value.text ?? ""); })
         .catch(() => setError("Could not reopen setup. Paste fresh connection details from the owner below."))
         .finally(() => setBusy(false));
     }
-  }, [invitationId, workspaceId, autoStart]);
+  }, [invitationId, workspaceId, autoStart, resumeExisting]);
 
   useEffect(() => {
     if (!setup?.setup_id || setup.state === "cancelled") return;

@@ -2561,11 +2561,11 @@ class MeshChatService(
             "connect_direct_setup": ("connect", {"setup_id", "document"}),
             "direct_setup_status": ("status", {"setup_id"}),
             "cancel_direct_setup": ("cancel", {"setup_id"}),
-            "resume_direct_setup": ("resume", {"workspace_id"}),
+            "resume_direct_setup": ("resume", {"workspace_id", "invitation_id"}),
         }
         if command in direct_commands:
             method, fields = direct_commands[command]
-            body = _payload(value, allowed=fields, required=fields)
+            body = _payload(value, allowed=fields, required=set() if method == "resume" else fields)
             from .connection_diagnostics import record
             try:
                 result = getattr(self._direct_setup, method)(**body)
