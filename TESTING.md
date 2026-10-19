@@ -161,6 +161,44 @@ development certificate `d6dbff63834666bace3d75b49234726e97ccce26d2b9e9516309682
 It has not been installed or executed here, and no physical connectivity result
 is claimed.
 
+## Windows default-route address fix, 2026-10-19
+
+The 0.2.63 Windows diagnostic from the pairing test showed
+`no_local_address`, `route: unavailable`, `mapping: not_needed`, and zero
+candidates, even though the machine had an active Wi-Fi default route. The
+cause was deterministic: Reticulum's `netinfo` exposed Windows interfaces as
+GUIDs, while `Get-NetRoute` reported the friendly alias `Wi-Fi`. The local
+address lookup used the alias as a dictionary key, so it returned `None`; the
+service then bound `0.0.0.0`, skipped every router-mapping attempt, and exported
+an invitation with no candidate.
+
+`_windows_default_routes` now selects `InterfaceIndex` and resolves addresses
+through `Get-NetIPAddress` by that stable index. The friendly alias remains a
+fallback for existing tests and unusual environments. A regression with GUID
+interface keys verifies that an active Wi-Fi route, a private IPv4 address, and
+a global IPv6 address are all recovered.
+
+After the fix, the same machine reports `route_available=True`,
+`mapping_attempted=True`, then:
+
+- PCP: `pcp_no_response`
+- UPnP: `upnp_wan_shared`
+- NAT-PMP: `nat_pmp_no_response`
+- planner: `upstream_nat` blocked
+
+That is a separate network fact, not a route bug: the router reports a shared
+upstream address (carrier-grade or double NAT). A local router mapping cannot
+make this Windows machine publicly reachable. The app now reports that honestly
+instead of saying it found no local address. IPv6, a public IPv4/bridge mode,
+an upstream forward, or an explicitly approved relay/access point are the
+remaining options for this pair.
+
+Validation: **115 focused tests passed**; the full local service suite passed
+**960 with 40 expected skips** and the same 12 deselected legacy setup-pipeline
+cases, which also fail at the preceding commit on this machine. Candidate:
+**0.2.66 / Android 2066**. No 0.2.66 package had been built when this section
+was written.
+
 ## Direct connectivity increment, 2026-10-16
 
 Native qualification now runs in GitHub Actions. At `cbcf659`,
