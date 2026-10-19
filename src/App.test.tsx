@@ -1302,6 +1302,39 @@ describe("new chat invitations", () => {
     expect(nearbyText.value).toBe("MESHCHAT1:nearby");
   });
 
+  it("creates a personal invitation through a signed I2P access point", async () => {
+    const current = snapshot();
+    api.runtimePlatform.mockResolvedValue("desktop");
+    api.initializeService.mockResolvedValue(current);
+    api.onInvitation.mockResolvedValue(() => undefined);
+    api.onServiceEvent.mockResolvedValue(() => undefined);
+    api.serviceCommand.mockImplementation(async (command: string, payload?: Record<string, unknown>) => {
+      if (command === "snapshot") return current;
+      if (command === "create_invitation") {
+        expect(payload).toEqual({ connection_mode: "i2p", i2p_access_point: B32 });
+        return { link: "meshchat://i2p/test", text: "MESHI2P1:test", file: "{}", expires_at: 2_000_000_000 };
+      }
+      return {};
+    });
+
+    render(<App />);
+    await screen.findByRole("heading", { name: "Your private conversations" });
+    fireEvent.click(screen.getAllByRole("button", { name: "New chat" })[0]);
+    fireEvent.change(screen.getByRole("combobox", { name: "How should they connect?" }), { target: { value: "i2p" } });
+    const create = await screen.findByRole("button", { name: "Create I2P invitation" });
+    expect((create as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.change(screen.getByLabelText("I2P access point address"), { target: { value: B32 } });
+    expect((create as HTMLButtonElement).disabled).toBe(false);
+    fireEvent.click(create);
+
+    await waitFor(() => expect(api.serviceCommand).toHaveBeenCalledWith("create_invitation", {
+      connection_mode: "i2p",
+      i2p_access_point: B32,
+    }));
+    const textareas = screen.getAllByLabelText("Invitation details to share");
+    expect((textareas.find((element) => element.tagName === "TEXTAREA") as HTMLTextAreaElement).value).toBe("MESHI2P1:test");
+  });
+
   it("walks the inviter through manual forwarding when automatic setup is unavailable", async () => {
     const current = snapshot();
     const setupId = "manual-setup-1";
