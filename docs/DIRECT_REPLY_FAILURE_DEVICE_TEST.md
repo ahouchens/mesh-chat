@@ -1,9 +1,11 @@
 # Android “prepare reply” failure device check
 
 Status: source fix and diagnostic fields implemented on
-`codex/android-reply-diagnostics` for a **0.2.64 / Android 2064** test build.
-No 0.2.64 package has been built or installed here, and no physical
-Windows↔Android result is claimed.
+`codex/android-reply-diagnostics` for a **0.2.65 / Android 2065** test build.
+The package was built in GitHub Actions
+([run 39200607637](https://github.com/ahouchens/mesh-chat/actions/runs/39200607637));
+it has not been installed or executed here, and no physical Windows↔Android
+result is claimed.
 
 ## Why a distinct test build
 
@@ -18,15 +20,28 @@ That evidence cannot distinguish:
 - native socket preparation/arming failure or a closed native channel; or
 - persistence failure after the join or reply was saved.
 
-The 0.2.64 test build records those allowlisted fields and routes the saved-
-workspace cases to a real next action instead of the former generic error. It is
-a test candidate, not a release, and its build must come from GitHub Actions as
-described in [TESTING.md](../TESTING.md). Dispatch the **Release build** workflow
-for this branch with version `0.2.64` (or tag `v0.2.64`); do not reuse a 0.2.63
-package because it lacks these fields.
+The 0.2.65 test build records those allowlisted fields and routes the saved-
+workspace cases to a real next action instead of the former generic error. It
+also adds the server-free reachability plan described in
+[REACHABILITY_PLANNER_SPEC.md](REACHABILITY_PLANNER_SPEC.md). It is a test
+candidate, not a release, and its build must come from GitHub Actions as
+described in [TESTING.md](../TESTING.md). Do not reuse a 0.2.63 package because
+it lacks these fields.
 
 ## What the build changes
 
+- The first wizard step shows per-strategy reachability evidence for IPv6,
+  public IPv4, PCP, UPnP, NAT-PMP, upstream NAT, manual forwarding, and
+  Windows firewall permission.
+- PCP/UPnP/NAT-PMP failures are individually visible; an earlier success marks
+  later protocols as not tried.
+- Upstream NAT/CGNAT is reported as a blocker; the UI does not suggest waiting
+  or re-copying as a remedy.
+- `Set up manual UDP forward` accepts a numeric public IP and external UDP port,
+  signs that tuple into the existing Offer/Answer, and shows the local port to
+  forward on the router.
+- `Allow UDP in Windows Firewall` installs one temporary exact UDP rule for the
+  service, port, and active profile, with cleanup on cancel/expiry/close.
 - `preview_direct_connection` now returns read-only `existing_workspace`
   evidence: saved workspace id/name/state, whether the exact saved join request
   can continue, and an allowlisted reason when it cannot.
@@ -38,16 +53,17 @@ package because it lacks these fields.
 - A closed native channel now reports `native_unavailable` at the
   `runtime_check` stage instead of an ambiguous `invalid_request` later.
 - Diagnostics add `failure_reason`, `workspace_state`, and up to 12 recent
-  events to a summary copy. Reports still exclude invitation text, addresses,
-  identities, and messages.
+  events to a summary copy. Network reasons such as `upnp_no_discovery` are
+  allowlisted. Reports still exclude invitation text, addresses, identities,
+  and messages.
 
 ## Device procedure (preserve data)
 
-1. Build and install the 0.2.64 / Android 2064 test APK **over** the existing app
+1. Build and install the 0.2.65 / Android 2065 test APK **over** the existing app
    without uninstalling it or clearing app data. Do not create a new workspace
    or invitation for this check.
-2. Confirm **Settings → Help and diagnostics** reports 0.2.64 and versionCode
-   2064. Keep the 0.2.64 Windows build available for the owner side if a reply
+2. Confirm **Settings → Help and diagnostics** reports 0.2.65 and versionCode
+   2065. Keep the 0.2.65 Windows build available for the owner side if a reply
    must be prepared.
 3. Open the affected saved workspace (or **Join or connect**) and repeat the
    same next step that previously showed “These details could not start the next

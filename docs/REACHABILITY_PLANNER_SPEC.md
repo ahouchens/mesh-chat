@@ -300,3 +300,12 @@ source/native setup-pipeline cases also fail at the preceding commit on this
 machine, so they are not attributed to this change. Frontend/TypeScript/package
 execution, Windows/Android builds, and physical device testing remain in GitHub
 Actions. Version: 0.2.65 / Android 2065.
+
+Built in GitHub Actions
+[run 39200607637](https://github.com/ahouchens/mesh-chat/actions/runs/39200607637):
+Verify (including 226 frontend tests, TypeScript, and the production build),
+Windows desktop, and Android arm64 all passed. The Android APK is 34,049,543
+bytes with SHA-256
+`b463fb9415a6d04b06714a5fb1872a0d454634d5ca941711ef69851f38b772f2`.
+No package has been installed or executed here; physical reachability remains
+unverified.

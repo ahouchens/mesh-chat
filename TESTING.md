@@ -146,8 +146,20 @@ regressions were added for the plan, firewall action, manual form, and
 diagnostic fields; frontend/TypeScript/package execution, Windows/Android
 builds, and physical device validation remain in GitHub Actions.
 
-The candidate is **0.2.65 / Android 2065**. No 0.2.65 package has been built in
-this workspace, and no physical connectivity result is claimed.
+The candidate is **0.2.65 / Android 2065**. GitHub Actions
+[run 39200607637](https://github.com/ahouchens/mesh-chat/actions/runs/39200607637)
+passed Verify, Windows packaging, and Android packaging. The Android APK is
+34,049,543 bytes with SHA-256
+`b463fb9415a6d04b06714a5fb1872a0d454634d5ca941711ef69851f38b772f2`;
+the NSIS installer is SHA-256
+`731649f59ba339795a357d6ad8bcdeb0de21d135a9da02cdd9d084da759fdc89`
+and the MSI is
+`2b6d45c3d4b65f2456c8cc9b03a8279c3b72cb4dc2635e098151e089d1b16bbf`.
+The APK reports versionName 0.2.65, versionCode 2065, package
+`com.meshchat.mobile`, arm64-v8a, target API 36, and the established
+development certificate `d6dbff63834666bace3d75b49234726e97ccce26d2b9e9516309682e0a33143f`.
+It has not been installed or executed here, and no physical connectivity result
+is claimed.
 
 ## Direct connectivity increment, 2026-10-16
 
