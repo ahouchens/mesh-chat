@@ -783,18 +783,27 @@ export interface NetworkSettings {
   approved_propagation_nodes: string[];
   i2p_enabled: boolean;
   i2p_connectable: boolean;
+  i2p_managed: boolean;
   i2p_peers: string[];
 }
 
 export interface I2PStatus {
   enabled: boolean;
   connectable: boolean;
+  managed: boolean;
   peer_count: number;
   interface_count: number;
   online_count: number;
   online: boolean;
   state: "disabled" | "not_started" | "starting" | "online" | "unavailable";
   b32: string | null;
+  router: {
+    state: string;
+    available: boolean;
+    managed: boolean;
+    sam_ready: boolean;
+    reason: string | null;
+  };
 }
 
 export interface NetworkInterfaceState {

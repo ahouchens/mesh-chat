@@ -41,6 +41,7 @@ from .direct_packet_adapter import ProfileBudget
 from .group_service import GroupServiceMixin
 from .models import Contact, DeliveryState, Message, MessageKind, Profile, TrustState
 from .network import ReticulumNetwork, select_lan_listener_port
+from .i2p_router import I2PRouterManager
 from .participant import (
     connection_response_formats,
     create_connection_response,
@@ -370,6 +371,7 @@ class MeshChatService(
 
         settings_record = store.get("settings", "network")
         self.settings = NetworkSettings.from_dict(settings_record)
+        self._i2p_router = I2PRouterManager(profile_dir)
         identity_record = store.get("identity", "local")
         profile_record = store.get("profile", "local")
         if identity_record is not None or profile_record is not None:
@@ -380,6 +382,8 @@ class MeshChatService(
                 raise ValidationError("Stored private identity is invalid")
             self._restore_participant_interfaces()
             self._prepare_lan_fallback()
+            if self.settings.i2p_enabled and self.settings.i2p_managed:
+                self._i2p_router.start()
             self._start_network(profile_record["display_name"])
             with self._dispatch_lock:
                 self._recover_outbox()
@@ -2356,8 +2360,9 @@ class MeshChatService(
                 self._attempt(message["id"])
 
     def i2p_status(self) -> dict[str, Any]:
+        router = self._i2p_router.status()
         if self.network is None:
-            return {
+            value = {
                 "enabled": self.settings.i2p_enabled,
                 "connectable": self.settings.i2p_connectable,
                 "peer_count": len(self.settings.i2p_peers),
@@ -2367,7 +2372,11 @@ class MeshChatService(
                 "state": "unavailable",
                 "b32": None,
             }
-        return self.network.i2p_status()
+        else:
+            value = self.network.i2p_status()
+        value["managed"] = self.settings.i2p_managed
+        value["router"] = router
+        return value
 
     def snapshot(self) -> dict[str, Any]:
         self._prune_discarded_messages()
@@ -2511,6 +2520,8 @@ class MeshChatService(
             settings.i2p_enabled = self.settings.i2p_enabled
         if "i2p_connectable" not in value:
             settings.i2p_connectable = self.settings.i2p_connectable
+        if "i2p_managed" not in value:
+            settings.i2p_managed = self.settings.i2p_managed
         if "i2p_peers" not in value:
             settings.i2p_peers = list(self.settings.i2p_peers)
         self.settings = settings
@@ -4011,6 +4022,10 @@ class MeshChatService(
             # Older/narrow test adapters return None; only an explicit False
             # means a real callback is still executing.
             callbacks_stopped = self.network.shutdown() is not False
+        try:
+            self._i2p_router.stop()
+        except Exception:
+            pass
         # Never close the encrypted vault underneath an already-running
         # callback or retry. If the bounded foreground shutdown expires, a
         # daemon finalizer waits for that worker and closes the vault exactly

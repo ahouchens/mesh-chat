@@ -1723,6 +1723,21 @@ function RemoteConnectionsSettings({ initial, onChanged }: { initial: RemoteProf
   return <section className="settings-section remote-connections" aria-labelledby="remote-connections-title"><div className="settings-section__heading"><h3 id="remote-connections-title">Approved access points</h3><p>Internet invitations first try a temporary path hosted by the inviter. Add an operator-supplied Reticulum access point only as an explicit fallback when the inviter's device or router cannot accept an inbound connection.</p></div><p className="muted">Operators can observe IP addresses, timing, packet sizes, connection duration, and Reticulum routing identifiers. They cannot decrypt or forge valid MeshChat content.</p>{profiles.map((profile) => <article className="remote-profile-row" key={profile.id}><span><strong>{profile.label}</strong><small role="status">{remoteStateLabel(profile)}</small><small>{profile.ratchet_ready ? "Encrypted recipient ready" : profile.path_available ? "Known peer path; awaiting ratchet" : "Path discovery occurs when an invitation is used"} · {profile.offline_delivery_available ? "Offline delivery node connected" : profile.offline_delivery_approved ? "Offline delivery approved; node unavailable" : profile.offline_delivery_recommended ? "Offline delivery available after separate approval" : "Live delivery only"}</small></span><div><Button variant="secondary" disabled={busy === profile.id || profile.state === "expired"} onClick={() => void run("test_remote_profile", profile.id)}>Test</Button><Button variant="ghost" disabled={busy === profile.id || profile.state === "expired"} onClick={() => void run("retry_remote_profile", profile.id)}>Retry</Button>{profile.offline_delivery_recommended && <Button variant="ghost" disabled={busy === profile.id} onClick={() => void run(profile.offline_delivery_approved ? "remove_remote_propagation" : "approve_remote_propagation", profile.id)}>{profile.offline_delivery_approved ? "Remove offline delivery" : "Approve offline delivery"}</Button>}<Button variant="danger" disabled={busy === profile.id || profile.offline_delivery_approved} title={profile.offline_delivery_approved ? "Remove offline delivery approval first" : undefined} onClick={() => void run("remove_remote_profile", profile.id)}>Remove</Button></div>{profile.offline_delivery_recommended && !profile.offline_delivery_approved && <p>Optional node {profile.propagation_identifier} stores recipient-encrypted objects and routing metadata. Storage is not endpoint or human receipt. Android may not retrieve messages until Mesh Chat runs again.</p>}</article>)}{profiles.length === 0 && <p className="muted">No access point is configured. Internet invitations still try a direct path to the online inviter.</p>}{adding ? <div className="remote-profile-form"><label>Profile name<input value={label} maxLength={64} onChange={(event) => setLabel(event.target.value)} /></label><label>TCP hostname or address<input value={host} autoCapitalize="off" autoCorrect="off" spellCheck={false} onChange={(event) => setHost(event.target.value)} /></label><label>TCP port<input value={port} inputMode="numeric" onChange={(event) => setPort(event.target.value)} /></label><label>Recommended LXMF propagation destination <small>Optional, 32 hexadecimal characters</small><input value={propagation} maxLength={32} autoCapitalize="off" autoCorrect="off" spellCheck={false} onChange={(event) => setPropagation(event.target.value)} /></label><label className="checkbox-line"><input type="checkbox" checked={allowPrivate} onChange={(event) => setAllowPrivate(event.target.checked)} /> Advanced: allow a private-network endpoint. This can expose local services and must only be used with an operator you trust.</label><div className="dialog-actions"><Button variant="ghost" onClick={() => setAdding(false)}>Cancel</Button><Button disabled={busy === "new" || !label.trim() || !host.trim()} onClick={() => void add()}>{busy === "new" ? "Connecting…" : "Approve and connect"}</Button></div></div> : <Button variant="secondary" disabled={profiles.length >= 4} onClick={() => setAdding(true)}>Add remote connection</Button>}{error && <p className="form-error" role="alert">{error}</p>}</section>;
 }
 
+const I2P_ROUTER_LABEL: Record<string, string> = {
+  running: "managed i2pd running",
+  external: "external I2P router",
+  starting: "starting",
+  failed: "failed",
+  not_started: "not started",
+};
+const I2P_ROUTER_REASON: Record<string, string> = {
+  router_missing: "i2pd was not found",
+  router_start_failed: "i2pd could not start",
+  router_exited: "i2pd exited",
+  sam_timeout: "SAM did not become ready",
+  unsupported_platform: "managed I2P is not supported on this platform",
+};
+
 function SettingsDialog({ snapshot, theme, onThemeChange, onClose, onSaved }: { snapshot: Snapshot; theme: Theme; onThemeChange: (theme: Theme) => void; onClose: () => void; onSaved: () => Promise<void> }) {
   const [settings, setSettings] = useState<NetworkSettings>(snapshot.settings);
   const [saved, setSaved] = useState(false);
@@ -1758,7 +1773,7 @@ function SettingsDialog({ snapshot, theme, onThemeChange, onClose, onSaved }: { 
     event.preventDefault();
     selectTheme(nextTheme);
   };
-  const toggle = (key: "nearby_discovery" | "lan_fallback" | "help_route" | "store_for_offline" | "i2p_enabled" | "i2p_connectable") => {
+  const toggle = (key: "nearby_discovery" | "lan_fallback" | "help_route" | "store_for_offline" | "i2p_enabled" | "i2p_connectable" | "i2p_managed") => {
     setSaved(false);
     setSaveError("");
     setSettings((current) => ({ ...current, [key]: !current[key] }));
@@ -1826,11 +1841,14 @@ function SettingsDialog({ snapshot, theme, onThemeChange, onClose, onSaved }: { 
           <Toggle title="Use I2P" description="Connect through an I2P access point. Requires an I2P router with SAM enabled." checked={settings.i2p_enabled} onChange={() => toggle("i2p_enabled")} />
         </div>
         {settings.i2p_enabled && <div className="form-stack">
+          {!isAndroid && <Toggle title="Manage i2pd for me" description="Start a local i2pd process with SAM on localhost. No administrator rights or Windows service." checked={settings.i2p_managed} onChange={() => toggle("i2p_managed")} />}
           {!isAndroid && <Toggle title="Run a connectable access point" description="Accept inbound I2P tunnels. Enable Help route messages if this device should relay for others." checked={settings.i2p_connectable} onChange={() => toggle("i2p_connectable")} />}
           {isAndroid && <p className="muted">Connectable access points are desktop-only. Android uses client-only I2P.</p>}
           <label className="field"><span>I2P access point addresses</span><textarea rows={3} value={settings.i2p_peers.join("\n")} onChange={(event) => setSettings((current) => ({ ...current, i2p_peers: event.target.value.split(/\r?\n/).map((value) => value.trim()).filter(Boolean) }))} placeholder="example.b32.i2p" spellCheck={false} /></label>
           <p className="muted">One <code>*.b32.i2p</code> address per line. The access point can see connection metadata, not message contents. Save, then restart Mesh Chat to apply.</p>
           {i2pStatus && <p className="muted" role="status">I2P: {i2pStatus.state === "online" ? `online · ${i2pStatus.online_count} interface${i2pStatus.online_count === 1 ? "" : "s"}` : i2pStatus.state === "not_started" ? "saved; restart Mesh Chat to start I2P" : i2pStatus.state} · {i2pStatus.peer_count} access point{i2pStatus.peer_count === 1 ? "" : "s"}</p>}
+          {i2pStatus?.router && <p className="muted" role="status">Router: {I2P_ROUTER_LABEL[i2pStatus.router.state] ?? i2pStatus.router.state}{i2pStatus.router.reason ? ` — ${I2P_ROUTER_REASON[i2pStatus.router.reason] ?? i2pStatus.router.reason}` : ""} · SAM {i2pStatus.router.sam_ready ? "ready" : "not ready"}</p>}
+          {i2pStatus?.router?.reason === "router_missing" && <p className="muted">Place <code>i2pd.exe</code> next to Mesh Chat, or turn off “Manage i2pd for me” and run i2pd yourself with SAM enabled.</p>}
           {i2pStatus?.b32 && <p className="muted">This device’s I2P address: <code>{i2pStatus.b32}.b32.i2p</code></p>}
         </div>}
       </section>

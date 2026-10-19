@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -57,6 +58,7 @@ class NetworkSettings:
     approved_propagation_nodes: list[str] = field(default_factory=list)
     i2p_enabled: bool = False
     i2p_connectable: bool = False
+    i2p_managed: bool = os.name == "nt"
     i2p_peers: list[str] = field(default_factory=list)
     # Runtime-only, DNS-policy-checked numeric endpoints. The canonical hosts
     # remain sealed in remote_profile vault records and never enter renderer
@@ -85,6 +87,7 @@ class NetworkSettings:
             "approved_propagation_nodes",
             "i2p_enabled",
             "i2p_connectable",
+            "i2p_managed",
             "i2p_peers",
         }
         if set(value) - allowed_keys:
@@ -145,6 +148,7 @@ class NetworkSettings:
 
         i2p_enabled = boolean("i2p_enabled", False)
         i2p_connectable = boolean("i2p_connectable", False)
+        i2p_managed = boolean("i2p_managed", os.name == "nt")
         if i2p_enabled and not checked_i2p_peers and not i2p_connectable:
             raise ValidationError(
                 "I2P needs an access point address or connectable access point mode"
@@ -162,6 +166,7 @@ class NetworkSettings:
             approved_propagation_nodes=list(nodes),
             i2p_enabled=i2p_enabled,
             i2p_connectable=i2p_connectable,
+            i2p_managed=i2p_managed,
             i2p_peers=checked_i2p_peers,
         )
 
@@ -178,6 +183,7 @@ class NetworkSettings:
             "approved_propagation_nodes": self.approved_propagation_nodes,
             "i2p_enabled": self.i2p_enabled,
             "i2p_connectable": self.i2p_connectable,
+            "i2p_managed": self.i2p_managed,
             "i2p_peers": self.i2p_peers,
         }
 

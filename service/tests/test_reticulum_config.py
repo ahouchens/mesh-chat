@@ -111,11 +111,14 @@ def test_i2p_settings_round_trip_and_normalize_addresses() -> None:
     settings = NetworkSettings.from_dict({
         "i2p_enabled": True,
         "i2p_connectable": False,
+        "i2p_managed": False,
         "i2p_peers": [" " + B32.upper() + " ", B32],
     })
 
     assert settings.i2p_peers == [B32]
+    assert settings.i2p_managed is False
     assert settings.to_dict()["i2p_peers"] == [B32]
+    assert settings.to_dict()["i2p_managed"] is False
 
 
 @pytest.mark.parametrize("peers", [["not-a-b32"], ["a" * 52], ["a" * 53 + ".b32.i2p"]])

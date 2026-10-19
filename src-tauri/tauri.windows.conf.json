@@ -1,0 +1,9 @@
+{
+  "bundle": {
+    "resources": [
+      "../THIRD_PARTY_NOTICES.md",
+      "../vendor/i2pd.exe",
+      "../vendor/i2pd-LICENSE.txt"
+    ]
+  }
+}

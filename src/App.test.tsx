@@ -39,6 +39,7 @@ const settings = {
   approved_propagation_nodes: [],
   i2p_enabled: false,
   i2p_connectable: false,
+  i2p_managed: true,
   i2p_peers: [],
 };
 

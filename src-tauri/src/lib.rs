@@ -29,6 +29,7 @@ use std::{
 use tauri::AppHandle;
 #[cfg(desktop)]
 use tauri::{Emitter, Manager, State};
+use tauri::path::BaseDirectory;
 #[cfg(desktop)]
 use tauri_plugin_shell::{
     process::{CommandChild, CommandEvent},
@@ -335,6 +336,16 @@ fn spawn_service(app: &AppHandle, state: &ServiceState) -> Result<(), String> {
         .sidecar("mesh-chat-service")
         .map_err(|_| "service_binary_unavailable".to_string())?
         .set_raw_out(true);
+    let mut command = command;
+    let i2pd = ["i2pd.exe", "vendor/i2pd.exe"].iter().find_map(|name| {
+        app.path()
+            .resolve(name, BaseDirectory::Resource)
+            .ok()
+            .filter(|path| path.is_file())
+    });
+    if let Some(i2pd) = i2pd {
+        command = command.env("MESH_CHAT_I2PD_PATH", i2pd.to_string_lossy().to_string());
+    }
     let (mut receiver, child) = command
         .spawn()
         .map_err(|_| "service_start_failed".to_string())?;
