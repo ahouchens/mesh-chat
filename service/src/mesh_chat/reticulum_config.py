@@ -9,6 +9,7 @@ from .errors import ValidationError
 from .invitations import validate_hints
 
 INTERFACE_NAME = re.compile(r"^[A-Za-z0-9_. -]{1,64}$")
+I2P_B32 = re.compile(r"^[a-z2-7]{52}\.b32\.i2p$", re.IGNORECASE)
 
 # A signed invitation gives the recipient an explicit TCP route to the peer.
 # Reticulum otherwise keeps whichever equal-hop announce arrived first. On
@@ -54,6 +55,9 @@ class NetworkSettings:
     help_route: bool = False
     store_for_offline: bool = False
     approved_propagation_nodes: list[str] = field(default_factory=list)
+    i2p_enabled: bool = False
+    i2p_connectable: bool = False
+    i2p_peers: list[str] = field(default_factory=list)
     # Runtime-only, DNS-policy-checked numeric endpoints. The canonical hosts
     # remain sealed in remote_profile vault records and never enter renderer
     # settings. This field is deliberately omitted from from_dict()/to_dict().
@@ -79,6 +83,9 @@ class NetworkSettings:
             "help_route",
             "store_for_offline",
             "approved_propagation_nodes",
+            "i2p_enabled",
+            "i2p_connectable",
+            "i2p_peers",
         }
         if set(value) - allowed_keys:
             raise ValidationError("Network settings contain unsupported fields")
@@ -117,11 +124,31 @@ class NetworkSettings:
             if len(raw) != 16:
                 raise ValidationError("Propagation-node address is invalid")
 
+        i2p_peers = value.get("i2p_peers", [])
+        if not isinstance(i2p_peers, list) or len(i2p_peers) > 4:
+            raise ValidationError("I2P access point list is invalid")
+        checked_i2p_peers: list[str] = []
+        for peer in i2p_peers:
+            if not isinstance(peer, str):
+                raise ValidationError("I2P access point address is invalid")
+            normalized = peer.strip().lower()
+            if not I2P_B32.fullmatch(normalized):
+                raise ValidationError("I2P access point address is invalid")
+            if normalized not in checked_i2p_peers:
+                checked_i2p_peers.append(normalized)
+
         def boolean(name: str, default: bool) -> bool:
             result = value.get(name, default)
             if not isinstance(result, bool):
                 raise ValidationError(f"{name} must be boolean")
             return result
+
+        i2p_enabled = boolean("i2p_enabled", False)
+        i2p_connectable = boolean("i2p_connectable", False)
+        if i2p_enabled and not checked_i2p_peers and not i2p_connectable:
+            raise ValidationError(
+                "I2P needs an access point address or connectable access point mode"
+            )
 
         return cls(
             nearby_discovery=boolean("nearby_discovery", True),
@@ -133,6 +160,9 @@ class NetworkSettings:
             help_route=boolean("help_route", False),
             store_for_offline=boolean("store_for_offline", False),
             approved_propagation_nodes=list(nodes),
+            i2p_enabled=i2p_enabled,
+            i2p_connectable=i2p_connectable,
+            i2p_peers=checked_i2p_peers,
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -146,6 +176,9 @@ class NetworkSettings:
             "help_route": self.help_route,
             "store_for_offline": self.store_for_offline,
             "approved_propagation_nodes": self.approved_propagation_nodes,
+            "i2p_enabled": self.i2p_enabled,
+            "i2p_connectable": self.i2p_connectable,
+            "i2p_peers": self.i2p_peers,
         }
 
 
@@ -259,6 +292,18 @@ def write_config(config_dir: Path, settings: NetworkSettings) -> Path:
             ]
         )
 
+    if settings.i2p_enabled:
+        lines.extend(
+            [
+                "  [[I2P]]",
+                "    type = I2PInterface",
+                "    enabled = Yes",
+                f"    connectable = {'Yes' if settings.i2p_connectable else 'No'}",
+            ]
+        )
+        if settings.i2p_peers:
+            lines.append(f"    peers = {','.join(settings.i2p_peers)}")
+
     if (
         not settings.nearby_discovery
         and not settings.tcp_clients
@@ -266,6 +311,7 @@ def write_config(config_dir: Path, settings: NetworkSettings) -> Path:
         and not settings.participant_listeners
         and not settings.participant_clients
         and not settings.tcp_listener
+        and not settings.i2p_enabled
         and not (settings.lan_fallback and settings.lan_listener_port is not None)
     ):
         lines.extend(

@@ -82,6 +82,7 @@ import type {
   GroupMember,
   GroupMessage,
   GroupPostingPolicy,
+  I2PStatus,
   InvitationFormats,
   InvitationPreview,
   ManualParticipantSetup,
@@ -1731,6 +1732,14 @@ function SettingsDialog({ snapshot, theme, onThemeChange, onClose, onSaved }: { 
   const [notificationError, setNotificationError] = useState("");
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState("");
+  const [i2pStatus, setI2PStatus] = useState<I2PStatus | null>(null);
+  const [isAndroid, setIsAndroid] = useState(false);
+  useEffect(() => {
+    void Promise.resolve(runtimePlatform()).then((value) => setIsAndroid(value === "android")).catch(() => undefined);
+    if (settings.i2p_enabled) {
+      void Promise.resolve(serviceCommand<I2PStatus>("i2p_status")).then(setI2PStatus).catch(() => undefined);
+    }
+  }, []);
   const darkThemeRef = useRef<HTMLButtonElement>(null);
   const lightThemeRef = useRef<HTMLButtonElement>(null);
   const selectTheme = (nextTheme: Theme) => {
@@ -1749,7 +1758,7 @@ function SettingsDialog({ snapshot, theme, onThemeChange, onClose, onSaved }: { 
     event.preventDefault();
     selectTheme(nextTheme);
   };
-  const toggle = (key: "nearby_discovery" | "lan_fallback" | "help_route" | "store_for_offline") => {
+  const toggle = (key: "nearby_discovery" | "lan_fallback" | "help_route" | "store_for_offline" | "i2p_enabled" | "i2p_connectable") => {
     setSaved(false);
     setSaveError("");
     setSettings((current) => ({ ...current, [key]: !current[key] }));
@@ -1810,6 +1819,20 @@ function SettingsDialog({ snapshot, theme, onThemeChange, onClose, onSaved }: { 
           <Toggle title="Use a direct local connection" description="Add a private local-network connection option to new invitations when nearby discovery is blocked." checked={settings.lan_fallback} onChange={() => toggle("lan_fallback")} />
         </div>
         <details className="advanced-settings"><summary>Advanced connection roles</summary><p>These options make this device part of the wider Reticulum mesh and may use additional power, storage, and bandwidth.</p><div className="settings-list settings-list--advanced"><Toggle title="Help route messages" description="Allow this device to forward encrypted Reticulum traffic for others." checked={settings.help_route} onChange={() => toggle("help_route")} /><Toggle title="Store encrypted messages" description="Act as an LXMF propagation node with a 100 MiB cache. This is separate from routing." checked={settings.store_for_offline} onChange={() => toggle("store_for_offline")} /></div></details>
+      </section>
+      <section className="settings-section i2p-settings" aria-labelledby="i2p-settings-title">
+        <div className="settings-section__heading"><h3 id="i2p-settings-title">I2P relay</h3><p>Use an I2P access point when this network cannot accept a direct connection. I2P relays encrypted Reticulum traffic; it does not create a direct link.</p></div>
+        <div className="settings-list">
+          <Toggle title="Use I2P" description="Connect through an I2P access point. Requires an I2P router with SAM enabled." checked={settings.i2p_enabled} onChange={() => toggle("i2p_enabled")} />
+        </div>
+        {settings.i2p_enabled && <div className="form-stack">
+          {!isAndroid && <Toggle title="Run a connectable access point" description="Accept inbound I2P tunnels. Enable Help route messages if this device should relay for others." checked={settings.i2p_connectable} onChange={() => toggle("i2p_connectable")} />}
+          {isAndroid && <p className="muted">Connectable access points are desktop-only. Android uses client-only I2P.</p>}
+          <label className="field"><span>I2P access point addresses</span><textarea rows={3} value={settings.i2p_peers.join("\n")} onChange={(event) => setSettings((current) => ({ ...current, i2p_peers: event.target.value.split(/\r?\n/).map((value) => value.trim()).filter(Boolean) }))} placeholder="example.b32.i2p" spellCheck={false} /></label>
+          <p className="muted">One <code>*.b32.i2p</code> address per line. The access point can see connection metadata, not message contents. Save, then restart Mesh Chat to apply.</p>
+          {i2pStatus && <p className="muted" role="status">I2P: {i2pStatus.state === "online" ? `online · ${i2pStatus.online_count} interface${i2pStatus.online_count === 1 ? "" : "s"}` : i2pStatus.state === "not_started" ? "saved; restart Mesh Chat to start I2P" : i2pStatus.state} · {i2pStatus.peer_count} access point{i2pStatus.peer_count === 1 ? "" : "s"}</p>}
+          {i2pStatus?.b32 && <p className="muted">This device’s I2P address: <code>{i2pStatus.b32}.b32.i2p</code></p>}
+        </div>}
       </section>
       <ParticipantHostingSettings initial={snapshot.participant_hosting ?? []} workspaces={snapshot.workspaces ?? []} onChanged={onSaved} />
       <RemoteConnectionsSettings initial={snapshot.remote_profiles ?? []} onChanged={onSaved} />

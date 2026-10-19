@@ -781,6 +781,20 @@ export interface NetworkSettings {
   help_route: boolean;
   store_for_offline: boolean;
   approved_propagation_nodes: string[];
+  i2p_enabled: boolean;
+  i2p_connectable: boolean;
+  i2p_peers: string[];
+}
+
+export interface I2PStatus {
+  enabled: boolean;
+  connectable: boolean;
+  peer_count: number;
+  interface_count: number;
+  online_count: number;
+  online: boolean;
+  state: "disabled" | "not_started" | "starting" | "online" | "unavailable";
+  b32: string | null;
 }
 
 export interface NetworkInterfaceState {

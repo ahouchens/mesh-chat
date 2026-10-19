@@ -151,6 +151,7 @@ class MeshChatService(
         "direct_recovery_status", "export_recovery_update", "import_recovery_update",
         "pause_direct_recovery", "resume_direct_recovery",
         "snapshot",
+        "i2p_status",
         "workspace_snapshot",
         "create_profile",
         "create_invitation",
@@ -317,6 +318,7 @@ class MeshChatService(
         "direct_recovery_status", "export_recovery_update", "import_recovery_update",
         "pause_direct_recovery", "resume_direct_recovery",
         "snapshot",
+        "i2p_status",
         "workspace_snapshot",
         "search",
         "connection_help",
@@ -2353,6 +2355,20 @@ class MeshChatService(
                     attempted += 1
                 self._attempt(message["id"])
 
+    def i2p_status(self) -> dict[str, Any]:
+        if self.network is None:
+            return {
+                "enabled": self.settings.i2p_enabled,
+                "connectable": self.settings.i2p_connectable,
+                "peer_count": len(self.settings.i2p_peers),
+                "interface_count": 0,
+                "online_count": 0,
+                "online": False,
+                "state": "unavailable",
+                "b32": None,
+            }
+        return self.network.i2p_status()
+
     def snapshot(self) -> dict[str, Any]:
         self._prune_discarded_messages()
         self._prune_pending_reactions()
@@ -2491,6 +2507,12 @@ class MeshChatService(
         settings.participant_clients = [
             dict(item) for item in self.settings.participant_clients
         ]
+        if "i2p_enabled" not in value:
+            settings.i2p_enabled = self.settings.i2p_enabled
+        if "i2p_connectable" not in value:
+            settings.i2p_connectable = self.settings.i2p_connectable
+        if "i2p_peers" not in value:
+            settings.i2p_peers = list(self.settings.i2p_peers)
         self.settings = settings
         self._prepare_lan_fallback()
         self.store.put("settings", "network", self.settings.to_dict())
@@ -2594,6 +2616,9 @@ class MeshChatService(
         if command == "snapshot":
             _payload(value, allowed=set())
             return self.snapshot()
+        if command == "i2p_status":
+            _payload(value, allowed=set())
+            return self.i2p_status()
         if command == "workspace_snapshot":
             _payload(value, allowed=set())
             return self.workspace_snapshot()

@@ -25,6 +25,8 @@ vi.mock("./api", () => api);
 import App from "./App";
 import type { ServiceEvent } from "./api";
 
+const B32 = "a".repeat(52) + ".b32.i2p";
+
 const settings = {
   nearby_discovery: true,
   lan_fallback: true,
@@ -35,6 +37,9 @@ const settings = {
   help_route: false,
   store_for_offline: false,
   approved_propagation_nodes: [],
+  i2p_enabled: false,
+  i2p_connectable: false,
+  i2p_peers: [],
 };
 
 const profile = {
@@ -1714,6 +1719,38 @@ describe("network settings", () => {
       });
     });
     expect(await screen.findByText("Saved. Restart Mesh Chat to apply networking-role changes.")).toBeTruthy();
+  });
+
+  it("saves an I2P access point without exposing router internals", async () => {
+    const current: Snapshot = { ...snapshot(), settings: { ...settings, i2p_enabled: false } };
+    api.runtimePlatform.mockResolvedValue("desktop");
+    api.initializeService.mockResolvedValue(current);
+    api.onInvitation.mockResolvedValue(() => undefined);
+    api.onServiceEvent.mockResolvedValue(() => undefined);
+    api.serviceCommand.mockImplementation(async (command: string) => {
+      if (command === "snapshot") return current;
+      return {};
+    });
+
+    render(<App />);
+    await screen.findByRole("heading", { name: "Your private conversations" });
+    fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: /Use I2P/ }));
+    fireEvent.change(screen.getByLabelText("I2P access point addresses"), {
+      target: { value: B32 },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save settings" }));
+
+    await waitFor(() => {
+      expect(api.serviceCommand).toHaveBeenCalledWith("update_settings", {
+        settings: expect.objectContaining({
+          i2p_enabled: true,
+          i2p_peers: [B32],
+        }),
+      });
+    });
+    expect(screen.queryByText(/7656/)).toBeNull();
+    expect(screen.queryByText(/private key/i)).toBeNull();
   });
 
   it("requests notification permission explicitly and hides private previews", async () => {

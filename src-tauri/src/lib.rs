@@ -453,6 +453,7 @@ fn allowed_renderer_command(command: &str) -> bool {
     matches!(
         command,
         "snapshot"
+            | "i2p_status"
             | "workspace_snapshot"
             | "create_profile"
             | "create_invitation"
@@ -1515,6 +1516,7 @@ mod tests {
             assert!(!allowed_renderer_command(command));
         }
         assert!(allowed_renderer_command("delete_conversation"));
+        assert!(allowed_renderer_command("i2p_status"));
         assert!(allowed_renderer_command("restore_conversation"));
         assert!(allowed_renderer_command("set_message_reaction"));
         assert!(!allowed_renderer_command("delete_contact_identity"));
