@@ -42,6 +42,11 @@ from .group_service import GroupServiceMixin
 from .models import Contact, DeliveryState, Message, MessageKind, Profile, TrustState
 from .network import ReticulumNetwork, select_lan_listener_port
 from .i2p_router import I2PRouterManager
+from .i2p_invitation import (
+    create_i2p_invitation,
+    i2p_invitation_formats,
+    verify_i2p_invitation,
+)
 from .participant import (
     connection_response_formats,
     create_connection_response,
@@ -66,7 +71,7 @@ from .remote import (
     verify_remote_invitation,
 )
 from .remote_service import RemoteProfileServiceMixin
-from .reticulum_config import NetworkSettings
+from .reticulum_config import NetworkSettings, write_config
 from .vault import VaultStore
 from .workspace_protocol import verify_workspace_invitation
 from .workspace_service import WorkspaceServiceMixin
@@ -479,6 +484,8 @@ class MeshChatService(
         manual_setup_id: str | None = None,
         external_host: str | None = None,
         external_port: int | None = None,
+        i2p_access_point: str | None = None,
+        i2p_label: str | None = None,
     ) -> InvitationFormats:
         profile = self._require_profile()
         if self._identity is None:
@@ -496,6 +503,26 @@ class MeshChatService(
             }:
                 hints.append({"type": "tcp", **listener})
         local = create_invitation(self._identity, profile["display_name"], hints=hints)
+        if connection_mode == "i2p":
+            if not isinstance(i2p_access_point, str):
+                raise ValidationError("I2P access point is required")
+            serialized = create_i2p_invitation(
+                self._identity,
+                local["file"],
+                "personal",
+                i2p_access_point,
+                label=i2p_label if isinstance(i2p_label, str) else None,
+                expires_at=local["expires_at"],
+            )
+            verified = verify_i2p_invitation(serialized, "personal")
+            if verified is None:
+                raise ValidationError("I2P invitation could not be created")
+            return {
+                **i2p_invitation_formats(serialized, "personal"),
+                "expires_at": verified.expires_at,
+                "connection_mode": "i2p",
+                "i2p_access_point": verified.access_point["b32"],
+            }
         if connection_mode == "email":
             scope_id = str(uuid.uuid4())
             access: dict[str, Any] | None = None
@@ -582,14 +609,19 @@ class MeshChatService(
 
     def preview_invitation(self, raw: str) -> dict[str, Any]:
         try:
-            email = verify_email_invitation(raw, "personal")
-            participant = None if email else verify_participant_invitation(raw, "personal")
-            remote = None if email or participant else verify_remote_invitation(raw, "personal")
+            i2p = verify_i2p_invitation(raw, "personal")
+            email = None if i2p else verify_email_invitation(raw, "personal")
+            participant = None if i2p or email else verify_participant_invitation(raw, "personal")
+            remote = None if i2p or email or participant else verify_remote_invitation(raw, "personal")
             invitation = verify_invitation(
-                email.inner if email else participant.inner if participant else remote.inner if remote else raw
+                i2p.inner if i2p else email.inner if email else participant.inner if participant else remote.inner if remote else raw
             )
             preview = invitation.preview()
-            if email is not None:
+            if i2p is not None:
+                preview["i2p_access_point"] = i2p.access_point
+                preview["requires_i2p_consent"] = True
+                preview["expires_at"] = min(preview["expires_at"], i2p.expires_at)
+            elif email is not None:
                 preview["connection_reply_available"] = True
                 preview["invitation_digest"] = email.digest
                 if email.inviter_access is not None:
@@ -609,14 +641,17 @@ class MeshChatService(
 
     def accept_invitation(self, raw: str) -> dict[str, Any]:
         try:
-            email = verify_email_invitation(raw, "personal")
-            participant = None if email else verify_participant_invitation(raw, "personal")
-            remote = None if email or participant else verify_remote_invitation(raw, "personal")
+            i2p = verify_i2p_invitation(raw, "personal")
+            email = None if i2p else verify_email_invitation(raw, "personal")
+            participant = None if i2p or email else verify_participant_invitation(raw, "personal")
+            remote = None if i2p or email or participant else verify_remote_invitation(raw, "personal")
             invitation = verify_invitation(
-                email.inner if email else participant.inner if participant else remote.inner if remote else raw
+                i2p.inner if i2p else email.inner if email else participant.inner if participant else remote.inner if remote else raw
             )
         except ValidationError as exc:
             raise InvitationInvalid("Invitation could not be validated") from exc
+        if i2p is not None:
+            self._adopt_i2p_access_point(i2p.access_point["b32"])
         profile = self._require_profile()
         if invitation.destination_hash.hex() == profile["destination_hash"]:
             raise ValidationError("Cannot connect to the local identity")
@@ -2359,6 +2394,16 @@ class MeshChatService(
                     attempted += 1
                 self._attempt(message["id"])
 
+    def _adopt_i2p_access_point(self, b32: str) -> None:
+        peers = [b32, *[item for item in self.settings.i2p_peers if item != b32]][:4]
+        settings = NetworkSettings.from_dict(self.settings.to_dict())
+        settings.i2p_enabled = True
+        settings.i2p_peers = peers
+        self.settings = settings
+        self.store.put("settings", "network", settings.to_dict())
+        write_config(self.profile_dir / "reticulum", settings)
+        self._connection_settings_dirty = True
+
     def i2p_status(self) -> dict[str, Any]:
         router = self._i2p_router.status()
         if self.network is None:
@@ -2640,13 +2685,14 @@ class MeshChatService(
             body = _payload(
                 value, allowed={
                     "remote_profile_id", "connection_mode", "manual_setup_id",
-                    "external_host", "external_port",
+                    "external_host", "external_port", "i2p_access_point", "i2p_label",
                 }
             )
             return self.invitation(
                 body.get("remote_profile_id"), body.get("connection_mode"),
                 body.get("manual_setup_id"), body.get("external_host"),
-                body.get("external_port"),
+                body.get("external_port"), body.get("i2p_access_point"),
+                body.get("i2p_label"),
             )
         if command in {"preview_invitation", "accept_invitation"}:
             body = _payload(value, allowed={"invitation"}, required={"invitation"})
@@ -2879,6 +2925,8 @@ class MeshChatService(
                     "manual_setup_id",
                     "external_host",
                     "external_port",
+                    "i2p_access_point",
+                    "i2p_label",
                 },
                 required={"operation_id", "workspace_id"},
             )
@@ -2891,6 +2939,8 @@ class MeshChatService(
                 body.get("manual_setup_id"),
                 body.get("external_host"),
                 body.get("external_port"),
+                body.get("i2p_access_point"),
+                body.get("i2p_label"),
             )
         if command == "preview_workspace_invitation":
             body = _payload(
