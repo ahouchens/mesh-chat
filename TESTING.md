@@ -334,6 +334,42 @@ development certificate
 `d6dbff63834666bace3d75b49234726e97ccce26d2b9e9516309682e0a33143f`.
 No physical installer run or end-to-end LXMF/workspace test is claimed.
 
+## I2P invitation integration, 2026-10-19
+
+0.2.72 adds an additive signed I2P wrapper around the existing personal and
+workspace invitation:
+
+- `MESHI2P1:` / `MESHI2P1W:` carry a canonical signed descriptor with the
+  complete inner invitation, its SHA-256 digest, one validated `b32.i2p`
+  access point, expiry, and the owner public key;
+- verification binds the wrapper signer to the inner invitation owner and
+  rejects altered descriptors, foreign signers, expired wrappers, and
+  purpose mismatches;
+- the personal and workspace invite dialogs offer an I2P access-point mode;
+- join previews show the relay disclosure and b32;
+- accepting or joining adopts the access point into I2P settings, which takes
+  effect after restart. The saved request remains queued until then.
+
+The inner signed invitation, single-use nonce, replay protection, and approval
+semantics are unchanged. This is not yet a proven end-to-end workspace join
+over I2P: the wrapper and settings adoption are tested, but no two-device
+workspace approval/receipt test over I2P has been run.
+
+Validation: **90 focused service tests passed**, including five wrapper tests.
+GitHub Actions
+[run 39343424932](https://github.com/ahouchens/mesh-chat/actions/runs/39343424932)
+passed Verify, Windows packaging, and Android packaging. The APK is 34,066,003
+bytes with SHA-256
+`94d84d6ddcbcf569b224b7338e8db1a9430b113c8f86fd0b19e098f5a2cd77b3`;
+the NSIS installer is SHA-256
+`4df07e2e962ca3ed1368a9bce5b9a57bcdf089fb078cf8747c460a3f84bb8d2b`
+and the MSI is
+`1662f13177bc064463185529aefcbf0a641dba11c0c186f8df748c78eb159258`.
+The APK reports versionName 0.2.72, versionCode 2072, package
+`com.meshchat.mobile`, arm64-v8a, target API 36, and the established
+development certificate
+`d6dbff63834666bace3d75b49234726e97ccce26d2b9e9516309682e0a33143f`.
+
 ## Direct connectivity increment, 2026-10-16
 
 Native qualification now runs in GitHub Actions. At `cbcf659`,
