@@ -256,6 +256,38 @@ The APK reports versionName 0.2.68, versionCode 2068, package
 development certificate
 `d6dbff63834666bace3d75b49234726e97ccce26d2b9e9516309682e0a33143f`.
 
+## I2P foundation, 2026-10-19
+
+The first I2P increment adds the opt-in Windows transport foundation described
+in [I2P_SUPPORT_SPEC.md](docs/I2P_SUPPORT_SPEC.md):
+
+- `NetworkSettings` fields for `i2p_enabled`, `i2p_connectable`, and up to four
+  validated `*.b32.i2p` peer addresses;
+- an additive `[[I2P]]` `I2PInterface` block written only when enabled;
+- a renderer-safe `i2p_status` command and native allowlist entry;
+- a Settings section with the relay disclosure, access-point input, connectable
+  mode, and local access-point status.
+
+This is **I1**, not a completed I2P feature. The machine used for this work has
+no `i2pd` and no SAM listener on `127.0.0.1:7656`, so the I0 protocol spike and
+physical I2P delivery were not executed here. No end-to-end I2P connectivity is
+claimed. Invitation/workspace integration is I3 and remains unimplemented.
+
+Validation: **974 service tests passed** with 40 expected skips and the same 12
+deselected legacy setup-pipeline cases. GitHub Actions
+[run 39333587879](https://github.com/ahouchens/mesh-chat/actions/runs/39333587879)
+passed Verify, Windows packaging, and Android packaging. The APK is 34,049,525
+bytes with SHA-256
+`a932d7df7659eabd4812248a8b9b5e289a19b052ce805c4a2225693bd352c15e`;
+the NSIS installer is SHA-256
+`fef3b70ec98e8d6ebffebc977ed1ec69c0925f04c9d050c41e0ef588ba521d95`
+and the MSI is
+`d7bedcefab89b97aa78274641eb8f9c8ac081d49e4ec462a8b1a84babe86d1af`.
+The APK reports versionName 0.2.69, versionCode 2069, package
+`com.meshchat.mobile`, arm64-v8a, target API 36, and the established
+development certificate
+`d6dbff63834666bace3d75b49234726e97ccce26d2b9e9516309682e0a33143f`.
+
 ## Direct connectivity increment, 2026-10-16
 
 Native qualification now runs in GitHub Actions. At `cbcf659`,
