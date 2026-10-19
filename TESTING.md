@@ -196,8 +196,23 @@ remaining options for this pair.
 Validation: **115 focused tests passed**; the full local service suite passed
 **960 with 40 expected skips** and the same 12 deselected legacy setup-pipeline
 cases, which also fail at the preceding commit on this machine. Candidate:
-**0.2.66 / Android 2066**. No 0.2.66 package had been built when this section
-was written.
+**0.2.66 / Android 2066**.
+
+GitHub Actions
+[run 39322819112](https://github.com/ahouchens/mesh-chat/actions/runs/39322819112)
+passed Verify, Windows packaging, and Android packaging. The Android APK is
+34,049,597 bytes with SHA-256
+`3a996a3399dca369082baaeb35b39544eb4ca08235884e9ecd4eab2c207c373b`;
+the NSIS installer is SHA-256
+`b63ad9e0ab6d2e3617e7bbc574c12ac0b78df5546ba480fa30cde9baad66e824`
+and the MSI is
+`88f3b875b79899da933dd9e48513658fc1416a008f71e06c58124b2582776a2b`.
+The APK reports versionName 0.2.66, versionCode 2066, package
+`com.meshchat.mobile`, arm64-v8a, target API 36, and the established
+development certificate
+`d6dbff63834666bace3d75b49234726e97ccce26d2b9e9516309682e0a33143f`.
+It has not been installed or executed here, and no physical connectivity result
+is claimed.
 
 ## Direct connectivity increment, 2026-10-16
 
