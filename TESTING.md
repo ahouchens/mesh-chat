@@ -214,6 +214,26 @@ development certificate
 It has not been installed or executed here, and no physical connectivity result
 is claimed.
 
+The upstream-NAT UI is corrected in **0.2.67 / Android 2067**. When a mapping
+attempt reports a shared or upstream NAT, the plan now reports only the
+`upstream_nat` blocker, marks manual forwarding unavailable, and points to
+IPv6, another network, or an approved access point. The renderer hides the
+manual-forward action and no longer advises restoring the Internet connection.
+Validation: **107 focused tests** and **15 version/planner tests** passed. GitHub
+Actions
+[run 39325462261](https://github.com/ahouchens/mesh-chat/actions/runs/39325462261)
+passed Verify, Windows packaging, and Android packaging. The APK is 34,049,529
+bytes with SHA-256
+`fa65bdaa93cd05e492df8b66ca4b4babc2dab8315186c1d95aefafcc4cfbdd0f`;
+the NSIS installer is SHA-256
+`5aaf194762c4901faf67a7a9004e1f3a254dea8adfce51d8e7db082f72de5413`
+and the MSI is
+`44f08297e5b5de34e6da17cdb6ad305309a89df123459984a029e936f825be76`.
+The APK reports versionName 0.2.67, versionCode 2067, package
+`com.meshchat.mobile`, arm64-v8a, target API 36, and the established
+development certificate
+`d6dbff63834666bace3d75b49234726e97ccce26d2b9e9516309682e0a33143f`.
+
 ## Direct connectivity increment, 2026-10-16
 
 Native qualification now runs in GitHub Actions. At `cbcf659`,
