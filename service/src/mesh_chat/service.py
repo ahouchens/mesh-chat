@@ -146,6 +146,7 @@ class MeshChatService(
         "connection_diagnostics", "clear_connection_diagnostics",
         "preview_direct_connection", "prepare_direct_offer", "prepare_direct_answer",
         "prepare_direct_ready", "accept_direct_ready", "connect_direct_setup",
+        "configure_direct_firewall",
         "direct_setup_status", "cancel_direct_setup", "check_direct_setup", "retry_direct_setup",
         "direct_recovery_status", "export_recovery_update", "import_recovery_update",
         "pause_direct_recovery", "resume_direct_recovery",
@@ -311,6 +312,7 @@ class MeshChatService(
         "connection_diagnostics", "clear_connection_diagnostics",
         "preview_direct_connection", "prepare_direct_offer", "prepare_direct_answer",
         "prepare_direct_ready", "accept_direct_ready", "connect_direct_setup",
+        "configure_direct_firewall",
         "direct_setup_status", "cancel_direct_setup", "check_direct_setup", "retry_direct_setup",
         "direct_recovery_status", "export_recovery_update", "import_recovery_update",
         "pause_direct_recovery", "resume_direct_recovery",
@@ -2553,21 +2555,22 @@ class MeshChatService(
             body = _payload(value,allowed=fields,required=fields)
             return getattr(self._direct_recovery,method)(**body)
         direct_commands = {
-            "preview_direct_connection": ("preview", {"document"}),
-            "prepare_direct_offer": ("offer", {"invitation_id"}),
-            "prepare_direct_answer": ("answer", {"document", "operation_id"}),
-            "prepare_direct_ready": ("ready", {"document"}),
-            "accept_direct_ready": ("accept_ready", {"document"}),
-            "connect_direct_setup": ("connect", {"setup_id", "document"}),
-            "direct_setup_status": ("status", {"setup_id"}),
-            "check_direct_setup": ("readiness", {"setup_id"}),
-            "retry_direct_setup": ("retry", {"setup_id"}),
-            "cancel_direct_setup": ("cancel", {"setup_id"}),
-            "resume_direct_setup": ("resume", {"workspace_id", "invitation_id"}),
+            "preview_direct_connection": ("preview", {"document"}, {"document"}),
+            "prepare_direct_offer": ("offer", {"invitation_id","manual_host","manual_port"}, {"invitation_id"}),
+            "prepare_direct_answer": ("answer", {"document","operation_id","manual_host","manual_port"}, {"document","operation_id"}),
+            "prepare_direct_ready": ("ready", {"document"}, {"document"}),
+            "accept_direct_ready": ("accept_ready", {"document"}, {"document"}),
+            "connect_direct_setup": ("connect", {"setup_id","document"}, {"setup_id","document"}),
+            "configure_direct_firewall": ("configure_firewall", {"setup_id"}, {"setup_id"}),
+            "direct_setup_status": ("status", {"setup_id"}, {"setup_id"}),
+            "check_direct_setup": ("readiness", {"setup_id"}, {"setup_id"}),
+            "retry_direct_setup": ("retry", {"setup_id"}, {"setup_id"}),
+            "cancel_direct_setup": ("cancel", {"setup_id"}, {"setup_id"}),
+            "resume_direct_setup": ("resume", {"workspace_id","invitation_id"}, set()),
         }
         if command in direct_commands:
-            method, fields = direct_commands[command]
-            body = _payload(value, allowed=fields, required=set() if method == "resume" else fields)
+            method, fields, required = direct_commands[command]
+            body = _payload(value, allowed=fields, required=required)
             from .connection_diagnostics import record
             try:
                 result = getattr(self._direct_setup, method)(**body)

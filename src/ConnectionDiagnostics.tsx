@@ -9,7 +9,7 @@ const phases = new Set(["waiting_for_reply", "waiting_for_ready", "ready_to_shar
 const events = new Set(["state", "import_verified", "import_rejected", "action_failed", "lifecycle_interrupted"]);
 const kinds = new Set(["offer", "answer", "ready", "recovery"]);
 const commands = new Set(["preview_direct_connection", "prepare_direct_offer", "prepare_direct_answer", "prepare_direct_ready",
-  "accept_direct_ready", "connect_direct_setup", "direct_setup_status", "check_direct_setup", "retry_direct_setup", "cancel_direct_setup", "resume_direct_setup"]);
+  "accept_direct_ready", "connect_direct_setup", "configure_direct_firewall", "direct_setup_status", "check_direct_setup", "retry_direct_setup", "cancel_direct_setup", "resume_direct_setup"]);
 const errorCodes = new Set(["internal_error", "invalid_request", "identity_mismatch", "invitation_invalid", "invitation_expired",
   "workspace_already_known", "workspace_limit_reached", "protected_storage_unavailable", "profile_in_use", "network_unavailable",
   "direct_connection_unavailable", "native_unavailable", "contact_not_approved", "contact_in_use", "recipient_keys_unavailable",
@@ -17,7 +17,17 @@ const errorCodes = new Set(["internal_error", "invalid_request", "identity_misma
 const failureStages = new Set(["runtime_check", "document_verification", "save_join_request", "join_authorization", "prepare_candidates",
   "sign_reply", "save_reply", "arm_socket", "verify_socket", "export_reply", "save_setup"]);
 const failureReasons = new Set(["invitation_mismatch", "request_stopped", "request_expired", "identity_mismatch",
-  "saved_request_invalid", "workspace_active", "workspace_not_pending"]);
+  "saved_request_invalid", "workspace_active", "workspace_not_pending",
+  "ready_to_prepare", "no_default_route", "no_global_ipv4", "no_global_ipv6",
+  "upnp_no_discovery", "upnp_wan_private", "upnp_wan_shared", "upnp_mapping_denied",
+  "upnp_unsupported_lease", "nat_pmp_no_response", "nat_pmp_mapping_denied",
+  "pcp_no_response", "pcp_mapping_denied", "upstream_nat_detected", "listener_bind_failed",
+  "windows_firewall_blocked", "windows_firewall_permission_required", "firewall_check_unsupported",
+  "session_limit", "direct_public_ipv4", "global_ipv6_available", "mapping_prepared",
+  "router_state_changed", "manual_setup_required", "no_public_candidate", "no_eligible_route",
+  "no_global_ipv6_route", "no_global_ipv6_address", "no_public_ipv4", "ipv6_pinhole_unavailable",
+  "manual_forward_configured", "manual_forward_available", "mapping_not_attempted",
+  "firewall_not_checked", "no_prepared_candidate"]);
 const workspaceStates = new Set(["unavailable", "none", "joining", "active", "linking", "leaving", "left", "removed",
   "closed", "forked", "incomplete_sync"]);
 function object(value: unknown): Record<string, unknown> {

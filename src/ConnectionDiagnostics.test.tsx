@@ -82,3 +82,12 @@ it("exports the saved-workspace failure reason and state only when allowlisted",
   expect(JSON.parse(rejected).events[0].workspace_state).toBe("unavailable");
   expect(rejected).not.toContain("private-document");
 });
+
+it("exports an allowlisted network reachability failure without addresses", () => {
+  const failure = {time:1, event:"action_failed", phase:"failed", command:"prepare_direct_offer",
+    error_code:"invalid_request", failure_stage:"prepare_candidates",
+    failure_reason:"upnp_no_discovery"};
+  const report = diagnosticReport({}, {format_version:1, events:[failure], last_failure:failure}, false);
+  expect(report.last_failure.failure_reason).toBe("upnp_no_discovery");
+  expect(report.last_failure.command).toBe("prepare_direct_offer");
+});

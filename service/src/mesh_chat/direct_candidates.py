@@ -13,6 +13,7 @@ import uuid
 from copy import deepcopy
 
 from . import connectivity as c
+from . import reachability
 from .errors import ValidationError
 
 
@@ -33,6 +34,11 @@ class NativePreparation:
         self._mappings = []
         self._candidates = []
         self.reason = "no_public_candidate"
+        self.mapping_attempts: list[dict] = []
+        self.ipv6_pinhole: dict | None = None
+        self.manual: dict | None = None
+        self.has_route = False
+        self.local_host = self._owned.get("host")
         self._timer = threading.Timer(max(0, expires_at-clock()), self.close)
         self._timer.daemon = True
         self._timer.start()
@@ -81,6 +87,41 @@ class NativePreparation:
             return {"session_id": self._owned["session"], "generation": self._owned["generation"],
                     "certificate": bytes.fromhex(self._owned["certificate"]),
                     "candidates": deepcopy(self._candidates), "expires_at": self.expires_at}
+
+    def add_manual_candidate(self, host, port):
+        """Add one user-declared public tuple for the exact owned socket."""
+        if not self.has_route or not self.route_available:
+            raise ValidationError("Manual forward requires a usable Internet route")
+        with self._lock:
+            self._check()
+            expires_at = self.expires_at
+        candidate = reachability.manual_candidate(host, port, expires_at, now=int(self._clock()))
+        self._add_candidate(candidate["host"], candidate["port"], candidate["expires_at"])
+        self._sources[(candidate["host"], candidate["port"])] = "manual"
+        self.manual = candidate
+
+    def manual_forward_details(self):
+        local = self.local_host or self._owned.get("host")
+        if local in {"0.0.0.0", "::"}:
+            local = None
+        return {"local_host": local, "local_port": self._owned.get("port"),
+                "protocol": "udp"}
+
+    def reachability(self, firewall: dict | None = None):
+        with self._lock:
+            candidates = deepcopy(self._candidates)
+            sources = dict(self._sources)
+            attempts = deepcopy(self.mapping_attempts)
+            pinhole = deepcopy(self.ipv6_pinhole)
+            manual = deepcopy(self.manual)
+        forward = self.manual_forward_details()
+        return reachability.build_plan(
+            candidates=candidates, sources=sources, mapping_attempts=attempts,
+            ipv6_pinhole=pinhole, manual=manual, firewall=firewall,
+            has_route=self.has_route, route_available=self.route_available,
+            local_host=forward["local_host"], local_port=forward["local_port"],
+            now=int(self._clock()),
+        )
 
     def _add_mapping(self, mapping, owned=None):
         owned = self._owned if owned is None else owned
@@ -138,6 +179,24 @@ class NativePreparation:
 def route_signature(routes):
     """Private route identity; never exported in diagnostics or documents."""
     return tuple(sorted((str(r.family), r.interface or "", r.local_address or "", r.gateway or "") for r in routes))
+
+
+def _mapping_evidence(attempts, *, method=None, success=False):
+    rows = [
+        {"method": getattr(item, "phase", "precondition"), "state": "failed",
+         "reason": getattr(item, "reason", "no_default_route")}
+        for item in attempts
+    ]
+    if success and method:
+        rows.append({"method": method, "state": "prepared", "reason": "mapping_prepared"})
+    return rows
+
+
+def _record_pinhole(preparation, state, reason):
+    current = preparation.ipv6_pinhole
+    if current and current.get("state") == "prepared":
+        return
+    preparation.ipv6_pinhole = {"state": state, "reason": reason}
 
 
 def prepare_candidates(native, *, generation, expires_at, family=None, routes=None,
@@ -210,6 +269,8 @@ def prepare_candidates(native, *, generation, expires_at, family=None, routes=No
         preparation = (RecoveryPreparation if recovery else NativePreparation)(native, owned, expires_at, clock=clock, monotonic=monotonic)
         preparation.route_signature = route_signature(routes)
         preparation.route_available = bool(eligible)
+        preparation.has_route = bool(routes)
+        preparation.local_host = route.local_address if route is not None else local
         preparation.mapping_attempted = any(c.classify_address(r.local_address) in {"rfc1918", "shared"} for r in eligible)
         kind = c.classify_address(local)
         lifetime = max(1, int(expires_at-clock()))
@@ -222,14 +283,21 @@ def prepare_candidates(native, *, generation, expires_at, family=None, routes=No
                     mapping = c.map_upnp_ipv6_pinhole(local, owned["port"], lifetime=lifetime,
                         routes=[item for item in routes if item.interface == route.interface], protocol="udp")
                     preparation._add_mapping(mapping)
-                except OSError:
-                    pass  # Global address is a candidate, never a firewall-success claim.
+                    _record_pinhole(preparation, "prepared", "ipv6_pinhole_prepared")
+                except OSError as exc:
+                    # Global address is a candidate, never a firewall-success claim.
+                    _record_pinhole(preparation, "failed", getattr(exc, "reason", "ipv6_pinhole_unavailable"))
         elif route is not None:
+            attempts: list = []
             try:
-                mapping = c.create_port_mapping(owned["port"], lifetime=lifetime, routes=[route], protocol="udp", **({"preferred_external_port": preferred_external_port} if recovery else {}))
+                mapping = c.create_port_mapping(owned["port"], lifetime=lifetime, routes=[route], protocol="udp", attempts=attempts, **({"preferred_external_port": preferred_external_port} if recovery else {}))
                 preparation._add_mapping(mapping)
-            except OSError:
+                preparation.mapping_attempts = _mapping_evidence(attempts, method=mapping.method, success=True)
+            except OSError as exc:
                 preparation.reason = "no_public_candidate"
+                if not attempts and isinstance(exc, c.ConnectivityError):
+                    attempts.append(exc)
+                preparation.mapping_attempts = _mapping_evidence(attempts)
         preparation.document_fields()  # Recheck after potentially slow router operations.
         if multiple and not recovery:
             seen = {(local, route.interface if route else None)}
@@ -261,13 +329,18 @@ def prepare_candidates(native, *, generation, expires_at, family=None, routes=No
                         try:
                             preparation._add_mapping(c.map_upnp_ipv6_pinhole(host,extra["port"],lifetime=lifetime,
                                 routes=[r for r in routes if r.interface == alternative.interface],protocol="udp"), extra)
-                        except OSError:
-                            pass
+                            _record_pinhole(preparation, "prepared", "ipv6_pinhole_prepared")
+                        except OSError as exc:
+                            _record_pinhole(preparation, "failed", getattr(exc, "reason", "ipv6_pinhole_unavailable"))
                 else:
+                    alt_attempts: list = []
                     try:
-                        preparation._add_mapping(c.create_port_mapping(extra["port"],lifetime=lifetime,routes=[alternative],protocol="udp"), extra)
-                    except OSError:
-                        pass
+                        preparation._add_mapping(c.create_port_mapping(extra["port"],lifetime=lifetime,routes=[alternative],protocol="udp",attempts=alt_attempts), extra)
+                        preparation.mapping_attempts.extend(_mapping_evidence(alt_attempts))
+                    except OSError as exc:
+                        if not alt_attempts and isinstance(exc, c.ConnectivityError):
+                            alt_attempts.append(exc)
+                        preparation.mapping_attempts.extend(_mapping_evidence(alt_attempts))
             preparation.document_fields()
         return preparation
     except Exception:

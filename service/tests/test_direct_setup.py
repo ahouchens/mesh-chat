@@ -7,6 +7,8 @@ import pytest
 import RNS
 
 from mesh_chat import direct_setup
+from mesh_chat import connectivity as connectivity_module
+from mesh_chat import firewall as firewall_module
 from mesh_chat.direct_candidates import prepare_candidates
 from mesh_chat.direct_documents import verify_connection_document
 from mesh_chat.errors import IdentityMismatch, NativeUnavailable, ValidationError, WorkspaceAlreadyKnown
@@ -472,6 +474,69 @@ def test_a_workspace_past_the_pending_state_is_never_replaced_by_a_new_invitatio
     assert caught.value.reason == reason
     assert joiner._require_workspace(workspace["id"])["state"] == state
     assert joiner.store.list("workspace") == [record]
+
+
+def test_manual_udp_forward_is_signed_and_reported_without_a_second_socket(peers, monkeypatch):
+    owner, joiner, _, invite = peers
+    route = connectivity_module.RouteInfo(socket.AF_INET, "wifi", "192.168.1.1", "192.168.1.20", 1)
+    def prepare(native, **kwargs):
+        return prepare_candidates(native, routes=[route], **kwargs)
+    def unavailable(*args, **kwargs):
+        raise connectivity_module.ConnectivityError("upnp", "upnp_no_discovery")
+    monkeypatch.setattr(direct_setup, "prepare_candidates", prepare)
+    monkeypatch.setattr(direct_setup.platform, "system", lambda: "Linux")
+    monkeypatch.setattr(connectivity_module, "create_port_mapping", unavailable)
+    monkeypatch.setattr(connectivity_module, "default_routes", lambda **kwargs: [route])
+    offer = owner._direct_setup.offer(invite["id"], manual_host="93.184.216.34", manual_port=55000)
+    assert offer["candidate_count"] == 1
+    plan = offer["reachability"]
+    steps = {item["id"]:item for item in plan["steps"]}
+    assert steps["manual"]["state"] == "prepared"
+    assert steps["upnp"]["state"] == "failed"
+    assert plan["manual_forward"] == {"local_host":"192.168.1.20", "local_port":45001,
+        "external_host":"93.184.216.34", "external_port":55000}
+    assert plan["state"] == "prepared"
+    checked = verify_connection_document(offer["text"])
+    from mesh_chat.direct_binding import _parse
+    assert _parse(checked.offer)["candidates"] == [
+        {"host":"93.184.216.34","port":55000,"expires_at":offer["expires_at"]}]
+    answer = joiner._direct_setup.answer(offer["text"], _op(99140),
+        manual_host="93.184.216.34", manual_port=55001)
+    assert answer["candidate_count"] == 1
+    assert answer["reachability"]["manual_forward"]["external_port"] == 55001
+    assert len(owner._direct_native.owned) == 1
+    assert len(joiner._direct_native.owned) == 1
+
+
+def test_configure_direct_firewall_is_exact_udp_and_removed_on_cancel(peers, monkeypatch):
+    owner, _, _, invite = peers
+    route = connectivity_module.RouteInfo(socket.AF_INET, "wifi", "192.168.1.1", "192.168.1.20", 1)
+    def prepare(native, **kwargs):
+        return prepare_candidates(native, routes=[route], **kwargs)
+    def unavailable(*args, **kwargs):
+        raise connectivity_module.ConnectivityError("upnp", "upnp_no_discovery")
+    monkeypatch.setattr(direct_setup, "prepare_candidates", prepare)
+    monkeypatch.setattr(direct_setup.platform, "system", lambda: "Windows")
+    monkeypatch.setattr(connectivity_module, "create_port_mapping", unavailable)
+    monkeypatch.setattr(connectivity_module, "default_routes", lambda **kwargs: [route])
+    installed, removed = [], []
+    def install(*args, **kwargs):
+        installed.append((args, kwargs))
+        return {"configured":True, "marker":"marker", "ready":"ready", "protocol":"UDP",
+                "rule_name":"rule", "profiles":["private"]}
+    monkeypatch.setattr(firewall_module, "install_temporary_windows_rule", install)
+    monkeypatch.setattr(firewall_module, "remove_temporary_windows_rule", removed.append)
+    offer = owner._direct_setup.offer(invite["id"], manual_host="93.184.216.34", manual_port=55000)
+    steps = {item["id"]:item for item in offer["reachability"]["steps"]}
+    assert steps["firewall"]["state"] == "needs_consent"
+    value = owner._execute("configure_direct_firewall", {"setup_id":offer["setup_id"]})
+    assert value["state"] == "prepared" and value["protocol"] == "udp"
+    assert installed[0][1]["protocol"] == "UDP"
+    status = owner._execute("check_direct_setup", {"setup_id":offer["setup_id"]})
+    assert {item["id"]:item for item in status["reachability"]["steps"]}["firewall"]["state"] == "prepared"
+    owner._execute("cancel_direct_setup", {"setup_id":offer["setup_id"]})
+    assert removed == [{"configured":True, "marker":"marker", "ready":"ready", "protocol":"UDP",
+        "rule_name":"rule", "profiles":["private"]}]
 
 
 def test_closed_native_channel_is_reported_before_any_workspace_is_saved(peers):

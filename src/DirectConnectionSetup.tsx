@@ -5,8 +5,18 @@ import { ConnectionDiagnostics } from "./ConnectionDiagnostics";
 import { normalizeInvitationInput } from "./invitation-transfer";
 import type { Workspace } from "./types";
 type ExistingWorkspace = { id: string; name: string; state: string; can_continue: boolean; reason: string | null };
+type ReachabilityStep = { id: string; label: string; state: string; reason?: string | null };
+type Reachability = {
+  state: "prepared" | "needs_action" | "blocked";
+  steps: ReachabilityStep[];
+  candidate_count: number;
+  candidate_sources?: Record<string, number>;
+  primary_action?: { kind: string; label: string } | null;
+  blockers: string[];
+  manual_forward?: { local_host?: string | null; local_port?: number | null; external_host?: string | null; external_port?: number | null } | null;
+};
 type Preview = { kind: "offer" | "answer" | "ready"; workspace_id: string; workspace_name: string; expires_at: number; candidate_count: number; existing_workspace?: ExistingWorkspace | null };
-type Setup = { setup_id: string; state: string; workspace_id: string; expires_at: number; candidate_count: number; text?: string; readiness?: string; can_share?: boolean; route?: string; socket?: string; mapping?: string; firewall?: string; peer_candidate_count?: number | null; peer_verified?: boolean; candidate_sources?: { ipv4?: number; ipv6?: number } };
+type Setup = { setup_id: string; state: string; workspace_id: string; expires_at: number; candidate_count: number; text?: string; readiness?: string; can_share?: boolean; route?: string; socket?: string; mapping?: string; firewall?: string; peer_candidate_count?: number | null; peer_verified?: boolean; candidate_sources?: { ipv4?: number; ipv6?: number }; reachability?: Reachability | null };
 const states: Record<string, string> = {
   waiting_for_reply: "Send this invitation to the other person. Next, they open Join or connect and send a reply back to you.",
   waiting_for_ready: "Share this reply with the owner. Next, the owner opens Join or connect and sends you the final connection message.",
@@ -43,6 +53,47 @@ const savedWorkspaceReason: Record<string, string> = {
 function savedWorkspaceDetail(existing: ExistingWorkspace) {
   return savedWorkspaceReason[existing.reason ?? ""] ?? "This invitation cannot reuse the saved join request. Open the saved workspace to review it.";
 }
+const reachabilityState: Record<string, string> = {
+  prepared: "Ready", verified: "Verified", unavailable: "Not available", failed: "Failed",
+  needs_consent: "Needs permission", not_tried: "Not tried", skipped: "Skipped", blocked: "Blocked",
+};
+const reachabilityReason: Record<string, string> = {
+  ipv6_candidate_prepared: "A global IPv6 address is ready.",
+  no_route: "No Internet route was found on this device.",
+  no_eligible_route: "No usable Internet interface was found.",
+  no_global_ipv6_address: "No global IPv6 address is available.",
+  ipv6_pinhole_prepared: "A temporary IPv6 pinhole was prepared.",
+  ipv6_pinhole_unavailable: "The router did not provide an IPv6 pinhole. A host firewall may still block traffic.",
+  public_ipv4_prepared: "A directly assigned public IPv4 address is ready.",
+  no_public_ipv4: "No directly assigned public IPv4 address is available.",
+  mapping_prepared: "The router created a temporary UDP mapping.",
+  mapping_not_attempted: "An earlier method succeeded, so this one was not needed.",
+  pcp_no_response: "The router did not answer PCP.",
+  pcp_mapping_denied: "The router refused the PCP mapping.",
+  upnp_no_discovery: "No UPnP router was found.",
+  upnp_mapping_denied: "The router refused the UPnP mapping.",
+  upnp_unsupported_lease: "The router refused the requested mapping lifetime.",
+  upnp_wan_private: "The router reports a private upstream address.",
+  upnp_wan_shared: "The router is behind carrier or shared NAT.",
+  upstream_nat_detected: "The router is behind another NAT or carrier NAT.",
+  nat_pmp_no_response: "The router did not answer NAT-PMP.",
+  nat_pmp_mapping_denied: "The router refused the NAT-PMP mapping.",
+  manual_forward_configured: "A manual UDP forward was added to the signed message.",
+  manual_forward_available: "You can forward one UDP port on your router.",
+  firewall_permission_required: "Windows may block inbound UDP until you allow it.",
+  temporary_udp_rule_active: "A temporary Windows UDP rule is active.",
+  windows_firewall_blocked: "Windows did not report an active firewall profile.",
+  firewall_check_unsupported: "This platform does not expose automated firewall control.",
+  no_prepared_candidate: "No address is ready yet.",
+  firewall_not_checked: "The host firewall was not checked.",
+  no_public_candidate: "No public address or router mapping was found.",
+};
+const blockerText: Record<string, string> = {
+  no_route: "This device has no Internet route. Restore Wi-Fi or mobile data, then retry.",
+  no_eligible_route: "This device has no usable Internet interface for a direct connection.",
+  upstream_nat: "This router is behind another NAT or carrier NAT. A local mapping cannot make this device reachable. Try IPv6, another network, or an approved access point.",
+  no_public_candidate: "This device could not prepare a public address or router mapping. You can try a manual UDP forward or the other device as host.",
+};
 function actionFailure(action: string, reason: unknown, retryAction: string) {
   const value = reason !== null && typeof reason === "object" ? reason as Record<string, unknown> : {};
   const code = typeof value.code === "string" ? value.code : "";
@@ -64,6 +115,9 @@ export function DirectConnectionSetup({ invitationId, workspaceId, autoStart = f
   const [feedback, setFeedback] = useState("");
   const [back, setBack] = useState(false);
   const [incomingOpen, setIncomingOpen] = useState(true);
+  const [manualOpen, setManualOpen] = useState(false);
+  const [manualHost, setManualHost] = useState("");
+  const [manualPort, setManualPort] = useState("");
   const [checkedAt, setCheckedAt] = useState(0);
   const [now, setNow] = useState(Date.now());
   const started = useRef(false);
@@ -179,6 +233,43 @@ export function DirectConnectionSetup({ invitationId, workspaceId, autoStart = f
     catch { setError("Could not cancel setup. Lock the app to retire its active connections."); }
     finally { setBusy(false); }
   };
+  const allowFirewall = async () => {
+    if (!setup?.setup_id) return;
+    setBusy(true); setError(""); setFeedback("");
+    try {
+      await serviceCommand("configure_direct_firewall", { setup_id: setup.setup_id });
+      await check(setup);
+      setFeedback("Windows firewall permission recorded for this temporary setup.");
+    } catch (reason) { setError(actionFailure("allow UDP through Windows Firewall", reason, "Allow UDP in Windows Firewall")); }
+    finally { setBusy(false); }
+  };
+  const prepareManual = async () => {
+    const host = manualHost.trim();
+    const port = Number(manualPort);
+    if (!host || !Number.isInteger(port) || port < 1 || port > 65535) {
+      setError("Enter the router’s public IP address and a UDP port from 1 to 65535."); return;
+    }
+    setBusy(true); setError(""); setFeedback("");
+    try {
+      let value: Setup;
+      if (invitationId) {
+        value = await serviceCommand<Setup>("prepare_direct_offer", {
+          invitation_id: invitationId, manual_host: host, manual_port: port });
+      } else if (preview?.kind === "offer") {
+        if (operation.current.document !== input) operation.current = { document: input, id: crypto.randomUUID() };
+        value = await serviceCommand<Setup>("prepare_direct_answer", {
+          document: input, operation_id: operation.current.id, manual_host: host, manual_port: port });
+      } else { setError("Check the received message before setting a manual forward."); return; }
+      revision.current++;
+      const current = await check(value); setBack(false); setPreview(null); setInput(""); setIncomingOpen(false);
+      setManualOpen(false);
+      const forward = current.reachability?.manual_forward;
+      setFeedback(forward?.local_host && forward.local_port
+        ? `Manual UDP forward prepared. Forward UDP ${forward.external_port ?? port} to ${forward.local_host}:${forward.local_port} on this device, then send the new message.`
+        : "Manual UDP forward prepared. Configure your router with the local address and port in the plan above, then send the new message.");
+    } catch (reason) { setError(actionFailure("prepare the manual UDP forward", reason, "Use manual forward")); }
+    finally { setBusy(false); }
+  };
   const openWorkspaceById = async (workspaceId: string) => {
     if (!onOpenWorkspace) return;
     try {
@@ -216,22 +307,41 @@ export function DirectConnectionSetup({ invitationId, workspaceId, autoStart = f
   };
   const step = back ? 1 : readiness === "peer_verified" || readiness === "complete" || readiness === "testing" ? 3 : setup?.can_share ? 2 : 1;
   const canExport = !!outgoing && !!setup?.can_share && !busy && !back && checkedAt > 0 && now - checkedAt < 5000;
+  const canManualForward = !!invitationId || preview?.kind === "offer";
   const remaining = setup ? Math.max(0, Math.ceil((setup.expires_at * 1000 - now) / 1000)) : 0;
   return <section className="form-stack guided-connection" aria-label="Direct connection setup">
     <h3>Connect your devices</h3>
-    <p>Check this device before sharing. Keep both Mesh Chat apps open.</p>
-    <p aria-label="Connection progress">Step {step} of 3: {step === 1 ? "Check this device" : step === 2 ? "Exchange messages" : "Test connection"}</p>
+    <p>Make this device reachable before sharing. Keep both Mesh Chat apps open.</p>
+    <p aria-label="Connection progress">Step {step} of 3: {step === 1 ? "Make this device reachable" : step === 2 ? "Exchange messages" : "Test connection"}</p>
     {readiness && guidance[readiness] && <div className="direct-consent" role="status"><h4>{guidance[readiness][0]}</h4><p>{guidance[readiness][1]}</p>
       <details><summary>What was checked</summary>
       {setup?.socket === "retained" && !setup.peer_verified && <p className="muted">UDP socket retained. Address candidates: IPv4 {setup.candidate_sources?.ipv4 ?? 0}; IPv6 {setup.candidate_sources?.ipv6 ?? 0}. These are candidates, not a successful peer test.</p>}
       {setup?.mapping === "unavailable" && <p>The router did not provide a usable UDP mapping. This alone does not prove that incoming connections are blocked.</p>}
-      {setup?.firewall && <p className="muted">UDP firewall permission has not been verified. {setup.firewall === "windows_profile_unavailable_udp_unverified" ? "Windows did not report an active Internet network profile. Check Windows network settings." : "The existing automatic firewall helper supports TCP only; it cannot approve this QUIC connection."}</p>}
+      {setup?.firewall && <p className="muted">UDP firewall permission is not confirmed. {setup.firewall === "windows_profile_unavailable_udp_unverified" ? "Windows did not report an active Internet network profile. Check Windows network settings." : "If Windows blocks inbound UDP, use Allow UDP in Windows Firewall above."}</p>}
       </details>
     </div>}
+    {setup?.reachability && <section className="direct-consent" aria-label="Reachability plan" role="status">
+      <h4>{setup.reachability.state === "prepared" ? "This device is ready to share" : setup.reachability.state === "needs_action" ? "One local action is needed" : "No reachable address on this device"}</h4>
+      <ul className="reachability-list">
+        {setup.reachability.steps.map(step => <li key={step.id}><span>{step.label}</span><strong>{reachabilityState[step.state] ?? step.state}</strong>{step.reason && <small>{reachabilityReason[step.reason] ?? step.reason}</small>}</li>)}
+      </ul>
+      {setup.reachability.blockers.map(blocker => <p key={blocker}>{blockerText[blocker] ?? "This network cannot supply a reachable address."}</p>)}
+      {setup.reachability.primary_action?.kind === "allow_firewall" && <button className="button button--primary" disabled={busy} onClick={() => void allowFirewall()}>{setup.reachability.primary_action.label}</button>}
+      {setup.reachability.primary_action?.kind === "manual_forward" && canManualForward && <button className="button button--secondary" disabled={busy} onClick={() => setManualOpen(true)}>Set up manual UDP forward</button>}
+      {setup.reachability.primary_action?.kind === "change_network" && <p className="muted">Restore this device’s Internet connection, then retry checks.</p>}
+    </section>}
+    {manualOpen && canManualForward && <form className="direct-consent" onSubmit={(event) => { event.preventDefault(); void prepareManual(); }}>
+      <h4>Manual UDP forward</h4>
+      <p>Mesh Chat will bind one UDP port and show it next. Then forward that local port on your router and enter the router’s public IP address and the external port here. Use a numeric public IP; hostnames are not supported for UDP.</p>
+      <label className="field"><span>Router public IP address</span><input value={manualHost} onChange={(event) => setManualHost(event.target.value)} placeholder="203.0.113.7" autoComplete="off" disabled={busy} /></label>
+      <label className="field"><span>External UDP port</span><input inputMode="numeric" value={manualPort} onChange={(event) => setManualPort(event.target.value)} placeholder="54321" disabled={busy} /></label>
+      <div className="dialog-actions"><button className="button button--primary" type="submit" disabled={busy}>Use manual forward</button><button className="button button--ghost" type="button" disabled={busy} onClick={() => setManualOpen(false)}>Cancel</button></div>
+    </form>}
     {canExport && remaining > 0 && <><p>On the other device, open <strong>Join or connect</strong>, paste this message and follow its next step. {setup?.state === "waiting_for_reply" || setup?.state === "waiting_for_ready" ? "Bring its reply back here." : "Choose Connect there and keep both apps open; no further reply is needed."}</p><details><summary>Message details and QR code</summary><InvitationQrCode document={outgoing} destination="workspace" /><label className="field"><span>Complete message to share</span><textarea aria-label="Complete connection message" onCopy={(event) => { if (!canExport || !setup || setup.expires_at * 1000 <= Date.now()) event.preventDefault(); else onShared?.(); }} readOnly rows={5} value={outgoing} onFocus={(event) => event.currentTarget.select()} /></label></details><div className="dialog-actions"><button className={preview ? "button button--secondary" : "button button--primary"} onClick={() => void copy()}>Copy connection message</button><button className="button button--secondary" onClick={() => void share()}>Share connection message</button><button className="button button--ghost" onClick={() => void save()}>Save connection file</button></div></>}
     {setup?.setup_id && ["checks_unavailable", "no_route", "both_no_address", "network_changed", "refresh_required", "test_failed"].includes(readiness ?? "") && <>
       <button className="button button--primary" disabled={busy} onClick={() => void retry()}>Retry checks</button>
-      <details><summary>Other ways to proceed</summary><p>Try the other device as the reachable side, or recheck after changing one device’s Internet connection. You can keep Windows on the home router and Android on mobile data.</p><p>If you manage the home router, check whether it allows app-requested UDP mappings (PCP, UPnP or NAT-PMP), then retry. Optional manual router configuration requires a usable public address and the exact app-owned UDP endpoint; this wizard does not currently provide a manual UDP mapping editor. A carrier or upstream router may prevent inbound connections. Some networks cannot connect without a helper service, which this server-free mode does not use.</p><p>Keep the firewall enabled. This wizard has no supported automatic UDP firewall repair action. A TCP permission or mapping is not proof for this connection.</p></details>
+      <details><summary>Other ways to proceed</summary><p>Try the other device as the reachable side, or recheck after changing one device’s Internet connection. You can keep Windows on the home router and Android on mobile data.</p><p>If you manage the home router, use <strong>Set up manual UDP forward</strong> above when automatic PCP, UPnP, or NAT-PMP is unavailable. A carrier or upstream router may prevent inbound connections. Some networks cannot connect without a helper service, which this server-free mode does not use.</p><p>Keep the firewall enabled. On Windows, allow UDP for this temporary setup; a TCP permission or mapping is not proof for this connection.</p></details>
+      {canManualForward && setup.reachability?.primary_action?.kind !== "manual_forward" && <button className="button button--secondary" disabled={busy} onClick={() => setManualOpen(true)}>Set up manual UDP forward</button>}
     </>}
     <ConnectionDiagnostics />
     {invitationId && (!setup?.setup_id || setup.state === "cancelled") && <button className="button button--primary" disabled={busy} onClick={() => void offer()}>{setup ? "Refresh connection details" : "Prepare invitation"}</button>}

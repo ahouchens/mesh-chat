@@ -41,7 +41,7 @@ def test_udp_mapping_uses_native_port_and_selected_interface(monkeypatch):
     def mapping(port, **options):
         assert native.calls[0][0] == "prepare"
         assert port == native.owned["port"] == 45678
-        assert options == {"lifetime":300,"routes":[V4],"protocol":"udp"}
+        assert options == {"lifetime":300,"routes":[V4],"protocol":"udp","attempts":[]}
         return c.MappingResult("pcp", "93.184.216.34", 55000, V4.local_address, port, 120, {}, "udp")
     monkeypatch.setattr(c, "create_port_mapping", mapping)
     monkeypatch.setattr(c, "remove_port_mapping", removed.append)

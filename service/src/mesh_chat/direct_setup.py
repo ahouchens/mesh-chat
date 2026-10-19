@@ -6,9 +6,11 @@ are not permission to attach the bootstrap adapter or claim remote receipt.
 from __future__ import annotations
 
 import hashlib
+import platform
 import socket
 import threading
 import time
+from pathlib import Path
 
 from .direct_binding import BindingAuthority, create_binding
 from .direct_candidates import prepare_candidates
@@ -25,6 +27,7 @@ class DirectSetup:
         self._lock = threading.Lock()
         self._prepared = {}
         self._carriers = {}
+        self._firewall = {}
         self._retiring = 0
         self._closed = False
         self._epoch = 0
@@ -45,6 +48,15 @@ class DirectSetup:
 
     def _prepare(self, setup_id, generation, expires_at, family=None):
         self._available()
+        with self._lock:
+            stale_firewall = self._firewall.pop(setup_id, None)
+        if stale_firewall is not None:
+            from .firewall import remove_temporary_windows_rule
+            remove_temporary_windows_rule(stale_firewall)
+            value = self.service.store.get("direct_setup", setup_id)
+            if value is not None and value.get("firewall"):
+                self.service.store.put("direct_setup", setup_id,
+                    {key:item for key,item in value.items() if key != "firewall"})
         with self._lock:
             active = setup_id in self._carriers
         if active:
@@ -95,12 +107,39 @@ class DirectSetup:
             "reason": reason,
         }
 
+    def _firewall_status(self, setup_id, prepared):
+        with self._lock:
+            record = self._firewall.get(setup_id)
+        if record is not None:
+            if record.get("configured"):
+                return {"state": "prepared", "reason": "temporary_udp_rule_active"}
+            return {"state": "failed", "reason": str(record.get("reason", "windows_firewall_blocked"))}
+        if not prepared._candidates:
+            return {"state": "skipped", "reason": "no_prepared_candidate"}
+        if platform.system().lower() != "windows":
+            return {"state": "skipped", "reason": "firewall_check_unsupported"}
+        return {"state": "needs_consent", "reason": "firewall_permission_required"}
+
+    def _plan(self, setup_id, prepared):
+        if prepared is None:
+            return None
+        return prepared.reachability(firewall=self._firewall_status(setup_id, prepared))
+
+    def _apply_manual(self, prepared, host, port):
+        if host is None and port is None:
+            return
+        if host is None or port is None:
+            raise ValidationError("Manual forward requires both an address and a port")
+        prepared.add_manual_candidate(host, port)
+
     def _state(self, setup_id, state, kind, workspace_id, fields, text=None):
         value = {"setup_id":setup_id,"state":state,"kind":kind,"workspace_id":workspace_id,
                  "expires_at":fields["expires_at"],"candidate_count":len(fields["candidates"])}
         previous = self.service.store.get("direct_setup", setup_id)
         if previous and previous.get("relationship_id"):
             value["relationship_id"] = previous["relationship_id"]
+        if previous and previous.get("firewall"):
+            value["firewall"] = previous["firewall"]
         self.service.store.put("direct_setup", setup_id, value)
         if text is not None:
             self.service.store.put("direct_setup_document", setup_id, {"text":text})
@@ -119,7 +158,11 @@ class DirectSetup:
                 "candidate_sources":counts, "receipt_status":receipt,
                 "approval_status":approval, **getattr(prepared, "statistics", {})})
         self.service._changed()
-        return {**value, **({"text":text} if text is not None else {})}
+        with self._lock:
+            prepared_now = self._prepared.get(setup_id)
+        plan = self._plan(setup_id, prepared_now)
+        return {**value, **({"text":text} if text is not None else {}),
+                **({"reachability":plan} if plan is not None else {})}
 
     def relationship_ready(self, carrier, identifier):
         """Persist completion after authenticated admitted RNS confirmation."""
@@ -172,6 +215,9 @@ class DirectSetup:
         with self._lock:
             prepared = self._prepared.get(setup_id)
             carrier = self._carriers.get(setup_id)
+        plan = self._plan(setup_id, prepared)
+        if plan is not None:
+            result["reachability"] = plan
         if value["state"] == "cancelled":
             return {**result, "readiness":"cancelled"}
         if value["state"] == "relationship_active":
@@ -322,7 +368,7 @@ class DirectSetup:
             return None
         return socket.AF_INET6 if ":" in candidates[0]["host"] else socket.AF_INET
 
-    def offer(self, invitation_id):
+    def offer(self, invitation_id, manual_host=None, manual_port=None):
         self._available()
         service = self.service
         invite, owner = service._direct_owner_invitation(invitation_id)
@@ -340,6 +386,7 @@ class DirectSetup:
                          record.get("ready_accepted", {}).get("generation", 0)) + 1
         prepared = self._prepare(setup_id, generation, record["expires_at"])
         try:
+            self._apply_manual(prepared, manual_host, manual_port)
             fields = prepared.document_fields()
             authority = OfferAuthority(owner.public_identity, record["scope"], record["expires_at"], bytes.fromhex(record["challenge"]))
             raw = create_offer(service._identity, authority, fields["certificate"],
@@ -354,7 +401,7 @@ class DirectSetup:
             self.cancel(setup_id)
             raise
 
-    def answer(self, document, operation_id):
+    def answer(self, document, operation_id, manual_host=None, manual_port=None):
         stage = "runtime_check"
         prepared = None
         workspace = None
@@ -394,6 +441,7 @@ class DirectSetup:
             setup_id = self._id("joiner", invite.workspace_id)
             stage = "prepare_candidates"
             prepared = self._prepare(setup_id, generation, expected.expires_at, self._family(checked))
+            self._apply_manual(prepared, manual_host, manual_port)
             stage = "verify_socket"
             fields = prepared.document_fields()
             stage = "sign_reply"
@@ -482,12 +530,58 @@ class DirectSetup:
         service.store.put("direct_setup_document", setup_id, {"text":document})
         return self._state(setup_id, "ready_received", "ready", workspace_id, fields)
 
+    def configure_firewall(self, setup_id):
+        """Install one temporary UDP rule for this exact prepared socket.
+
+        The operating system elevation prompt is the user's consent. This
+        never runs on Android, never opens a range, and never claims that the
+        router mapping is reachable.
+        """
+        self._available()
+        if not isinstance(setup_id, str):
+            raise ValidationError("Direct setup identifier is invalid")
+        with self._lock:
+            prepared = self._prepared.get(setup_id)
+            existing = self._firewall.get(setup_id)
+        if prepared is None:
+            raise ValidationError("Direct setup is unavailable")
+        prepared._check()
+        if not prepared._candidates:
+            raise ValidationError("No prepared address requires a firewall rule")
+        if existing is not None and existing.get("configured"):
+            return {"setup_id":setup_id,"state":"prepared",
+                    "reason":"temporary_udp_rule_active","protocol":"udp"}
+        from .firewall import install_temporary_windows_rule
+        session_id = hashlib.sha256(("direct:"+setup_id).encode()).hexdigest()
+        installed = install_temporary_windows_rule(
+            session_id, prepared._owned["port"], Path(self.service.profile_dir)/"firewall",
+            protocol="UDP",
+        )
+        if installed.get("configured"):
+            with self._lock:
+                self._firewall[setup_id] = installed
+            status = {"state":"prepared","reason":"temporary_udp_rule_active","protocol":"udp"}
+        else:
+            reason = str(installed.get("reason","windows_firewall_blocked"))
+            with self._lock:
+                self._firewall[setup_id] = {"configured":False,"reason":reason}
+            status = {"state":"failed","reason":reason,"protocol":"udp"}
+        value = self.service.store.get("direct_setup", setup_id)
+        if value is not None:
+            self.service.store.put("direct_setup", setup_id, {**value,"firewall":status})
+            self.service._changed()
+        return {"setup_id":setup_id, **status}
+
     def cancel(self, setup_id):
         if not isinstance(setup_id, str):
             raise ValidationError("Direct setup identifier is invalid")
         with self._lock:
             prepared = self._prepared.pop(setup_id, None)
             carrier = self._carriers.pop(setup_id, None)
+            firewall = self._firewall.pop(setup_id, None)
+        if firewall is not None:
+            from .firewall import remove_temporary_windows_rule
+            remove_temporary_windows_rule(firewall)
         value = self.service.store.get("direct_setup", setup_id)
         relationship = value.get("relationship_id") if value else None
         if relationship and self.service.store.get("direct_relationship",relationship) is not None:
@@ -592,7 +686,15 @@ class DirectSetup:
             self._epoch += 1
             prepared, self._prepared = list(self._prepared.values()), {}
             carriers, self._carriers = list(self._carriers.values()), {}
+            firewall, self._firewall = list(self._firewall.values()), {}
             self._retiring += len(prepared)
+        if firewall:
+            from .firewall import remove_temporary_windows_rule
+            for rule in firewall:
+                try:
+                    remove_temporary_windows_rule(rule)
+                except Exception:
+                    pass
         def cleanup():
             for carrier in carriers:
                 try:

@@ -11,6 +11,7 @@ from importlib.metadata import PackageNotFoundError, version
 import re
 import time
 
+from .connectivity import DIAGNOSTIC_REASONS as NETWORK_FAILURE_REASONS
 from .errors import WORKSPACE_ALREADY_KNOWN_REASONS
 
 LIMIT = 200
@@ -27,15 +28,20 @@ SOURCES = ("ipv4", "ipv6", "local_global", "pcp", "upnp", "upnp_ipv6", "nat_pmp"
 FAILURE_PHASES = frozenset({"failed", "existing_routes_only", "refresh_required",
     "connection_update_needed", "no_route", "network_changed", "test_failed", "both_no_address"})
 COMMANDS = frozenset({"preview_direct_connection", "prepare_direct_offer", "prepare_direct_answer",
-    "prepare_direct_ready", "accept_direct_ready", "connect_direct_setup", "direct_setup_status",
-    "check_direct_setup", "retry_direct_setup", "cancel_direct_setup", "resume_direct_setup"})
+    "prepare_direct_ready", "accept_direct_ready", "connect_direct_setup", "configure_direct_firewall",
+    "direct_setup_status", "check_direct_setup", "retry_direct_setup", "cancel_direct_setup", "resume_direct_setup"})
 ERROR_CODES = frozenset({"internal_error", "invalid_request", "identity_mismatch", "invitation_invalid",
     "invitation_expired", "workspace_already_known", "workspace_limit_reached", "protected_storage_unavailable",
     "profile_in_use", "network_unavailable", "direct_connection_unavailable", "native_unavailable", "contact_not_approved",
     "contact_in_use", "recipient_keys_unavailable", "stale_cursor", "history_pruned"})
 FAILURE_STAGES = frozenset({"runtime_check", "document_verification", "save_join_request", "join_authorization",
     "prepare_candidates", "sign_reply", "save_reply", "arm_socket", "verify_socket", "export_reply", "save_setup"})
-FAILURE_REASONS = WORKSPACE_ALREADY_KNOWN_REASONS
+FAILURE_REASONS = WORKSPACE_ALREADY_KNOWN_REASONS | NETWORK_FAILURE_REASONS | frozenset({
+    "no_public_candidate", "no_eligible_route", "no_global_ipv6_route",
+    "no_global_ipv6_address", "no_public_ipv4", "ipv6_pinhole_unavailable",
+    "manual_forward_configured", "manual_forward_available", "mapping_not_attempted",
+    "firewall_not_checked", "no_prepared_candidate",
+})
 WORKSPACE_STATES = frozenset({"unavailable", "none", "joining", "active", "linking", "leaving", "left", "removed",
     "closed", "forked", "incomplete_sync"})
 

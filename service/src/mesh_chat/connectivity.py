@@ -1004,7 +1004,7 @@ def map_pcp(
 def create_port_mapping(
     internal_port: int, *, lifetime: int = DEFAULT_MAPPING_LIFETIME,
     routes: list[RouteInfo] | None = None, preferred_external_port: int = 0,
-    protocol: str = "tcp",
+    protocol: str = "tcp", attempts: list[ConnectivityError] | None = None,
 ) -> MappingResult:
     _mapping_protocol(protocol)
     failures: list[ConnectivityError] = []
@@ -1016,8 +1016,13 @@ def create_port_mapping(
             )
         except ConnectivityError as exc:
             failures.append(exc)
+            if attempts is not None:
+                attempts.append(exc)
         except OSError:
-            failures.append(ConnectivityError("precondition", "no_default_route"))
+            failure = ConnectivityError("precondition", "no_default_route")
+            failures.append(failure)
+            if attempts is not None:
+                attempts.append(failure)
     for reason in ("upstream_nat_detected", "upnp_wan_shared", "upnp_wan_private"):
         failure = next((item for item in failures if item.reason == reason), None)
         if failure:

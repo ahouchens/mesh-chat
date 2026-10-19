@@ -109,6 +109,46 @@ procedure are described in
 No physical Windows-to-Android connectivity is claimed; the provenance check
 above identifies the earlier artifact, not a successful connection.
 
+## Reachability planner increment, 2026-10-19
+
+The setup wizard now exposes an evidence-based plan instead of one opaque
+"Check this device" result. The design and acceptance criteria are in
+[REACHABILITY_PLANNER_SPEC.md](docs/REACHABILITY_PLANNER_SPEC.md). The
+implementation adds:
+
+- per-protocol PCP/UPnP/NAT-PMP attempt evidence and IPv6 pinhole evidence;
+- explicit upstream-NAT/CGNAT blockers;
+- a validated manual UDP endpoint in `prepare_direct_offer` and
+  `prepare_direct_answer`, signed into the existing Offer/Answer;
+- a temporary, exact **UDP** Windows firewall rule command
+  (`configure_direct_firewall`) with protocol-specific cleanup;
+- a wizard plan with one primary action, manual-forward form, firewall
+  consent, and a terminal blocked explanation;
+- allowlisted network failure reasons in diagnostics, still without
+  addresses or invitation contents.
+
+Validation:
+
+```text
+.venv\Scripts\python.exe -m pytest service/tests/test_reachability.py \
+  service/tests/test_direct_setup.py service/tests/test_direct_candidates.py \
+  service/tests/test_connectivity_roadmap.py service/tests/test_direct_readiness.py \
+  service/tests/test_connection_diagnostics.py service/tests/test_direct_native.py \
+  -q
+```
+
+Result: **127 passed**. The full local service suite, excluding the legacy
+`test_production_setup_bootstrap_admission_and_fresh_workspace_path` cases,
+passed **958 with 40 expected skips** (12 deselected). Those 12 source/native
+pipeline cases also fail at preceding commit `203f1b4` on this machine before
+these changes, so the failure is not attributed to this increment. Frontend
+regressions were added for the plan, firewall action, manual form, and
+diagnostic fields; frontend/TypeScript/package execution, Windows/Android
+builds, and physical device validation remain in GitHub Actions.
+
+The candidate is **0.2.65 / Android 2065**. No 0.2.65 package has been built in
+this workspace, and no physical connectivity result is claimed.
+
 ## Direct connectivity increment, 2026-10-16
 
 Native qualification now runs in GitHub Actions. At `cbcf659`,

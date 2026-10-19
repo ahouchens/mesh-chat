@@ -237,3 +237,58 @@ it("does not offer a retry that cannot run when resume has no saved setup", asyn
   expect(screen.getByText(/The owner can refresh this same invitation/)).toBeTruthy();
   expect(screen.queryByText("Retry checks")).toBeNull();
 });
+
+it("shows the reachability plan and installs the UDP firewall rule on request", async () => {
+  const plan = {state:"needs_action", candidate_count:1, blockers:[],
+    steps:[
+      {id:"pcp",label:"PCP",state:"prepared",reason:"mapping_prepared"},
+      {id:"firewall",label:"Windows firewall",state:"needs_consent",reason:"firewall_permission_required"},
+    ],
+    primary_action:{kind:"allow_firewall",label:"Allow UDP in Windows Firewall"},
+    manual_forward:{local_host:"192.168.1.20",local_port:54321}};
+  api.serviceCommand.mockImplementation(async command => {
+    if (command === "prepare_direct_offer") return {...base, reachability:plan};
+    if (command === "check_direct_setup") return {...base, reachability:plan,
+      readiness:"address_prepared", can_share:true, text:"mesh-direct:offer"};
+    if (command === "configure_direct_firewall") return {state:"prepared"};
+    throw new Error("unavailable");
+  });
+  render(<DirectConnectionSetup invitationId="invite" autoStart />);
+  expect(await screen.findByText("Allow UDP in Windows Firewall")).toBeTruthy();
+  expect(screen.getByText("PCP")).toBeTruthy();
+  fireEvent.click(screen.getByText("Allow UDP in Windows Firewall"));
+  await waitFor(() => expect(api.serviceCommand).toHaveBeenCalledWith(
+    "configure_direct_firewall", {setup_id:"saved"}));
+});
+
+it("prepares a manual UDP forward with the entered public address and port", async () => {
+  const blocked = {state:"blocked", candidate_count:0, blockers:["no_public_candidate"],
+    steps:[
+      {id:"pcp",label:"PCP",state:"failed",reason:"pcp_no_response"},
+      {id:"manual",label:"Manual UDP forward",state:"not_tried",reason:"manual_forward_available"},
+    ],
+    primary_action:{kind:"manual_forward",label:"Set up manual UDP forward"},
+    manual_forward:{local_host:"192.168.1.20",local_port:54321}};
+  const prepared = {...blocked, state:"prepared", candidate_count:1, blockers:[],
+    primary_action:null,
+    steps:[{id:"manual",label:"Manual UDP forward",state:"prepared",reason:"manual_forward_configured"}],
+    manual_forward:{local_host:"192.168.1.20",local_port:54321,
+      external_host:"93.184.216.34",external_port:55000}};
+  let calls = 0;
+  let currentPlan = blocked;
+  api.serviceCommand.mockImplementation(async command => {
+    if (command === "prepare_direct_offer") { calls += 1; currentPlan = calls === 1 ? blocked : prepared; return {...base, reachability:currentPlan, text:"mesh-direct:manual"}; }
+    if (command === "check_direct_setup") return {...base, reachability:currentPlan,
+      readiness:currentPlan.state === "blocked" ? "both_no_address" : "address_prepared",
+      can_share:currentPlan.state !== "blocked", text:"mesh-direct:manual"};
+    throw new Error("unavailable");
+  });
+  render(<DirectConnectionSetup invitationId="invite" autoStart />);
+  fireEvent.click(await screen.findByText("Set up manual UDP forward"));
+  expect(screen.getByText("The router did not answer PCP.")).toBeTruthy();
+  fireEvent.change(screen.getByLabelText("Router public IP address"), {target:{value:"93.184.216.34"}});
+  fireEvent.change(screen.getByLabelText("External UDP port"), {target:{value:"55000"}});
+  fireEvent.click(screen.getByText("Use manual forward"));
+  await waitFor(() => expect(api.serviceCommand).toHaveBeenCalledWith("prepare_direct_offer", {
+    invitation_id:"invite", manual_host:"93.184.216.34", manual_port:55000}));
+});
