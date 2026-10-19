@@ -234,6 +234,28 @@ The APK reports versionName 0.2.67, versionCode 2067, package
 development certificate
 `d6dbff63834666bace3d75b49234726e97ccce26d2b9e9516309682e0a33143f`.
 
+The upstream classification and plan layout are extended in **0.2.68 / Android
+2068**. A shared `100.64/10` UPnP WAN address is reported as carrier-grade NAT
+with **UDP port forward: Not possible**; a private WAN address is reported as
+double NAT with **UDP port forward: Maybe** and a manual-forward action for both
+routers; unclassified upstream evidence asks for the router WAN address. The
+plan rows now have padding, borders, and separated reason text, and the
+upstream card is a distinct block. Validation: **109 focused tests** and the
+full local service suite **962 passed, 40 expected skips, 12 deselected**.
+GitHub Actions
+[run 39328374254](https://github.com/ahouchens/mesh-chat/actions/runs/39328374254)
+passed Verify, Windows packaging, and Android packaging. The APK is 34,049,645
+bytes with SHA-256
+`0f42b3be1202e06b6842c154e9800406030d578fe4315d891e4b19a6ef8006c3`;
+the NSIS installer is SHA-256
+`aa742c7fd1ac615281052db6fe0d6b9784615bdbfccf51f426db1eeac68807a1`
+and the MSI is
+`8bd1ece15e1e1e0a20a41f0c29c0dc7757cf2d4383de9add29d8706e85cbaf3c`.
+The APK reports versionName 0.2.68, versionCode 2068, package
+`com.meshchat.mobile`, arm64-v8a, target API 36, and the established
+development certificate
+`d6dbff63834666bace3d75b49234726e97ccce26d2b9e9516309682e0a33143f`.
+
 ## Direct connectivity increment, 2026-10-16
 
 Native qualification now runs in GitHub Actions. At `cbcf659`,
