@@ -370,3 +370,68 @@ def test_completed_setup_survives_socket_expiry_and_cancel_pauses_saved_relation
     setup.cancel(offer["setup_id"])
     assert paused==[identifier]
     assert setup.status(offer["setup_id"])["state"]=="cancelled"
+
+
+def test_reply_diagnostics_distinguish_a_new_invitation_from_the_saved_request(peers):
+    owner, joiner, workspace, invite = peers
+    first = owner._direct_setup.offer(invite["id"])
+    joiner._direct_setup.answer(first["text"], _op(99120))
+    saved = joiner._require_workspace(workspace["id"])
+    replacement = owner.create_workspace_invitation_command(workspace["id"], _op(99121))
+    fresh = owner._direct_setup.offer(replacement["id"])
+    assert joiner._execute("preview_direct_connection", {"document":fresh["text"]})["kind"] == "offer"
+    with pytest.raises(IdentityMismatch):
+        joiner._execute("prepare_direct_answer", {"document":fresh["text"], "operation_id":_op(99122)})
+    report = joiner._execute("connection_diagnostics", {})
+    failure = report["last_failure"]
+    assert (failure["command"], failure["error_code"], failure["failure_stage"]) == (
+        "prepare_direct_answer", "identity_mismatch", "join_authorization")
+    assert fresh["text"] not in str(report)
+    assert joiner._require_workspace(workspace["id"]) == saved
+
+
+@pytest.mark.parametrize("stage", ["runtime_check", "save_join_request", "prepare_candidates", "save_reply", "arm_socket"])
+def test_reply_failure_preserves_original_exception_and_records_its_stage(peers, monkeypatch, stage):
+    owner, joiner, workspace, invite = peers
+    offer = owner._direct_setup.offer(invite["id"])
+    secret = "private-failure-address-192.0.2.99"
+    failure = ValidationError(secret)
+    def fail(*args, **kwargs):
+        raise failure
+    setup = joiner._direct_setup
+    if stage == "runtime_check":
+        monkeypatch.setattr(setup, "_available", fail)
+    elif stage == "save_join_request":
+        monkeypatch.setattr(joiner, "submit_workspace_join", fail)
+    elif stage == "prepare_candidates":
+        monkeypatch.setattr(setup, "_prepare", fail)
+    elif stage == "save_reply":
+        monkeypatch.setattr(joiner, "_save_direct_join_answer", fail)
+    else:
+        native_request = joiner._direct_native.request
+        def request(op, **payload):
+            return fail() if op == "arm" else native_request(op, **payload)
+        monkeypatch.setattr(joiner._direct_native, "request", request)
+    with pytest.raises(ValidationError) as caught:
+        joiner._execute("prepare_direct_answer", {"document":offer["text"], "operation_id":_op(99123)})
+    assert caught.value is failure
+    report = joiner._execute("connection_diagnostics", {})
+    assert report["last_failure"]["failure_stage"] == stage
+    assert report["last_failure"]["error_code"] == "invalid_request"
+    assert report["last_failure"]["command"] == "prepare_direct_answer"
+    assert secret not in str(report) and offer["text"] not in str(report)
+    assert not joiner._direct_native.owned
+    saved = joiner.store.get("workspace", joiner._workspace_record_id(workspace["id"]))
+    assert (saved is not None) == (stage not in {"runtime_check", "save_join_request"})
+
+
+def test_reply_failure_after_preview_records_document_expiry(peers, monkeypatch):
+    owner, joiner, _, invite = peers
+    offer = owner._direct_setup.offer(invite["id"])
+    assert joiner._execute("preview_direct_connection", {"document":offer["text"]})["kind"] == "offer"
+    monkeypatch.setattr(time, "time", lambda: offer["expires_at"] + 1)
+    with pytest.raises(ValidationError):
+        joiner._execute("prepare_direct_answer", {"document":offer["text"], "operation_id":_op(99124)})
+    report = joiner._execute("connection_diagnostics", {})
+    assert report["last_failure"]["failure_stage"] == "document_verification"
+    assert not joiner.store.list("workspace")

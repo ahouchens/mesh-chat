@@ -2571,8 +2571,13 @@ class MeshChatService(
             from .connection_diagnostics import record
             try:
                 result = getattr(self._direct_setup, method)(**body)
-            except Exception:
-                record(self, "import_rejected" if method == "preview" else "action_failed", {"state":"failed"})
+            except Exception as exc:
+                record(self, "import_rejected" if method == "preview" else "action_failed", {
+                    "state":"failed", "command":command,
+                    "error_code":exc.code if isinstance(exc, MeshChatError) else "internal_error",
+                    "failure_stage":getattr(exc, "direct_setup_failure_stage", None),
+                    "setup_id":body.get("setup_id"),
+                })
                 raise
             if method == "readiness":
                 record(self, "state", {**result, "state":result["readiness"]})

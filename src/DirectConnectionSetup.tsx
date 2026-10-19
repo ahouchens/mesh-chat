@@ -19,6 +19,21 @@ const states: Record<string, string> = {
   refresh_required: "These connection details can no longer be used. Ask the owner to refresh their saved invitation and send it through Join or connect. Your saved request is kept.",
   cancelled: "Connection attempt cancelled. Your saved request is kept; a request already received by the owner is not withdrawn.",
 };
+const failureGuidance: Record<string, string> = {
+  invitation_expired: "These connection details have expired. Ask the sender to refresh them and send the complete message.",
+  invitation_invalid: "These connection details could not be verified. Ask the sender to send the complete message again.",
+  identity_mismatch: "The identity check failed. Confirm that the sender shared this message for this device.",
+  workspace_already_known: "This workspace is already saved on this device. Open it from the workspace list to check its status.",
+  workspace_limit_reached: "This device has reached its workspace limit. Remove a workspace you have left or closed before joining another.",
+  protected_storage_unavailable: "Protected storage is unavailable. Unlock this device and Mesh Chat, then try again.",
+  profile_in_use: "This profile is already in use. Close its other Mesh Chat session, then try again.",
+  network_unavailable: "The network is unavailable. Check this device’s Internet connection, then try again.",
+};
+function actionFailure(action: string, reason: unknown, retryAction: string) {
+  const code = reason !== null && typeof reason === "object" && "code" in reason && typeof reason.code === "string" ? reason.code : "";
+  const guidance = Object.hasOwn(failureGuidance, code) ? failureGuidance[code] : `Your pasted message is still here. Try ${retryAction} again.`;
+  return `Could not ${action}. ${guidance} If it fails again, use Copy diagnostics.`;
+}
 export function DirectConnectionSetup({ invitationId, workspaceId, autoStart = false, resumeExisting = false, onShared, initialDocument = "", onOpenWorkspace }: {
   invitationId?: string; workspaceId?: string; autoStart?: boolean; resumeExisting?: boolean; onShared?: () => void; initialDocument?: string; onOpenWorkspace?: (workspace: Workspace) => Promise<void>;
 }) {
@@ -30,6 +45,7 @@ export function DirectConnectionSetup({ invitationId, workspaceId, autoStart = f
   const [error, setError] = useState("");
   const [feedback, setFeedback] = useState("");
   const [back, setBack] = useState(false);
+  const [incomingOpen, setIncomingOpen] = useState(true);
   const [checkedAt, setCheckedAt] = useState(0);
   const [now, setNow] = useState(Date.now());
   const started = useRef(false);
@@ -72,9 +88,9 @@ export function DirectConnectionSetup({ invitationId, workspaceId, autoStart = f
     }, 2000);
     return () => { active = false; clearInterval(timer); };
   }, [setup?.setup_id, setup?.state === "cancelled"]);
-  const edit = (value: string) => { setInput(value); setPreview(null); setError(""); setFeedback(""); };
+  const edit = (value: string) => { setInput(value); setPreview(null); setIncomingOpen(true); setError(""); setFeedback(""); };
   const review = async () => {
-    setBusy(true); setError("");
+    setBusy(true); setError(""); setIncomingOpen(true);
     try {
       const document = await normalizeInvitationInput(input);
       const checked = await serviceCommand<Preview>("preview_direct_connection", { document });
@@ -93,20 +109,26 @@ export function DirectConnectionSetup({ invitationId, workspaceId, autoStart = f
   };
   const apply = async () => {
     if (!preview) return;
-    revision.current++; setBusy(true); setError(""); setFeedback("");
+    revision.current++; setBusy(true); setError(""); setFeedback(""); setIncomingOpen(true);
     if (operation.current.document !== input) operation.current = { document: input, id: crypto.randomUUID() };
+    const retryAction = preview.kind === "offer" ? "Prepare reply" : preview.kind === "answer" ? "Prepare connection message" : "Connect";
+    let action = preview.kind === "offer" ? "prepare your reply" : preview.kind === "answer" ? "prepare the final connection message" : "accept the final connection message";
     try {
       const command = preview.kind === "offer" ? "prepare_direct_answer" : preview.kind === "answer" ? "prepare_direct_ready" : "accept_direct_ready";
       const value = await serviceCommand<Setup>(command, { document: input,
         ...(preview.kind === "offer" ? { operation_id: operation.current.id } : {}) });
-      const readiness = await check(value); setBack(false); setPreview(null);
+      action = "check this device before connecting or sharing";
+      const readiness = await check(value); setBack(false);
       if (preview.kind !== "offer" && !["both_no_address", "no_route", "network_changed", "refresh_required"].includes(readiness.readiness ?? "")) {
-        await check(await serviceCommand<Setup>("connect_direct_setup", {
+        action = "connect the devices";
+        const connected = await serviceCommand<Setup>("connect_direct_setup", {
           setup_id: value.setup_id, document: preview.kind === "answer" ? value.text : input,
-        }));
+        });
+        action = "check this device after starting the connection";
+        await check(connected);
       }
-      setInput("");
-    } catch { setError("These details could not start the next step. Your saved request is kept. If either app restarted or the details expired, ask the owner to refresh the connection details."); }
+      setInput(""); setPreview(null); setIncomingOpen(false);
+    } catch (reason) { setIncomingOpen(true); setError(actionFailure(action, reason, retryAction)); }
     finally { setBusy(false); }
   };
   const exportText = async () => {
@@ -191,7 +213,7 @@ export function DirectConnectionSetup({ invitationId, workspaceId, autoStart = f
     </>}
     <ConnectionDiagnostics />
     {invitationId && (!setup?.setup_id || setup.state === "cancelled") && <button className="button button--primary" disabled={busy} onClick={() => void offer()}>{setup ? "Refresh connection details" : "Prepare invitation"}</button>}
-    <details open={!canExport || !!preview}><summary>I have a message from the other device</summary>
+    <details open={incomingOpen} onToggle={event => setIncomingOpen(event.currentTarget.open)}><summary>I have a message from the other device</summary>
     <label className="field"><span>Message from the other device</span><textarea aria-label="Message from the other device" rows={5} value={input} onChange={(event) => edit(event.target.value)} disabled={busy} /></label>
     <InvitationImportActions onValue={edit} />
     <button className="button button--secondary" disabled={busy || !input.trim()} onClick={() => void review()}>Check received message</button>

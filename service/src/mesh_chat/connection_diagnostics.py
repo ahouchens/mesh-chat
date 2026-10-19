@@ -24,6 +24,15 @@ KINDS = frozenset({"offer", "answer", "ready", "recovery", "unavailable"})
 SOURCES = ("ipv4", "ipv6", "local_global", "pcp", "upnp", "upnp_ipv6", "nat_pmp")
 FAILURE_PHASES = frozenset({"failed", "existing_routes_only", "refresh_required",
     "connection_update_needed", "no_route", "network_changed", "test_failed", "both_no_address"})
+COMMANDS = frozenset({"preview_direct_connection", "prepare_direct_offer", "prepare_direct_answer",
+    "prepare_direct_ready", "accept_direct_ready", "connect_direct_setup", "direct_setup_status",
+    "check_direct_setup", "retry_direct_setup", "cancel_direct_setup", "resume_direct_setup"})
+ERROR_CODES = frozenset({"internal_error", "invalid_request", "identity_mismatch", "invitation_invalid",
+    "invitation_expired", "workspace_already_known", "workspace_limit_reached", "protected_storage_unavailable",
+    "profile_in_use", "network_unavailable", "direct_connection_unavailable", "contact_not_approved",
+    "contact_in_use", "recipient_keys_unavailable", "stale_cursor", "history_pruned"})
+FAILURE_STAGES = frozenset({"runtime_check", "document_verification", "save_join_request", "join_authorization",
+    "prepare_candidates", "sign_reply", "save_reply", "arm_socket", "verify_socket", "export_reply", "save_setup"})
 
 
 def sanitize(value):
@@ -40,6 +49,9 @@ def sanitize(value):
     return {"time":integer("time", 2**53),
         "attempt":reference if isinstance(reference, str) and re.fullmatch(r"[0-9a-f]{12}", reference) else "unavailable",
         "event":enum("event", EVENTS, "action_failed"),
+        "command":enum("command", COMMANDS, "unavailable"),
+        "error_code":enum("error_code", ERROR_CODES, "unavailable"),
+        "failure_stage":enum("failure_stage", FAILURE_STAGES, "unavailable"),
         "phase":enum("phase", PHASES, "unavailable"),
         "kind":enum("kind", KINDS, "unavailable"),
         "candidate_count":integer("candidate_count", 8),
@@ -83,9 +95,10 @@ def record(service, event, state=None):
 
 def _record(service, event, state=None):
     state = state or {}
-    row = sanitize({**{key:state.get(key) for key in ("state", "kind", "route", "socket", "mapping", "firewall", "candidate_count", "candidate_sources", "receipt_status", "approval_status", "expires_at", "checks_started", "checks_authenticated", "elapsed_ms")},
+    setup_id = state.get("setup_id")
+    row = sanitize({**{key:state.get(key) for key in ("state", "kind", "command", "error_code", "failure_stage", "route", "socket", "mapping", "firewall", "candidate_count", "candidate_sources", "receipt_status", "approval_status", "expires_at", "checks_started", "checks_authenticated", "elapsed_ms")},
         "phase":state.get("state"), "event":event, "time":int(time.time()),
-        "attempt":hashlib.sha256(str(state.get("setup_id", "unknown")).encode()).hexdigest()[:12]})
+        "attempt":hashlib.sha256(setup_id.encode()).hexdigest()[:12] if isinstance(setup_id, str) and setup_id else "unavailable"})
     value = history(service)
     if value["events"] and {k:v for k,v in value["events"][-1].items() if k != "time"} == {k:v for k,v in row.items() if k != "time"}:
         return

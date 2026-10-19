@@ -322,42 +322,59 @@ class DirectSetup:
             raise
 
     def answer(self, document, operation_id):
-        self._available()
-        checked = verify_connection_document(document)
-        if checked.kind != "offer":
-            raise ValidationError("A connection Offer is required")
-        service, invite = self.service, checked.invitation
-        workspace = service.store.get("workspace", service._workspace_record_id(invite.workspace_id))
-        if workspace is None:
-            service.submit_workspace_join(invite.serialized, operation_id)
-        # Existing joining records are rechecked against the exact signed invitation.
-        owner = _destination_for(_identity_from_public_key(checked.offer_authority.issuer_public_identity))
-        local = _destination_for(service._identity)
-        expected = BindingAuthority(checked.offer_authority.issuer_public_identity, local,
-            checked.offer_authority.scope, checked.offer_authority.expires_at, checked.offer_authority.challenge)
-        service._direct_join_binding_authority(invite.workspace_id, expected)
-        previous = service.store.get("direct_join_exchange", service._workspace_record_id(invite.workspace_id))
-        generation = (previous or {}).get("answer_accepted", {}).get("generation", 0)+1
-        setup_id = self._id("joiner", invite.workspace_id)
-        prepared = self._prepare(setup_id, generation, expected.expires_at, self._family(checked))
+        stage = "runtime_check"
+        prepared = None
         try:
+            self._available()
+            stage = "document_verification"
+            checked = verify_connection_document(document)
+            if checked.kind != "offer":
+                raise ValidationError("A connection Offer is required")
+            service, invite = self.service, checked.invitation
+            stage = "save_join_request"
+            workspace = service.store.get("workspace", service._workspace_record_id(invite.workspace_id))
+            if workspace is None:
+                service.submit_workspace_join(invite.serialized, operation_id)
+            # Existing joining records are rechecked against the exact signed invitation.
+            stage = "join_authorization"
+            owner = _destination_for(_identity_from_public_key(checked.offer_authority.issuer_public_identity))
+            local = _destination_for(service._identity)
+            expected = BindingAuthority(checked.offer_authority.issuer_public_identity, local,
+                checked.offer_authority.scope, checked.offer_authority.expires_at, checked.offer_authority.challenge)
+            service._direct_join_binding_authority(invite.workspace_id, expected)
+            previous = service.store.get("direct_join_exchange", service._workspace_record_id(invite.workspace_id))
+            generation = (previous or {}).get("answer_accepted", {}).get("generation", 0)+1
+            setup_id = self._id("joiner", invite.workspace_id)
+            stage = "prepare_candidates"
+            prepared = self._prepare(setup_id, generation, expected.expires_at, self._family(checked))
+            stage = "verify_socket"
             fields = prepared.document_fields()
+            stage = "sign_reply"
             authority = BindingAuthority(service._identity.get_public_key(), owner, expected.scope,
                 expected.expires_at, expected.challenge)
             binding = create_binding(service._identity, authority, fields["certificate"],
                 session_id=fields["session_id"], challenge=expected.challenge, generation=generation,
                 candidates=fields["candidates"], issued_at=int(time.time()), expires_at=fields["expires_at"], version=2)
             answer = create_answer(service._identity, binding, checked.offer)
+            stage = "save_reply"
             accepted = service._save_direct_join_answer(invite.workspace_id, checked.offer, checked.offer_certificate,
                 answer, fields["certificate"], expected)
+            stage = "arm_socket"
             service._direct_native.request("arm", id=prepared.handle, session=fields["session_id"],
                 generation=generation, digest=accepted.digest)
+            stage = "verify_socket"
             prepared.document_fields()
+            stage = "export_reply"
             text = export_connection_document(invite.serialized, checked.offer, checked.offer_certificate,
                 answer=answer, answer_certificate=fields["certificate"])
+            stage = "save_setup"
             return self._state(setup_id, "waiting_for_ready", "answer", invite.workspace_id, fields, text)
-        except Exception:
-            self.cancel(setup_id)
+        except Exception as exc:
+            # Only a fixed stage label reaches diagnostics; never the document
+            # or exception text. Preserve the original error code and traceback.
+            exc.direct_setup_failure_stage = stage
+            if prepared is not None:
+                self.cancel(setup_id)
             raise
 
     def ready(self, document):
