@@ -275,7 +275,7 @@ it("prepares a manual UDP forward with the entered public address and port", asy
     manual_forward:{local_host:"192.168.1.20",local_port:54321,
       external_host:"93.184.216.34",external_port:55000}};
   let calls = 0;
-  let currentPlan = blocked;
+  let currentPlan: any = blocked;
   api.serviceCommand.mockImplementation(async command => {
     if (command === "prepare_direct_offer") { calls += 1; currentPlan = calls === 1 ? blocked : prepared; return {...base, reachability:currentPlan, text:"mesh-direct:manual"}; }
     if (command === "check_direct_setup") return {...base, reachability:currentPlan,
