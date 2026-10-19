@@ -12,9 +12,14 @@ const commands = new Set(["preview_direct_connection", "prepare_direct_offer", "
   "accept_direct_ready", "connect_direct_setup", "direct_setup_status", "check_direct_setup", "retry_direct_setup", "cancel_direct_setup", "resume_direct_setup"]);
 const errorCodes = new Set(["internal_error", "invalid_request", "identity_mismatch", "invitation_invalid", "invitation_expired",
   "workspace_already_known", "workspace_limit_reached", "protected_storage_unavailable", "profile_in_use", "network_unavailable",
-  "direct_connection_unavailable", "contact_not_approved", "contact_in_use", "recipient_keys_unavailable", "stale_cursor", "history_pruned"]);
+  "direct_connection_unavailable", "native_unavailable", "contact_not_approved", "contact_in_use", "recipient_keys_unavailable",
+  "stale_cursor", "history_pruned"]);
 const failureStages = new Set(["runtime_check", "document_verification", "save_join_request", "join_authorization", "prepare_candidates",
   "sign_reply", "save_reply", "arm_socket", "verify_socket", "export_reply", "save_setup"]);
+const failureReasons = new Set(["invitation_mismatch", "request_stopped", "request_expired", "identity_mismatch",
+  "saved_request_invalid", "workspace_active", "workspace_not_pending"]);
+const workspaceStates = new Set(["unavailable", "none", "joining", "active", "linking", "leaving", "left", "removed",
+  "closed", "forked", "incomplete_sync"]);
 function object(value: unknown): Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
 }
@@ -42,6 +47,7 @@ export function diagnosticReport(build: unknown, raw: unknown, log = false) {
     return { time: number(event.time, 2**53 - 1), attempt: token(event.attempt, /^[0-9a-f]{12}$/),
       event: choice(event.event, events), phase: choice(event.phase, phases), kind: choice(event.kind, kinds),
       command: choice(event.command, commands), error_code: choice(event.error_code, errorCodes), failure_stage: choice(event.failure_stage, failureStages),
+      failure_reason: choice(event.failure_reason, failureReasons), workspace_state: choice(event.workspace_state, workspaceStates),
       candidate_count: number(event.candidate_count, 8),
       route: choice(event.route, new Set(["available", "unavailable"])),
       socket: choice(event.socket, new Set(["retained", "unavailable"])),

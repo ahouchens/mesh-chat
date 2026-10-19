@@ -9,14 +9,14 @@ import RNS
 from mesh_chat import direct_setup
 from mesh_chat.direct_candidates import prepare_candidates
 from mesh_chat.direct_documents import verify_connection_document
-from mesh_chat.errors import IdentityMismatch, ValidationError
+from mesh_chat.errors import IdentityMismatch, NativeUnavailable, ValidationError, WorkspaceAlreadyKnown
 from test_workspace_service import _service, _op
 
 
 class Native:
     def __init__(self, label):
         self.label, self.next = label, 1
-        self.owned, self.calls = {}, []
+        self.owned, self.calls, self.closed = {}, [], False
 
     def request(self, op, **payload):
         self.calls.append((op, payload))
@@ -43,8 +43,10 @@ class Native:
 
     def close(self):
         self.owned.clear()
+        self.closed = True
 
-    retire = close
+    def retire(self):
+        self.owned.clear()
 
 
 @pytest.fixture
@@ -70,6 +72,7 @@ def test_public_offer_answer_ready_retains_answer_socket_without_hosting(peers):
     assert offer["state"] == "waiting_for_reply" and offer["candidate_count"] == 0
     preview = joiner._direct_setup.preview(offer["text"])
     assert preview["workspace_id"] == workspace["id"]
+    assert preview["existing_workspace"] is None
     assert joiner.store.list("workspace") == []  # Preview has no membership effects.
     answer = joiner._direct_setup.answer(offer["text"], _op(98002))
     assert answer["state"] == "waiting_for_ready" and answer["candidate_count"] == 0
@@ -377,17 +380,129 @@ def test_reply_diagnostics_distinguish_a_new_invitation_from_the_saved_request(p
     first = owner._direct_setup.offer(invite["id"])
     joiner._direct_setup.answer(first["text"], _op(99120))
     saved = joiner._require_workspace(workspace["id"])
+    deliveries = joiner.store.list("workspace_delivery")
     replacement = owner.create_workspace_invitation_command(workspace["id"], _op(99121))
     fresh = owner._direct_setup.offer(replacement["id"])
-    assert joiner._execute("preview_direct_connection", {"document":fresh["text"]})["kind"] == "offer"
-    with pytest.raises(IdentityMismatch):
+    preview = joiner._execute("preview_direct_connection", {"document":fresh["text"]})
+    assert preview["kind"] == "offer"
+    assert preview["existing_workspace"]["can_continue"] is False
+    assert preview["existing_workspace"]["reason"] == "invitation_mismatch"
+    with pytest.raises(WorkspaceAlreadyKnown) as caught:
         joiner._execute("prepare_direct_answer", {"document":fresh["text"], "operation_id":_op(99122)})
+    assert caught.value.reason == "invitation_mismatch"
     report = joiner._execute("connection_diagnostics", {})
     failure = report["last_failure"]
-    assert (failure["command"], failure["error_code"], failure["failure_stage"]) == (
-        "prepare_direct_answer", "identity_mismatch", "join_authorization")
+    assert (failure["command"], failure["error_code"], failure["failure_stage"],
+            failure["failure_reason"], failure["workspace_state"]) == (
+        "prepare_direct_answer", "workspace_already_known", "join_authorization",
+        "invitation_mismatch", "joining")
     assert fresh["text"] not in str(report)
     assert joiner._require_workspace(workspace["id"]) == saved
+    assert joiner.store.list("workspace_delivery") == deliveries
+
+
+def test_owner_answer_preview_is_not_rerouted_to_the_active_saved_workspace(peers):
+    owner, joiner, _, invite = peers
+    offer = owner._direct_setup.offer(invite["id"])
+    answer = joiner._direct_setup.answer(offer["text"], _op(99134))
+    preview = owner._execute("preview_direct_connection", {"document":answer["text"]})
+    assert preview["kind"] == "answer"
+    assert preview["existing_workspace"] is None
+    ready = owner._execute("prepare_direct_ready", {"document":answer["text"]})
+    assert ready["state"] == "ready_to_share"
+    assert ready["text"]
+
+
+def test_preview_reports_the_saved_workspace_without_mutating_or_retaining_sockets(peers):
+    owner, joiner, workspace, invite = peers
+    offer = owner._direct_setup.offer(invite["id"])
+    answer = joiner._direct_setup.answer(offer["text"], _op(99125))
+    saved = joiner._require_workspace(workspace["id"])
+    before = {kind:joiner.store.list(kind) for kind in ("workspace", "workspace_delivery",
+        "workspace_invitation", "direct_join_exchange")}
+    owned = dict(joiner._direct_native.owned)
+    preview = joiner._execute("preview_direct_connection", {"document":offer["text"]})
+    assert preview["existing_workspace"] == {"id":workspace["id"], "name":"Direct setup",
+        "state":"joining", "can_continue":True, "reason":None}
+    # The exact saved invitation can reuse the request; the preview itself
+    # still creates no socket and changes no saved record.
+    assert dict(joiner._direct_native.owned) == owned
+    assert {kind:joiner.store.list(kind) for kind in before} == before
+    assert joiner._require_workspace(workspace["id"]) == saved
+    assert answer["setup_id"] in joiner._direct_setup._prepared
+
+
+def test_matching_saved_request_can_prepare_a_fresh_reply_without_replacing_the_request(peers):
+    owner, joiner, workspace, invite = peers
+    first = owner._direct_setup.offer(invite["id"])
+    joiner._direct_setup.answer(first["text"], _op(99126))
+    saved = joiner._require_workspace(workspace["id"])
+    deliveries = joiner.store.list("workspace_delivery")
+    exchange = joiner.store.get("direct_join_exchange", joiner._workspace_record_id(workspace["id"]))
+    # The owner refreshes the same invitation's short-lived Offer. The joiner
+    # keeps the exact saved join request and prepares a newer Answer generation.
+    fresh = owner._direct_setup.offer(invite["id"])
+    preview = joiner._execute("preview_direct_connection", {"document":fresh["text"]})
+    assert preview["existing_workspace"]["can_continue"] is True
+    reply = joiner._execute("prepare_direct_answer", {"document":fresh["text"], "operation_id":_op(99127)})
+    assert reply["state"] == "waiting_for_ready"
+    assert joiner.store.list("workspace_delivery") == deliveries
+    assert joiner._require_workspace(workspace["id"])["join_delivery_id"] == saved["join_delivery_id"]
+    updated = joiner.store.get("direct_join_exchange", joiner._workspace_record_id(workspace["id"]))
+    assert updated["answer_accepted"]["generation"] > exchange["answer_accepted"]["generation"]
+    assert updated["challenge"] == exchange["challenge"]
+    assert verify_connection_document(reply["text"]).answer is not None
+
+
+@pytest.mark.parametrize("state,reason", [("active", "workspace_active"), ("failed", "workspace_not_pending")])
+def test_a_workspace_past_the_pending_state_is_never_replaced_by_a_new_invitation(peers, state, reason):
+    owner, joiner, workspace, invite = peers
+    first = owner._direct_setup.offer(invite["id"])
+    joiner._direct_setup.answer(first["text"], _op(99128))
+    record = dict(joiner._require_workspace(workspace["id"]))
+    record["state"] = state
+    joiner.store.put("workspace", joiner._workspace_record_id(workspace["id"]), record)
+    replacement = owner.create_workspace_invitation_command(workspace["id"], _op(99129))
+    fresh = owner._direct_setup.offer(replacement["id"])
+    preview = joiner._execute("preview_direct_connection", {"document":fresh["text"]})
+    assert preview["existing_workspace"]["can_continue"] is False
+    assert preview["existing_workspace"]["reason"] == reason
+    with pytest.raises(WorkspaceAlreadyKnown) as caught:
+        joiner._execute("prepare_direct_answer", {"document":fresh["text"], "operation_id":_op(99130)})
+    assert caught.value.reason == reason
+    assert joiner._require_workspace(workspace["id"])["state"] == state
+    assert joiner.store.list("workspace") == [record]
+
+
+def test_closed_native_channel_is_reported_before_any_workspace_is_saved(peers):
+    owner, joiner, _, invite = peers
+    offer = owner._direct_setup.offer(invite["id"])
+    joiner._direct_native.close()
+    with pytest.raises(NativeUnavailable):
+        joiner._execute("prepare_direct_answer", {"document":offer["text"], "operation_id":_op(99133)})
+    failure = joiner._execute("connection_diagnostics", {})["last_failure"]
+    assert (failure["command"], failure["error_code"], failure["failure_stage"]) == (
+        "prepare_direct_answer", "native_unavailable", "runtime_check")
+    assert joiner.store.list("workspace") == []
+
+
+def test_terminal_saved_request_is_reported_without_replacement(peers):
+    owner, joiner, workspace, invite = peers
+    offer = owner._direct_setup.offer(invite["id"])
+    joiner._direct_setup.answer(offer["text"], _op(99131))
+    delivery_id = joiner._require_workspace(workspace["id"])["join_delivery_id"]
+    delivery = dict(joiner.store.get("workspace_delivery", delivery_id))
+    delivery["state"] = "failed"
+    joiner.store.put("workspace_delivery", delivery_id, delivery)
+    saved = joiner._require_workspace(workspace["id"])
+    preview = joiner._execute("preview_direct_connection", {"document":offer["text"]})
+    assert preview["existing_workspace"]["can_continue"] is False
+    assert preview["existing_workspace"]["reason"] == "request_stopped"
+    with pytest.raises(WorkspaceAlreadyKnown) as caught:
+        joiner._execute("prepare_direct_answer", {"document":offer["text"], "operation_id":_op(99132)})
+    assert caught.value.reason == "request_stopped"
+    assert joiner._require_workspace(workspace["id"]) == saved
+    assert joiner.store.get("workspace_delivery", delivery_id) == delivery
 
 
 @pytest.mark.parametrize("stage", ["runtime_check", "save_join_request", "prepare_candidates", "save_reply", "arm_socket"])

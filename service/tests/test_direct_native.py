@@ -8,7 +8,7 @@ from concurrent.futures import ThreadPoolExecutor
 import pytest
 
 from mesh_chat.direct_native import NativeChannel, NativeFrameReader
-from mesh_chat.errors import ValidationError
+from mesh_chat.errors import NativeUnavailable, ValidationError
 from mesh_chat.ipc import encode_frame
 from mesh_chat import mobile_bridge
 
@@ -78,6 +78,15 @@ def test_native_timeout_resets_unknown_outcome_and_rejects_late_reply():
             future.result()
         assert channel.drain()[0]["request"] == {"op": "reset"}
         assert not channel.receive(reply(request, {"id": 42}))
+
+
+def test_closed_native_channel_has_a_distinct_restart_guidance_code():
+    channel = NativeChannel()
+    channel.close()
+    with pytest.raises(NativeUnavailable, match="closed") as caught:
+        channel.request("poll", id=1)
+    assert caught.value.code == "native_unavailable"
+    assert channel.closed is True
 
 
 def test_native_transport_failure_and_oversized_request():

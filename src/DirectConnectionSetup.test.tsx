@@ -144,3 +144,96 @@ it("keeps a retry action when the readiness service becomes unavailable", async 
   expect(screen.queryByText("Connection QR")).toBeNull();
   expect(navigator.clipboard.writeText).not.toHaveBeenCalled();
 });
+
+it("does not prepare a reply for a different invitation when a workspace is already saved", async () => {
+  api.serviceCommand.mockImplementation(async command => {
+    if (command === "preview_direct_connection") return {...base, kind:"offer", workspace_name:"Team",
+      existing_workspace:{id:"workspace", name:"Team", state:"joining", can_continue:false, reason:"invitation_mismatch"}};
+    throw new Error("prepare must not run");
+  });
+  const open = vi.fn().mockResolvedValue(undefined);
+  render(<DirectConnectionSetup initialDocument="mesh-direct:offer" onOpenWorkspace={open} />);
+  fireEvent.click(screen.getByText("Check received message"));
+  expect(await screen.findByText("Workspace already saved")).toBeTruthy();
+  expect(screen.getByText(/These details are for a different invitation/)).toBeTruthy();
+  expect(screen.queryByText("Prepare reply")).toBeNull();
+  expect(api.serviceCommand.mock.calls.some(([command]) => command === "prepare_direct_answer")).toBe(false);
+  api.serviceCommand.mockImplementation(async command => {
+    if (command === "workspace_snapshot") return {workspaces:[{id:"workspace", name:"Team"}]};
+    throw new Error("unavailable");
+  });
+  fireEvent.click(screen.getByText("Open saved workspace"));
+  await waitFor(() => expect(open).toHaveBeenCalledWith(expect.objectContaining({id:"workspace"})));
+});
+
+it("does not prepare a reply for an already active workspace", async () => {
+  api.serviceCommand.mockImplementation(async command => {
+    if (command === "preview_direct_connection") return {...base, kind:"offer", workspace_name:"Team",
+      existing_workspace:{id:"workspace", name:"Team", state:"active", can_continue:false, reason:"workspace_active"}};
+    throw new Error("prepare must not run");
+  });
+  render(<DirectConnectionSetup initialDocument="mesh-direct:offer" onOpenWorkspace={vi.fn()} />);
+  fireEvent.click(screen.getByText("Check received message"));
+  expect(await screen.findByText(/already active on this device/)).toBeTruthy();
+  expect(screen.queryByText("Prepare reply")).toBeNull();
+  expect(api.serviceCommand.mock.calls.some(([command]) => command === "prepare_direct_answer")).toBe(false);
+});
+
+it("allows a fresh reply that reuses a matching saved join request", async () => {
+  api.serviceCommand.mockImplementation(async command => {
+    if (command === "preview_direct_connection") return {...base, kind:"offer", workspace_name:"Team",
+      existing_workspace:{id:"workspace", name:"Team", state:"joining", can_continue:true, reason:null}};
+    if (command === "prepare_direct_answer") return {...base, state:"waiting_for_ready", text:"private-reply"};
+    if (command === "check_direct_setup") return current;
+    throw new Error("unavailable");
+  });
+  render(<DirectConnectionSetup initialDocument="mesh-direct:offer" />);
+  fireEvent.click(screen.getByText("Check received message"));
+  expect(await screen.findByText(/reuses that request/)).toBeTruthy();
+  fireEvent.click(screen.getByText("Prepare reply"));
+  await waitFor(() => expect(api.serviceCommand.mock.calls.some(([command]) => command === "prepare_direct_answer")).toBe(true));
+});
+
+it("keeps the pasted message and the incoming section open when a saved-workspace refusal is explained", async () => {
+  api.serviceCommand.mockImplementation(async command => {
+    if (command === "preview_direct_connection") return {...base, kind:"offer", workspace_name:"Team"};
+    if (command === "prepare_direct_answer") throw {code:"workspace_already_known", details:{reason:"invitation_mismatch"}};
+    throw new Error("unavailable");
+  });
+  render(<DirectConnectionSetup initialDocument="mesh-direct:offer" />);
+  fireEvent.click(screen.getByText("Check received message"));
+  fireEvent.click(await screen.findByText("Prepare reply"));
+  const alert = await screen.findByRole("alert");
+  expect(alert.textContent).toMatch(/different invitation/);
+  expect(alert.textContent).toMatch(/Copy diagnostics/);
+  expect(screen.getByDisplayValue("mesh-direct:offer")).toBeTruthy();
+  const details = screen.getByText("I have a message from the other device").closest("details");
+  expect(details?.open).toBe(true);
+});
+
+it("keeps the pasted message when a reply fails before any setup exists", async () => {
+  api.serviceCommand.mockImplementation(async command => {
+    if (command === "preview_direct_connection") return {...base, kind:"offer", workspace_name:"Team"};
+    throw new Error("timeout");
+  });
+  render(<DirectConnectionSetup initialDocument="mesh-direct:offer" />);
+  fireEvent.click(screen.getByText("Check received message"));
+  fireEvent.click(await screen.findByText("Prepare reply"));
+  const alert = await screen.findByRole("alert");
+  expect(alert.textContent).toMatch(/still here/);
+  expect(screen.getByDisplayValue("mesh-direct:offer")).toBeTruthy();
+  const details = screen.getByText("I have a message from the other device").closest("details");
+  expect(details?.open).toBe(true);
+});
+
+it("does not offer a retry that cannot run when resume has no saved setup", async () => {
+  api.serviceCommand.mockImplementation(async command => {
+    if (command === "resume_direct_setup") return {state:"refresh_required", workspace_id:"workspace",
+      expires_at:0, candidate_count:0, reason:"no_saved_connection_details"};
+    throw new Error("unavailable");
+  });
+  render(<DirectConnectionSetup workspaceId="workspace" />);
+  expect(await screen.findByText("Refresh the connection details")).toBeTruthy();
+  expect(screen.getByText(/The owner can refresh this same invitation/)).toBeTruthy();
+  expect(screen.queryByText("Retry checks")).toBeNull();
+});

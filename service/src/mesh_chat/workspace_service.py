@@ -5004,6 +5004,65 @@ class WorkspaceServiceMixin:
             ]
         return outcome
 
+    def _saved_join_invitation_reason(
+        self, workspace: dict[str, Any], invite: VerifiedWorkspaceInvitation
+    ) -> str | None:
+        """Classify a saved join request against a pasted invitation. Read-only.
+
+        Returns ``None`` only when this exact invitation may reuse the saved
+        request. Every other outcome is an allowlisted reason for the UI and
+        diagnostics. This never replaces, clears, or re-signs the saved request.
+        """
+        if workspace.get("state") != "joining":
+            return (
+                "workspace_active"
+                if workspace.get("state") == "active"
+                else "workspace_not_pending"
+            )
+        delivery_id = workspace.get("join_delivery_id")
+        delivery = (
+            self.store.get("workspace_delivery", delivery_id)
+            if isinstance(delivery_id, str) else None
+        )
+        if (
+            delivery is None
+            or delivery.get("kind") != "workspace_join"
+            or delivery.get("workspace_id") != invite.workspace_id
+        ):
+            return "saved_request_invalid"
+        if delivery.get("state") in {
+            DeliveryState.FAILED.value,
+            DeliveryState.EXPIRED.value,
+            DeliveryState.CANCELLED.value,
+        }:
+            return "request_stopped"
+        if float(delivery.get("expires_at", 0)) < time.time():
+            return "request_expired"
+        try:
+            join = verify_workspace_join(delivery["document"])
+        except MeshChatError:
+            return "saved_request_invalid"
+        record = self.store.get(
+            "workspace_invitation", self._workspace_invitation_record_id(invite.nonce)
+        )
+        if (
+            join.workspace_id != invite.workspace_id
+            or join.invite_nonce != invite.nonce
+            or join.invitation.serialized != invite.serialized
+            or record is None
+            or record.get("workspace_id") != invite.workspace_id
+            or record.get("document") != invite.serialized
+        ):
+            return "invitation_mismatch"
+        if (
+            self._identity is None
+            or join.member_id != workspace.get("local_member_id")
+            or join.device.device_id != workspace.get("local_device_id")
+            or join.device.public_identity != self._identity.get_public_key()
+        ):
+            return "identity_mismatch"
+        return None
+
     def _saved_workspace_join_owner(
         self,
         workspace: dict[str, Any],

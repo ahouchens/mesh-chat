@@ -15,7 +15,7 @@ from .direct_candidates import prepare_candidates
 from .direct_documents import export_connection_document, verify_connection_document
 from .direct_exchange import create_answer, create_ready
 from .direct_offer import OfferAuthority, create_offer
-from .errors import ValidationError
+from .errors import NativeUnavailable, ValidationError, WorkspaceAlreadyKnown
 from .workspace_protocol import _destination_for, _identity_from_public_key
 
 
@@ -33,7 +33,9 @@ class DirectSetup:
     def _available(self):
         self.service._check_direct_runtime_available()
         if self.service._direct_native is None:
-            raise ValidationError("Native direct transport is unavailable")
+            raise NativeUnavailable("Native direct transport is unavailable")
+        if getattr(self.service._direct_native, "closed", False):
+            raise NativeUnavailable("Direct native channel is closed")
         with self._lock:
             if self._closed:
                 raise ValidationError("Direct setup is closed")
@@ -72,6 +74,27 @@ class DirectSetup:
             previous.close()
         return prepared
 
+    def _existing_workspace(self, invite):
+        """Read-only saved-workspace evidence for a pasted connection document.
+
+        A different invitation must never replace an existing join request. The
+        caller uses this to route the user to the saved workspace instead of
+        attempting a reply that the exact saved-invitation check will reject.
+        """
+        workspace = self.service.store.get(
+            "workspace", self.service._workspace_record_id(invite.workspace_id)
+        )
+        if workspace is None:
+            return None
+        reason = self.service._saved_join_invitation_reason(workspace, invite)
+        return {
+            "id": workspace["id"],
+            "name": workspace.get("name", "Workspace"),
+            "state": workspace.get("state", "unknown"),
+            "can_continue": reason is None,
+            "reason": reason,
+        }
+
     def _state(self, setup_id, state, kind, workspace_id, fields, text=None):
         value = {"setup_id":setup_id,"state":state,"kind":kind,"workspace_id":workspace_id,
                  "expires_at":fields["expires_at"],"candidate_count":len(fields["candidates"])}
@@ -92,8 +115,9 @@ class DirectSetup:
             if workspace.get("local_role") != "owner" and workspace.get("state") in {"joining", "active"}:
                 receipt = "confirmed" if workspace.get("join_receipt") else "not_confirmed"
                 approval = "approved" if workspace["state"] == "active" else "pending"
-            record(self.service, "state", {**value, "candidate_sources":counts,
-                "receipt_status":receipt, "approval_status":approval, **getattr(prepared, "statistics", {})})
+            record(self.service, "state", {**value, "workspace_state":workspace.get("state", "unavailable"),
+                "candidate_sources":counts, "receipt_status":receipt,
+                "approval_status":approval, **getattr(prepared, "statistics", {})})
         self.service._changed()
         return {**value, **({"text":text} if text is not None else {})}
 
@@ -229,7 +253,16 @@ class DirectSetup:
         return self.answer(offer, str(uuid.uuid4()))
 
     def preview(self, document):
-        return verify_connection_document(document).preview()
+        checked = verify_connection_document(document)
+        # Only a joiner's Offer starts a saved join request. An Answer is the
+        # owner's step and its workspace is active by definition, so it must not
+        # be rerouted to the saved-workspace panel.
+        existing = None
+        if (checked.kind == "offer" and self.service._identity is not None
+                and checked.offer_authority.issuer_public_identity
+                != self.service._identity.get_public_key()):
+            existing = self._existing_workspace(checked.invitation)
+        return {**checked.preview(), "existing_workspace":existing}
 
     def resume(self, workspace_id=None, invitation_id=None):
         """Reopen a saved join without clipboard data; never revive a lost socket."""
@@ -324,6 +357,7 @@ class DirectSetup:
     def answer(self, document, operation_id):
         stage = "runtime_check"
         prepared = None
+        workspace = None
         try:
             self._available()
             stage = "document_verification"
@@ -335,6 +369,19 @@ class DirectSetup:
             workspace = service.store.get("workspace", service._workspace_record_id(invite.workspace_id))
             if workspace is None:
                 service.submit_workspace_join(invite.serialized, operation_id)
+            else:
+                # A saved request is authoritative. Never let a different
+                # invitation replace it, and never re-use a request whose
+                # workspace has already moved past the pending-join state.
+                stage = "join_authorization"
+                reason = service._saved_join_invitation_reason(workspace, invite)
+                if reason is not None:
+                    error = WorkspaceAlreadyKnown(
+                        "This workspace is already saved on this device",
+                        reason=reason,
+                    )
+                    error.direct_setup_workspace_state = workspace.get("state")
+                    raise error
             # Existing joining records are rechecked against the exact signed invitation.
             stage = "join_authorization"
             owner = _destination_for(_identity_from_public_key(checked.offer_authority.issuer_public_identity))
@@ -370,9 +417,11 @@ class DirectSetup:
             stage = "save_setup"
             return self._state(setup_id, "waiting_for_ready", "answer", invite.workspace_id, fields, text)
         except Exception as exc:
-            # Only a fixed stage label reaches diagnostics; never the document
-            # or exception text. Preserve the original error code and traceback.
+            # Only fixed labels reach diagnostics; never the document or
+            # exception text. Preserve the original error code and traceback.
             exc.direct_setup_failure_stage = stage
+            if workspace is not None:
+                exc.direct_setup_workspace_state = workspace.get("state")
             if prepared is not None:
                 self.cancel(setup_id)
             raise

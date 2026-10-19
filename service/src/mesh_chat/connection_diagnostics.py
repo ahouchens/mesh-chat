@@ -11,6 +11,8 @@ from importlib.metadata import PackageNotFoundError, version
 import re
 import time
 
+from .errors import WORKSPACE_ALREADY_KNOWN_REASONS
+
 LIMIT = 200
 RETENTION = 7 * 24 * 3600
 PHASES = frozenset({"waiting_for_reply", "waiting_for_ready", "ready_to_share", "ready_received",
@@ -29,10 +31,13 @@ COMMANDS = frozenset({"preview_direct_connection", "prepare_direct_offer", "prep
     "check_direct_setup", "retry_direct_setup", "cancel_direct_setup", "resume_direct_setup"})
 ERROR_CODES = frozenset({"internal_error", "invalid_request", "identity_mismatch", "invitation_invalid",
     "invitation_expired", "workspace_already_known", "workspace_limit_reached", "protected_storage_unavailable",
-    "profile_in_use", "network_unavailable", "direct_connection_unavailable", "contact_not_approved",
+    "profile_in_use", "network_unavailable", "direct_connection_unavailable", "native_unavailable", "contact_not_approved",
     "contact_in_use", "recipient_keys_unavailable", "stale_cursor", "history_pruned"})
 FAILURE_STAGES = frozenset({"runtime_check", "document_verification", "save_join_request", "join_authorization",
     "prepare_candidates", "sign_reply", "save_reply", "arm_socket", "verify_socket", "export_reply", "save_setup"})
+FAILURE_REASONS = WORKSPACE_ALREADY_KNOWN_REASONS
+WORKSPACE_STATES = frozenset({"unavailable", "none", "joining", "active", "linking", "leaving", "left", "removed",
+    "closed", "forked", "incomplete_sync"})
 
 
 def sanitize(value):
@@ -52,6 +57,8 @@ def sanitize(value):
         "command":enum("command", COMMANDS, "unavailable"),
         "error_code":enum("error_code", ERROR_CODES, "unavailable"),
         "failure_stage":enum("failure_stage", FAILURE_STAGES, "unavailable"),
+        "failure_reason":enum("failure_reason", FAILURE_REASONS, "unavailable"),
+        "workspace_state":enum("workspace_state", WORKSPACE_STATES, "unavailable"),
         "phase":enum("phase", PHASES, "unavailable"),
         "kind":enum("kind", KINDS, "unavailable"),
         "candidate_count":integer("candidate_count", 8),
@@ -96,7 +103,7 @@ def record(service, event, state=None):
 def _record(service, event, state=None):
     state = state or {}
     setup_id = state.get("setup_id")
-    row = sanitize({**{key:state.get(key) for key in ("state", "kind", "command", "error_code", "failure_stage", "route", "socket", "mapping", "firewall", "candidate_count", "candidate_sources", "receipt_status", "approval_status", "expires_at", "checks_started", "checks_authenticated", "elapsed_ms")},
+    row = sanitize({**{key:state.get(key) for key in ("state", "kind", "command", "error_code", "failure_stage", "failure_reason", "workspace_state", "route", "socket", "mapping", "firewall", "candidate_count", "candidate_sources", "receipt_status", "approval_status", "expires_at", "checks_started", "checks_authenticated", "elapsed_ms")},
         "phase":state.get("state"), "event":event, "time":int(time.time()),
         "attempt":hashlib.sha256(setup_id.encode()).hexdigest()[:12] if isinstance(setup_id, str) and setup_id else "unavailable"})
     value = history(service)

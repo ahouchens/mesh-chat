@@ -2576,13 +2576,17 @@ class MeshChatService(
                     "state":"failed", "command":command,
                     "error_code":exc.code if isinstance(exc, MeshChatError) else "internal_error",
                     "failure_stage":getattr(exc, "direct_setup_failure_stage", None),
+                    "failure_reason":getattr(exc, "reason", None),
+                    "workspace_state":getattr(exc, "direct_setup_workspace_state", None),
                     "setup_id":body.get("setup_id"),
                 })
                 raise
             if method == "readiness":
                 record(self, "state", {**result, "state":result["readiness"]})
             if method == "preview":
-                record(self, "import_verified", {"state":"verified", "kind":result.get("kind")})
+                existing = result.get("existing_workspace") or {}
+                record(self, "import_verified", {"state":"verified", "kind":result.get("kind"),
+                    "workspace_state":existing.get("state", "none")})
             return result
         if command == "snapshot":
             _payload(value, allowed=set())

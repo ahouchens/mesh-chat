@@ -18,7 +18,7 @@ from .connectivity import (
     DIAGNOSTIC_REASONS,
     DIAGNOSTIC_RESULTS,
 )
-from .errors import MeshChatError, ValidationError
+from .errors import MeshChatError, ValidationError, WORKSPACE_ALREADY_KNOWN_REASONS, WorkspaceAlreadyKnown
 from .direct_native import NativeChannel, NativeFrameReader
 from .ipc import FrameWriter, IPC_VERSION, read_frame
 from .service import MeshChatService
@@ -218,6 +218,9 @@ def _error_response(command_id: Any, error: Exception) -> dict[str, Any]:
     code = error.code if isinstance(error, MeshChatError) else "internal_error"
     details = getattr(error, "details", None)
     safe_error = {"code": code}
+    if (isinstance(error, WorkspaceAlreadyKnown)
+            and error.reason in WORKSPACE_ALREADY_KNOWN_REASONS):
+        safe_error["details"] = {"reason": error.reason}
     if isinstance(details, dict) and set(details) == {
         "phase", "result", "reason", "recommended_action"
     } and (

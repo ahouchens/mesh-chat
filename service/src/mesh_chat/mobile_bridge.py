@@ -15,7 +15,7 @@ from collections import deque
 from pathlib import Path
 from typing import Any
 
-from .errors import MeshChatError, ValidationError
+from .errors import MeshChatError, ValidationError, WORKSPACE_ALREADY_KNOWN_REASONS, WorkspaceAlreadyKnown
 from .direct_native import NativeChannel
 from .network import install_embedded_runtime_guards
 from .service import MeshChatService
@@ -71,7 +71,13 @@ def _dumps(value: Any) -> str:
 
 def _error(exc: Exception) -> str:
     code = exc.code if isinstance(exc, MeshChatError) else "internal_error"
-    return _dumps({"ok": False, "error": {"code": code}})
+    error: dict[str, Any] = {"code": code}
+    # A saved-workspace refusal is actionable only when the renderer can
+    # distinguish a changed invitation from an active/terminal request.
+    if (isinstance(exc, WorkspaceAlreadyKnown)
+            and exc.reason in WORKSPACE_ALREADY_KNOWN_REASONS):
+        error["details"] = {"reason": exc.reason}
+    return _dumps({"ok": False, "error": error})
 
 
 def _emit(value: dict[str, Any]) -> None:

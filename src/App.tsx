@@ -325,6 +325,12 @@ function errorMessage(error: unknown): string {
   if (raw.includes("service_stopped") || raw.includes("service_not_running")) {
     return "The messaging service stopped. Reopen Mesh Chat and try again.";
   }
+  if (raw.includes("native_unavailable")) {
+    return "The on-device connection service stopped responding. Close and reopen Mesh Chat, then try again. Your saved request and messages are unchanged.";
+  }
+  if (raw.includes("workspace_already_known")) {
+    return "This workspace is already saved on this device. Open it from the workspace switcher to check its status. A different invitation cannot replace an existing join request.";
+  }
   if (raw.includes("identity_mismatch")) {
     return "This invitation’s identity check failed.";
   }
@@ -360,9 +366,6 @@ function errorMessage(error: unknown): string {
   }
   if (raw.includes("history_pruned")) {
     return "That history was pruned from this device under the active retention preference.";
-  }
-  if (raw.includes("workspace_already_known")) {
-    return "This workspace is already saved on this device. Open it from the workspace switcher to check its status. A different invitation cannot replace an existing join request.";
   }
   if (raw.includes("workspace_limit_reached")) {
     return "This device already has 16 workspaces. Remove a workspace you have left or closed before joining another.";

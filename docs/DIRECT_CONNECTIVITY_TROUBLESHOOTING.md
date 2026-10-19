@@ -14,6 +14,13 @@ invitation in the owner's Invite dialog. A live saved message is reused. Lost
 socket ownership or expired details require a refresh of that same invitation;
 creating a different invitation cannot replace a saved join request.
 
+If a pasted message belongs to a **different** invitation than the saved request,
+or the saved workspace is already active or stopped, the wizard now shows
+**Workspace already saved** instead of trying to prepare a doomed reply. Open the
+saved workspace from that panel. To use a brand-new invitation, remove the saved
+workspace first in **Workspace settings**; Mesh Chat never replaces the request
+or clears app data automatically.
+
 Coordinated QUIC checks can open compatible NAT filters when usable peer tuples
 are known. They cannot discover two unknown public mappings. If neither device
 finds a usable public address, waiting or exchanging the same text again will

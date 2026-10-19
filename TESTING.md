@@ -48,6 +48,67 @@ service/protocol, mobile bridge, and email routing suites, plus 147 frontend
 tests across App, invitation transfer, and API. TypeScript `--noEmit` and
 `git diff --check` passed. No native or release build was performed.
 
+## Android direct-reply failure diagnosis, 2026-10-18
+
+The installed 0.2.63 build reported `build_commit: e361c70…`. That commit is a
+strict descendant of the qualified application source `34d9927…` and differs
+from it only by the LICENSE file, license metadata, and documentation:
+`git diff --name-status 34d9927 e361c70` lists no `service/src`, `src`,
+`src-tauri/src`, or protocol change. The branch base `7867e71` likewise has no
+code difference from `34d9927`. The installed application code therefore
+matches the qualified 0.2.63 source; the earlier “commit absent from local
+objects” observation was a stale-clone problem, not evidence of a different
+build. `service_version: unavailable` is expected because Android embeds
+`service/src` without installing the service distribution metadata; it is not a
+version mismatch.
+
+Source reproduction established one concrete pre-setup failure. A **different**
+invitation for a workspace that already has a saved join request passes
+document-only preview, then fails the exact saved-invitation check inside
+`prepare_direct_answer`. An active or terminal saved workspace behaves the same
+way. Both now return `workspace_already_known` with an allowlisted reason
+(`invitation_mismatch`, `workspace_active`, `request_stopped`, and so on)
+instead of an opaque `identity_mismatch`. The saved request, identity, delivery,
+receipt, and queued messages are unchanged; a matching invitation still
+prepares a newer Answer generation against the same saved request.
+
+Preview now supplies read-only saved-workspace evidence, and the wizard routes a
+non-matching or already-active workspace to **Open saved workspace** rather than
+offering a doomed **Prepare reply**. Diagnostics add `failure_reason`,
+`workspace_state`, and up to 12 recent events to a summary copy. A closed native
+channel now reports `native_unavailable` at `runtime_check` so an earlier
+timeout/pump stop is distinguishable from document or persistence failures.
+
+Validation at this revision:
+
+```text
+.venv\Scripts\python.exe -m pytest service/tests/test_direct_setup.py \
+  service/tests/test_direct_native.py service/tests/test_connection_diagnostics.py \
+  service/tests/test_mobile_bridge.py service/tests/test_service_process.py \
+  service/tests/test_direct_documents.py service/tests/test_direct_readiness.py \
+  service/tests/test_workspace_join_retry.py service/tests/test_workspace_join_receipt.py \
+  service/tests/test_release_version.py service/tests/test_workspace_service.py \
+  service/tests/test_service_invitation_refresh.py service/tests/test_workspace_protocol.py \
+  -q
+```
+
+Result: **297 passed**. The full local service suite also passed **954 passed,
+46 skipped** (opt-in native/packaged/network harnesses remain skipped). The
+Windows checkout needed the tracked Twemoji manifest restored to LF so its
+recorded hash matched; that is a line-ending-only working-copy artifact, not a
+source change. The pre-change focused baseline was 43 passed. Frontend
+regressions were added for the saved-workspace panel, reason-specific guidance,
+input retention, and the new diagnostic fields; frontend/package execution,
+TypeScript compilation, Windows/Android builds, and installation belong in
+GitHub Actions. `git diff --check` passed locally.
+
+The local cause of this specific device failure is still unconfirmed. A
+distinct **0.2.64 / Android 2064** test build and its exact evidence-collection
+procedure are described in
+[the reply-failure device check](docs/DIRECT_REPLY_FAILURE_DEVICE_TEST.md).
+No physical Windows-to-Android connectivity is claimed; the provenance check
+above identifies the earlier artifact, not a successful connection.
+
 ## Direct connectivity increment, 2026-10-16
 
 Native qualification now runs in GitHub Actions. At `cbcf659`,

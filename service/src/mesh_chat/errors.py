@@ -16,6 +16,19 @@ class WorkspaceAlreadyKnown(ValidationError):
         self.reason = reason
 
 
+# Allowlisted over the service boundary: these describe why a saved workspace
+# join request cannot be reused. Never include documents, identities or paths.
+WORKSPACE_ALREADY_KNOWN_REASONS = frozenset({
+    "invitation_mismatch",
+    "request_stopped",
+    "request_expired",
+    "identity_mismatch",
+    "saved_request_invalid",
+    "workspace_active",
+    "workspace_not_pending",
+})
+
+
 class WorkspaceLimitReached(ValidationError):
     code = "workspace_limit_reached"
 
@@ -66,6 +79,16 @@ class RecipientKeysUnavailable(MeshChatError):
 
 class NetworkUnavailable(MeshChatError):
     code = "network_unavailable"
+
+
+class NativeUnavailable(ValidationError):
+    """The private native channel closed or stopped answering.
+
+    Native ownership is reset before this is raised. Reopening the app is the
+    supported recovery; the saved request and identity remain intact.
+    """
+
+    code = "native_unavailable"
 
 
 class DirectConnectionUnavailable(NetworkUnavailable):

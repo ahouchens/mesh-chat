@@ -4,7 +4,8 @@ import { InvitationImportActions, InvitationQrCode } from "./InvitationTransfer"
 import { ConnectionDiagnostics } from "./ConnectionDiagnostics";
 import { normalizeInvitationInput } from "./invitation-transfer";
 import type { Workspace } from "./types";
-type Preview = { kind: "offer" | "answer" | "ready"; workspace_id: string; workspace_name: string; expires_at: number; candidate_count: number };
+type ExistingWorkspace = { id: string; name: string; state: string; can_continue: boolean; reason: string | null };
+type Preview = { kind: "offer" | "answer" | "ready"; workspace_id: string; workspace_name: string; expires_at: number; candidate_count: number; existing_workspace?: ExistingWorkspace | null };
 type Setup = { setup_id: string; state: string; workspace_id: string; expires_at: number; candidate_count: number; text?: string; readiness?: string; can_share?: boolean; route?: string; socket?: string; mapping?: string; firewall?: string; peer_candidate_count?: number | null; peer_verified?: boolean; candidate_sources?: { ipv4?: number; ipv6?: number } };
 const states: Record<string, string> = {
   waiting_for_reply: "Send this invitation to the other person. Next, they open Join or connect and send a reply back to you.",
@@ -28,11 +29,28 @@ const failureGuidance: Record<string, string> = {
   protected_storage_unavailable: "Protected storage is unavailable. Unlock this device and Mesh Chat, then try again.",
   profile_in_use: "This profile is already in use. Close its other Mesh Chat session, then try again.",
   network_unavailable: "The network is unavailable. Check this device’s Internet connection, then try again.",
+  native_unavailable: "The on-device connection service stopped responding. Close and reopen Mesh Chat, then try again. Your saved request and messages are unchanged.",
 };
+const savedWorkspaceReason: Record<string, string> = {
+  invitation_mismatch: "These details are for a different invitation. Your saved join request stays tied to the original invitation. Ask the owner to choose Refresh connection details for that original invitation, or open the saved workspace.",
+  request_stopped: "The saved join request has stopped. Open the saved workspace to review its status before starting again.",
+  request_expired: "The saved join request’s delivery window has expired. Open the saved workspace to review it.",
+  identity_mismatch: "The saved join request belongs to a different local device identity, so it cannot be reused. Open the saved workspace to review it.",
+  saved_request_invalid: "The saved join request could not be verified. Open the saved workspace to review it.",
+  workspace_active: "This workspace is already active on this device. Open it to continue.",
+  workspace_not_pending: "This workspace is saved but is not waiting for a join reply. Open it to check its status.",
+};
+function savedWorkspaceDetail(existing: ExistingWorkspace) {
+  return savedWorkspaceReason[existing.reason ?? ""] ?? "This invitation cannot reuse the saved join request. Open the saved workspace to review it.";
+}
 function actionFailure(action: string, reason: unknown, retryAction: string) {
-  const code = reason !== null && typeof reason === "object" && "code" in reason && typeof reason.code === "string" ? reason.code : "";
+  const value = reason !== null && typeof reason === "object" ? reason as Record<string, unknown> : {};
+  const code = typeof value.code === "string" ? value.code : "";
+  const details = value.details !== null && typeof value.details === "object" ? value.details as Record<string, unknown> : {};
   const guidance = Object.hasOwn(failureGuidance, code) ? failureGuidance[code] : `Your pasted message is still here. Try ${retryAction} again.`;
-  return `Could not ${action}. ${guidance} If it fails again, use Copy diagnostics.`;
+  const saved = code === "workspace_already_known" && typeof details.reason === "string" && Object.hasOwn(savedWorkspaceReason, details.reason)
+    ? ` ${savedWorkspaceReason[details.reason]}` : "";
+  return `Could not ${action}. ${guidance}${saved} If it fails again, use Copy diagnostics.`;
 }
 export function DirectConnectionSetup({ invitationId, workspaceId, autoStart = false, resumeExisting = false, onShared, initialDocument = "", onOpenWorkspace }: {
   invitationId?: string; workspaceId?: string; autoStart?: boolean; resumeExisting?: boolean; onShared?: () => void; initialDocument?: string; onOpenWorkspace?: (workspace: Workspace) => Promise<void>;
@@ -108,7 +126,7 @@ export function DirectConnectionSetup({ invitationId, workspaceId, autoStart = f
     finally { setBusy(false); }
   };
   const apply = async () => {
-    if (!preview) return;
+    if (!preview || (preview.existing_workspace && !preview.existing_workspace.can_continue)) return;
     revision.current++; setBusy(true); setError(""); setFeedback(""); setIncomingOpen(true);
     if (operation.current.document !== input) operation.current = { document: input, id: crypto.randomUUID() };
     const retryAction = preview.kind === "offer" ? "Prepare reply" : preview.kind === "answer" ? "Prepare connection message" : "Connect";
@@ -161,13 +179,17 @@ export function DirectConnectionSetup({ invitationId, workspaceId, autoStart = f
     catch { setError("Could not cancel setup. Lock the app to retire its active connections."); }
     finally { setBusy(false); }
   };
-  const openWorkspace = async () => {
-    if (!setup || !onOpenWorkspace) return;
+  const openWorkspaceById = async (workspaceId: string) => {
+    if (!onOpenWorkspace) return;
     try {
       const snapshot = await serviceCommand<{ workspaces: Workspace[] }>("workspace_snapshot", {});
-      const workspace = snapshot.workspaces.find((item) => item.id === setup.workspace_id);
+      const workspace = snapshot.workspaces.find((item) => item.id === workspaceId);
       if (workspace) await onOpenWorkspace(workspace);
     } catch { setError("Could not open the workspace. Close this dialog and open it from the workspace list."); }
+  };
+  const openWorkspace = async () => {
+    if (!setup) return;
+    await openWorkspaceById(setup.workspace_id);
   };
   const retry = async () => {
     if (!setup?.setup_id) return;
@@ -207,7 +229,7 @@ export function DirectConnectionSetup({ invitationId, workspaceId, autoStart = f
       </details>
     </div>}
     {canExport && remaining > 0 && <><p>On the other device, open <strong>Join or connect</strong>, paste this message and follow its next step. {setup?.state === "waiting_for_reply" || setup?.state === "waiting_for_ready" ? "Bring its reply back here." : "Choose Connect there and keep both apps open; no further reply is needed."}</p><details><summary>Message details and QR code</summary><InvitationQrCode document={outgoing} destination="workspace" /><label className="field"><span>Complete message to share</span><textarea aria-label="Complete connection message" onCopy={(event) => { if (!canExport || !setup || setup.expires_at * 1000 <= Date.now()) event.preventDefault(); else onShared?.(); }} readOnly rows={5} value={outgoing} onFocus={(event) => event.currentTarget.select()} /></label></details><div className="dialog-actions"><button className={preview ? "button button--secondary" : "button button--primary"} onClick={() => void copy()}>Copy connection message</button><button className="button button--secondary" onClick={() => void share()}>Share connection message</button><button className="button button--ghost" onClick={() => void save()}>Save connection file</button></div></>}
-    {setup && ["checks_unavailable", "no_route", "both_no_address", "network_changed", "refresh_required", "test_failed"].includes(readiness ?? "") && <>
+    {setup?.setup_id && ["checks_unavailable", "no_route", "both_no_address", "network_changed", "refresh_required", "test_failed"].includes(readiness ?? "") && <>
       <button className="button button--primary" disabled={busy} onClick={() => void retry()}>Retry checks</button>
       <details><summary>Other ways to proceed</summary><p>Try the other device as the reachable side, or recheck after changing one device’s Internet connection. You can keep Windows on the home router and Android on mobile data.</p><p>If you manage the home router, check whether it allows app-requested UDP mappings (PCP, UPnP or NAT-PMP), then retry. Optional manual router configuration requires a usable public address and the exact app-owned UDP endpoint; this wizard does not currently provide a manual UDP mapping editor. A carrier or upstream router may prevent inbound connections. Some networks cannot connect without a helper service, which this server-free mode does not use.</p><p>Keep the firewall enabled. This wizard has no supported automatic UDP firewall repair action. A TCP permission or mapping is not proof for this connection.</p></details>
     </>}
@@ -217,7 +239,18 @@ export function DirectConnectionSetup({ invitationId, workspaceId, autoStart = f
     <label className="field"><span>Message from the other device</span><textarea aria-label="Message from the other device" rows={5} value={input} onChange={(event) => edit(event.target.value)} disabled={busy} /></label>
     <InvitationImportActions onValue={edit} />
     <button className="button button--secondary" disabled={busy || !input.trim()} onClick={() => void review()}>Check received message</button>
-    {preview && <div className="direct-consent"><h4>{preview.workspace_name}</h4><p>Message checked. {preview.kind === "offer" ? "Save your request and prepare a reply for the owner." : preview.kind === "answer" ? "Prepare the final connection message for the other person." : "Both devices need to stay open for this step."}</p><button className="button button--primary" disabled={busy} onClick={() => void apply()}>{preview.kind === "offer" ? "Prepare reply" : preview.kind === "answer" ? "Prepare connection message" : "Connect"}</button></div>}
+    {preview && (preview.existing_workspace ? <div className="direct-consent" role="status">
+      <h4>Workspace already saved</h4>
+      <p><strong>{preview.existing_workspace.name}</strong> is already saved on this device.</p>
+      {preview.existing_workspace.can_continue
+        ? <p>These details match the saved join request. Preparing the reply reuses that request; Mesh Chat will not replace it.</p>
+        : <p>{savedWorkspaceDetail(preview.existing_workspace)}</p>}
+      <div className="dialog-actions">
+        {preview.existing_workspace.can_continue && <button className="button button--primary" disabled={busy} onClick={() => void apply()}>{preview.kind === "offer" ? "Prepare reply" : preview.kind === "answer" ? "Prepare connection message" : "Connect"}</button>}
+        {onOpenWorkspace && <button className="button button--secondary" disabled={busy} onClick={() => void openWorkspaceById(preview.existing_workspace!.id)}>Open saved workspace</button>}
+      </div>
+      {!preview.existing_workspace.can_continue && preview.existing_workspace.reason !== "workspace_active" && <p className="muted">To use a different invitation, open the saved workspace and remove its saved request in Workspace settings first. Mesh Chat will not replace it automatically.</p>}
+    </div> : <div className="direct-consent"><h4>{preview.workspace_name}</h4><p>Message checked. {preview.kind === "offer" ? "Save your request and prepare a reply for the owner." : preview.kind === "answer" ? "Prepare the final connection message for the other person." : "Both devices need to stay open for this step."}</p><button className="button button--primary" disabled={busy} onClick={() => void apply()}>{preview.kind === "offer" ? "Prepare reply" : preview.kind === "answer" ? "Prepare connection message" : "Connect"}</button></div>)}
     </details>
     {setup && <div><p>{!setup.readiness ? states[setup.state] ?? "Connection setup is in progress." : ""}</p><p className="muted">Connection details: {remaining ? `${Math.floor(remaining / 60)}m ${remaining % 60}s remaining` : "expired"}. This short setup timer is separate from invitation expiry. Check the workspace for owner receipt and approval.</p></div>}
 

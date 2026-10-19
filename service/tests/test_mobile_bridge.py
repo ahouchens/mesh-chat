@@ -16,6 +16,7 @@ import pytest
 import RNS
 
 from mesh_chat import mobile_bridge
+from mesh_chat.errors import WorkspaceAlreadyKnown
 from mesh_chat.invitations import create_invitation
 from mesh_chat.network import EmbeddedRuntimeTermination, install_embedded_runtime_guards
 from mesh_chat.vault import VaultStore, protect_workspace
@@ -37,6 +38,18 @@ def test_mobile_bridge_requires_initialization() -> None:
         mobile_bridge.command(json.dumps({"command": "snapshot", "payload": {}}))
     )
     assert response == {"ok": False, "error": {"code": "invalid_request"}}
+
+
+def test_saved_workspace_reason_crosses_the_mobile_boundary_only_when_allowlisted() -> None:
+    allowed = json.loads(mobile_bridge._error(
+        WorkspaceAlreadyKnown("saved", reason="invitation_mismatch")))
+    assert allowed == {"ok": False, "error": {
+        "code": "workspace_already_known",
+        "details": {"reason": "invitation_mismatch"},
+    }}
+    rejected = json.loads(mobile_bridge._error(
+        WorkspaceAlreadyKnown("saved", reason="private-document-text")))
+    assert rejected == {"ok": False, "error": {"code": "workspace_already_known"}}
 
 
 def test_only_public_document_commands_receive_larger_mobile_envelopes(monkeypatch):

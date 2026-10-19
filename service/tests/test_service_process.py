@@ -8,7 +8,7 @@ from typing import Any
 import pytest
 
 import mesh_chat.__main__ as service_main
-from mesh_chat.errors import ProfileInUse, StorageUnavailable, ValidationError
+from mesh_chat.errors import ProfileInUse, StorageUnavailable, ValidationError, WorkspaceAlreadyKnown
 
 
 def _initialize_request(parent_pid: Any) -> dict[str, Any]:
@@ -33,6 +33,18 @@ def test_profile_lock_and_storage_failures_have_distinct_codes() -> None:
 
     assert locked["error"]["code"] == "profile_in_use"
     assert unprotected["error"]["code"] == "protected_storage_unavailable"
+
+
+def test_saved_workspace_reason_is_allowlisted_over_the_sidecar_boundary() -> None:
+    allowed = service_main._error_response(
+        "one", WorkspaceAlreadyKnown("saved", reason="request_stopped"))
+    assert allowed["error"] == {
+        "code": "workspace_already_known",
+        "details": {"reason": "request_stopped"},
+    }
+    rejected = service_main._error_response(
+        "two", WorkspaceAlreadyKnown("saved", reason="private-document-text"))
+    assert rejected["error"] == {"code": "workspace_already_known"}
 
 
 @pytest.mark.parametrize(
