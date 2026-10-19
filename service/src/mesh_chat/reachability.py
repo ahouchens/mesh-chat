@@ -119,8 +119,11 @@ def build_plan(
         else:
             steps.append(_step(method, "not_tried", "mapping_not_attempted"))
 
+    upstream = [item for item in mapping_attempts if item.get("reason") in UPSTREAM_REASONS]
     if manual:
         steps.append(_step("manual", "prepared", "manual_forward_configured"))
+    elif upstream:
+        steps.append(_step("manual", "unavailable", "upstream_nat"))
     else:
         steps.append(_step("manual", "not_tried",
                            "manual_forward_available" if has_route else "no_route"))
@@ -130,7 +133,6 @@ def build_plan(
     else:
         steps.append(_step("firewall", "skipped", "firewall_not_checked"))
 
-    upstream = [item for item in mapping_attempts if item.get("reason") in UPSTREAM_REASONS]
     if upstream:
         steps.append(_step("upstream_nat", "blocked", upstream[-1]["reason"]))
         blockers.append("upstream_nat")
@@ -142,14 +144,12 @@ def build_plan(
             candidate_sources[key] += 1
         candidate_sources["ipv6" if ":" in item["host"] else "ipv4"] += 1
 
-    if not current:
+    if not current and "upstream_nat" not in blockers:
         if not has_route:
             blockers.append("no_route")
         elif not route_available:
             blockers.append("no_eligible_route")
         else:
-            blockers.append("no_public_candidate")
-        if "upstream_nat" in blockers and len(blockers) == 1:
             blockers.append("no_public_candidate")
 
     if current:
@@ -163,7 +163,7 @@ def build_plan(
         primary_action = {"kind": "allow_firewall", "label": label}
     elif state == "blocked":
         if "upstream_nat" in blockers:
-            primary_action = {"kind": "change_network", "label": "Try another network or IPv6"}
+            primary_action = {"kind": "change_network", "label": "Try another network, IPv6, or an approved access point"}
         elif has_route and route_available:
             primary_action = {"kind": "manual_forward", "label": "Set up manual UDP forward"}
         else:

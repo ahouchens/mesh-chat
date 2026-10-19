@@ -49,11 +49,14 @@ def test_upstream_nat_is_a_blocker_and_not_a_manual_forward_promise():
         local_host="192.168.1.20", local_port=45002, now=100,
     )
     assert plan["state"] == "blocked"
-    assert "upstream_nat" in plan["blockers"]
+    assert plan["blockers"] == ["upstream_nat"]
     assert plan["primary_action"]["kind"] == "change_network"
-    step = {item["id"]: item for item in plan["steps"]}["upstream_nat"]
-    assert step["state"] == "blocked"
-    assert step["reason"] == "upstream_nat_detected"
+    assert "manual" not in plan["primary_action"]["label"].lower()
+    steps = {item["id"]: item for item in plan["steps"]}
+    assert steps["upstream_nat"]["state"] == "blocked"
+    assert steps["upstream_nat"]["reason"] == "upstream_nat_detected"
+    assert steps["manual"]["state"] == "unavailable"
+    assert steps["manual"]["reason"] == "upstream_nat"
 
 
 def test_no_route_and_no_candidate_are_distinct_blockers():

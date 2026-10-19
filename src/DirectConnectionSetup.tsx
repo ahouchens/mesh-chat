@@ -79,6 +79,7 @@ const reachabilityReason: Record<string, string> = {
   nat_pmp_no_response: "The router did not answer NAT-PMP.",
   nat_pmp_mapping_denied: "The router refused the NAT-PMP mapping.",
   manual_forward_configured: "A manual UDP forward was added to the signed message.",
+  upstream_nat: "A local forward cannot bypass carrier or upstream NAT.",
   manual_forward_available: "You can forward one UDP port on your router.",
   firewall_permission_required: "Windows may block inbound UDP until you allow it.",
   temporary_udp_rule_active: "A temporary Windows UDP rule is active.",
@@ -307,7 +308,8 @@ export function DirectConnectionSetup({ invitationId, workspaceId, autoStart = f
   };
   const step = back ? 1 : readiness === "peer_verified" || readiness === "complete" || readiness === "testing" ? 3 : setup?.can_share ? 2 : 1;
   const canExport = !!outgoing && !!setup?.can_share && !busy && !back && checkedAt > 0 && now - checkedAt < 5000;
-  const canManualForward = !!invitationId || preview?.kind === "offer";
+  const upstreamBlocked = setup?.reachability?.blockers.includes("upstream_nat") === true;
+  const canManualForward = (!!invitationId || preview?.kind === "offer") && !upstreamBlocked;
   const remaining = setup ? Math.max(0, Math.ceil((setup.expires_at * 1000 - now) / 1000)) : 0;
   return <section className="form-stack guided-connection" aria-label="Direct connection setup">
     <h3>Connect your devices</h3>
@@ -328,7 +330,7 @@ export function DirectConnectionSetup({ invitationId, workspaceId, autoStart = f
       {setup.reachability.blockers.map(blocker => <p key={blocker}>{blockerText[blocker] ?? "This network cannot supply a reachable address."}</p>)}
       {setup.reachability.primary_action?.kind === "allow_firewall" && <button className="button button--primary" disabled={busy} onClick={() => void allowFirewall()}>{setup.reachability.primary_action.label}</button>}
       {setup.reachability.primary_action?.kind === "manual_forward" && canManualForward && <button className="button button--secondary" disabled={busy} onClick={() => setManualOpen(true)}>Set up manual UDP forward</button>}
-      {setup.reachability.primary_action?.kind === "change_network" && <p className="muted">Restore this device’s Internet connection, then retry checks.</p>}
+      {setup.reachability.primary_action?.kind === "change_network" && <p className="muted">{upstreamBlocked ? "This network is behind carrier or another NAT. A local mapping cannot make this device reachable. Use IPv6, another network, or an approved access point." : "Restore this device’s Internet connection, then retry checks."}</p>}
     </section>}
     {manualOpen && canManualForward && <form className="direct-consent" onSubmit={(event) => { event.preventDefault(); void prepareManual(); }}>
       <h4>Manual UDP forward</h4>
@@ -340,7 +342,7 @@ export function DirectConnectionSetup({ invitationId, workspaceId, autoStart = f
     {canExport && remaining > 0 && <><p>On the other device, open <strong>Join or connect</strong>, paste this message and follow its next step. {setup?.state === "waiting_for_reply" || setup?.state === "waiting_for_ready" ? "Bring its reply back here." : "Choose Connect there and keep both apps open; no further reply is needed."}</p><details><summary>Message details and QR code</summary><InvitationQrCode document={outgoing} destination="workspace" /><label className="field"><span>Complete message to share</span><textarea aria-label="Complete connection message" onCopy={(event) => { if (!canExport || !setup || setup.expires_at * 1000 <= Date.now()) event.preventDefault(); else onShared?.(); }} readOnly rows={5} value={outgoing} onFocus={(event) => event.currentTarget.select()} /></label></details><div className="dialog-actions"><button className={preview ? "button button--secondary" : "button button--primary"} onClick={() => void copy()}>Copy connection message</button><button className="button button--secondary" onClick={() => void share()}>Share connection message</button><button className="button button--ghost" onClick={() => void save()}>Save connection file</button></div></>}
     {setup?.setup_id && ["checks_unavailable", "no_route", "both_no_address", "network_changed", "refresh_required", "test_failed"].includes(readiness ?? "") && <>
       <button className="button button--primary" disabled={busy} onClick={() => void retry()}>Retry checks</button>
-      <details><summary>Other ways to proceed</summary><p>Try the other device as the reachable side, or recheck after changing one device’s Internet connection. You can keep Windows on the home router and Android on mobile data.</p><p>If you manage the home router, use <strong>Set up manual UDP forward</strong> above when automatic PCP, UPnP, or NAT-PMP is unavailable. A carrier or upstream router may prevent inbound connections. Some networks cannot connect without a helper service, which this server-free mode does not use.</p><p>Keep the firewall enabled. On Windows, allow UDP for this temporary setup; a TCP permission or mapping is not proof for this connection.</p></details>
+      <details><summary>Other ways to proceed</summary><p>{upstreamBlocked ? "This Windows network cannot accept an inbound path. The other device may still work as host if it has a public IPv6 or a different network; a carrier-only phone usually cannot." : "Try the other device as the reachable side, or recheck after changing one device’s Internet connection. You can keep Windows on the home router and Android on mobile data."}</p><p>{upstreamBlocked ? "This network is behind carrier or upstream NAT. A local mapping or manual forward will not help. Try IPv6, another network, or an approved access point." : "If you manage the home router, use Set up manual UDP forward above when automatic PCP, UPnP, or NAT-PMP is unavailable. A carrier or upstream router may prevent inbound connections. Some networks cannot connect without a helper service, which this server-free mode does not use."}</p><p>Keep the firewall enabled. On Windows, allow UDP for this temporary setup; a TCP permission or mapping is not proof for this connection.</p></details>
       {canManualForward && setup.reachability?.primary_action?.kind !== "manual_forward" && <button className="button button--secondary" disabled={busy} onClick={() => setManualOpen(true)}>Set up manual UDP forward</button>}
     </>}
     <ConnectionDiagnostics />

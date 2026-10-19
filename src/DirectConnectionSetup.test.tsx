@@ -261,6 +261,27 @@ it("shows the reachability plan and installs the UDP firewall rule on request", 
     "configure_direct_firewall", {setup_id:"saved"}));
 });
 
+it("does not offer a manual forward or restore-Internet advice for upstream NAT", async () => {
+  const plan = {state:"blocked", candidate_count:0, blockers:["upstream_nat"],
+    steps:[
+      {id:"manual",label:"Manual UDP forward",state:"unavailable",reason:"upstream_nat"},
+      {id:"upstream_nat",label:"Upstream NAT",state:"blocked",reason:"upnp_wan_shared"},
+    ],
+    primary_action:{kind:"change_network",label:"Try another network, IPv6, or an approved access point"},
+    manual_forward:{local_host:"192.168.4.20",local_port:54321}};
+  api.serviceCommand.mockImplementation(async command => {
+    if (command === "prepare_direct_offer") return {...base, reachability:plan};
+    if (command === "check_direct_setup") return {...base, reachability:plan,
+      readiness:"both_no_address", can_share:false};
+    throw new Error("unavailable");
+  });
+  render(<DirectConnectionSetup invitationId="invite" autoStart />);
+  expect(await screen.findByText("A local forward cannot bypass carrier or upstream NAT.")).toBeTruthy();
+  expect(screen.getByText(/This network is behind carrier or another NAT/)).toBeTruthy();
+  expect(screen.queryByText("Set up manual UDP forward")).toBeNull();
+  expect(screen.queryByText(/Restore this device’s Internet connection/)).toBeNull();
+});
+
 it("prepares a manual UDP forward with the entered public address and port", async () => {
   const blocked = {state:"blocked", candidate_count:0, blockers:["no_public_candidate"],
     steps:[
