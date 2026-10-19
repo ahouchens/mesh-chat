@@ -288,6 +288,52 @@ The APK reports versionName 0.2.69, versionCode 2069, package
 development certificate
 `d6dbff63834666bace3d75b49234726e97ccce26d2b9e9516309682e0a33143f`.
 
+## I2P transport and managed router, 2026-10-19
+
+I0 was executed on Windows with a real `i2pd` 2.61.0 and two independent
+Reticulum instances:
+
+- A was a `connectable` I2P access point with a stable `b32.i2p` address;
+- B was a client-only peer configured with that address;
+- B's I2P interface reached `online`, resolved a path to A's destination, and
+  delivered a Reticulum packet;
+- A received the exact payload.
+
+This proves Reticulum transport over I2P, not full LXMF/workspace delivery.
+LXMF and workspace join over I2P still need the I3 integration test.
+
+I2 adds an opt-in managed Windows router:
+
+- `I2PRouterManager` starts a local `i2pd` before Reticulum, waits for SAM on
+  `127.0.0.1:7656`, and stops it on service shutdown;
+- SAM is localhost-only; the web console, HTTP/SOCKS proxies, UPnP, and transit
+  relaying are disabled; the router uses the low bandwidth profile;
+- i2pd 2.61.0 and its BSD-3-Clause license are bundled as Windows resources;
+- the Rust launcher passes the installed resource path to the sidecar.
+
+The 0.2.70 MSI was administratively extracted without installation and
+contained `_up_/vendor/i2pd.exe` plus its license. The manager started and
+stopped that installed binary successfully. A path-only follow-up resolves both
+`vendor/i2pd.exe` and `_up_/vendor/i2pd.exe`.
+
+Validation: **978 service tests passed** with 40 expected skips and the same 12
+deselected legacy setup-pipeline cases before the path-only follow-up;
+**22 focused tests** passed for the follow-up. GitHub Actions
+[run 39339281467](https://github.com/ahouchens/mesh-chat/actions/runs/39339281467)
+built 0.2.70, and
+[run 39341205361](https://github.com/ahouchens/mesh-chat/actions/runs/39341205361)
+built the final **0.2.71** candidate. The APK is 34,049,462 bytes with SHA-256
+`c5e1d166cd27aa8c927a397dced208128b9e1df4ab81a3cc224877539a2f5255`;
+the NSIS installer is SHA-256
+`2212f236c5bb62ba3a247159de0385227b91abf45698b09130a3d56e93c84b80`
+and the MSI is
+`e9ee8295636a1672030738019c9c0e1b6834c6bfec1ff457cf5d5fe9b1adf6aa`.
+The APK reports versionName 0.2.71, versionCode 2071, package
+`com.meshchat.mobile`, arm64-v8a, target API 36, and the established
+development certificate
+`d6dbff63834666bace3d75b49234726e97ccce26d2b9e9516309682e0a33143f`.
+No physical installer run or end-to-end LXMF/workspace test is claimed.
+
 ## Direct connectivity increment, 2026-10-16
 
 Native qualification now runs in GitHub Actions. At `cbcf659`,
