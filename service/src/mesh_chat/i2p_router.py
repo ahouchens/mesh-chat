@@ -90,8 +90,12 @@ class I2PRouterManager:
         candidates.extend(
             [
                 Path(sys.executable).resolve().parent / "i2pd.exe",
+                Path(sys.executable).resolve().parent / "_up_" / "vendor" / "i2pd.exe",
+                Path(sys.executable).resolve().parent / "vendor" / "i2pd.exe",
                 Path(sys.argv[0]).resolve().parent / "i2pd.exe",
+                Path(sys.argv[0]).resolve().parent / "_up_" / "vendor" / "i2pd.exe",
                 Path(__file__).resolve().parent / "i2pd.exe",
+                Path(__file__).resolve().parent / "_up_" / "vendor" / "i2pd.exe",
             ]
         )
         found = shutil.which("i2pd")

@@ -337,7 +337,13 @@ fn spawn_service(app: &AppHandle, state: &ServiceState) -> Result<(), String> {
         .map_err(|_| "service_binary_unavailable".to_string())?
         .set_raw_out(true);
     let mut command = command;
-    let i2pd = ["i2pd.exe", "vendor/i2pd.exe"].iter().find_map(|name| {
+    let i2pd = [
+        "i2pd.exe",
+        "vendor/i2pd.exe",
+        "_up_/vendor/i2pd.exe",
+    ]
+    .iter()
+    .find_map(|name| {
         app.path()
             .resolve(name, BaseDirectory::Resource)
             .ok()
