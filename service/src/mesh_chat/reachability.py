@@ -119,11 +119,17 @@ def build_plan(
         else:
             steps.append(_step(method, "not_tried", "mapping_not_attempted"))
 
-    upstream = [item for item in mapping_attempts if item.get("reason") in UPSTREAM_REASONS]
+    carrier = [item for item in mapping_attempts if item.get("reason") == "upnp_wan_shared"]
+    double = [item for item in mapping_attempts if item.get("reason") == "upnp_wan_private"]
+    unknown = [item for item in mapping_attempts if item.get("reason") == "upstream_nat_detected"]
     if manual:
         steps.append(_step("manual", "prepared", "manual_forward_configured"))
-    elif upstream:
+    elif carrier:
         steps.append(_step("manual", "unavailable", "upstream_nat"))
+    elif double:
+        steps.append(_step("manual", "not_tried", "manual_forward_available"))
+    elif unknown:
+        steps.append(_step("manual", "not_tried", "upstream_nat_unknown"))
     else:
         steps.append(_step("manual", "not_tried",
                            "manual_forward_available" if has_route else "no_route"))
@@ -133,9 +139,13 @@ def build_plan(
     else:
         steps.append(_step("firewall", "skipped", "firewall_not_checked"))
 
-    if upstream:
-        steps.append(_step("upstream_nat", "blocked", upstream[-1]["reason"]))
-        blockers.append("upstream_nat")
+    upstream_evidence = carrier or double or unknown
+    if upstream_evidence:
+        steps.append(_step("upstream_nat", "blocked", upstream_evidence[-1]["reason"]))
+        if not current:
+            blockers.append(
+                "carrier_nat" if carrier else "double_nat" if double else "upstream_nat"
+            )
 
     candidate_sources = {key: 0 for key in ("ipv4", "ipv6", "local_global", "pcp", "upnp", "nat_pmp", "manual")}
     for item in current:
@@ -144,7 +154,7 @@ def build_plan(
             candidate_sources[key] += 1
         candidate_sources["ipv6" if ":" in item["host"] else "ipv4"] += 1
 
-    if not current and "upstream_nat" not in blockers:
+    if not current and not upstream_evidence:
         if not has_route:
             blockers.append("no_route")
         elif not route_available:
@@ -154,20 +164,45 @@ def build_plan(
 
     if current:
         state = "needs_action" if firewall and firewall.get("state") in {"needs_consent", "failed"} else "prepared"
+    elif carrier:
+        state = "blocked"
+    elif double or unknown:
+        state = "needs_action"
     else:
         state = "blocked"
 
     primary_action = None
     if state == "needs_action":
-        label = "Try Windows Firewall permission again" if firewall and firewall.get("state") == "failed" else "Allow UDP in Windows Firewall"
-        primary_action = {"kind": "allow_firewall", "label": label}
+        if firewall and firewall.get("state") in {"needs_consent", "failed"}:
+            label = "Try Windows Firewall permission again" if firewall.get("state") == "failed" else "Allow UDP in Windows Firewall"
+            primary_action = {"kind": "allow_firewall", "label": label}
+        elif double:
+            primary_action = {"kind": "manual_forward", "label": "Set up manual UDP forward (both routers)"}
+        elif unknown:
+            primary_action = {"kind": "manual_forward", "label": "Check the router WAN, then try manual forward"}
     elif state == "blocked":
-        if "upstream_nat" in blockers:
+        if carrier:
             primary_action = {"kind": "change_network", "label": "Try another network, IPv6, or an approved access point"}
         elif has_route and route_available:
             primary_action = {"kind": "manual_forward", "label": "Set up manual UDP forward"}
         else:
             primary_action = {"kind": "change_network", "label": "Check this device's Internet connection"}
+
+    if carrier:
+        upstream_nat = {"state": "carrier_nat", "port_forward": "not_needed" if current else "no",
+                        "reason": "upnp_wan_shared"}
+    elif double:
+        upstream_nat = {"state": "double_nat", "port_forward": "not_needed" if current else "maybe",
+                        "reason": "upnp_wan_private"}
+    elif unknown:
+        upstream_nat = {"state": "unknown", "port_forward": "not_needed" if current else "unknown",
+                        "reason": "upstream_nat_detected"}
+    elif current:
+        upstream_nat = {"state": "none", "port_forward": "not_needed", "reason": "already_reachable"}
+    elif has_route and route_available:
+        upstream_nat = {"state": "none", "port_forward": "maybe", "reason": "manual_forward_available"}
+    else:
+        upstream_nat = {"state": "none", "port_forward": "unknown", "reason": "no_route"}
 
     manual_forward = None
     if local_host and local_port:
@@ -183,4 +218,5 @@ def build_plan(
         "primary_action": primary_action,
         "blockers": blockers,
         "manual_forward": manual_forward,
+        "upstream_nat": upstream_nat,
     }

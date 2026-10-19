@@ -261,8 +261,9 @@ it("shows the reachability plan and installs the UDP firewall rule on request", 
     "configure_direct_firewall", {setup_id:"saved"}));
 });
 
-it("does not offer a manual forward or restore-Internet advice for upstream NAT", async () => {
-  const plan = {state:"blocked", candidate_count:0, blockers:["upstream_nat"],
+it("does not offer a manual forward or restore-Internet advice for carrier NAT", async () => {
+  const plan = {state:"blocked", candidate_count:0, blockers:["carrier_nat"],
+    upstream_nat:{state:"carrier_nat",port_forward:"no",reason:"upnp_wan_shared"},
     steps:[
       {id:"manual",label:"Manual UDP forward",state:"unavailable",reason:"upstream_nat"},
       {id:"upstream_nat",label:"Upstream NAT",state:"blocked",reason:"upnp_wan_shared"},
@@ -277,9 +278,32 @@ it("does not offer a manual forward or restore-Internet advice for upstream NAT"
   });
   render(<DirectConnectionSetup invitationId="invite" autoStart />);
   expect(await screen.findByText("A local forward cannot bypass carrier or upstream NAT.")).toBeTruthy();
-  expect(screen.getByText(/This network is behind carrier or another NAT/)).toBeTruthy();
+  expect(screen.getByText("Carrier-grade NAT")).toBeTruthy();
+  expect(screen.getByText("UDP port forward: Not possible")).toBeTruthy();
+  expect(screen.getAllByText(/This network is behind carrier NAT/).length).toBeGreaterThan(0);
   expect(screen.queryByText("Set up manual UDP forward")).toBeNull();
   expect(screen.queryByText(/Restore this device’s Internet connection/)).toBeNull();
+});
+
+it("offers a manual forward with both routers when double NAT is detected", async () => {
+  const plan = {state:"needs_action", candidate_count:0, blockers:["double_nat"],
+    upstream_nat:{state:"double_nat",port_forward:"maybe",reason:"upnp_wan_private"},
+    steps:[
+      {id:"manual",label:"Manual UDP forward",state:"not_tried",reason:"manual_forward_available"},
+      {id:"upstream_nat",label:"Upstream NAT",state:"blocked",reason:"upnp_wan_private"},
+    ],
+    primary_action:{kind:"manual_forward",label:"Set up manual UDP forward (both routers)"},
+    manual_forward:{local_host:"192.168.4.20",local_port:54321}};
+  api.serviceCommand.mockImplementation(async command => {
+    if (command === "prepare_direct_offer") return {...base, reachability:plan};
+    if (command === "check_direct_setup") return {...base, reachability:plan,
+      readiness:"both_no_address", can_share:false};
+    throw new Error("unavailable");
+  });
+  render(<DirectConnectionSetup invitationId="invite" autoStart />);
+  expect(await screen.findByText("Double NAT")).toBeTruthy();
+  expect(screen.getByText("UDP port forward: Maybe")).toBeTruthy();
+  expect(screen.getByText("Set up manual UDP forward (both routers)")).toBeTruthy();
 });
 
 it("prepares a manual UDP forward with the entered public address and port", async () => {
