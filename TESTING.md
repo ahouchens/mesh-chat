@@ -422,6 +422,41 @@ An intermediate 0.2.74 build failed five frontend assertions because normal
 invitations carried `i2p_consent: false`; 0.2.75 sends the field only for I2P
 previews.
 
+## STUN default, coturn, and C5 prototype, 2026-10-20
+
+**0.2.88 / Android 2088** makes Google STUN
+(`stun:stun.l.google.com:19302`) the default call ICE helper while keeping it
+replaceable/clearable. It adds a self-hosted coturn recipe under `deploy/turn`
+and starts C5 with a DataChannel onboarding prototype that exchanges a signed
+invitation and a separately signed reply.
+
+Validation:
+
+- Full service suite: **1034 passed**, with one timing-sensitive administrator
+  benchmark failing under the full run and passing in isolation; CI Verify
+  passed.
+- Frontend TypeScript: passed.
+- Frontend tests: **234 passed**.
+- Frontend production build: passed.
+- C5 prototype: **PASS** — signed invitation and reply traversed the
+  DataChannel.
+- GitHub Actions
+  [run 39440900966](https://github.com/ahouchens/mesh-chat/actions/runs/39440900966)
+  passed Verify, Windows packaging, Android packaging, and Publish.
+- Release: <https://github.com/ahouchens/mesh-chat/releases/tag/v0.2.88>.
+
+Published assets:
+
+| Artifact | Size | SHA-256 |
+|---|---:|---|
+| `Mesh-Chat_0.2.88_x64-setup.exe` | 27,521,497 | `21cefe5ed48456e1123bad2a57c9a7cdb891ade9c2c80bab8b807e9a8774cbd9` |
+| `Mesh-Chat_0.2.88_x64_en-US.msi` | 29,515,776 | `e036dd730a5a70fc871e5ab55d65980b4f4cc1b8b0bab41b55cc23dbb1af31ea` |
+| `mesh-chat-0.2.88-android-arm64-release.apk` | 34,098,850 | `cfcb3364accee540885c43e8f8af95875cb8d4646e77f74459d04e07ea3a95e7` |
+
+C5 remains a prototype: it is not exposed in the UI and does not yet bridge
+DataChannel bytes into Reticulum/LXMF. Google provides STUN, not free TURN; the
+coturn deployment is operator-controlled. Physical-device calls remain open.
+
 ## WebRTC video quality controls, 2026-10-19
 
 **0.2.87 / Android 2087** prefers VP8 when the WebView exposes codec
