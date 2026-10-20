@@ -422,6 +422,34 @@ An intermediate 0.2.74 build failed five frontend assertions because normal
 invitations carried `i2p_consent: false`; 0.2.75 sends the field only for I2P
 previews.
 
+## Android foreground call service, 2026-10-19
+
+**0.2.85 / Android 2085** adds a microphone/camera-typed foreground
+`CallService` with a persistent in-call notification, started/stopped by the
+audio-focus bridge. The service never reads the vault or messaging profile.
+
+Validation:
+
+- Full service suite: **1033 passed, 46 skipped**.
+- Frontend TypeScript: passed.
+- Frontend tests: **234 passed**.
+- Frontend production build: passed.
+- GitHub Actions
+  [run 39379524979](https://github.com/ahouchens/mesh-chat/actions/runs/39379524979)
+  passed Verify, Windows packaging, Android packaging, and Publish.
+- Release: <https://github.com/ahouchens/mesh-chat/releases/tag/v0.2.85>.
+
+Published assets:
+
+| Artifact | Size | SHA-256 |
+|---|---:|---|
+| `Mesh-Chat_0.2.85_x64-setup.exe` | 27,518,937 | `836052467b1e1ee61ba0ac1c78cffea278353f17f9c812fb3fa3dd1d944e238f` |
+| `Mesh-Chat_0.2.85_x64_en-US.msi` | 29,515,776 | `cb2056767ed9cfa3da6d516c3f7d0b2130bc3ceb941a91ae1946102eba111d66` |
+| `mesh-chat-0.2.85-android-arm64-release.apk` | 34,098,643 | `3c453228e9d0196f1c40292640f4dbde386a742d82ef702c39bfa4b87372f61f` |
+
+Still open: physical Android call/foreground behavior, physical
+Windows↔Android calls, TURN quotas, video quality, and C5.
+
 ## Android call-audio focus, 2026-10-19
 
 **0.2.84 / Android 2084** adds Android call-audio focus and
