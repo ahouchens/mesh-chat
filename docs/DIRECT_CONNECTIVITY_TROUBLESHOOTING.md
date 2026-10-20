@@ -14,6 +14,23 @@ invitation in the owner's Invite dialog. A live saved message is reused. Lost
 socket ownership or expired details require a refresh of that same invitation;
 creating a different invitation cannot replace a saved join request.
 
+If a pasted message belongs to a **different** invitation than the saved request,
+or the saved workspace is already active or stopped, the wizard now shows
+**Workspace already saved** instead of trying to prepare a doomed reply. Open the
+saved workspace from that panel. To use a brand-new invitation, remove the saved
+workspace first in **Workspace settings**; Mesh Chat never replaces the request
+or clears app data automatically.
+
+The first wizard step now shows a reachability plan instead of only
+**Address prepared** or a generic failure. It names the route, IPv6/public IPv4,
+PCP/UPnP/NAT-PMP result, upstream NAT, and firewall permission that applies.
+On Windows, **Allow UDP in Windows Firewall** installs one temporary rule for
+the exact service, port, and active profile. If automatic mapping is
+unavailable, **Set up manual UDP forward** accepts a numeric public IP and
+external UDP port, then shows the local port to forward on the router. A
+prepared mapping is still not reachability; only the other device’s
+authenticated test is.
+
 Coordinated QUIC checks can open compatible NAT filters when usable peer tuples
 are known. They cannot discover two unknown public mappings. If neither device
 finds a usable public address, waiting or exchanging the same text again will

@@ -82,6 +82,7 @@ import type {
   GroupMember,
   GroupMessage,
   GroupPostingPolicy,
+  I2PStatus,
   InvitationFormats,
   InvitationPreview,
   ManualParticipantSetup,
@@ -325,6 +326,12 @@ function errorMessage(error: unknown): string {
   if (raw.includes("service_stopped") || raw.includes("service_not_running")) {
     return "The messaging service stopped. Reopen Mesh Chat and try again.";
   }
+  if (raw.includes("native_unavailable")) {
+    return "The on-device connection service stopped responding. Close and reopen Mesh Chat, then try again. Your saved request and messages are unchanged.";
+  }
+  if (raw.includes("workspace_already_known")) {
+    return "This workspace is already saved on this device. Open it from the workspace switcher to check its status. A different invitation cannot replace an existing join request.";
+  }
   if (raw.includes("identity_mismatch")) {
     return "This invitation’s identity check failed.";
   }
@@ -360,9 +367,6 @@ function errorMessage(error: unknown): string {
   }
   if (raw.includes("history_pruned")) {
     return "That history was pruned from this device under the active retention preference.";
-  }
-  if (raw.includes("workspace_already_known")) {
-    return "This workspace is already saved on this device. Open it from the workspace switcher to check its status. A different invitation cannot replace an existing join request.";
   }
   if (raw.includes("workspace_limit_reached")) {
     return "This device already has 16 workspaces. Remove a workspace you have left or closed before joining another.";
@@ -830,6 +834,7 @@ function Onboarding({
   const [preview, setPreview] = useState<InvitationPreview | null>(null);
   const [formats, setFormats] = useState<InvitationFormats | null>(null);
   const [remoteConsent, setRemoteConsent] = useState(false);
+  const [i2pConsent, setI2PConsent] = useState(false);
   const [reachabilityWarning, setReachabilityWarning] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(() => initialWorkspacePrefixOnly ? incompleteWorkspacePrefixMessage(initialInvitation) : "");
@@ -886,7 +891,7 @@ function Onboarding({
       });
       if (generation !== previewGeneration.current) return;
       setPreview(checked);
-      setRemoteConsent(false);
+      setRemoteConsent(false); setI2PConsent(false);
       setMode("join");
     } catch (reason) {
       if (generation !== previewGeneration.current) return;
@@ -916,7 +921,7 @@ function Onboarding({
     try {
       await serviceCommand("create_profile", { display_name: name });
       if (mode === "join") {
-        await serviceCommand("accept_invitation", { invitation });
+        await serviceCommand("accept_invitation", { invitation, ...(preview?.i2p_access_point ? { i2p_consent: i2pConsent } : {}) });
         onReady(await serviceCommand<Snapshot>("snapshot"));
       } else {
         onReady(await serviceCommand<Snapshot>("snapshot"), pendingWorkspaceInvitation || undefined);
@@ -956,7 +961,7 @@ function Onboarding({
       <div className="onboarding__brand"><Brand /></div>
       <section className="welcome-card">
         {mode !== "home" && (
-          <button className="back-link" onClick={() => { previewGeneration.current += 1; setBusy(false); setMode("home"); setPreview(null); setRemoteConsent(false); setPendingWorkspaceInvitation(""); setWorkspaceContext(null); setInvitation(""); setError(""); }}>
+          <button className="back-link" onClick={() => { previewGeneration.current += 1; setBusy(false); setMode("home"); setPreview(null); setRemoteConsent(false); setI2PConsent(false); setPendingWorkspaceInvitation(""); setWorkspaceContext(null); setInvitation(""); setError(""); }}>
             <ArrowLeft size={18} /> Back
           </button>
         )}
@@ -1024,8 +1029,9 @@ function Onboarding({
             <SecurityDetails fingerprint={preview.fingerprint} destination={preview.destination_hash} />
             {preview.participant_access && <section className="direct-consent" aria-labelledby="onboarding-direct-connection"><h3 id="onboarding-direct-connection">Direct connection to the inviter</h3><p>{preview.participant_access.privacy_disclosure}</p><p>They must keep Mesh Chat open until this device connects.</p></section>}
             {preview.remote_profile && <section className="remote-consent" aria-labelledby="onboarding-remote-consent"><h3 id="onboarding-remote-consent">Remote connection requested</h3><p><strong>{preview.remote_profile.label}</strong> · {preview.remote_profile.endpoint_count} access-point {preview.remote_profile.endpoint_count === 1 ? "endpoint" : "endpoints"}</p><p>{preview.remote_profile.privacy_disclosure}</p><label className="checkbox-line"><input type="checkbox" checked={remoteConsent} onChange={(event) => setRemoteConsent(event.target.checked)} /> Connect to this access point after I create my profile</label></section>}
+            {preview.i2p_access_point && <section className="remote-consent" aria-labelledby="onboarding-i2p-consent"><h3 id="onboarding-i2p-consent">I2P relay requested</h3><p>Traffic will be relayed through <code>{preview.i2p_access_point.b32}</code>. This is not a direct connection.</p><label className="checkbox-line"><input type="checkbox" checked={i2pConsent} onChange={(event) => setI2PConsent(event.target.checked)} /> Use this I2P access point after I create my profile</label></section>}
             {error && <p className="form-error" role="alert">{error}</p>}
-            <Button type="submit" disabled={!name.trim() || busy || Boolean(preview.remote_profile) && !remoteConsent}>{busy ? "Connecting…" : preview.remote_profile ? "Create profile and connect" : preview.participant_access ? `Connect directly to ${preview.display_name}` : `Connect to ${preview.display_name}`}</Button>
+            <Button type="submit" disabled={!name.trim() || busy || Boolean(preview.remote_profile) && !remoteConsent || Boolean(preview.i2p_access_point) && !i2pConsent}>{busy ? "Connecting…" : preview.remote_profile ? "Create profile and connect" : preview.participant_access ? `Connect directly to ${preview.display_name}` : `Connect to ${preview.display_name}`}</Button>
           </form>
         )}
       </section>
@@ -1073,10 +1079,12 @@ function NewChatDialog({ initialInvitation, remoteProfiles, onClose, onChanged, 
   const [busy, setBusy] = useState(false);
   const [connectionChoice, setConnectionChoice] = useState("participant");
   const [remoteConsent, setRemoteConsent] = useState(false);
+  const [i2pConsent, setI2PConsent] = useState(false);
   const [doctor, setDoctor] = useState<DirectDoctorReport | null>(null);
   const [manualSetup, setManualSetup] = useState<ManualParticipantSetup | null>(null);
   const [manualHost, setManualHost] = useState("");
   const [manualPort, setManualPort] = useState("");
+  const [i2pAccessPoint, setI2PAccessPoint] = useState("");
   const [shared, setShared] = useState(false);
   const [candidateResults, setCandidateResults] = useState<ParticipantCandidateResult[]>([]);
   const [replyFormats, setReplyFormats] = useState<ConnectionDocumentFormats | null>(null);
@@ -1127,6 +1135,7 @@ function NewChatDialog({ initialInvitation, remoteProfiles, onClose, onChanged, 
         : connectionChoice === "participant" ? { connection_mode: "participant" }
           : connectionChoice === "email" ? { connection_mode: "email" }
           : connectionChoice === "nearby" ? { connection_mode: "nearby" }
+          : connectionChoice === "i2p" ? { connection_mode: "i2p", i2p_access_point: i2pAccessPoint.trim() }
             : { connection_mode: "remote", remote_profile_id: connectionChoice.slice("remote:".length) };
       const created = await serviceCommand<InvitationFormats>("create_invitation", payload);
       const previous = generatedHostSession.current;
@@ -1143,7 +1152,7 @@ function NewChatDialog({ initialInvitation, remoteProfiles, onClose, onChanged, 
   useEffect(() => {
     if (!initialInvitation) return;
     let active = true;
-    setRaw(initialInvitation); setTab("join"); setPreview(null); setRemoteConsent(false);
+    setRaw(initialInvitation); setTab("join"); setPreview(null); setRemoteConsent(false); setI2PConsent(false);
     setConnectionReplyPreview(null); setRouteUpdatePreview(null); setReplyDoctor(null); setRequestQueued(false); setError("");
     void (async () => {
       const normalized = await normalizeInvitationInput(initialInvitation);
@@ -1187,7 +1196,7 @@ function NewChatDialog({ initialInvitation, remoteProfiles, onClose, onChanged, 
         setRouteUpdatePreview(await serviceCommand("preview_route_update", { update: normalized }));
         setPreview(null);
       } else setPreview(await serviceCommand("preview_invitation", { invitation: normalized }));
-      setRemoteConsent(false);
+      setRemoteConsent(false); setI2PConsent(false);
     }
     catch (reason) { setError(importedDocumentErrorMessage(reason)); }
   };
@@ -1195,7 +1204,7 @@ function NewChatDialog({ initialInvitation, remoteProfiles, onClose, onChanged, 
     if (busy || requestQueued) return;
     setBusy(true); setError(""); setCandidateResults([]);
     try {
-      const accepted = await serviceCommand<Contact>("accept_invitation", { invitation: raw });
+      const accepted = await serviceCommand<Contact>("accept_invitation", { invitation: raw, ...(preview?.i2p_access_point ? { i2p_consent: i2pConsent } : {}) });
       await onChanged();
       if (accepted.connection_results?.length && !accepted.connection_results.some((item) => item.result === "connected")) {
         setCandidateResults(accepted.connection_results);
@@ -1243,7 +1252,8 @@ function NewChatDialog({ initialInvitation, remoteProfiles, onClose, onChanged, 
         <button role="tab" aria-selected={tab === "invite"} onClick={() => setTab("invite")}>Share an invite</button>
         <button role="tab" aria-selected={tab === "join"} onClick={() => { void stopUnsharedHost(); setTab("join"); }}>Open an invite</button>
       </div>
-      {tab === "invite" && <label className="field"><span>How should they connect?</span><select value={connectionChoice} disabled={busy} onChange={(event) => void chooseConnection(event.target.value)}><option value="participant">Over the Internet — directly to this device (default)</option><option value="email">Email-assisted direct connection — reverse direction if possible</option><option value="nearby">Same network only — will not work over cellular</option>{usableProfiles.map((profile) => <option key={profile.id} value={`remote:${profile.id}`}>Approved access point · {profile.label} · {profile.state === "connected" ? "connected" : "currently unavailable"}</option>)}</select></label>}
+      {tab === "invite" && <label className="field"><span>How should they connect?</span><select value={connectionChoice} disabled={busy} onChange={(event) => void chooseConnection(event.target.value)}><option value="participant">Over the Internet — directly to this device (default)</option><option value="email">Email-assisted direct connection — reverse direction if possible</option><option value="nearby">Same network only — will not work over cellular</option><option value="i2p">I2P access point — relayed through I2P</option>{usableProfiles.map((profile) => <option key={profile.id} value={`remote:${profile.id}`}>Approved access point · {profile.label} · {profile.state === "connected" ? "connected" : "currently unavailable"}</option>)}</select></label>}
+      {tab === "invite" && connectionChoice === "i2p" && !formats && <div className="stack"><p className="muted">The invitation is signed by this device and carries one I2P access point address. The recipient must consent before traffic is relayed through it. I2P is a relay, not a direct connection.</p><label className="field"><span>I2P access point address</span><input value={i2pAccessPoint} onChange={(event) => setI2PAccessPoint(event.target.value.trim())} placeholder="example.b32.i2p" spellCheck={false} /></label><Button disabled={busy || !/^[a-z2-7]{52}\.b32\.i2p$/i.test(i2pAccessPoint)} onClick={() => void createInvitation()}>{busy ? "Creating…" : "Create I2P invitation"}</Button></div>}
       {tab === "invite" && connectionChoice === "participant" && !formats && <div className="stack"><p className="muted">Direct participant hosting stays on this device. Keep Mesh Chat open during invitation and approval. No server, rendezvous service, or transport operator is added.</p><div className="dialog-actions"><Button variant="secondary" disabled={busy} onClick={() => void checkDirect()}>{busy ? "Checking this network…" : "Check direct Internet connection"}</Button><Button disabled={busy} onClick={() => void createInvitation()}>{busy ? "Preparing a direct route…" : "Prepare direct Internet invitation"}</Button><Button variant="ghost" disabled={busy} onClick={() => void prepareManual()}>Set up manual port forwarding</Button></div>{doctor && <DirectDoctorPanel report={doctor} busy={busy} onRetry={() => void checkDirect()} onManualSetup={() => void prepareManual()} />}{manualSetup && <ManualForwardingPanel setup={manualSetup} host={manualHost} port={manualPort} busy={busy} onHostChange={setManualHost} onPortChange={setManualPort} onCreate={() => void createInvitation(true)} />}</div>}
       {tab === "invite" && connectionChoice === "nearby" && !formats && <div className="stack"><p className="direct-host-warning">Same network only — will not work over cellular.</p><Button disabled={busy} onClick={() => void createInvitation()}>{busy ? "Creating…" : "Create same-network invitation"}</Button></div>}
       {tab === "invite" && connectionChoice === "email" && !formats && <div className="stack"><p className="muted">Creates a signed invitation even when this device cannot accept inbound traffic. The recipient first tries any existing or same-network Mesh route; a return reply works only if the recipient’s network can accept inbound traffic.</p><p className="muted">Email carries bootstrap files only; Mesh Chat never logs in, sends mail, or polls an inbox. If both networks block inbound connections and no shared route exists, invitation exchange alone cannot create one.</p><Button disabled={busy} onClick={() => void createInvitation()}>{busy ? "Creating…" : "Create email-ready invitation"}</Button></div>}
@@ -1256,11 +1266,12 @@ function NewChatDialog({ initialInvitation, remoteProfiles, onClose, onChanged, 
       {tab === "join" && preview && <div className="stack">
         <div className="person-preview"><Avatar name={preview.display_name} /><div><h3>{preview.display_name}</h3><p>Identity signature valid</p></div></div>
         <SecurityDetails fingerprint={preview.fingerprint} destination={preview.destination_hash} />
+        {preview.i2p_access_point && <section className="direct-consent" aria-labelledby="personal-i2p-connection"><h3 id="personal-i2p-connection">Relayed via I2P</h3><p>This signed invitation asks to use an I2P access point. Traffic is relayed; it is not a direct connection. The access point can see connection metadata, not message contents.</p><p><code>{preview.i2p_access_point.b32}</code></p><label className="checkbox-line"><input type="checkbox" checked={i2pConsent} onChange={(event) => setI2PConsent(event.target.checked)} /> Use this I2P access point</label></section>}
         {preview.participant_access && <section className="direct-consent" aria-labelledby="personal-direct-connection"><h3 id="personal-direct-connection">Direct connection to {preview.display_name}</h3><p>{preview.participant_access.privacy_disclosure}</p><p>No separate operator will join this chat or workspace.</p></section>}
         {preview.connection_reply_available && <section className="direct-consent"><h3>Connection options</h3><p>{preview.participant_access ? "Mesh Chat will try the inviter’s signed route first. If every candidate fails, this device can be checked for an optional return connection." : "Mesh Chat will first save and try the signed contact request over any existing or same-network Mesh route. If no route is confirmed, it will then offer to check this device for an optional return connection."}</p></section>}
         {preview.remote_profile && <section className="remote-consent" aria-labelledby="personal-remote-consent"><h3 id="personal-remote-consent">Remote connection requested</h3><p><strong>{preview.remote_profile.label}</strong> · {preview.remote_profile.endpoint_count} access-point {preview.remote_profile.endpoint_count === 1 ? "endpoint" : "endpoints"}</p><p>{preview.remote_profile.privacy_disclosure}</p><label className="checkbox-line"><input type="checkbox" checked={remoteConsent} onChange={(event) => setRemoteConsent(event.target.checked)} /> Connect to this access point after I continue</label></section>}
         {replyFormats && <ConnectionDocumentShare formats={replyFormats} kind="reply" onShared={() => setReplyShared(true)} />}
-        {!requestQueued && <Button disabled={busy || Boolean(preview.remote_profile) && !remoteConsent} onClick={() => void connect()}>{busy ? "Saving request…" : replyFormats ? "Send contact request after sharing" : preview.remote_profile ? "Connect and send contact request" : preview.participant_access ? `Connect directly to ${preview.display_name}` : "Send contact request"}</Button>}
+        {!requestQueued && <Button disabled={busy || Boolean(preview.remote_profile) && !remoteConsent || Boolean(preview.i2p_access_point) && !i2pConsent} onClick={() => void connect()}>{busy ? "Saving request…" : replyFormats ? "Send contact request after sharing" : preview.remote_profile ? "Connect and send contact request" : preview.participant_access ? `Connect directly to ${preview.display_name}` : "Send contact request"}</Button>}
         {requestQueued && <section className="direct-host-warning" role="status"><h3>{candidateResults.length > 0 ? "No candidate connected yet" : "Contact request saved"}</h3>{candidateResults.length > 0 && <pre>{candidateSummary(candidateResults)}</pre>}<p>{candidateResults.length > 0 ? "The signed request remains saved and will retry." : "No route has been confirmed yet. Mesh Chat will keep the signed request queued and retry any available route."} Checking a return connection does not approve a new identity.</p>{preview.connection_reply_available && !replyFormats && !replyDoctor && <Button variant="secondary" onClick={() => void createReply()} disabled={busy}>{busy ? "Checking this network…" : "Check this device for a return connection"}</Button>}<Button variant="ghost" onClick={() => void closeDialog()}>Continue</Button></section>}
         {replyDoctor && <ReturnConnectionUnavailable report={replyDoctor} busy={busy} onRetry={() => void createReply()} />}
       </div>}
@@ -1719,6 +1730,21 @@ function RemoteConnectionsSettings({ initial, onChanged }: { initial: RemoteProf
   return <section className="settings-section remote-connections" aria-labelledby="remote-connections-title"><div className="settings-section__heading"><h3 id="remote-connections-title">Approved access points</h3><p>Internet invitations first try a temporary path hosted by the inviter. Add an operator-supplied Reticulum access point only as an explicit fallback when the inviter's device or router cannot accept an inbound connection.</p></div><p className="muted">Operators can observe IP addresses, timing, packet sizes, connection duration, and Reticulum routing identifiers. They cannot decrypt or forge valid MeshChat content.</p>{profiles.map((profile) => <article className="remote-profile-row" key={profile.id}><span><strong>{profile.label}</strong><small role="status">{remoteStateLabel(profile)}</small><small>{profile.ratchet_ready ? "Encrypted recipient ready" : profile.path_available ? "Known peer path; awaiting ratchet" : "Path discovery occurs when an invitation is used"} · {profile.offline_delivery_available ? "Offline delivery node connected" : profile.offline_delivery_approved ? "Offline delivery approved; node unavailable" : profile.offline_delivery_recommended ? "Offline delivery available after separate approval" : "Live delivery only"}</small></span><div><Button variant="secondary" disabled={busy === profile.id || profile.state === "expired"} onClick={() => void run("test_remote_profile", profile.id)}>Test</Button><Button variant="ghost" disabled={busy === profile.id || profile.state === "expired"} onClick={() => void run("retry_remote_profile", profile.id)}>Retry</Button>{profile.offline_delivery_recommended && <Button variant="ghost" disabled={busy === profile.id} onClick={() => void run(profile.offline_delivery_approved ? "remove_remote_propagation" : "approve_remote_propagation", profile.id)}>{profile.offline_delivery_approved ? "Remove offline delivery" : "Approve offline delivery"}</Button>}<Button variant="danger" disabled={busy === profile.id || profile.offline_delivery_approved} title={profile.offline_delivery_approved ? "Remove offline delivery approval first" : undefined} onClick={() => void run("remove_remote_profile", profile.id)}>Remove</Button></div>{profile.offline_delivery_recommended && !profile.offline_delivery_approved && <p>Optional node {profile.propagation_identifier} stores recipient-encrypted objects and routing metadata. Storage is not endpoint or human receipt. Android may not retrieve messages until Mesh Chat runs again.</p>}</article>)}{profiles.length === 0 && <p className="muted">No access point is configured. Internet invitations still try a direct path to the online inviter.</p>}{adding ? <div className="remote-profile-form"><label>Profile name<input value={label} maxLength={64} onChange={(event) => setLabel(event.target.value)} /></label><label>TCP hostname or address<input value={host} autoCapitalize="off" autoCorrect="off" spellCheck={false} onChange={(event) => setHost(event.target.value)} /></label><label>TCP port<input value={port} inputMode="numeric" onChange={(event) => setPort(event.target.value)} /></label><label>Recommended LXMF propagation destination <small>Optional, 32 hexadecimal characters</small><input value={propagation} maxLength={32} autoCapitalize="off" autoCorrect="off" spellCheck={false} onChange={(event) => setPropagation(event.target.value)} /></label><label className="checkbox-line"><input type="checkbox" checked={allowPrivate} onChange={(event) => setAllowPrivate(event.target.checked)} /> Advanced: allow a private-network endpoint. This can expose local services and must only be used with an operator you trust.</label><div className="dialog-actions"><Button variant="ghost" onClick={() => setAdding(false)}>Cancel</Button><Button disabled={busy === "new" || !label.trim() || !host.trim()} onClick={() => void add()}>{busy === "new" ? "Connecting…" : "Approve and connect"}</Button></div></div> : <Button variant="secondary" disabled={profiles.length >= 4} onClick={() => setAdding(true)}>Add remote connection</Button>}{error && <p className="form-error" role="alert">{error}</p>}</section>;
 }
 
+const I2P_ROUTER_LABEL: Record<string, string> = {
+  running: "managed i2pd running",
+  external: "external I2P router",
+  starting: "starting",
+  failed: "failed",
+  not_started: "not started",
+};
+const I2P_ROUTER_REASON: Record<string, string> = {
+  router_missing: "i2pd was not found",
+  router_start_failed: "i2pd could not start",
+  router_exited: "i2pd exited",
+  sam_timeout: "SAM did not become ready",
+  unsupported_platform: "managed I2P is not supported on this platform",
+};
+
 function SettingsDialog({ snapshot, theme, onThemeChange, onClose, onSaved }: { snapshot: Snapshot; theme: Theme; onThemeChange: (theme: Theme) => void; onClose: () => void; onSaved: () => Promise<void> }) {
   const [settings, setSettings] = useState<NetworkSettings>(snapshot.settings);
   const [saved, setSaved] = useState(false);
@@ -1728,6 +1754,14 @@ function SettingsDialog({ snapshot, theme, onThemeChange, onClose, onSaved }: { 
   const [notificationError, setNotificationError] = useState("");
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState("");
+  const [i2pStatus, setI2PStatus] = useState<I2PStatus | null>(null);
+  const [isAndroid, setIsAndroid] = useState(false);
+  useEffect(() => {
+    void Promise.resolve(runtimePlatform()).then((value) => setIsAndroid(value === "android")).catch(() => undefined);
+    if (settings.i2p_enabled) {
+      void Promise.resolve(serviceCommand<I2PStatus>("i2p_status")).then(setI2PStatus).catch(() => undefined);
+    }
+  }, []);
   const darkThemeRef = useRef<HTMLButtonElement>(null);
   const lightThemeRef = useRef<HTMLButtonElement>(null);
   const selectTheme = (nextTheme: Theme) => {
@@ -1746,7 +1780,7 @@ function SettingsDialog({ snapshot, theme, onThemeChange, onClose, onSaved }: { 
     event.preventDefault();
     selectTheme(nextTheme);
   };
-  const toggle = (key: "nearby_discovery" | "lan_fallback" | "help_route" | "store_for_offline") => {
+  const toggle = (key: "nearby_discovery" | "lan_fallback" | "help_route" | "store_for_offline" | "i2p_enabled" | "i2p_connectable" | "i2p_managed") => {
     setSaved(false);
     setSaveError("");
     setSettings((current) => ({ ...current, [key]: !current[key] }));
@@ -1807,6 +1841,23 @@ function SettingsDialog({ snapshot, theme, onThemeChange, onClose, onSaved }: { 
           <Toggle title="Use a direct local connection" description="Add a private local-network connection option to new invitations when nearby discovery is blocked." checked={settings.lan_fallback} onChange={() => toggle("lan_fallback")} />
         </div>
         <details className="advanced-settings"><summary>Advanced connection roles</summary><p>These options make this device part of the wider Reticulum mesh and may use additional power, storage, and bandwidth.</p><div className="settings-list settings-list--advanced"><Toggle title="Help route messages" description="Allow this device to forward encrypted Reticulum traffic for others." checked={settings.help_route} onChange={() => toggle("help_route")} /><Toggle title="Store encrypted messages" description="Act as an LXMF propagation node with a 100 MiB cache. This is separate from routing." checked={settings.store_for_offline} onChange={() => toggle("store_for_offline")} /></div></details>
+      </section>
+      <section className="settings-section i2p-settings" aria-labelledby="i2p-settings-title">
+        <div className="settings-section__heading"><h3 id="i2p-settings-title">I2P relay</h3><p>Use an I2P access point when this network cannot accept a direct connection. I2P relays encrypted Reticulum traffic; it does not create a direct link.</p></div>
+        <div className="settings-list">
+          <Toggle title="Use I2P" description="Connect through an I2P access point. Requires an I2P router with SAM enabled." checked={settings.i2p_enabled} onChange={() => toggle("i2p_enabled")} />
+        </div>
+        {settings.i2p_enabled && <div className="form-stack">
+          {!isAndroid && <Toggle title="Manage i2pd for me" description="Start a local i2pd process with SAM on localhost. No administrator rights or Windows service." checked={settings.i2p_managed} onChange={() => toggle("i2p_managed")} />}
+          {!isAndroid && <Toggle title="Run a connectable access point" description="Accept inbound I2P tunnels. Enable Help route messages if this device should relay for others." checked={settings.i2p_connectable} onChange={() => toggle("i2p_connectable")} />}
+          {isAndroid && <p className="muted">Connectable access points are desktop-only. Android uses client-only I2P.</p>}
+          <label className="field"><span>I2P access point addresses</span><textarea rows={3} value={settings.i2p_peers.join("\n")} onChange={(event) => setSettings((current) => ({ ...current, i2p_peers: event.target.value.split(/\r?\n/).map((value) => value.trim()).filter(Boolean) }))} placeholder="example.b32.i2p" spellCheck={false} /></label>
+          <p className="muted">One <code>*.b32.i2p</code> address per line. The access point can see connection metadata, not message contents. Save, then restart Mesh Chat to apply.</p>
+          {i2pStatus && <p className="muted" role="status">I2P: {i2pStatus.state === "online" ? `online · ${i2pStatus.online_count} interface${i2pStatus.online_count === 1 ? "" : "s"}` : i2pStatus.state === "not_started" ? "saved; restart Mesh Chat to start I2P" : i2pStatus.state} · {i2pStatus.peer_count} access point{i2pStatus.peer_count === 1 ? "" : "s"}</p>}
+          {i2pStatus?.router && <p className="muted" role="status">Router: {I2P_ROUTER_LABEL[i2pStatus.router.state] ?? i2pStatus.router.state}{i2pStatus.router.reason ? ` — ${I2P_ROUTER_REASON[i2pStatus.router.reason] ?? i2pStatus.router.reason}` : ""} · SAM {i2pStatus.router.sam_ready ? "ready" : "not ready"}</p>}
+          {i2pStatus?.router?.reason === "router_missing" && <p className="muted">Place <code>i2pd.exe</code> next to Mesh Chat, or turn off “Manage i2pd for me” and run i2pd yourself with SAM enabled.</p>}
+          {i2pStatus?.b32 && <p className="muted">This device’s I2P address: <code>{i2pStatus.b32}.b32.i2p</code></p>}
+        </div>}
       </section>
       <ParticipantHostingSettings initial={snapshot.participant_hosting ?? []} workspaces={snapshot.workspaces ?? []} onChanged={onSaved} />
       <RemoteConnectionsSettings initial={snapshot.remote_profiles ?? []} onChanged={onSaved} />
@@ -2518,6 +2569,7 @@ function JoinWorkspaceDialog({ initialValue = "", resumeWorkspaceId, workspaces,
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [remoteConsent, setRemoteConsent] = useState(false);
+  const [i2pConsent, setI2PConsent] = useState(false);
   const [connectionResults, setConnectionResults] = useState<ParticipantCandidateResult[]>([]);
   const [joinedWorkspace, setJoinedWorkspace] = useState<Workspace | null>(null);
   const existingWorkspace = preview && !joinedWorkspace
@@ -2575,12 +2627,12 @@ function JoinWorkspaceDialog({ initialValue = "", resumeWorkspaceId, workspaces,
         if (generation !== reviewGeneration.current) return;
         setDevicePreview(checked);
         setPreview(null);
-        setRemoteConsent(false);
+        setRemoteConsent(false); setI2PConsent(false);
       } else {
         const checked = await serviceCommand<WorkspaceInvitationPreview>("preview_workspace_invitation", { invitation: normalized });
         if (generation !== reviewGeneration.current) return;
         setPreview(checked);
-        setRemoteConsent(false);
+        setRemoteConsent(false); setI2PConsent(false);
         setDevicePreview(null);
       }
     }
@@ -2597,7 +2649,7 @@ function JoinWorkspaceDialog({ initialValue = "", resumeWorkspaceId, workspaces,
     lastInitialValue.current = initialValue;
     reviewGeneration.current += 1;
     setBusy(false); setValue(initialValue); setError("");
-    setPreview(null); setDevicePreview(null); setRemoteConsent(false);
+    setPreview(null); setDevicePreview(null); setRemoteConsent(false); setI2PConsent(false);
     setConnectionResults([]); setJoinedWorkspace(null); setReplyFormats(null); setReplyDoctor(null);
     void stopUnsharedReply();
     if (initialValue.trim()) void reviewCandidate(initialValue);
@@ -2615,7 +2667,7 @@ function JoinWorkspaceDialog({ initialValue = "", resumeWorkspaceId, workspaces,
       }
       const workspace = await serviceCommand<Workspace>(command, {
         operation_id: joinAttempt.current.operationId,
-        ...(devicePreview ? { device_link: document } : { invitation: document }),
+        ...(devicePreview ? { device_link: document } : { invitation: document, ...(preview?.i2p_access_point ? { i2p_consent: i2pConsent } : {}) }),
       });
       if (workspace.connection_results?.length && !workspace.connection_results.some((item) => item.result === "connected")) {
         setConnectionResults(workspace.connection_results);
@@ -2664,6 +2716,7 @@ function JoinWorkspaceDialog({ initialValue = "", resumeWorkspaceId, workspaces,
       {preview ? <>
         <div className="workspace-preview"><span className="workspace-preview__avatar">{initials(preview.name)}</span><div><h3>{preview.name}</h3><p>{preview.description || "No description"}</p></div></div>
         <dl className="security-list"><div><dt>Owner fingerprint</dt><dd>{preview.owner_fingerprint}</dd></div><div><dt>Current members</dt><dd>{preview.member_count}</dd></div><div><dt>History preference</dt><dd>{preview.retention_days === null ? "Indefinite" : `${preview.retention_days} days`}</dd></div></dl>
+        {preview.i2p_access_point && <section className="direct-consent" aria-labelledby="workspace-i2p-connection"><h3 id="workspace-i2p-connection">Relayed via I2P</h3><p>This signed workspace invitation asks to use an I2P access point. Traffic is relayed; it is not a direct connection. The access point can see connection metadata, not message contents.</p><p><code>{preview.i2p_access_point.b32}</code></p><label className="checkbox-line"><input type="checkbox" checked={i2pConsent} onChange={(event) => setI2PConsent(event.target.checked)} /> Use this I2P access point for this join</label></section>}
         {existingWorkspace ? <section className="direct-host-warning" role="status">
           <h3>Workspace already saved</h3>
           <p><strong>{workspaceStateLabel(existingWorkspace)}</strong></p>
@@ -2692,8 +2745,8 @@ function JoinWorkspaceDialog({ initialValue = "", resumeWorkspaceId, workspaces,
       {replyDoctor && <ReturnConnectionUnavailable report={replyDoctor} busy={busy} onRetry={() => void createReply()} />}
       {error && <p className="form-error" role="alert">{error}</p>}
       <div className="dialog-actions">{!joinedWorkspace && <>
-        <Button variant="ghost" onClick={reviewed ? () => { void stopUnsharedReply(); setPreview(null); setDevicePreview(null); setRemoteConsent(false); setReplyFormats(null); setReplyDoctor(null); } : () => void closeDialog()}>{reviewed ? "Back" : "Cancel"}</Button>
-        {!existingWorkspace && <Button disabled={busy || (!reviewed && !value.trim()) || Boolean(preview?.remote_profile) && !remoteConsent} onClick={() => void (reviewed ? join() : review())}>{busy ? "Working…" : devicePreview ? "Request device approval" : preview ? replyFormats ? "Send join request after sharing" : preview.remote_profile ? "Connect and send join request" : preview.participant_access ? "Connect directly and send join request" : "Send join request" : "Review"}</Button>}
+        <Button variant="ghost" onClick={reviewed ? () => { void stopUnsharedReply(); setPreview(null); setDevicePreview(null); setRemoteConsent(false); setI2PConsent(false); setReplyFormats(null); setReplyDoctor(null); } : () => void closeDialog()}>{reviewed ? "Back" : "Cancel"}</Button>
+        {!existingWorkspace && <Button disabled={busy || (!reviewed && !value.trim()) || Boolean(preview?.remote_profile) && !remoteConsent || Boolean(preview?.i2p_access_point) && !i2pConsent} onClick={() => void (reviewed ? join() : review())}>{busy ? "Working…" : devicePreview ? "Request device approval" : preview ? replyFormats ? "Send join request after sharing" : preview.remote_profile ? "Connect and send join request" : preview.participant_access ? "Connect directly and send join request" : "Send join request" : "Review"}</Button>}
       </>}</div>
     </div>
   </Dialog>;
@@ -2711,6 +2764,7 @@ function WorkspaceInviteDialog({ workspace, existingInvitations, remoteProfiles,
   const [manualSetup, setManualSetup] = useState<ManualParticipantSetup | null>(null);
   const [manualHost, setManualHost] = useState("");
   const [manualPort, setManualPort] = useState("");
+  const [i2pAccessPoint, setI2PAccessPoint] = useState("");
   const [shared, setShared] = useState(false);
   const [shareFeedback, setShareFeedback] = useState("");
   const [firewallFeedback, setFirewallFeedback] = useState("");
@@ -2725,6 +2779,8 @@ function WorkspaceInviteDialog({ workspace, existingInvitations, remoteProfiles,
         ? { connection_mode: "email" }
       : connectionChoice === "nearby"
         ? { connection_mode: "nearby" }
+      : connectionChoice === "i2p"
+        ? { connection_mode: "i2p", i2p_access_point: i2pAccessPoint.trim() }
         : { connection_mode: "remote", remote_profile_id: connectionChoice.slice("remote:".length) };
     try {
       const created = await serviceCommand<WorkspaceInvitationFormats>("create_workspace_invitation", { operation_id: newOperationId(), workspace_id: workspace.id, lifetime_days: 7, ...connection });
@@ -2816,7 +2872,7 @@ function WorkspaceInviteDialog({ workspace, existingInvitations, remoteProfiles,
     {savedSetupId && <DirectConnectionSetup key={savedSetupId} invitationId={savedSetupId} resumeExisting />}
     {invitation && connectionChoice === "guided" && <><DirectConnectionSetup invitationId={invitation.id} autoStart onShared={() => setShared(true)} /><Button variant="danger" disabled={busy} onClick={() => void revoke(invitation.id)}>Revoke invitation</Button></>}
     {invitation && connectionChoice !== "guided" && <><p>This bearer invitation works once and expires {formatExpiry(invitation.expires_at)}. This is the effective direct-host expiry.</p>{invitation.connection_mode === "participant" && <p className="direct-host-status" role="status"><ShieldCheck size={17} /> Prepared — waiting for recipient verification. Keep this owner device online.</p>}{invitation.connection_mode === "email" && <p className="direct-host-status" role="status"><ShieldCheck size={17} /> Email-ready. {invitation.host_session_id ? "The joiner tries this owner device first, then may check their device for a return connection." : "This owner device could not host an inbound path. The joiner can first try an existing or same-network Mesh route, and may create a return reply only if their network accepts inbound traffic."}</p>}{invitation.methods?.includes("manual") && <p className="muted">Mesh Chat cannot remove your manual router rule. Remove it in the router when it is no longer needed.</p>}<InvitationQrCode document={invitation.value} destination="workspace" /><label className="field"><span>Complete workspace invitation</span><textarea readOnly value={invitation.text} aria-label="Workspace invitation text" rows={5} onFocus={(event) => event.currentTarget.select()} /></label><p className="muted invite-safety">Send the entire value in this box. The <strong>MESHWORKSPACE…</strong> prefix by itself is only the format label, not an invitation.</p><div className="dialog-actions"><Button variant="danger" disabled={busy} onClick={() => void revoke(invitation.id)}>Revoke invitation</Button><Button variant="secondary" onClick={() => void copyInvitation()}>{copied ? <Check size={17} /> : <Copy size={17} />}{copied ? "Complete invitation copied" : "Copy complete invitation"}</Button><Button variant="secondary" onClick={() => void share()}><Share2 size={17} /> Share complete invitation</Button><Button variant="ghost" onClick={save}><FileUp size={17} /> Save invitation file</Button>{invitation.connection_mode === "participant" && invitation.host_session_id && !invitation.methods?.includes("manual") && <Button variant="ghost" disabled={busy} onClick={() => void configureFirewall()}><ShieldCheck size={17} /> Allow in Windows Firewall</Button>}</div>{shareFeedback && <p className="invite-feedback" aria-live="polite">{shareFeedback}</p>}{firewallFeedback && <p className="muted" role="status">{firewallFeedback}</p>}</>}
-    {!invitation && !savedSetupId && <>{connectionChoice === "guided" && <><p>Send an invitation, then follow the steps on both devices. No account or connection server is needed. Some networks cannot connect directly.</p><Button disabled={busy} onClick={() => void create()}>{busy ? "Preparing…" : "Prepare invitation"}</Button></>}<details><summary>Other connection options</summary><label className="field"><span>How should they connect?</span><select value={connectionChoice} disabled={busy} onChange={(event) => { setConnectionChoice(event.target.value); setDoctor(null); setError(""); }}><option value="guided">Guided connection (recommended)</option><option value="participant">Advanced: direct TCP hosting</option><option value="email">Email-assisted direct connection — reverse direction if possible</option><option value="nearby">Same network only — will not work over cellular</option>{usableProfiles.map((profile) => <option key={profile.id} value={`remote:${profile.id}`}>Approved access point · {profile.label} · {profile.state === "connected" ? "connected" : "currently unavailable"}</option>)}</select></label>{connectionChoice === "participant" && <><p className="muted">Direct participant hosting stays on this owner device. Keep Mesh Chat open through approval.</p><div className="dialog-actions"><Button variant="secondary" disabled={busy} onClick={() => void checkDirect()}>{busy ? "Checking this network…" : "Check direct Internet connection"}</Button><Button disabled={busy} onClick={() => void create()}>{busy ? "Preparing a direct route…" : "Prepare direct Internet invitation"}</Button><Button variant="ghost" disabled={busy} onClick={() => void prepareManual()}>Set up manual port forwarding</Button></div>{doctor && <DirectDoctorPanel report={doctor} busy={busy} onRetry={() => void checkDirect()} onManualSetup={() => void prepareManual()} />}{manualSetup && <ManualForwardingPanel setup={manualSetup} host={manualHost} port={manualPort} busy={busy} onHostChange={setManualHost} onPortChange={setManualPort} onCreate={() => void create(true)} />}</>}{connectionChoice === "email" && <><p className="muted">Creates the signed one-use invitation even when this owner device cannot accept inbound traffic. The joiner first tries any existing or same-network Mesh route; a return reply works only if the joiner’s network can accept inbound traffic.</p><p className="muted">Mesh Chat never accesses an email account. If both networks block inbound connections and no shared route exists, invitation exchange alone cannot create one.</p><Button disabled={busy} onClick={() => void create()}>{busy ? "Creating…" : "Create email-ready invitation"}</Button></>}{connectionChoice === "nearby" && <><p className="direct-host-warning">Same network only — will not work over cellular.</p><Button disabled={busy} onClick={() => void create()}>{busy ? "Creating…" : "Create same-network invitation"}</Button></>}{connectionChoice.startsWith("remote:") && <><p className="muted">This invitation explicitly uses the named approved access point selected above. Its operator can observe connection metadata.</p><Button disabled={busy} onClick={() => void create()}>{busy ? "Creating…" : "Create using selected access point"}</Button></>}<p>Create a separate signed invitation for each person. Each request is reviewed independently.</p></details></>}
+    {!invitation && !savedSetupId && <>{connectionChoice === "guided" && <><p>Send an invitation, then follow the steps on both devices. No account or connection server is needed. Some networks cannot connect directly.</p><Button disabled={busy} onClick={() => void create()}>{busy ? "Preparing…" : "Prepare invitation"}</Button></>}<details><summary>Other connection options</summary><label className="field"><span>How should they connect?</span><select value={connectionChoice} disabled={busy} onChange={(event) => { setConnectionChoice(event.target.value); setDoctor(null); setError(""); }}><option value="guided">Guided connection (recommended)</option><option value="participant">Advanced: direct TCP hosting</option><option value="email">Email-assisted direct connection — reverse direction if possible</option><option value="nearby">Same network only — will not work over cellular</option><option value="i2p">I2P access point — relayed through I2P</option>{usableProfiles.map((profile) => <option key={profile.id} value={`remote:${profile.id}`}>Approved access point · {profile.label} · {profile.state === "connected" ? "connected" : "currently unavailable"}</option>)}</select></label>{connectionChoice === "participant" && <><p className="muted">Direct participant hosting stays on this owner device. Keep Mesh Chat open through approval.</p><div className="dialog-actions"><Button variant="secondary" disabled={busy} onClick={() => void checkDirect()}>{busy ? "Checking this network…" : "Check direct Internet connection"}</Button><Button disabled={busy} onClick={() => void create()}>{busy ? "Preparing a direct route…" : "Prepare direct Internet invitation"}</Button><Button variant="ghost" disabled={busy} onClick={() => void prepareManual()}>Set up manual port forwarding</Button></div>{doctor && <DirectDoctorPanel report={doctor} busy={busy} onRetry={() => void checkDirect()} onManualSetup={() => void prepareManual()} />}{manualSetup && <ManualForwardingPanel setup={manualSetup} host={manualHost} port={manualPort} busy={busy} onHostChange={setManualHost} onPortChange={setManualPort} onCreate={() => void create(true)} />}</>}{connectionChoice === "email" && <><p className="muted">Creates the signed one-use invitation even when this owner device cannot accept inbound traffic. The joiner first tries any existing or same-network Mesh route; a return reply works only if the joiner’s network can accept inbound traffic.</p><p className="muted">Mesh Chat never accesses an email account. If both networks block inbound connections and no shared route exists, invitation exchange alone cannot create one.</p><Button disabled={busy} onClick={() => void create()}>{busy ? "Creating…" : "Create email-ready invitation"}</Button></>}{connectionChoice === "nearby" && <><p className="direct-host-warning">Same network only — will not work over cellular.</p><Button disabled={busy} onClick={() => void create()}>{busy ? "Creating…" : "Create same-network invitation"}</Button></>}{connectionChoice === "i2p" && <><p className="muted">The signed workspace invitation carries one I2P access point. The joiner must consent before traffic is relayed. I2P is a relay, not a direct connection.</p><label className="field"><span>I2P access point address</span><input value={i2pAccessPoint} onChange={(event) => setI2PAccessPoint(event.target.value.trim())} placeholder="example.b32.i2p" spellCheck={false} /></label><Button disabled={busy || !/^[a-z2-7]{52}\.b32\.i2p$/i.test(i2pAccessPoint)} onClick={() => void create()}>{busy ? "Creating…" : "Create I2P workspace invitation"}</Button></>}{connectionChoice.startsWith("remote:") && <><p className="muted">This invitation explicitly uses the named approved access point selected above. Its operator can observe connection metadata.</p><Button disabled={busy} onClick={() => void create()}>{busy ? "Creating…" : "Create using selected access point"}</Button></>}<p>Create a separate signed invitation for each person. Each request is reviewed independently.</p></details></>}
     {existing.length > 0 && <div className="workspace-invitation-list"><h3>Active invitations</h3>{existing.filter((item) => item.id !== invitation?.id).map((item) => <div className="workspace-invitation-row" key={item.id}><span>One-use invitation · expires {formatExpiry(item.expires_at)}</span>{!invitation && <Button variant="secondary" disabled={busy} onClick={() => setSavedSetupId(item.id)}>Continue setup</Button>}<Button variant="ghost" disabled={busy} onClick={() => void revoke(item.id)}>Revoke</Button></div>)}</div>}
     {error && <p className="form-error" role="alert">{error}</p>}
   </div></Dialog>;

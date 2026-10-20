@@ -195,6 +195,50 @@ def _interface_addresses(rns_module: Any = RNS) -> dict[str, list[dict[str, Any]
     return values
 
 
+def _windows_interface_addresses(
+    runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
+) -> dict[tuple[int, str], list[str]]:
+    """Resolve interface addresses by Windows InterfaceIndex.
+
+    Reticulum's netinfo may expose GUIDs while Get-NetRoute reports friendly
+    aliases such as ``Wi-Fi``. The index is the stable join key.
+    """
+    command = [
+        "powershell.exe", "-NoLogo", "-NoProfile", "-NonInteractive", "-Command",
+        "$ErrorActionPreference='Stop'; Get-NetIPAddress -ErrorAction SilentlyContinue "
+        "| Select-Object InterfaceIndex,AddressFamily,IPAddress "
+        "| ConvertTo-Json -Compress",
+    ]
+    try:
+        completed = runner(
+            command, capture_output=True, text=True, timeout=3, check=False,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+        if completed.returncode or not completed.stdout.strip():
+            return {}
+        parsed = json.loads(completed.stdout)
+        rows = parsed if isinstance(parsed, list) else [parsed]
+    except (OSError, subprocess.SubprocessError, json.JSONDecodeError):
+        return {}
+    values: dict[tuple[int, str], list[str]] = {}
+    for row in rows:
+        try:
+            index = int(row["InterfaceIndex"])
+            family_value = str(row.get("AddressFamily", "")).strip().lower()
+            family = "ipv6" if family_value in {"23", "ipv6", "internetworkv6"} or "ipv6" in family_value else "ipv4"
+            address = str(row.get("IPAddress", "")).split("%", 1)[0]
+            kind = classify_address(address)
+            if kind not in {"public_ipv4", "public_ipv6", "rfc1918", "shared"}:
+                continue
+            values.setdefault((index, family), []).append(ipaddress.ip_address(address).compressed)
+        except (KeyError, TypeError, ValueError):
+            continue
+    priority = {"public_ipv4": 0, "public_ipv6": 0, "rfc1918": 1, "shared": 2}
+    for key in values:
+        values[key].sort(key=lambda item: priority.get(classify_address(item), 3))
+    return values
+
+
 def _windows_default_routes(
     interfaces: dict[str, list[dict[str, Any]]],
     runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
@@ -204,7 +248,7 @@ def _windows_default_routes(
         "$ErrorActionPreference='Stop'; Get-NetRoute "
         "| Where-Object {$_.DestinationPrefix -in @('0.0.0.0/0','::/0') -and $_.State -eq 'Alive'} "
         "| Sort-Object RouteMetric,InterfaceMetric "
-        "| Select-Object AddressFamily,InterfaceAlias,NextHop,RouteMetric,InterfaceMetric "
+        "| Select-Object AddressFamily,InterfaceAlias,InterfaceIndex,NextHop,RouteMetric,InterfaceMetric "
         "| ConvertTo-Json -Compress",
     ]
     try:
@@ -219,6 +263,7 @@ def _windows_default_routes(
     except (OSError, subprocess.SubprocessError, json.JSONDecodeError):
         return []
     routes: list[RouteInfo] = []
+    by_index: dict[tuple[int, str], list[str]] | None = None
     for row in rows:
         try:
             family_value = str(row["AddressFamily"]).strip().lower()
@@ -228,11 +273,19 @@ def _windows_default_routes(
                 else socket.AF_INET
             )
             interface = str(row.get("InterfaceAlias", ""))
+            interface_index = int(row["InterfaceIndex"]) if row.get("InterfaceIndex") is not None else None
             local = next((
                 str(item["address"]) for item in interfaces.get(interface, [])
                 if (family == socket.AF_INET6) == (":" in str(item["address"]))
                 and classify_address(str(item["address"])) not in {"loopback", "link_local"}
             ), None)
+            if local is None and interface_index is not None:
+                if by_index is None:
+                    by_index = _windows_interface_addresses(runner)
+                candidates = by_index.get(
+                    (interface_index, "ipv6" if family == socket.AF_INET6 else "ipv4"), []
+                )
+                local = candidates[0] if candidates else None
             raw_gateway = str(row.get("NextHop", ""))
             gateway = None if raw_gateway in {"", "0.0.0.0", "::"} else raw_gateway.split("%", 1)[0]
             metric = int(row.get("RouteMetric", 0)) + int(row.get("InterfaceMetric", 0))
@@ -1004,7 +1057,7 @@ def map_pcp(
 def create_port_mapping(
     internal_port: int, *, lifetime: int = DEFAULT_MAPPING_LIFETIME,
     routes: list[RouteInfo] | None = None, preferred_external_port: int = 0,
-    protocol: str = "tcp",
+    protocol: str = "tcp", attempts: list[ConnectivityError] | None = None,
 ) -> MappingResult:
     _mapping_protocol(protocol)
     failures: list[ConnectivityError] = []
@@ -1016,8 +1069,13 @@ def create_port_mapping(
             )
         except ConnectivityError as exc:
             failures.append(exc)
+            if attempts is not None:
+                attempts.append(exc)
         except OSError:
-            failures.append(ConnectivityError("precondition", "no_default_route"))
+            failure = ConnectivityError("precondition", "no_default_route")
+            failures.append(failure)
+            if attempts is not None:
+                attempts.append(failure)
     for reason in ("upstream_nat_detected", "upnp_wan_shared", "upnp_wan_private"):
         failure = next((item for item in failures if item.reason == reason), None)
         if failure:

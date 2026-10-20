@@ -29,6 +29,7 @@ use std::{
 use tauri::AppHandle;
 #[cfg(desktop)]
 use tauri::{Emitter, Manager, State};
+use tauri::path::BaseDirectory;
 #[cfg(desktop)]
 use tauri_plugin_shell::{
     process::{CommandChild, CommandEvent},
@@ -335,6 +336,22 @@ fn spawn_service(app: &AppHandle, state: &ServiceState) -> Result<(), String> {
         .sidecar("mesh-chat-service")
         .map_err(|_| "service_binary_unavailable".to_string())?
         .set_raw_out(true);
+    let mut command = command;
+    let i2pd = [
+        "i2pd.exe",
+        "vendor/i2pd.exe",
+        "_up_/vendor/i2pd.exe",
+    ]
+    .iter()
+    .find_map(|name| {
+        app.path()
+            .resolve(name, BaseDirectory::Resource)
+            .ok()
+            .filter(|path| path.is_file())
+    });
+    if let Some(i2pd) = i2pd {
+        command = command.env("MESH_CHAT_I2PD_PATH", i2pd.to_string_lossy().to_string());
+    }
     let (mut receiver, child) = command
         .spawn()
         .map_err(|_| "service_start_failed".to_string())?;
@@ -453,6 +470,7 @@ fn allowed_renderer_command(command: &str) -> bool {
     matches!(
         command,
         "snapshot"
+            | "i2p_status"
             | "workspace_snapshot"
             | "create_profile"
             | "create_invitation"
@@ -508,6 +526,7 @@ fn allowed_renderer_command(command: &str) -> bool {
             | "prepare_direct_ready"
             | "accept_direct_ready"
             | "connect_direct_setup"
+            | "configure_direct_firewall"
             | "direct_recovery_status"
             | "export_recovery_update"
             | "import_recovery_update"
@@ -1514,6 +1533,7 @@ mod tests {
             assert!(!allowed_renderer_command(command));
         }
         assert!(allowed_renderer_command("delete_conversation"));
+        assert!(allowed_renderer_command("i2p_status"));
         assert!(allowed_renderer_command("restore_conversation"));
         assert!(allowed_renderer_command("set_message_reaction"));
         assert!(!allowed_renderer_command("delete_contact_identity"));
@@ -1541,6 +1561,7 @@ mod tests {
             "prepare_direct_ready",
             "accept_direct_ready",
             "connect_direct_setup",
+            "configure_direct_firewall",
             "direct_recovery_status",
             "export_recovery_update",
             "import_recovery_update",

@@ -456,6 +456,41 @@ class ReticulumNetwork:
             for interface in list(RNS.Transport.interfaces)
         )
 
+    def i2p_status(self) -> dict[str, Any]:
+        """Return renderer-safe I2P interface state without peer addresses."""
+        interfaces = []
+        for interface in list(RNS.Transport.interfaces):
+            name = str(getattr(interface, "name", ""))
+            kind = interface.__class__.__name__
+            if not (name.startswith("I2P") or kind in {"I2PInterface", "I2PInterfacePeer"}):
+                continue
+            own_b32 = getattr(interface, "b32", None) if kind == "I2PInterface" else None
+            interfaces.append({
+                "name": name,
+                "online": bool(getattr(interface, "online", False)),
+                "own_b32": own_b32 if isinstance(own_b32, str) else None,
+            })
+        online = any(item["online"] for item in interfaces)
+        own_b32 = next((item["own_b32"] for item in interfaces if item["own_b32"]), None)
+        if not self.settings.i2p_enabled:
+            state = "disabled"
+        elif online:
+            state = "online"
+        elif interfaces:
+            state = "starting"
+        else:
+            state = "not_started"
+        return {
+            "enabled": self.settings.i2p_enabled,
+            "connectable": self.settings.i2p_connectable,
+            "peer_count": len(self.settings.i2p_peers),
+            "interface_count": len(interfaces),
+            "online_count": sum(1 for item in interfaces if item["online"]),
+            "online": online,
+            "state": state,
+            "b32": own_b32,
+        }
+
     def remember_contact(self, public_key: bytes, destination_hash: bytes) -> None:
         identity = RNS.Identity(create_keys=False)
         if not identity.load_public_key(public_key):

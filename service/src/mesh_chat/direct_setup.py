@@ -6,16 +6,18 @@ are not permission to attach the bootstrap adapter or claim remote receipt.
 from __future__ import annotations
 
 import hashlib
+import platform
 import socket
 import threading
 import time
+from pathlib import Path
 
 from .direct_binding import BindingAuthority, create_binding
 from .direct_candidates import prepare_candidates
 from .direct_documents import export_connection_document, verify_connection_document
 from .direct_exchange import create_answer, create_ready
 from .direct_offer import OfferAuthority, create_offer
-from .errors import ValidationError
+from .errors import NativeUnavailable, ValidationError, WorkspaceAlreadyKnown
 from .workspace_protocol import _destination_for, _identity_from_public_key
 
 
@@ -25,6 +27,7 @@ class DirectSetup:
         self._lock = threading.Lock()
         self._prepared = {}
         self._carriers = {}
+        self._firewall = {}
         self._retiring = 0
         self._closed = False
         self._epoch = 0
@@ -33,7 +36,9 @@ class DirectSetup:
     def _available(self):
         self.service._check_direct_runtime_available()
         if self.service._direct_native is None:
-            raise ValidationError("Native direct transport is unavailable")
+            raise NativeUnavailable("Native direct transport is unavailable")
+        if getattr(self.service._direct_native, "closed", False):
+            raise NativeUnavailable("Direct native channel is closed")
         with self._lock:
             if self._closed:
                 raise ValidationError("Direct setup is closed")
@@ -43,6 +48,15 @@ class DirectSetup:
 
     def _prepare(self, setup_id, generation, expires_at, family=None):
         self._available()
+        with self._lock:
+            stale_firewall = self._firewall.pop(setup_id, None)
+        if stale_firewall is not None:
+            from .firewall import remove_temporary_windows_rule
+            remove_temporary_windows_rule(stale_firewall)
+            value = self.service.store.get("direct_setup", setup_id)
+            if value is not None and value.get("firewall"):
+                self.service.store.put("direct_setup", setup_id,
+                    {key:item for key,item in value.items() if key != "firewall"})
         with self._lock:
             active = setup_id in self._carriers
         if active:
@@ -72,12 +86,60 @@ class DirectSetup:
             previous.close()
         return prepared
 
+    def _existing_workspace(self, invite):
+        """Read-only saved-workspace evidence for a pasted connection document.
+
+        A different invitation must never replace an existing join request. The
+        caller uses this to route the user to the saved workspace instead of
+        attempting a reply that the exact saved-invitation check will reject.
+        """
+        workspace = self.service.store.get(
+            "workspace", self.service._workspace_record_id(invite.workspace_id)
+        )
+        if workspace is None:
+            return None
+        reason = self.service._saved_join_invitation_reason(workspace, invite)
+        return {
+            "id": workspace["id"],
+            "name": workspace.get("name", "Workspace"),
+            "state": workspace.get("state", "unknown"),
+            "can_continue": reason is None,
+            "reason": reason,
+        }
+
+    def _firewall_status(self, setup_id, prepared):
+        with self._lock:
+            record = self._firewall.get(setup_id)
+        if record is not None:
+            if record.get("configured"):
+                return {"state": "prepared", "reason": "temporary_udp_rule_active"}
+            return {"state": "failed", "reason": str(record.get("reason", "windows_firewall_blocked"))}
+        if not prepared._candidates:
+            return {"state": "skipped", "reason": "no_prepared_candidate"}
+        if platform.system().lower() != "windows":
+            return {"state": "skipped", "reason": "firewall_check_unsupported"}
+        return {"state": "needs_consent", "reason": "firewall_permission_required"}
+
+    def _plan(self, setup_id, prepared):
+        if prepared is None:
+            return None
+        return prepared.reachability(firewall=self._firewall_status(setup_id, prepared))
+
+    def _apply_manual(self, prepared, host, port):
+        if host is None and port is None:
+            return
+        if host is None or port is None:
+            raise ValidationError("Manual forward requires both an address and a port")
+        prepared.add_manual_candidate(host, port)
+
     def _state(self, setup_id, state, kind, workspace_id, fields, text=None):
         value = {"setup_id":setup_id,"state":state,"kind":kind,"workspace_id":workspace_id,
                  "expires_at":fields["expires_at"],"candidate_count":len(fields["candidates"])}
         previous = self.service.store.get("direct_setup", setup_id)
         if previous and previous.get("relationship_id"):
             value["relationship_id"] = previous["relationship_id"]
+        if previous and previous.get("firewall"):
+            value["firewall"] = previous["firewall"]
         self.service.store.put("direct_setup", setup_id, value)
         if text is not None:
             self.service.store.put("direct_setup_document", setup_id, {"text":text})
@@ -92,10 +154,15 @@ class DirectSetup:
             if workspace.get("local_role") != "owner" and workspace.get("state") in {"joining", "active"}:
                 receipt = "confirmed" if workspace.get("join_receipt") else "not_confirmed"
                 approval = "approved" if workspace["state"] == "active" else "pending"
-            record(self.service, "state", {**value, "candidate_sources":counts,
-                "receipt_status":receipt, "approval_status":approval, **getattr(prepared, "statistics", {})})
+            record(self.service, "state", {**value, "workspace_state":workspace.get("state", "unavailable"),
+                "candidate_sources":counts, "receipt_status":receipt,
+                "approval_status":approval, **getattr(prepared, "statistics", {})})
         self.service._changed()
-        return {**value, **({"text":text} if text is not None else {})}
+        with self._lock:
+            prepared_now = self._prepared.get(setup_id)
+        plan = self._plan(setup_id, prepared_now)
+        return {**value, **({"text":text} if text is not None else {}),
+                **({"reachability":plan} if plan is not None else {})}
 
     def relationship_ready(self, carrier, identifier):
         """Persist completion after authenticated admitted RNS confirmation."""
@@ -148,6 +215,9 @@ class DirectSetup:
         with self._lock:
             prepared = self._prepared.get(setup_id)
             carrier = self._carriers.get(setup_id)
+        plan = self._plan(setup_id, prepared)
+        if plan is not None:
+            result["reachability"] = plan
         if value["state"] == "cancelled":
             return {**result, "readiness":"cancelled"}
         if value["state"] == "relationship_active":
@@ -229,7 +299,16 @@ class DirectSetup:
         return self.answer(offer, str(uuid.uuid4()))
 
     def preview(self, document):
-        return verify_connection_document(document).preview()
+        checked = verify_connection_document(document)
+        # Only a joiner's Offer starts a saved join request. An Answer is the
+        # owner's step and its workspace is active by definition, so it must not
+        # be rerouted to the saved-workspace panel.
+        existing = None
+        if (checked.kind == "offer" and self.service._identity is not None
+                and checked.offer_authority.issuer_public_identity
+                != self.service._identity.get_public_key()):
+            existing = self._existing_workspace(checked.invitation)
+        return {**checked.preview(), "existing_workspace":existing}
 
     def resume(self, workspace_id=None, invitation_id=None):
         """Reopen a saved join without clipboard data; never revive a lost socket."""
@@ -289,7 +368,7 @@ class DirectSetup:
             return None
         return socket.AF_INET6 if ":" in candidates[0]["host"] else socket.AF_INET
 
-    def offer(self, invitation_id):
+    def offer(self, invitation_id, manual_host=None, manual_port=None):
         self._available()
         service = self.service
         invite, owner = service._direct_owner_invitation(invitation_id)
@@ -307,6 +386,7 @@ class DirectSetup:
                          record.get("ready_accepted", {}).get("generation", 0)) + 1
         prepared = self._prepare(setup_id, generation, record["expires_at"])
         try:
+            self._apply_manual(prepared, manual_host, manual_port)
             fields = prepared.document_fields()
             authority = OfferAuthority(owner.public_identity, record["scope"], record["expires_at"], bytes.fromhex(record["challenge"]))
             raw = create_offer(service._identity, authority, fields["certificate"],
@@ -321,43 +401,77 @@ class DirectSetup:
             self.cancel(setup_id)
             raise
 
-    def answer(self, document, operation_id):
-        self._available()
-        checked = verify_connection_document(document)
-        if checked.kind != "offer":
-            raise ValidationError("A connection Offer is required")
-        service, invite = self.service, checked.invitation
-        workspace = service.store.get("workspace", service._workspace_record_id(invite.workspace_id))
-        if workspace is None:
-            service.submit_workspace_join(invite.serialized, operation_id)
-        # Existing joining records are rechecked against the exact signed invitation.
-        owner = _destination_for(_identity_from_public_key(checked.offer_authority.issuer_public_identity))
-        local = _destination_for(service._identity)
-        expected = BindingAuthority(checked.offer_authority.issuer_public_identity, local,
-            checked.offer_authority.scope, checked.offer_authority.expires_at, checked.offer_authority.challenge)
-        service._direct_join_binding_authority(invite.workspace_id, expected)
-        previous = service.store.get("direct_join_exchange", service._workspace_record_id(invite.workspace_id))
-        generation = (previous or {}).get("answer_accepted", {}).get("generation", 0)+1
-        setup_id = self._id("joiner", invite.workspace_id)
-        prepared = self._prepare(setup_id, generation, expected.expires_at, self._family(checked))
+    def answer(self, document, operation_id, manual_host=None, manual_port=None):
+        stage = "runtime_check"
+        prepared = None
+        workspace = None
         try:
+            self._available()
+            stage = "document_verification"
+            checked = verify_connection_document(document)
+            if checked.kind != "offer":
+                raise ValidationError("A connection Offer is required")
+            service, invite = self.service, checked.invitation
+            stage = "save_join_request"
+            workspace = service.store.get("workspace", service._workspace_record_id(invite.workspace_id))
+            if workspace is None:
+                service.submit_workspace_join(invite.serialized, operation_id)
+            else:
+                # A saved request is authoritative. Never let a different
+                # invitation replace it, and never re-use a request whose
+                # workspace has already moved past the pending-join state.
+                stage = "join_authorization"
+                reason = service._saved_join_invitation_reason(workspace, invite)
+                if reason is not None:
+                    error = WorkspaceAlreadyKnown(
+                        "This workspace is already saved on this device",
+                        reason=reason,
+                    )
+                    error.direct_setup_workspace_state = workspace.get("state")
+                    raise error
+            # Existing joining records are rechecked against the exact signed invitation.
+            stage = "join_authorization"
+            owner = _destination_for(_identity_from_public_key(checked.offer_authority.issuer_public_identity))
+            local = _destination_for(service._identity)
+            expected = BindingAuthority(checked.offer_authority.issuer_public_identity, local,
+                checked.offer_authority.scope, checked.offer_authority.expires_at, checked.offer_authority.challenge)
+            service._direct_join_binding_authority(invite.workspace_id, expected)
+            previous = service.store.get("direct_join_exchange", service._workspace_record_id(invite.workspace_id))
+            generation = (previous or {}).get("answer_accepted", {}).get("generation", 0)+1
+            setup_id = self._id("joiner", invite.workspace_id)
+            stage = "prepare_candidates"
+            prepared = self._prepare(setup_id, generation, expected.expires_at, self._family(checked))
+            self._apply_manual(prepared, manual_host, manual_port)
+            stage = "verify_socket"
             fields = prepared.document_fields()
+            stage = "sign_reply"
             authority = BindingAuthority(service._identity.get_public_key(), owner, expected.scope,
                 expected.expires_at, expected.challenge)
             binding = create_binding(service._identity, authority, fields["certificate"],
                 session_id=fields["session_id"], challenge=expected.challenge, generation=generation,
                 candidates=fields["candidates"], issued_at=int(time.time()), expires_at=fields["expires_at"], version=2)
             answer = create_answer(service._identity, binding, checked.offer)
+            stage = "save_reply"
             accepted = service._save_direct_join_answer(invite.workspace_id, checked.offer, checked.offer_certificate,
                 answer, fields["certificate"], expected)
+            stage = "arm_socket"
             service._direct_native.request("arm", id=prepared.handle, session=fields["session_id"],
                 generation=generation, digest=accepted.digest)
+            stage = "verify_socket"
             prepared.document_fields()
+            stage = "export_reply"
             text = export_connection_document(invite.serialized, checked.offer, checked.offer_certificate,
                 answer=answer, answer_certificate=fields["certificate"])
+            stage = "save_setup"
             return self._state(setup_id, "waiting_for_ready", "answer", invite.workspace_id, fields, text)
-        except Exception:
-            self.cancel(setup_id)
+        except Exception as exc:
+            # Only fixed labels reach diagnostics; never the document or
+            # exception text. Preserve the original error code and traceback.
+            exc.direct_setup_failure_stage = stage
+            if workspace is not None:
+                exc.direct_setup_workspace_state = workspace.get("state")
+            if prepared is not None:
+                self.cancel(setup_id)
             raise
 
     def ready(self, document):
@@ -416,12 +530,58 @@ class DirectSetup:
         service.store.put("direct_setup_document", setup_id, {"text":document})
         return self._state(setup_id, "ready_received", "ready", workspace_id, fields)
 
+    def configure_firewall(self, setup_id):
+        """Install one temporary UDP rule for this exact prepared socket.
+
+        The operating system elevation prompt is the user's consent. This
+        never runs on Android, never opens a range, and never claims that the
+        router mapping is reachable.
+        """
+        self._available()
+        if not isinstance(setup_id, str):
+            raise ValidationError("Direct setup identifier is invalid")
+        with self._lock:
+            prepared = self._prepared.get(setup_id)
+            existing = self._firewall.get(setup_id)
+        if prepared is None:
+            raise ValidationError("Direct setup is unavailable")
+        prepared._check()
+        if not prepared._candidates:
+            raise ValidationError("No prepared address requires a firewall rule")
+        if existing is not None and existing.get("configured"):
+            return {"setup_id":setup_id,"state":"prepared",
+                    "reason":"temporary_udp_rule_active","protocol":"udp"}
+        from .firewall import install_temporary_windows_rule
+        session_id = hashlib.sha256(("direct:"+setup_id).encode()).hexdigest()
+        installed = install_temporary_windows_rule(
+            session_id, prepared._owned["port"], Path(self.service.profile_dir)/"firewall",
+            protocol="UDP",
+        )
+        if installed.get("configured"):
+            with self._lock:
+                self._firewall[setup_id] = installed
+            status = {"state":"prepared","reason":"temporary_udp_rule_active","protocol":"udp"}
+        else:
+            reason = str(installed.get("reason","windows_firewall_blocked"))
+            with self._lock:
+                self._firewall[setup_id] = {"configured":False,"reason":reason}
+            status = {"state":"failed","reason":reason,"protocol":"udp"}
+        value = self.service.store.get("direct_setup", setup_id)
+        if value is not None:
+            self.service.store.put("direct_setup", setup_id, {**value,"firewall":status})
+            self.service._changed()
+        return {"setup_id":setup_id, **status}
+
     def cancel(self, setup_id):
         if not isinstance(setup_id, str):
             raise ValidationError("Direct setup identifier is invalid")
         with self._lock:
             prepared = self._prepared.pop(setup_id, None)
             carrier = self._carriers.pop(setup_id, None)
+            firewall = self._firewall.pop(setup_id, None)
+        if firewall is not None:
+            from .firewall import remove_temporary_windows_rule
+            remove_temporary_windows_rule(firewall)
         value = self.service.store.get("direct_setup", setup_id)
         relationship = value.get("relationship_id") if value else None
         if relationship and self.service.store.get("direct_relationship",relationship) is not None:
@@ -526,7 +686,15 @@ class DirectSetup:
             self._epoch += 1
             prepared, self._prepared = list(self._prepared.values()), {}
             carriers, self._carriers = list(self._carriers.values()), {}
+            firewall, self._firewall = list(self._firewall.values()), {}
             self._retiring += len(prepared)
+        if firewall:
+            from .firewall import remove_temporary_windows_rule
+            for rule in firewall:
+                try:
+                    remove_temporary_windows_rule(rule)
+                except Exception:
+                    pass
         def cleanup():
             for carrier in carriers:
                 try:

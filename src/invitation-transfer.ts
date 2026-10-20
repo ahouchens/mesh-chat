@@ -63,6 +63,10 @@ export function classifyInvitationInput(raw: string): InvitationInputKind {
   const lower = value.toLowerCase();
   const markers = jsonDocumentMarkers(value);
   if (value.startsWith(COMPACT_QR_PREFIX)) return "compact_qr";
+  if (lower.startsWith("meshi2p1w:")) return "workspace";
+  if (lower.startsWith("meshi2p1:") || markers.type === "i2p_invitation") {
+    return markers.purpose === "workspace" ? "workspace" : "personal";
+  }
   if (value.startsWith("mesh-direct:") || markers.type === "direct_connection") return "direct_connection";
   if (
     lower.startsWith("meshchat://workspace-device/")

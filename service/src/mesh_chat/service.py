@@ -41,6 +41,12 @@ from .direct_packet_adapter import ProfileBudget
 from .group_service import GroupServiceMixin
 from .models import Contact, DeliveryState, Message, MessageKind, Profile, TrustState
 from .network import ReticulumNetwork, select_lan_listener_port
+from .i2p_router import I2PRouterManager
+from .i2p_invitation import (
+    create_i2p_invitation,
+    i2p_invitation_formats,
+    verify_i2p_invitation,
+)
 from .participant import (
     connection_response_formats,
     create_connection_response,
@@ -65,7 +71,7 @@ from .remote import (
     verify_remote_invitation,
 )
 from .remote_service import RemoteProfileServiceMixin
-from .reticulum_config import NetworkSettings
+from .reticulum_config import NetworkSettings, write_config
 from .vault import VaultStore
 from .workspace_protocol import verify_workspace_invitation
 from .workspace_service import WorkspaceServiceMixin
@@ -146,10 +152,12 @@ class MeshChatService(
         "connection_diagnostics", "clear_connection_diagnostics",
         "preview_direct_connection", "prepare_direct_offer", "prepare_direct_answer",
         "prepare_direct_ready", "accept_direct_ready", "connect_direct_setup",
+        "configure_direct_firewall",
         "direct_setup_status", "cancel_direct_setup", "check_direct_setup", "retry_direct_setup",
         "direct_recovery_status", "export_recovery_update", "import_recovery_update",
         "pause_direct_recovery", "resume_direct_recovery",
         "snapshot",
+        "i2p_status",
         "workspace_snapshot",
         "create_profile",
         "create_invitation",
@@ -311,10 +319,12 @@ class MeshChatService(
         "connection_diagnostics", "clear_connection_diagnostics",
         "preview_direct_connection", "prepare_direct_offer", "prepare_direct_answer",
         "prepare_direct_ready", "accept_direct_ready", "connect_direct_setup",
+        "configure_direct_firewall",
         "direct_setup_status", "cancel_direct_setup", "check_direct_setup", "retry_direct_setup",
         "direct_recovery_status", "export_recovery_update", "import_recovery_update",
         "pause_direct_recovery", "resume_direct_recovery",
         "snapshot",
+        "i2p_status",
         "workspace_snapshot",
         "search",
         "connection_help",
@@ -366,6 +376,7 @@ class MeshChatService(
 
         settings_record = store.get("settings", "network")
         self.settings = NetworkSettings.from_dict(settings_record)
+        self._i2p_router = I2PRouterManager(profile_dir)
         identity_record = store.get("identity", "local")
         profile_record = store.get("profile", "local")
         if identity_record is not None or profile_record is not None:
@@ -376,6 +387,8 @@ class MeshChatService(
                 raise ValidationError("Stored private identity is invalid")
             self._restore_participant_interfaces()
             self._prepare_lan_fallback()
+            if self.settings.i2p_enabled and self.settings.i2p_managed:
+                self._i2p_router.start()
             self._start_network(profile_record["display_name"])
             with self._dispatch_lock:
                 self._recover_outbox()
@@ -471,6 +484,8 @@ class MeshChatService(
         manual_setup_id: str | None = None,
         external_host: str | None = None,
         external_port: int | None = None,
+        i2p_access_point: str | None = None,
+        i2p_label: str | None = None,
     ) -> InvitationFormats:
         profile = self._require_profile()
         if self._identity is None:
@@ -488,6 +503,28 @@ class MeshChatService(
             }:
                 hints.append({"type": "tcp", **listener})
         local = create_invitation(self._identity, profile["display_name"], hints=hints)
+        if connection_mode == "i2p":
+            if not isinstance(i2p_access_point, str):
+                raise ValidationError("I2P access point is required")
+            serialized = create_i2p_invitation(
+                self._identity,
+                local["file"],
+                "personal",
+                i2p_access_point,
+                label=i2p_label if isinstance(i2p_label, str) else None,
+                expires_at=local["expires_at"],
+            )
+            verified = verify_i2p_invitation(serialized, "personal")
+            if verified is None:
+                raise ValidationError("I2P invitation could not be created")
+            if not self.settings.i2p_connectable:
+                self._adopt_i2p_access_point(verified.access_point["b32"])
+            return {
+                **i2p_invitation_formats(serialized, "personal"),
+                "expires_at": verified.expires_at,
+                "connection_mode": "i2p",
+                "i2p_access_point": verified.access_point["b32"],
+            }
         if connection_mode == "email":
             scope_id = str(uuid.uuid4())
             access: dict[str, Any] | None = None
@@ -574,14 +611,19 @@ class MeshChatService(
 
     def preview_invitation(self, raw: str) -> dict[str, Any]:
         try:
-            email = verify_email_invitation(raw, "personal")
-            participant = None if email else verify_participant_invitation(raw, "personal")
-            remote = None if email or participant else verify_remote_invitation(raw, "personal")
+            i2p = verify_i2p_invitation(raw, "personal")
+            email = None if i2p else verify_email_invitation(raw, "personal")
+            participant = None if i2p or email else verify_participant_invitation(raw, "personal")
+            remote = None if i2p or email or participant else verify_remote_invitation(raw, "personal")
             invitation = verify_invitation(
-                email.inner if email else participant.inner if participant else remote.inner if remote else raw
+                i2p.inner if i2p else email.inner if email else participant.inner if participant else remote.inner if remote else raw
             )
             preview = invitation.preview()
-            if email is not None:
+            if i2p is not None:
+                preview["i2p_access_point"] = i2p.access_point
+                preview["requires_i2p_consent"] = True
+                preview["expires_at"] = min(preview["expires_at"], i2p.expires_at)
+            elif email is not None:
                 preview["connection_reply_available"] = True
                 preview["invitation_digest"] = email.digest
                 if email.inviter_access is not None:
@@ -599,16 +641,21 @@ class MeshChatService(
         except ValidationError as exc:
             raise InvitationInvalid("Invitation could not be validated") from exc
 
-    def accept_invitation(self, raw: str) -> dict[str, Any]:
+    def accept_invitation(self, raw: str, *, i2p_consent: bool = False) -> dict[str, Any]:
         try:
-            email = verify_email_invitation(raw, "personal")
-            participant = None if email else verify_participant_invitation(raw, "personal")
-            remote = None if email or participant else verify_remote_invitation(raw, "personal")
+            i2p = verify_i2p_invitation(raw, "personal")
+            email = None if i2p else verify_email_invitation(raw, "personal")
+            participant = None if i2p or email else verify_participant_invitation(raw, "personal")
+            remote = None if i2p or email or participant else verify_remote_invitation(raw, "personal")
             invitation = verify_invitation(
-                email.inner if email else participant.inner if participant else remote.inner if remote else raw
+                i2p.inner if i2p else email.inner if email else participant.inner if participant else remote.inner if remote else raw
             )
         except ValidationError as exc:
             raise InvitationInvalid("Invitation could not be validated") from exc
+        if i2p is not None:
+            if not i2p_consent:
+                raise ValidationError("I2P access point consent is required")
+            self._adopt_i2p_access_point(i2p.access_point["b32"])
         profile = self._require_profile()
         if invitation.destination_hash.hex() == profile["destination_hash"]:
             raise ValidationError("Cannot connect to the local identity")
@@ -2351,6 +2398,35 @@ class MeshChatService(
                     attempted += 1
                 self._attempt(message["id"])
 
+    def _adopt_i2p_access_point(self, b32: str) -> None:
+        peers = [b32, *[item for item in self.settings.i2p_peers if item != b32]][:4]
+        settings = NetworkSettings.from_dict(self.settings.to_dict())
+        settings.i2p_enabled = True
+        settings.i2p_peers = peers
+        self.settings = settings
+        self.store.put("settings", "network", settings.to_dict())
+        write_config(self.profile_dir / "reticulum", settings)
+        self._connection_settings_dirty = True
+
+    def i2p_status(self) -> dict[str, Any]:
+        router = self._i2p_router.status()
+        if self.network is None:
+            value = {
+                "enabled": self.settings.i2p_enabled,
+                "connectable": self.settings.i2p_connectable,
+                "peer_count": len(self.settings.i2p_peers),
+                "interface_count": 0,
+                "online_count": 0,
+                "online": False,
+                "state": "unavailable",
+                "b32": None,
+            }
+        else:
+            value = self.network.i2p_status()
+        value["managed"] = self.settings.i2p_managed
+        value["router"] = router
+        return value
+
     def snapshot(self) -> dict[str, Any]:
         self._prune_discarded_messages()
         self._prune_pending_reactions()
@@ -2489,6 +2565,14 @@ class MeshChatService(
         settings.participant_clients = [
             dict(item) for item in self.settings.participant_clients
         ]
+        if "i2p_enabled" not in value:
+            settings.i2p_enabled = self.settings.i2p_enabled
+        if "i2p_connectable" not in value:
+            settings.i2p_connectable = self.settings.i2p_connectable
+        if "i2p_managed" not in value:
+            settings.i2p_managed = self.settings.i2p_managed
+        if "i2p_peers" not in value:
+            settings.i2p_peers = list(self.settings.i2p_peers)
         self.settings = settings
         self._prepare_lan_fallback()
         self.store.put("settings", "network", self.settings.to_dict())
@@ -2553,35 +2637,48 @@ class MeshChatService(
             body = _payload(value,allowed=fields,required=fields)
             return getattr(self._direct_recovery,method)(**body)
         direct_commands = {
-            "preview_direct_connection": ("preview", {"document"}),
-            "prepare_direct_offer": ("offer", {"invitation_id"}),
-            "prepare_direct_answer": ("answer", {"document", "operation_id"}),
-            "prepare_direct_ready": ("ready", {"document"}),
-            "accept_direct_ready": ("accept_ready", {"document"}),
-            "connect_direct_setup": ("connect", {"setup_id", "document"}),
-            "direct_setup_status": ("status", {"setup_id"}),
-            "check_direct_setup": ("readiness", {"setup_id"}),
-            "retry_direct_setup": ("retry", {"setup_id"}),
-            "cancel_direct_setup": ("cancel", {"setup_id"}),
-            "resume_direct_setup": ("resume", {"workspace_id", "invitation_id"}),
+            "preview_direct_connection": ("preview", {"document"}, {"document"}),
+            "prepare_direct_offer": ("offer", {"invitation_id","manual_host","manual_port"}, {"invitation_id"}),
+            "prepare_direct_answer": ("answer", {"document","operation_id","manual_host","manual_port"}, {"document","operation_id"}),
+            "prepare_direct_ready": ("ready", {"document"}, {"document"}),
+            "accept_direct_ready": ("accept_ready", {"document"}, {"document"}),
+            "connect_direct_setup": ("connect", {"setup_id","document"}, {"setup_id","document"}),
+            "configure_direct_firewall": ("configure_firewall", {"setup_id"}, {"setup_id"}),
+            "direct_setup_status": ("status", {"setup_id"}, {"setup_id"}),
+            "check_direct_setup": ("readiness", {"setup_id"}, {"setup_id"}),
+            "retry_direct_setup": ("retry", {"setup_id"}, {"setup_id"}),
+            "cancel_direct_setup": ("cancel", {"setup_id"}, {"setup_id"}),
+            "resume_direct_setup": ("resume", {"workspace_id","invitation_id"}, set()),
         }
         if command in direct_commands:
-            method, fields = direct_commands[command]
-            body = _payload(value, allowed=fields, required=set() if method == "resume" else fields)
+            method, fields, required = direct_commands[command]
+            body = _payload(value, allowed=fields, required=required)
             from .connection_diagnostics import record
             try:
                 result = getattr(self._direct_setup, method)(**body)
-            except Exception:
-                record(self, "import_rejected" if method == "preview" else "action_failed", {"state":"failed"})
+            except Exception as exc:
+                record(self, "import_rejected" if method == "preview" else "action_failed", {
+                    "state":"failed", "command":command,
+                    "error_code":exc.code if isinstance(exc, MeshChatError) else "internal_error",
+                    "failure_stage":getattr(exc, "direct_setup_failure_stage", None),
+                    "failure_reason":getattr(exc, "reason", None),
+                    "workspace_state":getattr(exc, "direct_setup_workspace_state", None),
+                    "setup_id":body.get("setup_id"),
+                })
                 raise
             if method == "readiness":
                 record(self, "state", {**result, "state":result["readiness"]})
             if method == "preview":
-                record(self, "import_verified", {"state":"verified", "kind":result.get("kind")})
+                existing = result.get("existing_workspace") or {}
+                record(self, "import_verified", {"state":"verified", "kind":result.get("kind"),
+                    "workspace_state":existing.get("state", "none")})
             return result
         if command == "snapshot":
             _payload(value, allowed=set())
             return self.snapshot()
+        if command == "i2p_status":
+            _payload(value, allowed=set())
+            return self.i2p_status()
         if command == "workspace_snapshot":
             _payload(value, allowed=set())
             return self.workspace_snapshot()
@@ -2592,22 +2689,27 @@ class MeshChatService(
             body = _payload(
                 value, allowed={
                     "remote_profile_id", "connection_mode", "manual_setup_id",
-                    "external_host", "external_port",
+                    "external_host", "external_port", "i2p_access_point", "i2p_label",
                 }
             )
             return self.invitation(
                 body.get("remote_profile_id"), body.get("connection_mode"),
                 body.get("manual_setup_id"), body.get("external_host"),
-                body.get("external_port"),
+                body.get("external_port"), body.get("i2p_access_point"),
+                body.get("i2p_label"),
             )
         if command in {"preview_invitation", "accept_invitation"}:
-            body = _payload(value, allowed={"invitation"}, required={"invitation"})
+            body = _payload(
+                value, allowed={"invitation", "i2p_consent"}, required={"invitation"}
+            )
             if not isinstance(body["invitation"], str):
                 raise ValidationError("Invitation must be text")
             return (
                 self.preview_invitation(body["invitation"])
                 if command == "preview_invitation"
-                else self.accept_invitation(body["invitation"])
+                else self.accept_invitation(
+                    body["invitation"], i2p_consent=body.get("i2p_consent") is True
+                )
             )
         if command == "create_connection_reply":
             body = _payload(
@@ -2831,6 +2933,8 @@ class MeshChatService(
                     "manual_setup_id",
                     "external_host",
                     "external_port",
+                    "i2p_access_point",
+                    "i2p_label",
                 },
                 required={"operation_id", "workspace_id"},
             )
@@ -2843,6 +2947,8 @@ class MeshChatService(
                 body.get("manual_setup_id"),
                 body.get("external_host"),
                 body.get("external_port"),
+                body.get("i2p_access_point"),
+                body.get("i2p_label"),
             )
         if command == "preview_workspace_invitation":
             body = _payload(
@@ -2861,11 +2967,12 @@ class MeshChatService(
         if command == "submit_workspace_join":
             body = _payload(
                 value,
-                allowed={"operation_id", "invitation"},
+                allowed={"operation_id", "invitation", "i2p_consent"},
                 required={"operation_id", "invitation"},
             )
             return self.submit_workspace_join(
-                body["invitation"], body["operation_id"]
+                body["invitation"], body["operation_id"],
+                body.get("i2p_consent") is True,
             )
         if command in {"approve_workspace_join", "decline_workspace_join"}:
             body = _payload(
@@ -3974,6 +4081,10 @@ class MeshChatService(
             # Older/narrow test adapters return None; only an explicit False
             # means a real callback is still executing.
             callbacks_stopped = self.network.shutdown() is not False
+        try:
+            self._i2p_router.stop()
+        except Exception:
+            pass
         # Never close the encrypted vault underneath an already-running
         # callback or retry. If the bounded foreground shutdown expires, a
         # daemon finalizer waits for that worker and closes the vault exactly

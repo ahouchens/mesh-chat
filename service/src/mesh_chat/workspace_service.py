@@ -24,6 +24,11 @@ from .errors import (
     WorkspaceLimitReached,
 )
 from .invitations import canonical_bytes
+from .i2p_invitation import (
+    create_i2p_invitation,
+    i2p_invitation_formats,
+    verify_i2p_invitation,
+)
 from .remote import (
     add_profile_scope,
     create_remote_workspace_invitation,
@@ -4487,6 +4492,8 @@ class WorkspaceServiceMixin:
         manual_setup_id: Any = None,
         external_host: Any = None,
         external_port: Any = None,
+        i2p_access_point: Any = None,
+        i2p_label: Any = None,
     ) -> dict[str, Any]:
         payload = {
             "workspace_id": workspace_id,
@@ -4496,6 +4503,8 @@ class WorkspaceServiceMixin:
             "manual_setup_id": manual_setup_id,
             "external_host": external_host,
             "external_port": external_port,
+            "i2p_access_point": i2p_access_point,
+            "i2p_label": i2p_label,
         }
         operation_id, digest, replay = self._workspace_operation(
             "create_workspace_invitation", operation_id, payload
@@ -4564,7 +4573,29 @@ class WorkspaceServiceMixin:
         }
         remote_record = None
         email_record = None
-        if connection_mode == "email":
+        if connection_mode == "i2p":
+            if not isinstance(i2p_access_point, str):
+                raise ValidationError("I2P access point is required")
+            wrapped = create_i2p_invitation(
+                identity,
+                raw,
+                "workspace",
+                i2p_access_point,
+                label=i2p_label if isinstance(i2p_label, str) else None,
+                expires_at=invite.expires_at,
+            )
+            verified_i2p = verify_i2p_invitation(wrapped, "workspace")
+            if verified_i2p is None:
+                raise ValidationError("I2P workspace invitation could not be created")
+            if not self.settings.i2p_connectable:
+                self._adopt_i2p_access_point(verified_i2p.access_point["b32"])
+            outcome.update(i2p_invitation_formats(wrapped, "workspace"))
+            outcome["expires_at"] = verified_i2p.expires_at
+            outcome["connection_mode"] = "i2p"
+            outcome["i2p_access_point"] = verified_i2p.access_point["b32"]
+            record["i2p_access_point"] = verified_i2p.access_point["b32"]
+            record["expires_at"] = float(verified_i2p.expires_at)
+        elif connection_mode == "email":
             access = None
             host_session_id = None
             try:
@@ -4666,13 +4697,18 @@ class WorkspaceServiceMixin:
     def preview_workspace_invitation(self, raw: Any) -> dict[str, Any]:
         if not isinstance(raw, str):
             raise ValidationError("Workspace invitation must be text")
-        email = verify_email_invitation(raw, "workspace")
-        participant = None if email else verify_participant_invitation(raw, "workspace")
-        remote = None if email or participant else verify_remote_invitation(raw, "workspace")
+        i2p = verify_i2p_invitation(raw, "workspace")
+        email = None if i2p else verify_email_invitation(raw, "workspace")
+        participant = None if i2p or email else verify_participant_invitation(raw, "workspace")
+        remote = None if i2p or email or participant else verify_remote_invitation(raw, "workspace")
         invitation = verify_workspace_invitation(
-            email.inner if email else participant.inner if participant else remote.inner if remote else raw
+            i2p.inner if i2p else email.inner if email else participant.inner if participant else remote.inner if remote else raw
         )
         preview = invitation.preview()
+        if i2p is not None:
+            preview["i2p_access_point"] = i2p.access_point
+            preview["requires_i2p_consent"] = True
+            preview["expires_at"] = min(preview["expires_at"], i2p.expires_at)
         existing = self.store.get(
             "workspace", self._workspace_record_id(invitation.workspace_id)
         )
@@ -5004,6 +5040,65 @@ class WorkspaceServiceMixin:
             ]
         return outcome
 
+    def _saved_join_invitation_reason(
+        self, workspace: dict[str, Any], invite: VerifiedWorkspaceInvitation
+    ) -> str | None:
+        """Classify a saved join request against a pasted invitation. Read-only.
+
+        Returns ``None`` only when this exact invitation may reuse the saved
+        request. Every other outcome is an allowlisted reason for the UI and
+        diagnostics. This never replaces, clears, or re-signs the saved request.
+        """
+        if workspace.get("state") != "joining":
+            return (
+                "workspace_active"
+                if workspace.get("state") == "active"
+                else "workspace_not_pending"
+            )
+        delivery_id = workspace.get("join_delivery_id")
+        delivery = (
+            self.store.get("workspace_delivery", delivery_id)
+            if isinstance(delivery_id, str) else None
+        )
+        if (
+            delivery is None
+            or delivery.get("kind") != "workspace_join"
+            or delivery.get("workspace_id") != invite.workspace_id
+        ):
+            return "saved_request_invalid"
+        if delivery.get("state") in {
+            DeliveryState.FAILED.value,
+            DeliveryState.EXPIRED.value,
+            DeliveryState.CANCELLED.value,
+        }:
+            return "request_stopped"
+        if float(delivery.get("expires_at", 0)) < time.time():
+            return "request_expired"
+        try:
+            join = verify_workspace_join(delivery["document"])
+        except MeshChatError:
+            return "saved_request_invalid"
+        record = self.store.get(
+            "workspace_invitation", self._workspace_invitation_record_id(invite.nonce)
+        )
+        if (
+            join.workspace_id != invite.workspace_id
+            or join.invite_nonce != invite.nonce
+            or join.invitation.serialized != invite.serialized
+            or record is None
+            or record.get("workspace_id") != invite.workspace_id
+            or record.get("document") != invite.serialized
+        ):
+            return "invitation_mismatch"
+        if (
+            self._identity is None
+            or join.member_id != workspace.get("local_member_id")
+            or join.device.device_id != workspace.get("local_device_id")
+            or join.device.public_identity != self._identity.get_public_key()
+        ):
+            return "identity_mismatch"
+        return None
+
     def _saved_workspace_join_owner(
         self,
         workspace: dict[str, Any],
@@ -5091,9 +5186,9 @@ class WorkspaceServiceMixin:
         return committed
 
     def submit_workspace_join(
-        self, invitation: Any, operation_id: Any
+        self, invitation: Any, operation_id: Any, i2p_consent: bool = False
     ) -> dict[str, Any]:
-        payload = {"invitation": invitation}
+        payload = {"invitation": invitation, "i2p_consent": i2p_consent}
         operation_id, digest, replay = self._workspace_operation(
             "submit_workspace_join", operation_id, payload
         )
@@ -5111,12 +5206,17 @@ class WorkspaceServiceMixin:
             return replay
         if not isinstance(invitation, str):
             raise ValidationError("Workspace invitation must be text")
-        email = verify_email_invitation(invitation, "workspace")
-        participant = None if email else verify_participant_invitation(invitation, "workspace")
-        remote = None if email or participant else verify_remote_invitation(invitation, "workspace")
+        i2p = verify_i2p_invitation(invitation, "workspace")
+        email = None if i2p else verify_email_invitation(invitation, "workspace")
+        participant = None if i2p or email else verify_participant_invitation(invitation, "workspace")
+        remote = None if i2p or email or participant else verify_remote_invitation(invitation, "workspace")
         invite = verify_workspace_invitation(
-            email.inner if email else participant.inner if participant else remote.inner if remote else invitation
+            i2p.inner if i2p else email.inner if email else participant.inner if participant else remote.inner if remote else invitation
         )
+        if i2p is not None:
+            if not i2p_consent:
+                raise ValidationError("I2P access point consent is required")
+            self._adopt_i2p_access_point(i2p.access_point["b32"])
         existing = self.store.get("workspace", self._workspace_record_id(invite.workspace_id))
         if existing is not None:
             return self._resume_workspace_join(existing, invite, operation_id, digest)
@@ -5154,7 +5254,7 @@ class WorkspaceServiceMixin:
             "state": "joining",
             "join_delivery_id": delivery["id"],
             "join_receipt_tracking": True,
-            "join_connection_invitation": invitation if participant or email_access or remote else None,
+            "join_connection_invitation": invitation if participant or email_access or remote or i2p else None,
             "local_role": WorkspaceRole.MEMBER.value,
             "local_member_id": join.member_id,
             "local_device_id": join.device.device_id,

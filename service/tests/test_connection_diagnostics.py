@@ -81,6 +81,53 @@ def test_capture_failure_does_not_change_operation_outcome():
     diagnostics.record(SimpleNamespace(store=BrokenStore()), "action_failed", {"state":"failed"})
 
 
+def test_failure_context_is_allowlisted_and_missing_attempt_is_not_a_fake_identifier():
+    service = SimpleNamespace(store=Store())
+    secret = "private-key-192.0.2.1-invitation-document"
+    diagnostics.record(service, "action_failed", {"state":"failed",
+        "command":"prepare_direct_answer", "error_code":"workspace_already_known",
+        "failure_stage":"join_authorization", "failure_reason":"invitation_mismatch",
+        "workspace_state":"joining", "exception":secret, "document":secret})
+    row = diagnostics.report(service)["last_failure"]
+    assert row["command"] == "prepare_direct_answer"
+    assert row["error_code"] == "workspace_already_known"
+    assert row["failure_stage"] == "join_authorization"
+    assert row["failure_reason"] == "invitation_mismatch"
+    assert row["workspace_state"] == "joining"
+    assert row["attempt"] == "unavailable"
+    assert secret not in json.dumps(row)
+    diagnostics.record(service, "action_failed", {"state":"failed",
+        "command":secret, "error_code":secret, "failure_stage":secret,
+        "failure_reason":secret, "workspace_state":secret})
+    row = diagnostics.report(service)["last_failure"]
+    assert all(row[key] == "unavailable" for key in ("command", "error_code", "failure_stage"))
+    assert row["failure_reason"] == "unavailable"
+    assert row["workspace_state"] == "unavailable"
+    assert secret not in json.dumps(diagnostics.report(service))
+
+
+def test_unknown_workspace_state_is_unavailable_not_silently_none():
+    service = SimpleNamespace(store=Store())
+    diagnostics.record(service, "action_failed", {"state":"failed", "command":"prepare_direct_answer"})
+    row = diagnostics.report(service)["last_failure"]
+    assert row["workspace_state"] == "unavailable"
+    assert row["failure_reason"] == "unavailable"
+
+
+def test_network_failure_reason_is_allowlisted_and_secrets_are_not():
+    service = SimpleNamespace(store=Store())
+    diagnostics.record(service, "action_failed", {"state":"failed",
+        "command":"prepare_direct_offer", "failure_stage":"prepare_candidates",
+        "failure_reason":"upnp_no_discovery", "workspace_state":"unavailable"})
+    row = diagnostics.report(service)["last_failure"]
+    assert row["failure_reason"] == "upnp_no_discovery"
+    diagnostics.record(service, "action_failed", {"state":"failed",
+        "failure_reason":"private-router-192.0.2.1", "workspace_state":"joining"})
+    row = diagnostics.report(service)["last_failure"]
+    assert row["failure_reason"] == "unavailable"
+    assert "private-router" not in json.dumps(diagnostics.report(service))
+
+
 def test_failure_survives_encrypted_vault_reopen_and_clear_preserves_workspace(tmp_path):
     from mesh_chat.vault import VaultStore
     key = os.urandom(32)

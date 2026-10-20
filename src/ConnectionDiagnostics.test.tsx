@@ -59,3 +59,35 @@ it("clears only diagnostic history", async () => {
   expect(await screen.findByText(/Diagnostic history cleared/)).toBeTruthy();
   expect(api.serviceCommand.mock.calls).toEqual([["clear_connection_diagnostics"]]);
 });
+
+it("includes recent events in a summary copy and reports why it is truncated", () => {
+  const events = Array.from({length:20}, (_, index) => ({time:index+1, event:"state", phase:"connecting"}));
+  const report = JSON.parse(diagnosticReport({}, {format_version:1, events}, false));
+  expect(report.events).toHaveLength(12);
+  expect(report.events_included).toBe(12);
+  expect(report.history_event_count).toBe(20);
+  expect(report.truncated).toBe(true);
+});
+
+it("exports the saved-workspace failure reason and state only when allowlisted", () => {
+  const failure = {time:1, event:"action_failed", phase:"failed", command:"prepare_direct_answer",
+    error_code:"workspace_already_known", failure_stage:"join_authorization",
+    failure_reason:"invitation_mismatch", workspace_state:"joining"};
+  const report = JSON.parse(diagnosticReport({}, {format_version:1, events:[failure], last_failure:failure}, false));
+  expect(report.last_failure.failure_reason).toBe("invitation_mismatch");
+  expect(report.last_failure.workspace_state).toBe("joining");
+  const rejected = diagnosticReport({}, {format_version:1, events:[{time:1, event:"action_failed",
+    phase:"failed", failure_reason:"private-document", workspace_state:"private-document"}]}, false);
+  expect(JSON.parse(rejected).events[0].failure_reason).toBe("unavailable");
+  expect(JSON.parse(rejected).events[0].workspace_state).toBe("unavailable");
+  expect(rejected).not.toContain("private-document");
+});
+
+it("exports an allowlisted network reachability failure without addresses", () => {
+  const failure = {time:1, event:"action_failed", phase:"failed", command:"prepare_direct_offer",
+    error_code:"invalid_request", failure_stage:"prepare_candidates",
+    failure_reason:"upnp_no_discovery"};
+  const report = JSON.parse(diagnosticReport({}, {format_version:1, events:[failure], last_failure:failure}, false));
+  expect(report.last_failure.failure_reason).toBe("upnp_no_discovery");
+  expect(report.last_failure.command).toBe("prepare_direct_offer");
+});

@@ -625,6 +625,8 @@ export interface WorkspaceInvitationPreview {
   connection_reply_available?: boolean;
   invitation_digest?: string;
   requires_network_consent?: boolean;
+  i2p_access_point?: { b32: string; label: string; relay: string };
+  requires_i2p_consent?: boolean;
 }
 
 export interface WorkspaceInvitationFormats {
@@ -636,7 +638,7 @@ export interface WorkspaceInvitationFormats {
   expires_at: number;
   remote_profile_id?: string;
   access_point_reachable?: boolean;
-  connection_mode?: "participant" | "email";
+  connection_mode?: "participant" | "email" | "i2p";
   connection_reply_available?: boolean;
   host_session_id?: string;
   methods?: ParticipantHosting["methods"];
@@ -781,6 +783,29 @@ export interface NetworkSettings {
   help_route: boolean;
   store_for_offline: boolean;
   approved_propagation_nodes: string[];
+  i2p_enabled: boolean;
+  i2p_connectable: boolean;
+  i2p_managed: boolean;
+  i2p_peers: string[];
+}
+
+export interface I2PStatus {
+  enabled: boolean;
+  connectable: boolean;
+  managed: boolean;
+  peer_count: number;
+  interface_count: number;
+  online_count: number;
+  online: boolean;
+  state: "disabled" | "not_started" | "starting" | "online" | "unavailable";
+  b32: string | null;
+  router: {
+    state: string;
+    available: boolean;
+    managed: boolean;
+    sam_ready: boolean;
+    reason: string | null;
+  };
 }
 
 export interface NetworkInterfaceState {
@@ -933,6 +958,8 @@ export interface InvitationPreview {
   connection_reply_available?: boolean;
   invitation_digest?: string;
   requires_network_consent?: boolean;
+  i2p_access_point?: { b32: string; label: string; relay: string };
+  requires_i2p_consent?: boolean;
 }
 
 export interface InvitationFormats {
@@ -942,7 +969,7 @@ export interface InvitationFormats {
   expires_at: number;
   remote_profile_id?: string;
   access_point_reachable?: boolean;
-  connection_mode?: "participant" | "email";
+  connection_mode?: "participant" | "email" | "i2p";
   connection_reply_available?: boolean;
   host_session_id?: string;
   methods?: ParticipantHosting["methods"];

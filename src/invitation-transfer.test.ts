@@ -170,6 +170,10 @@ afterEach(() => {
 describe("invitation transfer classification", () => {
   it.each([
     ["MESHCHAT4:personal", "personal"],
+    ["MESHI2P1:personal", "personal"],
+    ["MESHI2P1W:workspace", "workspace"],
+    ['{"type":"i2p_invitation","purpose":"workspace"}', "workspace"],
+    ['{"type":"i2p_invitation","purpose":"personal"}', "personal"],
     ["meshchat://invite/personal", "personal"],
     ["MESHWORKSPACE4:workspace", "workspace"],
     ["MESHWORKSPACE4", "workspace"],

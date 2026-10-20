@@ -76,6 +76,7 @@ def install_temporary_windows_rule(
     *,
     executable: Path | None = None,
     parent_pid: int | None = None,
+    protocol: str = "TCP",
     runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
 ) -> dict[str, Any]:
     """Install an exact temporary rule with one explicit UAC consent.
@@ -87,20 +88,24 @@ def install_temporary_windows_rule(
 
     if platform.system().lower() != "windows" or not re.fullmatch(r"[0-9a-f]{64}", session_id):
         return {"configured": False, "reason": "firewall_check_unsupported"}
+    if protocol not in {"TCP", "UDP"}:
+        return {"configured": False, "reason": "firewall_check_unsupported"}
     if isinstance(port, bool) or not 1 <= int(port) <= 65535:
         return {"configured": False, "reason": "windows_firewall_blocked"}
     profiles = active_windows_profiles(runner=runner)
     if not profiles:
         return {"configured": False, "reason": "windows_firewall_blocked"}
     state_dir.mkdir(parents=True, exist_ok=True)
-    marker = (state_dir / f"{session_id}.active").resolve()
-    ready = (state_dir / f"{session_id}.ready").resolve()
+    suffix = "" if protocol == "TCP" else f"-{protocol.lower()}"
+    marker = (state_dir / f"{session_id}{suffix}.active").resolve()
+    ready = (state_dir / f"{session_id}{suffix}.ready").resolve()
     marker.write_text("active", encoding="ascii")
     try:
         ready.unlink(missing_ok=True)
     except OSError:
         pass
-    rule_name = f"Mesh Chat temporary invitation {session_id[:12]}"
+    prefix = "" if protocol == "TCP" else " UDP"
+    rule_name = f"Mesh Chat temporary{prefix} invitation {session_id[:12]}"
     executable_path = (executable or Path(sys.executable)).resolve()
     owner_pid = int(parent_pid or os.getpid())
 
@@ -109,7 +114,7 @@ def install_temporary_windows_rule(
 
     args = [
         "advfirewall", "firewall", "add", f"name={rule_name}", "dir=in", "action=allow",
-        f"program={executable_path}", "protocol=TCP", f"localport={int(port)}",
+        f"program={executable_path}", f"protocol={protocol}", f"localport={int(port)}",
         f"profile={','.join(profiles)}", "enable=yes",
     ]
     delete_args = ["advfirewall", "firewall", "delete", f"name={rule_name}"]
@@ -148,6 +153,7 @@ def install_temporary_windows_rule(
         "marker": str(marker),
         "ready": str(ready),
         "profiles": profiles,
+        "protocol": protocol,
     }
 
 

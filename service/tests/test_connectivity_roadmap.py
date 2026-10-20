@@ -60,6 +60,56 @@ def test_windows_default_route_selects_the_real_active_interface() -> None:
     assert all(route.interface not in {"vEthernet", "Disconnected"} for route in routes)
 
 
+def test_windows_route_address_uses_interface_index_when_alias_is_a_guid() -> None:
+    rows = [
+        {"AddressFamily": "IPv4", "InterfaceAlias": "Wi-Fi", "InterfaceIndex": 8,
+         "NextHop": "192.168.4.1", "RouteMetric": 0, "InterfaceMetric": 30},
+        {"AddressFamily": "IPv6", "InterfaceAlias": "Wi-Fi", "InterfaceIndex": 8,
+         "NextHop": "fe80::1", "RouteMetric": 0, "InterfaceMetric": 30},
+    ]
+    addresses = [
+        {"InterfaceIndex": 8, "AddressFamily": "IPv4", "IPAddress": "169.254.10.20"},
+        {"InterfaceIndex": 8, "AddressFamily": "IPv4", "IPAddress": "192.168.4.20"},
+        {"InterfaceIndex": 8, "AddressFamily": "IPv6", "IPAddress": "fe80::20"},
+        {"InterfaceIndex": 8, "AddressFamily": "IPv6", "IPAddress": "2001:4860:1::20"},
+    ]
+
+    def runner(command, **_kwargs):
+        script = command[-1]
+        payload = addresses if "Get-NetIPAddress" in script else rows
+        return subprocess.CompletedProcess(command, 0, json.dumps(payload), "")
+
+    def netinfo_interfaces():
+        return ["{1E7DAD70-C0D9-44B7-BD5D-1D7B04B25AFA}"]
+
+    def ifaddresses(_name):
+        return {}
+
+    rns = SimpleNamespace(Interfaces=SimpleNamespace(netinfo=SimpleNamespace(
+        interfaces=netinfo_interfaces, ifaddresses=ifaddresses,
+        AF_INET=socket.AF_INET, AF_INET6=socket.AF_INET6)))
+
+    routes = connectivity.default_routes(rns_module=rns, system="Windows", runner=runner)
+    assert [(route.family, route.local_address) for route in routes] == [
+        (socket.AF_INET, "192.168.4.20"),
+        (socket.AF_INET6, "2001:4860:1::20"),
+    ]
+    assert connectivity.gateway_candidates(routes=routes) == ["192.168.4.1"]
+
+
+def test_windows_route_address_keeps_a_matching_netinfo_alias_without_index() -> None:
+    rows = [
+        {"AddressFamily": "IPv4", "InterfaceAlias": "Wi-Fi",
+         "NextHop": "192.168.50.1", "RouteMetric": 0, "InterfaceMetric": 25},
+    ]
+
+    def runner(*_args, **_kwargs):
+        return subprocess.CompletedProcess([], 0, json.dumps(rows), "")
+
+    routes = connectivity.default_routes(rns_module=_rns(), system="Windows", runner=runner)
+    assert routes[0].local_address == "192.168.50.20"
+
+
 def test_direct_public_ipv4_candidate_comes_only_from_the_selected_route() -> None:
     routes = [
         RouteInfo(socket.AF_INET, "Ethernet", "93.184.216.1", "93.184.216.34", 10),
@@ -543,3 +593,35 @@ def test_windows_firewall_rule_is_exact_and_user_elevated(
     assert "profile=private" in helper
     firewall.remove_temporary_windows_rule(result)
     assert not (tmp_path / f"{session_id}.active").exists()
+
+
+def test_windows_firewall_rule_can_be_udp_without_changing_the_default(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(firewall.platform, "system", lambda: "Windows")
+    session_id = "b" * 64
+    executable = tmp_path / "mesh-chat-service.exe"
+    executable.write_bytes(b"test")
+    ready = tmp_path / f"{session_id}-udp.ready"
+    scripts: list[str] = []
+
+    def runner(command, **_kwargs):
+        script = base64.b64decode(command[-1]).decode("utf-16-le")
+        scripts.append(script)
+        if "Get-NetConnectionProfile" in script:
+            return subprocess.CompletedProcess(command, 0, "Private\n", "")
+        ready.write_text("ok", encoding="ascii")
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    result = firewall.install_temporary_windows_rule(
+        session_id, 45679, tmp_path, executable=executable,
+        parent_pid=1234, protocol="UDP", runner=runner,
+    )
+    assert result["configured"] is True and result["protocol"] == "UDP"
+    encoded_helper = re.findall(r"'[A-Za-z0-9+/=]{100,}'", scripts[-1])[-1].strip("'")
+    helper = base64.b64decode(encoded_helper).decode("utf-16-le")
+    assert "protocol=UDP" in helper
+    assert "localport=45679" in helper
+    assert "temporary UDP invitation" in helper
+    firewall.remove_temporary_windows_rule(result)
+    assert not (tmp_path / f"{session_id}-udp.active").exists()

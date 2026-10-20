@@ -1,11 +1,16 @@
 from __future__ import annotations
 
+import pytest
+
+from mesh_chat.errors import ValidationError
 from mesh_chat.reticulum_config import (
     REMOTE_TCP_ROUTE_GRAVITY,
     SIGNED_TCP_ROUTE_GRAVITY,
     NetworkSettings,
     write_config,
 )
+
+B32 = "a" * 52 + ".b32.i2p"
 
 
 def test_profile_is_isolated_and_no_external_interfaces_are_bundled(tmp_path) -> None:
@@ -80,3 +85,54 @@ def test_shared_remote_access_does_not_receive_signed_direct_route_gravity(tmp_p
     assert f"gravity = {REMOTE_TCP_ROUTE_GRAVITY}" in remote
     assert f"gravity = {SIGNED_TCP_ROUTE_GRAVITY}" not in remote
     assert "relay" not in remote.lower()
+
+
+def test_i2p_peer_block_is_written_only_when_enabled(tmp_path) -> None:
+    settings = NetworkSettings(i2p_enabled=True, i2p_peers=[B32])
+    text = write_config(tmp_path, settings).read_text(encoding="utf-8")
+
+    assert "[[I2P]]" in text
+    assert "type = I2PInterface" in text
+    assert "connectable = No" in text
+    assert f"peers = {B32}" in text
+    assert "enable_transport = No" in text
+
+
+def test_i2p_connectable_access_point_needs_no_peer_address(tmp_path) -> None:
+    settings = NetworkSettings(i2p_enabled=True, i2p_connectable=True)
+    text = write_config(tmp_path, settings).read_text(encoding="utf-8")
+
+    assert "[[I2P]]" in text
+    assert "connectable = Yes" in text
+    assert "peers =" not in text
+
+
+def test_i2p_settings_round_trip_and_normalize_addresses() -> None:
+    settings = NetworkSettings.from_dict({
+        "i2p_enabled": True,
+        "i2p_connectable": False,
+        "i2p_managed": False,
+        "i2p_peers": [" " + B32.upper() + " ", B32],
+    })
+
+    assert settings.i2p_peers == [B32]
+    assert settings.i2p_managed is False
+    assert settings.to_dict()["i2p_peers"] == [B32]
+    assert settings.to_dict()["i2p_managed"] is False
+
+
+@pytest.mark.parametrize("peers", [["not-a-b32"], ["a" * 52], ["a" * 53 + ".b32.i2p"]])
+def test_i2p_rejects_invalid_access_point_addresses(peers) -> None:
+    with pytest.raises(ValidationError):
+        NetworkSettings.from_dict({"i2p_enabled": True, "i2p_peers": peers})
+
+
+def test_i2p_requires_a_peer_or_connectable_mode_when_enabled() -> None:
+    with pytest.raises(ValidationError):
+        NetworkSettings.from_dict({"i2p_enabled": True})
+
+
+def test_i2p_accepts_a_disabled_empty_configuration() -> None:
+    settings = NetworkSettings.from_dict({"i2p_enabled": False})
+    assert settings.i2p_enabled is False
+    assert settings.i2p_peers == []

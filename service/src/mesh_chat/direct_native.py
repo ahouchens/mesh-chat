@@ -12,7 +12,7 @@ import uuid
 from collections import deque
 from concurrent.futures import Future, TimeoutError
 
-from .errors import ValidationError
+from .errors import NativeUnavailable, ValidationError
 
 MAX_BYTES = 64 * 1024
 OPERATIONS = frozenset({"prepare", "prepare_path", "inspect_paths", "inspect", "arm", "rearm", "activate", "send", "poll", "connection_state", "close", "reset", "prepare_recovery", "recover", "recovery_evidence", "authorize_recovery", "migrate"})
@@ -38,9 +38,9 @@ class NativeChannel:
         future = Future()
         with self._lock:
             if self._closed:
-                raise ValidationError("Direct native channel is closed")
+                raise NativeUnavailable("Direct native channel is closed")
             if self._reset_in_flight:
-                raise ValidationError("Direct native channel is retiring")
+                raise NativeUnavailable("Direct native channel is retiring")
             if len(self._pending) >= 8:
                 raise ValidationError("Direct native request budget exhausted")
             self._pending[request["id"]] = future
@@ -63,7 +63,7 @@ class NativeChannel:
         except TimeoutError as exc:
             # An unknown outcome cannot safely preserve any native ownership.
             self.close()
-            raise ValidationError("Direct native request timed out") from exc
+            raise NativeUnavailable("Direct native request timed out") from exc
         finally:
             with self._lock:
                 self._pending.pop(request["id"], None)
@@ -91,6 +91,11 @@ class NativeChannel:
         with self._lock:
             result = [self._queue.popleft() for _ in range(min(limit, len(self._queue)))]
             return result
+
+    @property
+    def closed(self):
+        with self._lock:
+            return self._closed
 
     def close(self):
         self.retire(close=True)

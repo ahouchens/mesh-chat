@@ -48,6 +48,380 @@ service/protocol, mobile bridge, and email routing suites, plus 147 frontend
 tests across App, invitation transfer, and API. TypeScript `--noEmit` and
 `git diff --check` passed. No native or release build was performed.
 
+## Android direct-reply failure diagnosis, 2026-10-18
+
+The installed 0.2.63 build reported `build_commit: e361c70…`. That commit is a
+strict descendant of the qualified application source `34d9927…` and differs
+from it only by the LICENSE file, license metadata, and documentation:
+`git diff --name-status 34d9927 e361c70` lists no `service/src`, `src`,
+`src-tauri/src`, or protocol change. The branch base `7867e71` likewise has no
+code difference from `34d9927`. The installed application code therefore
+matches the qualified 0.2.63 source; the earlier “commit absent from local
+objects” observation was a stale-clone problem, not evidence of a different
+build. `service_version: unavailable` is expected because Android embeds
+`service/src` without installing the service distribution metadata; it is not a
+version mismatch.
+
+Source reproduction established one concrete pre-setup failure. A **different**
+invitation for a workspace that already has a saved join request passes
+document-only preview, then fails the exact saved-invitation check inside
+`prepare_direct_answer`. An active or terminal saved workspace behaves the same
+way. Both now return `workspace_already_known` with an allowlisted reason
+(`invitation_mismatch`, `workspace_active`, `request_stopped`, and so on)
+instead of an opaque `identity_mismatch`. The saved request, identity, delivery,
+receipt, and queued messages are unchanged; a matching invitation still
+prepares a newer Answer generation against the same saved request.
+
+Preview now supplies read-only saved-workspace evidence, and the wizard routes a
+non-matching or already-active workspace to **Open saved workspace** rather than
+offering a doomed **Prepare reply**. Diagnostics add `failure_reason`,
+`workspace_state`, and up to 12 recent events to a summary copy. A closed native
+channel now reports `native_unavailable` at `runtime_check` so an earlier
+timeout/pump stop is distinguishable from document or persistence failures.
+
+Validation at this revision:
+
+```text
+.venv\Scripts\python.exe -m pytest service/tests/test_direct_setup.py \
+  service/tests/test_direct_native.py service/tests/test_connection_diagnostics.py \
+  service/tests/test_mobile_bridge.py service/tests/test_service_process.py \
+  service/tests/test_direct_documents.py service/tests/test_direct_readiness.py \
+  service/tests/test_workspace_join_retry.py service/tests/test_workspace_join_receipt.py \
+  service/tests/test_release_version.py service/tests/test_workspace_service.py \
+  service/tests/test_service_invitation_refresh.py service/tests/test_workspace_protocol.py \
+  -q
+```
+
+Result: **297 passed**. The full local service suite also passed **954 passed,
+46 skipped** (opt-in native/packaged/network harnesses remain skipped). The
+Windows checkout needed the tracked Twemoji manifest restored to LF so its
+recorded hash matched; that is a line-ending-only working-copy artifact, not a
+source change. The pre-change focused baseline was 43 passed. Frontend
+regressions were added for the saved-workspace panel, reason-specific guidance,
+input retention, and the new diagnostic fields; frontend/package execution,
+TypeScript compilation, Windows/Android builds, and installation belong in
+GitHub Actions. `git diff --check` passed locally.
+
+The local cause of this specific device failure is still unconfirmed. A
+distinct **0.2.64 / Android 2064** test build and its exact evidence-collection
+procedure are described in
+[the reply-failure device check](docs/DIRECT_REPLY_FAILURE_DEVICE_TEST.md).
+No physical Windows-to-Android connectivity is claimed; the provenance check
+above identifies the earlier artifact, not a successful connection.
+
+## Reachability planner increment, 2026-10-19
+
+The setup wizard now exposes an evidence-based plan instead of one opaque
+"Check this device" result. The design and acceptance criteria are in
+[REACHABILITY_PLANNER_SPEC.md](docs/REACHABILITY_PLANNER_SPEC.md). The
+implementation adds:
+
+- per-protocol PCP/UPnP/NAT-PMP attempt evidence and IPv6 pinhole evidence;
+- explicit upstream-NAT/CGNAT blockers;
+- a validated manual UDP endpoint in `prepare_direct_offer` and
+  `prepare_direct_answer`, signed into the existing Offer/Answer;
+- a temporary, exact **UDP** Windows firewall rule command
+  (`configure_direct_firewall`) with protocol-specific cleanup;
+- a wizard plan with one primary action, manual-forward form, firewall
+  consent, and a terminal blocked explanation;
+- allowlisted network failure reasons in diagnostics, still without
+  addresses or invitation contents.
+
+Validation:
+
+```text
+.venv\Scripts\python.exe -m pytest service/tests/test_reachability.py \
+  service/tests/test_direct_setup.py service/tests/test_direct_candidates.py \
+  service/tests/test_connectivity_roadmap.py service/tests/test_direct_readiness.py \
+  service/tests/test_connection_diagnostics.py service/tests/test_direct_native.py \
+  -q
+```
+
+Result: **127 passed**. The full local service suite, excluding the legacy
+`test_production_setup_bootstrap_admission_and_fresh_workspace_path` cases,
+passed **958 with 40 expected skips** (12 deselected). Those 12 source/native
+pipeline cases also fail at preceding commit `203f1b4` on this machine before
+these changes, so the failure is not attributed to this increment. Frontend
+regressions were added for the plan, firewall action, manual form, and
+diagnostic fields; frontend/TypeScript/package execution, Windows/Android
+builds, and physical device validation remain in GitHub Actions.
+
+The candidate is **0.2.65 / Android 2065**. GitHub Actions
+[run 39200607637](https://github.com/ahouchens/mesh-chat/actions/runs/39200607637)
+passed Verify, Windows packaging, and Android packaging. The Android APK is
+34,049,543 bytes with SHA-256
+`b463fb9415a6d04b06714a5fb1872a0d454634d5ca941711ef69851f38b772f2`;
+the NSIS installer is SHA-256
+`731649f59ba339795a357d6ad8bcdeb0de21d135a9da02cdd9d084da759fdc89`
+and the MSI is
+`2b6d45c3d4b65f2456c8cc9b03a8279c3b72cb4dc2635e098151e089d1b16bbf`.
+The APK reports versionName 0.2.65, versionCode 2065, package
+`com.meshchat.mobile`, arm64-v8a, target API 36, and the established
+development certificate `d6dbff63834666bace3d75b49234726e97ccce26d2b9e9516309682e0a33143f`.
+It has not been installed or executed here, and no physical connectivity result
+is claimed.
+
+## Windows default-route address fix, 2026-10-19
+
+The 0.2.63 Windows diagnostic from the pairing test showed
+`no_local_address`, `route: unavailable`, `mapping: not_needed`, and zero
+candidates, even though the machine had an active Wi-Fi default route. The
+cause was deterministic: Reticulum's `netinfo` exposed Windows interfaces as
+GUIDs, while `Get-NetRoute` reported the friendly alias `Wi-Fi`. The local
+address lookup used the alias as a dictionary key, so it returned `None`; the
+service then bound `0.0.0.0`, skipped every router-mapping attempt, and exported
+an invitation with no candidate.
+
+`_windows_default_routes` now selects `InterfaceIndex` and resolves addresses
+through `Get-NetIPAddress` by that stable index. The friendly alias remains a
+fallback for existing tests and unusual environments. A regression with GUID
+interface keys verifies that an active Wi-Fi route, a private IPv4 address, and
+a global IPv6 address are all recovered.
+
+After the fix, the same machine reports `route_available=True`,
+`mapping_attempted=True`, then:
+
+- PCP: `pcp_no_response`
+- UPnP: `upnp_wan_shared`
+- NAT-PMP: `nat_pmp_no_response`
+- planner: `upstream_nat` blocked
+
+That is a separate network fact, not a route bug: the router reports a shared
+upstream address (carrier-grade or double NAT). A local router mapping cannot
+make this Windows machine publicly reachable. The app now reports that honestly
+instead of saying it found no local address. IPv6, a public IPv4/bridge mode,
+an upstream forward, or an explicitly approved relay/access point are the
+remaining options for this pair.
+
+Validation: **115 focused tests passed**; the full local service suite passed
+**960 with 40 expected skips** and the same 12 deselected legacy setup-pipeline
+cases, which also fail at the preceding commit on this machine. Candidate:
+**0.2.66 / Android 2066**.
+
+GitHub Actions
+[run 39322819112](https://github.com/ahouchens/mesh-chat/actions/runs/39322819112)
+passed Verify, Windows packaging, and Android packaging. The Android APK is
+34,049,597 bytes with SHA-256
+`3a996a3399dca369082baaeb35b39544eb4ca08235884e9ecd4eab2c207c373b`;
+the NSIS installer is SHA-256
+`b63ad9e0ab6d2e3617e7bbc574c12ac0b78df5546ba480fa30cde9baad66e824`
+and the MSI is
+`88f3b875b79899da933dd9e48513658fc1416a008f71e06c58124b2582776a2b`.
+The APK reports versionName 0.2.66, versionCode 2066, package
+`com.meshchat.mobile`, arm64-v8a, target API 36, and the established
+development certificate
+`d6dbff63834666bace3d75b49234726e97ccce26d2b9e9516309682e0a33143f`.
+It has not been installed or executed here, and no physical connectivity result
+is claimed.
+
+The upstream-NAT UI is corrected in **0.2.67 / Android 2067**. When a mapping
+attempt reports a shared or upstream NAT, the plan now reports only the
+`upstream_nat` blocker, marks manual forwarding unavailable, and points to
+IPv6, another network, or an approved access point. The renderer hides the
+manual-forward action and no longer advises restoring the Internet connection.
+Validation: **107 focused tests** and **15 version/planner tests** passed. GitHub
+Actions
+[run 39325462261](https://github.com/ahouchens/mesh-chat/actions/runs/39325462261)
+passed Verify, Windows packaging, and Android packaging. The APK is 34,049,529
+bytes with SHA-256
+`fa65bdaa93cd05e492df8b66ca4b4babc2dab8315186c1d95aefafcc4cfbdd0f`;
+the NSIS installer is SHA-256
+`5aaf194762c4901faf67a7a9004e1f3a254dea8adfce51d8e7db082f72de5413`
+and the MSI is
+`44f08297e5b5de34e6da17cdb6ad305309a89df123459984a029e936f825be76`.
+The APK reports versionName 0.2.67, versionCode 2067, package
+`com.meshchat.mobile`, arm64-v8a, target API 36, and the established
+development certificate
+`d6dbff63834666bace3d75b49234726e97ccce26d2b9e9516309682e0a33143f`.
+
+The upstream classification and plan layout are extended in **0.2.68 / Android
+2068**. A shared `100.64/10` UPnP WAN address is reported as carrier-grade NAT
+with **UDP port forward: Not possible**; a private WAN address is reported as
+double NAT with **UDP port forward: Maybe** and a manual-forward action for both
+routers; unclassified upstream evidence asks for the router WAN address. The
+plan rows now have padding, borders, and separated reason text, and the
+upstream card is a distinct block. Validation: **109 focused tests** and the
+full local service suite **962 passed, 40 expected skips, 12 deselected**.
+GitHub Actions
+[run 39328374254](https://github.com/ahouchens/mesh-chat/actions/runs/39328374254)
+passed Verify, Windows packaging, and Android packaging. The APK is 34,049,645
+bytes with SHA-256
+`0f42b3be1202e06b6842c154e9800406030d578fe4315d891e4b19a6ef8006c3`;
+the NSIS installer is SHA-256
+`aa742c7fd1ac615281052db6fe0d6b9784615bdbfccf51f426db1eeac68807a1`
+and the MSI is
+`8bd1ece15e1e1e0a20a41f0c29c0dc7757cf2d4383de9add29d8706e85cbaf3c`.
+The APK reports versionName 0.2.68, versionCode 2068, package
+`com.meshchat.mobile`, arm64-v8a, target API 36, and the established
+development certificate
+`d6dbff63834666bace3d75b49234726e97ccce26d2b9e9516309682e0a33143f`.
+
+## I2P foundation, 2026-10-19
+
+The first I2P increment adds the opt-in Windows transport foundation described
+in [I2P_SUPPORT_SPEC.md](docs/I2P_SUPPORT_SPEC.md):
+
+- `NetworkSettings` fields for `i2p_enabled`, `i2p_connectable`, and up to four
+  validated `*.b32.i2p` peer addresses;
+- an additive `[[I2P]]` `I2PInterface` block written only when enabled;
+- a renderer-safe `i2p_status` command and native allowlist entry;
+- a Settings section with the relay disclosure, access-point input, connectable
+  mode, and local access-point status.
+
+This is **I1**, not a completed I2P feature. The machine used for this work has
+no `i2pd` and no SAM listener on `127.0.0.1:7656`, so the I0 protocol spike and
+physical I2P delivery were not executed here. No end-to-end I2P connectivity is
+claimed. Invitation/workspace integration is I3 and remains unimplemented.
+
+Validation: **974 service tests passed** with 40 expected skips and the same 12
+deselected legacy setup-pipeline cases. GitHub Actions
+[run 39333587879](https://github.com/ahouchens/mesh-chat/actions/runs/39333587879)
+passed Verify, Windows packaging, and Android packaging. The APK is 34,049,525
+bytes with SHA-256
+`a932d7df7659eabd4812248a8b9b5e289a19b052ce805c4a2225693bd352c15e`;
+the NSIS installer is SHA-256
+`fef3b70ec98e8d6ebffebc977ed1ec69c0925f04c9d050c41e0ef588ba521d95`
+and the MSI is
+`d7bedcefab89b97aa78274641eb8f9c8ac081d49e4ec462a8b1a84babe86d1af`.
+The APK reports versionName 0.2.69, versionCode 2069, package
+`com.meshchat.mobile`, arm64-v8a, target API 36, and the established
+development certificate
+`d6dbff63834666bace3d75b49234726e97ccce26d2b9e9516309682e0a33143f`.
+
+## I2P transport and managed router, 2026-10-19
+
+I0 was executed on Windows with a real `i2pd` 2.61.0 and two independent
+Reticulum instances:
+
+- A was a `connectable` I2P access point with a stable `b32.i2p` address;
+- B was a client-only peer configured with that address;
+- B's I2P interface reached `online`, resolved a path to A's destination, and
+  delivered a Reticulum packet;
+- A received the exact payload.
+
+This proves Reticulum transport over I2P, not full LXMF/workspace delivery.
+LXMF and workspace join over I2P still need the I3 integration test.
+
+I2 adds an opt-in managed Windows router:
+
+- `I2PRouterManager` starts a local `i2pd` before Reticulum, waits for SAM on
+  `127.0.0.1:7656`, and stops it on service shutdown;
+- SAM is localhost-only; the web console, HTTP/SOCKS proxies, UPnP, and transit
+  relaying are disabled; the router uses the low bandwidth profile;
+- i2pd 2.61.0 and its BSD-3-Clause license are bundled as Windows resources;
+- the Rust launcher passes the installed resource path to the sidecar.
+
+The 0.2.70 MSI was administratively extracted without installation and
+contained `_up_/vendor/i2pd.exe` plus its license. The manager started and
+stopped that installed binary successfully. A path-only follow-up resolves both
+`vendor/i2pd.exe` and `_up_/vendor/i2pd.exe`.
+
+Validation: **978 service tests passed** with 40 expected skips and the same 12
+deselected legacy setup-pipeline cases before the path-only follow-up;
+**22 focused tests** passed for the follow-up. GitHub Actions
+[run 39339281467](https://github.com/ahouchens/mesh-chat/actions/runs/39339281467)
+built 0.2.70, and
+[run 39341205361](https://github.com/ahouchens/mesh-chat/actions/runs/39341205361)
+built the final **0.2.71** candidate. The APK is 34,049,462 bytes with SHA-256
+`c5e1d166cd27aa8c927a397dced208128b9e1df4ab81a3cc224877539a2f5255`;
+the NSIS installer is SHA-256
+`2212f236c5bb62ba3a247159de0385227b91abf45698b09130a3d56e93c84b80`
+and the MSI is
+`e9ee8295636a1672030738019c9c0e1b6834c6bfec1ff457cf5d5fe9b1adf6aa`.
+The APK reports versionName 0.2.71, versionCode 2071, package
+`com.meshchat.mobile`, arm64-v8a, target API 36, and the established
+development certificate
+`d6dbff63834666bace3d75b49234726e97ccce26d2b9e9516309682e0a33143f`.
+No physical installer run or end-to-end LXMF/workspace test is claimed.
+
+## I2P invitation integration, 2026-10-19
+
+0.2.72 adds an additive signed I2P wrapper around the existing personal and
+workspace invitation:
+
+- `MESHI2P1:` / `MESHI2P1W:` carry a canonical signed descriptor with the
+  complete inner invitation, its SHA-256 digest, one validated `b32.i2p`
+  access point, expiry, and the owner public key;
+- verification binds the wrapper signer to the inner invitation owner and
+  rejects altered descriptors, foreign signers, expired wrappers, and
+  purpose mismatches;
+- the personal and workspace invite dialogs offer an I2P access-point mode;
+- join previews show the relay disclosure and b32;
+- accepting or joining adopts the access point into I2P settings, which takes
+  effect after restart. The saved request remains queued until then.
+
+The inner signed invitation, single-use nonce, replay protection, and approval
+semantics are unchanged. This is not yet a proven end-to-end workspace join
+over I2P: the wrapper and settings adoption are tested, but no two-device
+workspace approval/receipt test over I2P has been run.
+
+Validation: **90 focused service tests passed**, including five wrapper tests.
+GitHub Actions
+[run 39343424932](https://github.com/ahouchens/mesh-chat/actions/runs/39343424932)
+passed Verify, Windows packaging, and Android packaging. The APK is 34,066,003
+bytes with SHA-256
+`94d84d6ddcbcf569b224b7338e8db1a9430b113c8f86fd0b19e098f5a2cd77b3`;
+the NSIS installer is SHA-256
+`4df07e2e962ca3ed1368a9bce5b9a57bcdf089fb078cf8747c460a3f84bb8d2b`
+and the MSI is
+`1662f13177bc064463185529aefcbf0a641dba11c0c186f8df748c78eb159258`.
+The APK reports versionName 0.2.72, versionCode 2072, package
+`com.meshchat.mobile`, arm64-v8a, target API 36, and the established
+development certificate
+`d6dbff63834666bace3d75b49234726e97ccce26d2b9e9516309682e0a33143f`.
+
+### Coverage expansion, 0.2.73
+
+The I3 gap analysis added:
+
+- service-level personal I2P creation → preview → accept → settings/config
+  adoption;
+- normal personal invitation regression;
+- workspace I2P creation and preview;
+- workspace foreign-signer and excess-expiry rejection;
+- managed router SAM-timeout, process-exit, and shutdown cleanup;
+- personal invite UI selection, b32 validation, and create payload.
+
+Validation: **74 focused service tests passed**. GitHub Actions
+[run 39344867270](https://github.com/ahouchens/mesh-chat/actions/runs/39344867270)
+passed Verify, Windows packaging, and Android packaging. The APK is 34,065,900
+bytes with SHA-256
+`f7ed71f5172fa00adc378014ac5cbdce91171a4e7994ce66d0ce7703f6061c5e`;
+the NSIS installer is SHA-256
+`cb69f38eb1078790d125394b356f45c169f8efebc0b47d8a233a7b1bf2fdb9b4`
+and the MSI is
+`3eef3a7613ac4bfd794921a3b6241106b90f2a59f1e6f4dc1d730e99f2336aaa`.
+The APK reports versionName 0.2.73, versionCode 2073, package
+`com.meshchat.mobile`, arm64-v8a, target API 36, and the established
+development certificate
+`d6dbff63834666bace3d75b49234726e97ccce26d2b9e9516309682e0a33143f`.
+
+Still missing: a real two-device workspace approval/receipt over I2P, Android
+I2P router support, and a dedicated consent checkbox/service flag. No physical
+installer run is claimed.
+
+The consent gap is closed in **0.2.75 / Android 2075**: accepting an I2P
+personal invitation or submitting an I2P workspace join now requires an
+explicit `i2p_consent` flag, all three join views add the checkbox, and creating
+an invitation adopts the access point on the inviter side when it is not the
+connectable access point. Validation: **67 focused service tests passed**;
+GitHub Actions
+[run 39352529585](https://github.com/ahouchens/mesh-chat/actions/runs/39352529585)
+passed Verify, Windows packaging, and Android packaging. The APK is 34,065,938
+bytes with SHA-256
+`562e18c14777c39982989e379c0a371c1e48ba9970f35d700c930fea0a78156c`;
+the NSIS installer is SHA-256
+`e9fb4d048ff2a66e1b6cb47400954e2e3719a18b4a70b42161bdf096af27fd3a`
+and the MSI is
+`436b6921a129bdfa1fe5cc88d106521a42570278090e2007c037e7f4e977448e`.
+The APK reports versionName 0.2.75, versionCode 2075, package
+`com.meshchat.mobile`, arm64-v8a, target API 36, and the established
+development certificate
+`d6dbff63834666bace3d75b49234726e97ccce26d2b9e9516309682e0a33143f`.
+An intermediate 0.2.74 build failed five frontend assertions because normal
+invitations carried `i2p_consent: false`; 0.2.75 sends the field only for I2P
+previews.
+
 ## Direct connectivity increment, 2026-10-16
 
 Native qualification now runs in GitHub Actions. At `cbcf659`,
