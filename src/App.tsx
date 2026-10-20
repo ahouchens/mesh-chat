@@ -921,7 +921,7 @@ function Onboarding({
     try {
       await serviceCommand("create_profile", { display_name: name });
       if (mode === "join") {
-        await serviceCommand("accept_invitation", { invitation, i2p_consent: i2pConsent });
+        await serviceCommand("accept_invitation", { invitation, ...(preview?.i2p_access_point ? { i2p_consent: i2pConsent } : {}) });
         onReady(await serviceCommand<Snapshot>("snapshot"));
       } else {
         onReady(await serviceCommand<Snapshot>("snapshot"), pendingWorkspaceInvitation || undefined);
@@ -1204,7 +1204,7 @@ function NewChatDialog({ initialInvitation, remoteProfiles, onClose, onChanged, 
     if (busy || requestQueued) return;
     setBusy(true); setError(""); setCandidateResults([]);
     try {
-      const accepted = await serviceCommand<Contact>("accept_invitation", { invitation: raw, i2p_consent: i2pConsent });
+      const accepted = await serviceCommand<Contact>("accept_invitation", { invitation: raw, ...(preview?.i2p_access_point ? { i2p_consent: i2pConsent } : {}) });
       await onChanged();
       if (accepted.connection_results?.length && !accepted.connection_results.some((item) => item.result === "connected")) {
         setCandidateResults(accepted.connection_results);
@@ -2667,7 +2667,7 @@ function JoinWorkspaceDialog({ initialValue = "", resumeWorkspaceId, workspaces,
       }
       const workspace = await serviceCommand<Workspace>(command, {
         operation_id: joinAttempt.current.operationId,
-        ...(devicePreview ? { device_link: document } : { invitation: document, i2p_consent: i2pConsent }),
+        ...(devicePreview ? { device_link: document } : { invitation: document, ...(preview?.i2p_access_point ? { i2p_consent: i2pConsent } : {}) }),
       });
       if (workspace.connection_results?.length && !workspace.connection_results.some((item) => item.result === "connected")) {
         setConnectionResults(workspace.connection_results);
