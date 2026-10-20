@@ -400,6 +400,28 @@ Still missing: a real two-device workspace approval/receipt over I2P, Android
 I2P router support, and a dedicated consent checkbox/service flag. No physical
 installer run is claimed.
 
+The consent gap is closed in **0.2.75 / Android 2075**: accepting an I2P
+personal invitation or submitting an I2P workspace join now requires an
+explicit `i2p_consent` flag, all three join views add the checkbox, and creating
+an invitation adopts the access point on the inviter side when it is not the
+connectable access point. Validation: **67 focused service tests passed**;
+GitHub Actions
+[run 39352529585](https://github.com/ahouchens/mesh-chat/actions/runs/39352529585)
+passed Verify, Windows packaging, and Android packaging. The APK is 34,065,938
+bytes with SHA-256
+`562e18c14777c39982989e379c0a371c1e48ba9970f35d700c930fea0a78156c`;
+the NSIS installer is SHA-256
+`e9fb4d048ff2a66e1b6cb47400954e2e3719a18b4a70b42161bdf096af27fd3a`
+and the MSI is
+`436b6921a129bdfa1fe5cc88d106521a42570278090e2007c037e7f4e977448e`.
+The APK reports versionName 0.2.75, versionCode 2075, package
+`com.meshchat.mobile`, arm64-v8a, target API 36, and the established
+development certificate
+`d6dbff63834666bace3d75b49234726e97ccce26d2b9e9516309682e0a33143f`.
+An intermediate 0.2.74 build failed five frontend assertions because normal
+invitations carried `i2p_consent: false`; 0.2.75 sends the field only for I2P
+previews.
+
 ## Direct connectivity increment, 2026-10-16
 
 Native qualification now runs in GitHub Actions. At `cbcf659`,
