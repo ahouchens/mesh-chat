@@ -167,8 +167,8 @@ The threat model is explicit about what is *not* protected: traffic analysis, IP
 
 | Platform | What exists | Recorded verification |
 | --- | --- | --- |
-| Windows x64 | MSI and NSIS installers, standalone executable plus service sidecar, bundled/managed `i2pd`, I2P invitation and consent UI | 0.2.75 published; installer launch not rerun after the temporary-folder disk fix |
-| Android arm64 | Debug APK, plus release/AAB signing path; I2P settings and invitation preview | Built and package-inspected; no bundled I2P router and no device was attached in the recorded run |
+| Windows x64 | MSI and NSIS installers, standalone executable plus service sidecar, bundled/managed `i2pd`, I2P invitation and consent UI, 1:1 audio call surface | 0.2.77 published; installer launch not rerun after the temporary-folder disk fix |
+| Android arm64 | Debug APK, plus release/AAB signing path; I2P settings and invitation preview, 1:1 audio call surface | Built and package-inspected; no bundled I2P router and no physical call test in the recorded run |
 | macOS | Build path, FileVault adapter | No package built or run in this repository |
 | Linux | Build path, fscrypt/dm-crypt adapters | No package built or run in this repository |
 | iOS | Plugin and build script | Requires macOS and Xcode; not built or run in this repository |

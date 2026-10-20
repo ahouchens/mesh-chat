@@ -422,6 +422,41 @@ An intermediate 0.2.74 build failed five frontend assertions because normal
 invitations carried `i2p_consent: false`; 0.2.75 sends the field only for I2P
 previews.
 
+## WebRTC 1:1 audio call surface, 2026-10-19
+
+**0.2.77 / Android 2077** adds the first 1:1 audio call surface and durable
+call transport:
+
+- call button for approved contacts, incoming-call banner, Accept/Decline;
+- WebView `RTCPeerConnection`/`getUserMedia` media with mute and hangup;
+- signed `CALL_SIGNAL` documents over LXMF;
+- `start_call`, `answer_call`, `add_call_candidate`, `call_media`, `end_call`.
+
+Validation:
+
+- Frontend TypeScript: passed.
+- Frontend tests: **234 passed**.
+- Frontend production build: passed.
+- Full service suite: **1014 passed, 46 skipped**.
+- GitHub Actions
+  [run 39365694684](https://github.com/ahouchens/mesh-chat/actions/runs/39365694684)
+  passed Verify, Windows packaging, Android packaging, and the published
+  release step.
+- Release: <https://github.com/ahouchens/mesh-chat/releases/tag/v0.2.77>.
+
+Published assets:
+
+| Artifact | Size | SHA-256 |
+|---|---:|---|
+| `Mesh-Chat_0.2.77_x64-setup.exe` | 27,504,305 | `6c8538b49a65276694d8e24f3fbf74350ee47db5ec8a2a2d53c0c8525276018b` |
+| `Mesh-Chat_0.2.77_x64_en-US.msi` | 29,507,584 | `043e0fb958e0fe68b953703d85cd93eff483c411e2cea83e998a6a4cef679f3f` |
+| `mesh-chat-0.2.77-android-arm64-release.apk` | 34,082,283 | `59c3f7b98c9bd25e59ab9b313b8d215c44ac19135dc1e9eb1f9977ce90f97666` |
+
+The isolated C0b synthetic loopback and C1 microphone device spikes still pass.
+The direct WebView call path has not been qualified on two physical devices,
+over the public Internet, over STUN/TURN, on Android background/audio-focus, or
+with video. Those remain open.
+
 ## WebRTC calls foundation, 2026-10-19
 
 **0.2.76 / Android 2076** adds the C0a signed call-signaling foundation and
