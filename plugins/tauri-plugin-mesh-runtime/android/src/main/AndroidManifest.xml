@@ -6,11 +6,17 @@
     <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CAMERA" />
 
     <application
         android:allowBackup="false"
         android:fullBackupContent="false">
         <service android:name="com.meshchat.runtime.BootstrapService"
             android:exported="false" android:process=":mesh_bootstrap" />
+        <service android:name="com.meshchat.runtime.CallService"
+            android:exported="false"
+            android:foregroundServiceType="microphone|camera" />
     </application>
 </manifest>

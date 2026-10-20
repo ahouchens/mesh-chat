@@ -739,6 +739,10 @@ class MeshRuntimePlugin(private val activity: Activity) : Plugin(activity) {
                     ) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
                 }
                 audio.mode = AudioManager.MODE_IN_COMMUNICATION
+                ContextCompat.startForegroundService(
+                    activity,
+                    Intent(activity, CallService::class.java),
+                )
                 resolve(invoke, successful(JSONObject().put("granted", granted)))
                 return
             }
@@ -761,6 +765,7 @@ class MeshRuntimePlugin(private val activity: Activity) : Plugin(activity) {
             audioFocusRequest = null
             legacyAudioFocusListener = null
             audio.mode = previousAudioMode
+            activity.stopService(Intent(activity, CallService::class.java))
             resolve(invoke, successful(JSONObject().put("active", false)))
         } catch (error: Throwable) {
             reject(invoke, "end_call_audio", error)
