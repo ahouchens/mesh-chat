@@ -928,6 +928,7 @@ export interface CallSummary {
   created_at: number;
   updated_at: number;
   expires_at: number;
+  ring_expires_at?: number | null;
   candidate_count: number;
   has_local_sdp: boolean;
   has_remote_sdp: boolean;

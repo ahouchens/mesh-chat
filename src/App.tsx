@@ -1145,7 +1145,7 @@ function CallDialog({
         {phase === "ended" && <p className="muted">Call ended.</p>}
         {phase === "error" && <p className="form-error" role="alert">{error || "The call could not connect."}</p>}
         {media && active && <p className="muted">{media.candidate_count} network candidate{media.candidate_count === 1 ? "" : "s"} exchanged.</p>}
-        {phase === "error" && <div className="dialog-actions"><Button onClick={onClose}>Close</Button></div>}
+        {phase === "error" && <div className="dialog-actions">{call && <Button onClick={() => void startCall(call.media)}>Try again</Button>}<Button variant="secondary" onClick={onClose}>Close</Button></div>}
       </div>
     </Dialog>
   );

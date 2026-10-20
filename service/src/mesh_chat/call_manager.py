@@ -22,6 +22,7 @@ from .webrtc_signaling import (
 
 ACTIVE_STATES = {"dialing", "ringing", "connecting", "in_call"}
 MAX_CANDIDATES = 32
+RING_SECONDS = 45
 
 
 class CallManager:
@@ -81,6 +82,7 @@ class CallManager:
             "created_at": self.now(),
             "updated_at": self.now(),
             "expires_at": int(self.now()) + 600,
+            "ring_expires_at": self.now() + RING_SECONDS,
         }
         self.store.put("call", call_id, record)
         self.send_document(contact["id"], invite)
@@ -120,6 +122,7 @@ class CallManager:
                 "created_at": self.now(),
                 "updated_at": self.now(),
                 "expires_at": invite.expires_at,
+                "ring_expires_at": min(self.now() + RING_SECONDS, invite.expires_at),
             }
             self.store.put("call", invite.call_id, record)
             return self.public(record)
@@ -193,6 +196,11 @@ class CallManager:
         record = self._require_call(call_id)
         if record["role"] != "callee" or record["state"] != "ringing":
             raise ValidationError("This call is not awaiting an answer")
+        if self.now() > float(record.get("ring_expires_at", 0)):
+            record["state"] = "no_answer"
+            record["updated_at"] = self.now()
+            self.store.put("call", call_id, record)
+            raise ValidationError("This call invitation has expired")
         invite = verify_call_invite(
             record["invite"],
             expected_callee_destination=_destination(identity),
@@ -248,11 +256,19 @@ class CallManager:
         return self.public(record)
 
     def active(self) -> list[dict[str, Any]]:
-        calls = [
-            record
-            for record in self.store.list("call")
-            if record.get("state") in ACTIVE_STATES
-        ]
+        calls = []
+        for record in self.store.list("call"):
+            if record.get("state") not in ACTIVE_STATES:
+                continue
+            if (
+                record.get("state") in {"dialing", "ringing"}
+                and self.now() > float(record.get("ring_expires_at", 0))
+            ):
+                record["state"] = "no_answer"
+                record["updated_at"] = self.now()
+                self.store.put("call", record["id"], record)
+                continue
+            calls.append(record)
         calls.sort(key=lambda record: record.get("updated_at", 0), reverse=True)
         return [self.public(record) for record in calls]
 
@@ -270,6 +286,7 @@ class CallManager:
             "created_at": record["created_at"],
             "updated_at": record["updated_at"],
             "expires_at": record["expires_at"],
+            "ring_expires_at": record.get("ring_expires_at"),
             "candidate_count": len(record.get("candidates", [])),
             "has_local_sdp": bool(record.get("local_sdp")),
             "has_remote_sdp": bool(record.get("remote_sdp")),

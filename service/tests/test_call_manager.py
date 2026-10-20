@@ -161,3 +161,25 @@ def test_unapproved_contact_cannot_start() -> None:
             sdp=SDP,
             dtls_fingerprint=FINGERPRINT,
         )
+
+
+def test_ringing_call_times_out_and_is_not_active() -> None:
+    caller = RNS.Identity()
+    callee = RNS.Identity()
+    clock = [float(NOW)]
+    manager = CallManager(
+        MemoryStore(),
+        lambda _contact_id, _document: None,
+        now=lambda: clock[0],
+        new_id=lambda: "call_ring_timeout_01",
+    )
+    manager.start(
+        caller,
+        _contact(callee),
+        media="audio",
+        sdp=SDP,
+        dtls_fingerprint=FINGERPRINT,
+    )
+    clock[0] += 46
+    assert manager.active() == []
+    assert manager.get("call_ring_timeout_01")["state"] == "no_answer"
