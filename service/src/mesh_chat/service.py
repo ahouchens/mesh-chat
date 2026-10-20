@@ -37,6 +37,7 @@ from .invitations import (
 )
 from .call_manager import CallManager
 from .call_settings import CallSettings
+from .webrtc_interface import WebRTCInterface
 from .direct_runtime import SessionRegistry
 from .direct_packets import PacketRuntime
 from .direct_packet_adapter import ProfileBudget
@@ -200,6 +201,9 @@ class MeshChatService(
         "call_settings",
         "update_call_settings",
         "call_ice_servers",
+        "webrtc_attach",
+        "webrtc_packet",
+        "webrtc_detach",
         "set_message_reaction",
         "save_draft",
         "delete_conversation",
@@ -391,6 +395,7 @@ class MeshChatService(
         self._i2p_router = I2PRouterManager(profile_dir)
         self.calls = CallManager(store, self._send_call_document)
         self._call_settings = CallSettings.from_dict(store.get("call_settings", "default"))
+        self._webrtc_bridges: dict[str, WebRTCInterface] = {}
         identity_record = store.get("identity", "local")
         profile_record = store.get("profile", "local")
         if identity_record is not None or profile_record is not None:
@@ -1636,6 +1641,65 @@ class MeshChatService(
 
     def call_ice_servers(self) -> dict[str, Any]:
         return self._call_settings.rtc_configuration()
+
+    def webrtc_attach(self) -> dict[str, Any]:
+        if self.network is None:
+            raise NetworkUnavailable("Reticulum is not running for a WebRTC bridge")
+        bridge_id = _new_id()
+        interface = WebRTCInterface(
+            RNS.Transport,
+            lambda data: self._webrtc_outbound(bridge_id, data),
+            name=f"Mesh Chat WebRTC {bridge_id[:8]}",
+        )
+        try:
+            RNS.Transport.add_interface(interface)
+        except Exception as exc:
+            raise NetworkUnavailable("Could not attach the WebRTC interface") from exc
+        self._webrtc_bridges[bridge_id] = interface
+        self._changed()
+        return {
+            "bridge_id": bridge_id,
+            "max_packet": WebRTCInterface.HW_MTU,
+            "state": "online",
+        }
+
+    def webrtc_packet(self, bridge_id: str, data: str) -> dict[str, Any]:
+        interface = self._webrtc_bridges.get(bridge_id)
+        if interface is None or not interface.online:
+            raise ValidationError("WebRTC bridge is not active")
+        if not isinstance(data, str) or not data:
+            raise ValidationError("WebRTC packet is empty")
+        try:
+            packet = _unb64(data)
+        except Exception as exc:
+            raise ValidationError("WebRTC packet is invalid") from exc
+        if not 1 <= len(packet) <= WebRTCInterface.HW_MTU:
+            raise ValidationError("WebRTC packet exceeds the interface MTU")
+        interface.process_incoming(packet)
+        return {"accepted": len(packet)}
+
+    def webrtc_detach(self, bridge_id: str) -> dict[str, Any]:
+        interface = self._webrtc_bridges.pop(bridge_id, None)
+        if interface is not None:
+            interface.detach()
+        self._changed()
+        return {"state": "closed"}
+
+    def _webrtc_outbound(self, bridge_id: str, data: bytes) -> None:
+        interface = self._webrtc_bridges.get(bridge_id)
+        if interface is None or not interface.online:
+            return
+        if not data or len(data) > WebRTCInterface.HW_MTU:
+            return
+        self.emit(
+            {
+                "type": "event",
+                "event": "webrtc_packet",
+                "bridge_id": bridge_id,
+                "data": base64.b64encode(data).decode("ascii"),
+            }
+        )
+
 
 
     @staticmethod
@@ -3028,6 +3092,15 @@ class MeshChatService(
         if command == "call_ice_servers":
             _payload(value, allowed=set())
             return self.call_ice_servers()
+        if command == "webrtc_attach":
+            _payload(value, allowed=set())
+            return self.webrtc_attach()
+        if command == "webrtc_packet":
+            body = _payload(value, allowed={"bridge_id", "data"}, required={"bridge_id", "data"})
+            return self.webrtc_packet(body["bridge_id"], body["data"])
+        if command == "webrtc_detach":
+            body = _payload(value, allowed={"bridge_id"}, required={"bridge_id"})
+            return self.webrtc_detach(body["bridge_id"])
         if command == "set_message_reaction":
             body = _payload(
                 value,
@@ -4266,6 +4339,12 @@ class MeshChatService(
         if self._retry_thread.is_alive() and self._retry_thread is not threading.current_thread():
             self._retry_thread.join(timeout=0.75)
         callbacks_stopped = True
+        for interface in list(getattr(self, "_webrtc_bridges", {}).values()):
+            try:
+                interface.detach()
+            except Exception:
+                pass
+        getattr(self, "_webrtc_bridges", {}).clear()
         if self.network:
             # Older/narrow test adapters return None; only an explicit False
             # means a real callback is still executing.
