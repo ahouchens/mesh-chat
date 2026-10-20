@@ -620,7 +620,7 @@ class MeshChatService(
                 "host_session_id": host_session_id,
                 "methods": sorted({item["path"] for item in access["endpoints"]}),
             }
-        if connection_mode not in {None, "nearby", "remote"}:
+        if connection_mode not in {None, "nearby", "remote", "webrtc"}:
             raise ValidationError("Invitation connection mode is invalid")
         if profile_id is None:
             return local

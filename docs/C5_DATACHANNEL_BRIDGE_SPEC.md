@@ -1,9 +1,10 @@
 # C5 DataChannel onboarding bridge specification
 
-Status: C5a–C5c implemented (Python interface + service packet IPC, renderer
-DataChannel pump, signed QR/copy offer/answer and onboarding dialog). C5d–C5e
-(admission automation and physical test) remain open. The 0.2.88 prototype is
-not a shipping onboarding path.
+Status: C5a–C5d implemented as a candidate (Python interface + service packet
+IPC, renderer DataChannel pump, signed QR/copy offer/answer, and
+invitation/workspace admission over the connected bridge). C5e physical
+qualification remains open. The 0.2.88 prototype is not a shipping onboarding
+path.
 
 ## 1. Goal
 
@@ -224,6 +225,19 @@ Implemented in 0.2.91:
 - ICE configuration from call settings.
 
 ### C5d — Onboarding admission
+
+Implemented candidate in 0.2.93:
+
+- personal and workspace invitation selectors expose **WebRTC bridge —
+  connected** when the session is active;
+- `connection_mode = "webrtc"` creates the existing signed invitation without
+  starting participant-hosted direct setup;
+- the normal join/approval/receipt flow then runs over the attached Reticulum
+  interface.
+
+Still open: automatic invitation transfer inside the WebRTC dialog (the
+invitation is still copied/pasted), reconnect/failure tests, and physical
+qualification.
 
 - Run the existing invitation/join flow over the bridge.
 - Owner approval, queued messages, receipts.

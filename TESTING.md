@@ -422,6 +422,27 @@ An intermediate 0.2.74 build failed five frontend assertions because normal
 invitations carried `i2p_consent: false`; 0.2.75 sends the field only for I2P
 previews.
 
+## C5d WebRTC invitation admission, 2026-10-20
+
+**0.2.93 / Android 2093** adds **WebRTC bridge — connected** to the personal
+and workspace invitation selectors. `connection_mode="webrtc"` returns the
+normal signed invitation without starting participant-hosted direct setup, so
+the existing join/approval/receipt flow runs over the attached DataChannel
+interface.
+
+Validation:
+
+- Full service suite: **1040 passed, 46 skipped**.
+- Frontend TypeScript: passed.
+- Frontend tests: **237 passed**.
+- Frontend production build: passed.
+- GitHub Actions run: see release notes.
+- Release: <https://github.com/ahouchens/mesh-chat/releases/tag/v0.2.93>.
+
+Still open: transferring the invitation automatically inside the WebRTC dialog
+(it is still copied/pasted), reconnect/failure tests, and C5e physical
+qualification.
+
 ## C5c WebRTC onboarding dialog, 2026-10-20
 
 **0.2.92 / Android 2092** adds signed WebRTC onboarding offers/answers and a

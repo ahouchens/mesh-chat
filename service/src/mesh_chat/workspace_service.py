@@ -4652,7 +4652,7 @@ class WorkspaceServiceMixin:
             outcome["methods"] = sorted({item["path"] for item in access["endpoints"]})
             record["participant_host_id"] = host_session_id
             record["expires_at"] = float(outcome["expires_at"])
-        elif connection_mode not in {None, "nearby", "remote"}:
+        elif connection_mode not in {None, "nearby", "remote", "webrtc"}:
             raise ValidationError("Workspace invitation connection mode is invalid")
         elif remote_profile_id is not None:
             remote_record = self._require_remote_profile(remote_profile_id)
