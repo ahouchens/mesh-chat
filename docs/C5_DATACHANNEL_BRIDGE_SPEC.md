@@ -1,8 +1,8 @@
 # C5 DataChannel onboarding bridge specification
 
-Status: C5a implemented (Python Reticulum interface + service packet IPC).
-C5b–C5e (renderer pump, signed QR/copy offer/answer, admission, physical test)
-remain open. The 0.2.88 prototype is not a shipping onboarding path.
+Status: C5a and C5b implemented (Python interface + service packet IPC, renderer
+DataChannel pump). C5c–C5e (signed QR/copy offer/answer, admission, physical
+test) remain open. The 0.2.88 prototype is not a shipping onboarding path.
 
 ## 1. Goal
 
@@ -192,6 +192,16 @@ Implemented in 0.2.89:
 - No UI yet.
 
 ### C5b — Renderer DataChannel pump
+
+Implemented in 0.2.90:
+
+- `src/webrtc-onboarding.ts` attaches one open DataChannel to the service;
+- binary messages are base64-coded into `webrtc_packet` and decoded from
+  `webrtc_packet` events;
+- 1064-byte MTU enforcement and detach on channel close/error;
+- service event listener cleanup;
+- Vitest coverage for base64 round-trip, inbound/outbound packets, MTU, and
+  detach.
 
 - DataChannel creation, binary type, packet encode/decode.
 - Tauri event listener, attach/detach lifecycle.

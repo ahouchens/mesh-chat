@@ -2240,7 +2240,7 @@ dependencies = [
 
 [[package]]
 name = "mesh-chat"
-version = "0.2.89"
+version = "0.2.90"
 dependencies = [
  "base64 0.22.1",
  "keyring",
