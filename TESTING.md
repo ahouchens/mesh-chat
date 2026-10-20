@@ -422,6 +422,34 @@ An intermediate 0.2.74 build failed five frontend assertions because normal
 invitations carried `i2p_consent: false`; 0.2.75 sends the field only for I2P
 previews.
 
+## WebRTC STUN/TURN settings, 2026-10-19
+
+**0.2.79 / Android 2079** adds validated STUN/TURN settings, encrypted-at-rest
+TURN credentials, relay-only mode, an active-call ICE handoff, and a
+Direct/Relayed path badge.
+
+Validation:
+
+- Frontend TypeScript: passed.
+- Frontend tests: **234 passed**.
+- Frontend production build: passed.
+- Full service suite: **1024 passed, 46 skipped**.
+- GitHub Actions
+  [run 39369294109](https://github.com/ahouchens/mesh-chat/actions/runs/39369294109)
+  passed Verify, Windows packaging, Android packaging, and Publish.
+- Release: <https://github.com/ahouchens/mesh-chat/releases/tag/v0.2.79>.
+
+Published assets:
+
+| Artifact | Size | SHA-256 |
+|---|---:|---|
+| `Mesh-Chat_0.2.79_x64-setup.exe` | 27,512,952 | `6c4ae556d5477954453aefc44d5be3b294a8ac570ba7179689bd84780627cd55` |
+| `Mesh-Chat_0.2.79_x64_en-US.msi` | 29,511,680 | `28e66977196deb857af3dca18c6f8ae446f1eeb947585f51a723411d1ce2239a` |
+| `mesh-chat-0.2.79-android-arm64-release.apk` | 34,082,641 | `fae2365414b2c0dfb0c26f0026b6e61e1702acf20f065284df9929a11a909f15` |
+
+Still open: ICE restart/reconnect, TURN quotas, physical multi-device calls,
+Android runtime permission/audio focus, video quality, and C5.
+
 ## WebRTC video surface and Android call permissions, 2026-10-19
 
 **0.2.78 / Android 2078** adds Audio call / Video call choices, camera capture,
