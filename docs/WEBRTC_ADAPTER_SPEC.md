@@ -772,6 +772,12 @@ Windows microphone, sends it through the WebRTC/Opus path, and can monitor the
 decoded audio. It is still local-only; service signaling, durable call state,
 permissions, and UI are not wired yet.
 
+C1a implemented: `service/src/mesh_chat/call_manager.py` persists call records,
+signs/verifies C0a documents, and exposes start/answer/candidate/end operations.
+`CALL_SIGNAL` messages carry those documents over the existing LXMF path. The
+service commands are `start_call`, `answer_call`, `add_call_candidate`, and
+`end_call`; the renderer does not yet use them.
+
 Goal: a consented audio call between approved Windows contacts.
 
 Scope:

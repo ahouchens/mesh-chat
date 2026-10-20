@@ -357,6 +357,7 @@ def next_call_state(state: str, event: str) -> str:
     transitions = {
         ("idle", "dial"): "dialing",
         ("dialing", "ring"): "ringing",
+        ("dialing", "answer"): "connecting",
         ("dialing", "decline"): "declined",
         ("dialing", "busy"): "busy",
         ("dialing", "timeout"): "no_answer",

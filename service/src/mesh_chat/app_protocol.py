@@ -15,6 +15,7 @@ from .models import MessageKind
 PAYLOAD_VERSION = 1
 CUSTOM_TYPE = b"mesh-chat"
 MAX_TEXT_BYTES = 16 * 1024
+MAX_CALL_DOCUMENT_BYTES = 16 * 1024
 DELIVERY_WINDOW_SECONDS = 7 * 24 * 60 * 60
 
 # LXMF explicitly reserves 0xFB and 0xFD for custom type and metadata. The
@@ -406,6 +407,13 @@ def parse_payload(message: LXMF.LXMessage, *, now: int | None = None) -> AppPayl
         raise ValidationError("Message text is invalid or too large")
     if kind == MessageKind.CHAT and not text.strip():
         raise ValidationError("Chat message is empty")
+    if kind == MessageKind.CALL_SIGNAL:
+        if not text.strip():
+            raise ValidationError("Call signal is empty")
+        if len(text.encode("utf-8")) > MAX_CALL_DOCUMENT_BYTES:
+            raise ValidationError("Call signal is too large")
+        if receipt_for is not None:
+            raise ValidationError("Receipt reference is not valid for a call signal")
     if kind in {MessageKind.RECEIPT, MessageKind.GROUP_RECEIPT} and (
         text or receipt_for is None
     ):

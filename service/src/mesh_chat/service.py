@@ -35,6 +35,7 @@ from .invitations import (
     readable_fingerprint,
     verify_invitation,
 )
+from .call_manager import CallManager
 from .direct_runtime import SessionRegistry
 from .direct_packets import PacketRuntime
 from .direct_packet_adapter import ProfileBudget
@@ -188,6 +189,10 @@ class MeshChatService(
         "rename_contact",
         "delete_contact",
         "send_message",
+        "start_call",
+        "answer_call",
+        "add_call_candidate",
+        "end_call",
         "set_message_reaction",
         "save_draft",
         "delete_conversation",
@@ -377,6 +382,7 @@ class MeshChatService(
         settings_record = store.get("settings", "network")
         self.settings = NetworkSettings.from_dict(settings_record)
         self._i2p_router = I2PRouterManager(profile_dir)
+        self.calls = CallManager(store, self._send_call_document)
         identity_record = store.get("identity", "local")
         profile_record = store.get("profile", "local")
         if identity_record is not None or profile_record is not None:
@@ -1521,6 +1527,65 @@ class MeshChatService(
         self._changed()
         return self.store.get("message", message["id"]) or message
 
+    def _call_identity(self) -> RNS.Identity:
+        if self._identity is None:
+            raise NetworkUnavailable("Local identity is not ready for calls")
+        return self._identity
+
+    def _send_call_document(self, contact_id: str, document: str) -> None:
+        contact = self._require_contact(contact_id)
+        if contact["trust"] not in {TrustState.APPROVED.value, TrustState.VERIFIED.value}:
+            raise ContactNotApproved("Calls require an approved contact")
+        if not isinstance(document, str) or not document:
+            raise ValidationError("Call document is empty")
+        if len(document.encode("utf-8")) > MAX_TEXT_BYTES:
+            raise ValidationError("Call document is too large")
+        message = self._create_outbound(contact, MessageKind.CALL_SIGNAL, document)
+        self._attempt(message["id"])
+
+    def start_call(
+        self,
+        contact_id: str,
+        media: str,
+        sdp: str,
+        dtls_fingerprint: str,
+    ) -> dict[str, Any]:
+        contact = self._require_contact(contact_id)
+        result = self.calls.start(
+            self._call_identity(),
+            contact,
+            media=media,
+            sdp=sdp,
+            dtls_fingerprint=dtls_fingerprint,
+        )
+        self._changed()
+        return result
+
+    def answer_call(
+        self,
+        call_id: str,
+        sdp: str,
+        dtls_fingerprint: str,
+    ) -> dict[str, Any]:
+        result = self.calls.answer(
+            self._call_identity(),
+            call_id,
+            sdp=sdp,
+            dtls_fingerprint=dtls_fingerprint,
+        )
+        self._changed()
+        return result
+
+    def add_call_candidate(self, call_id: str, candidate: str) -> dict[str, Any]:
+        result = self.calls.add_candidate(self._call_identity(), call_id, candidate)
+        self._changed()
+        return result
+
+    def end_call(self, call_id: str, reason: str = "completed") -> dict[str, Any]:
+        result = self.calls.end(self._call_identity(), call_id, reason)
+        self._changed()
+        return result
+
     @staticmethod
     def _conversation_marker_id(kind: str, target_id: str) -> str:
         digest = RNS.Identity.full_hash(
@@ -2135,12 +2200,23 @@ class MeshChatService(
                 return
             if app.kind == MessageKind.REACTION:
                 self._receive_direct_reaction(contact, native, app)
+            elif app.kind == MessageKind.CALL_SIGNAL:
+                self._receive_call_signal(contact, app.text)
             elif app.kind == MessageKind.CHAT:
                 self._receive_chat(contact, native, app)
         except Exception:
             # Malformed, unauthenticated, unknown and mismatched messages fail
             # closed without a reply that could be abused as an oracle.
             return
+
+    def _receive_call_signal(self, contact: dict[str, Any], document: str | None) -> None:
+        if not isinstance(document, str) or not document:
+            return
+        if self._identity is None:
+            return
+        result = self.calls.receive(self._identity, contact, document)
+        if result is not None:
+            self._changed()
 
     def _receive_contact_request(
         self, native: LXMF.LXMessage, app: Any, existing: dict[str, Any] | None
@@ -2497,6 +2573,7 @@ class MeshChatService(
             ],
             "participant_hosting": self.participant_hosting_snapshot(),
             "participant_connections": self.participant_connection_snapshot(),
+            "calls": self.calls.active(),
             "network": self.network.snapshot() if self.network else None,
             "service_error": (
                 self._network_error
@@ -2839,6 +2916,34 @@ class MeshChatService(
                 value, allowed={"contact_id", "text"}, required={"contact_id", "text"}
             )
             return self.send_message(body["contact_id"], body["text"])
+        if command == "start_call":
+            body = _payload(
+                value,
+                allowed={"contact_id", "media", "sdp", "dtls_fingerprint"},
+                required={"contact_id", "media", "sdp", "dtls_fingerprint"},
+            )
+            return self.start_call(
+                body["contact_id"], body["media"], body["sdp"], body["dtls_fingerprint"]
+            )
+        if command == "answer_call":
+            body = _payload(
+                value,
+                allowed={"call_id", "sdp", "dtls_fingerprint"},
+                required={"call_id", "sdp", "dtls_fingerprint"},
+            )
+            return self.answer_call(
+                body["call_id"], body["sdp"], body["dtls_fingerprint"]
+            )
+        if command == "add_call_candidate":
+            body = _payload(
+                value, allowed={"call_id", "candidate"}, required={"call_id", "candidate"}
+            )
+            return self.add_call_candidate(body["call_id"], body["candidate"])
+        if command == "end_call":
+            body = _payload(
+                value, allowed={"call_id", "reason"}, required={"call_id"}
+            )
+            return self.end_call(body["call_id"], body.get("reason", "completed"))
         if command == "set_message_reaction":
             body = _payload(
                 value,

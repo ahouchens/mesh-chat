@@ -39,6 +39,18 @@ def test_chat_payload_uses_standard_content_and_custom_fields() -> None:
     assert parsed.text == "Hello"
 
 
+def test_call_signal_carries_the_signed_document() -> None:
+    message = _message(MessageKind.CALL_SIGNAL, '{"type":"call_invite"}')
+    parsed = parse_payload(message)
+    assert parsed.kind == MessageKind.CALL_SIGNAL
+    assert parsed.text == '{"type":"call_invite"}'
+
+
+def test_call_signal_must_not_be_empty() -> None:
+    with pytest.raises(ValidationError):
+        parse_payload(_message(MessageKind.CALL_SIGNAL, ""))
+
+
 def test_receipt_must_have_empty_content() -> None:
     with pytest.raises(ValidationError):
         parse_payload(_message(MessageKind.RECEIPT, "not empty"))
