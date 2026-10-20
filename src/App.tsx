@@ -857,6 +857,7 @@ function CallDialog({
   const [muted, setMuted] = useState(false);
   const [videoEnabled, setVideoEnabled] = useState(initialCall?.media === "video");
   const [path, setPath] = useState<"direct" | "relay" | "unknown">("unknown");
+  const [quality, setQuality] = useState<"good" | "fair" | "poor" | "unknown">("unknown");
   const [error, setError] = useState("");
   const pcRef = useRef<RTCPeerConnection | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -891,6 +892,15 @@ function CallDialog({
 
   useEffect(() => cleanup, [cleanup]);
 
+  useEffect(() => {
+    const onOnline = () => {
+      if (!callIdRef.current) return;
+      window.setTimeout(() => restartRef.current(), 1000);
+    };
+    window.addEventListener("online", onOnline);
+    return () => window.removeEventListener("online", onOnline);
+  }, []);
+
   const inspectPath = useCallback(async (pc: RTCPeerConnection) => {
     try {
       const stats = await pc.getStats();
@@ -911,6 +921,27 @@ function CallDialog({
       setPath(relayed ? "relay" : "direct");
     } catch {
       setPath("unknown");
+    }
+  }, []);
+
+  const inspectQuality = useCallback(async (pc: RTCPeerConnection) => {
+    try {
+      const stats = await pc.getStats();
+      let lost = 0;
+      let received = 0;
+      let jitter = 0;
+      stats.forEach((report) => {
+        const value = report as unknown as Record<string, unknown>;
+        if (value.type !== "inbound-rtp") return;
+        lost += Number(value.packetsLost ?? 0);
+        received += Number(value.packetsReceived ?? 0);
+        jitter = Math.max(jitter, Number(value.jitter ?? 0));
+      });
+      const total = lost + received;
+      const loss = total > 0 ? lost / total : 0;
+      setQuality(loss > 0.08 || jitter > 0.08 ? "poor" : loss > 0.02 || jitter > 0.03 ? "fair" : total > 0 ? "good" : "unknown");
+    } catch {
+      setQuality("unknown");
     }
   }, []);
 
@@ -936,6 +967,8 @@ function CallDialog({
         setPhase("in_call");
         setError("");
         void inspectPath(pc);
+        void inspectQuality(pc);
+        window.setTimeout(() => { void inspectQuality(pc); }, 3000);
       }
       if (pc.connectionState === "disconnected") {
         setPhase("connecting");
@@ -948,7 +981,7 @@ function CallDialog({
     };
     pcRef.current = pc;
     return pc;
-  }, [inspectPath]);
+  }, [inspectPath, inspectQuality]);
 
   const startPolling = useCallback((callId: string) => {
     if (pollRef.current !== null) window.clearInterval(pollRef.current);
@@ -1091,6 +1124,34 @@ function CallDialog({
   }, [waitForCandidates]);
   restartRef.current = () => { void attemptRestart(); };
 
+  const configureVideoSender = useCallback(async (pc: RTCPeerConnection, stream: MediaStream) => {
+    const track = stream.getVideoTracks()[0];
+    if (!track) return;
+    const sender = pc.getSenders().find((candidate) => candidate.track === track);
+    if (!sender) return;
+    try {
+      const capabilities = RTCRtpSender.getCapabilities("video");
+      if (capabilities) {
+        const codecs = [...capabilities.codecs].sort((left, right) => {
+          const score = (mime: string) => mime === "video/VP8" ? 0 : mime === "video/VP9" ? 1 : 2;
+          return score(left.mimeType) - score(right.mimeType);
+        });
+        pc.getTransceivers().find((transceiver) => transceiver.sender === sender)?.setCodecPreferences(codecs);
+      }
+    } catch {
+      // The platform may not expose codec preferences; keep its default.
+    }
+    try {
+      const parameters = sender.getParameters();
+      if (parameters.encodings[0]) {
+        parameters.encodings[0].maxBitrate = 500_000;
+        await sender.setParameters(parameters);
+      }
+    } catch {
+      // Bitrate shaping is best-effort; the call still proceeds.
+    }
+  }, []);
+
   const startCall = useCallback(async (media: "audio" | "video") => {
     setError("");
     setPhase("preparing");
@@ -1103,6 +1164,7 @@ function CallDialog({
       const configuration = await serviceCommand<CallIceConfiguration>("call_ice_servers");
       const pc = attachPeer(configuration);
       stream.getTracks().forEach((track) => pc.addTrack(track, stream));
+      void configureVideoSender(pc, stream);
       const offer = await pc.createOffer();
       await pc.setLocalDescription(offer);
       await waitForCandidates(pc);
@@ -1126,7 +1188,7 @@ function CallDialog({
       setError(errorMessage(reason));
       setPhase("error");
     }
-  }, [attachPeer, cleanup, contact.id, onChanged, prepareMedia, startPolling, waitForCandidates]);
+  }, [attachPeer, cleanup, configureVideoSender, contact.id, onChanged, prepareMedia, startPolling, waitForCandidates]);
 
   const acceptCall = useCallback(async () => {
     if (!call) return;
@@ -1144,6 +1206,7 @@ function CallDialog({
       const pc = attachPeer(configuration);
       await pc.setRemoteDescription({ type: "offer", sdp: details.remote_sdp });
       stream.getTracks().forEach((track) => pc.addTrack(track, stream));
+      void configureVideoSender(pc, stream);
       const answer = await pc.createAnswer();
       await pc.setLocalDescription(answer);
       await waitForCandidates(pc);
@@ -1166,7 +1229,7 @@ function CallDialog({
       setError(errorMessage(reason));
       setPhase("error");
     }
-  }, [attachPeer, call, cleanup, onChanged, prepareMedia, startPolling, waitForCandidates]);
+  }, [attachPeer, call, cleanup, configureVideoSender, onChanged, prepareMedia, startPolling, waitForCandidates]);
 
   const hangup = useCallback(async (reason: "completed" | "declined" | "cancelled") => {
     const callId = callIdRef.current;
@@ -1237,7 +1300,7 @@ function CallDialog({
         )}
         {active && (
           <>
-            <p className="direct-host-status" role="status"><Phone size={17} /> In call · {path === "relay" ? "Relayed via TURN" : path === "direct" ? "Direct media" : "Checking media path"}</p>
+            <p className="direct-host-status" role="status"><Phone size={17} /> In call · {path === "relay" ? "Relayed via TURN" : path === "direct" ? "Direct media" : "Checking media path"} · {quality === "unknown" ? "Measuring quality" : quality === "good" ? "Good quality" : quality === "fair" ? "Fair quality" : "Poor quality"}</p>
             <div className="dialog-actions">
               <Button variant="secondary" onClick={toggleMute}>{muted ? <MicOff size={17} /> : <Mic size={17} />} {muted ? "Unmute" : "Mute"}</Button>
               {call?.media === "video" && <Button variant="secondary" onClick={toggleCamera}>{videoEnabled ? <Video size={17} /> : <VideoOff size={17} />} {videoEnabled ? "Camera off" : "Camera on"}</Button>}

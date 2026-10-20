@@ -835,8 +835,10 @@ Exit criteria:
 ### C3 — 1:1 video
 
 Implemented candidate: the call surface offers Audio call / Video call, requests
-a camera track, renders local/remote video, and adds camera on/off. VP8/VP9
-negotiation, physical camera behavior, bandwidth adaptation, and thermal/battery
+a camera track, renders local/remote video, adds camera on/off, prefers VP8
+when the platform exposes codec preferences, caps the video sender at 500 kbps,
+and shows a good/fair/poor indicator from inbound RTP loss/jitter. Physical
+camera behavior, codec negotiation on real devices, and thermal/battery
 measurement remain open.
 
 Goal: optional camera video on the same call path.
@@ -867,12 +869,13 @@ limited to three per minute and twenty per hour per contact, and call records
 are pruned after 24 hours.
 
 TURN quotas are the operator's responsibility (ADR 0022); Mesh Chat does not
-operate a TURN service.
+operate a TURN service. The call surface retries the media path when the
+browser reports that the network is online.
 
 Still open:
 
 - codec/device matrix;
-- network-change and sleep/resume tests;
+- sleep/resume tests;
 - diagnostics without addresses, credentials, or media keys.
 
 ### C5 — Conditional DataChannel adapter
