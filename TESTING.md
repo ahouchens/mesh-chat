@@ -1,4 +1,4 @@
-﻿# Verification and release gates
+# Verification and release gates
 
 Phase 2 direct-connectivity work has a separate
 [evidence record](docs/DIRECT_CONNECTIVITY_PHASE2_EVIDENCE.md), distinguishing
@@ -50,14 +50,14 @@ tests across App, invitation transfer, and API. TypeScript `--noEmit` and
 
 ## Android direct-reply failure diagnosis, 2026-10-18
 
-The installed 0.2.63 build reported `build_commit: e361c70â€¦`. That commit is a
-strict descendant of the qualified application source `34d9927â€¦` and differs
+The installed 0.2.63 build reported `build_commit: e361c70…`. That commit is a
+strict descendant of the qualified application source `34d9927…` and differs
 from it only by the LICENSE file, license metadata, and documentation:
 `git diff --name-status 34d9927 e361c70` lists no `service/src`, `src`,
 `src-tauri/src`, or protocol change. The branch base `7867e71` likewise has no
 code difference from `34d9927`. The installed application code therefore
-matches the qualified 0.2.63 source; the earlier â€œcommit absent from local
-objectsâ€ observation was a stale-clone problem, not evidence of a different
+matches the qualified 0.2.63 source; the earlier “commit absent from local
+objects” observation was a stale-clone problem, not evidence of a different
 build. `service_version: unavailable` is expected because Android embeds
 `service/src` without installing the service distribution metadata; it is not a
 version mismatch.
@@ -374,7 +374,7 @@ development certificate
 
 The I3 gap analysis added:
 
-- service-level personal I2P creation â†’ preview â†’ accept â†’ settings/config
+- service-level personal I2P creation → preview → accept → settings/config
   adoption;
 - normal personal invitation regression;
 - workspace I2P creation and preview;
@@ -434,11 +434,21 @@ Validation:
 - Frontend TypeScript: passed.
 - Frontend tests: **237 passed**.
 - Frontend production build: passed.
-- GitHub Actions run: see release notes.
+- GitHub Actions
+  [run 39459131402](https://github.com/ahouchens/mesh-chat/actions/runs/39459131402)
+  passed Verify, Windows packaging, Android packaging, and Publish.
 - Release: <https://github.com/ahouchens/mesh-chat/releases/tag/v0.2.92>.
 
+Published assets:
+
+| Artifact | Size | SHA-256 |
+|---|---:|---|
+| `Mesh-Chat_0.2.92_x64-setup.exe` | 27,527,667 | `7b768db26246f5b22daf961e427e63f8fe795d400fd35ab322d7d4b5cc80c015` |
+| `Mesh-Chat_0.2.92_x64_en-US.msi` | 29,528,064 | `4274bf38070ead4f722c68f214dfda54fa46949cdefaa9acb2a2f825bfd2a112` |
+| `mesh-chat-0.2.92-android-arm64-release.apk` | 34,115,249 | `45c94c600d74d1f45c432505da2816f665bdf2675af48938b1d8c4473cf40d60` |
+
 Still open: automatic contact/workspace admission over the bridge, physical
-Windowsâ†”Android cellular test with TURN, and relay/consent evidence.
+Windows↔Android cellular test with TURN, and relay/consent evidence.
 
 ## C5b renderer DataChannel pump, 2026-10-20
 
@@ -483,7 +493,7 @@ Published assets:
 - bridge cleanup during service shutdown.
 
 This is not the full C5 onboarding flow. The renderer packet pump, signed
-QR/copy offer/answer UI, admission flow, and physical Windowsâ†”Android test
+QR/copy offer/answer UI, admission flow, and physical Windows↔Android test
 remain open.
 
 Validation:
@@ -525,7 +535,7 @@ Validation:
 - Frontend TypeScript: passed.
 - Frontend tests: **234 passed**.
 - Frontend production build: passed.
-- C5 prototype: **PASS** â€” signed invitation and reply traversed the
+- C5 prototype: **PASS** — signed invitation and reply traversed the
   DataChannel.
 - GitHub Actions
   [run 39440900966](https://github.com/ahouchens/mesh-chat/actions/runs/39440900966)
@@ -627,7 +637,7 @@ Published assets:
 | `mesh-chat-0.2.85-android-arm64-release.apk` | 34,098,643 | `3c453228e9d0196f1c40292640f4dbde386a742d82ef702c39bfa4b87372f61f` |
 
 Still open: physical Android call/foreground behavior, physical
-Windowsâ†”Android calls, TURN quotas, video quality, and C5.
+Windows↔Android calls, TURN quotas, video quality, and C5.
 
 ## Android call-audio focus, 2026-10-19
 
@@ -655,7 +665,7 @@ Published assets:
 | `mesh-chat-0.2.84-android-arm64-release.apk` | 34,098,631 | `688a77208aa4596e58f0f043e8f33dd015fa3cad9be14037a56836b131583c80` |
 
 Still open: physical Android call/runtime-prompt behavior, foreground-service
-notification, physical Windowsâ†”Android calls, TURN quotas, video quality, and
+notification, physical Windows↔Android calls, TURN quotas, video quality, and
 C5.
 
 ## WebRTC SDP input hardening, 2026-10-19
@@ -712,7 +722,7 @@ Published assets:
 | `mesh-chat-0.2.82-android-arm64-release.apk` | 34,082,615 | `74f188af50cdd0490efdc78ebbff594465e7d506b1c60a9345f9b71a904226ae` |
 
 Still open: TURN quotas/abuse controls, malformed-SDP/fuzz coverage, physical
-Windowsâ†”Android calls, Android audio focus/foreground, video quality, and C5.
+Windows↔Android calls, Android audio focus/foreground, video quality, and C5.
 
 ## WebRTC call timeout and recovery, 2026-10-19
 
@@ -772,7 +782,7 @@ Published assets:
 | `mesh-chat-0.2.80-android-arm64-release.apk` | 34,082,515 | `fe5227c7f120e892482c1fa4bc435bbc15141ff4a8bc55de617c2523dd89e525` |
 
 Still open: physical Android call/runtime prompt behavior, audio focus and
-foreground service, physical Windowsâ†”Android calls, ICE restart, TURN quotas,
+foreground service, physical Windows↔Android calls, ICE restart, TURN quotas,
 video quality, and C5.
 
 ## WebRTC STUN/TURN settings, 2026-10-19
@@ -831,7 +841,7 @@ Published assets:
 | `Mesh-Chat_0.2.78_x64_en-US.msi` | 29,503,488 | `aa8e65e18baf67e38358d372fd8e2281a388ed76063348622fb87a8671c663c5` |
 | `mesh-chat-0.2.78-android-arm64-release.apk` | 34,082,306 | `ee44e9710fe1e44e67304f40622da8999db35cefeb4a3c34c086a26e2c65e022` |
 
-Still open: physical Windowsâ†”Windows and Windowsâ†”Android calls, Android
+Still open: physical Windows↔Windows and Windows↔Android calls, Android
 runtime microphone/camera permission, audio focus/foreground behavior,
 STUN/TURN, physical video quality, C4 hardening, and C5.
 
@@ -902,7 +912,7 @@ microphone energy present; `--play` also passed on the selected output device.
 These are local experiments, not shipping calls.
 
 Still open: service/LXMF signaling transport, call persistence, call UI,
-STUN/TURN, Windowsâ†”Android calls, Android audio focus, video, and physical
+STUN/TURN, Windows↔Android calls, Android audio focus, video, and physical
 device qualification.
 
 ## Direct connectivity increment, 2026-10-16
@@ -1281,7 +1291,7 @@ logs for this sequence:
    to find device**, and that the invitee receives no dialog.
 3. Restore the intended Reticulum path with both apps running. Record the
    transitions through **Sending invitation** and, when applicable, **Reached
-   device Â· confirming receipt**. Only the verified application receipt may
+   device · confirming receipt**. Only the verified application receipt may
    produce **Invitation ready for review**.
 4. Break the path again while the invitation is still pending. Use **Retry
    invitation** and prove that it starts an immediate attempt with current
@@ -1297,7 +1307,7 @@ logs for this sequence:
 7. Exercise signed expiry. After expiry, **Retry invitation** must not revive
    the capability, and the invitee must be unable to accept it.
 
-## Recorded 0.1.7 first-message layout hotfix verification â€” 2026-10-03
+## Recorded 0.1.7 first-message layout hotfix verification — 2026-10-03
 
 - Version 0.1.7 fixes the approved-conversation grid layout that could make the
   Windows and Android chat views look blank immediately after the first message
@@ -1344,7 +1354,7 @@ logs for this sequence:
 | `Mesh Chat_0.1.7_x64-setup.exe` | `4BE40433B346363E553DF4D52DE43C5CAF2159AA47458A85969E9032938464FE` |
 | `mesh-chat-0.1.7-android-arm64-debug.apk` | `14A3E37EB184073F741067CB2815CFA07A84F06E56723FB2670690DC27D32CA5` |
 
-## Recorded direct LAN fallback verification â€” 2026-10-03
+## Recorded direct LAN fallback verification — 2026-10-03
 
 - Version 0.1.6 adds a bounded local TCP listener and advertises concrete local
   addresses only through cryptographically signed invitation hints. It is a
@@ -1389,7 +1399,7 @@ logs for this sequence:
 | `Mesh Chat_0.1.6_x64-setup.exe` | `F90DCC3441684C2BB95C982FF811A3B6C5F8815BD9E1E8063B169B252FC95263` |
 | `mesh-chat-0.1.6-android-arm64-debug.apk` | `B05FB98D83D11BE2F83F573D15D4B1813F2FE26C89640D0F8489A2C1A1C6F104` |
 
-## Recorded 0.1.5 connection-request regression verification â€” 2026-10-03
+## Recorded 0.1.5 connection-request regression verification — 2026-10-03
 
 - Focused suite: 45 Python tests passed with 2 expected platform/opt-in skips;
   7 renderer tests, TypeScript compilation, and the production Vite build
@@ -1432,7 +1442,7 @@ logs for this sequence:
 | `Mesh Chat_0.1.5_x64-setup.exe` | `EBBCB5D53C8BAC0CBBA5E7370920C2534A9F87684B7DF99EEEF6CCBE7877DC53` |
 | `mesh-chat-0.1.5-android-arm64-debug.apk` | `419E41FF14493AF6A55A8E92381157C37C14DB45AEB0EFDA479486F75B324D72` |
 
-## Recorded Windows verification â€” 2026-10-02
+## Recorded Windows verification — 2026-10-02
 
 Environment: Windows 10.0.19045 x64, Python 3.12.14, Rust 1.99.0,
 RNS 1.5.5, LXMF 1.2.0, Node.js 24.19.0.
@@ -1441,7 +1451,7 @@ RNS 1.5.5, LXMF 1.2.0, Node.js 24.19.0.
   Linux-only `/sys` device-tree test skipped; 2 renderer tests passed;
   TypeScript and the production Vite build passed.
 - Full protected integration suite: 27 tests passed, including the real
-  four-process Aâ†’Bâ†’Câ†’D topology. The destination reported exactly three hops,
+  four-process A→B→C→D topology. The destination reported exactly three hops,
   its ratchet was present before send, the LXMF signature validated, and no
   plaintext marker appeared in B or C persistent files.
 - Packaged-sidecar smoke: initialize, EFS-protected profile creation, signed
@@ -1465,7 +1475,7 @@ Artifact hashes for this run:
 | `Mesh Chat_0.1.0_x64_en-US.msi` | `843B49788ED705ED34D4E92075D7A5CD1011741500EDDFECD9F6B37ABB7326BB` |
 | `Mesh Chat_0.1.0_x64-setup.exe` | `70A1C1119F33DB3967199396B45504733361FC926863D8B92263EA65D178D130` |
 
-## Recorded Android regression verification â€” 2026-10-03
+## Recorded Android regression verification — 2026-10-03
 
 - Focused suite: 35 Python tests passed with 2 platform/opt-in tests skipped;
   2 renderer tests, TypeScript, and the production Vite build passed.
@@ -1496,7 +1506,7 @@ Artifact hashes for this run:
 | --- | --- |
 | `mesh-chat-0.1.4-android-arm64-debug.apk` | `8ACE8B42D4967B5A1E13723DCE9F2ED29FEAA1B4039B777F55C32BD8D83689D3` |
 
-## Recorded Windows 0.1.3 packaging regression â€” 2026-10-03
+## Recorded Windows 0.1.3 packaging regression — 2026-10-03
 
 - The focused suite passed with 33 Python tests, 2 expected skips, 2 renderer
   tests, TypeScript compilation, and the production Vite build.
@@ -1516,13 +1526,13 @@ Artifact hashes for this run:
 | `Mesh Chat_0.1.3_x64_en-US.msi` | `703226D61F15C8183DF0957A79E54E8C724BCF360933E7A99D20EE4B3F7AA0E9` |
 | `Mesh Chat_0.1.3_x64-setup.exe` | `9DB43D5299CBBE45724DCFC6BAD7C9BB71A4F5626D30F246ED869044A60876CE` |
 
-## Recorded 0.2.0 private-group package verification â€” 2026-10-03
+## Recorded 0.2.0 private-group package verification — 2026-10-03
 
 - The complete automated run passed **80 Python tests** with three documented
   platform/integration skips, **18 renderer tests**, TypeScript compilation,
   and the production Vite build.
 - The opt-in real Reticulum/LXMF direct-LAN harness passed separately, as did
-  the isolated four-process Aâ†’Bâ†’Câ†’D topology harness.
+  the isolated four-process A→B→C→D topology harness.
 - Eleven focused group-service tests passed, including simultaneous invitees,
   reversed membership-epoch arrival, replay after removal, remove/leave/close,
   old-epoch owner equivocation, restart recovery, application-receipt retry,
@@ -1540,7 +1550,7 @@ Artifact hashes for this run:
 - These Windows development packages are not Authenticode-signed, and the APK
   uses the Android debug certificate (certificate SHA-256
   `D6DBFF63834666BACE3D75B49234726E97CCCE26D2B9E9516309682E0A33143F`).
-  Physical Windowsâ†”Android multi-member group, suspend/resume, partition, and
+  Physical Windows↔Android multi-member group, suspend/resume, partition, and
   upgrade testing remains required before sensitive use.
 
 | Artifact | SHA-256 |
@@ -1550,7 +1560,7 @@ Artifact hashes for this run:
 | `Mesh Chat_0.2.0_x64_en-US.msi` | `53E93942B04763D216CFE1469B0184FA9AF28E504E5E00A62627A344B6327947` |
 | `mesh-chat-0.2.0-android-arm64-debug.apk` | `DB8DE84EC8DCFD06BBE08284D1B29A5EE6A4B0DCC52FF4592CE82AFDCD663381` |
 
-## Recorded 0.2.1 group-invitation reliability verification â€” 2026-10-03
+## Recorded 0.2.1 group-invitation reliability verification — 2026-10-03
 
 - The complete automated run passed **82 Python tests** with three documented
   platform/integration skips and **19 renderer tests**. TypeScript compilation
@@ -1573,7 +1583,7 @@ Artifact hashes for this run:
   native renderer-command allowlist contains `retry_group_invitation`, so the
   owner-side Retry control reaches the embedded service instead of being
   rejected at the native boundary.
-- Physical Windowsâ†”Android foreground/background, route-loss, and multi-member
+- Physical Windows↔Android foreground/background, route-loss, and multi-member
   group testing remains required before sensitive operational use; the passing
   two-process harness does not substitute for Android lifecycle and Wi-Fi
   behavior.
@@ -1586,7 +1596,7 @@ Artifact hashes for this run:
 | `Mesh Chat_0.2.1_x64_en-US.msi` | `EF864D759D4C0D39C0FD60A34352049FF4FFA7D6E77A08460CD6E12DF266A07E` |
 | `mesh-chat-0.2.1-android-arm64-debug.apk` | `B2C9E877CCBA22534097FE21FBBE39E17D2F17F4B5E92398F8BDA81AB08DF4EE` |
 
-## Recorded 0.2.2 desktop lifecycle verification â€” 2026-10-04
+## Recorded 0.2.2 desktop lifecycle verification — 2026-10-04
 
 - This is a historical record, not the current install recommendation. A later
   live 0.2.2 reproduction found that the PyInstaller supervisor and worker
@@ -1638,7 +1648,7 @@ Artifact hashes for this run:
 | `Mesh Chat_0.2.2_x64_en-US.msi` | `9B685D8D321DFFB820AACBC74CD0E6FFA2977571DCB6B30ABC58480D7241DED5` |
 | `mesh-chat-0.2.2-android-arm64-debug.apk` | `75FB7EC1F8EAAF64724D683452B5694AF6C06C35B669CC2217E3AFF20ECCC5D0` |
 
-## Recorded 0.2.3 profile-lock and desktop lifecycle verification â€” 2026-10-04
+## Recorded 0.2.3 profile-lock and desktop lifecycle verification — 2026-10-04
 
 - The observed startup safety screen was traced to a stale 0.2.2 PyInstaller
   worker holding the profile lock, not to loss of NTFS EFS protection. The
@@ -1686,7 +1696,7 @@ Artifact hashes for this run:
 | `Mesh Chat_0.2.3_x64_en-US.msi` | `D1E9E3F41BCF5D033746BE7AC73622A8AB41F0CB1C75D3825C44FD87E38CAD44` |
 | `mesh-chat-0.2.3-android-arm64-debug.apk` | `C47BDC54472283AA9B113BCDBFEB6230FDEB116F06D2247592C2BC7BCFAC1ED2` |
 
-## Recorded 0.2.4 one-to-one approval regression verification â€” 2026-10-04
+## Recorded 0.2.4 one-to-one approval regression verification — 2026-10-04
 
 - A physical Windows-to-Android run on the previous release reached the
   desktop **Connection request** dialog but failed after **Accept and open
@@ -1749,7 +1759,7 @@ Artifact hashes for this run:
 | `Mesh Chat_0.2.4_x64_en-US.msi` | 20,373,504 | `63DBFE071984FFEA776728BC3262F337B6BFAD114FA6112264B34C44102080ED` |
 | `mesh-chat-0.2.4-android-arm64-debug.apk` | 44,252,597 | `5AEC41364390FB73C96FB8B18F3C22FE8ABF11E8A74AB13EAFAE0C87FECBFFEE` |
 
-## Recorded 0.2.5 first-message visibility and delivery-state verification â€” 2026-10-04
+## Recorded 0.2.5 first-message visibility and delivery-state verification — 2026-10-04
 
 - A physical Windows-to-Android run on 0.2.4 connected both peers, but the
   first direct message did not appear in the conversation. Runtime metadata
@@ -1813,7 +1823,7 @@ Artifact hashes for this run:
 | `Mesh Chat_0.2.5_x64_en-US.msi` | 20,373,504 | `248E139BFA3EF4F2594E3434FCB9BF05D8C364895AB9CF5012E081DCD94110FC` |
 | `mesh-chat-0.2.5-android-arm64-debug.apk` | 44,252,597 | `755F77029CE7D21EFBC74781DE56C30E0D2C973F36545C4DAD07FECF6B4FC510` |
 
-## Recorded 0.2.6 phone-to-desktop route and mobile-send verification â€” 2026-10-04
+## Recorded 0.2.6 phone-to-desktop route and mobile-send verification — 2026-10-04
 
 - A physical Windows-to-Android run on 0.2.5 completed invitation delivery and
   explicit acceptance, but a chat submitted on the phone did not reach the
@@ -1884,7 +1894,7 @@ Artifact hashes for this run:
 | `Mesh Chat_0.2.6_x64_en-US.msi` | 20,377,600 | `B70F6F5C268D44D9757D429743AF482DE52A129B336C3298E10454F9B7B0447D` |
 | `mesh-chat-0.2.6-android-arm64-debug.apk` | 44,252,593 | `C67159232A3F45628F039E97E67914A47487C36BFE6B0ABB0C18EF4DD0441D44` |
 
-## Recorded 0.2.7 desktop-reply concurrency verification â€” 2026-10-04
+## Recorded 0.2.7 desktop-reply concurrency verification — 2026-10-04
 
 - A physical Windows-to-Android run using 0.2.6 successfully delivered the
   phone's first direct message to the desktop. After the desktop user entered a
@@ -2006,7 +2016,7 @@ Artifact hashes for this run:
 | `Mesh Chat_0.2.7_x64-setup.exe` | 19,633,234 | `7B5C2297AC9C20B43584FD21045476FE25D37C46B0759EE41A00022F2AC41179` |
 | `mesh-chat-0.2.7-android-arm64-debug.apk` | 44,252,597 | `663D46518E861E89E0939A26E2FC91D0C1C1E0993F8A3F6DF16CC82B29FF859F` |
 
-## 0.2.8 responsive UI and conversation-management verification â€” 2026-10-04
+## 0.2.8 responsive UI and conversation-management verification — 2026-10-04
 
 - Source metadata is set to 0.2.8 across the web package, Python service, Rust
   package, Tauri configuration, Cargo lock entry, renderer expectation, and
@@ -2059,7 +2069,7 @@ Artifact hashes for this run:
 | `mesh-chat-0.2.8-windows-x64-portable.zip` | 20,141,161 | `C475956801516B3764B740BBDEE3F22801DF58D8043D0F551DD20E8C5DC9B875` |
 | `mesh-chat-0.2.8-android-arm64-debug.apk` | 44,268,965 | `7977CC17810AFCC8AE77A652D7D4E878226C7F05F2A46FCDC3681ACD2EC0C56D` |
 
-## 0.2.9 encrypted emoji reactions verification â€” 2026-10-05
+## 0.2.9 encrypted emoji reactions verification — 2026-10-05
 
 - Source metadata is set to 0.2.9 across the web package, Python service, Rust
   package, Tauri configuration, Cargo lock entry, renderer expectation, and
@@ -2111,7 +2121,7 @@ Artifact hashes for this run:
   Inspection of its Chaquopy `app.imy` found the new `mesh_chat/reactions.pyc`,
   the `set_message_reaction` command allowlist/dispatch, group-reaction code,
   and reaction snapshot aggregation.
-- **Pending â€” physical devices:** test the exact 0.2.9 Windows and Android
+- **Pending — physical devices:** test the exact 0.2.9 Windows and Android
   packages in both directions for direct, group, and announcement-channel
   reaction add/replace/remove, compact counts, picker placement, Back behavior,
   offline recovery, and continued ordinary chat with an older peer. A signed
@@ -2128,7 +2138,7 @@ Artifact hashes for this run:
 | `mesh-chat-0.2.9-windows-x64-portable.zip` | 20,164,196 | `79E9B343EE094FB4A42E67EE845EDAA0A1DA6564B79E3650A23590A920CC4017` |
 | `mesh-chat-0.2.9-android-arm64-debug.apk` | 44,318,285 | `6BFE002A17A9EB4F6A098ABCD144F5D60C0072AF358089A808911B3D29171A83` |
 
-## 0.2.10 expanded Unicode emoji reactions verification â€” 2026-10-05
+## 0.2.10 expanded Unicode emoji reactions verification — 2026-10-05
 
 - Source metadata is set to 0.2.10 across the web package, Python service,
   Rust package, Tauri configuration, Cargo lock entry, renderer expectation,
@@ -2197,7 +2207,7 @@ Artifact hashes for this run:
   reactions but ignore other Emoji 18 choices; earlier peers ignore reactions;
   ordinary chat continues. Install 0.2.10 on every participating device for
   the expanded set.
-- **Pending â€” physical devices:** test the exact 0.2.10 Windows and Android
+- **Pending — physical devices:** test the exact 0.2.10 Windows and Android
   packages in both directions for catalog/search/custom entry, direct, group,
   and announcement reaction add/replace/remove, compact counts, picker
   placement, nested Back behavior, offline recovery, and 0.2.9 compatibility.
@@ -2213,7 +2223,7 @@ Artifact hashes for this run:
 | `mesh-chat-0.2.10-android-arm64-debug.apk` | 44,368,811 | `8C20E7297D22F1ABB0818A0782590C5DC7C59F36C63A08060A8D11BC4C506B44` |
 | `THIRD_PARTY_NOTICES.md` | 2,401 | `987A3B010A0ECB5FFA13D3F4504E5D0F1251895A8C4172E1A91ED0626B520DF8` |
 
-## 0.2.11 bundled offline emoji artwork verification â€” 2026-10-05
+## 0.2.11 bundled offline emoji artwork verification — 2026-10-05
 
 - Source metadata is set to 0.2.11 across the web package, Python service,
   Rust package, Tauri configuration, Cargo lock entry, renderer expectation,
@@ -2284,7 +2294,7 @@ Artifact hashes for this run:
   and matched all 12 artwork files directly from the stripped native library
   extracted from the exact APK; that library is 14,258,592 bytes with SHA-256
   `0FB9B99AECB1E61C3D4848704D5F41793B5D7BA79A22AAFC5601F2EC55A7687B`.
-- **Pending â€” physical devices:** test the exact 0.2.11 Windows and Android
+- **Pending — physical devices:** test the exact 0.2.11 Windows and Android
   packages for quick-picker, searchable catalog, reaction-chip, 19-entry
   fallback, loading/error, compact layout, forced-colors where available, and
   direct/group/announcement add-replace-remove flows in both directions. The
@@ -2300,7 +2310,7 @@ Artifact hashes for this run:
 | `mesh-chat-0.2.11-android-arm64-debug.apk` | 46,300,720 | `59B0DC9D6C516AED846E72C908C400C0571FB014E8AC0F55E438FE947C08DC75` |
 | Packaged `THIRD_PARTY_NOTICES.md` | 3,239 | `D663E6E7B26D12B33F5042B7C9F413BA57CABF331A6D0B0C37693F2B3D125D44` |
 
-## 0.2.12 contact management verification â€” 2026-10-06
+## 0.2.12 contact management verification — 2026-10-06
 
 - Source metadata is set to 0.2.12 across the web package, Python service,
   Rust package, Tauri configuration, Cargo lock entry, renderer expectation,
@@ -2342,8 +2352,8 @@ Artifact hashes for this run:
   and notice files from that exact library. The Android helper now requests
   `--split-per-abi`, matching the arm64 artifact path it publishes and
   preventing reuse of a stale split APK.
-- **Pending â€” physical devices:** no Android device was attached, so the exact
-  APK still needs an in-place `adb install -r` and a physical Windowsâ†”Android
+- **Pending — physical devices:** no Android device was attached, so the exact
+  APK still needs an in-place `adb install -r` and a physical Windows↔Android
   contact-management/interoperability run. The APK is debug-signed for direct
   testing; a production AAB still requires a private release keystore. macOS,
   Linux, and iOS native package validation also remain pending.
@@ -2424,9 +2434,9 @@ Artifact hashes for this run:
 - Real-stack route-preference probing in which an earlier equal-hop nearby path
   remains selected at equal gravity, then is replaced by the exact signed TCP
   client after its minimally preferred announce.
-- Optional real RNS/LXMF Aâ†’Bâ†’Câ†’D delivery using only Aâ€“B, Bâ€“C and Câ€“D interfaces, with ratchet presence, three-hop assertion, signature validation, and intermediate persistent-file plaintext scan.
+- Optional real RNS/LXMF A→B→C→D delivery using only A–B, B–C and C–D interfaces, with ratchet presence, three-hop assertion, signature validation, and intermediate persistent-file plaintext scan.
 
-## Deterministic delivery pipeline verification â€” 2026-10-06
+## Deterministic delivery pipeline verification — 2026-10-06
 
 - `python scripts/release.py check --expected-version v0.2.12` passed and
   reported consistent npm, Tauri, Cargo, Cargo-lock, Python, and Android version
@@ -2458,7 +2468,7 @@ Artifact hashes for this run:
   remote; that remains an external activation prerequisite rather than an LLM
   build step.
 
-## Workspace increment 2 verification â€” 2026-10-07
+## Workspace increment 2 verification — 2026-10-07
 
 - The complete Python suite passed with **290 tests passed and 6 intentional
   environment/device skips**. Thirteen focused workspace tests cover deterministic
@@ -2512,7 +2522,7 @@ Artifact hashes for this run:
   partition recovery, package extraction, and protected-profile plaintext scans
   remain release gates; automated tests do not claim those device results.
 
-## Workspace increment 3 verification â€” 2026-10-07
+## Workspace increment 3 verification — 2026-10-07
 
 - The maintained suite passed **295 Python tests with 6 intentional
   environment/device skips**, **79 frontend tests**, all 3 package-artwork
@@ -2555,7 +2565,7 @@ Artifact hashes for this run:
   packet capture, protected-profile plaintext scans, and Windows-to-Android
   workspace validation remain release gates.
 
-## Workspace increment 4 verification â€” 2026-10-07
+## Workspace increment 4 verification — 2026-10-07
 
 - The complete maintained verification passed **298 Python tests with 6
   intentional environment/package skips**, **80 frontend tests**, all 3
@@ -2596,7 +2606,7 @@ Artifact hashes for this run:
   walkthrough, physical multi-install private-channel partition/reconnect,
   packet capture, and protected-profile plaintext scans remain release gates.
 
-## Workspace increment 5 verification â€” 2026-10-08
+## Workspace increment 5 verification — 2026-10-08
 
 - The complete maintained verification passed **300 Python tests with 6
   intentional environment/package skips**, **81 frontend tests**, all 3
@@ -2637,7 +2647,7 @@ Artifact hashes for this run:
   walkthrough, physical multi-install DM partition/reconnect, packet capture,
   and protected-profile plaintext scans remain release gates.
 
-## Workspace increment 5 corrective verification â€” 2026-10-08
+## Workspace increment 5 corrective verification — 2026-10-08
 
 - Final review found that confirmed local workspace removal did not include the
   new sealed `workspace_direct` summary records, and that cancellation of a DM
@@ -2676,7 +2686,7 @@ Artifact hashes for this run:
   walkthrough, physical multi-install DM partition/reconnect, packet capture,
   and protected-profile plaintext scans remain release gates.
 
-## Workspace increment 6 verification â€” 2026-10-08
+## Workspace increment 6 verification — 2026-10-08
 
 - Protocol coverage preserves the exact Increment 5 message envelope and adds
   exact-field signed edit, delete, and reaction events with target UUIDs, base
@@ -2718,7 +2728,7 @@ Artifact hashes for this run:
   accessibility, packet capture, protected-profile plaintext scanning,
   production signing, and in-place installation remain release gates.
 
-## Workspace increment 7 verification â€” 2026-10-09
+## Workspace increment 7 verification — 2026-10-09
 
 - Increment 7 adds canonical structured workspace mentions to messages and
   edits. Protocol coverage verifies stable sorted member UUIDs, the eight-target
@@ -2764,7 +2774,7 @@ Artifact hashes for this run:
   plaintext scanning, production signing, and in-place installation remain
   release gates.
 
-## Workspace increment 8 verification â€” 2026-10-09
+## Workspace increment 8 verification — 2026-10-09
 
 - Increment 8 activates the existing signed `thread_root` field while
   preserving the canonical bytes of ordinary messages and mutations. Protocol
@@ -2829,7 +2839,7 @@ Artifact hashes for this run:
   protected-profile plaintext scanning, production signing, and in-place
   installation remain release gates.
 
-## Workspace increment 9 verification â€” 2026-10-09
+## Workspace increment 9 verification — 2026-10-09
 
 - Increment 9 adds retained encrypted local history for active and archived
   conversations, per-message revisions and reactions, author-signed deletion
@@ -2907,7 +2917,7 @@ Artifact hashes for this run:
   production signing, in-place installation, and Windows-to-Android validation
   remain release gates.
 
-## Workspace increment 10 verification â€” 2026-10-09
+## Workspace increment 10 verification — 2026-10-09
 
 - Increment 10 adds encrypted local exact-token search over retained workspace
   message roots, thread replies, current permitted people names, and visible
@@ -2969,7 +2979,7 @@ Artifact hashes for this run:
   changed. Three validated temporary benchmark profiles and the disposable
   generated Rust release cache were removed, restoring 3.3 GB, and the full
   rerun above passed. An initial unscoped `vitest run` also collected the
-  separate Node `node:test` artwork file and reported â€œno test suiteâ€; the
+  separate Node `node:test` artwork file and reported “no test suite”; the
   maintained scoped frontend runner then passed all 88 Vitest tests and the
   separate Node runner passed its 3 artwork tests. A direct shell `cargo`
   lookup was absent from `PATH`; the pinned `~/.cargo/bin/cargo.exe` toolchain
@@ -2995,7 +3005,7 @@ Artifact hashes for this run:
   full-tree plaintext scanning, production signing, in-place installation, and
   Windows-to-Android validation remain release gates.
 
-## Workspace increment 11 verification â€” 2026-10-10
+## Workspace increment 11 verification — 2026-10-10
 
 - Increment 11 adds peer-to-peer workspace history catch-up without a server,
   relay, or global archive. Canonical signed requests and bounded signed
@@ -3093,7 +3103,7 @@ Artifact hashes for this run:
   protected-profile full-tree plaintext scanning, production signing, in-place
   installation, and Windows-to-Android validation remain release gates.
 
-## Workspace increment 12 verification â€” 2026-10-10
+## Workspace increment 12 verification — 2026-10-10
 
 - Increment 12 adds effective `owner`, `admin`, and `member` roles, exact
   `all_members|owner_and_admins` channel/posting policies, and exact
@@ -3193,7 +3203,7 @@ Artifact hashes for this run:
   remain manual/physical release gates. Permanent owner-authority loss remains
   intentionally unresolved until Increment 13.
 
-## Workspace increment 13 verification â€” 2026-10-11
+## Workspace increment 13 verification — 2026-10-11
 
 - Increment 13 adds canonical current-authority offers, exact named-successor
   acceptances, and predecessor-authority-signed final manifests for same-owner
@@ -3306,7 +3316,7 @@ Artifact hashes for this run:
   in-place installation, and Windows-to-Android validation remain manual or
   physical release gates.
 
-## Workspace increment 14 verification â€” 2026-10-11
+## Workspace increment 14 verification — 2026-10-11
 
 - Increment 14 adds a countersigned, 15-minute, single-use device-link proof.
   An existing active device signs the genesis/current-manifest bootstrap; the
@@ -3396,7 +3406,7 @@ Artifact hashes for this run:
   packet capture, protected-profile full-tree plaintext scanning, production
   signing and in-place installation remain manual release gates.
 
-## Increment 15 mobile lifecycle and local-notification verification â€” 2026-10-11
+## Increment 15 mobile lifecycle and local-notification verification — 2026-10-11
 
 - Source metadata was advanced transactionally to **0.2.35** (Android version
   code **2035**). The pre-release 0.2.34 desktop manifest still hashes to
@@ -3515,7 +3525,7 @@ Artifact hashes for this run:
   physical iOS device remain mandatory. Increment 15 is automated/package
   complete but **not physically complete on an advertised mobile platform**.
 
-## Android parity increment verification â€” 2026-10-11
+## Android parity increment verification — 2026-10-11
 
 - The source audit and strict five-state matrix are recorded in
   `docs/ANDROID_PARITY.md`. Shared renderer/service code is classified as
@@ -3580,63 +3590,63 @@ Artifact hashes for this run:
   storage, accessibility, battery/memory, or upgrade result is claimed. The
   exact required physical matrix remains in `docs/ANDROID_PARITY.md`.
 
-## Remote connectivity 0.2.39 verification â€” 2026-10-14
+## Remote connectivity 0.2.39 verification — 2026-10-14
 
 The implementation and records below cover desktop and Android source-supported paths. No authorized physical Android device was attached, so the physical release matrix remains open and no physical Android completion is claimed. iOS was not modified, built, tested, or included in this release evidence.
 
 Commands and results:
 
-- `python -m pytest service/tests` â€” **396 passed, 12 skipped** after the direct/live-default follow-up. This includes strict v1/v2 formats, proof that merely configuring a remote profile does not change default v1 invitation generation, signer/digest/profile tampering, unsafe literals, DNS mixed-answer rebinding defense, preview-without-network, durable explicit consent, separate propagation consent/removal, bounded retry backoff, scope reference counting, existing invitation/workspace/replay/ratchet/outbox regressions, and the environment-gated real-network case.
-- `$env:MESH_CHAT_RUN_DIRECT_LAN_TESTS='1'; python -m pytest service/tests/test_direct_lan_harness.py -v` â€” **3 passed** after the follow-up. The isolated topology used no shared transport node and verified the signed direct invitation route, a phone-shaped joiner with no reverse listener, and workspace administrator messaging while the owner was offline after admission.
-- `$env:MESH_CHAT_RUN_REMOTE_NETWORK_TESTS='1'; python -m pytest service/tests/test_remote_access_harness.py -v` â€” **1 passed**. The harness launched three isolated processes: one standard Reticulum TCP transport and two Mesh Chat clients with AutoInterface, LAN fallback, and shared-instance shortcuts disabled. Both clients had only outbound TCP access to the same node. It proved network-free preview; signed v2 consent; Personal request, approval, DM, and authenticated application receipt; workspace invitation, join, owner approval, channel message, and workspace DM. Both reported route kind `remote`.
-- `pnpm test` â€” **110 passed across 7 files**. Coverage includes the direct/live no-transport default for personal and workspace invitations even when an approved remote profile exists, explicit remote selection, first-run and existing-profile privacy disclosure with required consent, sanitized settings state/actions, propagation's separate approval/removal, route labels without raw transport data, progress/error wording, and narrow/accessibility interactions.
-- `pnpm exec tsc --noEmit` and `pnpm build` â€” both passed; the Vite production build completed.
-- `cargo test --lib` in `src-tauri` â€” **7 passed**, including strict native v1/v2 launch/file parsing and byte bounds.
-- `gradlew.bat :app:testArm64DebugUnitTest -x rustBuildArm64Debug --no-configuration-cache` in `src-tauri/gen/android` â€” **BUILD SUCCESSFUL, 96 tasks**. Native Android tests cover accepted and rejected v1/v2 deep links/files, malformed/extra fields, UTF-8, and size limits.
-- `python scripts/build_android.py` â€” built and immutably published `dist/mobile/mesh-chat-0.2.39-android-arm64-debug.apk`, 46,882,848 bytes, SHA-256 `FC25A99B7C8500165BE035283461C0F563EBB1BBA58F2BCFF8CE32A2CEFFD281`.
-- `python scripts/build_android.py --release` with all signing inputs pointing to a disposable 30-day test certificate â€” built and immutably published the optimized `dist/mobile/mesh-chat-0.2.39-android-arm64-release.apk`, 31,721,626 bytes, SHA-256 `CBA7D5AB3EC338B9201B06426250EB77E54A120CA15B758B6714C9704445C5BD`. The temporary keystore was deleted. `apksigner` verified v2/v3 signatures and one 3072-bit RSA signer; certificate SHA-256 was `6001C702631C3B5710DD00A45FF930BD7509B707FC06FB0709F31E0B04CC6EBC`. This is test signing, not a production or upgrade identity.
+- `python -m pytest service/tests` — **396 passed, 12 skipped** after the direct/live-default follow-up. This includes strict v1/v2 formats, proof that merely configuring a remote profile does not change default v1 invitation generation, signer/digest/profile tampering, unsafe literals, DNS mixed-answer rebinding defense, preview-without-network, durable explicit consent, separate propagation consent/removal, bounded retry backoff, scope reference counting, existing invitation/workspace/replay/ratchet/outbox regressions, and the environment-gated real-network case.
+- `$env:MESH_CHAT_RUN_DIRECT_LAN_TESTS='1'; python -m pytest service/tests/test_direct_lan_harness.py -v` — **3 passed** after the follow-up. The isolated topology used no shared transport node and verified the signed direct invitation route, a phone-shaped joiner with no reverse listener, and workspace administrator messaging while the owner was offline after admission.
+- `$env:MESH_CHAT_RUN_REMOTE_NETWORK_TESTS='1'; python -m pytest service/tests/test_remote_access_harness.py -v` — **1 passed**. The harness launched three isolated processes: one standard Reticulum TCP transport and two Mesh Chat clients with AutoInterface, LAN fallback, and shared-instance shortcuts disabled. Both clients had only outbound TCP access to the same node. It proved network-free preview; signed v2 consent; Personal request, approval, DM, and authenticated application receipt; workspace invitation, join, owner approval, channel message, and workspace DM. Both reported route kind `remote`.
+- `pnpm test` — **110 passed across 7 files**. Coverage includes the direct/live no-transport default for personal and workspace invitations even when an approved remote profile exists, explicit remote selection, first-run and existing-profile privacy disclosure with required consent, sanitized settings state/actions, propagation's separate approval/removal, route labels without raw transport data, progress/error wording, and narrow/accessibility interactions.
+- `pnpm exec tsc --noEmit` and `pnpm build` — both passed; the Vite production build completed.
+- `cargo test --lib` in `src-tauri` — **7 passed**, including strict native v1/v2 launch/file parsing and byte bounds.
+- `gradlew.bat :app:testArm64DebugUnitTest -x rustBuildArm64Debug --no-configuration-cache` in `src-tauri/gen/android` — **BUILD SUCCESSFUL, 96 tasks**. Native Android tests cover accepted and rejected v1/v2 deep links/files, malformed/extra fields, UTF-8, and size limits.
+- `python scripts/build_android.py` — built and immutably published `dist/mobile/mesh-chat-0.2.39-android-arm64-debug.apk`, 46,882,848 bytes, SHA-256 `FC25A99B7C8500165BE035283461C0F563EBB1BBA58F2BCFF8CE32A2CEFFD281`.
+- `python scripts/build_android.py --release` with all signing inputs pointing to a disposable 30-day test certificate — built and immutably published the optimized `dist/mobile/mesh-chat-0.2.39-android-arm64-release.apk`, 31,721,626 bytes, SHA-256 `CBA7D5AB3EC338B9201B06426250EB77E54A120CA15B758B6714C9704445C5BD`. The temporary keystore was deleted. `apksigner` verified v2/v3 signatures and one 3072-bit RSA signer; certificate SHA-256 was `6001C702631C3B5710DD00A45FF930BD7509B707FC06FB0709F31E0B04CC6EBC`. This is test signing, not a production or upgrade identity.
 - Android package inspection reported `com.meshchat.mobile`, version `0.2.39` / code `2039`, minimum API 24, target API 36, arm64-v8a only, backup disabled, full-backup content disabled, and cleartext traffic disabled.
-- `python scripts/release.py build --platform desktop --expected-version 0.2.39 --skip-tests` â€” completed the Windows release build and immutable publication. The x64 MSI is 23,531,520 bytes with SHA-256 `5A28B41F970F1EF45D68BE6DEDFE38413AD36A7B551FDC19E0D3DFD8F0A3A8C2`; the NSIS installer is 22,804,113 bytes with SHA-256 `4C6FB9FBB7AC78733973C62A1CDDEF0DDF9DFB79C540E688715B8BF24895BC80`; the sidecar SHA-256 is `AC2141FC1944CBF4A057F2142C526D6EA228212E15FF20F7876A821A142BD614`.
+- `python scripts/release.py build --platform desktop --expected-version 0.2.39 --skip-tests` — completed the Windows release build and immutable publication. The x64 MSI is 23,531,520 bytes with SHA-256 `5A28B41F970F1EF45D68BE6DEDFE38413AD36A7B551FDC19E0D3DFD8F0A3A8C2`; the NSIS installer is 22,804,113 bytes with SHA-256 `4C6FB9FBB7AC78733973C62A1CDDEF0DDF9DFB79C540E688715B8BF24895BC80`; the sidecar SHA-256 is `AC2141FC1944CBF4A057F2142C526D6EA228212E15FF20F7876A821A142BD614`.
 
 The real topology proves the definition-of-done exchange through standard Reticulum with no client listener or port forwarding. Unit/integration coverage additionally proves retry-state persistence, bounded backoff/jitter, endpoint failover selection, route gravity separation, scope cleanup, DNS revalidation, and signature/ratchet enforcement. The gateway is never accepted as identity, join, manifest, message, or receipt authority.
 
-Still-open release evidence is explicit: no physical Android install, Androidâ†”desktop unrelated-carrier run, Androidâ†”Android unrelated-network run, Wi-Fi/cellular handoff, suspension/process-death timing, propagation-store offline/later-retrieval topology, packet capture, battery/memory measurement, protected-tree/SQLite/log/intent/notification inspection, TalkBack/large-text/rotation matrix, production signing, or in-place production upgrade was performed. The core real harness also did not physically interrupt the access point mid-message or introduce a simultaneous nearby path; those behaviors are covered at the adapter/configuration level rather than claimed as real-topology evidence.
+Still-open release evidence is explicit: no physical Android install, Android↔desktop unrelated-carrier run, Android↔Android unrelated-network run, Wi-Fi/cellular handoff, suspension/process-death timing, propagation-store offline/later-retrieval topology, packet capture, battery/memory measurement, protected-tree/SQLite/log/intent/notification inspection, TalkBack/large-text/rotation matrix, production signing, or in-place production upgrade was performed. The core real harness also did not physically interrupt the access point mid-message or introduce a simultaneous nearby path; those behaviors are covered at the adapter/configuration level rather than claimed as real-topology evidence.
 
-## Participant-hosted Internet invitations 0.2.40 verification â€” 2026-10-13
+## Participant-hosted Internet invitations 0.2.40 verification — 2026-10-13
 
 This increment changes the default Internet invitation from nearby-only v1 to participant-hosted v3 while retaining nearby v1 and explicitly approved access-point v2. It adds no managed service. The verification below proves canonical/security behavior and platform integration; it does not claim that a real home router or mobile carrier accepted a mapping.
 
-- `.venv\Scripts\python.exe -m pytest service\tests -q` â€” **404 passed, 12 skipped**. New coverage verifies personal and workspace v3 creation/parse across raw, text, and link forms; signer/operator/inner-authority binding; tamper failure; public-endpoint policy; service hosting without a remote profile; IFAC listener/client generation; mapping cleanup and empty-listener application on close; NAT-PMP response handling; and all existing identity, ratchet, workspace, remote-profile, notification-ingress, and outbox regressions.
-- Bundled Node 24 TypeScript project build â€” passed with no diagnostics.
-- Bundled Node 24 Vitest â€” **116 passed across 7 files**. New coverage verifies direct-first personal/workspace creation, explicit nearby and approved-access-point choices, honest router-failure fallback, participant preview without third-party consent, v3 personal/workspace ingress routing, stale mapping-response cancellation, active-host settings and stop action, share/file naming, and the existing responsive/accessibility flows.
-- Bundled Node 24 Vite production build â€” passed; 1,820 modules transformed. The existing single-chunk size warning remains non-blocking.
-- `gradlew.bat :app:testArm64DebugUnitTest -x rustBuildArm64Debug --no-configuration-cache` â€” **BUILD SUCCESSFUL, 96 tasks**. Android source/JVM coverage accepts exact v3 text/raw/deep-link values, retains v1/v2 and legacy file compatibility, rejects malformed values, and registers `.meshchat-invite` without enabling SEND intents.
-- `cargo check --locked` with incremental compilation disabled and debug info removed â€” passed from a clean generated target.
-- `cargo test --lib --locked` under the same bounded build settings â€” **7 passed**. Native validation accepts exact v3 personal/workspace families and the new file extension while retaining command allowlisting and payload bounds.
-- `.venv\Scripts\python.exe scripts\release.py verify` â€” passed for version **0.2.40**, repeating the 404/12 Python result, 116 frontend tests, three decoded-asset verification tests, and the content-addressed production frontend bundle. Report: `dist/reports/0.2.40/20261014T035447Z-8fdc0df7/report.json`.
-- `git diff --check` â€” passed; only the repository's existing Windows line-ending notices were emitted.
+- `.venv\Scripts\python.exe -m pytest service\tests -q` — **404 passed, 12 skipped**. New coverage verifies personal and workspace v3 creation/parse across raw, text, and link forms; signer/operator/inner-authority binding; tamper failure; public-endpoint policy; service hosting without a remote profile; IFAC listener/client generation; mapping cleanup and empty-listener application on close; NAT-PMP response handling; and all existing identity, ratchet, workspace, remote-profile, notification-ingress, and outbox regressions.
+- Bundled Node 24 TypeScript project build — passed with no diagnostics.
+- Bundled Node 24 Vitest — **116 passed across 7 files**. New coverage verifies direct-first personal/workspace creation, explicit nearby and approved-access-point choices, honest router-failure fallback, participant preview without third-party consent, v3 personal/workspace ingress routing, stale mapping-response cancellation, active-host settings and stop action, share/file naming, and the existing responsive/accessibility flows.
+- Bundled Node 24 Vite production build — passed; 1,820 modules transformed. The existing single-chunk size warning remains non-blocking.
+- `gradlew.bat :app:testArm64DebugUnitTest -x rustBuildArm64Debug --no-configuration-cache` — **BUILD SUCCESSFUL, 96 tasks**. Android source/JVM coverage accepts exact v3 text/raw/deep-link values, retains v1/v2 and legacy file compatibility, rejects malformed values, and registers `.meshchat-invite` without enabling SEND intents.
+- `cargo check --locked` with incremental compilation disabled and debug info removed — passed from a clean generated target.
+- `cargo test --lib --locked` under the same bounded build settings — **7 passed**. Native validation accepts exact v3 personal/workspace families and the new file extension while retaining command allowlisting and payload bounds.
+- `.venv\Scripts\python.exe scripts\release.py verify` — passed for version **0.2.40**, repeating the 404/12 Python result, 116 frontend tests, three decoded-asset verification tests, and the content-addressed production frontend bundle. Report: `dist/reports/0.2.40/20261014T035447Z-8fdc0df7/report.json`.
+- `git diff --check` — passed; only the repository's existing Windows line-ending notices were emitted.
 
 The implementation does not call STUN, TURN, rendezvous, public-IP discovery, account, signaling, or managed relay services. Automatic candidates come from global local IPv6 or the participant's local router through UPnP IGD, NAT-PMP, or PCP. The signed invitation carries a fresh, short-lived IFAC credential; off-LAN listening remains separate from the LAN listener, is not a Reticulum transport/propagation role, and is removed with its router mapping on stop, expiry reconciliation, revocation, or clean shutdown.
 
-Open physical gates are material: no real UPnP/NAT-PMP/PCP router, inbound IPv6 firewall, CGNAT/symmetric-NAT failure case, Windows-on-Wi-Fi â†” Android-on-carrier exchange, Android host mode, invitation-channel share sheet, abrupt-crash lease expiry, packet capture, resource measurement, or production package was exercised. Router mapping success is not treated as independent reachability proof; the invitee remains the first external check. A 0.2.40 release artifact is not claimed by this source/test increment.
+Open physical gates are material: no real UPnP/NAT-PMP/PCP router, inbound IPv6 firewall, CGNAT/symmetric-NAT failure case, Windows-on-Wi-Fi ↔ Android-on-carrier exchange, Android host mode, invitation-channel share sheet, abrupt-crash lease expiry, packet capture, resource measurement, or production package was exercised. Router mapping success is not treated as independent reachability proof; the invitee remains the first external check. A 0.2.40 release artifact is not claimed by this source/test increment.
 
-## Direct-connectivity diagnostics and home-router hardening 0.2.41 â€” 2026-10-14
+## Direct-connectivity diagnostics and home-router hardening 0.2.41 — 2026-10-14
 
 This patch keeps participant-hosted v3 as the explicit default and adds no server, rendezvous, public-IP lookup, STUN/TURN, telemetry, account, or silent fallback. Opening an invitation dialog no longer starts hosting. The real invitation-bound listener binds first on a kernel-assigned port; only then may the service prepare direct public IPv4/IPv6, PCP, UPnP, NAT-PMP, or manual candidates. A prepared route remains unverified until an authenticated recipient attaches.
 
-- `.venv\Scripts\python.exe scripts\release.py verify --expected-version 0.2.41` â€” **passed**. Python: **432 passed, 12 skipped**. Frontend: **118 passed across 7 files**. Decoded assets: **3 passed**. TypeScript project compilation and the production Vite bundle passed; the existing non-blocking chunk-size warning remains. Report: `dist/reports/0.2.41/20261014T150016Z-9fd60d56/report.json`.
-- `.venv\Scripts\python.exe scripts\release.py build --platform all --expected-version 0.2.41 --skip-tests` â€” **passed** after the independently recorded verification run above. The immutable Windows x64 release contains a 23,711,744-byte MSI with SHA-256 `43CD1BEC710516F9F4E6323EBCD48E45DBDD66D6C19FB15CC9F6C053F47DEE8A` and a 22,982,893-byte NSIS installer with SHA-256 `57C16952BA8A402F14EA721E578467FD3C93CB43932ADB1126BECCEEACF581C0`. The immutable Android ARM64 debug APK is 46,964,796 bytes with SHA-256 `F454870743360A64A7002C4209EC1F923E95DF44FF72A00989910177D3E4DBF4`. Build report: `dist/reports/0.2.41/20261014T151006Z-cadc469f/report.json`.
+- `.venv\Scripts\python.exe scripts\release.py verify --expected-version 0.2.41` — **passed**. Python: **432 passed, 12 skipped**. Frontend: **118 passed across 7 files**. Decoded assets: **3 passed**. TypeScript project compilation and the production Vite bundle passed; the existing non-blocking chunk-size warning remains. Report: `dist/reports/0.2.41/20261014T150016Z-9fd60d56/report.json`.
+- `.venv\Scripts\python.exe scripts\release.py build --platform all --expected-version 0.2.41 --skip-tests` — **passed** after the independently recorded verification run above. The immutable Windows x64 release contains a 23,711,744-byte MSI with SHA-256 `43CD1BEC710516F9F4E6323EBCD48E45DBDD66D6C19FB15CC9F6C053F47DEE8A` and a 22,982,893-byte NSIS installer with SHA-256 `57C16952BA8A402F14EA721E578467FD3C93CB43932ADB1126BECCEEACF581C0`. The immutable Android ARM64 debug APK is 46,964,796 bytes with SHA-256 `F454870743360A64A7002C4209EC1F923E95DF44FF72A00989910177D3E4DBF4`. Build report: `dist/reports/0.2.41/20261014T151006Z-cadc469f/report.json`.
 - Package inspection confirmed Windows application `FileVersion` and `ProductVersion` 0.2.41 plus exact sidecar matching. Android `aapt2` inspection confirmed package `com.meshchat.mobile`, version code 2041/name 0.2.41, API 24/36, ARM64-only native code, backup disabled, cleartext disabled, and the embedded third-party notice. `apksigner` verified the APK v2 debug signature and `zipalign -c -v 4` passed. This is a debug-signed sideload artifact, not a production-signed release.
 - New service coverage exercises selected Windows default routes across physical/VPN/Hyper-V/APIPA/disconnected interfaces; public/RFC1918/shared/ULA/special-use classification; stable active-route IPv4/IPv6 selection; source-bound SSDP; IGD2 any-port mapping and IPv6 pinholes; UPnP fault classes; PCP/NAT-PMP retransmission, result codes, secure nonces, epoch/uptime regression, renewal, and cleanup; kernel-bound listener allocation; listener/firewall failures; manual v3 invitations; DNS-before-probe validation; sanitized diagnostic IPC; prepared-versus-authenticated state; and redacted snapshots.
 - New renderer coverage proves explicit prepare, no silent nearby or first-access-point selection, unshared-host cleanup, manual-forward guidance, `participant_direct` route display, prepared wording, effective workspace-host expiry, and safe per-candidate failure reporting. Desktop and Android use the same React/Python implementation and command allowlist.
 
 No physical networking claim is made by this automation. A Windows device on ordinary home Wi-Fi and an ARM64 Android device on cellular must still exercise real PCP/UPnP/NAT-PMP routers, directly assigned IPv4, native IPv6 and router/host firewall policy, the Windows elevation prompt and cleanup, manual forwarding, mapping renewal, router reboot/address change, invitation expiry, timeout/refusal/no-IPv6-route results, and an authenticated Personal/workspace exchange. Provider/shared NAT, unconfigurable upstream NAT, and restrictive ISP/enterprise firewalls can remain impossible without provider/router cooperation or an explicitly selected participant-operated access point.
 
-## Immutable package rebuild 0.2.42 â€” 2026-10-14
+## Immutable package rebuild 0.2.42 — 2026-10-14
 
 Version 0.2.42 contains the tested 0.2.41 direct-connectivity implementation with synchronized release metadata. The patch version was advanced because the immutable publisher correctly refused to replace the already-published 0.2.41 package bytes during a fresh build.
 
-- `.venv\Scripts\python.exe scripts\release.py build --platform all --expected-version 0.2.42` â€” **passed**. Python: **432 passed, 12 skipped**. Frontend: **118 passed across 7 files**. Decoded assets: **3 passed**. TypeScript, production Vite bundles, Windows packaging, Android packaging, and immutable publication passed. Report: `dist/reports/0.2.42/20261014T155828Z-b181d35e/report.json`.
+- `.venv\Scripts\python.exe scripts\release.py build --platform all --expected-version 0.2.42` — **passed**. Python: **432 passed, 12 skipped**. Frontend: **118 passed across 7 files**. Decoded assets: **3 passed**. TypeScript, production Vite bundles, Windows packaging, Android packaging, and immutable publication passed. Report: `dist/reports/0.2.42/20261014T155828Z-b181d35e/report.json`.
 - Windows x64 MSI: 23,711,744 bytes, SHA-256 `9D9B8FFA80766C142BED3C0B605523AD01D52B6BA8D391E534CFC220CB5D0E89`. Windows x64 NSIS: 22,982,966 bytes, SHA-256 `8825638DC1037015CA860AACF37C6D5617B8A8D733ED89BC65FA4B2E607AE428`.
 - Android ARM64 debug APK: 46,964,796 bytes, SHA-256 `A25435832164A10EE50A143C5607BFF2BF3ABCB1262A2FD86643DCF041DE1B84`. `aapt2` confirmed package `com.meshchat.mobile`, version code 2042/name 0.2.42, API 24/36, and ARM64-only native code. `apksigner` verified its v2 Android Debug signature; `zipalign` and embedded-notice inspection passed.
 - The build report records the source as dirty because the approved 0.2.42 version/documentation update was intentionally not committed before packaging. No application code changed after commit `1a099e481f3bac30e818324f7516048df9fc3b0a`; no install, launch, physical-network test, production signing, push, or publication outside the local immutable artifact directories is claimed.
@@ -3646,7 +3656,7 @@ Version 0.2.42 contains the tested 0.2.41 direct-connectivity implementation wit
 | Gate | Current evidence |
 | --- | --- |
 | No infrastructure | Config and code automated; direct TCP-only two-process harnesses passed both bidirectional-hint chat/group/chat and phone-shaped outbound-client/no-listener direct chat without a relay; two-device disconnected-LAN packet capture not yet run |
-| Real mesh | Protected four-process Aâ†’Bâ†’Câ†’D run passed with exactly three reported hops |
+| Real mesh | Protected four-process A→B→C→D run passed with exactly three reported hops |
 | Intermediate confidentiality | B/C persistent-file marker scan passed; process-memory inspection not yet run |
 | Offline propagation | Adapter implemented; end-to-end offline retrieval not yet proven |
 | Propagation independence | Not yet proven |
@@ -3662,12 +3672,12 @@ Version 0.2.42 contains the tested 0.2.41 direct-connectivity implementation wit
 | At-rest protection | Encrypted-record scan, Windows protected topology/sidecar, and mobile Token round-trip tests passed; macOS/Linux adapters unit-covered, Android device and iOS native full-tree scans pending |
 | Isolation/process safety | Config and IPC parser covered; local hostile-process run pending |
 | Abuse/limits | Static caps implemented; stress/flood run pending |
-| Emoji reactions | Direct, group, and announcement-channel authorization, encrypted durability, bounds, replay/tombstone behavior, old-peer compatibility, and desktop/mobile renderer behavior passed coverage. The 0.2.11 local artwork mapping covers 253/253 picker choices and partitions the full catalog into 3,944 sprites plus 19 named fallbacks; all 12 artwork/metadata/license files were decoded and matched in the final Windows and Android binaries. Physical Windowsâ†”Android/iOS rendering validation remains pending. Delivery is best effort after authenticated endpoint evidence and same-revision equivocation is first-seen-wins |
-| One-to-one approval | Always-on deterministic full flow and prior real bidirectional-hint Reticulum/LXMF runs passed; the phone-shaped harness covers phone-first delivery followed by the desktop reply on the same connection. Exact 0.2.12 physical Windowsâ†”Android validation remains pending |
+| Emoji reactions | Direct, group, and announcement-channel authorization, encrypted durability, bounds, replay/tombstone behavior, old-peer compatibility, and desktop/mobile renderer behavior passed coverage. The 0.2.11 local artwork mapping covers 253/253 picker choices and partitions the full catalog into 3,944 sprites plus 19 named fallbacks; all 12 artwork/metadata/license files were decoded and matched in the final Windows and Android binaries. Physical Windows↔Android/iOS rendering validation remains pending. Delivery is best effort after authenticated endpoint evidence and same-revision equivocation is first-seen-wins |
+| One-to-one approval | Always-on deterministic full flow and prior real bidirectional-hint Reticulum/LXMF runs passed; the phone-shaped harness covers phone-first delivery followed by the desktop reply on the same connection. Exact 0.2.12 physical Windows↔Android validation remains pending |
 | Contact management | Rename, verification toggling, block/unblock trust restoration, deletion cleanup, active-group identity retention, pending-group-invitation refusal, search, confirmations, mobile Back handling, and responsive dialog layout are covered. The shared UI was matched inside the exact Android APK; physical desktop/phone interaction remains pending |
 | Reconnection/interoperability | Upstream format preserved; bidirectional direct-LAN attachment, dirty-route retry, signed-client route replacement, deferred callback re-entry, and phone-shaped full-duplex return traffic are covered; reference-client and suspend/resume runs pending |
-| Platform packaging | Windows x64 0.2.42 MSI/NSIS and Android ARM64 debug 0.2.42 packages were built, hashed, and inspected; exact application/sidecar versions, API 24/36, ARM64-only native code, `POST_NOTIFICATIONS`, backup/cleartext policy, APK v2 debug signature, ZIP alignment, and the embedded notice verified. Neither app nor installer was launched. Physical Windowsâ†”Android direct-connectivity/lifecycle/notification validation, macOS/Linux/iOS native package runs, and production signing remain pending |
-| First-message usability | 0.2.12 retains desktop timeout guidance, exact draft preservation, callback/retry concurrency regressions, and the phone-first/desktop-reply harness together with durable-result, bounded-draft, duplicate-submit, IME, stale-refresh, delivery-state, and responsive-layout coverage. Exact 0.2.12 physical Windowsâ†”Android validation and a broader human study remain open |
+| Platform packaging | Windows x64 0.2.42 MSI/NSIS and Android ARM64 debug 0.2.42 packages were built, hashed, and inspected; exact application/sidecar versions, API 24/36, ARM64-only native code, `POST_NOTIFICATIONS`, backup/cleartext policy, APK v2 debug signature, ZIP alignment, and the embedded notice verified. Neither app nor installer was launched. Physical Windows↔Android direct-connectivity/lifecycle/notification validation, macOS/Linux/iOS native package runs, and production signing remain pending |
+| First-message usability | 0.2.12 retains desktop timeout guidance, exact draft preservation, callback/retry concurrency regressions, and the phone-first/desktop-reply harness together with durable-result, bounded-draft, duplicate-submit, IME, stale-refresh, delivery-state, and responsive-layout coverage. Exact 0.2.12 physical Windows↔Android validation and a broader human study remain open |
 | Invitation entry points | UI and validation implemented; installed-app OS matrix pending |
 | Common flow without technical setup | UI implemented; fresh/returning human run pending |
 | Connection help | State/action mapping implemented; recovery scenarios pending |
@@ -3847,7 +3857,7 @@ addresses and exchanging explicit connection updates. Capture router lease
 renewal/cleanup and foreground battery/traffic evidence; compilation and loopback
 tests cannot establish those results. Do not infer Android background availability.
 
-## Invitation recovery explanation â€” 0.2.49
+## Invitation recovery explanation — 0.2.49
 
 Saved-workspace invitation previews report why recovery is unavailable without
 replacing the original signed request. Backend regression cases cover changed
@@ -3862,7 +3872,7 @@ horizontal overflow at widths 360, 393 and 591px; the 393px render was inspected
 This fixture is a layout check, not Android device qualification. Cellular join
 receipt and owner approval remain unverified on the physical devices.
 
-## Windows single-stack route detection â€” 0.2.50
+## Windows single-stack route detection — 0.2.50
 
 Query all Windows routes and filter active default prefixes in the pipeline.
 Get-NetRoute's multi-prefix lookup previously terminated when IPv6 had no default
