@@ -807,6 +807,12 @@ Exit criteria:
 
 ### C2 — Android 1:1 audio
 
+Implemented candidate: the WebView call surface is shared with Windows, and the
+Android manifest declares `RECORD_AUDIO`, `MODIFY_AUDIO_SETTINGS`, and `CAMERA`.
+Runtime permission handling, audio focus/foreground service, notification
+behavior, and a physical Android call are still required before this gate
+closes.
+
 Goal: the same call path on Android.
 
 Scope:
@@ -825,6 +831,11 @@ Exit criteria:
 - no auto-answer or silent microphone.
 
 ### C3 — 1:1 video
+
+Implemented candidate: the call surface offers Audio call / Video call, requests
+a camera track, renders local/remote video, and adds camera on/off. VP8/VP9
+negotiation, physical camera behavior, bandwidth adaptation, and thermal/battery
+measurement remain open.
 
 Goal: optional camera video on the same call path.
 
@@ -871,6 +882,11 @@ Exit criteria:
 - disabling WebRTC removes the interface and leaves other paths intact.
 
 ### C6 — Workspace/group calls (research)
+
+Decision recorded in
+[ADR 0020](adr/0020-webrtc-group-call-topology.md): no group calls before 1:1
+audio/video gates; if added, start with full mesh for 2–3 participants; no SFU
+without a concrete requirement and an E2EE media review.
 
 Group calls require a topology decision:
 

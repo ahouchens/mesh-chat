@@ -41,6 +41,8 @@ import {
   UserMinus,
   UserRoundPlus,
   Users,
+  Video,
+  VideoOff,
   WifiOff,
   X,
 } from "lucide-react";
@@ -848,10 +850,13 @@ function CallDialog({
     initialCall?.direction === "inbound" && initialCall.state === "ringing" ? "ringing" : "idle",
   );
   const [muted, setMuted] = useState(false);
+  const [videoEnabled, setVideoEnabled] = useState(initialCall?.media === "video");
   const [error, setError] = useState("");
   const pcRef = useRef<RTCPeerConnection | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const localVideoRef = useRef<HTMLVideoElement | null>(null);
+  const remoteVideoRef = useRef<HTMLVideoElement | null>(null);
   const callIdRef = useRef<string | undefined>(initialCall?.id);
   const remoteSetRef = useRef(false);
   const pollRef = useRef<number | null>(null);
@@ -867,6 +872,8 @@ function CallDialog({
     pcRef.current?.close();
     pcRef.current = null;
     if (audioRef.current) audioRef.current.srcObject = null;
+    if (localVideoRef.current) localVideoRef.current.srcObject = null;
+    if (remoteVideoRef.current) remoteVideoRef.current.srcObject = null;
   }, []);
 
   useEffect(() => cleanup, [cleanup]);
@@ -874,9 +881,15 @@ function CallDialog({
   const attachPeer = useCallback(() => {
     const pc = new RTCPeerConnection({ iceServers: [] });
     pc.ontrack = (event) => {
+      const stream = event.streams[0] ?? new MediaStream([event.track]);
       if (audioRef.current) {
-        audioRef.current.srcObject = event.streams[0] ?? new MediaStream([event.track]);
+        audioRef.current.srcObject = stream;
         void audioRef.current.play().catch(() => undefined);
+      }
+      if (event.track.kind === "video" && remoteVideoRef.current) {
+        remoteVideoRef.current.srcObject = stream;
+        setVideoEnabled(true);
+        void remoteVideoRef.current.play().catch(() => undefined);
       }
     };
     pc.onconnectionstatechange = () => {
@@ -917,13 +930,13 @@ function CallDialog({
     }, 1000);
   }, []);
 
-  const prepareMicrophone = useCallback(async () => {
+  const prepareMedia = useCallback(async (media: "audio" | "video") => {
     if (!navigator.mediaDevices?.getUserMedia) {
       throw new Error("This device does not expose a microphone to Mesh Chat.");
     }
     return navigator.mediaDevices.getUserMedia({
       audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
-      video: false,
+      video: media === "video" ? { facingMode: "user", width: { ideal: 640 }, height: { ideal: 480 } } : false,
     });
   }, []);
 
@@ -942,12 +955,13 @@ function CallDialog({
     });
   }, []);
 
-  const startCall = useCallback(async () => {
+  const startCall = useCallback(async (media: "audio" | "video") => {
     setError("");
     setPhase("preparing");
     try {
-      const stream = await prepareMicrophone();
+      const stream = await prepareMedia(media);
       streamRef.current = stream;
+      if (localVideoRef.current) localVideoRef.current.srcObject = stream;
       const pc = attachPeer();
       stream.getTracks().forEach((track) => pc.addTrack(track, stream));
       const offer = await pc.createOffer();
@@ -957,12 +971,13 @@ function CallDialog({
       if (!sdp) throw new Error("The call offer could not be created.");
       const result = await serviceCommand<CallSummary>("start_call", {
         contact_id: contact.id,
-        media: "audio",
+        media,
         sdp,
         dtls_fingerprint: callFingerprint(sdp),
       });
       callIdRef.current = result.id;
       setCall(result);
+      setVideoEnabled(media === "video");
       setPhase("calling");
       startPolling(result.id);
       await onChanged();
@@ -971,7 +986,7 @@ function CallDialog({
       setError(errorMessage(reason));
       setPhase("error");
     }
-  }, [attachPeer, cleanup, contact.id, onChanged, prepareMicrophone, startPolling, waitForCandidates]);
+  }, [attachPeer, cleanup, contact.id, onChanged, prepareMedia, startPolling, waitForCandidates]);
 
   const acceptCall = useCallback(async () => {
     if (!call) return;
@@ -980,8 +995,9 @@ function CallDialog({
     try {
       const details = await serviceCommand<CallMedia>("call_media", { call_id: call.id });
       if (!details.remote_sdp) throw new Error("This call invitation has no media description.");
-      const stream = await prepareMicrophone();
+      const stream = await prepareMedia(call.media);
       streamRef.current = stream;
+      if (localVideoRef.current) localVideoRef.current.srcObject = stream;
       const pc = attachPeer();
       await pc.setRemoteDescription({ type: "offer", sdp: details.remote_sdp });
       stream.getTracks().forEach((track) => pc.addTrack(track, stream));
@@ -997,6 +1013,7 @@ function CallDialog({
       });
       setCall(result);
       setMedia(details);
+      setVideoEnabled(call.media === "video");
       setPhase("connecting");
       startPolling(call.id);
       await onChanged();
@@ -1005,7 +1022,7 @@ function CallDialog({
       setError(errorMessage(reason));
       setPhase("error");
     }
-  }, [attachPeer, call, cleanup, onChanged, prepareMicrophone, startPolling, waitForCandidates]);
+  }, [attachPeer, call, cleanup, onChanged, prepareMedia, startPolling, waitForCandidates]);
 
   const hangup = useCallback(async (reason: "completed" | "declined" | "cancelled") => {
     const callId = callIdRef.current;
@@ -1028,6 +1045,12 @@ function CallDialog({
     setMuted(next);
   }, [muted]);
 
+  const toggleCamera = useCallback(() => {
+    const next = !videoEnabled;
+    streamRef.current?.getVideoTracks().forEach((track) => { track.enabled = next; });
+    setVideoEnabled(next);
+  }, [videoEnabled]);
+
   const incoming = call?.direction === "inbound";
   const active = phase === "in_call";
 
@@ -1035,19 +1058,22 @@ function CallDialog({
     <Dialog title={incoming ? `Call from ${contact.display_name}` : `Call ${contact.display_name}`} onClose={() => void hangup("cancelled")}>
       <div className="stack">
         <audio ref={audioRef} autoPlay playsInline hidden />
+        <video ref={localVideoRef} className="call-video call-video--local" autoPlay muted playsInline hidden={!videoEnabled} />
+        <video ref={remoteVideoRef} className="call-video" autoPlay playsInline hidden={!videoEnabled} />
         {phase === "idle" && (
           <>
-            <p className="muted">Audio is sent directly to {contact.display_name} over the authenticated call path. Your microphone starts only after you choose Call.</p>
+            <p className="muted">Audio and video are sent directly to {contact.display_name} over the authenticated call path. Your microphone and camera start only after you choose a call.</p>
             <div className="dialog-actions">
               <Button variant="secondary" onClick={onClose}>Cancel</Button>
-              <Button onClick={() => void startCall()}><Phone size={17} /> Call</Button>
+              <Button onClick={() => void startCall("audio")}><Phone size={17} /> Audio call</Button>
+              <Button onClick={() => void startCall("video")}><Video size={17} /> Video call</Button>
             </div>
           </>
         )}
         {phase === "ringing" && (
           <>
-            <p className="direct-host-status" role="status"><Phone size={17} /> Incoming audio call</p>
-            <p className="muted">Your microphone stays off until you accept.</p>
+            <p className="direct-host-status" role="status"><Phone size={17} /> Incoming {call?.media === "video" ? "video" : "audio"} call</p>
+            <p className="muted">Your microphone and camera stay off until you accept.</p>
             <div className="dialog-actions">
               <Button variant="danger" onClick={() => void hangup("declined")}>Decline</Button>
               <Button onClick={() => void acceptCall()}><Phone size={17} /> Accept</Button>
@@ -1057,7 +1083,7 @@ function CallDialog({
         {(phase === "preparing" || phase === "calling" || phase === "connecting") && (
           <>
             <p className="direct-host-status" role="status">
-              <RefreshCw size={17} /> {phase === "preparing" ? "Preparing audio…" : phase === "calling" ? "Calling and waiting for an answer…" : "Connecting the audio path…"}
+              <RefreshCw size={17} /> {phase === "preparing" ? "Preparing media…" : phase === "calling" ? "Calling and waiting for an answer…" : "Connecting the media path…"}
             </p>
             <p className="muted">The call uses the signed Reticulum signaling path; the media path is direct when the network allows it.</p>
             <div className="dialog-actions">
@@ -1070,6 +1096,7 @@ function CallDialog({
             <p className="direct-host-status" role="status"><Phone size={17} /> In call</p>
             <div className="dialog-actions">
               <Button variant="secondary" onClick={toggleMute}>{muted ? <MicOff size={17} /> : <Mic size={17} />} {muted ? "Unmute" : "Mute"}</Button>
+              {call?.media === "video" && <Button variant="secondary" onClick={toggleCamera}>{videoEnabled ? <Video size={17} /> : <VideoOff size={17} />} {videoEnabled ? "Camera off" : "Camera on"}</Button>}
               <Button variant="danger" onClick={() => void hangup("completed")}><PhoneOff size={17} /> Hang up</Button>
             </div>
           </>
@@ -5353,7 +5380,7 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceChannelIn
         {incomingCall && !callContactId && (
           <div className="incoming-call-banner" role="status">
             <Phone size={18} />
-            <span><strong>Incoming audio call</strong><small>{snapshot.contacts.find((contact) => contact.id === incomingCall.contact_id)?.display_name ?? "An approved contact"} is calling.</small></span>
+            <span><strong>Incoming {incomingCall.media === "video" ? "video" : "audio"} call</strong><small>{snapshot.contacts.find((contact) => contact.id === incomingCall.contact_id)?.display_name ?? "An approved contact"} is calling.</small></span>
             <Button onClick={() => { setCallSummary(incomingCall); setCallContactId(incomingCall.contact_id); }}>Review</Button>
           </div>
         )}

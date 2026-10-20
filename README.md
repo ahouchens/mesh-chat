@@ -1,4 +1,4 @@
-# Mesh Chat
+﻿# Mesh Chat
 
 **Server-free, end-to-end encrypted messaging for small groups — built directly on Reticulum and LXMF.**
 
@@ -8,7 +8,7 @@ The design accepts real trade-offs. Delivery depends on peers being reachable, h
 
 An optional **I2P relay path** can bootstrap a workspace or 1:1 connection when neither device has a public endpoint. It is an explicit, consented fallback: the invitation carries one signed `*.b32.i2p` access point, both sides need an I2P router, and the access point relays encrypted Reticulum traffic rather than creating a direct link. I2P is not the default, is not available on Android yet, and does not replace the direct/LAN/access-point paths.
 
-> **Status — security-sensitive prototype.** The source tree is at 0.2.77. It has not been independently audited, and several physical-device and packaging gates are still open. Read [Status and verification](#status-and-verification) before relying on it.
+> **Status — security-sensitive prototype.** The source tree is at 0.2.78. It has not been independently audited, and several physical-device and packaging gates are still open. Read [Status and verification](#status-and-verification) before relying on it.
 
 ## What problem it solves
 
@@ -24,7 +24,7 @@ In short, it solves **“how do a few people message and coordinate privately wi
 | **Unsolicited contact and unclear trust** | **Explicit consent.** Invitations are signed and single-use; the recipient reviews the inviter, fingerprint, and workspace details before approving. | Trust is established peer-to-peer. Delivery never implies approval. |
 | **Group chat normally needs a hosted room** | **Private groups.** Up to eight people, owner-signed membership, an announcement-channel mode, and per-recipient delivery state. | One logical message becomes one separately encrypted copy per member. There is no group server and no shared group key. |
 | **Workspace collaboration normally needs a server** | **Shared workspaces.** Up to eight people, 32 public/private channels including `#general`, workspace DMs, one-level threads, mentions, edits, deletion tombstones, reactions, local search, and cooperative retention. | One authority-signed manifest chain describes membership; every device receives its own signed copy of each event. |
-| **First contact usually needs STUN, TURN, or a rendezvous service** | **Direct Internet invitations.** A temporary listener on the inviter's device asks their router for a mapping, then signs the resulting endpoint and credential into the invitation. | PCP → UPnP IGD → NAT-PMP on the participant's router. No rendezvous, STUN, TURN, or Mesh Chat service is contacted. |
+| **First contact usually needs STUN, TURN, or a rendezvous service** | **Direct Internet invitations.** A temporary listener on the inviter's device asks their router for a mapping, then signs the resulting endpoint and credential into the invitation. | PCP â†’ UPnP IGD â†’ NAT-PMP on the participant's router. No rendezvous, STUN, TURN, or Mesh Chat service is contacted. |
 | **No public endpoint and no directly reachable access point** | **I2P relay invitations.** A signed `MESHI2P1:` / `MESHI2P1W:` envelope carries one `*.b32.i2p` Reticulum access point; the joiner must consent before traffic is relayed. | Each side runs an I2P router with SAM. The access point relays encrypted Reticulum/LXMF traffic; no public IP or port forward is needed on either participant. |
 | **One network path is not enough** | **Explicit fallbacks.** Nearby discovery, signed direct TCP, an operator-run access point, an email/reverse handshake, and an experimental QUIC underlay. | Each path is a visible choice, never a silent downgrade. See [Reaching another device](#reaching-another-device). |
 | **Cloud chat means cloud-held history and metadata** | **Local-only privacy.** Encrypted vault, sealed local search, no telemetry, analytics, crash upload, CDN, or remote artwork fetch. | Search and history stay on the device; there is no hosted index to query. |
@@ -70,13 +70,13 @@ Reticulum routes packets, but it cannot make an arbitrary NAT accept an inbound 
 | **v3 — participant-hosted** | `MESHCHAT3:` / `MESHWORKSPACE3:` | The inviter opens a short-lived, invitation-scoped listener on their device and asks their router to publish it; the signed envelope carries the public endpoints and a fresh Reticulum IFAC credential | Inviter online; router mapping succeeds |
 | **v4 — email-ready** | `MESHCHAT4:` / `MESHWORKSPACE4:` | Outbound-first attempt, with an optional signed callback and role reversal if the invitee must host instead | An out-of-band channel to exchange signed documents |
 | **I2P relay** | `MESHI2P1:` / `MESHI2P1W:` | A signed outer envelope around the complete inner invitation, carrying one validated `*.b32.i2p` access point, its expiry, and the owner binding | Each side runs an I2P router with SAM; the access point is reachable through I2P |
-| **Direct setup** | `mesh-direct:` | Signed Offer → Answer → Ready over an experimental QUIC underlay, then an isolated bootstrap interpreter | Both sides can reach each other; physical qualification pending |
+| **Direct setup** | `mesh-direct:` | Signed Offer â†’ Answer â†’ Ready over an experimental QUIC underlay, then an isolated bootstrap interpreter | Both sides can reach each other; physical qualification pending |
 
 Accepting an invitation never creates trust by itself. The recipient reviews the inviter, fingerprint, and workspace details, and the request must still be approved. The first contact on a shared path is bounded by invitation expiry, single use, and explicit consent.
 
 Two honest limits follow from having no infrastructure: if neither participant can accept inbound traffic and they share no already-working path, setup fails and says so; and a self-hosted access point or propagation node is a separate deployment, not a Mesh Chat service. See [deploy/remote-access](deploy/remote-access/README.md).
 
-**I2P is an opt-in relay, not the default.** A normal invitation still starts with nearby/direct/participant-hosted/remote choices. I2P is selected explicitly, and the joiner sees the access point and must consent. The access point is a Reticulum `I2PInterface` node addressed by `*.b32.i2p`; it relays encrypted Reticulum/LXMF traffic and does not see message plaintext. Windows bundles and manages `i2pd`; Android has the settings and consent UI but no bundled I2P router yet, so Android cannot complete an I2P join in 0.2.77.
+**I2P is an opt-in relay, not the default.** A normal invitation still starts with nearby/direct/participant-hosted/remote choices. I2P is selected explicitly, and the joiner sees the access point and must consent. The access point is a Reticulum `I2PInterface` node addressed by `*.b32.i2p`; it relays encrypted Reticulum/LXMF traffic and does not see message plaintext. Windows bundles and manages `i2pd`; Android has the settings and consent UI but no bundled I2P router yet, so Android cannot complete an I2P join in 0.2.78.
 
 ## Workspaces: authority without a server
 
@@ -167,15 +167,15 @@ The threat model is explicit about what is *not* protected: traffic analysis, IP
 
 | Platform | What exists | Recorded verification |
 | --- | --- | --- |
-| Windows x64 | MSI and NSIS installers, standalone executable plus service sidecar, bundled/managed `i2pd`, I2P invitation and consent UI, 1:1 audio call surface | 0.2.77 published; installer launch not rerun after the temporary-folder disk fix |
+| Windows x64 | MSI and NSIS installers, standalone executable plus service sidecar, bundled/managed `i2pd`, I2P invitation and consent UI, 1:1 audio call surface | 0.2.78 published; installer launch not rerun after the temporary-folder disk fix |
 | Android arm64 | Debug APK, plus release/AAB signing path; I2P settings and invitation preview, 1:1 audio call surface | Built and package-inspected; no bundled I2P router and no physical call test in the recorded run |
 | macOS | Build path, FileVault adapter | No package built or run in this repository |
 | Linux | Build path, fscrypt/dm-crypt adapters | No package built or run in this repository |
 | iOS | Plugin and build script | Requires macOS and Xcode; not built or run in this repository |
 
-Automated verification is substantial: Python, Vitest, and Rust suites, plus opt-in real-stack harnesses — a four-process A→B→C→D Reticulum/LXMF topology, a two-process direct-LAN harness, a three-process remote-access harness, a packaged-sidecar harness, and QUIC fabric/recovery runs in CI. The recorded evidence, exact hashes, and per-version notes are in [TESTING.md](TESTING.md).
+Automated verification is substantial: Python, Vitest, and Rust suites, plus opt-in real-stack harnesses — a four-process Aâ†’Bâ†’Câ†’D Reticulum/LXMF topology, a two-process direct-LAN harness, a three-process remote-access harness, a packaged-sidecar harness, and QUIC fabric/recovery runs in CI. The recorded evidence, exact hashes, and per-version notes are in [TESTING.md](TESTING.md).
 
-Still open: physical Windows↔Android runs, real router/NAT and cellular traversal, propagation independence, crash-injection matrices, hostile-input fuzzing, accessibility review, macOS/Linux/iOS packages, and an independent security review. CI passing is not a substitute for those gates.
+Still open: physical Windowsâ†”Android runs, real router/NAT and cellular traversal, propagation independence, crash-injection matrices, hostile-input fuzzing, accessibility review, macOS/Linux/iOS packages, and an independent security review. CI passing is not a substitute for those gates.
 
 ## Repository map
 
