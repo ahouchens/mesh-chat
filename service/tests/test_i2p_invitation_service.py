@@ -97,7 +97,10 @@ def test_personal_i2p_invitation_previews_and_adopts_the_route(tmp_path) -> None
         assert preview["i2p_access_point"]["b32"] == B32
         assert preview["requires_i2p_consent"] is True
 
-        joiner.accept_invitation(created["text"])
+        with pytest.raises(ValidationError):
+            joiner.accept_invitation(created["text"])
+
+        joiner.accept_invitation(created["text"], i2p_consent=True)
         assert joiner.settings.i2p_enabled is True
         assert B32 in joiner.settings.i2p_peers
         config = (tmp_path / "joiner" / "reticulum" / "config").read_text(encoding="utf-8")

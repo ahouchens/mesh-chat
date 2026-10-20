@@ -834,6 +834,7 @@ function Onboarding({
   const [preview, setPreview] = useState<InvitationPreview | null>(null);
   const [formats, setFormats] = useState<InvitationFormats | null>(null);
   const [remoteConsent, setRemoteConsent] = useState(false);
+  const [i2pConsent, setI2PConsent] = useState(false);
   const [reachabilityWarning, setReachabilityWarning] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(() => initialWorkspacePrefixOnly ? incompleteWorkspacePrefixMessage(initialInvitation) : "");
@@ -890,7 +891,7 @@ function Onboarding({
       });
       if (generation !== previewGeneration.current) return;
       setPreview(checked);
-      setRemoteConsent(false);
+      setRemoteConsent(false); setI2PConsent(false);
       setMode("join");
     } catch (reason) {
       if (generation !== previewGeneration.current) return;
@@ -920,7 +921,7 @@ function Onboarding({
     try {
       await serviceCommand("create_profile", { display_name: name });
       if (mode === "join") {
-        await serviceCommand("accept_invitation", { invitation });
+        await serviceCommand("accept_invitation", { invitation, i2p_consent: i2pConsent });
         onReady(await serviceCommand<Snapshot>("snapshot"));
       } else {
         onReady(await serviceCommand<Snapshot>("snapshot"), pendingWorkspaceInvitation || undefined);
@@ -960,7 +961,7 @@ function Onboarding({
       <div className="onboarding__brand"><Brand /></div>
       <section className="welcome-card">
         {mode !== "home" && (
-          <button className="back-link" onClick={() => { previewGeneration.current += 1; setBusy(false); setMode("home"); setPreview(null); setRemoteConsent(false); setPendingWorkspaceInvitation(""); setWorkspaceContext(null); setInvitation(""); setError(""); }}>
+          <button className="back-link" onClick={() => { previewGeneration.current += 1; setBusy(false); setMode("home"); setPreview(null); setRemoteConsent(false); setI2PConsent(false); setPendingWorkspaceInvitation(""); setWorkspaceContext(null); setInvitation(""); setError(""); }}>
             <ArrowLeft size={18} /> Back
           </button>
         )}
@@ -1028,8 +1029,9 @@ function Onboarding({
             <SecurityDetails fingerprint={preview.fingerprint} destination={preview.destination_hash} />
             {preview.participant_access && <section className="direct-consent" aria-labelledby="onboarding-direct-connection"><h3 id="onboarding-direct-connection">Direct connection to the inviter</h3><p>{preview.participant_access.privacy_disclosure}</p><p>They must keep Mesh Chat open until this device connects.</p></section>}
             {preview.remote_profile && <section className="remote-consent" aria-labelledby="onboarding-remote-consent"><h3 id="onboarding-remote-consent">Remote connection requested</h3><p><strong>{preview.remote_profile.label}</strong> · {preview.remote_profile.endpoint_count} access-point {preview.remote_profile.endpoint_count === 1 ? "endpoint" : "endpoints"}</p><p>{preview.remote_profile.privacy_disclosure}</p><label className="checkbox-line"><input type="checkbox" checked={remoteConsent} onChange={(event) => setRemoteConsent(event.target.checked)} /> Connect to this access point after I create my profile</label></section>}
+            {preview.i2p_access_point && <section className="remote-consent" aria-labelledby="onboarding-i2p-consent"><h3 id="onboarding-i2p-consent">I2P relay requested</h3><p>Traffic will be relayed through <code>{preview.i2p_access_point.b32}</code>. This is not a direct connection.</p><label className="checkbox-line"><input type="checkbox" checked={i2pConsent} onChange={(event) => setI2PConsent(event.target.checked)} /> Use this I2P access point after I create my profile</label></section>}
             {error && <p className="form-error" role="alert">{error}</p>}
-            <Button type="submit" disabled={!name.trim() || busy || Boolean(preview.remote_profile) && !remoteConsent}>{busy ? "Connecting…" : preview.remote_profile ? "Create profile and connect" : preview.participant_access ? `Connect directly to ${preview.display_name}` : `Connect to ${preview.display_name}`}</Button>
+            <Button type="submit" disabled={!name.trim() || busy || Boolean(preview.remote_profile) && !remoteConsent || Boolean(preview.i2p_access_point) && !i2pConsent}>{busy ? "Connecting…" : preview.remote_profile ? "Create profile and connect" : preview.participant_access ? `Connect directly to ${preview.display_name}` : `Connect to ${preview.display_name}`}</Button>
           </form>
         )}
       </section>
@@ -1077,6 +1079,7 @@ function NewChatDialog({ initialInvitation, remoteProfiles, onClose, onChanged, 
   const [busy, setBusy] = useState(false);
   const [connectionChoice, setConnectionChoice] = useState("participant");
   const [remoteConsent, setRemoteConsent] = useState(false);
+  const [i2pConsent, setI2PConsent] = useState(false);
   const [doctor, setDoctor] = useState<DirectDoctorReport | null>(null);
   const [manualSetup, setManualSetup] = useState<ManualParticipantSetup | null>(null);
   const [manualHost, setManualHost] = useState("");
@@ -1149,7 +1152,7 @@ function NewChatDialog({ initialInvitation, remoteProfiles, onClose, onChanged, 
   useEffect(() => {
     if (!initialInvitation) return;
     let active = true;
-    setRaw(initialInvitation); setTab("join"); setPreview(null); setRemoteConsent(false);
+    setRaw(initialInvitation); setTab("join"); setPreview(null); setRemoteConsent(false); setI2PConsent(false);
     setConnectionReplyPreview(null); setRouteUpdatePreview(null); setReplyDoctor(null); setRequestQueued(false); setError("");
     void (async () => {
       const normalized = await normalizeInvitationInput(initialInvitation);
@@ -1193,7 +1196,7 @@ function NewChatDialog({ initialInvitation, remoteProfiles, onClose, onChanged, 
         setRouteUpdatePreview(await serviceCommand("preview_route_update", { update: normalized }));
         setPreview(null);
       } else setPreview(await serviceCommand("preview_invitation", { invitation: normalized }));
-      setRemoteConsent(false);
+      setRemoteConsent(false); setI2PConsent(false);
     }
     catch (reason) { setError(importedDocumentErrorMessage(reason)); }
   };
@@ -1201,7 +1204,7 @@ function NewChatDialog({ initialInvitation, remoteProfiles, onClose, onChanged, 
     if (busy || requestQueued) return;
     setBusy(true); setError(""); setCandidateResults([]);
     try {
-      const accepted = await serviceCommand<Contact>("accept_invitation", { invitation: raw });
+      const accepted = await serviceCommand<Contact>("accept_invitation", { invitation: raw, i2p_consent: i2pConsent });
       await onChanged();
       if (accepted.connection_results?.length && !accepted.connection_results.some((item) => item.result === "connected")) {
         setCandidateResults(accepted.connection_results);
@@ -1263,12 +1266,12 @@ function NewChatDialog({ initialInvitation, remoteProfiles, onClose, onChanged, 
       {tab === "join" && preview && <div className="stack">
         <div className="person-preview"><Avatar name={preview.display_name} /><div><h3>{preview.display_name}</h3><p>Identity signature valid</p></div></div>
         <SecurityDetails fingerprint={preview.fingerprint} destination={preview.destination_hash} />
-        {preview.i2p_access_point && <section className="direct-consent" aria-labelledby="personal-i2p-connection"><h3 id="personal-i2p-connection">Relayed via I2P</h3><p>This signed invitation asks to use an I2P access point. Traffic is relayed; it is not a direct connection. The access point can see connection metadata, not message contents.</p><p><code>{preview.i2p_access_point.b32}</code></p></section>}
+        {preview.i2p_access_point && <section className="direct-consent" aria-labelledby="personal-i2p-connection"><h3 id="personal-i2p-connection">Relayed via I2P</h3><p>This signed invitation asks to use an I2P access point. Traffic is relayed; it is not a direct connection. The access point can see connection metadata, not message contents.</p><p><code>{preview.i2p_access_point.b32}</code></p><label className="checkbox-line"><input type="checkbox" checked={i2pConsent} onChange={(event) => setI2PConsent(event.target.checked)} /> Use this I2P access point</label></section>}
         {preview.participant_access && <section className="direct-consent" aria-labelledby="personal-direct-connection"><h3 id="personal-direct-connection">Direct connection to {preview.display_name}</h3><p>{preview.participant_access.privacy_disclosure}</p><p>No separate operator will join this chat or workspace.</p></section>}
         {preview.connection_reply_available && <section className="direct-consent"><h3>Connection options</h3><p>{preview.participant_access ? "Mesh Chat will try the inviter’s signed route first. If every candidate fails, this device can be checked for an optional return connection." : "Mesh Chat will first save and try the signed contact request over any existing or same-network Mesh route. If no route is confirmed, it will then offer to check this device for an optional return connection."}</p></section>}
         {preview.remote_profile && <section className="remote-consent" aria-labelledby="personal-remote-consent"><h3 id="personal-remote-consent">Remote connection requested</h3><p><strong>{preview.remote_profile.label}</strong> · {preview.remote_profile.endpoint_count} access-point {preview.remote_profile.endpoint_count === 1 ? "endpoint" : "endpoints"}</p><p>{preview.remote_profile.privacy_disclosure}</p><label className="checkbox-line"><input type="checkbox" checked={remoteConsent} onChange={(event) => setRemoteConsent(event.target.checked)} /> Connect to this access point after I continue</label></section>}
         {replyFormats && <ConnectionDocumentShare formats={replyFormats} kind="reply" onShared={() => setReplyShared(true)} />}
-        {!requestQueued && <Button disabled={busy || Boolean(preview.remote_profile) && !remoteConsent} onClick={() => void connect()}>{busy ? "Saving request…" : replyFormats ? "Send contact request after sharing" : preview.remote_profile ? "Connect and send contact request" : preview.participant_access ? `Connect directly to ${preview.display_name}` : "Send contact request"}</Button>}
+        {!requestQueued && <Button disabled={busy || Boolean(preview.remote_profile) && !remoteConsent || Boolean(preview.i2p_access_point) && !i2pConsent} onClick={() => void connect()}>{busy ? "Saving request…" : replyFormats ? "Send contact request after sharing" : preview.remote_profile ? "Connect and send contact request" : preview.participant_access ? `Connect directly to ${preview.display_name}` : "Send contact request"}</Button>}
         {requestQueued && <section className="direct-host-warning" role="status"><h3>{candidateResults.length > 0 ? "No candidate connected yet" : "Contact request saved"}</h3>{candidateResults.length > 0 && <pre>{candidateSummary(candidateResults)}</pre>}<p>{candidateResults.length > 0 ? "The signed request remains saved and will retry." : "No route has been confirmed yet. Mesh Chat will keep the signed request queued and retry any available route."} Checking a return connection does not approve a new identity.</p>{preview.connection_reply_available && !replyFormats && !replyDoctor && <Button variant="secondary" onClick={() => void createReply()} disabled={busy}>{busy ? "Checking this network…" : "Check this device for a return connection"}</Button>}<Button variant="ghost" onClick={() => void closeDialog()}>Continue</Button></section>}
         {replyDoctor && <ReturnConnectionUnavailable report={replyDoctor} busy={busy} onRetry={() => void createReply()} />}
       </div>}
@@ -2566,6 +2569,7 @@ function JoinWorkspaceDialog({ initialValue = "", resumeWorkspaceId, workspaces,
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [remoteConsent, setRemoteConsent] = useState(false);
+  const [i2pConsent, setI2PConsent] = useState(false);
   const [connectionResults, setConnectionResults] = useState<ParticipantCandidateResult[]>([]);
   const [joinedWorkspace, setJoinedWorkspace] = useState<Workspace | null>(null);
   const existingWorkspace = preview && !joinedWorkspace
@@ -2623,12 +2627,12 @@ function JoinWorkspaceDialog({ initialValue = "", resumeWorkspaceId, workspaces,
         if (generation !== reviewGeneration.current) return;
         setDevicePreview(checked);
         setPreview(null);
-        setRemoteConsent(false);
+        setRemoteConsent(false); setI2PConsent(false);
       } else {
         const checked = await serviceCommand<WorkspaceInvitationPreview>("preview_workspace_invitation", { invitation: normalized });
         if (generation !== reviewGeneration.current) return;
         setPreview(checked);
-        setRemoteConsent(false);
+        setRemoteConsent(false); setI2PConsent(false);
         setDevicePreview(null);
       }
     }
@@ -2645,7 +2649,7 @@ function JoinWorkspaceDialog({ initialValue = "", resumeWorkspaceId, workspaces,
     lastInitialValue.current = initialValue;
     reviewGeneration.current += 1;
     setBusy(false); setValue(initialValue); setError("");
-    setPreview(null); setDevicePreview(null); setRemoteConsent(false);
+    setPreview(null); setDevicePreview(null); setRemoteConsent(false); setI2PConsent(false);
     setConnectionResults([]); setJoinedWorkspace(null); setReplyFormats(null); setReplyDoctor(null);
     void stopUnsharedReply();
     if (initialValue.trim()) void reviewCandidate(initialValue);
@@ -2663,7 +2667,7 @@ function JoinWorkspaceDialog({ initialValue = "", resumeWorkspaceId, workspaces,
       }
       const workspace = await serviceCommand<Workspace>(command, {
         operation_id: joinAttempt.current.operationId,
-        ...(devicePreview ? { device_link: document } : { invitation: document }),
+        ...(devicePreview ? { device_link: document } : { invitation: document, i2p_consent: i2pConsent }),
       });
       if (workspace.connection_results?.length && !workspace.connection_results.some((item) => item.result === "connected")) {
         setConnectionResults(workspace.connection_results);
@@ -2712,7 +2716,7 @@ function JoinWorkspaceDialog({ initialValue = "", resumeWorkspaceId, workspaces,
       {preview ? <>
         <div className="workspace-preview"><span className="workspace-preview__avatar">{initials(preview.name)}</span><div><h3>{preview.name}</h3><p>{preview.description || "No description"}</p></div></div>
         <dl className="security-list"><div><dt>Owner fingerprint</dt><dd>{preview.owner_fingerprint}</dd></div><div><dt>Current members</dt><dd>{preview.member_count}</dd></div><div><dt>History preference</dt><dd>{preview.retention_days === null ? "Indefinite" : `${preview.retention_days} days`}</dd></div></dl>
-        {preview.i2p_access_point && <section className="direct-consent" aria-labelledby="workspace-i2p-connection"><h3 id="workspace-i2p-connection">Relayed via I2P</h3><p>This signed workspace invitation asks to use an I2P access point. Traffic is relayed; it is not a direct connection. The access point can see connection metadata, not message contents.</p><p><code>{preview.i2p_access_point.b32}</code></p></section>}
+        {preview.i2p_access_point && <section className="direct-consent" aria-labelledby="workspace-i2p-connection"><h3 id="workspace-i2p-connection">Relayed via I2P</h3><p>This signed workspace invitation asks to use an I2P access point. Traffic is relayed; it is not a direct connection. The access point can see connection metadata, not message contents.</p><p><code>{preview.i2p_access_point.b32}</code></p><label className="checkbox-line"><input type="checkbox" checked={i2pConsent} onChange={(event) => setI2PConsent(event.target.checked)} /> Use this I2P access point for this join</label></section>}
         {existingWorkspace ? <section className="direct-host-warning" role="status">
           <h3>Workspace already saved</h3>
           <p><strong>{workspaceStateLabel(existingWorkspace)}</strong></p>
@@ -2741,8 +2745,8 @@ function JoinWorkspaceDialog({ initialValue = "", resumeWorkspaceId, workspaces,
       {replyDoctor && <ReturnConnectionUnavailable report={replyDoctor} busy={busy} onRetry={() => void createReply()} />}
       {error && <p className="form-error" role="alert">{error}</p>}
       <div className="dialog-actions">{!joinedWorkspace && <>
-        <Button variant="ghost" onClick={reviewed ? () => { void stopUnsharedReply(); setPreview(null); setDevicePreview(null); setRemoteConsent(false); setReplyFormats(null); setReplyDoctor(null); } : () => void closeDialog()}>{reviewed ? "Back" : "Cancel"}</Button>
-        {!existingWorkspace && <Button disabled={busy || (!reviewed && !value.trim()) || Boolean(preview?.remote_profile) && !remoteConsent} onClick={() => void (reviewed ? join() : review())}>{busy ? "Working…" : devicePreview ? "Request device approval" : preview ? replyFormats ? "Send join request after sharing" : preview.remote_profile ? "Connect and send join request" : preview.participant_access ? "Connect directly and send join request" : "Send join request" : "Review"}</Button>}
+        <Button variant="ghost" onClick={reviewed ? () => { void stopUnsharedReply(); setPreview(null); setDevicePreview(null); setRemoteConsent(false); setI2PConsent(false); setReplyFormats(null); setReplyDoctor(null); } : () => void closeDialog()}>{reviewed ? "Back" : "Cancel"}</Button>
+        {!existingWorkspace && <Button disabled={busy || (!reviewed && !value.trim()) || Boolean(preview?.remote_profile) && !remoteConsent || Boolean(preview?.i2p_access_point) && !i2pConsent} onClick={() => void (reviewed ? join() : review())}>{busy ? "Working…" : devicePreview ? "Request device approval" : preview ? replyFormats ? "Send join request after sharing" : preview.remote_profile ? "Connect and send join request" : preview.participant_access ? "Connect directly and send join request" : "Send join request" : "Review"}</Button>}
       </>}</div>
     </div>
   </Dialog>;

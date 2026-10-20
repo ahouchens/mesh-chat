@@ -4587,6 +4587,8 @@ class WorkspaceServiceMixin:
             verified_i2p = verify_i2p_invitation(wrapped, "workspace")
             if verified_i2p is None:
                 raise ValidationError("I2P workspace invitation could not be created")
+            if not self.settings.i2p_connectable:
+                self._adopt_i2p_access_point(verified_i2p.access_point["b32"])
             outcome.update(i2p_invitation_formats(wrapped, "workspace"))
             outcome["expires_at"] = verified_i2p.expires_at
             outcome["connection_mode"] = "i2p"
@@ -5184,9 +5186,9 @@ class WorkspaceServiceMixin:
         return committed
 
     def submit_workspace_join(
-        self, invitation: Any, operation_id: Any
+        self, invitation: Any, operation_id: Any, i2p_consent: bool = False
     ) -> dict[str, Any]:
-        payload = {"invitation": invitation}
+        payload = {"invitation": invitation, "i2p_consent": i2p_consent}
         operation_id, digest, replay = self._workspace_operation(
             "submit_workspace_join", operation_id, payload
         )
@@ -5212,6 +5214,8 @@ class WorkspaceServiceMixin:
             i2p.inner if i2p else email.inner if email else participant.inner if participant else remote.inner if remote else invitation
         )
         if i2p is not None:
+            if not i2p_consent:
+                raise ValidationError("I2P access point consent is required")
             self._adopt_i2p_access_point(i2p.access_point["b32"])
         existing = self.store.get("workspace", self._workspace_record_id(invite.workspace_id))
         if existing is not None:

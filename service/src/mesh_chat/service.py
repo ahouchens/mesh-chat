@@ -517,6 +517,8 @@ class MeshChatService(
             verified = verify_i2p_invitation(serialized, "personal")
             if verified is None:
                 raise ValidationError("I2P invitation could not be created")
+            if not self.settings.i2p_connectable:
+                self._adopt_i2p_access_point(verified.access_point["b32"])
             return {
                 **i2p_invitation_formats(serialized, "personal"),
                 "expires_at": verified.expires_at,
@@ -639,7 +641,7 @@ class MeshChatService(
         except ValidationError as exc:
             raise InvitationInvalid("Invitation could not be validated") from exc
 
-    def accept_invitation(self, raw: str) -> dict[str, Any]:
+    def accept_invitation(self, raw: str, *, i2p_consent: bool = False) -> dict[str, Any]:
         try:
             i2p = verify_i2p_invitation(raw, "personal")
             email = None if i2p else verify_email_invitation(raw, "personal")
@@ -651,6 +653,8 @@ class MeshChatService(
         except ValidationError as exc:
             raise InvitationInvalid("Invitation could not be validated") from exc
         if i2p is not None:
+            if not i2p_consent:
+                raise ValidationError("I2P access point consent is required")
             self._adopt_i2p_access_point(i2p.access_point["b32"])
         profile = self._require_profile()
         if invitation.destination_hash.hex() == profile["destination_hash"]:
@@ -2695,13 +2699,17 @@ class MeshChatService(
                 body.get("i2p_label"),
             )
         if command in {"preview_invitation", "accept_invitation"}:
-            body = _payload(value, allowed={"invitation"}, required={"invitation"})
+            body = _payload(
+                value, allowed={"invitation", "i2p_consent"}, required={"invitation"}
+            )
             if not isinstance(body["invitation"], str):
                 raise ValidationError("Invitation must be text")
             return (
                 self.preview_invitation(body["invitation"])
                 if command == "preview_invitation"
-                else self.accept_invitation(body["invitation"])
+                else self.accept_invitation(
+                    body["invitation"], i2p_consent=body.get("i2p_consent") is True
+                )
             )
         if command == "create_connection_reply":
             body = _payload(
@@ -2959,11 +2967,12 @@ class MeshChatService(
         if command == "submit_workspace_join":
             body = _payload(
                 value,
-                allowed={"operation_id", "invitation"},
+                allowed={"operation_id", "invitation", "i2p_consent"},
                 required={"operation_id", "invitation"},
             )
             return self.submit_workspace_join(
-                body["invitation"], body["operation_id"]
+                body["invitation"], body["operation_id"],
+                body.get("i2p_consent") is True,
             )
         if command in {"approve_workspace_join", "decline_workspace_join"}:
             body = _payload(
