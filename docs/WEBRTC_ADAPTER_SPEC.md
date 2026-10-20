@@ -242,8 +242,9 @@ call_hangup
 
 ## 7. UX
 
-This is the **target UX** for the adapter; WebRTC media is not implemented in
-0.2.76 (the C0a signaling foundation is).
+This is the **target UX** for the adapter; the C1 WebView call surface is
+implemented in 0.2.77 for local LAN calls. STUN/TURN, Android background calls,
+and video remain open.
 The adapter must feel like one obvious next step, not a networking console. The
 guiding rule is:
 
@@ -775,8 +776,16 @@ permissions, and UI are not wired yet.
 C1a implemented: `service/src/mesh_chat/call_manager.py` persists call records,
 signs/verifies C0a documents, and exposes start/answer/candidate/end operations.
 `CALL_SIGNAL` messages carry those documents over the existing LXMF path. The
-service commands are `start_call`, `answer_call`, `add_call_candidate`, and
-`end_call`; the renderer does not yet use them.
+service commands are `start_call`, `answer_call`, `add_call_candidate`,
+`call_media`, and `end_call`.
+
+C1b implemented as the WebView media adapter: the renderer uses
+`RTCPeerConnection`/`getUserMedia` for microphone and playback, while the
+service still owns identity, signed signaling, call persistence, and consent.
+This is a deliberate first implementation to ship Windows and Android media
+without bundling a native codec stack; a native media adapter remains the
+long-term option for background/lock-screen calls and can replace the WebView
+path behind the same service contract.
 
 Goal: a consented audio call between approved Windows contacts.
 

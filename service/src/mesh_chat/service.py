@@ -193,6 +193,7 @@ class MeshChatService(
         "answer_call",
         "add_call_candidate",
         "end_call",
+        "call_media",
         "set_message_reaction",
         "save_draft",
         "delete_conversation",
@@ -1586,6 +1587,16 @@ class MeshChatService(
         self._changed()
         return result
 
+    def call_media(self, call_id: str) -> dict[str, Any]:
+        record = self.calls._require_call(call_id)
+        result = self.calls.public(record)
+        result.update(
+            local_sdp=record.get("local_sdp"),
+            remote_sdp=record.get("remote_sdp"),
+            candidates=list(record.get("candidates", [])),
+        )
+        return result
+
     @staticmethod
     def _conversation_marker_id(kind: str, target_id: str) -> str:
         digest = RNS.Identity.full_hash(
@@ -2944,6 +2955,9 @@ class MeshChatService(
                 value, allowed={"call_id", "reason"}, required={"call_id"}
             )
             return self.end_call(body["call_id"], body.get("reason", "completed"))
+        if command == "call_media":
+            body = _payload(value, allowed={"call_id"}, required={"call_id"})
+            return self.call_media(body["call_id"])
         if command == "set_message_reaction":
             body = _payload(
                 value,

@@ -8,7 +8,7 @@ The design accepts real trade-offs. Delivery depends on peers being reachable, h
 
 An optional **I2P relay path** can bootstrap a workspace or 1:1 connection when neither device has a public endpoint. It is an explicit, consented fallback: the invitation carries one signed `*.b32.i2p` access point, both sides need an I2P router, and the access point relays encrypted Reticulum traffic rather than creating a direct link. I2P is not the default, is not available on Android yet, and does not replace the direct/LAN/access-point paths.
 
-> **Status — security-sensitive prototype.** The source tree is at 0.2.76. It has not been independently audited, and several physical-device and packaging gates are still open. Read [Status and verification](#status-and-verification) before relying on it.
+> **Status — security-sensitive prototype.** The source tree is at 0.2.77. It has not been independently audited, and several physical-device and packaging gates are still open. Read [Status and verification](#status-and-verification) before relying on it.
 
 ## What problem it solves
 
@@ -76,7 +76,7 @@ Accepting an invitation never creates trust by itself. The recipient reviews the
 
 Two honest limits follow from having no infrastructure: if neither participant can accept inbound traffic and they share no already-working path, setup fails and says so; and a self-hosted access point or propagation node is a separate deployment, not a Mesh Chat service. See [deploy/remote-access](deploy/remote-access/README.md).
 
-**I2P is an opt-in relay, not the default.** A normal invitation still starts with nearby/direct/participant-hosted/remote choices. I2P is selected explicitly, and the joiner sees the access point and must consent. The access point is a Reticulum `I2PInterface` node addressed by `*.b32.i2p`; it relays encrypted Reticulum/LXMF traffic and does not see message plaintext. Windows bundles and manages `i2pd`; Android has the settings and consent UI but no bundled I2P router yet, so Android cannot complete an I2P join in 0.2.76.
+**I2P is an opt-in relay, not the default.** A normal invitation still starts with nearby/direct/participant-hosted/remote choices. I2P is selected explicitly, and the joiner sees the access point and must consent. The access point is a Reticulum `I2PInterface` node addressed by `*.b32.i2p`; it relays encrypted Reticulum/LXMF traffic and does not see message plaintext. Windows bundles and manages `i2pd`; Android has the settings and consent UI but no bundled I2P router yet, so Android cannot complete an I2P join in 0.2.77.
 
 ## Workspaces: authority without a server
 

@@ -21,7 +21,11 @@ import {
   LockKeyhole,
   Megaphone,
   MessageCircleMore,
+  Mic,
+  MicOff,
   Moon,
+  Phone,
+  PhoneOff,
   Plus,
   QrCode,
   RefreshCw,
@@ -71,6 +75,8 @@ import { InvitationImportActions, InvitationQrCode } from "./InvitationTransfer"
 import { classifyInvitationInput, InvitationTransferError, normalizeInvitationInput } from "./invitation-transfer";
 import packageInfo from "../package.json";
 import type {
+  CallMedia,
+  CallSummary,
   ChatMessage,
   ConnectionDocumentFormats,
   ConnectionReplyPreview,
@@ -815,6 +821,265 @@ function Dialog({
         {children}
       </section>
     </div>
+  );
+}
+
+function callFingerprint(sdp: string): string {
+  for (const line of sdp.split(/\r?\n/)) {
+    if (line.startsWith("a=fingerprint:")) return line.slice("a=fingerprint:".length).trim();
+  }
+  throw new Error("The call could not be secured (no DTLS fingerprint).");
+}
+
+function CallDialog({
+  contact,
+  initialCall,
+  onClose,
+  onChanged,
+}: {
+  contact: Contact;
+  initialCall?: CallSummary;
+  onClose: () => void;
+  onChanged: () => Promise<void>;
+}) {
+  const [call, setCall] = useState<CallSummary | undefined>(initialCall);
+  const [media, setMedia] = useState<CallMedia | null>(null);
+  const [phase, setPhase] = useState<"idle" | "preparing" | "calling" | "ringing" | "connecting" | "in_call" | "ended" | "error">(
+    initialCall?.direction === "inbound" && initialCall.state === "ringing" ? "ringing" : "idle",
+  );
+  const [muted, setMuted] = useState(false);
+  const [error, setError] = useState("");
+  const pcRef = useRef<RTCPeerConnection | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const callIdRef = useRef<string | undefined>(initialCall?.id);
+  const remoteSetRef = useRef(false);
+  const pollRef = useRef<number | null>(null);
+  const pollBusyRef = useRef(false);
+
+  const cleanup = useCallback(() => {
+    if (pollRef.current !== null) {
+      window.clearInterval(pollRef.current);
+      pollRef.current = null;
+    }
+    streamRef.current?.getTracks().forEach((track) => track.stop());
+    streamRef.current = null;
+    pcRef.current?.close();
+    pcRef.current = null;
+    if (audioRef.current) audioRef.current.srcObject = null;
+  }, []);
+
+  useEffect(() => cleanup, [cleanup]);
+
+  const attachPeer = useCallback(() => {
+    const pc = new RTCPeerConnection({ iceServers: [] });
+    pc.ontrack = (event) => {
+      if (audioRef.current) {
+        audioRef.current.srcObject = event.streams[0] ?? new MediaStream([event.track]);
+        void audioRef.current.play().catch(() => undefined);
+      }
+    };
+    pc.onconnectionstatechange = () => {
+      if (pc.connectionState === "connected") setPhase("in_call");
+      if (pc.connectionState === "failed") {
+        setError("The audio path could not be established.");
+        setPhase("error");
+      }
+    };
+    pcRef.current = pc;
+    return pc;
+  }, []);
+
+  const startPolling = useCallback((callId: string) => {
+    if (pollRef.current !== null) window.clearInterval(pollRef.current);
+    pollRef.current = window.setInterval(async () => {
+      if (pollBusyRef.current) return;
+      pollBusyRef.current = true;
+      try {
+        const latest = await serviceCommand<CallMedia>("call_media", { call_id: callId });
+        setMedia(latest);
+        setCall((current) => current ? { ...current, ...latest } : current);
+        if (latest.remote_sdp && !remoteSetRef.current && pcRef.current?.signalingState === "have-local-offer") {
+          await pcRef.current.setRemoteDescription({ type: "answer", sdp: latest.remote_sdp });
+          remoteSetRef.current = true;
+          setPhase("connecting");
+        }
+        if (latest.state === "in_call") setPhase("in_call");
+        if (["ended", "declined", "busy", "no_answer", "failed"].includes(latest.state)) {
+          setPhase(latest.state === "failed" ? "error" : "ended");
+          if (latest.state === "failed") setError("The call ended unexpectedly.");
+        }
+      } catch {
+        // Keep the last safe state; the next event or explicit hangup updates it.
+      } finally {
+        pollBusyRef.current = false;
+      }
+    }, 1000);
+  }, []);
+
+  const prepareMicrophone = useCallback(async () => {
+    if (!navigator.mediaDevices?.getUserMedia) {
+      throw new Error("This device does not expose a microphone to Mesh Chat.");
+    }
+    return navigator.mediaDevices.getUserMedia({
+      audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+      video: false,
+    });
+  }, []);
+
+  const waitForCandidates = useCallback(async (pc: RTCPeerConnection) => {
+    if (pc.iceGatheringState === "complete") return;
+    await new Promise<void>((resolve) => {
+      const timeout = window.setTimeout(resolve, 3000);
+      const onChange = () => {
+        if (pc.iceGatheringState === "complete") {
+          window.clearTimeout(timeout);
+          pc.removeEventListener("icegatheringstatechange", onChange);
+          resolve();
+        }
+      };
+      pc.addEventListener("icegatheringstatechange", onChange);
+    });
+  }, []);
+
+  const startCall = useCallback(async () => {
+    setError("");
+    setPhase("preparing");
+    try {
+      const stream = await prepareMicrophone();
+      streamRef.current = stream;
+      const pc = attachPeer();
+      stream.getTracks().forEach((track) => pc.addTrack(track, stream));
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+      await waitForCandidates(pc);
+      const sdp = pc.localDescription?.sdp;
+      if (!sdp) throw new Error("The call offer could not be created.");
+      const result = await serviceCommand<CallSummary>("start_call", {
+        contact_id: contact.id,
+        media: "audio",
+        sdp,
+        dtls_fingerprint: callFingerprint(sdp),
+      });
+      callIdRef.current = result.id;
+      setCall(result);
+      setPhase("calling");
+      startPolling(result.id);
+      await onChanged();
+    } catch (reason) {
+      cleanup();
+      setError(errorMessage(reason));
+      setPhase("error");
+    }
+  }, [attachPeer, cleanup, contact.id, onChanged, prepareMicrophone, startPolling, waitForCandidates]);
+
+  const acceptCall = useCallback(async () => {
+    if (!call) return;
+    setError("");
+    setPhase("preparing");
+    try {
+      const details = await serviceCommand<CallMedia>("call_media", { call_id: call.id });
+      if (!details.remote_sdp) throw new Error("This call invitation has no media description.");
+      const stream = await prepareMicrophone();
+      streamRef.current = stream;
+      const pc = attachPeer();
+      await pc.setRemoteDescription({ type: "offer", sdp: details.remote_sdp });
+      stream.getTracks().forEach((track) => pc.addTrack(track, stream));
+      const answer = await pc.createAnswer();
+      await pc.setLocalDescription(answer);
+      await waitForCandidates(pc);
+      const sdp = pc.localDescription?.sdp;
+      if (!sdp) throw new Error("The call answer could not be created.");
+      const result = await serviceCommand<CallSummary>("answer_call", {
+        call_id: call.id,
+        sdp,
+        dtls_fingerprint: callFingerprint(sdp),
+      });
+      setCall(result);
+      setMedia(details);
+      setPhase("connecting");
+      startPolling(call.id);
+      await onChanged();
+    } catch (reason) {
+      cleanup();
+      setError(errorMessage(reason));
+      setPhase("error");
+    }
+  }, [attachPeer, call, cleanup, onChanged, prepareMicrophone, startPolling, waitForCandidates]);
+
+  const hangup = useCallback(async (reason: "completed" | "declined" | "cancelled") => {
+    const callId = callIdRef.current;
+    cleanup();
+    setPhase("ended");
+    if (callId) {
+      try {
+        await serviceCommand("end_call", { call_id: callId, reason });
+        await onChanged();
+      } catch {
+        // The call may already have ended on the other side.
+      }
+    }
+    onClose();
+  }, [cleanup, onChanged, onClose]);
+
+  const toggleMute = useCallback(() => {
+    const next = !muted;
+    streamRef.current?.getAudioTracks().forEach((track) => { track.enabled = !next; });
+    setMuted(next);
+  }, [muted]);
+
+  const incoming = call?.direction === "inbound";
+  const active = phase === "in_call";
+
+  return (
+    <Dialog title={incoming ? `Call from ${contact.display_name}` : `Call ${contact.display_name}`} onClose={() => void hangup("cancelled")}>
+      <div className="stack">
+        <audio ref={audioRef} autoPlay playsInline hidden />
+        {phase === "idle" && (
+          <>
+            <p className="muted">Audio is sent directly to {contact.display_name} over the authenticated call path. Your microphone starts only after you choose Call.</p>
+            <div className="dialog-actions">
+              <Button variant="secondary" onClick={onClose}>Cancel</Button>
+              <Button onClick={() => void startCall()}><Phone size={17} /> Call</Button>
+            </div>
+          </>
+        )}
+        {phase === "ringing" && (
+          <>
+            <p className="direct-host-status" role="status"><Phone size={17} /> Incoming audio call</p>
+            <p className="muted">Your microphone stays off until you accept.</p>
+            <div className="dialog-actions">
+              <Button variant="danger" onClick={() => void hangup("declined")}>Decline</Button>
+              <Button onClick={() => void acceptCall()}><Phone size={17} /> Accept</Button>
+            </div>
+          </>
+        )}
+        {(phase === "preparing" || phase === "calling" || phase === "connecting") && (
+          <>
+            <p className="direct-host-status" role="status">
+              <RefreshCw size={17} /> {phase === "preparing" ? "Preparing audio…" : phase === "calling" ? "Calling and waiting for an answer…" : "Connecting the audio path…"}
+            </p>
+            <p className="muted">The call uses the signed Reticulum signaling path; the media path is direct when the network allows it.</p>
+            <div className="dialog-actions">
+              <Button variant="secondary" onClick={() => void hangup("cancelled")}>Cancel</Button>
+            </div>
+          </>
+        )}
+        {active && (
+          <>
+            <p className="direct-host-status" role="status"><Phone size={17} /> In call</p>
+            <div className="dialog-actions">
+              <Button variant="secondary" onClick={toggleMute}>{muted ? <MicOff size={17} /> : <Mic size={17} />} {muted ? "Unmute" : "Mute"}</Button>
+              <Button variant="danger" onClick={() => void hangup("completed")}><PhoneOff size={17} /> Hang up</Button>
+            </div>
+          </>
+        )}
+        {phase === "ended" && <p className="muted">Call ended.</p>}
+        {phase === "error" && <p className="form-error" role="alert">{error || "The call could not connect."}</p>}
+        {media && active && <p className="muted">{media.candidate_count} network candidate{media.candidate_count === 1 ? "" : "s"} exchanged.</p>}
+        {phase === "error" && <div className="dialog-actions"><Button onClick={onClose}>Close</Button></div>}
+      </div>
+    </Dialog>
   );
 }
 
@@ -2251,7 +2516,7 @@ function MessageReactions({
   );
 }
 
-function Conversation({ contact, messages, draft, sendError, sending, detailsOpen, reactionTargetId, reactionCatalogOpen, reactionBusyEmoji, reactionError, onDetailsOpenChange, onToggleReactionPicker, onReactionCatalogOpenChange, onCloseReactionPicker, onSetReaction, onDraft, onSend, onHelp, onBack, onDelete }: { contact: Contact; messages: ChatMessage[]; draft: string; sendError: string; sending: boolean; detailsOpen: boolean; reactionTargetId: string | null; reactionCatalogOpen: boolean; reactionBusyEmoji: string | null; reactionError: string; onDetailsOpenChange: (open: boolean) => void; onToggleReactionPicker: (messageId: string) => void; onReactionCatalogOpenChange: (messageId: string, open: boolean) => void; onCloseReactionPicker: () => void; onSetReaction: (messageId: string, emoji: string, active: boolean) => void; onDraft: (value: string) => void; onSend: () => void; onHelp: () => void; onBack: () => void; onDelete: () => void }) {
+function Conversation({ contact, messages, draft, sendError, sending, detailsOpen, reactionTargetId, reactionCatalogOpen, reactionBusyEmoji, reactionError, onDetailsOpenChange, onToggleReactionPicker, onReactionCatalogOpenChange, onCloseReactionPicker, onSetReaction, onDraft, onSend, onHelp, onBack, onDelete, onCall }: { contact: Contact; messages: ChatMessage[]; draft: string; sendError: string; sending: boolean; detailsOpen: boolean; reactionTargetId: string | null; reactionCatalogOpen: boolean; reactionBusyEmoji: string | null; reactionError: string; onDetailsOpenChange: (open: boolean) => void; onToggleReactionPicker: (messageId: string) => void; onReactionCatalogOpenChange: (messageId: string, open: boolean) => void; onCloseReactionPicker: () => void; onSetReaction: (messageId: string, emoji: string, active: boolean) => void; onDraft: (value: string) => void; onSend: () => void; onHelp: () => void; onBack: () => void; onDelete: () => void; onCall: () => void }) {
   const messageListRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const messageList = messageListRef.current;
@@ -2266,7 +2531,7 @@ function Conversation({ contact, messages, draft, sendError, sending, detailsOpe
   const routeLabel = contact.route_kind === "participant_direct" ? "Connected directly over the Internet" : contact.route_kind === "remote" ? "Reachable through remote transport" : contact.route_kind === "signed_direct" ? "Reachable through signed direct local route" : contact.route_kind === "nearby" ? "Reachable nearby" : "Secure route not currently known";
   return (
     <section className="conversation" aria-label={`Conversation with ${contact.display_name}`}>
-      <header className="conversation__header"><button className="icon-button mobile-only mobile-back" type="button" onClick={onBack} aria-label="Back to conversations"><ArrowLeft size={21} /></button><div className="conversation__person"><Avatar name={contact.display_name} small /><div><h2>{contact.display_name}</h2><span>{routeLabel}</span></div></div><div className="conversation__actions"><button className="icon-button conversation-delete" type="button" onClick={onDelete} disabled={sending} aria-label={`Delete conversation with ${contact.display_name}`} title="Delete conversation"><Trash2 size={18} /></button><SecurityDetails fingerprint={contact.fingerprint} destination={contact.destination_hash} open={detailsOpen} onOpenChange={onDetailsOpenChange} /></div></header>
+      <header className="conversation__header"><button className="icon-button mobile-only mobile-back" type="button" onClick={onBack} aria-label="Back to conversations"><ArrowLeft size={21} /></button><div className="conversation__person"><Avatar name={contact.display_name} small /><div><h2>{contact.display_name}</h2><span>{routeLabel}</span></div></div><div className="conversation__actions">{approved && <button className="icon-button" type="button" onClick={onCall} disabled={sending} aria-label={`Call ${contact.display_name}`} title="Audio call"><Phone size={18} /></button>}<button className="icon-button conversation-delete" type="button" onClick={onDelete} disabled={sending} aria-label={`Delete conversation with ${contact.display_name}`} title="Delete conversation"><Trash2 size={18} /></button><SecurityDetails fingerprint={contact.fingerprint} destination={contact.destination_hash} open={detailsOpen} onOpenChange={onDetailsOpenChange} /></div></header>
       {!approved && <div className={`connection-banner connection-banner--${contact.trust}`} role="status"><span>{contactConnectionLabel(contact)}</span>{contact.trust === "awaiting_consent" && <Button variant="ghost" onClick={onHelp}><CircleHelp size={17} /> Connection help</Button>}</div>}
       <div className="message-list" aria-live="polite" ref={messageListRef}>
         <div className="day-divider"><span>Messages are end-to-end encrypted</span></div>
@@ -3520,6 +3785,10 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceChannelIn
   const [groupDrafts, setGroupDrafts] = useState<Record<string, string>>(() => Object.fromEntries((snapshot.group_drafts ?? []).map((draft) => [draft.group_id, draft.text])));
   const [newChat, setNewChat] = useState(false);
   const [newGroup, setNewGroup] = useState(false);
+  const [callContactId, setCallContactId] = useState<string | null>(null);
+  const [callSummary, setCallSummary] = useState<CallSummary | undefined>(undefined);
+  const incomingCall = (snapshot.calls ?? []).find((call) => call.direction === "inbound" && call.state === "ringing");
+  const callContact = snapshot.contacts.find((contact) => contact.id === callContactId);
   const [workspacesEnabled, setWorkspacesEnabled] = useState(false);
   const [activeSpaceId, setActiveSpaceId] = useState<"personal" | string>("personal");
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(true);
@@ -5081,6 +5350,21 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceChannelIn
             <span><strong>Networking is unavailable.</strong> Put both devices on the same local network and reopen Mesh Chat. Your profile and queued messages are safe.</span>
           </div>
         )}
+        {incomingCall && !callContactId && (
+          <div className="incoming-call-banner" role="status">
+            <Phone size={18} />
+            <span><strong>Incoming audio call</strong><small>{snapshot.contacts.find((contact) => contact.id === incomingCall.contact_id)?.display_name ?? "An approved contact"} is calling.</small></span>
+            <Button onClick={() => { setCallSummary(incomingCall); setCallContactId(incomingCall.contact_id); }}>Review</Button>
+          </div>
+        )}
+        {callContactId && callContact && (
+          <CallDialog
+            contact={callContact}
+            initialCall={callSummary}
+            onClose={() => { setCallContactId(null); setCallSummary(undefined); }}
+            onChanged={async () => { await refresh(true); }}
+          />
+        )}
         {selectedWorkspace ? (workspaceSearchOpen ? (
           <WorkspaceSearchView
             workspace={selectedWorkspace}
@@ -5228,6 +5512,7 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceChannelIn
             onHelp={() => void connectionHelp()}
             onBack={() => selectConversation(null)}
             onDelete={() => { setDeleteError(""); setDeleteTarget({ kind: "contact", id: selectedContact.id }); }}
+            onCall={() => { setCallSummary(undefined); setCallContactId(selectedContact.id); }}
           />
         ) : selectedGroup && snapshot.profile ? (
           <GroupConversation

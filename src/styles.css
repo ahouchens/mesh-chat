@@ -272,6 +272,12 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .main-pane > .conversation, .main-pane > .empty-state { min-height: 0; flex: 1; }
 .service-warning { display: flex; align-items: center; justify-content: center; gap: 9px; padding: 10px 16px; color: #6f431d; background: #fff0ce; border-bottom: 1px solid #e5c990; font-size: .8rem; line-height: 1.4; }
 .service-warning svg { flex: 0 0 auto; }
+.incoming-call-banner { display: flex; align-items: center; gap: 10px; padding: 9px 16px; color: #1d5f50; background: #e5f6ef; border-bottom: 1px solid #b9dfd0; font-size: .82rem; }
+.incoming-call-banner > span { display: flex; min-width: 0; flex: 1; flex-direction: column; }
+.incoming-call-banner strong { font-size: .84rem; }
+.incoming-call-banner small { color: #4d7167; }
+.incoming-call-banner .button { flex: 0 0 auto; }
+.call-dialog audio { display: none; }
 .conversation { display: grid; height: 100%; min-height: 0; grid-template-areas: "header" "banner" "messages" "composer"; grid-template-rows: auto auto minmax(0, 1fr) auto; overflow: hidden; background: var(--paper); }
 .conversation__header { grid-area: header; display: flex; min-height: 74px; align-items: center; justify-content: space-between; padding: 12px 24px; background: rgba(255, 253, 247, 0.92); border-bottom: 1px solid var(--line); }
 .conversation__person { display: flex; min-width: 0; align-items: center; gap: 11px; }.conversation__person > div { min-width: 0; }.conversation__person h2 { margin: 0; overflow: hidden; font-size: 1rem; text-overflow: ellipsis; white-space: nowrap; }.conversation__person span { display: block; overflow: hidden; color: var(--muted); font-size: 0.75rem; text-overflow: ellipsis; white-space: nowrap; }

@@ -907,6 +907,38 @@ export interface ParticipantConnectionSummary {
   all_failed: boolean;
 }
 
+export type CallState =
+  | "dialing"
+  | "ringing"
+  | "connecting"
+  | "in_call"
+  | "ended"
+  | "declined"
+  | "busy"
+  | "no_answer"
+  | "failed";
+
+export interface CallSummary {
+  id: string;
+  contact_id: string;
+  role: "caller" | "callee";
+  media: "audio" | "video";
+  state: CallState;
+  direction: "outbound" | "inbound";
+  created_at: number;
+  updated_at: number;
+  expires_at: number;
+  candidate_count: number;
+  has_local_sdp: boolean;
+  has_remote_sdp: boolean;
+}
+
+export interface CallMedia extends CallSummary {
+  local_sdp: string | null;
+  remote_sdp: string | null;
+  candidates: string[];
+}
+
 export interface Snapshot {
   profile: Profile | null;
   contacts: Contact[];
@@ -936,6 +968,7 @@ export interface Snapshot {
   remote_profiles?: RemoteProfile[];
   participant_hosting?: ParticipantHosting[];
   participant_connections?: ParticipantConnectionSummary[];
+  calls?: CallSummary[];
   network: {
     transport_enabled: boolean;
     propagation_enabled: boolean;
