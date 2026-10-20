@@ -77,7 +77,9 @@ import { InvitationImportActions, InvitationQrCode } from "./InvitationTransfer"
 import { classifyInvitationInput, InvitationTransferError, normalizeInvitationInput } from "./invitation-transfer";
 import packageInfo from "../package.json";
 import type {
+  CallIceConfiguration,
   CallMedia,
+  CallSettings,
   CallSummary,
   ChatMessage,
   ConnectionDocumentFormats,
@@ -851,6 +853,7 @@ function CallDialog({
   );
   const [muted, setMuted] = useState(false);
   const [videoEnabled, setVideoEnabled] = useState(initialCall?.media === "video");
+  const [path, setPath] = useState<"direct" | "relay" | "unknown">("unknown");
   const [error, setError] = useState("");
   const pcRef = useRef<RTCPeerConnection | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -878,8 +881,34 @@ function CallDialog({
 
   useEffect(() => cleanup, [cleanup]);
 
-  const attachPeer = useCallback(() => {
-    const pc = new RTCPeerConnection({ iceServers: [] });
+  const inspectPath = useCallback(async (pc: RTCPeerConnection) => {
+    try {
+      const stats = await pc.getStats();
+      let relayed = false;
+      let selectedPairId: string | null = null;
+      stats.forEach((report) => {
+        if (report.type === "transport" && report.selectedCandidatePairId) {
+          selectedPairId = report.selectedCandidatePairId;
+        }
+      });
+      stats.forEach((report) => {
+        if (report.type === "candidate-pair" && (report.id === selectedPairId || report.selected)) {
+          const local = stats.get(report.localCandidateId);
+          const remote = stats.get(report.remoteCandidateId);
+          if (local?.candidateType === "relay" || remote?.candidateType === "relay") relayed = true;
+        }
+      });
+      setPath(relayed ? "relay" : "direct");
+    } catch {
+      setPath("unknown");
+    }
+  }, []);
+
+  const attachPeer = useCallback((configuration: CallIceConfiguration) => {
+    const pc = new RTCPeerConnection({
+      iceServers: configuration.iceServers,
+      iceTransportPolicy: configuration.iceTransportPolicy,
+    });
     pc.ontrack = (event) => {
       const stream = event.streams[0] ?? new MediaStream([event.track]);
       if (audioRef.current) {
@@ -893,15 +922,18 @@ function CallDialog({
       }
     };
     pc.onconnectionstatechange = () => {
-      if (pc.connectionState === "connected") setPhase("in_call");
+      if (pc.connectionState === "connected") {
+        setPhase("in_call");
+        void inspectPath(pc);
+      }
       if (pc.connectionState === "failed") {
-        setError("The audio path could not be established.");
+        setError("The media path could not be established.");
         setPhase("error");
       }
     };
     pcRef.current = pc;
     return pc;
-  }, []);
+  }, [inspectPath]);
 
   const startPolling = useCallback((callId: string) => {
     if (pollRef.current !== null) window.clearInterval(pollRef.current);
@@ -962,7 +994,8 @@ function CallDialog({
       const stream = await prepareMedia(media);
       streamRef.current = stream;
       if (localVideoRef.current) localVideoRef.current.srcObject = stream;
-      const pc = attachPeer();
+      const configuration = await serviceCommand<CallIceConfiguration>("call_ice_servers");
+      const pc = attachPeer(configuration);
       stream.getTracks().forEach((track) => pc.addTrack(track, stream));
       const offer = await pc.createOffer();
       await pc.setLocalDescription(offer);
@@ -998,7 +1031,8 @@ function CallDialog({
       const stream = await prepareMedia(call.media);
       streamRef.current = stream;
       if (localVideoRef.current) localVideoRef.current.srcObject = stream;
-      const pc = attachPeer();
+      const configuration = await serviceCommand<CallIceConfiguration>("call_ice_servers");
+      const pc = attachPeer(configuration);
       await pc.setRemoteDescription({ type: "offer", sdp: details.remote_sdp });
       stream.getTracks().forEach((track) => pc.addTrack(track, stream));
       const answer = await pc.createAnswer();
@@ -1093,7 +1127,7 @@ function CallDialog({
         )}
         {active && (
           <>
-            <p className="direct-host-status" role="status"><Phone size={17} /> In call</p>
+            <p className="direct-host-status" role="status"><Phone size={17} /> In call · {path === "relay" ? "Relayed via TURN" : path === "direct" ? "Direct media" : "Checking media path"}</p>
             <div className="dialog-actions">
               <Button variant="secondary" onClick={toggleMute}>{muted ? <MicOff size={17} /> : <Mic size={17} />} {muted ? "Unmute" : "Mute"}</Button>
               {call?.media === "video" && <Button variant="secondary" onClick={toggleCamera}>{videoEnabled ? <Video size={17} /> : <VideoOff size={17} />} {videoEnabled ? "Camera off" : "Camera on"}</Button>}
@@ -2037,6 +2071,61 @@ const I2P_ROUTER_REASON: Record<string, string> = {
   unsupported_platform: "managed I2P is not supported on this platform",
 };
 
+function WebRTCCallSettings({ onSaved }: { onSaved: () => Promise<void> }) {
+  const [settings, setSettings] = useState<CallSettings | null>(null);
+  const [stun, setStun] = useState("");
+  const [turnUrl, setTurnUrl] = useState("");
+  const [turnUser, setTurnUser] = useState("");
+  const [turnCredential, setTurnCredential] = useState("");
+  const [relayOnly, setRelayOnly] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [error, setError] = useState("");
+  useEffect(() => {
+    void serviceCommand<CallSettings>("call_settings").then((value) => {
+      setSettings(value);
+      setStun(value.stun_urls.join(", "));
+      setRelayOnly(value.relay_only);
+    }).catch((reason) => setError(errorMessage(reason)));
+  }, []);
+  const save = async () => {
+    setBusy(true); setSaved(false); setError("");
+    try {
+      const result = await serviceCommand<CallSettings>("update_call_settings", {
+        stun_urls: stun.split(/[,\s]+/).map((value) => value.trim()).filter(Boolean),
+        turn_url: turnUrl.trim() || null,
+        turn_username: turnUser.trim() || null,
+        turn_credential: turnCredential || null,
+        relay_only: relayOnly,
+      });
+      setSettings(result);
+      setTurnCredential("");
+      setSaved(true);
+      await onSaved();
+    } catch (reason) {
+      setError(errorMessage(reason));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <section className="settings-section" aria-labelledby="webrtc-call-settings-title">
+      <div className="settings-section__heading"><h3 id="webrtc-call-settings-title">WebRTC calls</h3><p>STUN and TURN are optional. Direct host candidates are tried first. TURN is a relay and can see connection metadata, not media content.</p></div>
+      <label className="field"><span>STUN servers <small>Comma-separated, for example stun:stun.example.org:3478</small></span><input value={stun} autoCapitalize="off" autoCorrect="off" spellCheck={false} onChange={(event) => { setStun(event.target.value); setSaved(false); }} /></label>
+      <label className="field"><span>TURN server <small>Optional, for example turns:turn.example.org:5349</small></span><input value={turnUrl} autoCapitalize="off" autoCorrect="off" spellCheck={false} onChange={(event) => { setTurnUrl(event.target.value); setSaved(false); }} /></label>
+      <div className="field-grid">
+        <label className="field"><span>TURN username</span><input value={turnUser} autoCapitalize="off" autoCorrect="off" spellCheck={false} onChange={(event) => { setTurnUser(event.target.value); setSaved(false); }} /></label>
+        <label className="field"><span>TURN credential</span><input type="password" value={turnCredential} autoComplete="off" onChange={(event) => { setTurnCredential(event.target.value); setSaved(false); }} /></label>
+      </div>
+      <label className="checkbox-line"><input type="checkbox" checked={relayOnly} onChange={(event) => { setRelayOnly(event.target.checked); setSaved(false); }} /> Relay-only: never try a direct path. This requires a TURN server and shows every call as relayed.</label>
+      <p className="muted">{settings?.turn_configured ? "TURN is configured. Credentials stay in the encrypted service record and are released only to an active call." : "No TURN server configured. Calls work only on a shared LAN or when direct host candidates are reachable."}</p>
+      {saved && <p className="muted" role="status">Call settings saved.</p>}
+      {error && <p className="form-error" role="alert">{error}</p>}
+      <Button disabled={busy} onClick={() => void save()}>{busy ? "Saving…" : "Save call settings"}</Button>
+    </section>
+  );
+}
+
 function SettingsDialog({ snapshot, theme, onThemeChange, onClose, onSaved }: { snapshot: Snapshot; theme: Theme; onThemeChange: (theme: Theme) => void; onClose: () => void; onSaved: () => Promise<void> }) {
   const [settings, setSettings] = useState<NetworkSettings>(snapshot.settings);
   const [saved, setSaved] = useState(false);
@@ -2153,6 +2242,7 @@ function SettingsDialog({ snapshot, theme, onThemeChange, onClose, onSaved }: { 
       </section>
       <ParticipantHostingSettings initial={snapshot.participant_hosting ?? []} workspaces={snapshot.workspaces ?? []} onChanged={onSaved} />
       <RemoteConnectionsSettings initial={snapshot.remote_profiles ?? []} onChanged={onSaved} />
+      <WebRTCCallSettings onSaved={onSaved} />
       <section className="notification-settings" aria-labelledby="notification-settings-title">
         <h3 id="notification-settings-title"><Bell size={18} /> Local notifications</h3>
         <p role="status" aria-live="polite"><strong>{!capability?.supported ? "Not supported on this platform" : capability.permission_state === "allowed" ? "Allowed" : capability.permission_state === "not_requested" ? "Permission not requested" : "Permission denied or settings required"}</strong></p>

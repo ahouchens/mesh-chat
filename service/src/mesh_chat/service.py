@@ -36,6 +36,7 @@ from .invitations import (
     verify_invitation,
 )
 from .call_manager import CallManager
+from .call_settings import CallSettings
 from .direct_runtime import SessionRegistry
 from .direct_packets import PacketRuntime
 from .direct_packet_adapter import ProfileBudget
@@ -194,6 +195,9 @@ class MeshChatService(
         "add_call_candidate",
         "end_call",
         "call_media",
+        "call_settings",
+        "update_call_settings",
+        "call_ice_servers",
         "set_message_reaction",
         "save_draft",
         "delete_conversation",
@@ -384,6 +388,7 @@ class MeshChatService(
         self.settings = NetworkSettings.from_dict(settings_record)
         self._i2p_router = I2PRouterManager(profile_dir)
         self.calls = CallManager(store, self._send_call_document)
+        self._call_settings = CallSettings.from_dict(store.get("call_settings", "default"))
         identity_record = store.get("identity", "local")
         profile_record = store.get("profile", "local")
         if identity_record is not None or profile_record is not None:
@@ -1596,6 +1601,20 @@ class MeshChatService(
             candidates=list(record.get("candidates", [])),
         )
         return result
+
+    def call_settings(self) -> dict[str, Any]:
+        return self._call_settings.public()
+
+    def update_call_settings(self, value: dict[str, Any]) -> dict[str, Any]:
+        settings = CallSettings.from_dict(value)
+        self.store.put("call_settings", "default", settings.to_dict())
+        self._call_settings = settings
+        self._changed()
+        return settings.public()
+
+    def call_ice_servers(self) -> dict[str, Any]:
+        return self._call_settings.rtc_configuration()
+
 
     @staticmethod
     def _conversation_marker_id(kind: str, target_id: str) -> str:
@@ -2958,6 +2977,19 @@ class MeshChatService(
         if command == "call_media":
             body = _payload(value, allowed={"call_id"}, required={"call_id"})
             return self.call_media(body["call_id"])
+        if command == "call_settings":
+            _payload(value, allowed=set())
+            return self.call_settings()
+        if command == "update_call_settings":
+            body = _payload(
+                value,
+                allowed={"stun_urls", "turn_url", "turn_username", "turn_credential", "relay_only"},
+                required={"stun_urls", "relay_only"},
+            )
+            return self.update_call_settings(body)
+        if command == "call_ice_servers":
+            _payload(value, allowed=set())
+            return self.call_ice_servers()
         if command == "set_message_reaction":
             body = _payload(
                 value,

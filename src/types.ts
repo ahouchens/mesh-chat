@@ -939,6 +939,21 @@ export interface CallMedia extends CallSummary {
   candidates: string[];
 }
 
+export interface CallSettings {
+  stun_urls: string[];
+  turn_configured: boolean;
+  relay_only: boolean;
+}
+
+export interface CallIceConfiguration {
+  iceServers: Array<{
+    urls: string | string[];
+    username?: string;
+    credential?: string;
+  }>;
+  iceTransportPolicy: "all" | "relay";
+}
+
 export interface Snapshot {
   profile: Profile | null;
   contacts: Contact[];

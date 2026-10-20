@@ -854,6 +854,13 @@ Exit criteria:
 
 ### C4 — Hardening
 
+Implemented candidate: user-supplied STUN/TURN settings, encrypted-at-rest TURN
+credentials, relay-only mode, a `call_ice_servers` handoff to the active call,
+and a Direct/Relayed path badge derived from selected ICE candidates. Settings
+validation and credential scoping are covered by tests.
+
+Still open:
+
 - reconnect and ICE restart;
 - TURN quotas and abuse controls;
 - codec/device matrix;
