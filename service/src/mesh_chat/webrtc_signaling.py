@@ -13,6 +13,7 @@ from .invitations import _b64decode, _b64encode, canonical_bytes
 
 CALL_VERSION = 1
 MAX_SDP_BYTES = 32 * 1024
+MAX_SDP_LINES = 512
 MAX_CANDIDATE_BYTES = 2 * 1024
 MAX_CALL_SECONDS = 10 * 60
 CALL_ID = re.compile(r"^[A-Za-z0-9_-]{16,64}$")
@@ -256,6 +257,8 @@ def create_call_candidate(
         raise ValidationError("Call candidate role is invalid")
     if not isinstance(candidate, str) or not candidate or len(candidate.encode("utf-8")) > MAX_CANDIDATE_BYTES:
         raise ValidationError("Call candidate is invalid")
+    if any(ord(character) < 32 or ord(character) == 127 for character in candidate):
+        raise ValidationError("Call candidate is invalid")
     unsigned = {
         "v": CALL_VERSION,
         "type": "call_candidate",
@@ -286,6 +289,8 @@ def verify_call_candidate(
         raise ValidationError("Call candidate role is invalid")
     candidate = value["candidate"]
     if not isinstance(candidate, str) or not candidate or len(candidate.encode("utf-8")) > MAX_CANDIDATE_BYTES:
+        raise ValidationError("Call candidate is invalid")
+    if any(ord(character) < 32 or ord(character) == 127 for character in candidate):
         raise ValidationError("Call candidate is invalid")
     _expiry_value(value, now)
     public_key = _verify_signature(value, raw)
@@ -595,6 +600,20 @@ def _sdp(value: Any) -> str:
         raise ValidationError("Call SDP is invalid")
     if len(value.encode("utf-8")) > MAX_SDP_BYTES or not value.startswith("v=0"):
         raise ValidationError("Call SDP is invalid")
+    if any(ord(character) < 32 and character not in "\r\n\t" for character in value):
+        raise ValidationError("Call SDP contains control characters")
+    lines = value.replace("\r\n", "\n").split("\n")
+    if len(lines) > MAX_SDP_LINES:
+        raise ValidationError("Call SDP has too many lines")
+    media = [line for line in lines if line.startswith("m=")]
+    if not media or any(
+        not (line.startswith("m=audio ") or line.startswith("m=video "))
+        for line in media
+    ):
+        raise ValidationError("Call SDP must describe audio or video")
+    fingerprints = [line for line in lines if line.startswith("a=fingerprint:")]
+    if len(fingerprints) != 1:
+        raise ValidationError("Call SDP must contain exactly one DTLS fingerprint")
     return value
 
 

@@ -238,3 +238,33 @@ def test_renegotiate_binds_call_role_and_generation() -> None:
 
     with pytest.raises(IdentityMismatch):
         verify_call_renegotiate(raw, call_id="other_0123456789abcdef", now=NOW)
+
+
+@pytest.mark.parametrize(
+    "bad_sdp",
+    [
+        "v=0\r\na=fingerprint:" + FINGERPRINT,
+        "v=0\r\nm=application 9 UDP/DTLS/SCTP webrtc-datachannel\r\na=fingerprint:"
+        + FINGERPRINT,
+        SDP + "a=fingerprint:" + FINGERPRINT + "\r\n",
+        SDP.replace("\r\n", "\x00\r\n"),
+        "v=0\r\n" + "\r\n".join(["a=x"] * 513) + "\r\na=fingerprint:" + FINGERPRINT,
+    ],
+)
+def test_invite_rejects_malformed_sdp(bad_sdp: str) -> None:
+    caller = RNS.Identity()
+    callee = RNS.Identity()
+    with pytest.raises(ValidationError):
+        _invite(caller, callee, sdp=bad_sdp)
+
+
+def test_candidate_rejects_control_characters() -> None:
+    caller = RNS.Identity()
+    with pytest.raises(ValidationError):
+        create_call_candidate(
+            caller,
+            call_id=CALL_ID,
+            role="caller",
+            candidate="candidate:1 1 UDP 1 192.0.2.1 5000 typ host\x00",
+            now=NOW,
+        )

@@ -858,14 +858,14 @@ Implemented candidate: user-supplied STUN/TURN settings, encrypted-at-rest TURN
 credentials, relay-only mode, a `call_ice_servers` handoff to the active call,
 a Direct/Relayed path badge derived from selected ICE candidates, a 45-second
 ring timeout, explicit **Try again** recovery, and signed ICE-restart
-renegotiation with generation/replay checks. Settings validation and
-credential scoping are covered by tests.
+renegotiation with generation/replay checks. Malformed SDP/candidate inputs are
+rejected by bounded structural validation with malformed-input tests. Settings
+validation and credential scoping are covered by tests.
 
 Still open:
 
 - TURN quotas and abuse controls;
 - codec/device matrix;
-- malformed SDP/fuzz tests;
 - network-change and sleep/resume tests;
 - diagnostics without addresses, credentials, or media keys.
 
