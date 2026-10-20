@@ -422,6 +422,35 @@ An intermediate 0.2.74 build failed five frontend assertions because normal
 invitations carried `i2p_consent: false`; 0.2.75 sends the field only for I2P
 previews.
 
+## WebRTC ICE restart, 2026-10-19
+
+**0.2.82 / Android 2082** adds signed `call_renegotiate` documents, generation
+and replay checks, manager restart/answer operations, and a call surface that
+recreates the media path on disconnect without a new ring or contact approval.
+
+Validation:
+
+- Focused call tests: **19 passed**.
+- Full service suite: **1027 passed, 46 skipped**.
+- Frontend TypeScript: passed.
+- Frontend tests: **234 passed**.
+- Frontend production build: passed.
+- GitHub Actions
+  [run 39375134922](https://github.com/ahouchens/mesh-chat/actions/runs/39375134922)
+  passed Verify, Windows packaging, Android packaging, and Publish.
+- Release: <https://github.com/ahouchens/mesh-chat/releases/tag/v0.2.82>.
+
+Published assets:
+
+| Artifact | Size | SHA-256 |
+|---|---:|---|
+| `Mesh-Chat_0.2.82_x64-setup.exe` | 27,517,075 | `22c736d73d53ff96ee54604fe3d904c2a7b77ffe2e7e7a7db95d4266c6527dae` |
+| `Mesh-Chat_0.2.82_x64_en-US.msi` | 29,511,680 | `7b40c075e201d723fc4b69ecac3ce42d21a8b66a4adc4f189668c65c91de45bc` |
+| `mesh-chat-0.2.82-android-arm64-release.apk` | 34,082,615 | `74f188af50cdd0490efdc78ebbff594465e7d506b1c60a9345f9b71a904226ae` |
+
+Still open: TURN quotas/abuse controls, malformed-SDP/fuzz coverage, physical
+Windows↔Android calls, Android audio focus/foreground, video quality, and C5.
+
 ## WebRTC call timeout and recovery, 2026-10-19
 
 **0.2.81 / Android 2081** bounds unanswered calls to 45 seconds, removes expired

@@ -238,4 +238,3 @@ def test_renegotiate_binds_call_role_and_generation() -> None:
 
     with pytest.raises(IdentityMismatch):
         verify_call_renegotiate(raw, call_id="other_0123456789abcdef", now=NOW)
-
