@@ -222,6 +222,7 @@ Desktop installers must be built on their target operating system. Android build
 | [Direct connectivity roadmap](docs/DIRECT_CONNECTIVITY_ROADMAP.md) | Invitation bootstrap, traversal, recovery phases, and qualification status |
 | [I2P support specification](docs/I2P_SUPPORT_SPEC.md) | I2P access-point architecture, Windows/Android roadmap, consent, and limits |
 | [WebRTC adapter roadmap](docs/WEBRTC_ADAPTER_SPEC.md) | DataChannel connection bootstrap, STUN/TURN policy, 1:1 call increments, and decision gates |
+| [WebRTC physical test plan](docs/WEBRTC_PHYSICAL_TEST_PLAN.md) | Windows/Android call, TURN, foreground-service, and privacy qualification matrix |
 | [docs/ANDROID_PARITY.md](docs/ANDROID_PARITY.md) | Android capability status and the physical test matrix |
 | [deploy/remote-access](deploy/remote-access/README.md) | Running an access point or propagation node without becoming a Mesh Chat service |
 
