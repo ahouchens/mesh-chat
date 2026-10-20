@@ -743,6 +743,10 @@ Exit criteria:
 
 ### C0b — Native audio spike
 
+Implemented experiment: `experiments/webrtc-call`, using aiortc with synthetic
+440/660 Hz tracks, host candidates, and the C0a signed invite/answer documents.
+It is not a shipping dependency and does not use a microphone yet.
+
 Goal: prove a native 1:1 audio call on a desktop using the C0a signaling.
 
 Scope:
