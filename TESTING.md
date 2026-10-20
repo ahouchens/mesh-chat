@@ -437,7 +437,16 @@ isolation, Windows Firewall blocking UDP, or mDNS-only host candidates. TURN is
 the reliable workaround when client isolation is enabled.
 
 Validation: frontend TypeScript, **237 frontend tests**, and production build
-passed. Release: <https://github.com/ahouchens/mesh-chat/releases/tag/v0.2.94>.
+passed. GitHub Actions
+[run 39501671842](https://github.com/ahouchens/mesh-chat/actions/runs/39501671842)
+passed Verify, Windows packaging, Android packaging, and Publish.
+Release: <https://github.com/ahouchens/mesh-chat/releases/tag/v0.2.94>.
+
+| Artifact | SHA-256 |
+|---|---|
+| `Mesh-Chat_0.2.94_x64-setup.exe` | `97428b877a346a6031d1e912a9395daab8df3d72e0a4c1eb27c4f6df3f199571` |
+| `Mesh-Chat_0.2.94_x64_en-US.msi` | `26c2366d7ec6840b7517b572d7cdc7d036d9bb0d7449db4807ca17797b4f26cf` |
+| `mesh-chat-0.2.94-android-arm64-release.apk` | `c6b150d593a4cfa4e27b085a103722f692dbfdfc4b622a59e4d6c96e2a5ee5ce` |
 
 ## C5d WebRTC invitation admission, 2026-10-20
 
