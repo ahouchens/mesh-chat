@@ -863,6 +863,13 @@ Exit criteria:
 
 ### C5 — Conditional DataChannel adapter
 
+Decision recorded in
+[ADR 0021](adr/0021-defer-webrtc-datachannel-onboarding.md): not implemented
+now. TCP access-point onboarding is the default, I2P is the no-public-endpoint
+option, and no current browser/deployment requirement justifies a second
+Reticulum-over-SCTP stack. Revisit only on a measured failure or a browser
+client requirement.
+
 Only start if a concrete onboarding or browser requirement exists after TCP
 access point, direct QUIC, and I2P have been evaluated.
 

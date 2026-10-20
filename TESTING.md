@@ -422,6 +422,38 @@ An intermediate 0.2.74 build failed five frontend assertions because normal
 invitations carried `i2p_consent: false`; 0.2.75 sends the field only for I2P
 previews.
 
+## WebRTC video surface and Android call permissions, 2026-10-19
+
+**0.2.78 / Android 2078** adds Audio call / Video call choices, camera capture,
+local/remote video, camera on/off, and the Android `RECORD_AUDIO`,
+`MODIFY_AUDIO_SETTINGS`, and `CAMERA` declarations. The C6 group-call decision
+is recorded in ADR 0020; group calls are not implemented.
+
+Validation:
+
+- Frontend TypeScript: passed.
+- Frontend tests: **234 passed**.
+- Frontend production build: passed.
+- Full service suite: **1014 passed, 46 skipped**.
+- GitHub Actions
+  [run 39367262608](https://github.com/ahouchens/mesh-chat/actions/runs/39367262608)
+  passed Verify, Windows packaging, Android packaging, and Publish.
+- Release: <https://github.com/ahouchens/mesh-chat/releases/tag/v0.2.78>.
+- APK package inspection: versionCode 2078, versionName 0.2.78, and the three
+  call permissions are present.
+
+Published assets:
+
+| Artifact | Size | SHA-256 |
+|---|---:|---|
+| `Mesh-Chat_0.2.78_x64-setup.exe` | 27,508,927 | `cab5202ff8746b3afd57cd36d49482d46d4cb3065364e3029d104b20def1e149` |
+| `Mesh-Chat_0.2.78_x64_en-US.msi` | 29,503,488 | `aa8e65e18baf67e38358d372fd8e2281a388ed76063348622fb87a8671c663c5` |
+| `mesh-chat-0.2.78-android-arm64-release.apk` | 34,082,306 | `ee44e9710fe1e44e67304f40622da8999db35cefeb4a3c34c086a26e2c65e022` |
+
+Still open: physical Windows↔Windows and Windows↔Android calls, Android
+runtime microphone/camera permission, audio focus/foreground behavior,
+STUN/TURN, physical video quality, C4 hardening, and C5.
+
 ## WebRTC 1:1 audio call surface, 2026-10-19
 
 **0.2.77 / Android 2077** adds the first 1:1 audio call surface and durable
