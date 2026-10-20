@@ -56,6 +56,7 @@ import {
   onServiceEvent,
   openNotificationSettings,
   requestNotificationPermission,
+  requestMediaPermission,
   runtimePlatform,
   setNativeTheme,
   serviceCommand,
@@ -965,6 +966,12 @@ function CallDialog({
   const prepareMedia = useCallback(async (media: "audio" | "video") => {
     if (!navigator.mediaDevices?.getUserMedia) {
       throw new Error("This device does not expose a microphone to Mesh Chat.");
+    }
+    if (await runtimePlatform() !== "desktop") {
+      const permission = await requestMediaPermission();
+      if (!permission.audio || (media === "video" && !permission.camera)) {
+        throw new Error(media === "video" ? "Microphone and camera access are required for a video call." : "Microphone access is required for an audio call.");
+      }
     }
     return navigator.mediaDevices.getUserMedia({
       audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },

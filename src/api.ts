@@ -88,6 +88,10 @@ export function requestNotificationPermission(): Promise<NotificationCapability>
   return invoke<NotificationCapability>("request_notification_permission");
 }
 
+export function requestMediaPermission(): Promise<{ audio: boolean; camera: boolean }> {
+  return invoke<{ audio: boolean; camera: boolean }>("request_media_permission");
+}
+
 export function openNotificationSettings(): Promise<NotificationCapability> {
   return invoke<NotificationCapability>("open_notification_settings");
 }

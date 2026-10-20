@@ -84,6 +84,10 @@ interface InvitationDocumentHost {
 @TauriPlugin(
     permissions = [
         Permission(strings = [Manifest.permission.POST_NOTIFICATIONS], alias = "postNotification"),
+        Permission(
+            strings = [Manifest.permission.RECORD_AUDIO, Manifest.permission.CAMERA],
+            alias = "media",
+        ),
     ],
 )
 class MeshRuntimePlugin(private val activity: Activity) : Plugin(activity) {
@@ -672,6 +676,32 @@ class MeshRuntimePlugin(private val activity: Activity) : Plugin(activity) {
                 reject(invoke, "request_notification_permission", error)
             }
         }
+    }
+
+    @Command
+    fun requestMediaPermission(invoke: Invoke) {
+        val audio = ContextCompat.checkSelfPermission(activity, Manifest.permission.RECORD_AUDIO) ==
+            PackageManager.PERMISSION_GRANTED
+        val camera = ContextCompat.checkSelfPermission(activity, Manifest.permission.CAMERA) ==
+            PackageManager.PERMISSION_GRANTED
+        if (audio && camera) {
+            resolve(invoke, successful(JSONObject().put("audio", true).put("camera", true)))
+            return
+        }
+        try {
+            requestPermissionForAlias("media", invoke, "mediaPermissionResult")
+        } catch (error: Throwable) {
+            reject(invoke, "request_media_permission", error)
+        }
+    }
+
+    @PermissionCallback
+    private fun mediaPermissionResult(invoke: Invoke) {
+        val audio = ContextCompat.checkSelfPermission(activity, Manifest.permission.RECORD_AUDIO) ==
+            PackageManager.PERMISSION_GRANTED
+        val camera = ContextCompat.checkSelfPermission(activity, Manifest.permission.CAMERA) ==
+            PackageManager.PERMISSION_GRANTED
+        resolve(invoke, successful(JSONObject().put("audio", audio).put("camera", camera)))
     }
 
     @Command

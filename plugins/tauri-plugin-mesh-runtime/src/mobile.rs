@@ -62,6 +62,10 @@ impl<R: Runtime> MeshRuntime<R> {
             .run_mobile_plugin("requestNotificationPermission", ())?)
     }
 
+    pub fn request_media_permission(&self) -> Result<NativeResponse> {
+        Ok(self.0.run_mobile_plugin("requestMediaPermission", ())?)
+    }
+
     pub fn open_notification_settings(&self) -> Result<NativeResponse> {
         Ok(self.0.run_mobile_plugin("openNotificationSettings", ())?)
     }

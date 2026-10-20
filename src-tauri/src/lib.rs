@@ -1340,6 +1340,22 @@ fn request_notification_permission(app: AppHandle) -> PendingResult {
 
 #[cfg(desktop)]
 #[tauri::command]
+fn request_media_permission() -> serde_json::Value {
+    serde_json::json!({"audio": false, "camera": false})
+}
+
+#[cfg(mobile)]
+#[tauri::command]
+fn request_media_permission(app: AppHandle) -> PendingResult {
+    mobile_result(
+        app.mesh_runtime()
+            .request_media_permission()
+            .map_err(|_| "media_permission_unavailable".to_string())?,
+    )
+}
+
+#[cfg(desktop)]
+#[tauri::command]
 fn open_notification_settings() -> PendingResult {
     notification_capability()
 }
@@ -1467,6 +1483,7 @@ pub fn run() {
             set_native_theme,
             notification_capability,
             request_notification_permission,
+            request_media_permission,
             open_notification_settings
         ])
         .setup(|_app| {
