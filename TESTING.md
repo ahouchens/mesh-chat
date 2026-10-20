@@ -422,6 +422,41 @@ An intermediate 0.2.74 build failed five frontend assertions because normal
 invitations carried `i2p_consent: false`; 0.2.75 sends the field only for I2P
 previews.
 
+## WebRTC calls foundation, 2026-10-19
+
+**0.2.76 / Android 2076** adds the C0a signed call-signaling foundation and
+keeps TCP access-point onboarding as the default connection path. No WebRTC
+media stack, call UI, STUN/TURN configuration, or physical call is shipped.
+
+Validation:
+
+- `service/tests/test_webrtc_signaling.py`: **12 passed**.
+- Full service suite: **1007 passed, 46 skipped**.
+- GitHub Actions
+  [run 39361103319](https://github.com/ahouchens/mesh-chat/actions/runs/39361103319)
+  passed Verify, Windows packaging, Android packaging, and the published
+  release step.
+- Release: <https://github.com/ahouchens/mesh-chat/releases/tag/v0.2.76>.
+
+Published assets:
+
+| Artifact | Size | SHA-256 |
+|---|---:|---|
+| `Mesh-Chat_0.2.76_x64-setup.exe` | 27,487,550 | `58af920f25bcb7ef679838ab02755a5deeeb248b6e94ff96f752cbd8ace97981` |
+| `Mesh-Chat_0.2.76_x64_en-US.msi` | 29,483,008 | `a12c13fe8f436786da947bc0ca652270818a50d012e4ef4a2fd6db9d011d0f26` |
+| `mesh-chat-0.2.76-android-arm64-release.apk` | 34,065,822 | `7346b83efa4ef316e41adefb4a3d300c28d2921181e8bc7517bb1fce00821709` |
+
+The isolated C0b spike (`experiments/webrtc-call/spike.py`) passed with
+bidirectional decoded Opus audio and verified C0a signaling on host candidates.
+The isolated C1 device spike (`experiments/webrtc-call/live.py`) captured the
+real Windows microphone, decoded it over WebRTC/Opus, and passed with
+microphone energy present; `--play` also passed on the selected output device.
+These are local experiments, not shipping calls.
+
+Still open: service/LXMF signaling transport, call persistence, call UI,
+STUN/TURN, Windows↔Android calls, Android audio focus, video, and physical
+device qualification.
+
 ## Direct connectivity increment, 2026-10-16
 
 Native qualification now runs in GitHub Actions. At `cbcf659`,
