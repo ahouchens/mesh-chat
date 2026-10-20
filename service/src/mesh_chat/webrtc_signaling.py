@@ -529,6 +529,16 @@ def _keys(kind: str) -> set[str]:
             "v", "type", "call_id", "role", "generation", "sdp", "dtls_fingerprint",
             "created_at", "expires_at", "signer_destination", "signer_public_key", "signature",
         }
+    if kind == "webrtc_onboarding_offer":
+        return {
+            "v", "type", "session_id", "sdp", "dtls_fingerprint",
+            "created_at", "expires_at", "signer_public_key", "signature",
+        }
+    if kind == "webrtc_onboarding_answer":
+        return {
+            "v", "type", "session_id", "offer_digest", "sdp", "dtls_fingerprint",
+            "created_at", "expires_at", "signer_public_key", "signature",
+        }
     raise ValidationError("Call document type is invalid")
 
 

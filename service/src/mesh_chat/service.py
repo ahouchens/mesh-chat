@@ -38,6 +38,12 @@ from .invitations import (
 from .call_manager import CallManager
 from .call_settings import CallSettings
 from .webrtc_interface import WebRTCInterface
+from .webrtc_onboarding import (
+    create_onboarding_answer,
+    create_onboarding_offer,
+    verify_onboarding_answer,
+    verify_onboarding_offer,
+)
 from .direct_runtime import SessionRegistry
 from .direct_packets import PacketRuntime
 from .direct_packet_adapter import ProfileBudget
@@ -204,6 +210,10 @@ class MeshChatService(
         "webrtc_attach",
         "webrtc_packet",
         "webrtc_detach",
+        "webrtc_onboarding_offer",
+        "webrtc_onboarding_answer",
+        "verify_webrtc_onboarding_offer",
+        "verify_webrtc_onboarding_answer",
         "set_message_reaction",
         "save_draft",
         "delete_conversation",
@@ -1641,6 +1651,63 @@ class MeshChatService(
 
     def call_ice_servers(self) -> dict[str, Any]:
         return self._call_settings.rtc_configuration()
+
+    def webrtc_onboarding_offer(self, sdp: str, dtls_fingerprint: str) -> dict[str, Any]:
+        identity = self._call_identity()
+        session_id = uuid.uuid4().hex
+        document = create_onboarding_offer(
+            identity,
+            session_id=session_id,
+            sdp=sdp,
+            dtls_fingerprint=dtls_fingerprint,
+        )
+        verified = verify_onboarding_offer(document)
+        return {
+            "document": document,
+            "session_id": verified.session_id,
+            "expires_at": verified.expires_at,
+        }
+
+    def verify_webrtc_onboarding_offer(self, document: str) -> dict[str, Any]:
+        offer = verify_onboarding_offer(document)
+        return {
+            "document": offer.serialized,
+            "session_id": offer.session_id,
+            "sdp": offer.sdp,
+            "dtls_fingerprint": offer.dtls_fingerprint,
+            "expires_at": offer.expires_at,
+            "signer_destination": offer.signer_destination,
+        }
+
+    def webrtc_onboarding_answer(
+        self, offer_document: str, sdp: str, dtls_fingerprint: str
+    ) -> dict[str, Any]:
+        offer = verify_onboarding_offer(offer_document)
+        document = create_onboarding_answer(
+            self._call_identity(), offer, sdp=sdp, dtls_fingerprint=dtls_fingerprint
+        )
+        answer = verify_onboarding_answer(document, offer)
+        return {
+            "document": document,
+            "session_id": answer.session_id,
+            "signer_destination": answer.signer_destination,
+            "expires_at": answer.expires_at,
+        }
+
+    def verify_webrtc_onboarding_answer(
+        self, offer_document: str, answer_document: str
+    ) -> dict[str, Any]:
+        offer = verify_onboarding_offer(offer_document)
+        answer = verify_onboarding_answer(answer_document, offer)
+        return {
+            "document": answer.serialized,
+            "session_id": answer.session_id,
+            "sdp": answer.sdp,
+            "dtls_fingerprint": answer.dtls_fingerprint,
+            "expires_at": answer.expires_at,
+            "signer_destination": answer.signer_destination,
+        }
+
 
     def webrtc_attach(self) -> dict[str, Any]:
         if self.network is None:
@@ -3101,6 +3168,34 @@ class MeshChatService(
         if command == "webrtc_detach":
             body = _payload(value, allowed={"bridge_id"}, required={"bridge_id"})
             return self.webrtc_detach(body["bridge_id"])
+        if command == "webrtc_onboarding_offer":
+            body = _payload(
+                value,
+                allowed={"sdp", "dtls_fingerprint"},
+                required={"sdp", "dtls_fingerprint"},
+            )
+            return self.webrtc_onboarding_offer(body["sdp"], body["dtls_fingerprint"])
+        if command == "webrtc_onboarding_answer":
+            body = _payload(
+                value,
+                allowed={"offer_document", "sdp", "dtls_fingerprint"},
+                required={"offer_document", "sdp", "dtls_fingerprint"},
+            )
+            return self.webrtc_onboarding_answer(
+                body["offer_document"], body["sdp"], body["dtls_fingerprint"]
+            )
+        if command == "verify_webrtc_onboarding_offer":
+            body = _payload(value, allowed={"document"}, required={"document"})
+            return self.verify_webrtc_onboarding_offer(body["document"])
+        if command == "verify_webrtc_onboarding_answer":
+            body = _payload(
+                value,
+                allowed={"offer_document", "answer_document"},
+                required={"offer_document", "answer_document"},
+            )
+            return self.verify_webrtc_onboarding_answer(
+                body["offer_document"], body["answer_document"]
+            )
         if command == "set_message_reaction":
             body = _payload(
                 value,

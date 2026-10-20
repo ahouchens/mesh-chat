@@ -422,6 +422,24 @@ An intermediate 0.2.74 build failed five frontend assertions because normal
 invitations carried `i2p_consent: false`; 0.2.75 sends the field only for I2P
 previews.
 
+## C5c WebRTC onboarding dialog, 2026-10-20
+
+**0.2.91 / Android 2091** adds signed WebRTC onboarding offers/answers and a
+**WebRTC** onboarding dialog with QR/copy, create/join, ICE settings, and a
+persistent connected-session banner.
+
+Validation:
+
+- Full service suite: **1040 passed, 46 skipped**.
+- Frontend TypeScript: passed.
+- Frontend tests: **237 passed**.
+- Frontend production build: passed.
+- GitHub Actions run: see release notes.
+- Release: <https://github.com/ahouchens/mesh-chat/releases/tag/v0.2.91>.
+
+Still open: automatic contact/workspace admission over the bridge, physical
+Windows↔Android cellular test with TURN, and relay/consent evidence.
+
 ## C5b renderer DataChannel pump, 2026-10-20
 
 **0.2.90 / Android 2090** adds the renderer pump between the WebRTC

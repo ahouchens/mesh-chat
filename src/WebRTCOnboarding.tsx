@@ -1,0 +1,260 @@
+import { useCallback, useEffect, useRef, useState } from "react";
+import { QRCodeSVG } from "qrcode.react";
+import { Check, Copy, Phone, RefreshCw, X } from "lucide-react";
+
+import { serviceCommand } from "./api";
+import { attachWebRTCBridge, type WebRTCBridge } from "./webrtc-onboarding";
+import { setWebRTCSession } from "./webrtc-session";
+import type { CallIceConfiguration } from "./types";
+
+interface OnboardingOfferResult {
+  document: string;
+  session_id: string;
+  expires_at: number;
+}
+
+interface OnboardingOfferPreview {
+  document: string;
+  session_id: string;
+  sdp: string;
+  dtls_fingerprint: string;
+  expires_at: number;
+  signer_destination: string;
+}
+
+interface OnboardingAnswerResult {
+  document: string;
+  session_id: string;
+  signer_destination: string;
+  expires_at: number;
+}
+
+interface OnboardingAnswerPreview {
+  document: string;
+  session_id: string;
+  sdp: string;
+  dtls_fingerprint: string;
+  expires_at: number;
+  signer_destination: string;
+}
+
+type Phase = "choose" | "creating" | "waiting-answer" | "review" | "waiting-owner" | "connecting" | "connected" | "error";
+
+function fingerprint(sdp: string): string {
+  for (const line of sdp.split(/\r?\n/)) {
+    if (line.startsWith("a=fingerprint:")) return line.slice("a=fingerprint:".length).trim();
+  }
+  throw new Error("The offer has no DTLS fingerprint.");
+}
+
+function errorMessage(reason: unknown): string {
+  return reason instanceof Error ? reason.message : "The WebRTC onboarding step failed.";
+}
+
+async function waitForCandidates(pc: RTCPeerConnection): Promise<void> {
+  if (pc.iceGatheringState === "complete") return;
+  await new Promise<void>((resolve) => {
+    const timeout = window.setTimeout(resolve, 4000);
+    const onChange = () => {
+      if (pc.iceGatheringState === "complete") {
+        window.clearTimeout(timeout);
+        pc.removeEventListener("icegatheringstatechange", onChange);
+        resolve();
+      }
+    };
+    pc.addEventListener("icegatheringstatechange", onChange);
+  });
+}
+
+async function waitForOpen(channel: RTCDataChannel): Promise<void> {
+  if (channel.readyState === "open") return;
+  await new Promise<void>((resolve, reject) => {
+    const timeout = window.setTimeout(() => reject(new Error("The DataChannel did not open.")), 20000);
+    channel.addEventListener("open", () => { window.clearTimeout(timeout); resolve(); }, { once: true });
+    channel.addEventListener("error", () => { window.clearTimeout(timeout); reject(new Error("The DataChannel failed.")); }, { once: true });
+  });
+}
+
+export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected }: { onClose: () => void; onChanged: () => Promise<void>; onConnected?: () => void }) {
+  const [phase, setPhase] = useState<Phase>("choose");
+  const [offerDocument, setOfferDocument] = useState("");
+  const [answerDocument, setAnswerDocument] = useState("");
+  const [offerInput, setOfferInput] = useState("");
+  const [answerInput, setAnswerInput] = useState("");
+  const [offerPreview, setOfferPreview] = useState<OnboardingOfferPreview | null>(null);
+  const [answerPreview, setAnswerPreview] = useState<OnboardingAnswerPreview | null>(null);
+  const [error, setError] = useState("");
+  const [copied, setCopied] = useState("");
+  const pcRef = useRef<RTCPeerConnection | null>(null);
+  const channelRef = useRef<RTCDataChannel | null>(null);
+  const bridgeRef = useRef<WebRTCBridge | null>(null);
+  const handedOffRef = useRef(false);
+
+  const cleanup = useCallback(() => {
+    void bridgeRef.current?.close().catch(() => undefined);
+    bridgeRef.current = null;
+    channelRef.current?.close();
+    channelRef.current = null;
+    pcRef.current?.close();
+    pcRef.current = null;
+  }, []);
+
+  useEffect(() => () => {
+    if (!handedOffRef.current) cleanup();
+  }, [cleanup]);
+
+  const attach = useCallback(async (channel: RTCDataChannel) => {
+    await waitForOpen(channel);
+    const bridge = await attachWebRTCBridge(channel, { onError: (reason) => { setError(errorMessage(reason)); setPhase("error"); } });
+    bridgeRef.current = bridge;
+    const pc = pcRef.current;
+    if (pc) {
+      setWebRTCSession({ bridge, channel, pc });
+      handedOffRef.current = true;
+    }
+    setPhase("connected");
+    onConnected?.();
+    await onChanged();
+  }, [onChanged, onConnected]);
+
+  const copy = useCallback(async (value: string, label: string) => {
+    try {
+      await navigator.clipboard.writeText(value);
+      setCopied(label);
+      window.setTimeout(() => setCopied(""), 1500);
+    } catch {
+      setError("Could not copy. Select the text and copy it manually.");
+    }
+  }, []);
+
+  const createOffer = useCallback(async () => {
+    setError(""); setPhase("creating");
+    try {
+      const ice = await serviceCommand<CallIceConfiguration>("call_ice_servers");
+      const pc = new RTCPeerConnection({ iceServers: ice.iceServers, iceTransportPolicy: ice.iceTransportPolicy });
+      const channel = pc.createDataChannel("mesh-reticulum", { ordered: true });
+      channel.binaryType = "arraybuffer";
+      channel.onopen = () => { void attach(channel); };
+      channel.onclose = () => cleanup();
+      channel.onerror = () => { setError("The DataChannel failed."); setPhase("error"); };
+      pcRef.current = pc;
+      channelRef.current = channel;
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+      await waitForCandidates(pc);
+      const sdp = pc.localDescription?.sdp;
+      if (!sdp) throw new Error("Could not create the WebRTC offer.");
+      const result = await serviceCommand<OnboardingOfferResult>("webrtc_onboarding_offer", {
+        sdp,
+        dtls_fingerprint: fingerprint(sdp),
+      });
+      setOfferDocument(result.document);
+      setPhase("waiting-answer");
+    } catch (reason) {
+      cleanup();
+      setError(errorMessage(reason));
+      setPhase("error");
+    }
+  }, [attach, cleanup]);
+
+  const connectAnswer = useCallback(async () => {
+    setError(""); setPhase("connecting");
+    try {
+      if (!pcRef.current || !offerDocument) throw new Error("Create an offer first.");
+      const preview = await serviceCommand<OnboardingAnswerPreview>("verify_webrtc_onboarding_answer", {
+        offer_document: offerDocument,
+        answer_document: answerInput.trim(),
+      });
+      setAnswerPreview(preview);
+      await pcRef.current.setRemoteDescription({ type: "answer", sdp: preview.sdp });
+      if (channelRef.current?.readyState === "open") await attach(channelRef.current);
+    } catch (reason) {
+      setError(errorMessage(reason));
+      setPhase("error");
+    }
+  }, [answerInput, attach, offerDocument]);
+
+  const reviewOffer = useCallback(async () => {
+    setError(""); setPhase("review");
+    try {
+      const preview = await serviceCommand<OnboardingOfferPreview>("verify_webrtc_onboarding_offer", {
+        document: offerInput.trim(),
+      });
+      setOfferPreview(preview);
+      const ice = await serviceCommand<CallIceConfiguration>("call_ice_servers");
+      const pc = new RTCPeerConnection({ iceServers: ice.iceServers, iceTransportPolicy: ice.iceTransportPolicy });
+      pc.ondatachannel = (event) => {
+        const channel = event.channel;
+        channel.binaryType = "arraybuffer";
+        channelRef.current = channel;
+        channel.onopen = () => { void attach(channel); };
+        channel.onclose = () => cleanup();
+        channel.onerror = () => { setError("The DataChannel failed."); setPhase("error"); };
+      };
+      pcRef.current = pc;
+      await pc.setRemoteDescription({ type: "offer", sdp: preview.sdp });
+      const answer = await pc.createAnswer();
+      await pc.setLocalDescription(answer);
+      await waitForCandidates(pc);
+      const sdp = pc.localDescription?.sdp;
+      if (!sdp) throw new Error("Could not create the WebRTC answer.");
+      const result = await serviceCommand<OnboardingAnswerResult>("webrtc_onboarding_answer", {
+        offer_document: preview.document,
+        sdp,
+        dtls_fingerprint: fingerprint(sdp),
+      });
+      setAnswerDocument(result.document);
+      setAnswerPreview({ ...preview, sdp, dtls_fingerprint: fingerprint(sdp), document: result.document });
+      setPhase("waiting-owner");
+    } catch (reason) {
+      cleanup();
+      setError(errorMessage(reason));
+      setPhase("error");
+    }
+  }, [attach, cleanup, offerInput]);
+
+  const close = () => {
+    if (!handedOffRef.current) cleanup();
+    onClose();
+  };
+
+  return (
+    <div className="dialog-backdrop" role="presentation" onMouseDown={close}>
+      <section className="dialog dialog--wide" role="dialog" aria-modal="true" aria-labelledby="webrtc-onboarding-title" onMouseDown={(event) => event.stopPropagation()}>
+        <div className="dialog__header"><h2 id="webrtc-onboarding-title">Connect with WebRTC</h2><button className="icon-button" onClick={close} aria-label="Close"><X size={20} /></button></div>
+        <div className="stack">
+          <p className="muted">WebRTC carries Reticulum packets over a direct or relayed DataChannel. The other person must review the signed offer and return a signed answer. This is experimental and does not approve a contact by itself.</p>
+          {phase === "choose" && <div className="dialog-actions"><button className="button button--primary" onClick={() => void createOffer()}><Phone size={17} /> Create WebRTC invitation</button><button className="button button--secondary" onClick={() => { setPhase("review"); setOfferInput(""); }}>Join with WebRTC</button></div>}
+          {phase === "creating" && <p className="direct-host-status" role="status"><RefreshCw size={17} /> Preparing the signed WebRTC offer…</p>}
+          {phase === "waiting-answer" && <>
+            <h3>Send this offer to the other person</h3>
+            <div className="webrtc-qr"><QRCodeSVG value={offerDocument} size={190} level="L" /></div>
+            <textarea className="webrtc-document" readOnly value={offerDocument} rows={5} aria-label="Signed WebRTC offer" />
+            <div className="dialog-actions"><button className="button button--secondary" onClick={() => void copy(offerDocument, "offer")}>{copied === "offer" ? <Check size={17} /> : <Copy size={17} />} {copied === "offer" ? "Copied" : "Copy offer"}</button></div>
+            <label className="field"><span>Paste their signed answer</span><textarea className="webrtc-document" value={answerInput} onChange={(event) => setAnswerInput(event.target.value)} rows={5} spellCheck={false} /></label>
+            <div className="dialog-actions"><button className="button button--primary" disabled={!answerInput.trim()} onClick={() => void connectAnswer()}>Connect</button></div>
+          </>}
+          {phase === "review" && <>
+            <label className="field"><span>Paste the signed WebRTC offer</span><textarea className="webrtc-document" value={offerInput} onChange={(event) => setOfferInput(event.target.value)} rows={5} spellCheck={false} placeholder="MESH-WEBRTC-OFFER..." /></label>
+            <div className="dialog-actions"><button className="button button--secondary" onClick={() => setPhase("choose")}>Back</button><button className="button button--primary" disabled={!offerInput.trim()} onClick={() => void reviewOffer()}>Review and create answer</button></div>
+          </>}
+          {phase === "waiting-owner" && <>
+            <h3>Send this answer back to the offerer</h3>
+            <div className="webrtc-qr"><QRCodeSVG value={answerDocument} size={190} level="L" /></div>
+            <textarea className="webrtc-document" readOnly value={answerDocument} rows={5} aria-label="Signed WebRTC answer" />
+            <div className="dialog-actions"><button className="button button--secondary" onClick={() => void copy(answerDocument, "answer")}>{copied === "answer" ? <Check size={17} /> : <Copy size={17} />} {copied === "answer" ? "Copied" : "Copy answer"}</button></div>
+            <p className="muted">Keep this open while the offerer pastes the answer. The DataChannel opens after both sides apply it.</p>
+          </>}
+          {phase === "connecting" && <p className="direct-host-status" role="status"><RefreshCw size={17} /> Applying the signed answer and opening the DataChannel…</p>}
+          {phase === "connected" && <>
+            <p className="direct-host-status" role="status"><Check size={17} /> WebRTC path connected</p>
+            <p className="muted">Reticulum packets are now using this DataChannel. Continue with the normal invitation or workspace join; approval is still required.</p>
+            <div className="dialog-actions"><button className="button button--primary" onClick={close}>Close and continue</button></div>
+          </>}
+          {(offerPreview || answerPreview) && phase !== "choose" && <p className="muted">Offers are signed and expire automatically. Destination: <code>{(answerPreview?.signer_destination ?? offerPreview?.signer_destination ?? "").slice(0, 12)}</code>…</p>}
+          {phase === "error" && <><p className="form-error" role="alert">{error}</p><div className="dialog-actions"><button className="button button--secondary" onClick={() => setPhase("choose")}>Back</button><button className="button button--primary" onClick={close}>Close</button></div></>}
+        </div>
+      </section>
+    </div>
+  );
+}

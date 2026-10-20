@@ -1,8 +1,9 @@
 # C5 DataChannel onboarding bridge specification
 
-Status: C5a and C5b implemented (Python interface + service packet IPC, renderer
-DataChannel pump). C5c–C5e (signed QR/copy offer/answer, admission, physical
-test) remain open. The 0.2.88 prototype is not a shipping onboarding path.
+Status: C5a–C5c implemented (Python interface + service packet IPC, renderer
+DataChannel pump, signed QR/copy offer/answer and onboarding dialog). C5d–C5e
+(admission automation and physical test) remain open. The 0.2.88 prototype is
+not a shipping onboarding path.
 
 ## 1. Goal
 
@@ -208,6 +209,15 @@ Implemented in 0.2.90:
 - Loopback test harness.
 
 ### C5c — Signed offer/answer QR/copy
+
+Implemented in 0.2.91:
+
+- signed `webrtc_onboarding_offer` / `webrtc_onboarding_answer` documents;
+- identity binding, session binding, offer digest, expiry, and SDP validation;
+- service create/verify commands;
+- a **WebRTC** sidebar dialog with Create/Join, QR, copy, paste, Direct/Relayed
+  ICE settings, and a persistent connected-session banner;
+- the bridge survives closing the dialog; Disconnect closes it explicitly.
 
 - `webrtc_onboarding_offer` / `webrtc_onboarding_answer` documents.
 - QR and copy/paste UI; expiry/replay checks.
