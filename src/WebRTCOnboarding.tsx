@@ -103,19 +103,49 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected }: { on
     if (!handedOffRef.current) cleanup();
   }, [cleanup]);
 
+  useEffect(() => {
+    if (phase !== "connecting") return;
+    const timer = window.setTimeout(() => {
+      setError("The WebRTC path did not open. On Wi-Fi, check that the access point allows client-to-client traffic and that Windows Firewall permits Mesh Chat on private networks. If the network isolates clients, configure TURN.");
+      setPhase("error");
+      cleanup();
+    }, 20000);
+    return () => window.clearTimeout(timer);
+  }, [cleanup, phase]);
+
   const attach = useCallback(async (channel: RTCDataChannel) => {
-    await waitForOpen(channel);
-    const bridge = await attachWebRTCBridge(channel, { onError: (reason) => { setError(errorMessage(reason)); setPhase("error"); } });
-    bridgeRef.current = bridge;
-    const pc = pcRef.current;
-    if (pc) {
-      setWebRTCSession({ bridge, channel, pc });
-      handedOffRef.current = true;
+    try {
+      await waitForOpen(channel);
+      const bridge = await attachWebRTCBridge(channel, { onError: (reason) => { setError(errorMessage(reason)); setPhase("error"); } });
+      bridgeRef.current = bridge;
+      const pc = pcRef.current;
+      if (pc) {
+        setWebRTCSession({ bridge, channel, pc });
+        handedOffRef.current = true;
+      }
+      setPhase("connected");
+      onConnected?.();
+      await onChanged();
+    } catch (reason) {
+      setError(errorMessage(reason));
+      setPhase("error");
+      cleanup();
     }
-    setPhase("connected");
-    onConnected?.();
-    await onChanged();
-  }, [onChanged, onConnected]);
+  }, [cleanup, onChanged, onConnected]);
+
+  const watchPeer = useCallback((pc: RTCPeerConnection) => {
+    const failed = () => {
+      setError("The WebRTC network path failed. On Wi-Fi, check client isolation and Windows Firewall. If the access point isolates clients, configure TURN.");
+      setPhase("error");
+      cleanup();
+    };
+    pc.onconnectionstatechange = () => {
+      if (pc.connectionState === "failed") failed();
+    };
+    pc.oniceconnectionstatechange = () => {
+      if (pc.iceConnectionState === "failed") failed();
+    };
+  }, [cleanup]);
 
   const copy = useCallback(async (value: string, label: string) => {
     try {
@@ -139,6 +169,7 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected }: { on
       channel.onerror = () => { setError("The DataChannel failed."); setPhase("error"); };
       pcRef.current = pc;
       channelRef.current = channel;
+      watchPeer(pc);
       const offer = await pc.createOffer();
       await pc.setLocalDescription(offer);
       await waitForCandidates(pc);
@@ -155,7 +186,7 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected }: { on
       setError(errorMessage(reason));
       setPhase("error");
     }
-  }, [attach, cleanup]);
+  }, [attach, cleanup, watchPeer]);
 
   const connectAnswer = useCallback(async () => {
     setError(""); setPhase("connecting");
@@ -192,6 +223,7 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected }: { on
         channel.onerror = () => { setError("The DataChannel failed."); setPhase("error"); };
       };
       pcRef.current = pc;
+      watchPeer(pc);
       await pc.setRemoteDescription({ type: "offer", sdp: preview.sdp });
       const answer = await pc.createAnswer();
       await pc.setLocalDescription(answer);
@@ -211,7 +243,7 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected }: { on
       setError(errorMessage(reason));
       setPhase("error");
     }
-  }, [attach, cleanup, offerInput]);
+  }, [attach, cleanup, offerInput, watchPeer]);
 
   const close = () => {
     if (!handedOffRef.current) cleanup();
@@ -245,7 +277,7 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected }: { on
             <div className="dialog-actions"><button className="button button--secondary" onClick={() => void copy(answerDocument, "answer")}>{copied === "answer" ? <Check size={17} /> : <Copy size={17} />} {copied === "answer" ? "Copied" : "Copy answer"}</button></div>
             <p className="muted">Keep this open while the offerer pastes the answer. The DataChannel opens after both sides apply it.</p>
           </>}
-          {phase === "connecting" && <p className="direct-host-status" role="status"><RefreshCw size={17} /> Applying the signed answer and opening the DataChannel…</p>}
+          {phase === "connecting" && <><p className="direct-host-status" role="status"><RefreshCw size={17} /> Applying the signed answer and opening the DataChannel…</p><p className="muted">If this takes more than 20 seconds, Mesh Chat will stop and report the likely network cause.</p><div className="dialog-actions"><button className="button button--secondary" onClick={close}>Cancel</button></div></>}
           {phase === "connected" && <>
             <p className="direct-host-status" role="status"><Check size={17} /> WebRTC path connected</p>
             <p className="muted">Reticulum packets are now using this DataChannel. Continue with the normal invitation or workspace join; approval is still required.</p>

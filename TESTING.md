@@ -422,6 +422,23 @@ An intermediate 0.2.74 build failed five frontend assertions because normal
 invitations carried `i2p_consent: false`; 0.2.75 sends the field only for I2P
 previews.
 
+## WebRTC connection timeout, 2026-10-20
+
+**0.2.94 / Android 2094** fixes the indefinite **Applying the signed answer
+and opening the DataChannel…** state.
+
+- a 20-second timeout now fails with an actionable Wi-Fi/firewall/TURN message;
+- ICE/peer connection failure transitions to the error state;
+- a Cancel action is available while connecting;
+- attach errors are surfaced instead of leaving the dialog stuck.
+
+The likely physical causes on Windows↔Android Wi-Fi are access-point client
+isolation, Windows Firewall blocking UDP, or mDNS-only host candidates. TURN is
+the reliable workaround when client isolation is enabled.
+
+Validation: frontend TypeScript, **237 frontend tests**, and production build
+passed. Release: <https://github.com/ahouchens/mesh-chat/releases/tag/v0.2.94>.
+
 ## C5d WebRTC invitation admission, 2026-10-20
 
 **0.2.93 / Android 2093** adds **WebRTC bridge — connected** to the personal
