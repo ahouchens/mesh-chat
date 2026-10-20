@@ -938,6 +938,8 @@ export interface CallMedia extends CallSummary {
   local_sdp: string | null;
   remote_sdp: string | null;
   candidates: string[];
+  restart_offer: string | null;
+  restart_answer: string | null;
 }
 
 export interface CallSettings {

@@ -857,12 +857,12 @@ Exit criteria:
 Implemented candidate: user-supplied STUN/TURN settings, encrypted-at-rest TURN
 credentials, relay-only mode, a `call_ice_servers` handoff to the active call,
 a Direct/Relayed path badge derived from selected ICE candidates, a 45-second
-ring timeout, and explicit **Try again** recovery. Settings validation and
+ring timeout, explicit **Try again** recovery, and signed ICE-restart
+renegotiation with generation/replay checks. Settings validation and
 credential scoping are covered by tests.
 
 Still open:
 
-- reconnect and ICE restart;
 - TURN quotas and abuse controls;
 - codec/device matrix;
 - malformed SDP/fuzz tests;

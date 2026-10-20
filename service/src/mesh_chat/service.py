@@ -195,6 +195,8 @@ class MeshChatService(
         "add_call_candidate",
         "end_call",
         "call_media",
+        "restart_call",
+        "answer_call_restart",
         "call_settings",
         "update_call_settings",
         "call_ice_servers",
@@ -1592,6 +1594,24 @@ class MeshChatService(
         self._changed()
         return result
 
+    def restart_call(
+        self, call_id: str, sdp: str, dtls_fingerprint: str
+    ) -> dict[str, Any]:
+        result = self.calls.restart(
+            self._call_identity(), call_id, sdp=sdp, dtls_fingerprint=dtls_fingerprint
+        )
+        self._changed()
+        return result
+
+    def answer_call_restart(
+        self, call_id: str, sdp: str, dtls_fingerprint: str
+    ) -> dict[str, Any]:
+        result = self.calls.answer_restart(
+            self._call_identity(), call_id, sdp=sdp, dtls_fingerprint=dtls_fingerprint
+        )
+        self._changed()
+        return result
+
     def call_media(self, call_id: str) -> dict[str, Any]:
         record = self.calls._require_call(call_id)
         result = self.calls.public(record)
@@ -1599,6 +1619,8 @@ class MeshChatService(
             local_sdp=record.get("local_sdp"),
             remote_sdp=record.get("remote_sdp"),
             candidates=list(record.get("candidates", [])),
+            restart_offer=record.get("restart_offer"),
+            restart_answer=record.get("restart_answer"),
         )
         return result
 
@@ -2977,6 +2999,22 @@ class MeshChatService(
         if command == "call_media":
             body = _payload(value, allowed={"call_id"}, required={"call_id"})
             return self.call_media(body["call_id"])
+        if command == "restart_call":
+            body = _payload(
+                value,
+                allowed={"call_id", "sdp", "dtls_fingerprint"},
+                required={"call_id", "sdp", "dtls_fingerprint"},
+            )
+            return self.restart_call(body["call_id"], body["sdp"], body["dtls_fingerprint"])
+        if command == "answer_call_restart":
+            body = _payload(
+                value,
+                allowed={"call_id", "sdp", "dtls_fingerprint"},
+                required={"call_id", "sdp", "dtls_fingerprint"},
+            )
+            return self.answer_call_restart(
+                body["call_id"], body["sdp"], body["dtls_fingerprint"]
+            )
         if command == "call_settings":
             _payload(value, allowed=set())
             return self.call_settings()

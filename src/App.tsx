@@ -862,9 +862,15 @@ function CallDialog({
   const localVideoRef = useRef<HTMLVideoElement | null>(null);
   const remoteVideoRef = useRef<HTMLVideoElement | null>(null);
   const callIdRef = useRef<string | undefined>(initialCall?.id);
+  const roleRef = useRef<"caller" | "callee" | undefined>(initialCall?.role);
   const remoteSetRef = useRef(false);
   const pollRef = useRef<number | null>(null);
   const pollBusyRef = useRef(false);
+  const restartInFlightRef = useRef(false);
+  const restartAnswerInFlightRef = useRef(false);
+  const lastRestartOfferRef = useRef("");
+  const lastRestartAnswerRef = useRef("");
+  const restartRef = useRef<() => void>(() => undefined);
 
   const cleanup = useCallback(() => {
     if (pollRef.current !== null) {
@@ -925,7 +931,12 @@ function CallDialog({
     pc.onconnectionstatechange = () => {
       if (pc.connectionState === "connected") {
         setPhase("in_call");
+        setError("");
         void inspectPath(pc);
+      }
+      if (pc.connectionState === "disconnected") {
+        setPhase("connecting");
+        window.setTimeout(() => restartRef.current(), 1500);
       }
       if (pc.connectionState === "failed") {
         setError("The media path could not be established.");
@@ -945,6 +956,61 @@ function CallDialog({
         const latest = await serviceCommand<CallMedia>("call_media", { call_id: callId });
         setMedia(latest);
         setCall((current) => current ? { ...current, ...latest } : current);
+        if (
+          latest.restart_answer &&
+          lastRestartAnswerRef.current !== latest.restart_answer &&
+          pcRef.current?.signalingState === "have-local-offer"
+        ) {
+          await pcRef.current.setRemoteDescription({ type: "answer", sdp: latest.restart_answer });
+          lastRestartAnswerRef.current = latest.restart_answer;
+          remoteSetRef.current = true;
+          setPhase("connecting");
+          void inspectPath(pcRef.current);
+        }
+        if (
+          latest.restart_offer &&
+          roleRef.current === "callee" &&
+          lastRestartOfferRef.current !== latest.restart_offer &&
+          !restartAnswerInFlightRef.current
+        ) {
+          restartAnswerInFlightRef.current = true;
+          try {
+            const pc = pcRef.current;
+            if (pc) {
+              await pc.setRemoteDescription({ type: "offer", sdp: latest.restart_offer });
+              const answer = await pc.createAnswer();
+              await pc.setLocalDescription(answer);
+              if (pc.iceGatheringState !== "complete") {
+                await new Promise<void>((resolve) => {
+                  const timeout = window.setTimeout(resolve, 3000);
+                  const onChange = () => {
+                    if (pc.iceGatheringState === "complete") {
+                      window.clearTimeout(timeout);
+                      pc.removeEventListener("icegatheringstatechange", onChange);
+                      resolve();
+                    }
+                  };
+                  pc.addEventListener("icegatheringstatechange", onChange);
+                });
+              }
+              const sdp = pc.localDescription?.sdp;
+              if (sdp) {
+                await serviceCommand("answer_call_restart", {
+                  call_id: callId,
+                  sdp,
+                  dtls_fingerprint: callFingerprint(sdp),
+                });
+                lastRestartOfferRef.current = latest.restart_offer;
+                setPhase("connecting");
+              }
+            }
+          } catch (reason) {
+            setError(errorMessage(reason));
+            setPhase("error");
+          } finally {
+            restartAnswerInFlightRef.current = false;
+          }
+        }
         if (latest.remote_sdp && !remoteSetRef.current && pcRef.current?.signalingState === "have-local-offer") {
           await pcRef.current.setRemoteDescription({ type: "answer", sdp: latest.remote_sdp });
           remoteSetRef.current = true;
@@ -961,7 +1027,7 @@ function CallDialog({
         pollBusyRef.current = false;
       }
     }, 1000);
-  }, []);
+  }, [inspectPath]);
 
   const prepareMedia = useCallback(async (media: "audio" | "video") => {
     if (!navigator.mediaDevices?.getUserMedia) {
@@ -994,6 +1060,34 @@ function CallDialog({
     });
   }, []);
 
+  const attemptRestart = useCallback(async () => {
+    const callId = callIdRef.current;
+    const pc = pcRef.current;
+    if (!callId || !pc || restartInFlightRef.current) return;
+    if (roleRef.current !== "caller" || pc.connectionState === "closed") return;
+    restartInFlightRef.current = true;
+    try {
+      setPhase("connecting");
+      const offer = await pc.createOffer({ iceRestart: true });
+      await pc.setLocalDescription(offer);
+      await waitForCandidates(pc);
+      const sdp = pc.localDescription?.sdp;
+      if (!sdp) throw new Error("The reconnecting call offer could not be created.");
+      await serviceCommand("restart_call", {
+        call_id: callId,
+        sdp,
+        dtls_fingerprint: callFingerprint(sdp),
+      });
+      setPhase("connecting");
+    } catch (reason) {
+      setError(errorMessage(reason));
+      setPhase("error");
+    } finally {
+      restartInFlightRef.current = false;
+    }
+  }, [waitForCandidates]);
+  restartRef.current = () => { void attemptRestart(); };
+
   const startCall = useCallback(async (media: "audio" | "video") => {
     setError("");
     setPhase("preparing");
@@ -1016,6 +1110,7 @@ function CallDialog({
         dtls_fingerprint: callFingerprint(sdp),
       });
       callIdRef.current = result.id;
+      roleRef.current = result.role;
       setCall(result);
       setVideoEnabled(media === "video");
       setPhase("calling");
@@ -1053,6 +1148,7 @@ function CallDialog({
         dtls_fingerprint: callFingerprint(sdp),
       });
       setCall(result);
+      roleRef.current = result.role;
       setMedia(details);
       setVideoEnabled(call.media === "video");
       setPhase("connecting");

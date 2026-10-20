@@ -9,11 +9,13 @@ from mesh_chat.webrtc_signaling import (
     create_call_candidate,
     create_call_hangup,
     create_call_invite,
+    create_call_renegotiate,
     next_call_state,
     verify_call_answer,
     verify_call_candidate,
     verify_call_hangup,
     verify_call_invite,
+    verify_call_renegotiate,
 )
 
 NOW = 1_800_000_000
@@ -210,3 +212,30 @@ def test_call_state_machine() -> None:
         next_call_state("ended", "accept")
     with pytest.raises(ValidationError):
         next_call_state("unknown", "dial")
+
+
+def test_renegotiate_binds_call_role_and_generation() -> None:
+    caller = RNS.Identity()
+    raw = create_call_renegotiate(
+        caller,
+        call_id=CALL_ID,
+        role="offer",
+        generation=2,
+        sdp=SDP,
+        dtls_fingerprint=FINGERPRINT,
+        now=NOW,
+    )
+
+    verified = verify_call_renegotiate(
+        raw,
+        call_id=CALL_ID,
+        expected_signer_destination=_destination(caller),
+        now=NOW,
+    )
+    assert verified.role == "offer"
+    assert verified.generation == 2
+    assert verified.dtls_fingerprint == FINGERPRINT
+
+    with pytest.raises(IdentityMismatch):
+        verify_call_renegotiate(raw, call_id="other_0123456789abcdef", now=NOW)
+

@@ -19,6 +19,7 @@ CALL_ID = re.compile(r"^[A-Za-z0-9_-]{16,64}$")
 FINGERPRINT = re.compile(r"^sha-256 (?:[0-9A-F]{2}:){31}[0-9A-F]{2}$")
 MEDIA = {"audio", "video"}
 ROLES = {"caller", "callee"}
+RENEGOTIATE_ROLES = {"offer", "answer"}
 HANGUP_REASONS = {"completed", "declined", "busy", "failed", "cancelled"}
 
 CALL_STATES = {
@@ -75,6 +76,19 @@ class VerifiedCallCandidate:
 class VerifiedCallHangup:
     call_id: str
     reason: str
+    created_at: int
+    expires_at: int
+    signer_destination: str
+    serialized: str
+
+
+@dataclass(frozen=True, slots=True)
+class VerifiedCallRenegotiate:
+    call_id: str
+    role: str
+    generation: int
+    sdp: str
+    dtls_fingerprint: str
     created_at: int
     expires_at: int
     signer_destination: str
@@ -350,6 +364,90 @@ def verify_call_hangup(
     )
 
 
+def create_call_renegotiate(
+    identity: RNS.Identity,
+    *,
+    call_id: str,
+    role: str,
+    generation: int,
+    sdp: str,
+    dtls_fingerprint: str,
+    expires_at: int | None = None,
+    now: int | None = None,
+) -> str:
+    created = _now(now)
+    expiry = _expiry(expires_at, created)
+    _call_id(call_id)
+    if role not in RENEGOTIATE_ROLES:
+        raise ValidationError("Call renegotiation role is invalid")
+    if isinstance(generation, bool) or not isinstance(generation, int) or not 1 <= generation <= 10000:
+        raise ValidationError("Call renegotiation generation is invalid")
+    sdp = _sdp(sdp)
+    fingerprint = _fingerprint(dtls_fingerprint)
+    if sdp.lower().find(fingerprint.lower()) < 0:
+        raise ValidationError("Call SDP does not contain the DTLS fingerprint")
+    unsigned = {
+        "v": CALL_VERSION,
+        "type": "call_renegotiate",
+        "call_id": call_id,
+        "role": role,
+        "generation": generation,
+        "sdp": sdp,
+        "dtls_fingerprint": fingerprint,
+        "created_at": created,
+        "expires_at": expiry,
+        "signer_destination": _destination_for(identity),
+        "signer_public_key": _b64encode(identity.get_public_key()),
+    }
+    return _sign(identity, unsigned)
+
+
+def verify_call_renegotiate(
+    raw: str,
+    *,
+    call_id: str,
+    expected_signer_destination: str | None = None,
+    now: int | None = None,
+) -> VerifiedCallRenegotiate:
+    value = _document(raw, "call_renegotiate")
+    _call_id(call_id)
+    if value["call_id"] != call_id:
+        raise IdentityMismatch("Call renegotiation is for a different call")
+    role = value["role"]
+    if role not in RENEGOTIATE_ROLES:
+        raise ValidationError("Call renegotiation role is invalid")
+    generation = value["generation"]
+    if (
+        isinstance(generation, bool)
+        or not isinstance(generation, int)
+        or not 1 <= generation <= 10000
+    ):
+        raise ValidationError("Call renegotiation generation is invalid")
+    sdp = _sdp(value["sdp"])
+    fingerprint = _fingerprint(value["dtls_fingerprint"])
+    if sdp.lower().find(fingerprint.lower()) < 0:
+        raise ValidationError("Call SDP does not contain the DTLS fingerprint")
+    _expiry_value(value, now)
+    public_key = _verify_signature(value, raw)
+    signer = _destination_for_public_key(public_key)
+    expected = value["signer_destination"]
+    if not isinstance(expected, str) or signer != expected.lower():
+        raise IdentityMismatch("Call renegotiation signer destination is invalid")
+    if expected_signer_destination is not None and signer != expected_signer_destination.lower():
+        raise IdentityMismatch("Call renegotiation signer is not the expected participant")
+    return VerifiedCallRenegotiate(
+        call_id=call_id,
+        role=role,
+        generation=generation,
+        sdp=sdp,
+        dtls_fingerprint=fingerprint,
+        created_at=value["created_at"],
+        expires_at=value["expires_at"],
+        signer_destination=signer,
+        serialized=raw,
+    )
+
+
 def next_call_state(state: str, event: str) -> str:
     """Return the next call state or raise for an invalid transition."""
     if state not in CALL_STATES:
@@ -421,6 +519,11 @@ def _keys(kind: str) -> set[str]:
     if kind == "call_hangup":
         return {"v", "type", "call_id", "reason", "created_at", "expires_at",
                 "signer_destination", "signer_public_key", "signature"}
+    if kind == "call_renegotiate":
+        return {
+            "v", "type", "call_id", "role", "generation", "sdp", "dtls_fingerprint",
+            "created_at", "expires_at", "signer_destination", "signer_public_key", "signature",
+        }
     raise ValidationError("Call document type is invalid")
 
 

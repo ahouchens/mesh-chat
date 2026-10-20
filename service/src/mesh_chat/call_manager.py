@@ -13,11 +13,13 @@ from .webrtc_signaling import (
     create_call_candidate,
     create_call_hangup,
     create_call_invite,
+    create_call_renegotiate,
     next_call_state,
     verify_call_answer,
     verify_call_candidate,
     verify_call_hangup,
     verify_call_invite,
+    verify_call_renegotiate,
 )
 
 ACTIVE_STATES = {"dialing", "ringing", "connecting", "in_call"}
@@ -79,6 +81,9 @@ class CallManager:
             "local_sdp": sdp,
             "remote_sdp": None,
             "candidates": [],
+            "generation": 1,
+            "restart_offer": None,
+            "restart_answer": None,
             "created_at": self.now(),
             "updated_at": self.now(),
             "expires_at": int(self.now()) + 600,
@@ -119,6 +124,9 @@ class CallManager:
                 "local_sdp": None,
                 "remote_sdp": invite.sdp,
                 "candidates": [],
+                "generation": 1,
+                "restart_offer": None,
+                "restart_answer": None,
                 "created_at": self.now(),
                 "updated_at": self.now(),
                 "expires_at": invite.expires_at,
@@ -163,6 +171,37 @@ class CallManager:
             if len(record["candidates"]) >= MAX_CANDIDATES:
                 record["candidates"] = record["candidates"][-MAX_CANDIDATES + 1 :]
             record["candidates"].append(candidate.candidate)
+            record["updated_at"] = self.now()
+            self.store.put("call", call_id, record)
+            return self.public(record)
+
+        if kind == "call_renegotiate":
+            call_id = _document_call_id(document)
+            record = self._require_call(call_id)
+            if record["contact_id"] != contact["id"]:
+                raise IdentityMismatch("Call renegotiation is for a different contact")
+            update = verify_call_renegotiate(
+                document,
+                call_id=call_id,
+                expected_signer_destination=record["peer_destination"],
+                now=int(self.now()),
+            )
+            if update.role == "offer":
+                if record["role"] != "callee":
+                    raise IdentityMismatch("Only the callee receives a renegotiation offer")
+                if update.generation <= int(record.get("generation", 1)):
+                    raise IdentityMismatch("Call renegotiation offer is stale")
+                record["restart_offer"] = document
+                record["remote_sdp"] = update.sdp
+            else:
+                if record["role"] != "caller":
+                    raise IdentityMismatch("Only the caller receives a renegotiation answer")
+                if update.generation != int(record.get("generation", 1)):
+                    raise IdentityMismatch("Call renegotiation answer is stale")
+                record["restart_answer"] = document
+                record["remote_sdp"] = update.sdp
+            record["generation"] = update.generation
+            record["state"] = "connecting"
             record["updated_at"] = self.now()
             self.store.put("call", call_id, record)
             return self.public(record)
@@ -224,8 +263,78 @@ class CallManager:
         self.send_document(record["contact_id"], answer)
         return self.public(record)
 
-    def add_candidate(
+    def restart(
         self,
+        identity: RNS.Identity,
+        call_id: str,
+        *,
+        sdp: str,
+        dtls_fingerprint: str,
+    ) -> dict[str, Any]:
+        record = self._require_call(call_id)
+        if record["role"] != "caller" or record["state"] not in {"connecting", "in_call"}:
+            raise ValidationError("This call cannot start an ICE restart")
+        generation = int(record.get("generation", 1)) + 1
+        document = create_call_renegotiate(
+            identity,
+            call_id=call_id,
+            role="offer",
+            generation=generation,
+            sdp=sdp,
+            dtls_fingerprint=dtls_fingerprint,
+            now=int(self.now()),
+        )
+        record.update(
+            generation=generation,
+            local_sdp=sdp,
+            restart_offer=None,
+            restart_answer=None,
+            state="connecting",
+            updated_at=self.now(),
+        )
+        self.store.put("call", call_id, record)
+        self.send_document(record["contact_id"], document)
+        return self.public(record)
+
+    def answer_restart(
+        self,
+        identity: RNS.Identity,
+        call_id: str,
+        *,
+        sdp: str,
+        dtls_fingerprint: str,
+    ) -> dict[str, Any]:
+        record = self._require_call(call_id)
+        if record["role"] != "callee" or not record.get("restart_offer"):
+            raise ValidationError("This call has no pending ICE restart")
+        offer = verify_call_renegotiate(
+            record["restart_offer"],
+            call_id=call_id,
+            expected_signer_destination=record["peer_destination"],
+            now=int(self.now()),
+        )
+        document = create_call_renegotiate(
+            identity,
+            call_id=call_id,
+            role="answer",
+            generation=offer.generation,
+            sdp=sdp,
+            dtls_fingerprint=dtls_fingerprint,
+            now=int(self.now()),
+        )
+        record.update(
+            generation=offer.generation,
+            local_sdp=sdp,
+            remote_sdp=offer.sdp,
+            restart_offer=None,
+            state="connecting",
+            updated_at=self.now(),
+        )
+        self.store.put("call", call_id, record)
+        self.send_document(record["contact_id"], document)
+        return self.public(record)
+
+    def add_candidate(        self,
         identity: RNS.Identity,
         call_id: str,
         candidate: str,
@@ -316,7 +425,9 @@ def _document_type(document: str) -> str:
     except Exception as exc:
         raise ValidationError("Call document is invalid") from exc
     kind = value.get("type") if isinstance(value, dict) else None
-    if kind not in {"call_invite", "call_answer", "call_candidate", "call_hangup"}:
+    if kind not in {
+        "call_invite", "call_answer", "call_candidate", "call_hangup", "call_renegotiate"
+    }:
         raise ValidationError("Call document type is unsupported")
     return kind
 

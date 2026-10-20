@@ -503,6 +503,8 @@ fn allowed_renderer_command(command: &str) -> bool {
             | "add_call_candidate"
             | "end_call"
             | "call_media"
+            | "restart_call"
+            | "answer_call_restart"
             | "call_settings"
             | "update_call_settings"
             | "call_ice_servers"

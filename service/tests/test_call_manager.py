@@ -163,6 +163,41 @@ def test_unapproved_contact_cannot_start() -> None:
         )
 
 
+def test_ice_restart_renegotiates_without_a_new_ring() -> None:
+    caller = RNS.Identity()
+    callee = RNS.Identity()
+    sent: list[tuple[str, str]] = []
+    caller_manager = _manager(sent)
+    callee_contact = _contact(callee)
+    caller_contact = _contact(caller)
+
+    outgoing = caller_manager.start(
+        caller, callee_contact, media="audio", sdp=SDP, dtls_fingerprint=FINGERPRINT
+    )
+    callee_manager = _manager(sent)
+    incoming = callee_manager.receive(callee, caller_contact, sent[0][1])
+    assert incoming is not None
+    callee_manager.answer(callee, incoming["id"], sdp=SDP, dtls_fingerprint=FINGERPRINT)
+    caller_manager.receive(caller, callee_contact, sent[-1][1])
+
+    restarted = caller_manager.restart(
+        caller, outgoing["id"], sdp=SDP, dtls_fingerprint=FINGERPRINT
+    )
+    assert restarted["state"] == "connecting"
+    offer_doc = sent[-1][1]
+    remote = callee_manager.receive(callee, caller_contact, offer_doc)
+    assert remote is not None
+    assert remote["state"] == "connecting"
+
+    callee_manager.answer_restart(
+        callee, incoming["id"], sdp=SDP, dtls_fingerprint=FINGERPRINT
+    )
+    final = caller_manager.receive(caller, callee_contact, sent[-1][1])
+    assert final is not None
+    assert final["state"] == "connecting"
+    assert caller_manager.get(outgoing["id"])["candidate_count"] == 0
+
+
 def test_ringing_call_times_out_and_is_not_active() -> None:
     caller = RNS.Identity()
     callee = RNS.Identity()
