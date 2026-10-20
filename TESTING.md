@@ -370,6 +370,36 @@ The APK reports versionName 0.2.72, versionCode 2072, package
 development certificate
 `d6dbff63834666bace3d75b49234726e97ccce26d2b9e9516309682e0a33143f`.
 
+### Coverage expansion, 0.2.73
+
+The I3 gap analysis added:
+
+- service-level personal I2P creation → preview → accept → settings/config
+  adoption;
+- normal personal invitation regression;
+- workspace I2P creation and preview;
+- workspace foreign-signer and excess-expiry rejection;
+- managed router SAM-timeout, process-exit, and shutdown cleanup;
+- personal invite UI selection, b32 validation, and create payload.
+
+Validation: **74 focused service tests passed**. GitHub Actions
+[run 39344867270](https://github.com/ahouchens/mesh-chat/actions/runs/39344867270)
+passed Verify, Windows packaging, and Android packaging. The APK is 34,065,900
+bytes with SHA-256
+`f7ed71f5172fa00adc378014ac5cbdce91171a4e7994ce66d0ce7703f6061c5e`;
+the NSIS installer is SHA-256
+`cb69f38eb1078790d125394b356f45c169f8efebc0b47d8a233a7b1bf2fdb9b4`
+and the MSI is
+`3eef3a7613ac4bfd794921a3b6241106b90f2a59f1e6f4dc1d730e99f2336aaa`.
+The APK reports versionName 0.2.73, versionCode 2073, package
+`com.meshchat.mobile`, arm64-v8a, target API 36, and the established
+development certificate
+`d6dbff63834666bace3d75b49234726e97ccce26d2b9e9516309682e0a33143f`.
+
+Still missing: a real two-device workspace approval/receipt over I2P, Android
+I2P router support, and a dedicated consent checkbox/service flag. No physical
+installer run is claimed.
+
 ## Direct connectivity increment, 2026-10-16
 
 Native qualification now runs in GitHub Actions. At `cbcf659`,
