@@ -54,12 +54,31 @@ def test_stun_and_turn_are_normalized_and_secretly_scoped() -> None:
     }
 
 
+def test_turn_tcp_443_url_is_supported() -> None:
+    settings = CallSettings.from_dict(
+        {
+            "stun_urls": [],
+            "turn_url": "turn:relay.example.org:443?transport=tcp",
+            "turn_username": "mesh",
+            "turn_credential": "secret",
+        }
+    )
+    assert settings.ice_servers() == [
+        {
+            "urls": ["turn:relay.example.org:443?transport=tcp"],
+            "username": "mesh",
+            "credential": "secret",
+        }
+    ]
+
+
 @pytest.mark.parametrize(
     "value",
     [
         {"stun_urls": ["http://stun.example.org"]},
         {"stun_urls": ["stun:bad host"]},
         {"stun_urls": ["stun:example.org/path"]},
+        {"stun_urls": ["stun:example.org?transport=tcp"]},
         {"stun_urls": ["stun:example.org"] * 9},
         {"turn_url": "turn:example.org", "turn_username": "user"},
         {"turn_url": "turn:example.org", "turn_username": "user", "turn_credential": ""},

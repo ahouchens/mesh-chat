@@ -1,5 +1,10 @@
 # Self-hosted TURN service
 
+> **For a one-command deployment, use [`deploy/relay`](../relay/README.md).**
+> It installs Docker, generates credentials, opens TCP/UDP 443, and supports
+> the `?transport=tcp` URL form. This older directory is the manual coturn
+> reference.
+
 Mesh Chat does not operate a public TURN service. Google offers free **STUN**
 (`stun:stun.l.google.com:19302`), which is the app default, but Google does not
 offer a free public **TURN** relay. This directory provides a coturn deployment

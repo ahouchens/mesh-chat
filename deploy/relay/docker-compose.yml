@@ -1,0 +1,27 @@
+services:
+  coturn:
+    image: coturn/coturn:4.6.3
+    container_name: mesh-chat-relay
+    restart: unless-stopped
+    network_mode: host
+    env_file:
+      - .env
+    command:
+      - --listening-port=3478
+      - --alt-listening-port=${TURN_ALT_PORT:-443}
+      - --fingerprint
+      - --lt-cred-mech
+      - --no-tls
+      - --realm=${REALM:-mesh-chat-relay}
+      - --user=${TURN_USER}:${TURN_PASSWORD}
+      - --external-ip=${EXTERNAL_IP}
+      - --relay-ip=${RELAY_IP}
+      - --min-port=${RELAY_PORT_MIN:-49160}
+      - --max-port=${RELAY_PORT_MAX:-49300}
+      - --no-cli
+      - --no-multicast-peers
+      - --no-loopback-peers
+      - --stale-nonce=600
+      - --total-quota=100
+      - --bps-capacity=0
+      - --log-file=stdout

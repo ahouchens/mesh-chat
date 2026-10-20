@@ -422,6 +422,27 @@ An intermediate 0.2.74 build failed five frontend assertions because normal
 invitations carried `i2p_consent: false`; 0.2.75 sends the field only for I2P
 previews.
 
+## TURN relay deployment kit, 2026-10-20
+
+**0.2.95 / Android 2095** adds a least-friction TURN relay:
+
+- `deploy/relay/install.sh` installs Docker, detects the VPS IPv4 address,
+  generates credentials, opens ports, and starts coturn;
+- TURN is exposed on TCP/UDP 443 as well as 3478, so it works through
+  client-isolated Wi-Fi, CGNAT, and Windows inbound firewall blocks;
+- call settings now accept `turn:host:443?transport=tcp`;
+- `deploy/relay/README.md` documents capacity, privacy, rotation, and cloud
+  security-group ports.
+
+Validation:
+
+- Full service suite: **1042 passed, 46 skipped**.
+- Frontend TypeScript: passed.
+- Frontend tests: **237 passed**.
+- Frontend production build: passed.
+- Installer shell syntax: `bash -n` passed.
+- No VPS was available for a live relay allocation test.
+
 ## WebRTC connection timeout, 2026-10-20
 
 **0.2.94 / Android 2094** fixes the indefinite **Applying the signed answer

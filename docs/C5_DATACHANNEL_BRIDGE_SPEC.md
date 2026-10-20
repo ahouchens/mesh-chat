@@ -140,8 +140,9 @@ The DataChannel is not a replacement for approval. It is only a transport.
   `stun:stun.l.google.com:19302`. The user can replace or clear it.
 - **No free Google TURN exists.** Mesh Chat does not ship a default TURN
   endpoint or shared credentials.
-- Users can configure their own TURN server. `deploy/turn` provides a coturn
-  recipe.
+- Users can configure their own TURN server. `deploy/relay` provides a
+  one-command coturn deployment with TURN over TCP 443, and `deploy/turn` is
+  the manual reference.
 - A public/operator TURN relay sees connection metadata, not decrypted media;
   the UI must disclose that.
 - Cellular/CGNAT connections generally require TURN. STUN-only is not a

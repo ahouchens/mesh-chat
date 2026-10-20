@@ -9,7 +9,7 @@ from .errors import ValidationError
 MAX_SERVERS = 8
 DEFAULT_STUN_URLS = ("stun:stun.l.google.com:19302",)
 URL = re.compile(
-    r"^(stun|stuns|turn|turns):([A-Za-z0-9.-]{1,253})(?::([0-9]{1,5}))?$",
+    r"^(stun|stuns|turn|turns):([A-Za-z0-9.-]{1,253})(?::([0-9]{1,5}))?(?:\?transport=(tcp|udp))?$",
     re.IGNORECASE,
 )
 HOST = re.compile(r"^[A-Za-z0-9.-]{1,253}$")
@@ -109,8 +109,11 @@ def _url(value: Any, schemes: set[str]) -> str:
     parsed = URL.fullmatch(value)
     if parsed is None:
         raise ValidationError("Call server URL is invalid")
-    if parsed.group(1).lower() not in schemes:
+    scheme = parsed.group(1).lower()
+    if scheme not in schemes:
         raise ValidationError("Call server URL scheme is invalid")
+    if parsed.group(4) is not None and scheme not in {"turn", "turns"}:
+        raise ValidationError("Only TURN URLs may specify a transport")
     if not HOST.fullmatch(parsed.group(2)):
         raise ValidationError("Call server host is invalid")
     port = parsed.group(3)
