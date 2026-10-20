@@ -422,6 +422,34 @@ An intermediate 0.2.74 build failed five frontend assertions because normal
 invitations carried `i2p_consent: false`; 0.2.75 sends the field only for I2P
 previews.
 
+## WebRTC call rate limits, 2026-10-19
+
+**0.2.86 / Android 2086** adds per-contact outbound call rate limits (three per
+minute, twenty per hour), prunes finished call records after 24 hours, and
+records the TURN quota/abuse boundary in ADR 0022. TURN quotas remain the
+operator's responsibility.
+
+Validation:
+
+- Full service suite: **1034 passed, 46 skipped**.
+- Frontend TypeScript: passed.
+- Frontend tests: **234 passed**.
+- GitHub Actions
+  [run 39381179215](https://github.com/ahouchens/mesh-chat/actions/runs/39381179215)
+  passed Verify, Windows packaging, Android packaging, and Publish.
+- Release: <https://github.com/ahouchens/mesh-chat/releases/tag/v0.2.86>.
+
+Published assets:
+
+| Artifact | Size | SHA-256 |
+|---|---:|---|
+| `Mesh-Chat_0.2.86_x64-setup.exe` | 27,518,689 | `ce91ba3a395462dc09376ad27c04217bb7cd3caa9c4402943653409b4b17092b` |
+| `Mesh-Chat_0.2.86_x64_en-US.msi` | 29,511,680 | `53670146d45c97cf35457bfb5ba485c89a4a38f8a3f0f0731d78a4da17ed5fbd` |
+| `mesh-chat-0.2.86-android-arm64-release.apk` | 34,098,644 | `e00b48540bf1b0327daa9b65bca911cb529cf48b6043c1fc13112be864b850f6` |
+
+Still open: physical multi-device calls, Android foreground/call behavior on a
+device, video quality/thermal validation, and C5.
+
 ## Android foreground call service, 2026-10-19
 
 **0.2.85 / Android 2085** adds a microphone/camera-typed foreground
