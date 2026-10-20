@@ -92,6 +92,14 @@ export function requestMediaPermission(): Promise<{ audio: boolean; camera: bool
   return invoke<{ audio: boolean; camera: boolean }>("request_media_permission");
 }
 
+export function beginCallAudio(): Promise<{ granted: boolean }> {
+  return invoke<{ granted: boolean }>("begin_call_audio");
+}
+
+export function endCallAudio(): Promise<{ active: boolean }> {
+  return invoke<{ active: boolean }>("end_call_audio");
+}
+
 export function openNotificationSettings(): Promise<NotificationCapability> {
   return invoke<NotificationCapability>("open_notification_settings");
 }

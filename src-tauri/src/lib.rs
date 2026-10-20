@@ -1358,6 +1358,38 @@ fn request_media_permission(app: AppHandle) -> PendingResult {
 
 #[cfg(desktop)]
 #[tauri::command]
+fn begin_call_audio() -> serde_json::Value {
+    serde_json::json!({"granted": true})
+}
+
+#[cfg(mobile)]
+#[tauri::command]
+fn begin_call_audio(app: AppHandle) -> PendingResult {
+    mobile_result(
+        app.mesh_runtime()
+            .begin_call_audio()
+            .map_err(|_| "call_audio_unavailable".to_string())?,
+    )
+}
+
+#[cfg(desktop)]
+#[tauri::command]
+fn end_call_audio() -> serde_json::Value {
+    serde_json::json!({"active": false})
+}
+
+#[cfg(mobile)]
+#[tauri::command]
+fn end_call_audio(app: AppHandle) -> PendingResult {
+    mobile_result(
+        app.mesh_runtime()
+            .end_call_audio()
+            .map_err(|_| "call_audio_unavailable".to_string())?,
+    )
+}
+
+#[cfg(desktop)]
+#[tauri::command]
 fn open_notification_settings() -> PendingResult {
     notification_capability()
 }
@@ -1486,6 +1518,8 @@ pub fn run() {
             notification_capability,
             request_notification_permission,
             request_media_permission,
+            begin_call_audio,
+            end_call_audio,
             open_notification_settings
         ])
         .setup(|_app| {

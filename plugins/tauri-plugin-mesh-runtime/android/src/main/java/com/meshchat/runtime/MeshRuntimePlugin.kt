@@ -9,6 +9,9 @@ import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.media.AudioAttributes
+import android.media.AudioFocusRequest
+import android.media.AudioManager
 import android.net.Uri
 import android.net.wifi.WifiManager
 import android.graphics.Color
@@ -121,6 +124,9 @@ class MeshRuntimePlugin(private val activity: Activity) : Plugin(activity) {
         activity.getSharedPreferences("mesh-chat-vault", Context.MODE_PRIVATE)
     }
     private var multicastLock: WifiManager.MulticastLock? = null
+    private var audioFocusRequest: AudioFocusRequest? = null
+    private var legacyAudioFocusListener: AudioManager.OnAudioFocusChangeListener? = null
+    private var previousAudioMode: Int = AudioManager.MODE_NORMAL
     private val pythonExecutor = Executors.newSingleThreadExecutor { runnable ->
         Thread(runnable, "mesh-chat-python").apply { isDaemon = true }
     }
@@ -702,6 +708,63 @@ class MeshRuntimePlugin(private val activity: Activity) : Plugin(activity) {
         val camera = ContextCompat.checkSelfPermission(activity, Manifest.permission.CAMERA) ==
             PackageManager.PERMISSION_GRANTED
         resolve(invoke, successful(JSONObject().put("audio", audio).put("camera", camera)))
+    }
+
+    @Command
+    fun beginCallAudio(invoke: Invoke) {
+        try {
+            val audio = activity.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+            if (audioFocusRequest == null) {
+                previousAudioMode = audio.mode
+                val granted = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    val request = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT)
+                        .setAudioAttributes(
+                            AudioAttributes.Builder()
+                                .setUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION)
+                                .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                                .build(),
+                        )
+                        .setOnAudioFocusChangeListener { }
+                        .build()
+                    audioFocusRequest = request
+                    audio.requestAudioFocus(request) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
+                } else {
+                    @Suppress("DEPRECATION")
+                    val listener = AudioManager.OnAudioFocusChangeListener { }
+                    legacyAudioFocusListener = listener
+                    audio.requestAudioFocus(
+                        listener,
+                        AudioManager.STREAM_VOICE_CALL,
+                        AudioManager.AUDIOFOCUS_GAIN_TRANSIENT,
+                    ) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
+                }
+                audio.mode = AudioManager.MODE_IN_COMMUNICATION
+                resolve(invoke, successful(JSONObject().put("granted", granted)))
+                return
+            }
+            resolve(invoke, successful(JSONObject().put("granted", true)))
+        } catch (error: Throwable) {
+            reject(invoke, "begin_call_audio", error)
+        }
+    }
+
+    @Command
+    fun endCallAudio(invoke: Invoke) {
+        try {
+            val audio = activity.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                audioFocusRequest?.let { audio.abandonAudioFocusRequest(it) }
+            } else {
+                @Suppress("DEPRECATION")
+                audio.abandonAudioFocus(legacyAudioFocusListener)
+            }
+            audioFocusRequest = null
+            legacyAudioFocusListener = null
+            audio.mode = previousAudioMode
+            resolve(invoke, successful(JSONObject().put("active", false)))
+        } catch (error: Throwable) {
+            reject(invoke, "end_call_audio", error)
+        }
     }
 
     @Command

@@ -47,6 +47,7 @@ import {
   X,
 } from "lucide-react";
 import {
+  beginCallAudio,
   initializeService,
   lockService,
   notificationCapability,
@@ -60,6 +61,7 @@ import {
   runtimePlatform,
   setNativeTheme,
   serviceCommand,
+  endCallAudio,
 } from "./api";
 import type { ServiceEvent } from "./api";
 import { contactConnectionLabel, deliveryLabel, workspaceJoinStatus } from "./status";
@@ -884,6 +886,7 @@ function CallDialog({
     if (audioRef.current) audioRef.current.srcObject = null;
     if (localVideoRef.current) localVideoRef.current.srcObject = null;
     if (remoteVideoRef.current) remoteVideoRef.current.srcObject = null;
+    void endCallAudio().catch(() => undefined);
   }, []);
 
   useEffect(() => cleanup, [cleanup]);
@@ -1095,6 +1098,8 @@ function CallDialog({
       const stream = await prepareMedia(media);
       streamRef.current = stream;
       if (localVideoRef.current) localVideoRef.current.srcObject = stream;
+      const focus = await beginCallAudio();
+      if (!focus.granted) throw new Error("Android could not take call-audio focus.");
       const configuration = await serviceCommand<CallIceConfiguration>("call_ice_servers");
       const pc = attachPeer(configuration);
       stream.getTracks().forEach((track) => pc.addTrack(track, stream));
@@ -1133,6 +1138,8 @@ function CallDialog({
       const stream = await prepareMedia(call.media);
       streamRef.current = stream;
       if (localVideoRef.current) localVideoRef.current.srcObject = stream;
+      const focus = await beginCallAudio();
+      if (!focus.granted) throw new Error("Android could not take call-audio focus.");
       const configuration = await serviceCommand<CallIceConfiguration>("call_ice_servers");
       const pc = attachPeer(configuration);
       await pc.setRemoteDescription({ type: "offer", sdp: details.remote_sdp });

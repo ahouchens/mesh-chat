@@ -809,9 +809,10 @@ Exit criteria:
 
 Implemented candidate: the WebView call surface is shared with Windows, the
 Android manifest declares `RECORD_AUDIO`, `MODIFY_AUDIO_SETTINGS`, and `CAMERA`,
-and the runtime plugin requests the microphone/camera aliases before
-`getUserMedia`. Audio focus/foreground service, notification behavior, and a
-physical Android call are still required before this gate closes.
+the runtime plugin requests the microphone/camera aliases before `getUserMedia`,
+and call setup requests Android call-audio focus/`MODE_IN_COMMUNICATION`,
+releasing it on hangup. Foreground service/notification behavior and a physical
+Android call are still required before this gate closes.
 
 Goal: the same call path on Android.
 
