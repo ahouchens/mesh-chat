@@ -422,6 +422,42 @@ An intermediate 0.2.74 build failed five frontend assertions because normal
 invitations carried `i2p_consent: false`; 0.2.75 sends the field only for I2P
 previews.
 
+## C5a Reticulum DataChannel bridge, 2026-10-20
+
+**0.2.89 / Android 2089** adds the C5a Python bridge:
+
+- `WebRTCInterface` with 1064-byte packet bounds and detach-on-close;
+- `webrtc_attach`, `webrtc_packet`, `webrtc_detach` service commands;
+- base64 `webrtc_packet` service events for the renderer;
+- bridge cleanup during service shutdown.
+
+This is not the full C5 onboarding flow. The renderer packet pump, signed
+QR/copy offer/answer UI, admission flow, and physical Windows↔Android test
+remain open.
+
+Validation:
+
+- Full service suite: **1037 passed, 46 skipped**.
+- Frontend TypeScript: passed.
+- Frontend tests: **234 passed**.
+- GitHub Actions
+  [run 39449588664 attempt 2](https://github.com/ahouchens/mesh-chat/actions/runs/39449588664)
+  passed Verify, Windows packaging, Android packaging, and Publish. Attempt 1
+  failed while the runner downloaded a corrupted Android NDK zip; no release
+  was published from it.
+- Release: <https://github.com/ahouchens/mesh-chat/releases/tag/v0.2.89>.
+
+Published assets:
+
+| Artifact | Size | SHA-256 |
+|---|---:|---|
+| `Mesh-Chat_0.2.89_x64-setup.exe` | 27,522,714 | `7268e7e9a3ae00e76b01537da2b78c1b3b9a06df26cde83f575c9ce1f864e45e` |
+| `Mesh-Chat_0.2.89_x64_en-US.msi` | 29,515,776 | `fc829cd725efc911e61bde7ea64a603e77db296c8b627955b1390f16c06ab66e` |
+| `mesh-chat-0.2.89-android-arm64-release.apk` | 34,098,872 | `f610b38bfdf284c1300bda0e71ff2d24fb47c652b0444e171366ba750c8afccf` |
+
+Still open: renderer DataChannel pump, signed offer/answer QR/copy UI,
+admission flow, TURN-forced physical test, and C5 acceptance criteria.
+
 ## STUN default, coturn, and C5 prototype, 2026-10-20
 
 **0.2.88 / Android 2088** makes Google STUN
