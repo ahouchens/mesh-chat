@@ -1,5 +1,7 @@
 # Architecture
 
+![Mesh Chat architecture: renderer, Tauri shell, Python service, Reticulum/LXMF with optional I2P, protected profile, and network paths](docs/architecture/overview.png)
+
 ## Durable connectivity implementation boundary
 
 Workspace joining distinguishes local persistence, LXMF endpoint proof, a signed
@@ -78,6 +80,41 @@ An optional recommended propagation destination is inert until separately approv
 
 The first supported access point is self-hosted or manually supplied. It is outside the client processes and has no Mesh Chat account, contact, workspace, membership, key-directory, or control API. The example deployment is under `deploy/remote-access`. A managed public Mesh Chat gateway is not part of this architecture.
 
+## I2P access-point transport
+
+I2P is an optional relay path for a first connection when neither device has a public endpoint. It is **not the default** and does not replace nearby/direct/participant-hosted/remote access. A normal invitation still uses the existing direct-first choices; I2P is selected explicitly.
+
+The signed envelope is additive:
+
+- `MESHI2P1:` wraps a complete personal invitation.
+- `MESHI2P1W:` wraps a complete workspace invitation.
+- The outer document carries the exact inner bytes, their SHA-256 digest, one validated `*.b32.i2p` access point, a bounded expiry, the signer public key, and a signature.
+- Verification requires the inner invitation to verify, the outer signer to match the inner owner, the digest to match, the purpose to match, and the outer expiry not to exceed the inner invitation.
+- The inner invitation, single-use nonce, replay protection, approval, and membership semantics are unchanged.
+
+Connectivity has two independent requirements:
+
+1. **A local I2P router.** Reticulum's `I2PInterface` talks to a local I2P router through SAM at `127.0.0.1:7656` (overridable with `I2P_SAM_ADDRESS`). A `b32.i2p` address is a destination, not an IP endpoint; a device cannot dial it without an I2P router.
+2. **A reachable access point.** The access point is a Reticulum transport node with an `I2PInterface` (`connectable = Yes`). It may be the inviter's own always-on Windows device or a separately operated access point. Both participants must have a path to it.
+
+Windows bundles `i2pd` 2.61.0 and `I2PRouterManager` starts it before Reticulum when I2P is enabled and managed. The managed configuration:
+
+- binds SAM to localhost only;
+- disables the web console, HTTP proxy, SOCKS proxy, and UPnP;
+- disables transit relaying and uses the low-bandwidth profile;
+- runs as a child process, not a Windows service, and stops on shutdown;
+- resolves the bundled binary from the Tauri resource path.
+
+Android has the settings, invitation wrapper, preview, and consent UI, but no bundled I2P router and no verified external-SAM path in 0.2.75. It cannot complete an I2P join yet.
+
+### Consent and adoption
+
+The joiner must explicitly consent to the access point. `accept_invitation` and `submit_workspace_join` reject an I2P envelope without `i2p_consent`. The personal, onboarding, and workspace join views show the relay disclosure and keep the action disabled until the box is selected.
+
+The access point is adopted into local I2P settings only after consent. The invitation's creator also adopts the access point when it is not itself the connectable access point, so both sides converge on the same route. Adoption writes the `[[I2P]]` interface and takes effect after restart; the signed request remains queued until then.
+
+The access point sees connection metadata and relay timing, not message plaintext. Reticulum/LXMF encryption and recipient-ratchet enforcement remain end to end. There is no anonymity claim: the I2P network and access point can still observe metadata, and I2P does not create a direct QUIC path.
+
 ## Trust and process boundaries
 
 | Component | Owns | Must not own |
@@ -88,6 +125,7 @@ The first supported access point is self-hosted or manually supplied. It is outs
 | Python service | private identity, contact/group policy, durable state, Reticulum/LXMF integration | OS credential lookup, arbitrary commands, remote UI |
 | Reticulum | paths, announces, interfaces, native transport forwarding | contact trust, chat history, durable-delivery claims |
 | LXMF | message wire format, direct/propagated transfer, propagation storage/sync | accepted-conversation or group-membership policy, logical deduplication, application receipts |
+| I2P router / access point | I2P tunnels, relay forwarding, connection metadata | message plaintext, contact trust, workspace authority, delivery receipts |
 
 The shell selects the profile path and retrieves or creates a 32-byte vault key in the native credential store. Desktop starts the packaged sidecar without arguments and sends both values in the first private stdin frame. Android and iOS call the same Python service through a narrow JSON boundary in a native Tauri plugin; the key remains in native code and the profile remains inside the app sandbox. The renderer can invoke only an allowlisted Rust command; Rust rejects oversized bodies, filesystem/control keys, and unknown operations.
 
@@ -95,12 +133,13 @@ The desktop sidecar reserves stdout for framed responses/events and discards det
 
 ## Networking lifecycle
 
-1. The service writes an app-owned Reticulum configuration with `share_instance = No`, `discover_interfaces = No`, no public gateways, and only user-configured interfaces.
-2. RNS is initialized inside the protected profile, then LXMF registers the standard `lxmf.delivery` individual destination.
-3. Destination ratchets are enabled and enforced before the first announce.
-4. An imported invitation is independently signature-checked and its destination is re-derived before its public identity is remembered by RNS.
-5. Sending waits for acceptable recipient ratchet material. Direct messages use LXMF Links; propagated messages are permitted only when a configured approved propagation node exists and recipient ratchet encryption is confirmed before handoff.
-6. A native direct proof becomes `received_by_endpoint`; a propagation upload proof becomes `stored_for_delivery`. Only an authenticated Mesh Chat receipt becomes `delivered`.
+1. The service writes an app-owned Reticulum configuration with `share_instance = No`, `discover_interfaces = No`, no public gateways, and only user-configured interfaces. When I2P is enabled, the configuration includes one `I2PInterface` with `connectable` and bounded `peers`.
+2. If I2P is enabled and managed, `I2PRouterManager` starts the bundled `i2pd` and waits for SAM on localhost; an already-running external SAM is used without spawning a process. A missing router is reported as a status, not a startup crash.
+3. RNS is initialized inside the protected profile, then LXMF registers the standard `lxmf.delivery` individual destination.
+4. Destination ratchets are enabled and enforced before the first announce.
+5. An imported invitation is independently signature-checked and its destination is re-derived before its public identity is remembered by RNS. I2P envelopes are verified against the inner owner before any access point is adopted.
+6. Sending waits for acceptable recipient ratchet material. Direct messages use LXMF Links; propagated messages are permitted only when a configured approved propagation node exists and recipient ratchet encryption is confirmed before handoff.
+7. A native direct proof becomes `received_by_endpoint`; a propagation upload proof becomes `stored_for_delivery`. Only an authenticated Mesh Chat receipt becomes `delivered`. An I2P-relayed path uses the same LXMF evidence; the transport is different, not the delivery semantics.
 
 ## Private groups and channels
 
