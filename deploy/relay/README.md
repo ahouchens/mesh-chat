@@ -1,5 +1,11 @@
 # Mesh Chat relay (least-friction TURN)
 
+> **Deployment model:** this is a manual VPS installer. The Mesh Chat release
+> workflow publishes desktop/Android artifacts only; it does **not** provision
+> or host a relay. GitHub-hosted runners are ephemeral and cannot serve TURN.
+> Automatic relay deployment would need a chosen VPS/cloud account, a stable
+> public IP, and deployment secrets.
+
 One Ubuntu/Debian VPS, no domain, no TLS certificate, one command.
 
 This runs **coturn** on:
