@@ -422,6 +422,33 @@ An intermediate 0.2.74 build failed five frontend assertions because normal
 invitations carried `i2p_consent: false`; 0.2.75 sends the field only for I2P
 previews.
 
+## WebRTC SDP input hardening, 2026-10-19
+
+**0.2.83 / Android 2083** hardens call SDP and candidate validation before
+signing or verification: bounded lines/bytes, control-character rejection,
+exactly one DTLS fingerprint, and audio/video-only media sections.
+
+Validation:
+
+- Full service suite: **1033 passed, 46 skipped**.
+- Frontend TypeScript: passed.
+- Frontend tests: **234 passed**.
+- GitHub Actions
+  [run 39376839336](https://github.com/ahouchens/mesh-chat/actions/runs/39376839336)
+  passed Verify, Windows packaging, Android packaging, and Publish.
+- Release: <https://github.com/ahouchens/mesh-chat/releases/tag/v0.2.83>.
+
+Published assets:
+
+| Artifact | Size | SHA-256 |
+|---|---:|---|
+| `Mesh-Chat_0.2.83_x64-setup.exe` | 27,520,111 | `00adce61647d5d8a0b0552c88bf31eee22eec7ad7f7533ea89d23f6586dbf94a` |
+| `Mesh-Chat_0.2.83_x64_en-US.msi` | 29,515,776 | `a12e0a2fe62b57230e592b6635ba831422f993b4fea1c0a2d58b650d89866da8` |
+| `mesh-chat-0.2.83-android-arm64-release.apk` | 34,082,156 | `699805c68779c13697db7392a0181d8b566e0033bf4b9e263ecb4be9819dd0da` |
+
+Still open: TURN quotas/abuse controls, physical multi-device calls, Android
+audio focus/foreground behavior, video quality, and C5.
+
 ## WebRTC ICE restart, 2026-10-19
 
 **0.2.82 / Android 2082** adds signed `call_renegotiate` documents, generation
