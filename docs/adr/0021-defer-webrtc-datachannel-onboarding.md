@@ -1,7 +1,8 @@
 # 0021: Defer the WebRTC DataChannel onboarding adapter
 
-Status: accepted for the current roadmap. No DataChannel onboarding code is
-implemented.
+Status: superseded by ADR 0023 for the explicit C5 onboarding requirement. The
+original deferral remains useful context for why no Reticulum-over-SCTP bridge
+existed before 0.2.88.
 
 ## Context
 

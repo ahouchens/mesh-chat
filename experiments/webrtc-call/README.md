@@ -54,6 +54,16 @@ python experiments/webrtc-call/live.py --seconds 2 --input 1
 Use `--list-devices` to find device indexes. Add `--play --output 4` to monitor
 through the speakers; use headphones to avoid feedback.
 
+## C5 DataChannel onboarding prototype
+
+```sh
+python experiments/webrtc-call/datachannel_onboarding.py
+```
+
+This establishes a host-candidate DataChannel, sends a signed personal
+invitation, and returns a separately signed reply. It verifies both destinations
+but does not bridge the channel into Reticulum/LXMF or expose an onboarding UI.
+
 Expected:
 
 ```text

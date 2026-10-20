@@ -7,6 +7,7 @@ from typing import Any
 from .errors import ValidationError
 
 MAX_SERVERS = 8
+DEFAULT_STUN_URLS = ("stun:stun.l.google.com:19302",)
 URL = re.compile(
     r"^(stun|stuns|turn|turns):([A-Za-z0-9.-]{1,253})(?::([0-9]{1,5}))?$",
     re.IGNORECASE,
@@ -17,7 +18,7 @@ USERNAME = re.compile(r"^[^\x00-\x1f\x7f]{1,128}$")
 
 @dataclass(slots=True)
 class CallSettings:
-    stun_urls: list[str] = field(default_factory=list)
+    stun_urls: list[str] = field(default_factory=lambda: list(DEFAULT_STUN_URLS))
     turn_url: str | None = None
     turn_username: str | None = None
     turn_credential: str | None = None

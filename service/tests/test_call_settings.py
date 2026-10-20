@@ -6,14 +6,23 @@ from mesh_chat.call_settings import CallSettings
 from mesh_chat.errors import ValidationError
 
 
-def test_defaults_are_empty_and_not_relay_only() -> None:
+def test_defaults_use_google_stun_but_no_turn() -> None:
     settings = CallSettings.from_dict(None)
     assert settings.public() == {
-        "stun_urls": [],
+        "stun_urls": ["stun:stun.l.google.com:19302"],
         "turn_configured": False,
         "relay_only": False,
     }
-    assert settings.ice_servers() == []
+    assert settings.ice_servers() == [{"urls": ["stun:stun.l.google.com:19302"]}]
+
+
+def test_user_can_replace_or_clear_the_default_stun_server() -> None:
+    cleared = CallSettings.from_dict({"stun_urls": [], "relay_only": False})
+    assert cleared.ice_servers() == []
+    custom = CallSettings.from_dict(
+        {"stun_urls": ["stun:stun.example.org:3478"], "relay_only": False}
+    )
+    assert custom.ice_servers() == [{"urls": ["stun:stun.example.org:3478"]}]
 
 
 def test_stun_and_turn_are_normalized_and_secretly_scoped() -> None:

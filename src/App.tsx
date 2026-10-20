@@ -2283,7 +2283,7 @@ function WebRTCCallSettings({ onSaved }: { onSaved: () => Promise<void> }) {
   };
   return (
     <section className="settings-section" aria-labelledby="webrtc-call-settings-title">
-      <div className="settings-section__heading"><h3 id="webrtc-call-settings-title">WebRTC calls</h3><p>STUN and TURN are optional. Direct host candidates are tried first. TURN is a relay and can see connection metadata, not media content.</p></div>
+      <div className="settings-section__heading"><h3 id="webrtc-call-settings-title">WebRTC calls</h3><p>Google STUN is used by default to find a direct call path. Replace or clear it to use another STUN server. TURN is optional, relays media, and can see connection metadata, not content.</p></div>
       <label className="field"><span>STUN servers <small>Comma-separated, for example stun:stun.example.org:3478</small></span><input value={stun} autoCapitalize="off" autoCorrect="off" spellCheck={false} onChange={(event) => { setStun(event.target.value); setSaved(false); }} /></label>
       <label className="field"><span>TURN server <small>Optional, for example turns:turn.example.org:5349</small></span><input value={turnUrl} autoCapitalize="off" autoCorrect="off" spellCheck={false} onChange={(event) => { setTurnUrl(event.target.value); setSaved(false); }} /></label>
       <div className="field-grid">

@@ -186,8 +186,9 @@ Rules:
 - The UI shows `Direct`, `STUN-assisted`, or `Relayed via TURN`.
 - A TURN relay sees encrypted DTLS/SRTP and connection metadata, not media
   plaintext, but it can observe timing and volume.
-- No Mesh Chat-operated STUN/TURN service is part of this design. A self-hosted
-  or explicitly approved operator is required.
+- No Mesh Chat-operated TURN service is part of this design. Google STUN is the
+  free default for call candidate discovery; TURN requires a self-hosted or
+  explicitly approved operator (`deploy/turn` is an example).
 - A strict server-free deployment can use host candidates only; that works
   only on a shared LAN or when one side has a reachable public address.
 
@@ -556,7 +557,8 @@ In-call failure:
 
 - **WebRTC connections** — off by default.
 - **Calls** — off until the call increment; separate consent.
-- **STUN servers** — user-supplied; no default public list.
+- **STUN servers** — `stun:stun.l.google.com:19302` by default; replace or
+  clear it to use another server. No TURN endpoint is provided by default.
 - **TURN server** — address and short-lived credentials; sealed.
 - **Prefer relay** — off; when on, the UI says **Relayed** from the start.
 - **Test WebRTC** — shows **Direct**, **STUN-assisted**, or **TURN-relayed**;
@@ -880,22 +882,22 @@ Still open:
 
 ### C5 — Conditional DataChannel adapter
 
-Decision recorded in
-[ADR 0021](adr/0021-defer-webrtc-datachannel-onboarding.md): not implemented
-now. TCP access-point onboarding is the default, I2P is the no-public-endpoint
-option, and no current browser/deployment requirement justifies a second
-Reticulum-over-SCTP stack. Revisit only on a measured failure or a browser
-client requirement.
+Decision updated by
+[ADR 0023](adr/0023-webrtc-datachannel-onboarding-prototype.md): begin C5.
+Implemented prototype:
+`experiments/webrtc-call/datachannel_onboarding.py` establishes a host-candidate
+DataChannel and exchanges a signed personal invitation and a separately signed
+reply, verifying both destinations.
 
-Only start if a concrete onboarding or browser requirement exists after TCP
-access point, direct QUIC, and I2P have been evaluated.
+This is not yet a shipping onboarding path. It does not bridge DataChannel bytes
+into the Python Reticulum interface and is not exposed in the UI. TCP access
+point remains the default onboarding path.
 
-Scope:
+Scope remaining:
 
-- DataChannel framing/MTU/backpressure;
-- custom Reticulum interface or application-level LXMF bridge;
+- DataChannel framing/MTU/backpressure into a Reticulum interface or LXMF bridge;
 - signed WebRTC invitation descriptor;
-- explicit joiner consent;
+- explicit joiner consent and workspace admission;
 - fallback to TCP/Reticulum.
 
 Exit criteria:
