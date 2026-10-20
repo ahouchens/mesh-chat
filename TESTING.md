@@ -422,6 +422,36 @@ An intermediate 0.2.74 build failed five frontend assertions because normal
 invitations carried `i2p_consent: false`; 0.2.75 sends the field only for I2P
 previews.
 
+## WebRTC Android media permission bridge, 2026-10-19
+
+**0.2.80 / Android 2080** adds the mesh-runtime media permission alias and
+`requestMediaPermission` bridge, requested before Android `getUserMedia`. The
+APK declares microphone, camera, and audio-settings permissions; package
+inspection confirms them.
+
+Validation:
+
+- Frontend TypeScript: passed.
+- Frontend tests: **234 passed**.
+- Frontend production build: passed.
+- Full service suite: **1024 passed, 46 skipped**.
+- GitHub Actions
+  [run 39370718006](https://github.com/ahouchens/mesh-chat/actions/runs/39370718006)
+  passed Verify, Windows packaging, Android packaging, and Publish.
+- Release: <https://github.com/ahouchens/mesh-chat/releases/tag/v0.2.80>.
+
+Published assets:
+
+| Artifact | Size | SHA-256 |
+|---|---:|---|
+| `Mesh-Chat_0.2.80_x64-setup.exe` | 27,510,915 | `435ac9b9f3e78fd30a39616076857ab2d54e8405130391d3380799551ef9a2a7` |
+| `Mesh-Chat_0.2.80_x64_en-US.msi` | 29,511,680 | `eff89ca1701d677a2d3027bd2fb7027d76aad287d4924e202f777257222be217` |
+| `mesh-chat-0.2.80-android-arm64-release.apk` | 34,082,515 | `fe5227c7f120e892482c1fa4bc435bbc15141ff4a8bc55de617c2523dd89e525` |
+
+Still open: physical Android call/runtime prompt behavior, audio focus and
+foreground service, physical Windows↔Android calls, ICE restart, TURN quotas,
+video quality, and C5.
+
 ## WebRTC STUN/TURN settings, 2026-10-19
 
 **0.2.79 / Android 2079** adds validated STUN/TURN settings, encrypted-at-rest
