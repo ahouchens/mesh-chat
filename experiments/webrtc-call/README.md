@@ -43,15 +43,36 @@ left_energy=... right_energy=...
 PASS: bidirectional WebRTC/Opus audio
 ```
 
+## Real microphone test
+
+The C1 device spike sends the microphone through the same WebRTC/Opus path:
+
+```sh
+python experiments/webrtc-call/live.py --seconds 2 --input 1
+```
+
+Use `--list-devices` to find device indexes. Add `--play --output 4` to monitor
+through the speakers; use headphones to avoid feedback.
+
+Expected:
+
+```text
+microphone_frames=...
+received_frames=...
+received_energy=...
+PASS: microphone captured and decoded over WebRTC/Opus
+```
+
 ## Limits
 
-- Synthetic 440/660 Hz tones, not a microphone or speaker.
+- Synthetic 440/660 Hz tones for the loopback test.
+- The live test uses a real microphone but still a local peer only.
 - Host candidates only; no STUN/TURN yet.
-- No Reticulum-signed signaling; C0a documents are not wired in yet.
-- No UI, call state, permissions, or Android.
+- No Reticulum/LXMF signaling transport or call UI yet.
+- No UI, permissions, Android, or persistence.
 - Not part of the service dependency set or CI.
 
 ## Next
 
-C1 wires the C0a signaling documents to this media path, replaces the tone
-track with the Windows microphone, and adds an isolated 1:1 call UI.
+C1 wires the C0a signaling documents into the service, adds durable call state,
+and puts a Windows 1:1 audio call UI over this media path.

@@ -767,6 +767,11 @@ Exit criteria:
 
 ### C1 — Windows 1:1 audio
 
+Device spike implemented: `experiments/webrtc-call/live.py` captures the real
+Windows microphone, sends it through the WebRTC/Opus path, and can monitor the
+decoded audio. It is still local-only; service signaling, durable call state,
+permissions, and UI are not wired yet.
+
 Goal: a consented audio call between approved Windows contacts.
 
 Scope:
