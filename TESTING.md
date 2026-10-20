@@ -422,6 +422,39 @@ An intermediate 0.2.74 build failed five frontend assertions because normal
 invitations carried `i2p_consent: false`; 0.2.75 sends the field only for I2P
 previews.
 
+## C5b renderer DataChannel pump, 2026-10-20
+
+**0.2.90 / Android 2090** adds the renderer pump between the WebRTC
+DataChannel and the Python Reticulum bridge:
+
+- binary DataChannel messages become bounded `webrtc_packet` IPC;
+- `webrtc_packet` service events become channel binary messages;
+- 1064-byte MTU enforcement, close/error detach, and listener cleanup;
+- Vitest coverage for base64 round-trip, both directions, MTU rejection, and
+  detach.
+
+Still missing: signed offer/answer QR/copy UI, onboarding admission over the
+bridge, TURN-forced cellular test.
+
+Validation:
+
+- Frontend TypeScript: passed.
+- Frontend tests: **237 passed**.
+- Frontend production build: passed.
+- Full service suite: **1037 passed, 46 skipped**.
+- GitHub Actions
+  [run 39454264862](https://github.com/ahouchens/mesh-chat/actions/runs/39454264862)
+  passed Verify, Windows packaging, Android packaging, and Publish.
+- Release: <https://github.com/ahouchens/mesh-chat/releases/tag/v0.2.90>.
+
+Published assets:
+
+| Artifact | Size | SHA-256 |
+|---|---:|---|
+| `Mesh-Chat_0.2.90_x64-setup.exe` | 27,525,091 | `76b0600331255e8c81b6cb2b187fe0178feeed2df432866551557dbf31aef172` |
+| `Mesh-Chat_0.2.90_x64_en-US.msi` | 29,515,776 | `c2e01c015dc697ea2190f231259339c3e452681553cafd0b02c8c6519cac734d` |
+| `mesh-chat-0.2.90-android-arm64-release.apk` | 34,098,732 | `bff9c05253f360903539b557f702b8ea0ad5beb60ece4259686bdc3851ff262d` |
+
 ## C5a Reticulum DataChannel bridge, 2026-10-20
 
 **0.2.89 / Android 2089** adds the C5a Python bridge:
