@@ -181,15 +181,25 @@ def _read_windows_version(executable: Path) -> WindowsVersion:
         "@{file_version=$v.FileVersion;product_version=$v.ProductVersion}"
         "|ConvertTo-Json -Compress"
     )
-    result = subprocess.run(
-        [powershell, "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", command],
-        check=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        timeout=20,
-        env=environment,
-    )
+    result = None
+    for attempt in range(2):
+        try:
+            result = subprocess.run(
+                [powershell, "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", command],
+                check=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                timeout=60,
+                env=environment,
+            )
+            break
+        except subprocess.TimeoutExpired:
+            if attempt == 1:
+                raise ReleaseValidationError(
+                    "PowerShell timed out while reading Windows executable version metadata"
+                )
+    assert result is not None
     try:
         value = json.loads(result.stdout)
         return WindowsVersion(str(value["file_version"]), str(value["product_version"]))

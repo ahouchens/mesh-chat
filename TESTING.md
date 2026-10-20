@@ -422,6 +422,37 @@ An intermediate 0.2.74 build failed five frontend assertions because normal
 invitations carried `i2p_consent: false`; 0.2.75 sends the field only for I2P
 previews.
 
+## WebRTC call timeout and recovery, 2026-10-19
+
+**0.2.81 / Android 2081** bounds unanswered calls to 45 seconds, removes expired
+ringing calls from the active set, rejects late answers, and adds explicit
+**Try again** recovery. The desktop release verifier now allows 60 seconds and
+one retry for the Windows version probe after a transient CI timeout.
+
+Validation:
+
+- Focused call-manager/settings tests: **15 passed**.
+- Frontend TypeScript: passed.
+- Frontend tests: **234 passed**.
+- GitHub Actions
+  [run 39372079291 attempt 2](https://github.com/ahouchens/mesh-chat/actions/runs/39372079291)
+  passed Verify, Windows packaging, Android packaging, and Publish. Attempt 1
+  hit a transient PowerShell version-query timeout; no artifact was published
+  from that attempt.
+- Release: <https://github.com/ahouchens/mesh-chat/releases/tag/v0.2.81>.
+
+Published assets:
+
+| Artifact | Size | SHA-256 |
+|---|---:|---|
+| `Mesh-Chat_0.2.81_x64-setup.exe` | 27,515,717 | `3861f0c4461ccaba0b21caa4661bfef86d1969ede53ca24c581a64b5f6f99fc4` |
+| `Mesh-Chat_0.2.81_x64_en-US.msi` | 29,511,680 | `193be62ebe728819d95d654d47f3b6f4d6b429467dd785511a1f51fce288b8fb` |
+| `mesh-chat-0.2.81-android-arm64-release.apk` | 34,082,565 | `0143de02878cb8c75dac3b30ac7f800ba84f95ceb43fbca20393c8f6b1d40a0d` |
+
+The full service suite was last recorded at 1024 passed before the ring-timeout
+change; the focused call-manager suite covers the new transition. Physical
+calls, Android audio focus, ICE restart, and TURN quotas remain open.
+
 ## WebRTC Android media permission bridge, 2026-10-19
 
 **0.2.80 / Android 2080** adds the mesh-runtime media permission alias and
