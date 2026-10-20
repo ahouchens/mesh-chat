@@ -25,6 +25,9 @@ from .webrtc_signaling import (
 ACTIVE_STATES = {"dialing", "ringing", "connecting", "in_call"}
 MAX_CANDIDATES = 32
 RING_SECONDS = 45
+CALLS_PER_MINUTE = 3
+CALLS_PER_HOUR = 20
+CALL_HISTORY_SECONDS = 24 * 60 * 60
 
 
 class CallManager:
@@ -58,6 +61,8 @@ class CallManager:
         dtls_fingerprint: str,
     ) -> dict[str, Any]:
         self._require_approved(contact)
+        self._prune_history()
+        self._enforce_rate_limit(contact["id"])
         call_id = self.new_id()
         invite = create_call_invite(
             identity,
@@ -363,6 +368,26 @@ class CallManager:
         self.store.put("call", call_id, record)
         self.send_document(record["contact_id"], document)
         return self.public(record)
+
+    def _prune_history(self) -> None:
+        cutoff = self.now() - CALL_HISTORY_SECONDS
+        for record in self.store.list("call"):
+            if record.get("state") in ACTIVE_STATES:
+                continue
+            if float(record.get("updated_at", 0)) < cutoff:
+                self.store.delete("call", record["id"])
+
+    def _enforce_rate_limit(self, contact_id: str) -> None:
+        calls = [
+            record
+            for record in self.store.list("call")
+            if record.get("contact_id") == contact_id and record.get("direction") == "outbound"
+        ]
+        now = self.now()
+        minute = sum(1 for record in calls if now - float(record.get("created_at", 0)) < 60)
+        hour = sum(1 for record in calls if now - float(record.get("created_at", 0)) < 3600)
+        if minute >= CALLS_PER_MINUTE or hour >= CALLS_PER_HOUR:
+            raise ValidationError("Too many call attempts; wait before trying again")
 
     def active(self) -> list[dict[str, Any]]:
         calls = []

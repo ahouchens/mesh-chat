@@ -163,6 +163,35 @@ def test_unapproved_contact_cannot_start() -> None:
         )
 
 
+def test_outbound_call_attempts_are_rate_limited() -> None:
+    caller = RNS.Identity()
+    callee = RNS.Identity()
+    counter = iter(range(100))
+    manager = CallManager(
+        MemoryStore(),
+        lambda _contact_id, _document: None,
+        now=lambda: float(NOW),
+        new_id=lambda: f"call_rate_{next(counter):08d}",
+    )
+    contact = _contact(callee)
+    for _ in range(3):
+        manager.start(
+            caller,
+            contact,
+            media="audio",
+            sdp=SDP,
+            dtls_fingerprint=FINGERPRINT,
+        )
+    with pytest.raises(ValidationError):
+        manager.start(
+            caller,
+            contact,
+            media="audio",
+            sdp=SDP,
+            dtls_fingerprint=FINGERPRINT,
+        )
+
+
 def test_ice_restart_renegotiates_without_a_new_ring() -> None:
     caller = RNS.Identity()
     callee = RNS.Identity()

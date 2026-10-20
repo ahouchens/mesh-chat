@@ -862,11 +862,15 @@ a Direct/Relayed path badge derived from selected ICE candidates, a 45-second
 ring timeout, explicit **Try again** recovery, and signed ICE-restart
 renegotiation with generation/replay checks. Malformed SDP/candidate inputs are
 rejected by bounded structural validation with malformed-input tests. Settings
-validation and credential scoping are covered by tests.
+validation and credential scoping are covered by tests. Outbound calls are
+limited to three per minute and twenty per hour per contact, and call records
+are pruned after 24 hours.
+
+TURN quotas are the operator's responsibility (ADR 0022); Mesh Chat does not
+operate a TURN service.
 
 Still open:
 
-- TURN quotas and abuse controls;
 - codec/device matrix;
 - network-change and sleep/resume tests;
 - diagnostics without addresses, credentials, or media keys.
