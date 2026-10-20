@@ -422,6 +422,31 @@ An intermediate 0.2.74 build failed five frontend assertions because normal
 invitations carried `i2p_consent: false`; 0.2.75 sends the field only for I2P
 previews.
 
+## Cloudflare TURN broker support, 2026-10-20
+
+**0.2.96 / Android 2096** adds Cloudflare TURN as a credential-broker
+provider:
+
+- Cloudflare Worker in `deploy/cloudflare-turn` exchanges TURN Key ID + API
+  token for short-lived `iceServers`;
+- Mesh Chat stores only the HTTPS broker URL, never the TURN API token;
+- Settings → WebRTC calls exposes the broker URL, a **Use global default**
+  action, and **Disable TURN broker**;
+- dynamic ICE servers are cached for 50 minutes and refreshed before the
+  one-hour credential TTL;
+- self-hosted coturn remains supported.
+
+No global broker URL is shipped yet. The source defaults to no broker until a
+Worker URL is configured with `MESH_CHAT_DEFAULT_TURN_BROKER`.
+
+Validation:
+
+- Full service suite: **1051 passed, 46 skipped**.
+- Frontend TypeScript: passed.
+- Frontend tests: **237 passed**.
+- Frontend production build: passed.
+- Worker syntax: `node --check` passed.
+
 ## TURN relay deployment kit, 2026-10-20
 
 **0.2.95 / Android 2095** adds a least-friction TURN relay:

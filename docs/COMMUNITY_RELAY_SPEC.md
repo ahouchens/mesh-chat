@@ -32,8 +32,8 @@ Out of scope:
 
 ## 3. Default relay
 
-The app ships with a built-in **Mesh Chat community relay** descriptor so a new
-user can opt in without finding a server. It is:
+The app can ship with a built-in **Mesh Chat community relay** descriptor so a
+new user can opt in without finding a server. It is:
 
 - visible during onboarding and in Settings;
 - **not activated until the user consents**;
@@ -46,18 +46,19 @@ The built-in descriptor is distributed as signed static configuration. It
 contains no TURN password in the app package; credentials are obtained per
 session or per community.
 
+The first implementation uses **Cloudflare TURN** through a credential broker
+([`deploy/cloudflare-turn`](../deploy/cloudflare-turn/README.md)):
+
+- the broker holds the TURN Key ID and API token as server-side secrets;
+- Mesh Chat requests short-lived `iceServers` from the broker;
+- users can override the broker URL or disable it in Settings;
+- the broker URL is not a secret.
+
 ### Current blocker
 
-A default descriptor needs a real public endpoint:
-
-- public IPv4;
-- DNS name;
-- TCP/UDP 443 and TURN relay port range;
-- TLS certificate if `turns:` is used;
-- operator identity and abuse/quota policy.
-
-No VPS, cloud credential, domain, or running relay endpoint exists in this
-project. A placeholder endpoint would be dishonest and would fail for users.
+A default descriptor needs a real broker endpoint URL and a Reticulum access
+point host. No broker URL is configured in this source tree yet. A placeholder
+endpoint would be dishonest and would fail for users.
 
 ## 4. Relay descriptor
 
@@ -120,9 +121,12 @@ Rules:
 
 ## 7. TURN credentials
 
-- v1 may use a per-community static credential entered by the user.
+- Cloudflare TURN credentials are short-lived `iceServers` returned by a
+  credential broker.
+- The long-term TURN Key ID and API token stay on the broker.
+- Mesh Chat stores the broker URL, not the API token.
+- v1 also supports a per-community static credential for self-hosted coturn.
 - The built-in relay must not ship one shared global password in the app.
-- Target design: short-lived TURN REST credentials issued per session.
 - Credentials are stored in the encrypted service record and released only to
   an active connection.
 - No credentials in logs, diagnostics, QR codes, or invitation documents.

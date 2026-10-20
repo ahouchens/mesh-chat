@@ -37,6 +37,7 @@ from .invitations import (
 )
 from .call_manager import CallManager
 from .call_settings import CallSettings
+from .turn_credentials import fetch_ice_servers
 from .webrtc_interface import WebRTCInterface
 from .webrtc_onboarding import (
     create_onboarding_answer,
@@ -405,6 +406,8 @@ class MeshChatService(
         self._i2p_router = I2PRouterManager(profile_dir)
         self.calls = CallManager(store, self._send_call_document)
         self._call_settings = CallSettings.from_dict(store.get("call_settings", "default"))
+        self._turn_ice_lock = threading.Lock()
+        self._turn_ice_cache: tuple[float, list[dict[str, Any]]] | None = None
         self._webrtc_bridges: dict[str, WebRTCInterface] = {}
         identity_record = store.get("identity", "local")
         profile_record = store.get("profile", "local")
@@ -1643,14 +1646,49 @@ class MeshChatService(
         return self._call_settings.public()
 
     def update_call_settings(self, value: dict[str, Any]) -> dict[str, Any]:
+        existing = self._call_settings
+        if (
+            not value.get("turn_credential")
+            and value.get("turn_url") == existing.turn_url
+            and value.get("turn_username") == existing.turn_username
+            and existing.turn_credential is not None
+        ):
+            value = {**value, "turn_credential": existing.turn_credential}
         settings = CallSettings.from_dict(value)
         self.store.put("call_settings", "default", settings.to_dict())
         self._call_settings = settings
+        with self._turn_ice_lock:
+            self._turn_ice_cache = None
         self._changed()
         return settings.public()
 
     def call_ice_servers(self) -> dict[str, Any]:
+        broker = self._call_settings.turn_broker_url
+        if broker is not None:
+            try:
+                servers = self._broker_ice_servers(broker)
+            except NetworkUnavailable:
+                if self._call_settings.turn_url is None:
+                    raise
+                servers = self._call_settings.ice_servers()
+            return {
+                "iceServers": servers,
+                "iceTransportPolicy": "relay" if self._call_settings.relay_only else "all",
+            }
         return self._call_settings.rtc_configuration()
+
+    def _broker_ice_servers(self, broker: str) -> list[dict[str, Any]]:
+        now = time.monotonic()
+        with self._turn_ice_lock:
+            cached = self._turn_ice_cache
+            if cached is not None and cached[0] > now:
+                return [dict(item) for item in cached[1]]
+        servers = fetch_ice_servers(broker)
+        # Cloudflare credentials are short-lived. Refresh well before the
+        # requested one-hour TTL rather than keeping a stale allocation.
+        with self._turn_ice_lock:
+            self._turn_ice_cache = (now + 3000.0, servers)
+        return [dict(item) for item in servers]
 
     def webrtc_onboarding_offer(self, sdp: str, dtls_fingerprint: str) -> dict[str, Any]:
         identity = self._call_identity()

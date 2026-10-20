@@ -1,13 +1,16 @@
 from __future__ import annotations
 
+import os
 import re
 from dataclasses import dataclass, field
 from typing import Any
+from urllib.parse import urlsplit
 
 from .errors import ValidationError
 
 MAX_SERVERS = 8
 DEFAULT_STUN_URLS = ("stun:stun.l.google.com:19302",)
+DEFAULT_TURN_BROKER_URL = os.environ.get("MESH_CHAT_DEFAULT_TURN_BROKER", "").strip() or None
 URL = re.compile(
     r"^(stun|stuns|turn|turns):([A-Za-z0-9.-]{1,253})(?::([0-9]{1,5}))?(?:\?transport=(tcp|udp))?$",
     re.IGNORECASE,
@@ -22,6 +25,7 @@ class CallSettings:
     turn_url: str | None = None
     turn_username: str | None = None
     turn_credential: str | None = None
+    turn_broker_url: str | None = field(default_factory=lambda: DEFAULT_TURN_BROKER_URL)
     relay_only: bool = False
 
     @classmethod
@@ -30,7 +34,10 @@ class CallSettings:
             return cls()
         if not isinstance(value, dict):
             raise ValidationError("Call settings must be an object")
-        allowed = {"stun_urls", "turn_url", "turn_username", "turn_credential", "relay_only"}
+        allowed = {
+            "stun_urls", "turn_url", "turn_username", "turn_credential",
+            "turn_broker_url", "relay_only",
+        }
         if set(value) - allowed:
             raise ValidationError("Call settings contain unsupported fields")
         stun = value.get("stun_urls", [])
@@ -56,12 +63,15 @@ class CallSettings:
             not isinstance(credential, str) or not 1 <= len(credential) <= 512
         ):
             raise ValidationError("TURN credential is invalid")
+        broker = value.get("turn_broker_url", DEFAULT_TURN_BROKER_URL)
+        if broker is not None:
+            broker = validate_broker_url(broker)
         relay_only = value.get("relay_only", False)
         if not isinstance(relay_only, bool):
             raise ValidationError("Relay-only must be boolean")
-        if relay_only and turn_url is None:
+        if relay_only and turn_url is None and broker is None:
             raise ValidationError("Relay-only requires a TURN server")
-        return cls(stun_urls, turn_url, username, credential, relay_only)
+        return cls(stun_urls, turn_url, username, credential, broker, relay_only)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -69,13 +79,19 @@ class CallSettings:
             "turn_url": self.turn_url,
             "turn_username": self.turn_username,
             "turn_credential": self.turn_credential,
+            "turn_broker_url": self.turn_broker_url,
             "relay_only": self.relay_only,
         }
 
     def public(self) -> dict[str, Any]:
         return {
             "stun_urls": list(self.stun_urls),
+            "turn_url": self.turn_url,
+            "turn_username": self.turn_username,
             "turn_configured": self.turn_url is not None,
+            "turn_broker_url": self.turn_broker_url,
+            "turn_broker_configured": self.turn_broker_url is not None,
+            "turn_broker_default_url": DEFAULT_TURN_BROKER_URL,
             "relay_only": self.relay_only,
         }
 
@@ -98,6 +114,24 @@ class CallSettings:
             "iceServers": self.ice_servers(),
             "iceTransportPolicy": "relay" if self.relay_only else "all",
         }
+
+
+def validate_broker_url(value: Any) -> str:
+    if not isinstance(value, str):
+        raise ValidationError("TURN credential broker URL is invalid")
+    value = value.strip()
+    if not 1 <= len(value) <= 512 or not value.startswith("https://"):
+        raise ValidationError("TURN credential broker URL must use HTTPS")
+    parsed = urlsplit(value)
+    if (
+        parsed.scheme != "https"
+        or not parsed.hostname
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.fragment
+    ):
+        raise ValidationError("TURN credential broker URL is invalid")
+    return value
 
 
 def _url(value: Any, schemes: set[str]) -> str:

@@ -2254,6 +2254,7 @@ function WebRTCCallSettings({ onSaved }: { onSaved: () => Promise<void> }) {
   const [turnUrl, setTurnUrl] = useState("");
   const [turnUser, setTurnUser] = useState("");
   const [turnCredential, setTurnCredential] = useState("");
+  const [turnBrokerUrl, setTurnBrokerUrl] = useState("");
   const [relayOnly, setRelayOnly] = useState(false);
   const [busy, setBusy] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -2262,6 +2263,9 @@ function WebRTCCallSettings({ onSaved }: { onSaved: () => Promise<void> }) {
     void serviceCommand<CallSettings>("call_settings").then((value) => {
       setSettings(value);
       setStun(value.stun_urls.join(", "));
+      setTurnUrl(value.turn_url ?? "");
+      setTurnUser(value.turn_username ?? "");
+      setTurnBrokerUrl(value.turn_broker_url ?? "");
       setRelayOnly(value.relay_only);
     }).catch((reason) => setError(errorMessage(reason)));
   }, []);
@@ -2273,6 +2277,7 @@ function WebRTCCallSettings({ onSaved }: { onSaved: () => Promise<void> }) {
         turn_url: turnUrl.trim() || null,
         turn_username: turnUser.trim() || null,
         turn_credential: turnCredential || null,
+        turn_broker_url: turnBrokerUrl.trim() || null,
         relay_only: relayOnly,
       });
       setSettings(result);
@@ -2294,8 +2299,14 @@ function WebRTCCallSettings({ onSaved }: { onSaved: () => Promise<void> }) {
         <label className="field"><span>TURN username</span><input value={turnUser} autoCapitalize="off" autoCorrect="off" spellCheck={false} onChange={(event) => { setTurnUser(event.target.value); setSaved(false); }} /></label>
         <label className="field"><span>TURN credential</span><input type="password" value={turnCredential} autoComplete="off" onChange={(event) => { setTurnCredential(event.target.value); setSaved(false); }} /></label>
       </div>
+      <label className="field"><span>Cloudflare TURN credential broker <small>Optional HTTPS URL; the API token stays on the broker</small></span><input value={turnBrokerUrl} placeholder="https://mesh-chat-turn.example.workers.dev/credentials" autoCapitalize="off" autoCorrect="off" spellCheck={false} onChange={(event) => { setTurnBrokerUrl(event.target.value); setSaved(false); }} /></label>
+      <div className="dialog-actions">
+        {settings?.turn_broker_default_url && <Button variant="secondary" onClick={() => { setTurnBrokerUrl(settings.turn_broker_default_url ?? ""); setSaved(false); }}>Use global default</Button>}
+        <Button variant="ghost" onClick={() => { setTurnBrokerUrl(""); setSaved(false); }}>Disable TURN broker</Button>
+      </div>
+      {settings?.turn_broker_default_url && <p className="muted">Global default: <code>{settings.turn_broker_default_url}</code>. You can override it with a community broker or disable it.</p>}
       <label className="checkbox-line"><input type="checkbox" checked={relayOnly} onChange={(event) => { setRelayOnly(event.target.checked); setSaved(false); }} /> Relay-only: never try a direct path. This requires a TURN server and shows every call as relayed.</label>
-      <p className="muted">{settings?.turn_configured ? "TURN is configured. Credentials stay in the encrypted service record and are released only to an active call." : "No TURN server configured. Calls work only on a shared LAN or when direct host candidates are reachable."}</p>
+      <p className="muted">{settings?.turn_broker_configured ? "Cloudflare TURN credentials are fetched from the configured broker and refreshed per session." : settings?.turn_configured ? "TURN is configured. Credentials stay in the encrypted service record and are released only to an active call." : "No TURN server configured. Calls work only on a shared LAN or when direct host candidates are reachable."}</p>
       {saved && <p className="muted" role="status">Call settings saved.</p>}
       {error && <p className="form-error" role="alert">{error}</p>}
       <Button disabled={busy} onClick={() => void save()}>{busy ? "Saving…" : "Save call settings"}</Button>

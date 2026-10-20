@@ -1,0 +1,8 @@
+name = "mesh-chat-turn"
+main = "worker.js"
+compatibility_date = "2026-10-20"
+workers_dev = true
+
+# Store the TURN key ID and API token as Worker secrets; never commit them.
+#   wrangler secret put TURN_KEY_ID
+#   wrangler secret put TURN_KEY_API_TOKEN

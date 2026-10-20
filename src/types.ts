@@ -944,7 +944,12 @@ export interface CallMedia extends CallSummary {
 
 export interface CallSettings {
   stun_urls: string[];
+  turn_url?: string | null;
+  turn_username?: string | null;
   turn_configured: boolean;
+  turn_broker_url?: string | null;
+  turn_broker_configured?: boolean;
+  turn_broker_default_url?: string | null;
   relay_only: boolean;
 }
 

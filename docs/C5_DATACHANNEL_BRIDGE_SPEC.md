@@ -142,7 +142,8 @@ The DataChannel is not a replacement for approval. It is only a transport.
   endpoint or shared credentials.
 - Users can configure their own TURN server. `deploy/relay` provides a
   one-command coturn deployment with TURN over TCP 443, and `deploy/turn` is
-  the manual reference.
+  the manual reference. `deploy/cloudflare-turn` provides a Worker that
+  exchanges a Cloudflare TURN key for short-lived ICE credentials.
 - A public/operator TURN relay sees connection metadata, not decrypted media;
   the UI must disclose that.
 - Cellular/CGNAT connections generally require TURN. STUN-only is not a

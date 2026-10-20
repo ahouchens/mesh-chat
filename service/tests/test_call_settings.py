@@ -10,7 +10,12 @@ def test_defaults_use_google_stun_but_no_turn() -> None:
     settings = CallSettings.from_dict(None)
     assert settings.public() == {
         "stun_urls": ["stun:stun.l.google.com:19302"],
+        "turn_url": None,
+        "turn_username": None,
         "turn_configured": False,
+        "turn_broker_url": None,
+        "turn_broker_configured": False,
+        "turn_broker_default_url": None,
         "relay_only": False,
     }
     assert settings.ice_servers() == [{"urls": ["stun:stun.l.google.com:19302"]}]
@@ -37,7 +42,12 @@ def test_stun_and_turn_are_normalized_and_secretly_scoped() -> None:
     )
     assert settings.public() == {
         "stun_urls": ["stun:stun.example.org:3478"],
+        "turn_url": "turns:turn.example.org:5349",
+        "turn_username": "mesh",
         "turn_configured": True,
+        "turn_broker_url": None,
+        "turn_broker_configured": False,
+        "turn_broker_default_url": None,
         "relay_only": True,
     }
     assert "credential" not in settings.public()
@@ -70,6 +80,34 @@ def test_turn_tcp_443_url_is_supported() -> None:
             "credential": "secret",
         }
     ]
+
+
+def test_cloudflare_broker_url_is_stored_and_exposed_without_secrets() -> None:
+    settings = CallSettings.from_dict(
+        {
+            "stun_urls": [],
+            "turn_broker_url": "https://turn.example.workers.dev/credentials",
+            "relay_only": True,
+        }
+    )
+    assert settings.turn_broker_url == "https://turn.example.workers.dev/credentials"
+    assert settings.public()["turn_broker_configured"] is True
+    assert "turn_credential" not in settings.public()
+    assert settings.rtc_configuration()["iceTransportPolicy"] == "relay"
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        {"turn_broker_url": "http://turn.example.workers.dev/credentials"},
+        {"turn_broker_url": "https://user:pass@turn.example/credentials"},
+        {"turn_broker_url": "https://turn.example/credentials#fragment"},
+        {"turn_broker_url": "not-a-url"},
+    ],
+)
+def test_invalid_turn_broker_urls_fail_closed(value: dict) -> None:
+    with pytest.raises(ValidationError):
+        CallSettings.from_dict(value)
 
 
 @pytest.mark.parametrize(

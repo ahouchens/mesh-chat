@@ -8,7 +8,7 @@ The design accepts real trade-offs. Delivery depends on peers being reachable, h
 
 An optional **I2P relay path** can bootstrap a workspace or 1:1 connection when neither device has a public endpoint. It is an explicit, consented fallback: the invitation carries one signed `*.b32.i2p` access point, both sides need an I2P router, and the access point relays encrypted Reticulum traffic rather than creating a direct link. I2P is not the default, is not available on Android yet, and does not replace the direct/LAN/access-point paths.
 
-> **Status — security-sensitive prototype.** The source tree is at 0.2.95. It has not been independently audited, and several physical-device and packaging gates are still open. Read [Status and verification](#status-and-verification) before relying on it.
+> **Status — security-sensitive prototype.** The source tree is at 0.2.96. It has not been independently audited, and several physical-device and packaging gates are still open. Read [Status and verification](#status-and-verification) before relying on it.
 
 ## What problem it solves
 
@@ -49,7 +49,7 @@ The application is four cooperating layers plus the network below them. Reticulu
 1. **React renderer** — the conversation list, chats, groups, workspaces, threads, search, and settings. It holds UI state and drafts only. It never receives a private key, the vault key, a filesystem path, or a socket.
 2. **Tauri 2 shell (Rust)** — the only component allowed to start and stop the messaging service. It retrieves or creates a 32-byte vault key in the operating system's credential store, supplies the app-private profile path, validates every renderer command against a named allowlist and a size limit, and applies a strict content security policy.
 3. **`mesh-chat-service` (Python 3.11+)** — the security boundary. It parses and verifies every signed document, owns contact/group/workspace consent, commits state to the vault, runs the outbox and receipt jobs, and hands messages to LXMF only after the local transaction is durable. It speaks a framed stdin/stdout protocol; there is no localhost HTTP or WebSocket control server.
-4. **Reticulum 1.5.5 + LXMF 1.2.0** — the pinned reference stack. Reticulum supplies identities, destinations, paths, Links, and transport; LXMF supplies message serialization plus direct and propagated delivery. Mesh Chat adds no custom cipher, group key, or routing envelope. An optional Reticulum `I2PInterface` can carry the same LXMF traffic over I2P when a local `i2pd` router and an access point are explicitly configured.
+4. **Reticulum 1.5.5 + LXMF 1.2.0** — the pinned reference stack. Reticulum supplies identities, destinations, paths, Links, and transport; LXMF supplies message serialization plus direct and propagated delivery. Mesh Chat adds no custom cipher, group key, or routing envelope. An optional Reticulum `I2PInterface` can carry the same LXMF traffic over I2P when a local `i2pd` router and an access point are explicitly configured. An optional **community relay** (TURN plus a Reticulum TCP access point) can carry encrypted packets when direct Internet paths fail; it is not an authority and does not store messages.
 
 Underneath them, one **protected profile** holds everything at rest: the sealed vault, Reticulum path/ratchet state, and the LXMF message store. The service verifies OS-level encryption for that directory (and enables NTFS EFS on Windows when needed) and refuses to start if it cannot confirm it — FileVault, fscrypt / dm-crypt / LUKS, or an app-private Android/iOS container.
 
@@ -76,7 +76,34 @@ Accepting an invitation never creates trust by itself. The recipient reviews the
 
 Two honest limits follow from having no infrastructure: if neither participant can accept inbound traffic and they share no already-working path, setup fails and says so; and a self-hosted access point or propagation node is a separate deployment, not a Mesh Chat service. See [deploy/remote-access](deploy/remote-access/README.md).
 
-**I2P is an opt-in relay, not the default.** A normal invitation still starts with nearby/direct/participant-hosted/remote choices. I2P is selected explicitly, and the joiner sees the access point and must consent. The access point is a Reticulum `I2PInterface` node addressed by `*.b32.i2p`; it relays encrypted Reticulum/LXMF traffic and does not see message plaintext. Windows bundles and manages `i2pd`; Android has the settings and consent UI but no bundled I2P router yet, so Android cannot complete an I2P join in 0.2.95.
+### Optional community relay
+
+Mesh Chat now has an **optional relay** for easier connectivity over the
+Internet. It is not a central account, directory, or message store.
+
+- **TURN** relays encrypted WebRTC/DTLS packets for an active call or WebRTC
+  onboarding session.
+- A **Reticulum TCP access point** can route encrypted Reticulum/LXMF packets
+  when no direct path exists.
+- Direct/LAN paths are preferred; the relay is a fallback.
+- The relay cannot approve contacts or workspace members.
+- It sees connection metadata and encrypted traffic, never message plaintext.
+- It does not store messages or workspace history.
+- Relay failure leaves local state unchanged.
+- Users can opt in, opt out, or provide a community/custom relay.
+
+Cloudflare TURN is supported through a small credential broker
+([deploy/cloudflare-turn](deploy/cloudflare-turn/README.md)): the long-term
+TURN API token stays on the broker, while Mesh Chat receives short-lived
+`iceServers` credentials. Self-hosted coturn remains available at
+[deploy/relay](deploy/relay/README.md).
+
+In **Settings → WebRTC calls**, users can enter a Cloudflare TURN broker URL,
+override the built-in default, or disable the broker. A build can ship a global
+default via `MESH_CHAT_DEFAULT_TURN_BROKER`; no default endpoint is configured
+in this source tree yet. See [the community relay spec](docs/COMMUNITY_RELAY_SPEC.md).
+
+**I2P is an opt-in relay, not the default.** A normal invitation still starts with nearby/direct/participant-hosted/remote choices. I2P is selected explicitly, and the joiner sees the access point and must consent. The access point is a Reticulum `I2PInterface` node addressed by `*.b32.i2p`; it relays encrypted Reticulum/LXMF traffic and does not see message plaintext. Windows bundles and manages `i2pd`; Android has the settings and consent UI but no bundled I2P router yet, so Android cannot complete an I2P join in 0.2.96.
 
 ## Workspaces: authority without a server
 
@@ -167,7 +194,7 @@ The threat model is explicit about what is *not* protected: traffic analysis, IP
 
 | Platform | What exists | Recorded verification |
 | --- | --- | --- |
-| Windows x64 | MSI and NSIS installers, standalone executable plus service sidecar, bundled/managed `i2pd`, I2P invitation and consent UI, 1:1 audio/video call surface | 0.2.95 published; installer launch not rerun after the temporary-folder disk fix |
+| Windows x64 | MSI and NSIS installers, standalone executable plus service sidecar, bundled/managed `i2pd`, I2P invitation and consent UI, 1:1 audio/video call surface | 0.2.96 published; installer launch not rerun after the temporary-folder disk fix |
 | Android arm64 | Debug APK, plus release/AAB signing path; I2P settings and invitation preview, 1:1 audio/video call surface | Built and package-inspected; no bundled I2P router and no physical call test in the recorded run |
 | macOS | Build path, FileVault adapter | No package built or run in this repository |
 | Linux | Build path, fscrypt/dm-crypt adapters | No package built or run in this repository |
@@ -225,6 +252,7 @@ Desktop installers must be built on their target operating system. Android build
 | [WebRTC adapter roadmap](docs/WEBRTC_ADAPTER_SPEC.md) | DataChannel connection bootstrap, STUN/TURN policy, 1:1 call increments, and decision gates |
 | [C5 DataChannel bridge spec](docs/C5_DATACHANNEL_BRIDGE_SPEC.md) | Reticulum-over-DataChannel bridge, IPC, signaling, onboarding, and TURN policy |
 | [Relay deployment](deploy/relay/README.md) | One-command TURN relay with TCP/UDP 443, credentials, and VPS hardening |
+| [Cloudflare TURN broker](deploy/cloudflare-turn/README.md) | Short-lived Cloudflare TURN credentials without shipping the API token |
 | [Community relay spec](docs/COMMUNITY_RELAY_SPEC.md) | Opt-in default/community relays, TURN + Reticulum access point, consent, failover, and no central store |
 | [WebRTC physical test plan](docs/WEBRTC_PHYSICAL_TEST_PLAN.md) | Windows/Android call, TURN, foreground-service, and privacy qualification matrix |
 | [docs/ANDROID_PARITY.md](docs/ANDROID_PARITY.md) | Android capability status and the physical test matrix |
