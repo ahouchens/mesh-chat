@@ -225,6 +225,7 @@ Desktop installers must be built on their target operating system. Android build
 | [WebRTC adapter roadmap](docs/WEBRTC_ADAPTER_SPEC.md) | DataChannel connection bootstrap, STUN/TURN policy, 1:1 call increments, and decision gates |
 | [C5 DataChannel bridge spec](docs/C5_DATACHANNEL_BRIDGE_SPEC.md) | Reticulum-over-DataChannel bridge, IPC, signaling, onboarding, and TURN policy |
 | [Relay deployment](deploy/relay/README.md) | One-command TURN relay with TCP/UDP 443, credentials, and VPS hardening |
+| [Community relay spec](docs/COMMUNITY_RELAY_SPEC.md) | Opt-in default/community relays, TURN + Reticulum access point, consent, failover, and no central store |
 | [WebRTC physical test plan](docs/WEBRTC_PHYSICAL_TEST_PLAN.md) | Windows/Android call, TURN, foreground-service, and privacy qualification matrix |
 | [docs/ANDROID_PARITY.md](docs/ANDROID_PARITY.md) | Android capability status and the physical test matrix |
 | [deploy/remote-access](deploy/remote-access/README.md) | Running an access point or propagation node without becoming a Mesh Chat service |
