@@ -422,6 +422,35 @@ An intermediate 0.2.74 build failed five frontend assertions because normal
 invitations carried `i2p_consent: false`; 0.2.75 sends the field only for I2P
 previews.
 
+## WebRTC video quality controls, 2026-10-19
+
+**0.2.87 / Android 2087** prefers VP8 when the WebView exposes codec
+preferences, caps the video sender at 500 kbps, shows a good/fair/poor media
+indicator from inbound RTP loss/jitter, and retries the call media path when the
+browser reports that it is online.
+
+Validation:
+
+- Full service suite: **1034 passed, 46 skipped**.
+- Frontend TypeScript: passed.
+- Frontend tests: **234 passed**.
+- Frontend production build: passed.
+- GitHub Actions
+  [run 39382669387](https://github.com/ahouchens/mesh-chat/actions/runs/39382669387)
+  passed Verify, Windows packaging, Android packaging, and Publish.
+- Release: <https://github.com/ahouchens/mesh-chat/releases/tag/v0.2.87>.
+
+Published assets:
+
+| Artifact | Size | SHA-256 |
+|---|---:|---|
+| `Mesh-Chat_0.2.87_x64-setup.exe` | 27,519,856 | `3e698e1f5e68604a8a38d52b2fcb507fbb445910fe938a9361c9635d2c987dea` |
+| `Mesh-Chat_0.2.87_x64_en-US.msi` | 29,515,776 | `643cfd2f87e8c81727613fa9cbe433cdc0eea4b641eb18a26b597b8c42b3963c` |
+| `mesh-chat-0.2.87-android-arm64-release.apk` | 34,098,770 | `6d56f324958fcbbf9654f79fe4c31176a9c046ba34e2fe1e3c84683eabc064ac` |
+
+Still open: physical multi-device calls, Android foreground behavior on a
+device, real video codec/thermal measurement, and C5.
+
 ## WebRTC call rate limits, 2026-10-19
 
 **0.2.86 / Android 2086** adds per-contact outbound call rate limits (three per
