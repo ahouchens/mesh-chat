@@ -436,8 +436,18 @@ Validation:
 - Frontend TypeScript: passed.
 - Frontend tests: **237 passed**.
 - Frontend production build: passed.
-- GitHub Actions run: see release notes.
+- GitHub Actions
+  [run 39498341896](https://github.com/ahouchens/mesh-chat/actions/runs/39498341896)
+  passed Verify, Windows packaging, Android packaging, and Publish.
 - Release: <https://github.com/ahouchens/mesh-chat/releases/tag/v0.2.93>.
+
+Published assets:
+
+| Artifact | Size | SHA-256 |
+|---|---:|---|
+| `Mesh-Chat_0.2.93_x64-setup.exe` | 27,533,191 | `04d9f2c656502894f990ae6d76e7df9ac4bc8dc44fe446f61926190ea8736887` |
+| `Mesh-Chat_0.2.93_x64_en-US.msi` | 29,528,064 | `63d2034c407725604ee74d7b9a0041ecea302afb172a37723fdc1ab368173675` |
+| `mesh-chat-0.2.93-android-arm64-release.apk` | 34,115,005 | `89734b08135815a0a05bb38506777a98bb04498fb7819499310b7c8bcd0de3b9` |
 
 Still open: transferring the invitation automatically inside the WebRTC dialog
 (it is still copied/pasted), reconnect/failure tests, and C5e physical
