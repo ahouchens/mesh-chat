@@ -422,6 +422,35 @@ An intermediate 0.2.74 build failed five frontend assertions because normal
 invitations carried `i2p_consent: false`; 0.2.75 sends the field only for I2P
 previews.
 
+## Android call-audio focus, 2026-10-19
+
+**0.2.84 / Android 2084** adds Android call-audio focus and
+`MODE_IN_COMMUNICATION` around media calls, released on hangup. The WebView
+microphone/camera remains behind the runtime media permission bridge.
+
+Validation:
+
+- Full service suite: **1033 passed, 46 skipped**.
+- Frontend TypeScript: passed.
+- Frontend tests: **234 passed**.
+- Frontend production build: passed.
+- GitHub Actions
+  [run 39378211532](https://github.com/ahouchens/mesh-chat/actions/runs/39378211532)
+  passed Verify, Windows packaging, Android packaging, and Publish.
+- Release: <https://github.com/ahouchens/mesh-chat/releases/tag/v0.2.84>.
+
+Published assets:
+
+| Artifact | Size | SHA-256 |
+|---|---:|---|
+| `Mesh-Chat_0.2.84_x64-setup.exe` | 27,519,552 | `4bbd070f51336b6d1317b2a1e0e200c85fb9de71b032731166d1bb572f73eb03` |
+| `Mesh-Chat_0.2.84_x64_en-US.msi` | 29,511,680 | `870d9de98b5a97a1a6bb7314144d1594430258b68ee1027f2386cde3cc83127c` |
+| `mesh-chat-0.2.84-android-arm64-release.apk` | 34,098,631 | `688a77208aa4596e58f0f043e8f33dd015fa3cad9be14037a56836b131583c80` |
+
+Still open: physical Android call/runtime-prompt behavior, foreground-service
+notification, physical Windows↔Android calls, TURN quotas, video quality, and
+C5.
+
 ## WebRTC SDP input hardening, 2026-10-19
 
 **0.2.83 / Android 2083** hardens call SDP and candidate validation before
