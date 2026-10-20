@@ -1,19 +1,22 @@
 # WebRTC adapter specification and roadmap
 
-Status: design proposal. No WebRTC implementation exists in Mesh Chat. This
-document defines how a WebRTC adapter could carry a first connection and,
-later, 1:1 calls without changing the existing Reticulum/LXMF or workspace
-protocols.
+Status: design and early implementation. No native WebRTC media stack exists in
+Mesh Chat yet. The signed call-signaling foundation is being added first.
 
 ## 1. Summary
 
-Add an optional **WebRTC adapter** for two purposes:
+The near-term onboarding path is a **TCP access point**, not WebRTC. A TCP
+access point works on Windows and Android with outbound TCP only, needs no local
+daemon, and is already the supported remote-profile path.
 
-1. **Connection bootstrap:** carry Reticulum/LXMF traffic over a WebRTC
-   DataChannel so a user can join a 1:1 conversation or workspace when direct
-   QUIC and TCP access points are unavailable or unsuitable.
-2. **Calls:** reuse the same authenticated peer relationship for 1:1 audio and
-   video calls, then consider workspace calls.
+The **WebRTC adapter is for calls first**:
+
+1. **1:1 audio calls** between approved contacts, using Reticulum-signed call
+   signaling and a WebRTC media plane.
+2. **1:1 video calls** after audio is stable.
+3. **Optional later:** a WebRTC DataChannel that carries Reticulum packets for
+   onboarding or browser clients. This is not a prerequisite for joining a
+   workspace and is deferred until a concrete need is proven.
 
 WebRTC is not a server-free transport. A practical deployment needs:
 
@@ -21,27 +24,32 @@ WebRTC is not a server-free transport. A practical deployment needs:
 - STUN for server-reflexive candidates;
 - TURN when direct ICE fails, especially on symmetric NAT or CGNAT.
 
-The adapter must therefore be explicit, consented, non-default, and honest
-about relay metadata. It does not replace the existing direct, TCP access
-point, I2P, or Reticulum fallback paths.
+Reticulum remains the identity and control plane. It authenticates the peers,
+carries signed call signaling, and continues to carry messages and workspace
+events. WebRTC is a separate media plane.
+
+The adapter must be explicit, consented, non-default, and honest about relay
+metadata. It does not replace the existing direct, TCP access point, I2P, or
+Reticulum paths.
 
 ## 2. Definitions
 
 - **WebRTC adapter** — a native component that creates a peer connection,
-  exchanges signed session descriptions, carries a DataChannel and/or media
-  tracks, and exposes the result to the service.
-- **DataChannel transport** — an ordered, reliable SCTP channel used to carry
-  framed Reticulum packets.
-- **Signaling document** — a signed `webrtc_offer`, `webrtc_answer`, or
-  `webrtc_candidate` document bound to a contact/workspace and session.
+  exchanges signed session descriptions, carries media tracks (and later a
+  DataChannel), and exposes the result to the service.
+- **DataChannel transport** — an ordered, reliable SCTP channel that could
+  carry framed Reticulum packets in a later increment.
+- **Signaling document** — a signed `call_invite`, `call_answer`,
+  `call_candidate`, or `call_hangup` document bound to a contact/workspace and
+  session.
 - **ICE** — Interactive Connectivity Establishment: host, server-reflexive,
   peer-reflexive, and relayed candidates.
 - **STUN** — an observer that reports a peer’s public UDP tuple.
 - **TURN** — a relay used when direct ICE cannot establish a path.
 - **Call session** — an authenticated audio/video session with explicit
   ringing, accept, decline, and hangup states.
-- **Mesh peer connection** — a WebRTC peer connection carrying the
-  DataChannel, media, or both.
+- **Mesh peer connection** — a WebRTC peer connection carrying media, and later
+  optionally a DataChannel.
 
 ## 3. Why WebRTC
 
@@ -50,10 +58,12 @@ WebRTC provides capabilities Mesh Chat does not currently have:
 - mature ICE candidate gathering and connectivity checks;
 - DTLS/SRTP media;
 - Opus audio and VP8/VP9/H.264 video;
+- echo cancellation and device audio/video integration;
 - browser-class NAT traversal behavior;
-- a path to browser-based onboarding later.
+- a path to browser-based calling later.
 
-It also provides a DataChannel that can carry framed application packets.
+It also provides a DataChannel, but that is a secondary use until a real
+onboarding or browser requirement appears.
 
 The trade-off is substantial: signaling, STUN/TURN, native media stacks,
 permissions, codecs, battery, and a second traversal path alongside the
@@ -61,29 +71,30 @@ existing QUIC Offer/Answer/Ready work.
 
 ## 4. Goals
 
-1. Two consented users can establish a WebRTC DataChannel and carry a signed
-   workspace join, approval, receipt, and messages.
-2. The connection is authenticated by the existing Reticulum identities; a
-   WebRTC DTLS fingerprint alone is not identity.
-3. Direct ICE is preferred; TURN is an explicit fallback with bounded
-   credentials and quotas.
-4. A 1:1 audio call can be placed from an approved contact without joining a
+1. A 1:1 audio call can be placed from an approved contact without joining a
    third-party calling service.
-5. A 1:1 video call can be added after audio is stable.
-6. The UI states whether the path is direct, STUN-assisted, or TURN-relayed.
-7. No silent camera/microphone access, no auto-answer, no recording.
-8. The adapter is off by default and does not alter existing invitation,
+2. A 1:1 video call can be added after audio is stable.
+3. Call signaling is authenticated by the existing Reticulum identities; a
+   WebRTC DTLS fingerprint alone is not identity.
+4. Direct ICE is preferred; TURN is an explicit fallback with bounded
+   credentials and quotas.
+5. The UI states whether the media path is direct or TURN-relayed.
+6. No silent camera/microphone access, no auto-answer, no recording.
+7. The adapter is off by default and does not alter existing invitation,
    membership, or delivery semantics.
+8. A DataChannel onboarding adapter is considered only after calls, and only if
+   a TCP access point or direct path cannot meet a concrete requirement.
 
 ## 5. Non-goals
 
 - A server-free WebRTC deployment.
 - Anonymous calls or anonymity for relay metadata.
 - PSTN, SIP, or phone-number calling.
-- Group calls or an SFU in the first call increment.
+- Group calls or an SFU in the first call increments.
 - Recording, transcription, or cloud media storage.
 - Replacing Reticulum/LXMF as the message and membership protocol.
 - Making WebRTC the default invitation path.
+- Making the WebRTC DataChannel a prerequisite for workspace onboarding.
 - Browser client support in the first increments.
 
 ## 6. Architecture
@@ -105,7 +116,7 @@ The renderer must not own a peer connection, camera, microphone, TURN
 credential, or SDP. The service owns identity binding and policy; the native
 host owns media and the WebRTC stack.
 
-### 6.2 Connection path
+### 6.2 Connection path (C5, conditional)
 
 ```text
 Signed invitation / contact
@@ -180,7 +191,7 @@ Rules:
 - A strict server-free deployment can use host candidates only; that works
   only on a shared LAN or when one side has a reachable public address.
 
-### 6.5 DataChannel transport
+### 6.5 DataChannel transport (C5, conditional)
 
 - Label: `meshchat-data`.
 - Ordered, reliable SCTP stream.
@@ -195,7 +206,7 @@ Rules:
 - Close the peer connection on invitation expiry, contact block, workspace
   removal, or explicit disconnect.
 
-### 6.6 Calls
+### 6.6 Calls (C0–C3, primary)
 
 Calls use a separate authenticated media session:
 
@@ -231,12 +242,19 @@ call_hangup
 
 ## 7. UX
 
-This is the **target UX** for the adapter; WebRTC is not implemented in 0.2.75.
+This is the **target UX** for the adapter; WebRTC media is not implemented in
+0.2.76 (the C0a signaling foundation is).
 The adapter must feel like one obvious next step, not a networking console. The
 guiding rule is:
 
 > **One primary action per screen, plain-language progress, no dead ends, and no
 > surprise microphone, camera, or relay use.**
+
+**Priority:** the call UX in section 7.7 is the near-term WebRTC UX. The
+connection and workspace flows in sections 7.2–7.6 describe the conditional
+DataChannel onboarding adapter (C5), not the current onboarding path. For now,
+workspace onboarding uses a TCP access point; calls are the first WebRTC
+feature.
 
 WebRTC must not expose SDP, ICE, DTLS, codecs, candidate types, or TURN
 credentials in the normal flow. Those belong in diagnostics only.
@@ -268,7 +286,7 @@ credentials in the normal flow. Those belong in diagnostics only.
     a **Details** disclosure. Copied diagnostics never contain SDP, candidates,
     TURN credentials, or media keys.
 
-### 7.2 Connection flow map
+### 7.2 Connection flow map (C5, conditional)
 
 ```text
 Start invitation
@@ -310,7 +328,7 @@ The UI must use:
 - **Waiting for approval** for a workspace
 - **Couldn’t connect** only after a terminal failure
 
-### 7.3 Creator flow: inviting with WebRTC
+### 7.3 Creator flow: WebRTC DataChannel invitation (C5, conditional)
 
 Entry point:
 
@@ -350,7 +368,7 @@ Screen 3 — **Invitation ready**
 - **Keep Mesh Chat open while they connect.**
 - Path note: **Direct when possible; relay only if needed.**
 
-### 7.4 Joiner flow: connecting with WebRTC
+### 7.4 Joiner flow: DataChannel connection (C5, conditional)
 
 Entry point: paste/import a signed WebRTC invitation.
 
@@ -405,7 +423,7 @@ Screen 3 — **Connected**
   - **Open workspace** when approved
 - Always show a short note: **You can disconnect at any time.**
 
-### 7.5 Existing contact: “Improve connection”
+### 7.5 Existing contact: Improve connection (C5, conditional)
 
 If messages are slow or failing and the contact is approved:
 
@@ -424,7 +442,7 @@ If messages are slow or failing and the contact is approved:
 
 No new contact approval is created by **Improve connection**.
 
-### 7.6 Workspace flow
+### 7.6 Workspace flow via DataChannel (C5, conditional)
 
 Owner:
 
@@ -446,7 +464,7 @@ Joiner:
 If approval is delayed, the UI says **Request delivered; waiting for the owner**
 and keeps the request saved. It must not show a connection failure.
 
-### 7.7 Call flows
+### 7.7 Call flows (C0–C3, primary)
 
 #### Call entry points
 
@@ -679,116 +697,110 @@ intact.
 
 ## 10. Roadmap
 
+The roadmap is calls-first. The DataChannel onboarding adapter is conditional
+and comes after calls.
+
 | Increment | Platform | Outcome | Effort | Gate |
 |---|---|---|---|---|
-| W0 | Desktop | DataChannel spike with self-hosted STUN/TURN; measure ICE, latency, throughput | M | G0 |
-| W1 | Desktop | Signed offer/answer/candidate documents; authenticated loopback | M | G1 |
-| W2 | Windows | DataChannel as a Reticulum interface; workspace join over WebRTC | L | G2 |
-| W3 | Android | DataChannel client with native WebRTC; physical device test | L | G3 |
-| W4 | Windows | 1:1 audio call, Opus, mic/speaker, call UI | L | G4 |
-| W5 | Android | 1:1 audio call, audio focus/foreground service | L | G4 |
-| W6 | Windows/Android | 1:1 video call, codec/device validation | L | G5 |
-| W7 | Both | Hardening, TURN quotas, reconnect, diagnostics | M | G6 |
-| W8 | Research | Workspace/group call architecture (mesh vs SFU/E2EE) | XL | G7 |
+| C0a | Desktop | Signed call signaling documents and call state machine | M | G0 |
+| C0b | Desktop | Native 1:1 audio spike with self-hosted STUN/TURN | M | G1 |
+| C1 | Windows | 1:1 audio call, Opus, mic/speaker, call UI | L | G2 |
+| C2 | Android | 1:1 audio call, audio focus/foreground service | L | G3 |
+| C3 | Windows/Android | 1:1 video call, codec/device validation | L | G4 |
+| C4 | Both | Hardening, TURN quotas, reconnect, diagnostics | M | G5 |
+| C5 | Both | Conditional WebRTC DataChannel onboarding adapter | XL | G6 |
+| C6 | Research | Group-call architecture (mesh vs SFU/E2EE) | XL | G7 |
 
-### W0 — DataChannel spike
+### C0a — Signed call signaling foundation
 
-Goal: prove two peers can establish a DataChannel using a self-hosted
-STUN/TURN pair on a test network.
+Goal: make call invitation, answer, ICE candidate, and hangup messages
+authenticated and replay-safe without adding media yet.
 
-Scope:
-
-- native WebRTC peer connection;
-- host/STUN/TURN candidates;
-- DataChannel echo and throughput test;
-- force TURN to measure relay latency;
-- no Mesh Chat UI or invitation integration.
-
-Exit criteria:
-
-- direct DataChannel on LAN;
-- STUN-assisted DataChannel across NAT;
-- TURN-forced DataChannel when direct fails;
-- reconnect after network change;
-- measured latency/throughput and CPU.
-
-### W1 — Signed signaling
-
-Goal: replace the spike’s manual signaling with signed documents.
+Implemented foundation: `service/src/mesh_chat/webrtc_signaling.py`, with tests
+in `service/tests/test_webrtc_signaling.py`. It is not yet wired into the
+service command surface or UI.
 
 Scope:
 
-- `webrtc_offer`, `webrtc_answer`, `webrtc_candidate`;
-- identity binding to contact/invitation;
-- single-use session ID, expiry, replay rejection;
-- QR/file exchange for first contact;
-- existing Reticulum/LXMF path when available.
+- signed `call_invite`, `call_answer`, `call_candidate`, `call_hangup`;
+- contact/workspace identity binding;
+- call/session ID, single-use invite, expiry, replay rejection;
+- media type (`audio` / `video`);
+- SDP and DTLS fingerprint binding;
+- bounded document size and strict parsing;
+- call state machine: `idle`, `dialing`, `ringing`, `connecting`, `in_call`,
+  `ended`, `declined`, `busy`, `no_answer`, `failed`;
+- no microphone, camera, SDP generation, or ICE yet.
 
 Exit criteria:
 
 - tampered SDP/fingerprint rejected;
 - foreign signer rejected;
-- expired/replayed session rejected;
-- candidate exchange works both trickle and non-trickle.
+- expired or replayed invite rejected;
+- answer is bound to the exact invite digest;
+- hangup/candidate are scoped to the call ID;
+- state transitions are unit-tested.
 
-### W2 — Windows data-channel adapter
+### C0b — Native audio spike
 
-Goal: carry a real workspace join over WebRTC.
+Goal: prove a native 1:1 audio call on a desktop using the C0a signaling.
 
 Scope:
 
-- custom Reticulum interface over DataChannel;
-- framing/MTU/backpressure;
-- service-owned consent and diagnostics;
-- invitation option and joiner consent;
-- STUN/TURN settings;
-- fallback to Reticulum/TCP if WebRTC fails.
+- native WebRTC peer connection;
+- Opus audio, microphone, speaker;
+- host/STUN/TURN candidates;
+- force TURN to measure relay latency;
+- no production UI; a bounded harness is enough.
 
 Exit criteria:
 
-- workspace join, owner approval, receipt, and messages over WebRTC;
-- direct/STUN/TURN visible;
-- no plaintext or credentials in diagnostics;
-- disabling WebRTC removes the interface and leaves other paths intact.
+- clear audio on LAN;
+- STUN-assisted audio across NAT;
+- TURN-forced audio when direct fails;
+- reconnect after network change;
+- measured latency, CPU, and audio quality.
 
-### W3 — Android data-channel adapter
+### C1 — Windows 1:1 audio
 
-Goal: prove the same path on Android.
+Goal: a consented audio call between approved Windows contacts.
+
+Scope:
+
+- call button, ringing, accept/decline/hangup;
+- microphone/speaker device selection;
+- mute, audio focus, path badge;
+- call timeline events;
+- permission preflight and recovery.
+
+Exit criteria:
+
+- clear audio on Windows↔Windows;
+- no auto-answer;
+- permissions requested only at call time;
+- no recording;
+- failed calls do not change contact approval.
+
+### C2 — Android 1:1 audio
+
+Goal: the same call path on Android.
 
 Scope:
 
 - native WebRTC plugin;
-- permissions and lifecycle;
-- physical device join;
-- battery/data measurement.
+- audio focus, foreground service, screen-lock behavior;
+- microphone/speaker/Bluetooth routing;
+- incoming-call notification;
+- physical-device test.
 
 Exit criteria:
 
-- Android joins a workspace over WebRTC;
+- Windows↔Android and Android↔Android audio;
 - background/network transitions documented;
-- no bundled browser dependency;
-- fallback to TCP/Reticulum.
+- battery/data measured;
+- no auto-answer or silent microphone.
 
-### W4–W5 — 1:1 audio
-
-Goal: a consented audio call between approved contacts.
-
-Scope:
-
-- call invite/ring/accept/decline/hangup;
-- Opus, microphone, speaker/earpiece;
-- mute, device selection, audio focus;
-- call UI and diagnostics.
-
-Exit criteria:
-
-- clear audio on Windows↔Windows and Windows↔Android;
-- no auto-answer;
-- call state independent of message delivery;
-- permissions requested only at call time;
-- no recording.
-
-### W6 — 1:1 video
+### C3 — 1:1 video
 
 Goal: optional camera video on the same call path.
 
@@ -805,16 +817,36 @@ Exit criteria:
 - graceful degradation to audio;
 - no camera start before consent.
 
-### W7 — Hardening
+### C4 — Hardening
 
 - reconnect and ICE restart;
 - TURN quotas and abuse controls;
 - codec/device matrix;
 - malformed SDP/fuzz tests;
 - network-change and sleep/resume tests;
-- diagnostics without addresses or credentials.
+- diagnostics without addresses, credentials, or media keys.
 
-### W8 — Workspace/group calls (research)
+### C5 — Conditional DataChannel adapter
+
+Only start if a concrete onboarding or browser requirement exists after TCP
+access point, direct QUIC, and I2P have been evaluated.
+
+Scope:
+
+- DataChannel framing/MTU/backpressure;
+- custom Reticulum interface or application-level LXMF bridge;
+- signed WebRTC invitation descriptor;
+- explicit joiner consent;
+- fallback to TCP/Reticulum.
+
+Exit criteria:
+
+- a real workspace join, approval, receipt, and messages over WebRTC;
+- direct/STUN/TURN visible;
+- no plaintext or credentials in diagnostics;
+- disabling WebRTC removes the interface and leaves other paths intact.
+
+### C6 — Workspace/group calls (research)
 
 Group calls require a topology decision:
 
@@ -829,18 +861,21 @@ review.
 
 ## 11. Decision gates
 
-- **G0:** DataChannel works direct, via STUN, and forced via TURN with acceptable
-  latency/CPU.
-- **G1:** signaling documents are authenticated, replay-safe, and expire.
-- **G2:** a real workspace join/approval/receipt completes over WebRTC on
-  Windows.
-- **G3:** Android completes the same flow on a physical device.
-- **G4:** 1:1 audio is intelligible, stable, and battery-acceptable on both
-  platforms.
-- **G5:** 1:1 video meets device/codec/thermal thresholds.
-- **G6:** TURN quotas, reconnect, and diagnostics pass.
+- **G0:** call signaling is authenticated, replay-safe, expires, and binds
+  SDP/DTLS to the Reticulum identity.
+- **G1:** native audio works on a LAN, across STUN, and forced through TURN.
+- **G2:** Windows 1:1 audio passes device, permission, and quality checks.
+- **G3:** Android 1:1 audio passes physical-device and battery checks.
+- **G4:** 1:1 video meets device/codec/thermal thresholds.
+- **G5:** TURN quotas, reconnect, and diagnostics pass.
+- **G6:** a concrete requirement justifies the DataChannel adapter; a real
+  workspace join succeeds over it.
 - **G7:** group-call architecture and E2EE decision approved.
+
 ## 12. Testing plan
+
+Priority: call signaling and native audio first. DataChannel tests are required
+only when C5 is started.
 
 ### Unit
 
@@ -853,15 +888,15 @@ review.
 
 ### Integration
 
-- two native peers on a LAN, host candidates only;
-- STUN-assisted pair across a NAT;
-- forced TURN pair with direct blocked;
+- audio loopback and audio-device test;
+- STUN-assisted audio across a NAT;
+- forced TURN audio with direct blocked;
 - symmetric NAT/CGNAT simulation;
 - reconnect after IP change and ICE restart;
 - packet loss/latency injection;
-- workspace join, approval, receipt over DataChannel;
-- audio loopback and video device test;
-- background/sleep/wake on Android.
+- video device test;
+- background/sleep/wake on Android;
+- workspace join, approval, and receipt over DataChannel only after C5 starts.
 
 ### CI
 
@@ -873,26 +908,29 @@ review.
 ## 13. Acceptance criteria
 
 1. WebRTC is off by default and requires explicit consent.
-2. A normal invitation is unchanged unless WebRTC is selected.
-3. A signed WebRTC offer/answer is bound to the Reticulum identity and rejects
+2. A normal invitation and TCP-access-point onboarding are unchanged.
+3. A signed call invite/answer is bound to the Reticulum identity and rejects
    tampering, replay, expiry, and foreign signers.
-4. DataChannel can carry a workspace join, approval, receipt, and messages.
-5. Direct, STUN-assisted, and TURN-relayed paths are visibly distinct.
-6. TURN is used only when direct ICE fails or relay-only is selected.
-7. Calls are 1:1, explicitly accepted, and never auto-answer.
+4. A 1:1 audio call works on Windows and Android without auto-answer.
+5. A 1:1 video call works after audio, with camera consent.
+6. Direct and TURN-relayed media paths are visibly distinct.
+7. TURN is used only when direct ICE fails or relay-only is selected.
 8. Microphone/camera permissions are requested at call time.
 9. No recording, transcription, or media persistence.
-10. Failed WebRTC/calls do not change contact approval or workspace membership.
+10. Failed calls do not change contact approval or workspace membership.
 11. Android and Windows pass the physical call matrix before calls are enabled
     by default.
 12. Diagnostics contain no SDP, candidates, TURN credentials, or media keys.
+13. A WebRTC DataChannel onboarding adapter is not required for a workspace
+    join and remains conditional (C5).
 
 ## 14. Open questions
 
 1. Native stack: `str0m`, `webrtc-rs`, platform WebRTC, or a hybrid?
 2. Signaling: non-trickle SDP in one document, or signed candidate messages?
 3. Default STUN/TURN policy: none, self-hosted, or approved community?
-4. DataChannel as a Reticulum interface vs an application-level LXMF bridge?
+4. Whether the C5 DataChannel should be a Reticulum interface or an
+   application-level LXMF bridge.
 5. Should a WebRTC connection and a call share one peer connection?
 6. How long may a call ring before timeout?
 7. Group calls: full mesh, SFU with insertable-stream E2EE, or no group calls?
@@ -907,7 +945,8 @@ review.
 - Anonymous calling.
 - PSTN/SIP.
 - Recording/transcription.
-- Group calls before W8.
+- Group calls before C6.
+- A WebRTC DataChannel onboarding adapter before C5.
 - Browser client before a separate identity/vault/WASM decision.
 - Replacing Reticulum/LXMF or the existing QUIC underlay.
 
