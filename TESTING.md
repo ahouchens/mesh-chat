@@ -440,6 +440,16 @@ Fix:
 
 Validation: targeted service tests **22 passed**; mobile packaging and runtime
 startup are verified by the Android CI build and the next device launch.
+GitHub Actions
+[run 39529227899](https://github.com/ahouchens/mesh-chat/actions/runs/39529227899)
+passed Verify, Windows packaging, Android packaging, and Publish.
+Release: <https://github.com/ahouchens/mesh-chat/releases/tag/v0.2.99>.
+
+| Artifact | SHA-256 |
+|---|---|
+| `Mesh-Chat_0.2.99_x64-setup.exe` | `bcf7b1c8a5fa0a3891d64b19e2205724a6c8a1b0d0023ac48039544c4e17f0fd` |
+| `Mesh-Chat_0.2.99_x64_en-US.msi` | `9237eece13848e5efd07f4c6779ef9a13869959acbf839343ed59aefce471225` |
+| `mesh-chat-0.2.99-android-arm64-release.apk` | `c88fa153913833b558e668e3388c33658bc2be38ab011fcbdbc467dd36849e61` |
 
 ## WebRTC diagnostics export, 2026-10-20
 
