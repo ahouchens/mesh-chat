@@ -422,6 +422,25 @@ An intermediate 0.2.74 build failed five frontend assertions because normal
 invitations carried `i2p_consent: false`; 0.2.75 sends the field only for I2P
 previews.
 
+## TURN consent save fix, 2026-10-20
+
+**0.3.1 / Android 301** fixes **“That information could not be validated”**
+when saving the TURN broker consent.
+
+Cause: `update_call_settings` accepted the new `CallSettings` fields internally,
+but the service command allowlist still rejected `turn_broker_url` and
+`turn_broker_consent`. The UI sent them, so every save failed and the relay
+stayed disabled.
+
+Fix:
+
+- allow both fields in the `update_call_settings` command envelope;
+- add a regression test for the exact payload;
+- move the relay consent checkbox above the action buttons and show a
+  “Relay is disabled” warning when it is off.
+
+Validation: targeted service tests **19 passed**; full CI will verify packaging.
+
 ## Persistent WebRTC diagnostics, 2026-10-20
 
 **0.3.0 / Android 300** makes the last WebRTC diagnostics survive the dialog

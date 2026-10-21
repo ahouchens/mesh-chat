@@ -3190,7 +3190,10 @@ class MeshChatService(
         if command == "update_call_settings":
             body = _payload(
                 value,
-                allowed={"stun_urls", "turn_url", "turn_username", "turn_credential", "relay_only"},
+                allowed={
+                    "stun_urls", "turn_url", "turn_username", "turn_credential",
+                    "turn_broker_url", "turn_broker_consent", "relay_only",
+                },
                 required={"stun_urls", "relay_only"},
             )
             return self.update_call_settings(body)
