@@ -342,6 +342,17 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
   }, []);
 
   useEffect(() => {
+    const onApproval = (event: Event) => {
+      if (roleRef.current !== "offer") return;
+      const approved = Boolean((event as CustomEvent<{ approved?: boolean }>).detail?.approved);
+      updateWebRTCSessionApprovalPending(false);
+      setOnboarding(approved ? "approved" : "declined");
+    };
+    window.addEventListener("meshchat:approval", onApproval);
+    return () => window.removeEventListener("meshchat:approval", onApproval);
+  }, []);
+
+  useEffect(() => {
     if (initialPairingCode && !pcRef.current) {
       setOfferInput(initialPairingCode);
       setPhase("review");

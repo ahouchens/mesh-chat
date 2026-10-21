@@ -422,6 +422,18 @@ An intermediate 0.2.74 build failed five frontend assertions because normal
 invitations carried `i2p_consent: false`; 0.2.75 sends the field only for I2P
 previews.
 
+## Connect entry consolidation, 2026-10-21
+
+- Removed the redundant sidebar **New chat** button; invitation entry now
+  starts from **Connect → Invite someone**.
+- Updated the 21 affected frontend test interactions.
+- Owner approval also updates an open offerer WebRTC dialog via the
+  `meshchat:approval` event, so it no longer stays on “waiting approval” when
+  the approval happened outside the control-channel path.
+- Control-channel acknowledgement remains gated on `approvalPending`.
+
+Validation: TypeScript and **237 frontend tests** passed.
+
 ## Connection review fixes, 2026-10-21
 
 Bugs found while auditing the mailbox/connection changes:

@@ -612,7 +612,8 @@ describe("new chat invitations", () => {
 
     render(<App />);
     await screen.findByRole("heading", { name: "Your private conversations" });
-    fireEvent.click(screen.getAllByRole("button", { name: "New chat" })[0]);
+    fireEvent.click(screen.getAllByRole("button", { name: "Connect" })[0]);
+    fireEvent.click(screen.getByRole("button", { name: "Invite someone" }));
     fireEvent.click(await screen.findByRole("button", { name: "Prepare direct Internet invitation" }));
     await screen.findByDisplayValue("MESHCHAT3:direct");
 
@@ -693,7 +694,8 @@ describe("new chat invitations", () => {
 
     render(<App />);
     await screen.findByRole("heading", { name: "Your private conversations" });
-    fireEvent.click(screen.getAllByRole("button", { name: "New chat" })[0]);
+    fireEvent.click(screen.getAllByRole("button", { name: "Connect" })[0]);
+    fireEvent.click(screen.getByRole("button", { name: "Invite someone" }));
     fireEvent.click(await screen.findByRole("tab", { name: "Open an invite" }));
     fireEvent.change(screen.getByRole("textbox", { name: "Invitation" }), { target: { value: invitation } });
     fireEvent.click(screen.getByRole("button", { name: "Check invitation" }));
@@ -718,7 +720,8 @@ describe("new chat invitations", () => {
 
     render(<App />);
     await screen.findByRole("heading", { name: "Your private conversations" });
-    fireEvent.click(screen.getAllByRole("button", { name: "New chat" })[0]);
+    fireEvent.click(screen.getAllByRole("button", { name: "Connect" })[0]);
+    fireEvent.click(screen.getByRole("button", { name: "Invite someone" }));
     fireEvent.click(await screen.findByRole("tab", { name: "Open an invite" }));
     fireEvent.change(screen.getByRole("textbox", { name: "Invitation" }), { target: { value: "MESHWORKSPACE4" } });
     fireEvent.click(screen.getByRole("button", { name: "Check invitation" }));
@@ -819,7 +822,8 @@ describe("new chat invitations", () => {
 
     render(<App />);
     await screen.findByRole("heading", { name: "Your private conversations" });
-    fireEvent.click(screen.getAllByRole("button", { name: "New chat" })[0]);
+    fireEvent.click(screen.getAllByRole("button", { name: "Connect" })[0]);
+    fireEvent.click(screen.getByRole("button", { name: "Invite someone" }));
     fireEvent.click(await screen.findByRole("tab", { name: "Open an invite" }));
     fireEvent.change(screen.getByRole("textbox", { name: "Invitation" }), { target: { value: invitation } });
     fireEvent.click(screen.getByRole("button", { name: "Check invitation" }));
@@ -874,7 +878,8 @@ describe("new chat invitations", () => {
 
     render(<App />);
     await screen.findByRole("heading", { name: "Your private conversations" });
-    fireEvent.click(screen.getAllByRole("button", { name: "New chat" })[0]);
+    fireEvent.click(screen.getAllByRole("button", { name: "Connect" })[0]);
+    fireEvent.click(screen.getByRole("button", { name: "Invite someone" }));
     fireEvent.click(await screen.findByRole("tab", { name: "Open an invite" }));
     fireEvent.change(screen.getByRole("textbox", { name: "Invitation" }), { target: { value: "MESHWORKSPACE4:new-invitation-same-workspace" } });
     fireEvent.click(screen.getByRole("button", { name: "Check invitation" }));
@@ -914,7 +919,8 @@ describe("new chat invitations", () => {
 
     render(<App />);
     await screen.findByRole("heading", { name: "Your private conversations" });
-    fireEvent.click(screen.getAllByRole("button", { name: "New chat" })[0]);
+    fireEvent.click(screen.getAllByRole("button", { name: "Connect" })[0]);
+    fireEvent.click(screen.getByRole("button", { name: "Invite someone" }));
     fireEvent.click(await screen.findByRole("tab", { name: "Open an invite" }));
     fireEvent.change(screen.getByRole("textbox", { name: "Invitation" }), { target: { value: "MESHWORKSPACE4:copied" } });
     fireEvent.click(screen.getByRole("button", { name: "Check invitation" }));
@@ -943,7 +949,8 @@ describe("new chat invitations", () => {
 
     render(<App />);
     await screen.findByRole("heading", { name: "Your private conversations" });
-    fireEvent.click(screen.getAllByRole("button", { name: "New chat" })[0]);
+    fireEvent.click(screen.getAllByRole("button", { name: "Connect" })[0]);
+    fireEvent.click(screen.getByRole("button", { name: "Invite someone" }));
     fireEvent.change(await screen.findByRole("combobox", { name: "How should they connect?" }), { target: { value: "email" } });
     fireEvent.click(await screen.findByRole("button", { name: "Create email-ready invitation" }));
 
@@ -986,7 +993,8 @@ describe("new chat invitations", () => {
 
     render(<App />);
     await screen.findByRole("heading", { name: "Your private conversations" });
-    fireEvent.click(screen.getAllByRole("button", { name: "New chat" })[0]);
+    fireEvent.click(screen.getAllByRole("button", { name: "Connect" })[0]);
+    fireEvent.click(screen.getByRole("button", { name: "Invite someone" }));
     fireEvent.click(await screen.findByRole("tab", { name: "Open an invite" }));
     fireEvent.change(screen.getByRole("textbox", { name: "Invitation" }), { target: { value: "MESHCHAT4:invitation" } });
     fireEvent.click(screen.getByRole("button", { name: "Check invitation" }));
@@ -1039,7 +1047,8 @@ describe("new chat invitations", () => {
 
     render(<App />);
     await screen.findByRole("heading", { name: "Your private conversations" });
-    fireEvent.click(screen.getAllByRole("button", { name: "New chat" })[0]);
+    fireEvent.click(screen.getAllByRole("button", { name: "Connect" })[0]);
+    fireEvent.click(screen.getByRole("button", { name: "Invite someone" }));
     fireEvent.click(await screen.findByRole("tab", { name: "Open an invite" }));
     fireEvent.change(screen.getByRole("textbox", { name: "Invitation" }), { target: { value: "MESHCHAT4:invitation" } });
     fireEvent.click(screen.getByRole("button", { name: "Check invitation" }));
@@ -1089,7 +1098,8 @@ describe("new chat invitations", () => {
 
     render(<App />);
     await screen.findByRole("heading", { name: "Your private conversations" });
-    fireEvent.click(screen.getAllByRole("button", { name: "New chat" })[0]);
+    fireEvent.click(screen.getAllByRole("button", { name: "Connect" })[0]);
+    fireEvent.click(screen.getByRole("button", { name: "Invite someone" }));
     fireEvent.click(await screen.findByRole("tab", { name: "Open an invite" }));
     fireEvent.change(screen.getByRole("textbox", { name: "Invitation" }), { target: { value: "MESHCHAT4:invitation" } });
     fireEvent.click(screen.getByRole("button", { name: "Check invitation" }));
@@ -1127,7 +1137,8 @@ describe("new chat invitations", () => {
 
     render(<App />);
     await screen.findByRole("heading", { name: "Your private conversations" });
-    fireEvent.click(screen.getAllByRole("button", { name: "New chat" })[0]);
+    fireEvent.click(screen.getAllByRole("button", { name: "Connect" })[0]);
+    fireEvent.click(screen.getByRole("button", { name: "Invite someone" }));
     fireEvent.click(await screen.findByRole("tab", { name: "Open an invite" }));
     fireEvent.change(screen.getByRole("textbox", { name: "Invitation" }), { target: { value: reply } });
     fireEvent.click(screen.getByRole("button", { name: "Check invitation" }));
@@ -1200,7 +1211,8 @@ describe("new chat invitations", () => {
 
     render(<App />);
     await screen.findByRole("heading", { name: "Your private conversations" });
-    fireEvent.click(screen.getAllByRole("button", { name: "New chat" })[0]);
+    fireEvent.click(screen.getAllByRole("button", { name: "Connect" })[0]);
+    fireEvent.click(screen.getByRole("button", { name: "Invite someone" }));
 
     fireEvent.click(await screen.findByRole("button", { name: "Prepare direct Internet invitation" }));
     expect((await screen.findByRole("alert")).textContent).toContain("did not respond in time");
@@ -1230,7 +1242,8 @@ describe("new chat invitations", () => {
 
     render(<App />);
     await screen.findByRole("heading", { name: "Your private conversations" });
-    fireEvent.click(screen.getAllByRole("button", { name: "New chat" })[0]);
+    fireEvent.click(screen.getAllByRole("button", { name: "Connect" })[0]);
+    fireEvent.click(screen.getByRole("button", { name: "Invite someone" }));
     const reachability = await screen.findByRole("combobox", { name: "How should they connect?" });
     expect((reachability as HTMLSelectElement).value).toBe("participant");
     expect(screen.getByRole("option", { name: "Over the Internet — directly to this device (default)" })).toBeTruthy();
@@ -1266,7 +1279,8 @@ describe("new chat invitations", () => {
 
     render(<App />);
     await screen.findByRole("heading", { name: "Your private conversations" });
-    fireEvent.click(screen.getAllByRole("button", { name: "New chat" })[0]);
+    fireEvent.click(screen.getAllByRole("button", { name: "Connect" })[0]);
+    fireEvent.click(screen.getByRole("button", { name: "Invite someone" }));
     expect(api.serviceCommand.mock.calls.some(([command]) => command === "create_invitation")).toBe(false);
     fireEvent.click(screen.getByRole("button", { name: "Prepare direct Internet invitation" }));
     await screen.findByDisplayValue("MESHCHAT3:direct");
@@ -1289,7 +1303,8 @@ describe("new chat invitations", () => {
 
     render(<App />);
     await screen.findByRole("heading", { name: "Your private conversations" });
-    fireEvent.click(screen.getAllByRole("button", { name: "New chat" })[0]);
+    fireEvent.click(screen.getAllByRole("button", { name: "Connect" })[0]);
+    fireEvent.click(screen.getByRole("button", { name: "Invite someone" }));
     fireEvent.click(await screen.findByRole("button", { name: "Prepare direct Internet invitation" }));
     expect((await screen.findByRole("alert")).textContent).toContain("could not open a direct Internet path");
     fireEvent.change(screen.getByRole("combobox", { name: "How should they connect?" }), { target: { value: "nearby" } });
@@ -1319,7 +1334,8 @@ describe("new chat invitations", () => {
 
     render(<App />);
     await screen.findByRole("heading", { name: "Your private conversations" });
-    fireEvent.click(screen.getAllByRole("button", { name: "New chat" })[0]);
+    fireEvent.click(screen.getAllByRole("button", { name: "Connect" })[0]);
+    fireEvent.click(screen.getByRole("button", { name: "Invite someone" }));
     fireEvent.change(screen.getByRole("combobox", { name: "How should they connect?" }), { target: { value: "i2p" } });
     const create = await screen.findByRole("button", { name: "Create I2P invitation" });
     expect((create as HTMLButtonElement).disabled).toBe(true);
@@ -1374,7 +1390,8 @@ describe("new chat invitations", () => {
 
     render(<App />);
     await screen.findByRole("heading", { name: "Your private conversations" });
-    fireEvent.click(screen.getAllByRole("button", { name: "New chat" })[0]);
+    fireEvent.click(screen.getAllByRole("button", { name: "Connect" })[0]);
+    fireEvent.click(screen.getByRole("button", { name: "Invite someone" }));
     fireEvent.click(await screen.findByRole("button", { name: "Check direct Internet connection" }));
 
     expect(await screen.findByText("What should I do next?")).toBeTruthy();
@@ -1427,7 +1444,8 @@ describe("new chat invitations", () => {
 
     render(<App />);
     await screen.findByRole("heading", { name: "Your private conversations" });
-    fireEvent.click(screen.getAllByRole("button", { name: "New chat" })[0]);
+    fireEvent.click(screen.getAllByRole("button", { name: "Connect" })[0]);
+    fireEvent.click(screen.getByRole("button", { name: "Invite someone" }));
     fireEvent.click(await screen.findByRole("tab", { name: "Open an invite" }));
     fireEvent.change(screen.getByRole("textbox", { name: "Invitation" }), { target: { value: "MESHCHAT3:direct" } });
     fireEvent.click(screen.getByRole("button", { name: "Check invitation" }));
@@ -1468,7 +1486,8 @@ describe("new chat invitations", () => {
 
     render(<App />);
     await screen.findByRole("heading", { name: "Your private conversations" });
-    fireEvent.click(screen.getAllByRole("button", { name: "New chat" })[0]);
+    fireEvent.click(screen.getAllByRole("button", { name: "Connect" })[0]);
+    fireEvent.click(screen.getByRole("button", { name: "Invite someone" }));
     fireEvent.click(await screen.findByRole("tab", { name: "Open an invite" }));
     fireEvent.change(screen.getByRole("textbox", { name: "Invitation" }), { target: { value: "MESHCHAT3:direct" } });
     fireEvent.click(screen.getByRole("button", { name: "Check invitation" }));
@@ -1514,7 +1533,8 @@ describe("new chat invitations", () => {
 
     render(<App />);
     await screen.findByRole("heading", { name: "Your private conversations" });
-    fireEvent.click(screen.getAllByRole("button", { name: "New chat" })[0]);
+    fireEvent.click(screen.getAllByRole("button", { name: "Connect" })[0]);
+    fireEvent.click(screen.getByRole("button", { name: "Invite someone" }));
     fireEvent.click(await screen.findByRole("tab", { name: "Open an invite" }));
     fireEvent.change(screen.getByRole("textbox", { name: "Invitation" }), { target: { value: "MESHCHAT2:remote" } });
     fireEvent.click(screen.getByRole("button", { name: "Check invitation" }));
@@ -1629,7 +1649,8 @@ describe("incoming connection requests", () => {
     render(<App />);
     await screen.findByRole("heading", { name: "Your private conversations" });
 
-    fireEvent.click(screen.getAllByRole("button", { name: "New chat" })[0]);
+    fireEvent.click(screen.getAllByRole("button", { name: "Connect" })[0]);
+    fireEvent.click(screen.getByRole("button", { name: "Invite someone" }));
     await screen.findByRole("heading", { name: "New chat" });
     fireEvent.click(screen.getByRole("button", { name: "Prepare direct Internet invitation" }));
     expect(await screen.findByText("Invitation details to share")).toBeTruthy();

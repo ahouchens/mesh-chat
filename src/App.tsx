@@ -4876,6 +4876,7 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceChannelIn
         setNewChat(false);
         onInvitationHandled();
       }
+      window.dispatchEvent(new CustomEvent("meshchat:approval", { detail: { approved: accept } }));
       await refresh(true);
     } catch (reason) {
       if (accept) {
@@ -5676,7 +5677,6 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceChannelIn
           {conversationItems.length === 0 && <div className="conversation-list-empty"><MessageCircleMore size={24} /><strong>{query ? "No matching conversations" : "Your conversations will appear here"}</strong><span>{query ? "Try a different name or clear the filter." : "Start a private chat or create a group below."}</span></div>}
         </nav>
         <div className="new-conversation-actions">
-          <button className="new-chat-button" aria-label="New chat" onClick={() => setNewChat(true)}><Plus size={20} /><span>New chat</span></button>
           <button className="new-group-button" aria-label="New group" onClick={() => setNewGroup(true)}><Users size={19} /><span>New group</span></button>
           <button className="new-group-button" aria-label="Connect" onClick={() => setConnectEntryOpen(true)}><QrCode size={19} /><span>Connect</span></button>
         </div>
