@@ -422,6 +422,21 @@ An intermediate 0.2.74 build failed five frontend assertions because normal
 invitations carried `i2p_consent: false`; 0.2.75 sends the field only for I2P
 previews.
 
+## Role and document-type errors, 2026-10-21
+
+**0.4.5 / Android 405** stops mislabeling offer failures as answer failures:
+
+- offer verification errors now say the offer signature or document is invalid;
+- answer verification errors remain answer-specific;
+- both fields validate the signed document `type` before calling the service;
+- pasting an offer into the answer field now says “That document is not a
+  WebRTC answer”;
+- pasting an answer into the offer field says “That document is not a WebRTC
+  offer”;
+- the chooser explains which device is offerer and which is joiner.
+
+Validation: TypeScript and **237 frontend tests** passed.
+
 ## Duplicate WebRTC operation guard, 2026-10-21
 
 **0.4.4 / Android 404** closes a race that could produce zero ICE candidate

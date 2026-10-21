@@ -61,16 +61,42 @@ function fingerprint(sdp: string): string {
   throw new Error("The offer has no DTLS fingerprint.");
 }
 
-function errorMessage(reason: unknown): string {
+function documentType(value: string): string {
+  try {
+    const parsed = JSON.parse(value) as { type?: unknown };
+    return typeof parsed.type === "string" ? parsed.type : "";
+  } catch {
+    return "";
+  }
+}
+
+function offerErrorMessage(reason: unknown): string {
   const code = reason && typeof reason === "object" && "code" in reason
     ? String((reason as { code?: unknown }).code ?? "")
     : "";
   if (code === "identity_mismatch") {
-    return "This answer belongs to a different WebRTC offer. The offer was probably regenerated. Create a new offer and have the other person generate a new answer; do not reuse an earlier answer.";
+    return "The offer signature could not be verified. Copy the complete current offer from the device that created it; if it was regenerated, use the new offer.";
   }
   if (code === "invalid_request") {
-    return "The WebRTC onboarding data was rejected as invalid. Create a fresh offer and answer.";
+    return "This is not a complete signed WebRTC offer. Copy the entire offer document, including its outer JSON braces.";
   }
+  return reason instanceof Error ? reason.message : "The WebRTC offer could not be verified.";
+}
+
+function answerErrorMessage(reason: unknown): string {
+  const code = reason && typeof reason === "object" && "code" in reason
+    ? String((reason as { code?: unknown }).code ?? "")
+    : "";
+  if (code === "identity_mismatch") {
+    return "This answer belongs to a different WebRTC offer. Generate a new answer from the current offer.";
+  }
+  if (code === "invalid_request") {
+    return "This is not a complete signed WebRTC answer. Copy the entire answer document.";
+  }
+  return reason instanceof Error ? reason.message : "The WebRTC answer could not be verified.";
+}
+
+function errorMessage(reason: unknown): string {
   return reason instanceof Error ? reason.message : "The WebRTC onboarding step failed.";
 }
 
@@ -454,12 +480,15 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, worksp
     try {
       if (!pcRef.current || !offerDocument) throw new Error("Create an offer first.");
       let localOffer: { session_id?: unknown } = {};
-      let answerValue: { session_id?: unknown; offer_digest?: unknown } = {};
+      let answerValue: { type?: unknown; session_id?: unknown; offer_digest?: unknown } = {};
       try {
         localOffer = JSON.parse(offerDocument) as { session_id?: unknown };
-        answerValue = JSON.parse(answerInput.trim()) as { session_id?: unknown; offer_digest?: unknown };
+        answerValue = JSON.parse(answerInput.trim()) as { type?: unknown; session_id?: unknown; offer_digest?: unknown };
       } catch {
         throw new Error("The answer is not valid JSON. Copy the complete signed answer.");
+      }
+      if (answerValue.type !== "webrtc_onboarding_answer") {
+        throw new Error("That document is not a WebRTC answer. On the other device, choose Join with WebRTC, paste the offer, and copy the answer it creates.");
       }
       if (answerValue.session_id !== localOffer.session_id) {
         throw new Error(`This answer is for session ${String(answerValue.session_id ?? "?").slice(0, 8)}, but the current offer is ${String(localOffer.session_id ?? "?").slice(0, 8)}. Generate a new answer from the current offer.`);
@@ -475,7 +504,7 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, worksp
       await pcRef.current.setRemoteDescription({ type: "answer", sdp: preview.sdp });
       if (channelRef.current?.readyState === "open") await attach(channelRef.current);
     } catch (reason) {
-      const message = errorMessage(reason);
+      const message = answerErrorMessage(reason);
       void captureDiagnostics("answer-failed", message);
       setError(message);
       setPhase("error");
@@ -490,6 +519,15 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, worksp
     setReviewBusy(true);
     setError(""); setPhase("review");
     try {
+      let parsedOffer: { type?: unknown } = {};
+      try {
+        parsedOffer = JSON.parse(offerInput.trim()) as { type?: unknown };
+      } catch {
+        throw new Error("The offer is not valid JSON. Copy the complete signed offer.");
+      }
+      if (parsedOffer.type !== "webrtc_onboarding_offer") {
+        throw new Error("That document is not a WebRTC offer. Paste the offer created on the other device, not an answer.");
+      }
       const preview = await serviceCommand<OnboardingOfferPreview>("verify_webrtc_onboarding_offer", {
         document: offerInput.trim(),
       });
@@ -528,7 +566,7 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, worksp
       setAnswerPreview({ ...preview, sdp, dtls_fingerprint: fingerprint(sdp), document: result.document });
       setPhase("waiting-owner");
     } catch (reason) {
-      const message = errorMessage(reason);
+      const message = offerErrorMessage(reason);
       void captureDiagnostics("offer-review-failed", message).finally(cleanup);
       setError(message);
       setPhase("error");
@@ -586,6 +624,7 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, worksp
         <div className="dialog__header"><h2 id="webrtc-onboarding-title">Connect with WebRTC</h2><button className="icon-button" onClick={close} aria-label="Close"><X size={20} /></button></div>
         <div className="stack">
           <p className="muted">WebRTC carries Reticulum packets over a direct or relayed DataChannel. The other person must review the signed offer and return a signed answer. This is experimental and does not approve a contact by itself.</p>
+          <p className="muted">Create invitation: this device makes the offer. Join with WebRTC: this device pastes an offer. Use only one role per attempt.</p>
           {phase === "choose" && <>
             {workspaces.length > 0 && <label className="field"><span>Also invite to workspace <small>Optional; the contact invitation is still sent</small></span><select value={selectedWorkspaceId} onChange={(event) => setSelectedWorkspaceId(event.target.value)}><option value="">Personal contact only</option>{workspaces.map((workspace) => <option key={workspace.id} value={workspace.id}>{workspace.name}</option>)}</select></label>}
             <div className="dialog-actions"><button className="button button--primary" onClick={() => void createOffer()}><Phone size={17} /> Create WebRTC invitation</button><button className="button button--secondary" onClick={() => { setPhase("review"); setOfferInput(""); }}>Join with WebRTC</button></div>
