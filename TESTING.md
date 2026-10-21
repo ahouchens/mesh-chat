@@ -436,6 +436,18 @@ previews.
   SDP candidate counts.
 
 Validation: TypeScript, **237 frontend tests**, and production build passed.
+GitHub Actions
+[run 39599950154](https://github.com/ahouchens/mesh-chat/actions/runs/39599950154)
+passed Verify, Windows packaging, Android packaging, and Publish.
+Release: <https://github.com/ahouchens/mesh-chat/releases/tag/v0.4.0>.
+
+| Artifact | SHA-256 |
+|---|---|
+| `Mesh-Chat_0.4.0_x64-setup.exe` | `57c5566ec16292d51041ee1f09b88464371f1de4b34d26c0e98e6e648aff9dad` |
+| `Mesh-Chat_0.4.0_x64_en-US.msi` | `4d5882e6e9bf0e2ba040ef2e5dcccba1fadf4ce3b13d28733fdf25e17fa681b6` |
+| `mesh-chat-0.4.0-android-arm64-release.apk` | `0df2319bc8ac1881617399ad4713336a03446820fac2ccf0a3812f903f807e95` |
+
+## ICE gathering and relay diagnostics, 2026-10-20
 
 ## ICE gathering and relay diagnostics, 2026-10-20
 

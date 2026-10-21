@@ -1,10 +1,9 @@
 # C5 DataChannel onboarding bridge specification
 
-Status: C5a–C5d implemented as a candidate (Python interface + service packet
-IPC, renderer DataChannel pump, signed QR/copy offer/answer, and
-invitation/workspace admission over the connected bridge). C5e physical
-qualification remains open. The 0.2.88 prototype is not a shipping onboarding
-path.
+Status: C5a–C5d implemented (Python interface + service packet IPC, renderer
+DataChannel pump, signed QR/copy offer/answer, and inline personal/workspace
+onboarding over a second control DataChannel). C5e physical qualification
+remains open. The 0.2.88 prototype is not a shipping onboarding path.
 
 ## 1. Goal
 
@@ -230,22 +229,18 @@ Implemented in 0.2.91:
 
 ### C5d — Onboarding admission
 
-Implemented candidate in 0.2.93:
+Implemented in 0.4.0:
 
-- personal and workspace invitation selectors expose **WebRTC bridge —
-  connected** when the session is active;
-- `connection_mode = "webrtc"` creates the existing signed invitation without
-  starting participant-hosted direct setup;
-- the normal join/approval/receipt flow then runs over the attached Reticulum
-  interface.
+- a second reliable `mesh-onboarding` DataChannel;
+- the offerer creates and sends a signed personal invitation over it;
+- optional workspace invitation is created and sent in the same exchange;
+- the joiner previews identity/fingerprint and accepts inline;
+- owner approval still runs through the existing signed request flow;
+- no QR/copy/paste for the contact/workspace invitation after the WebRTC
+  connection is established.
 
-Still open: automatic invitation transfer inside the WebRTC dialog (the
-invitation is still copied/pasted), reconnect/failure tests, and physical
-qualification.
-
-- Run the existing invitation/join flow over the bridge.
-- Owner approval, queued messages, receipts.
-- Failure/reconnect tests.
+Still open: signalling the joiner when owner approval completes, automatic
+invitation transfer after a reconnect, and physical qualification.
 
 ### C5e — Physical qualification
 
