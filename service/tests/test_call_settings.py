@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from mesh_chat.call_settings import CallSettings
+from mesh_chat.call_settings import CallSettings, DEFAULT_TURN_BROKER_URL
 from mesh_chat.errors import ValidationError
 
 
@@ -13,9 +13,10 @@ def test_defaults_use_google_stun_but_no_turn() -> None:
         "turn_url": None,
         "turn_username": None,
         "turn_configured": False,
-        "turn_broker_url": None,
-        "turn_broker_configured": False,
-        "turn_broker_default_url": None,
+        "turn_broker_url": DEFAULT_TURN_BROKER_URL,
+        "turn_broker_configured": DEFAULT_TURN_BROKER_URL is not None,
+        "turn_broker_consent": False,
+        "turn_broker_default_url": DEFAULT_TURN_BROKER_URL,
         "relay_only": False,
     }
     assert settings.ice_servers() == [{"urls": ["stun:stun.l.google.com:19302"]}]
@@ -45,9 +46,10 @@ def test_stun_and_turn_are_normalized_and_secretly_scoped() -> None:
         "turn_url": "turns:turn.example.org:5349",
         "turn_username": "mesh",
         "turn_configured": True,
-        "turn_broker_url": None,
-        "turn_broker_configured": False,
-        "turn_broker_default_url": None,
+        "turn_broker_url": DEFAULT_TURN_BROKER_URL,
+        "turn_broker_configured": DEFAULT_TURN_BROKER_URL is not None,
+        "turn_broker_consent": False,
+        "turn_broker_default_url": DEFAULT_TURN_BROKER_URL,
         "relay_only": True,
     }
     assert "credential" not in settings.public()
@@ -87,11 +89,13 @@ def test_cloudflare_broker_url_is_stored_and_exposed_without_secrets() -> None:
         {
             "stun_urls": [],
             "turn_broker_url": "https://turn.example.workers.dev/credentials",
+            "turn_broker_consent": True,
             "relay_only": True,
         }
     )
     assert settings.turn_broker_url == "https://turn.example.workers.dev/credentials"
     assert settings.public()["turn_broker_configured"] is True
+    assert settings.public()["turn_broker_consent"] is True
     assert "turn_credential" not in settings.public()
     assert settings.rtc_configuration()["iceTransportPolicy"] == "relay"
 

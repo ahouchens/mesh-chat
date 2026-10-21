@@ -56,7 +56,7 @@ def test_fetch_broker_adds_ttl_and_returns_ice_servers(monkeypatch) -> None:
         def __exit__(self, *args):
             return False
 
-    def urlopen(request, timeout):
+    def urlopen(request, timeout, context=None):
         requested["url"] = request.full_url
         requested["timeout"] = timeout
         return Response()

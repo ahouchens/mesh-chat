@@ -949,6 +949,7 @@ export interface CallSettings {
   turn_configured: boolean;
   turn_broker_url?: string | null;
   turn_broker_configured?: boolean;
+  turn_broker_consent?: boolean;
   turn_broker_default_url?: string | null;
   relay_only: boolean;
 }

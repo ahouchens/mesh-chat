@@ -1663,7 +1663,7 @@ class MeshChatService(
         return settings.public()
 
     def call_ice_servers(self) -> dict[str, Any]:
-        broker = self._call_settings.turn_broker_url
+        broker = self._call_settings.turn_broker_url if self._call_settings.turn_broker_consent else None
         if broker is not None:
             try:
                 servers = self._broker_ice_servers(broker)

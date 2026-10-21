@@ -140,6 +140,8 @@ The DataChannel is not a replacement for approval. It is only a transport.
   `stun:stun.l.google.com:19302`. The user can replace or clear it.
 - **No free Google TURN exists.** Mesh Chat does not ship a default TURN
   endpoint or shared credentials.
+- A built-in Cloudflare TURN broker is available but disabled until the user
+  enables relay consent. Users can replace or disable it.
 - Users can configure their own TURN server. `deploy/relay` provides a
   one-command coturn deployment with TURN over TCP 443, and `deploy/turn` is
   the manual reference. `deploy/cloudflare-turn` provides a Worker that

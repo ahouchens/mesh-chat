@@ -422,6 +422,34 @@ An intermediate 0.2.74 build failed five frontend assertions because normal
 invitations carried `i2p_consent: false`; 0.2.75 sends the field only for I2P
 previews.
 
+## Default Cloudflare TURN relay, 2026-10-20
+
+**0.2.97 / Android 2097** makes the Cloudflare TURN broker a built-in default:
+
+```text
+https://staether.webtechalex.workers.dev/credentials
+```
+
+- calls do not use it until the user enables **Use this TURN broker for calls**;
+- users can override the broker URL or disable it;
+- the long-term Cloudflare TURN API token stays in the Worker;
+- `certifi` is bundled for service HTTPS validation on Windows and Android;
+- broker responses are cached for 50 minutes and refreshed before the TTL.
+
+Validation:
+
+- Live Worker response returned two ICE server entries, including TURN URLs.
+- Service `fetch_ice_servers` returned TURN URLs through the new certifi SSL
+  context.
+- Full service suite: **1051 passed, 46 skipped**.
+- Frontend TypeScript: passed.
+- Frontend tests: **237 passed**.
+- Frontend production build: passed.
+- GitHub Actions: pending.
+
+Still open: live Windows↔Android onboarding through Cloudflare TURN, Worker
+rate limiting, and token rotation after the exposed token.
+
 ## Cloudflare TURN broker support, 2026-10-20
 
 **0.2.96 / Android 2096** adds Cloudflare TURN as a credential-broker

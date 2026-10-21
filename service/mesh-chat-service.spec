@@ -3,13 +3,14 @@ from PyInstaller.utils.hooks import collect_all
 
 rns_data, rns_binaries, rns_hidden = collect_all("RNS")
 lxmf_data, lxmf_binaries, lxmf_hidden = collect_all("LXMF")
+certifi_data, certifi_binaries, certifi_hidden = collect_all("certifi")
 
 a = Analysis(
     ["entrypoint.py"],
     pathex=["src"],
-    binaries=rns_binaries + lxmf_binaries,
-    datas=rns_data + lxmf_data,
-    hiddenimports=rns_hidden + lxmf_hidden,
+    binaries=rns_binaries + lxmf_binaries + certifi_binaries,
+    datas=rns_data + lxmf_data + certifi_data,
+    hiddenimports=rns_hidden + lxmf_hidden + certifi_hidden,
     noarchive=False,
 )
 pyz = PYZ(a.pure)

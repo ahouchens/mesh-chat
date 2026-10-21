@@ -2255,6 +2255,7 @@ function WebRTCCallSettings({ onSaved }: { onSaved: () => Promise<void> }) {
   const [turnUser, setTurnUser] = useState("");
   const [turnCredential, setTurnCredential] = useState("");
   const [turnBrokerUrl, setTurnBrokerUrl] = useState("");
+  const [turnBrokerConsent, setTurnBrokerConsent] = useState(false);
   const [relayOnly, setRelayOnly] = useState(false);
   const [busy, setBusy] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -2266,6 +2267,7 @@ function WebRTCCallSettings({ onSaved }: { onSaved: () => Promise<void> }) {
       setTurnUrl(value.turn_url ?? "");
       setTurnUser(value.turn_username ?? "");
       setTurnBrokerUrl(value.turn_broker_url ?? "");
+      setTurnBrokerConsent(value.turn_broker_consent ?? false);
       setRelayOnly(value.relay_only);
     }).catch((reason) => setError(errorMessage(reason)));
   }, []);
@@ -2278,6 +2280,7 @@ function WebRTCCallSettings({ onSaved }: { onSaved: () => Promise<void> }) {
         turn_username: turnUser.trim() || null,
         turn_credential: turnCredential || null,
         turn_broker_url: turnBrokerUrl.trim() || null,
+        turn_broker_consent: turnBrokerConsent,
         relay_only: relayOnly,
       });
       setSettings(result);
@@ -2305,8 +2308,9 @@ function WebRTCCallSettings({ onSaved }: { onSaved: () => Promise<void> }) {
         <Button variant="ghost" onClick={() => { setTurnBrokerUrl(""); setSaved(false); }}>Disable TURN broker</Button>
       </div>
       {settings?.turn_broker_default_url && <p className="muted">Global default: <code>{settings.turn_broker_default_url}</code>. You can override it with a community broker or disable it.</p>}
+      <label className="checkbox-line"><input type="checkbox" checked={turnBrokerConsent} disabled={!turnBrokerUrl.trim()} onChange={(event) => { setTurnBrokerConsent(event.target.checked); setSaved(false); }} /> Use this TURN broker for calls. The relay operator can see IP addresses, timing, and encrypted traffic; it does not get message plaintext.</label>
       <label className="checkbox-line"><input type="checkbox" checked={relayOnly} onChange={(event) => { setRelayOnly(event.target.checked); setSaved(false); }} /> Relay-only: never try a direct path. This requires a TURN server and shows every call as relayed.</label>
-      <p className="muted">{settings?.turn_broker_configured ? "Cloudflare TURN credentials are fetched from the configured broker and refreshed per session." : settings?.turn_configured ? "TURN is configured. Credentials stay in the encrypted service record and are released only to an active call." : "No TURN server configured. Calls work only on a shared LAN or when direct host candidates are reachable."}</p>
+      <p className="muted">{settings?.turn_broker_configured && settings.turn_broker_consent ? "Cloudflare TURN credentials are fetched from the configured broker and refreshed per session." : settings?.turn_broker_configured ? "A TURN broker is configured but not enabled. Enable it above to use the relay." : settings?.turn_configured ? "TURN is configured. Credentials stay in the encrypted service record and are released only to an active call." : "No TURN server configured. Calls work only on a shared LAN or when direct host candidates are reachable."}</p>
       {saved && <p className="muted" role="status">Call settings saved.</p>}
       {error && <p className="form-error" role="alert">{error}</p>}
       <Button disabled={busy} onClick={() => void save()}>{busy ? "Saving…" : "Save call settings"}</Button>

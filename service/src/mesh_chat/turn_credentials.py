@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import json
+import ssl
 import urllib.request
 from typing import Any
+
+import certifi
 
 from .call_settings import _url, validate_broker_url
 from .errors import NetworkUnavailable
@@ -24,7 +27,8 @@ def fetch_ice_servers(broker_url: str, *, timeout: float = 8.0) -> list[dict[str
         },
     )
     try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
+        context = ssl.create_default_context(cafile=certifi.where())
+        with urllib.request.urlopen(request, timeout=timeout, context=context) as response:
             if response.status != 200:
                 raise NetworkUnavailable("TURN credential broker rejected the request")
             body = response.read(MAX_RESPONSE_BYTES + 1)

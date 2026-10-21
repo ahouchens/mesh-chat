@@ -61,7 +61,9 @@ export default {
 
     if (!upstream.ok) {
       // Do not relay Cloudflare's error body: it can contain account/key data.
-      return json({ error: "turn_upstream_rejected" }, 502);
+      // The status alone distinguishes bad credentials (401/403) from a bad
+      // request (400) without exposing secrets.
+      return json({ error: "turn_upstream_rejected", upstream_status: upstream.status }, 502);
     }
 
     let payload;

@@ -54,11 +54,22 @@ The first implementation uses **Cloudflare TURN** through a credential broker
 - users can override the broker URL or disable it in Settings;
 - the broker URL is not a secret.
 
-### Current blocker
+### Default endpoint
 
-A default descriptor needs a real broker endpoint URL and a Reticulum access
-point host. No broker URL is configured in this source tree yet. A placeholder
-endpoint would be dishonest and would fail for users.
+The built-in Cloudflare TURN broker is:
+
+```text
+https://staether.webtechalex.workers.dev/credentials
+```
+
+It is opt-in: `turn_broker_consent` is false by default, so calls do not use the
+broker until the user enables relay consent. Users can replace or disable it in
+Settings.
+
+The broker is TURN-only. It does not provide a Reticulum TCP access point; that
+role still requires a VPS or an existing community access point. The Worker
+must remain reachable and rate-limited, and its TURN API token must be rotated
+if exposed.
 
 ## 4. Relay descriptor
 

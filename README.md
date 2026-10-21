@@ -8,7 +8,7 @@ The design accepts real trade-offs. Delivery depends on peers being reachable, h
 
 An optional **I2P relay path** can bootstrap a workspace or 1:1 connection when neither device has a public endpoint. It is an explicit, consented fallback: the invitation carries one signed `*.b32.i2p` access point, both sides need an I2P router, and the access point relays encrypted Reticulum traffic rather than creating a direct link. I2P is not the default, is not available on Android yet, and does not replace the direct/LAN/access-point paths.
 
-> **Status — security-sensitive prototype.** The source tree is at 0.2.96. It has not been independently audited, and several physical-device and packaging gates are still open. Read [Status and verification](#status-and-verification) before relying on it.
+> **Status — security-sensitive prototype.** The source tree is at 0.2.97. It has not been independently audited, and several physical-device and packaging gates are still open. Read [Status and verification](#status-and-verification) before relying on it.
 
 ## What problem it solves
 
@@ -99,11 +99,12 @@ TURN API token stays on the broker, while Mesh Chat receives short-lived
 [deploy/relay](deploy/relay/README.md).
 
 In **Settings → WebRTC calls**, users can enter a Cloudflare TURN broker URL,
-override the built-in default, or disable the broker. A build can ship a global
-default via `MESH_CHAT_DEFAULT_TURN_BROKER`; no default endpoint is configured
-in this source tree yet. See [the community relay spec](docs/COMMUNITY_RELAY_SPEC.md).
+override the built-in default, or disable the broker. The built-in default is
+`https://staether.webtechalex.workers.dev/credentials`; it is **not used until
+the user enables relay consent** and can be changed at any time. See
+[the community relay spec](docs/COMMUNITY_RELAY_SPEC.md).
 
-**I2P is an opt-in relay, not the default.** A normal invitation still starts with nearby/direct/participant-hosted/remote choices. I2P is selected explicitly, and the joiner sees the access point and must consent. The access point is a Reticulum `I2PInterface` node addressed by `*.b32.i2p`; it relays encrypted Reticulum/LXMF traffic and does not see message plaintext. Windows bundles and manages `i2pd`; Android has the settings and consent UI but no bundled I2P router yet, so Android cannot complete an I2P join in 0.2.96.
+**I2P is an opt-in relay, not the default.** A normal invitation still starts with nearby/direct/participant-hosted/remote choices. I2P is selected explicitly, and the joiner sees the access point and must consent. The access point is a Reticulum `I2PInterface` node addressed by `*.b32.i2p`; it relays encrypted Reticulum/LXMF traffic and does not see message plaintext. Windows bundles and manages `i2pd`; Android has the settings and consent UI but no bundled I2P router yet, so Android cannot complete an I2P join in 0.2.97.
 
 ## Workspaces: authority without a server
 
@@ -194,7 +195,7 @@ The threat model is explicit about what is *not* protected: traffic analysis, IP
 
 | Platform | What exists | Recorded verification |
 | --- | --- | --- |
-| Windows x64 | MSI and NSIS installers, standalone executable plus service sidecar, bundled/managed `i2pd`, I2P invitation and consent UI, 1:1 audio/video call surface | 0.2.96 published; installer launch not rerun after the temporary-folder disk fix |
+| Windows x64 | MSI and NSIS installers, standalone executable plus service sidecar, bundled/managed `i2pd`, I2P invitation and consent UI, 1:1 audio/video call surface | 0.2.97 published; installer launch not rerun after the temporary-folder disk fix |
 | Android arm64 | Debug APK, plus release/AAB signing path; I2P settings and invitation preview, 1:1 audio/video call surface | Built and package-inspected; no bundled I2P router and no physical call test in the recorded run |
 | macOS | Build path, FileVault adapter | No package built or run in this repository |
 | Linux | Build path, fscrypt/dm-crypt adapters | No package built or run in this repository |
