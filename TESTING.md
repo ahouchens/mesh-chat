@@ -445,6 +445,16 @@ Validation: TypeScript and **237 frontend tests** passed.
 - no TURN or identity change is required for this error.
 
 Validation: TypeScript and **237 frontend tests** passed.
+GitHub Actions
+[run 39609800738](https://github.com/ahouchens/mesh-chat/actions/runs/39609800738)
+passed Verify, Windows packaging, Android packaging, and Publish.
+Release: <https://github.com/ahouchens/mesh-chat/releases/tag/v0.4.2>.
+
+| Artifact | SHA-256 |
+|---|---|
+| `Mesh-Chat_0.4.2_x64-setup.exe` | `263ea54eb680e248c8c2a68fc2dd00d743e6b9bc3e511f372d48e0a1fd253e8e` |
+| `Mesh-Chat_0.4.2_x64_en-US.msi` | `3cd23ffc71d7924cf03582c9e319f060aecd21f4ecd517508a74ae39b6ebdc56` |
+| `mesh-chat-0.4.2-android-arm64-release.apk` | `48805461d56b92a5ce36f0e8434500dfd9289d8f7174b5160f4fba05583eb608` |
 
 ## Inline contact and workspace onboarding, 2026-10-21
 
