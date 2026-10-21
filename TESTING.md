@@ -436,6 +436,14 @@ previews.
 - `ConnectionTransport` boundary.
 
 Validation: TypeScript, **237 frontend tests**, and production build passed.
+GitHub Actions [run 39693211475](https://github.com/ahouchens/mesh-chat/actions/runs/39693211475) passed.
+Release: <https://github.com/ahouchens/mesh-chat/releases/tag/v0.8.0>.
+
+| Artifact | SHA-256 |
+|---|---|
+| `Mesh-Chat_0.8.0_x64-setup.exe` | `5dbdb45aed2cd82eeac5e3bd829462512de2bff8bb35a6338814b36fdeab3361` |
+| `Mesh-Chat_0.8.0_x64_en-US.msi` | `2d01ef5b2a19b17ffd1f6b09951f9d5f5ce883c8e13352318ef38a848c8d9f74` |
+| `mesh-chat-0.8.0-android-arm64-release.apk` | `dbe8f5fa6e50d78e1ec94558a3512d227d3b0e9dceadecd5fffa1acd1d8e8522` |
 
 ## Signaling mailbox UI, 2026-10-21
 
