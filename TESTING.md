@@ -440,6 +440,16 @@ Fix:
   “Relay is disabled” warning when it is off.
 
 Validation: targeted service tests **19 passed**; full CI will verify packaging.
+GitHub Actions
+[run 39536091748](https://github.com/ahouchens/mesh-chat/actions/runs/39536091748)
+passed Verify, Windows packaging, Android packaging, and Publish.
+Release: <https://github.com/ahouchens/mesh-chat/releases/tag/v0.3.1>.
+
+| Artifact | SHA-256 |
+|---|---|
+| `Mesh-Chat_0.3.1_x64-setup.exe` | `1c7394b4bfa51248a43db8d44fa3f9a893c8614c6544afeede6871e501b0bbae` |
+| `Mesh-Chat_0.3.1_x64_en-US.msi` | `e65316c2dcd4e93327d1acc75a507968cdc83c06f14de78677fa2d965eb8a462` |
+| `mesh-chat-0.3.1-android-arm64-release.apk` | `2614e261220d9fbc28b6cd2f0f63ae2546cb3bf26d64deb70aab29ecfcd11c9d` |
 
 ## Persistent WebRTC diagnostics, 2026-10-20
 
