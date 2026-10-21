@@ -422,6 +422,19 @@ An intermediate 0.2.74 build failed five frontend assertions because normal
 invitations carried `i2p_consent: false`; 0.2.75 sends the field only for I2P
 previews.
 
+## Answer binding precheck, 2026-10-21
+
+**0.4.2 / Android 402** distinguishes a stale answer from a copy mistake:
+
+- the offer and answer display a short session code;
+- before calling the service, the app compares the answer's `session_id` with
+  the current offer;
+- it computes SHA-256 of the current offer and compares `offer_digest`;
+- a mismatch now names the session or digest instead of returning generic
+  `identity_mismatch`.
+
+Validation: TypeScript and **237 frontend tests** passed.
+
 ## Stale WebRTC answer guidance, 2026-10-21
 
 **0.4.1 / Android 401** makes a stale signed answer actionable:

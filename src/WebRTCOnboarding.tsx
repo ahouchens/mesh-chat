@@ -74,6 +74,20 @@ function errorMessage(reason: unknown): string {
   return reason instanceof Error ? reason.message : "The WebRTC onboarding step failed.";
 }
 
+function sessionCode(document: string): string {
+  try {
+    const value = JSON.parse(document) as { session_id?: unknown };
+    return typeof value.session_id === "string" ? value.session_id.slice(0, 8) : "?";
+  } catch {
+    return "?";
+  }
+}
+
+async function sha256Hex(value: string): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
 async function waitForCandidates(pc: RTCPeerConnection, timeoutMs = 15000): Promise<void> {
   if (pc.iceGatheringState === "complete") return;
   await new Promise<void>((resolve) => {
@@ -429,6 +443,20 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, worksp
     setError(""); setPhase("connecting");
     try {
       if (!pcRef.current || !offerDocument) throw new Error("Create an offer first.");
+      let localOffer: { session_id?: unknown } = {};
+      let answerValue: { session_id?: unknown; offer_digest?: unknown } = {};
+      try {
+        localOffer = JSON.parse(offerDocument) as { session_id?: unknown };
+        answerValue = JSON.parse(answerInput.trim()) as { session_id?: unknown; offer_digest?: unknown };
+      } catch {
+        throw new Error("The answer is not valid JSON. Copy the complete signed answer.");
+      }
+      if (answerValue.session_id !== localOffer.session_id) {
+        throw new Error(`This answer is for session ${String(answerValue.session_id ?? "?").slice(0, 8)}, but the current offer is ${String(localOffer.session_id ?? "?").slice(0, 8)}. Generate a new answer from the current offer.`);
+      }
+      if (answerValue.offer_digest !== await sha256Hex(offerDocument)) {
+        throw new Error("This answer binds a different offer digest. The offer was regenerated; generate a new answer from the current offer.");
+      }
       const preview = await serviceCommand<OnboardingAnswerPreview>("verify_webrtc_onboarding_answer", {
         offer_document: offerDocument,
         answer_document: answerInput.trim(),
@@ -547,6 +575,7 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, worksp
           {phase === "creating" && <p className="direct-host-status" role="status"><RefreshCw size={17} /> Preparing the signed WebRTC offer…</p>}
           {phase === "waiting-answer" && <>
             <h3>Send this offer to the other person</h3>
+            <p className="muted">Offer session: <code>{sessionCode(offerDocument)}</code>. The answer must carry the same session.</p>
             <div className="webrtc-qr"><QRCodeSVG value={offerDocument} size={190} level="L" /></div>
             <textarea className="webrtc-document" readOnly value={offerDocument} rows={5} aria-label="Signed WebRTC offer" />
             <div className="dialog-actions"><button className="button button--secondary" onClick={() => void copy(offerDocument, "offer")}>{copied === "offer" ? <Check size={17} /> : <Copy size={17} />} {copied === "offer" ? "Copied" : "Copy offer"}</button></div>
@@ -559,6 +588,7 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, worksp
           </>}
           {phase === "waiting-owner" && <>
             <h3>Send this answer back to the offerer</h3>
+            <p className="muted">Answer session: <code>{sessionCode(answerDocument)}</code>. It must match the offer session.</p>
             <div className="webrtc-qr"><QRCodeSVG value={answerDocument} size={190} level="L" /></div>
             <textarea className="webrtc-document" readOnly value={answerDocument} rows={5} aria-label="Signed WebRTC answer" />
             <div className="dialog-actions"><button className="button button--secondary" onClick={() => void copy(answerDocument, "answer")}>{copied === "answer" ? <Check size={17} /> : <Copy size={17} />} {copied === "answer" ? "Copied" : "Copy answer"}</button></div>
