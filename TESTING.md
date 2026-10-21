@@ -445,7 +445,18 @@ Validation:
 - Frontend TypeScript: passed.
 - Frontend tests: **237 passed**.
 - Frontend production build: passed.
-- GitHub Actions: pending.
+- GitHub Actions
+  [run 39522492785](https://github.com/ahouchens/mesh-chat/actions/runs/39522492785)
+  passed Verify, Windows packaging, Android packaging, and Publish.
+- Release: <https://github.com/ahouchens/mesh-chat/releases/tag/v0.2.97>.
+
+Published assets:
+
+| Artifact | SHA-256 |
+|---|---|
+| `Mesh-Chat_0.2.97_x64-setup.exe` | `2f8a08a72d4a5839d57e4c63f269e0a0fc19ead85fc96b310099a5149e9fee65` |
+| `Mesh-Chat_0.2.97_x64_en-US.msi` | `bdb6c0ecc0cfe532fe5e94fe64710a419fd1776bc6a90c5899b331f27a5956ec` |
+| `mesh-chat-0.2.97-android-arm64-release.apk` | `70382576463fdd80f638e0587ff4af9561b091a60ae8b0676524acbdd1dc12b4` |
 
 Still open: live Windows↔Android onboarding through Cloudflare TURN, Worker
 rate limiting, and token rotation after the exposed token.
