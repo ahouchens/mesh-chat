@@ -422,6 +422,23 @@ An intermediate 0.2.74 build failed five frontend assertions because normal
 invitations carried `i2p_consent: false`; 0.2.75 sends the field only for I2P
 previews.
 
+## ICE gathering and relay diagnostics, 2026-10-20
+
+**0.3.2 / Android 302** fixes the relay candidate exchange window:
+
+- waits up to **15 seconds** for ICE gathering to complete before signing the
+  offer/answer, instead of 4 seconds;
+- total connection timeout raised to 30 seconds;
+- diagnostics now include local/remote SDP candidate counts, making it
+  explicit when the remote side sent no relay candidate;
+- the Android relay consent must be enabled independently of Windows.
+
+Diagnostics from the relay-only failure showed Windows had six TURN URLs and
+`local:relay`, but Android had not enabled the broker; both sides need TURN for
+a fully relayed path.
+
+Validation: TypeScript, **237 frontend tests**, and production build passed.
+
 ## TURN consent save fix, 2026-10-20
 
 **0.3.1 / Android 301** fixes **“That information could not be validated”**

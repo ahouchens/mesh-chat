@@ -52,10 +52,10 @@ function errorMessage(reason: unknown): string {
   return reason instanceof Error ? reason.message : "The WebRTC onboarding step failed.";
 }
 
-async function waitForCandidates(pc: RTCPeerConnection): Promise<void> {
+async function waitForCandidates(pc: RTCPeerConnection, timeoutMs = 15000): Promise<void> {
   if (pc.iceGatheringState === "complete") return;
   await new Promise<void>((resolve) => {
-    const timeout = window.setTimeout(resolve, 4000);
+    const timeout = window.setTimeout(resolve, timeoutMs);
     const onChange = () => {
       if (pc.iceGatheringState === "complete") {
         window.clearTimeout(timeout);
@@ -144,6 +144,8 @@ async function peerDiagnostics(
     local: candidates.get(String(selected.localCandidateId)) ?? null,
     remote: candidates.get(String(selected.remoteCandidateId)) ?? null,
   } : null;
+  const countCandidates = (sdp?: string) =>
+    (sdp?.match(/^a=candidate:/gm) ?? []).length;
   return JSON.stringify({
     timestamp: new Date().toISOString(),
     phase,
@@ -152,6 +154,8 @@ async function peerDiagnostics(
     iceConnectionState: pc.iceConnectionState,
     iceGatheringState: pc.iceGatheringState,
     iceConfiguration: iceSummary,
+    localSdpCandidates: countCandidates(pc.localDescription?.sdp),
+    remoteSdpCandidates: countCandidates(pc.remoteDescription?.sdp),
     selectedPair,
     candidateTypes: [...new Set([...candidates.values()].map((candidate) => `${candidate.side}:${candidate.candidateType}`))],
     pairStates: pairs.reduce<Record<string, number>>((counts, pair) => {
@@ -215,7 +219,7 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected }: { on
         setPhase("error");
         cleanup();
       });
-    }, 20000);
+    }, 30000);
     return () => window.clearTimeout(timer);
   }, [captureDiagnostics, cleanup, phase]);
 
@@ -403,7 +407,7 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected }: { on
             <div className="dialog-actions"><button className="button button--secondary" onClick={() => void copy(answerDocument, "answer")}>{copied === "answer" ? <Check size={17} /> : <Copy size={17} />} {copied === "answer" ? "Copied" : "Copy answer"}</button></div>
             <p className="muted">Keep this open while the offerer pastes the answer. The DataChannel opens after both sides apply it.</p>
           </>}
-          {phase === "connecting" && <><p className="direct-host-status" role="status"><RefreshCw size={17} /> Applying the signed answer and opening the DataChannel…</p><p className="muted">If this takes more than 20 seconds, Mesh Chat will stop and report the likely network cause.</p><div className="dialog-actions"><button className="button button--secondary" onClick={close}>Cancel</button></div></>}
+          {phase === "connecting" && <><p className="direct-host-status" role="status"><RefreshCw size={17} /> Applying the signed answer and opening the DataChannel…</p><p className="muted">If this takes more than 30 seconds, Mesh Chat will stop and report the likely network cause.</p><div className="dialog-actions"><button className="button button--secondary" onClick={close}>Cancel</button></div></>}
           {phase === "connected" && <>
             <p className="direct-host-status" role="status"><Check size={17} /> WebRTC path connected</p>
             <p className="muted">Reticulum packets are now using this DataChannel. Continue with the normal invitation or workspace join; approval is still required.</p>
