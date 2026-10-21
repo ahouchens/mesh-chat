@@ -441,6 +441,16 @@ connected successfully with 100 candidate pairs, confirming relay-to-relay
 works.
 
 Validation: TypeScript, **237 frontend tests**, and production build passed.
+GitHub Actions
+[run 39642830953](https://github.com/ahouchens/mesh-chat/actions/runs/39642830953)
+passed Verify, Windows packaging, Android packaging, and Publish.
+Release: <https://github.com/ahouchens/mesh-chat/releases/tag/v0.4.4>.
+
+| Artifact | SHA-256 |
+|---|---|
+| `Mesh-Chat_0.4.4_x64-setup.exe` | `b4da34834173073cfbfc0a882442cdfd7323def50bbab3c3ec45377d1b6e27a1` |
+| `Mesh-Chat_0.4.4_x64_en-US.msi` | `1a5c2d781c308b5b0e2a2c5431f6c5389280081048c072b439aa31bd2c5329fe` |
+| `mesh-chat-0.4.4-android-arm64-release.apk` | `fd932043ef7adffaa64d458c80484fa8b8778d3f12d797f284ad37e295b11aa4` |
 
 ## WebRTC path announcement, 2026-10-21
 
