@@ -433,6 +433,16 @@ previews.
 - the banner shows the number of pending contact approvals.
 
 Validation: TypeScript, **237 frontend tests**, and production build passed.
+GitHub Actions
+[run 39684042623](https://github.com/ahouchens/mesh-chat/actions/runs/39684042623)
+passed Verify, Windows packaging, Android packaging, and Publish.
+Release: <https://github.com/ahouchens/mesh-chat/releases/tag/v0.5.1>.
+
+| Artifact | SHA-256 |
+|---|---|
+| `Mesh-Chat_0.5.1_x64-setup.exe` | `f78bc649aa528e1e895a5184fca8bc1765ec10c243bc47c68f9f0d528c3c6c53` |
+| `Mesh-Chat_0.5.1_x64_en-US.msi` | `86f33a9a01b10f654545bfff895c9f8e7633aba79bb2ac405ae5e6e2005eb82d` |
+| `mesh-chat-0.5.1-android-arm64-release.apk` | `aefe44ad67e433624698e8070456ae49f773d452cb5eb7e9b38c7d565a6f3b44` |
 
 ## Connection UX phase 1, 2026-10-21
 
