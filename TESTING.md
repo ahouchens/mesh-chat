@@ -435,6 +435,18 @@ previews.
 
 Validation: TypeScript, **237 frontend tests**, and production build passed.
 
+Validation: TypeScript, **237 frontend tests**, and production build passed.
+GitHub Actions
+[run 39691011372](https://github.com/ahouchens/mesh-chat/actions/runs/39691011372)
+passed Verify, Windows packaging, Android packaging, and Publish.
+Release: <https://github.com/ahouchens/mesh-chat/releases/tag/v0.7.0>.
+
+| Artifact | SHA-256 |
+|---|---|
+| `Mesh-Chat_0.7.0_x64-setup.exe` | `4c237fe310a791fea6943f1bf729727866251a68333369231e62b199eb217a92` |
+| `Mesh-Chat_0.7.0_x64_en-US.msi` | `26467983f56f219cca6ebb35dc0aa82eb797300d12b94296a0813c9ae420bb9b` |
+| `mesh-chat-0.7.0-android-arm64-release.apk` | `6dd5b3097491f6cf9f95ff48f4629bf804b2a7bb90d0078fa2fd7df5489e785e` |
+
 ## Connection fallback action, 2026-10-21
 
 **0.6.1 / Android 601** adds **Use invitation instead** to the WebRTC failure
