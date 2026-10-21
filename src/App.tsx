@@ -71,6 +71,7 @@ import { DirectConnectionSetup } from "./DirectConnectionSetup";
 import { DirectRecovery } from "./DirectRecovery";
 import { WebRTCOnboardingDialog } from "./WebRTCOnboarding";
 import { closeWebRTCSession, getWebRTCSession } from "./webrtc-session";
+import { lastWebRTCDiagnostics } from "./webrtc-diagnostics";
 import { getEmojiFallbackName } from "./emoji-artwork";
 import {
   QUICK_REACTION_OPTIONS,
@@ -2260,6 +2261,8 @@ function WebRTCCallSettings({ onSaved }: { onSaved: () => Promise<void> }) {
   const [busy, setBusy] = useState(false);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState("");
+  const [lastDiagnostics] = useState(() => lastWebRTCDiagnostics());
+  const [diagnosticsCopied, setDiagnosticsCopied] = useState(false);
   useEffect(() => {
     void serviceCommand<CallSettings>("call_settings").then((value) => {
       setSettings(value);
@@ -2313,6 +2316,7 @@ function WebRTCCallSettings({ onSaved }: { onSaved: () => Promise<void> }) {
       <p className="muted">{settings?.turn_broker_configured && settings.turn_broker_consent ? "Cloudflare TURN credentials are fetched from the configured broker and refreshed per session." : settings?.turn_broker_configured ? "A TURN broker is configured but not enabled. Enable it above to use the relay." : settings?.turn_configured ? "TURN is configured. Credentials stay in the encrypted service record and are released only to an active call." : "No TURN server configured. Calls work only on a shared LAN or when direct host candidates are reachable."}</p>
       {saved && <p className="muted" role="status">Call settings saved.</p>}
       {error && <p className="form-error" role="alert">{error}</p>}
+      {lastDiagnostics && <div className="stack"><p className="muted">The last WebRTC attempt left diagnostics available. They exclude SDP, TURN credentials, IP addresses, and message content.</p><Button variant="secondary" onClick={() => { void navigator.clipboard.writeText(lastDiagnostics).then(() => setDiagnosticsCopied(true)).catch(() => setError("Could not copy diagnostics.")); }}>{diagnosticsCopied ? "Copied" : "Copy last WebRTC diagnostics"}</Button></div>}
       <Button disabled={busy} onClick={() => void save()}>{busy ? "Saving…" : "Save call settings"}</Button>
     </section>
   );

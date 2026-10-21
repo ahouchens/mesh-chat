@@ -4,6 +4,7 @@ import { Check, Copy, Phone, RefreshCw, X } from "lucide-react";
 
 import { serviceCommand } from "./api";
 import { attachWebRTCBridge, type WebRTCBridge } from "./webrtc-onboarding";
+import { rememberWebRTCDiagnostics } from "./webrtc-diagnostics";
 import { setWebRTCSession } from "./webrtc-session";
 import type { CallIceConfiguration } from "./types";
 
@@ -75,10 +76,23 @@ async function waitForOpen(channel: RTCDataChannel): Promise<void> {
   });
 }
 
+function summarizeIce(ice: CallIceConfiguration): Record<string, unknown> {
+  const urls = ice.iceServers.flatMap((server) =>
+    Array.isArray(server.urls) ? server.urls : [server.urls],
+  );
+  return {
+    transportPolicy: ice.iceTransportPolicy,
+    stun: urls.filter((url) => url.startsWith("stun:") || url.startsWith("stuns:")).length,
+    turn: urls.filter((url) => url.startsWith("turn:") || url.startsWith("turns:")).length,
+    credentialPresent: ice.iceServers.some((server) => Boolean(server.credential)),
+  };
+}
+
 async function peerDiagnostics(
   pc: RTCPeerConnection,
   phase: string,
   error: string,
+  iceSummary: Record<string, unknown> | null,
 ): Promise<string> {
   const stats = await pc.getStats();
   const candidates = new Map<string, Record<string, unknown>>();
@@ -137,6 +151,7 @@ async function peerDiagnostics(
     connectionState: pc.connectionState,
     iceConnectionState: pc.iceConnectionState,
     iceGatheringState: pc.iceGatheringState,
+    iceConfiguration: iceSummary,
     selectedPair,
     candidateTypes: [...new Set([...candidates.values()].map((candidate) => `${candidate.side}:${candidate.candidateType}`))],
     pairStates: pairs.reduce<Record<string, number>>((counts, pair) => {
@@ -163,13 +178,15 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected }: { on
   const channelRef = useRef<RTCDataChannel | null>(null);
   const bridgeRef = useRef<WebRTCBridge | null>(null);
   const handedOffRef = useRef(false);
+  const iceSummaryRef = useRef<Record<string, unknown> | null>(null);
 
   const captureDiagnostics = useCallback(async (phase: string, message: string): Promise<string> => {
     const pc = pcRef.current;
     if (!pc) return "";
     try {
-      const text = await peerDiagnostics(pc, phase, message);
+      const text = await peerDiagnostics(pc, phase, message, iceSummaryRef.current);
       setDiagnostics(text);
+      rememberWebRTCDiagnostics(text);
       return text;
     } catch {
       return "";
@@ -255,6 +272,7 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected }: { on
     setError(""); setPhase("creating");
     try {
       const ice = await serviceCommand<CallIceConfiguration>("call_ice_servers");
+      iceSummaryRef.current = summarizeIce(ice);
       const pc = new RTCPeerConnection({ iceServers: ice.iceServers, iceTransportPolicy: ice.iceTransportPolicy });
       const channel = pc.createDataChannel("mesh-reticulum", { ordered: true });
       channel.binaryType = "arraybuffer";
@@ -310,6 +328,7 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected }: { on
       });
       setOfferPreview(preview);
       const ice = await serviceCommand<CallIceConfiguration>("call_ice_servers");
+      iceSummaryRef.current = summarizeIce(ice);
       const pc = new RTCPeerConnection({ iceServers: ice.iceServers, iceTransportPolicy: ice.iceTransportPolicy });
       pc.ondatachannel = (event) => {
         const channel = event.channel;

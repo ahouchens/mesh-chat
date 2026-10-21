@@ -422,6 +422,26 @@ An intermediate 0.2.74 build failed five frontend assertions because normal
 invitations carried `i2p_consent: false`; 0.2.75 sends the field only for I2P
 previews.
 
+## Persistent WebRTC diagnostics, 2026-10-20
+
+**0.3.0 / Android 300** makes the last WebRTC diagnostics survive the dialog
+closing:
+
+- **Copy last WebRTC diagnostics** is available in Settings → WebRTC calls;
+- diagnostics now include an ICE configuration summary: transport policy,
+  count of STUN/TURN URLs, and whether credentials were present;
+- the bundle still excludes SDP, TURN credentials, IP addresses, and message
+  content.
+
+This is intended to distinguish:
+
+- `iceConfiguration.turn: 0` → TURN was not in the ICE configuration
+  (consent unchecked or broker disabled);
+- `turn > 0` with no `local:relay` candidate → TURN allocation failed;
+- `local:relay` present but no selected pair → relay reachability failed.
+
+Validation: TypeScript, **237 frontend tests**, and production build passed.
+
 ## Android certifi startup fix, 2026-10-20
 
 **0.2.99 / Android 2099** fixes **“The mobile messaging runtime could not
