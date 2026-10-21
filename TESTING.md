@@ -436,6 +436,16 @@ previews.
 - the chooser explains which device is offerer and which is joiner.
 
 Validation: TypeScript and **237 frontend tests** passed.
+GitHub Actions
+[run 39661330663](https://github.com/ahouchens/mesh-chat/actions/runs/39661330663)
+passed Verify, Windows packaging, Android packaging, and Publish.
+Release: <https://github.com/ahouchens/mesh-chat/releases/tag/v0.4.5>.
+
+| Artifact | SHA-256 |
+|---|---|
+| `Mesh-Chat_0.4.5_x64-setup.exe` | `08115f9b8a24939e98b2d6f9ff1f001cd7499bb6d12d649fac321dd44e7f93db` |
+| `Mesh-Chat_0.4.5_x64_en-US.msi` | `512e6befb5d58f5441ece785b96fb4802186624f15996d4b98390a81f0705d94` |
+| `mesh-chat-0.4.5-android-arm64-release.apk` | `deea0b7ef21c53ca171266f8f8534ac3b72262885adf09a88243ec71d3c4b233` |
 
 ## Duplicate WebRTC operation guard, 2026-10-21
 
