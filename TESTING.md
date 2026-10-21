@@ -422,6 +422,17 @@ An intermediate 0.2.74 build failed five frontend assertions because normal
 invitations carried `i2p_consent: false`; 0.2.75 sends the field only for I2P
 previews.
 
+## Stale WebRTC answer guidance, 2026-10-21
+
+**0.4.1 / Android 401** makes a stale signed answer actionable:
+
+- `identity_mismatch` during answer verification now says the answer belongs to
+  a different or regenerated offer;
+- creating a new offer clears any previously pasted answer;
+- no TURN or identity change is required for this error.
+
+Validation: TypeScript and **237 frontend tests** passed.
+
 ## Inline contact and workspace onboarding, 2026-10-21
 
 **0.4.0 / Android 400** removes the second invitation flow after WebRTC connects:

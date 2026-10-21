@@ -62,6 +62,15 @@ function fingerprint(sdp: string): string {
 }
 
 function errorMessage(reason: unknown): string {
+  const code = reason && typeof reason === "object" && "code" in reason
+    ? String((reason as { code?: unknown }).code ?? "")
+    : "";
+  if (code === "identity_mismatch") {
+    return "This answer belongs to a different WebRTC offer. The offer was probably regenerated. Create a new offer and have the other person generate a new answer; do not reuse an earlier answer.";
+  }
+  if (code === "invalid_request") {
+    return "The WebRTC onboarding data was rejected as invalid. Create a fresh offer and answer.";
+  }
   return reason instanceof Error ? reason.message : "The WebRTC onboarding step failed.";
 }
 
@@ -381,6 +390,7 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, worksp
 
   const createOffer = useCallback(async () => {
     setError(""); setPhase("creating");
+    setAnswerInput(""); setAnswerDocument(""); setAnswerPreview(null);
     try {
       const ice = await serviceCommand<CallIceConfiguration>("call_ice_servers");
       iceSummaryRef.current = summarizeIce(ice);
