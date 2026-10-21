@@ -219,6 +219,12 @@ Do not dump the user back to a blank dialog.
 
 ### Phase 4 — signaling adapter
 
+In progress:
+
+- `deploy/cloudflare-signal` implements a 10-minute signed offer/answer
+  mailbox using Cloudflare KV (48 KiB cap, random session ID, no messages);
+- app-side settings/fetch integration is still pending.
+
 - Optional community mailbox (Cloudflare Worker + Durable Object/KV).
 - Short-lived opaque signed envelopes.
 - Deep link/QR fallback.
