@@ -422,6 +422,21 @@ An intermediate 0.2.74 build failed five frontend assertions because normal
 invitations carried `i2p_consent: false`; 0.2.75 sends the field only for I2P
 previews.
 
+## Connection UX release, 2026-10-21
+
+**0.8.0 / Android 800** packages the connection improvements:
+
+- unified Connect entry;
+- inline relay consent and relay retry;
+- approval acknowledgement over the control channel;
+- Direct/Relayed path state and pending-request actions;
+- optional Cloudflare signaling mailbox with short-code and QR pairing;
+- `meshchat://pair/<code>` deep links;
+- reconnect and diagnostics actions;
+- `ConnectionTransport` boundary.
+
+Validation: TypeScript, **237 frontend tests**, and production build passed.
+
 ## Signaling mailbox UI, 2026-10-21
 
 **0.7.0 / Android 700** wires the optional mailbox into the WebRTC flow:
