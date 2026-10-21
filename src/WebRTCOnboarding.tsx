@@ -75,6 +75,79 @@ async function waitForOpen(channel: RTCDataChannel): Promise<void> {
   });
 }
 
+async function peerDiagnostics(
+  pc: RTCPeerConnection,
+  phase: string,
+  error: string,
+): Promise<string> {
+  const stats = await pc.getStats();
+  const candidates = new Map<string, Record<string, unknown>>();
+  const pairs: Array<Record<string, unknown>> = [];
+  let selectedPairId = "";
+  let dataChannel: Record<string, unknown> | null = null;
+  stats.forEach((report) => {
+    const value = report as unknown as Record<string, unknown>;
+    const type = value.type;
+    if (type === "local-candidate" || type === "remote-candidate") {
+      candidates.set(String(value.id), {
+        side: type === "local-candidate" ? "local" : "remote",
+        candidateType: value.candidateType,
+        protocol: value.protocol,
+        relayProtocol: value.relayProtocol,
+        networkType: value.networkType,
+      });
+    } else if (type === "candidate-pair") {
+      pairs.push({
+        id: value.id,
+        state: value.state,
+        nominated: value.nominated,
+        bytesSent: value.bytesSent,
+        bytesReceived: value.bytesReceived,
+        localCandidateId: value.localCandidateId,
+        remoteCandidateId: value.remoteCandidateId,
+      });
+    } else if (type === "transport" && value.selectedCandidatePairId) {
+      selectedPairId = String(value.selectedCandidatePairId);
+    } else if (type === "data-channel") {
+      dataChannel = {
+        state: value.state,
+        messagesSent: value.messagesSent,
+        messagesReceived: value.messagesReceived,
+        bytesSent: value.bytesSent,
+        bytesReceived: value.bytesReceived,
+      };
+    }
+  });
+  const selected = pairs.find((pair) => pair.id === selectedPairId)
+    ?? pairs.find((pair) => pair.nominated === true && pair.state === "succeeded")
+    ?? pairs.find((pair) => pair.state === "succeeded")
+    ?? null;
+  const selectedPair = selected ? {
+    state: selected.state,
+    nominated: selected.nominated,
+    bytesSent: selected.bytesSent,
+    bytesReceived: selected.bytesReceived,
+    local: candidates.get(String(selected.localCandidateId)) ?? null,
+    remote: candidates.get(String(selected.remoteCandidateId)) ?? null,
+  } : null;
+  return JSON.stringify({
+    timestamp: new Date().toISOString(),
+    phase,
+    error: error || undefined,
+    connectionState: pc.connectionState,
+    iceConnectionState: pc.iceConnectionState,
+    iceGatheringState: pc.iceGatheringState,
+    selectedPair,
+    candidateTypes: [...new Set([...candidates.values()].map((candidate) => `${candidate.side}:${candidate.candidateType}`))],
+    pairStates: pairs.reduce<Record<string, number>>((counts, pair) => {
+      const state = String(pair.state ?? "unknown");
+      counts[state] = (counts[state] ?? 0) + 1;
+      return counts;
+    }, {}),
+    dataChannel,
+  }, null, 2);
+}
+
 export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected }: { onClose: () => void; onChanged: () => Promise<void>; onConnected?: () => void }) {
   const [phase, setPhase] = useState<Phase>("choose");
   const [offerDocument, setOfferDocument] = useState("");
@@ -85,10 +158,23 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected }: { on
   const [answerPreview, setAnswerPreview] = useState<OnboardingAnswerPreview | null>(null);
   const [error, setError] = useState("");
   const [copied, setCopied] = useState("");
+  const [diagnostics, setDiagnostics] = useState("");
   const pcRef = useRef<RTCPeerConnection | null>(null);
   const channelRef = useRef<RTCDataChannel | null>(null);
   const bridgeRef = useRef<WebRTCBridge | null>(null);
   const handedOffRef = useRef(false);
+
+  const captureDiagnostics = useCallback(async (phase: string, message: string): Promise<string> => {
+    const pc = pcRef.current;
+    if (!pc) return "";
+    try {
+      const text = await peerDiagnostics(pc, phase, message);
+      setDiagnostics(text);
+      return text;
+    } catch {
+      return "";
+    }
+  }, []);
 
   const cleanup = useCallback(() => {
     void bridgeRef.current?.close().catch(() => undefined);
@@ -106,12 +192,15 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected }: { on
   useEffect(() => {
     if (phase !== "connecting") return;
     const timer = window.setTimeout(() => {
-      setError("The WebRTC path did not open. On Wi-Fi, check that the access point allows client-to-client traffic and that Windows Firewall permits Mesh Chat on private networks. If the network isolates clients, configure TURN.");
-      setPhase("error");
-      cleanup();
+      const message = "The WebRTC path did not open. On Wi-Fi, check that the access point allows client-to-client traffic and that Windows Firewall permits Mesh Chat on private networks. If the network isolates clients, configure TURN.";
+      void captureDiagnostics("timeout", message).finally(() => {
+        setError(message);
+        setPhase("error");
+        cleanup();
+      });
     }, 20000);
     return () => window.clearTimeout(timer);
-  }, [cleanup, phase]);
+  }, [captureDiagnostics, cleanup, phase]);
 
   const attach = useCallback(async (channel: RTCDataChannel) => {
     try {
@@ -127,17 +216,22 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected }: { on
       onConnected?.();
       await onChanged();
     } catch (reason) {
-      setError(errorMessage(reason));
+      const message = errorMessage(reason);
+      void captureDiagnostics("attach-failed", message);
+      setError(message);
       setPhase("error");
       cleanup();
     }
-  }, [cleanup, onChanged, onConnected]);
+  }, [captureDiagnostics, cleanup, onChanged, onConnected]);
 
   const watchPeer = useCallback((pc: RTCPeerConnection) => {
     const failed = () => {
-      setError("The WebRTC network path failed. On Wi-Fi, check client isolation and Windows Firewall. If the access point isolates clients, configure TURN.");
-      setPhase("error");
-      cleanup();
+      const message = "The WebRTC network path failed. On Wi-Fi, check client isolation and Windows Firewall. If the access point isolates clients, configure TURN.";
+      void captureDiagnostics("ice-failed", message).finally(() => {
+        setError(message);
+        setPhase("error");
+        cleanup();
+      });
     };
     pc.onconnectionstatechange = () => {
       if (pc.connectionState === "failed") failed();
@@ -145,7 +239,7 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected }: { on
     pc.oniceconnectionstatechange = () => {
       if (pc.iceConnectionState === "failed") failed();
     };
-  }, [cleanup]);
+  }, [captureDiagnostics, cleanup]);
 
   const copy = useCallback(async (value: string, label: string) => {
     try {
@@ -182,11 +276,12 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected }: { on
       setOfferDocument(result.document);
       setPhase("waiting-answer");
     } catch (reason) {
-      cleanup();
-      setError(errorMessage(reason));
+      const message = errorMessage(reason);
+      void captureDiagnostics("offer-failed", message).finally(cleanup);
+      setError(message);
       setPhase("error");
     }
-  }, [attach, cleanup, watchPeer]);
+  }, [attach, captureDiagnostics, cleanup, watchPeer]);
 
   const connectAnswer = useCallback(async () => {
     setError(""); setPhase("connecting");
@@ -200,10 +295,12 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected }: { on
       await pcRef.current.setRemoteDescription({ type: "answer", sdp: preview.sdp });
       if (channelRef.current?.readyState === "open") await attach(channelRef.current);
     } catch (reason) {
-      setError(errorMessage(reason));
+      const message = errorMessage(reason);
+      void captureDiagnostics("answer-failed", message);
+      setError(message);
       setPhase("error");
     }
-  }, [answerInput, attach, offerDocument]);
+  }, [answerInput, attach, captureDiagnostics, offerDocument]);
 
   const reviewOffer = useCallback(async () => {
     setError(""); setPhase("review");
@@ -239,15 +336,25 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected }: { on
       setAnswerPreview({ ...preview, sdp, dtls_fingerprint: fingerprint(sdp), document: result.document });
       setPhase("waiting-owner");
     } catch (reason) {
-      cleanup();
-      setError(errorMessage(reason));
+      const message = errorMessage(reason);
+      void captureDiagnostics("offer-review-failed", message).finally(cleanup);
+      setError(message);
       setPhase("error");
     }
-  }, [attach, cleanup, offerInput, watchPeer]);
+  }, [attach, captureDiagnostics, cleanup, offerInput, watchPeer]);
 
   const close = () => {
     if (!handedOffRef.current) cleanup();
     onClose();
+  };
+
+  const copyDiagnostics = async () => {
+    const text = diagnostics || await captureDiagnostics(phase, error);
+    if (!text) {
+      setError("No WebRTC diagnostics are available. The connection may already be closed.");
+      return;
+    }
+    await copy(text, "diagnostics");
   };
 
   return (
@@ -281,10 +388,10 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected }: { on
           {phase === "connected" && <>
             <p className="direct-host-status" role="status"><Check size={17} /> WebRTC path connected</p>
             <p className="muted">Reticulum packets are now using this DataChannel. Continue with the normal invitation or workspace join; approval is still required.</p>
-            <div className="dialog-actions"><button className="button button--primary" onClick={close}>Close and continue</button></div>
+            <div className="dialog-actions"><button className="button button--secondary" onClick={() => void copyDiagnostics()}>{copied === "diagnostics" ? "Copied" : "Copy diagnostics"}</button><button className="button button--primary" onClick={close}>Close and continue</button></div>
           </>}
           {(offerPreview || answerPreview) && phase !== "choose" && <p className="muted">Offers are signed and expire automatically. Destination: <code>{(answerPreview?.signer_destination ?? offerPreview?.signer_destination ?? "").slice(0, 12)}</code>…</p>}
-          {phase === "error" && <><p className="form-error" role="alert">{error}</p><div className="dialog-actions"><button className="button button--secondary" onClick={() => setPhase("choose")}>Back</button><button className="button button--primary" onClick={close}>Close</button></div></>}
+          {phase === "error" && <><p className="form-error" role="alert">{error}</p><div className="dialog-actions"><button className="button button--secondary" onClick={() => void copyDiagnostics()}>{copied === "diagnostics" ? "Copied" : "Copy diagnostics"}</button><button className="button button--secondary" onClick={() => setPhase("choose")}>Back</button><button className="button button--primary" onClick={close}>Close</button></div></>}
         </div>
       </section>
     </div>

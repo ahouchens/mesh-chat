@@ -422,6 +422,29 @@ An intermediate 0.2.74 build failed five frontend assertions because normal
 invitations carried `i2p_consent: false`; 0.2.75 sends the field only for I2P
 previews.
 
+## WebRTC diagnostics export, 2026-10-20
+
+**0.2.98 / Android 2098** adds **Copy diagnostics** to the WebRTC onboarding
+dialog on both success and failure.
+
+The bundle contains:
+
+- connection, ICE connection, and ICE gathering states;
+- selected candidate pair types, protocol, relay protocol, bytes sent/received;
+- local/remote candidate types;
+- candidate-pair state counts;
+- DataChannel state and counters;
+- phase, timestamp, and visible error.
+
+It excludes SDP, TURN credentials, IP addresses, and message content.
+
+Validation:
+
+- Frontend TypeScript: passed.
+- Frontend tests: **237 passed**.
+- Frontend production build: passed.
+- Full service suite unchanged: **1051 passed, 46 skipped**.
+
 ## Default Cloudflare TURN relay, 2026-10-20
 
 **0.2.97 / Android 2097** makes the Cloudflare TURN broker a built-in default:
