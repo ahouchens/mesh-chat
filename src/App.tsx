@@ -5713,6 +5713,7 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceChannelIn
             <QrCode size={18} />
             <span><strong>WebRTC path connected · {webrtcPath === "relayed" ? "Relayed" : webrtcPath === "direct" ? "Direct" : "Path pending"}</strong><small>{pending.length > 0 ? `${pending.length} contact ${pending.length === 1 ? "request" : "requests"} awaiting approval.` : "Reticulum packets are using the DataChannel."}</small></span>
             {pending.length > 0 && <Button variant="secondary" onClick={() => setDismissedRequests((current) => current.filter((id) => id !== pending[0].id))}>Review request</Button>}
+            <Button variant="secondary" onClick={() => { const text = lastWebRTCDiagnostics(); if (text) void navigator.clipboard.writeText(text); }}>Diagnostics</Button>
             <Button variant="secondary" onClick={() => { void closeWebRTCSession().finally(() => { setWebRtcSessionActive(false); void refresh(true); }); }}>Disconnect</Button>
           </div>
         )}
