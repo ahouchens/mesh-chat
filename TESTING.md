@@ -446,6 +446,18 @@ Validation:
 - Frontend tests: **237 passed**.
 - Frontend production build: passed.
 - Worker syntax: `node --check` passed.
+- GitHub Actions
+  [run 39518026972](https://github.com/ahouchens/mesh-chat/actions/runs/39518026972)
+  passed Verify, Windows packaging, Android packaging, and Publish.
+- Release: <https://github.com/ahouchens/mesh-chat/releases/tag/v0.2.96>.
+
+Published assets:
+
+| Artifact | SHA-256 |
+|---|---|
+| `Mesh-Chat_0.2.96_x64-setup.exe` | `c37dc681d871e50732a7de9dec73817358927298953d4353850fd4532cb8c9a9` |
+| `Mesh-Chat_0.2.96_x64_en-US.msi` | `c35bdf1cf60b51648377118414d6010cf5f600bd78d5c2a534b5eacd5191b7bd` |
+| `mesh-chat-0.2.96-android-arm64-release.apk` | `147697f4b8d9bc17f85079aa44fd210302beee496733f0a1872297639ad0e0ac` |
 
 ## TURN relay deployment kit, 2026-10-20
 
