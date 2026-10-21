@@ -437,6 +437,16 @@ previews.
 - the spec is at `docs/CONNECTION_UX_ARCHITECTURE.md`.
 
 Validation: TypeScript and **237 frontend tests** passed.
+GitHub Actions
+[run 39676192689](https://github.com/ahouchens/mesh-chat/actions/runs/39676192689)
+passed Verify, Windows packaging, Android packaging, and Publish.
+Release: <https://github.com/ahouchens/mesh-chat/releases/tag/v0.5.0>.
+
+| Artifact | SHA-256 |
+|---|---|
+| `Mesh-Chat_0.5.0_x64-setup.exe` | `187a640cb9c228ab857ff12b31937c95fc5f586a08cef745d46f9884468179c2` |
+| `Mesh-Chat_0.5.0_x64_en-US.msi` | `9e69d0c1f2e8de1d177458eb08d21e736fe013c7bc512bb96d56de9ad94b0add` |
+| `mesh-chat-0.5.0-android-arm64-release.apk` | `be52a4ec97c7fba3d66f836a67e02313987c525d4e9d09eb52a2907319220caf` |
 
 ## Role and document-type errors, 2026-10-21
 
