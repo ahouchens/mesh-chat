@@ -422,6 +422,26 @@ An intermediate 0.2.74 build failed five frontend assertions because normal
 invitations carried `i2p_consent: false`; 0.2.75 sends the field only for I2P
 previews.
 
+## Duplicate WebRTC operation guard, 2026-10-21
+
+**0.4.4 / Android 404** closes a race that could produce zero ICE candidate
+pairs:
+
+- the review screen could be tapped repeatedly while it waited 15 seconds for
+  ICE gathering;
+- each tap created another `RTCPeerConnection` and answer, while one signed
+  answer could carry ICE credentials from a different peer connection;
+- the remote candidates then did not match the local ICE ufrag/pwd, producing
+  `pairStates: {}` despite candidates in the SDP;
+- create-offer, review-offer, and connect-answer are now single-flight guarded;
+- the review button shows **Creating answer…** and is disabled while busy.
+
+A real Chromium two-peer probe with the same Cloudflare TURN configuration
+connected successfully with 100 candidate pairs, confirming relay-to-relay
+works.
+
+Validation: TypeScript, **237 frontend tests**, and production build passed.
+
 ## WebRTC path announcement, 2026-10-21
 
 **0.4.3 / Android 403** fixes the case where Android accepted the contact

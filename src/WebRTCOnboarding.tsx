@@ -225,6 +225,7 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, worksp
   const [workspaceInvitation, setWorkspaceInvitation] = useState<WorkspaceInvitationPreview | null>(null);
   const [selectedWorkspaceId, setSelectedWorkspaceId] = useState("");
   const [onboardingBusy, setOnboardingBusy] = useState(false);
+  const [reviewBusy, setReviewBusy] = useState(false);
   const pcRef = useRef<RTCPeerConnection | null>(null);
   const channelRef = useRef<RTCDataChannel | null>(null);
   const controlRef = useRef<RTCDataChannel | null>(null);
@@ -232,6 +233,9 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, worksp
   const workspaceDocumentRef = useRef("");
   const roleRef = useRef<"offer" | "join" | null>(null);
   const invitationStartedRef = useRef(false);
+  const createOfferBusyRef = useRef(false);
+  const reviewOfferBusyRef = useRef(false);
+  const connectAnswerBusyRef = useRef(false);
   const bridgeRef = useRef<WebRTCBridge | null>(null);
   const handedOffRef = useRef(false);
   const iceSummaryRef = useRef<Record<string, unknown> | null>(null);
@@ -403,6 +407,8 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, worksp
   }, []);
 
   const createOffer = useCallback(async () => {
+    if (createOfferBusyRef.current) return;
+    createOfferBusyRef.current = true;
     setError(""); setPhase("creating");
     setAnswerInput(""); setAnswerDocument(""); setAnswerPreview(null);
     try {
@@ -436,10 +442,14 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, worksp
       void captureDiagnostics("offer-failed", message).finally(cleanup);
       setError(message);
       setPhase("error");
+    } finally {
+      createOfferBusyRef.current = false;
     }
   }, [attach, captureDiagnostics, cleanup, setupControl, watchPeer]);
 
   const connectAnswer = useCallback(async () => {
+    if (connectAnswerBusyRef.current) return;
+    connectAnswerBusyRef.current = true;
     setError(""); setPhase("connecting");
     try {
       if (!pcRef.current || !offerDocument) throw new Error("Create an offer first.");
@@ -469,10 +479,15 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, worksp
       void captureDiagnostics("answer-failed", message);
       setError(message);
       setPhase("error");
+    } finally {
+      connectAnswerBusyRef.current = false;
     }
   }, [answerInput, attach, captureDiagnostics, offerDocument]);
 
   const reviewOffer = useCallback(async () => {
+    if (reviewOfferBusyRef.current) return;
+    reviewOfferBusyRef.current = true;
+    setReviewBusy(true);
     setError(""); setPhase("review");
     try {
       const preview = await serviceCommand<OnboardingOfferPreview>("verify_webrtc_onboarding_offer", {
@@ -517,6 +532,9 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, worksp
       void captureDiagnostics("offer-review-failed", message).finally(cleanup);
       setError(message);
       setPhase("error");
+    } finally {
+      reviewOfferBusyRef.current = false;
+      setReviewBusy(false);
     }
   }, [attach, captureDiagnostics, cleanup, offerInput, setupControl, watchPeer]);
 
@@ -584,7 +602,7 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, worksp
           </>}
           {phase === "review" && <>
             <label className="field"><span>Paste the signed WebRTC offer</span><textarea className="webrtc-document" value={offerInput} onChange={(event) => setOfferInput(event.target.value)} rows={5} spellCheck={false} placeholder="MESH-WEBRTC-OFFER..." /></label>
-            <div className="dialog-actions"><button className="button button--secondary" onClick={() => setPhase("choose")}>Back</button><button className="button button--primary" disabled={!offerInput.trim()} onClick={() => void reviewOffer()}>Review and create answer</button></div>
+            <div className="dialog-actions"><button className="button button--secondary" onClick={() => setPhase("choose")}>Back</button><button className="button button--primary" disabled={!offerInput.trim() || reviewBusy} onClick={() => void reviewOffer()}>{reviewBusy ? "Creating answer…" : "Review and create answer"}</button></div>
           </>}
           {phase === "waiting-owner" && <>
             <h3>Send this answer back to the offerer</h3>
