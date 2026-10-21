@@ -422,6 +422,25 @@ An intermediate 0.2.74 build failed five frontend assertions because normal
 invitations carried `i2p_consent: false`; 0.2.75 sends the field only for I2P
 previews.
 
+## Android certifi startup fix, 2026-10-20
+
+**0.2.99 / Android 2099** fixes **“The mobile messaging runtime could not
+start.”**
+
+Cause: 0.2.98 imported `certifi` from `turn_credentials.py`, but the Chaquopy
+mobile dependency lock did not include certifi. The import raised at service
+startup before the runtime could initialize.
+
+Fix:
+
+- added `certifi==2026.10.19` to `service/requirements-mobile.lock`;
+- made the certifi import optional so a missing CA bundle cannot stop the
+  messaging runtime;
+- broker TLS still uses certifi when present.
+
+Validation: targeted service tests **22 passed**; mobile packaging and runtime
+startup are verified by the Android CI build and the next device launch.
+
 ## WebRTC diagnostics export, 2026-10-20
 
 **0.2.98 / Android 2098** adds **Copy diagnostics** to the WebRTC onboarding

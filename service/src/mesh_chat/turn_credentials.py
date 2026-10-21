@@ -5,7 +5,10 @@ import ssl
 import urllib.request
 from typing import Any
 
-import certifi
+try:
+    import certifi
+except ImportError:  # Older mobile builds may not bundle CA data yet.
+    certifi = None
 
 from .call_settings import _url, validate_broker_url
 from .errors import NetworkUnavailable
@@ -27,7 +30,11 @@ def fetch_ice_servers(broker_url: str, *, timeout: float = 8.0) -> list[dict[str
         },
     )
     try:
-        context = ssl.create_default_context(cafile=certifi.where())
+        context = (
+            ssl.create_default_context(cafile=certifi.where())
+            if certifi is not None
+            else ssl.create_default_context()
+        )
         with urllib.request.urlopen(request, timeout=timeout, context=context) as response:
             if response.status != 200:
                 raise NetworkUnavailable("TURN credential broker rejected the request")
