@@ -444,6 +444,18 @@ Validation:
 - Frontend tests: **237 passed**.
 - Frontend production build: passed.
 - Full service suite unchanged: **1051 passed, 46 skipped**.
+- GitHub Actions
+  [run 39527002432](https://github.com/ahouchens/mesh-chat/actions/runs/39527002432)
+  passed Verify, Windows packaging, Android packaging, and Publish.
+- Release: <https://github.com/ahouchens/mesh-chat/releases/tag/v0.2.98>.
+
+Published assets:
+
+| Artifact | SHA-256 |
+|---|---|
+| `Mesh-Chat_0.2.98_x64-setup.exe` | `88ca6e583934fdd683982846d247f9d7d98197b89b7ef9a94e86a5f420a0aaa7` |
+| `Mesh-Chat_0.2.98_x64_en-US.msi` | `f9a47751941c2c7041be0d5a619dd9364d91537ed17c71814b4f83ab7bbd17d4` |
+| `mesh-chat-0.2.98-android-arm64-release.apk` | `84a878ed28bd3772391132fa3b6e2ce4fabad27dcd3dc705295e94ddc9f0a447` |
 
 ## Default Cloudflare TURN relay, 2026-10-20
 
