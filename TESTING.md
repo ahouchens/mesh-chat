@@ -435,6 +435,16 @@ invitation but Windows never received the request:
 - the contact request retry worker then delivers it normally.
 
 Validation: full service suite **1053 passed, 46 skipped**; targeted tests passed.
+GitHub Actions
+[run 39637023085](https://github.com/ahouchens/mesh-chat/actions/runs/39637023085)
+passed Verify, Windows packaging, Android packaging, and Publish.
+Release: <https://github.com/ahouchens/mesh-chat/releases/tag/v0.4.3>.
+
+| Artifact | SHA-256 |
+|---|---|
+| `Mesh-Chat_0.4.3_x64-setup.exe` | `53528370f6bbb48d006b8f2c9f7aa68ff81bc45985dac35ced1dd89a88bcc221` |
+| `Mesh-Chat_0.4.3_x64_en-US.msi` | `5519adf1d818437fd20646eb35e48538592b7bbf527c7766ba61603e4b36d8e9` |
+| `mesh-chat-0.4.3-android-arm64-release.apk` | `2e48422c995d626ed2ec2d271f58da4e547ca324abefb285def422105cc0fac7` |
 
 ## Answer binding precheck, 2026-10-21
 
