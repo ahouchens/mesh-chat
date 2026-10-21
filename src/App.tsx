@@ -4100,7 +4100,7 @@ function ConnectEntryDialog({
   );
 }
 
-function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceChannelInvalidation, notificationTarget, onNotificationHandled, onLock, initialInvitation, onInvitationHandled }: { snapshot: Snapshot; theme: Theme; onThemeChange: (theme: Theme) => void; refresh: (afterCurrent?: boolean) => Promise<Snapshot>; workspaceChannelInvalidation: ServiceEvent | null; notificationTarget: NotificationOpenTarget | null; onNotificationHandled: () => void; onLock: () => Promise<void>; initialInvitation: string; onInvitationHandled: () => void }) {
+function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceChannelInvalidation, notificationTarget, onNotificationHandled, onLock, initialInvitation, onInvitationHandled, initialPairingCode = "", onPairingHandled }: { snapshot: Snapshot; theme: Theme; onThemeChange: (theme: Theme) => void; refresh: (afterCurrent?: boolean) => Promise<Snapshot>; workspaceChannelInvalidation: ServiceEvent | null; notificationTarget: NotificationOpenTarget | null; onNotificationHandled: () => void; onLock: () => Promise<void>; initialInvitation: string; onInvitationHandled: () => void; initialPairingCode?: string; onPairingHandled?: () => void }) {
   const groups = snapshot.groups ?? [];
   const groupMessages = snapshot.group_messages ?? [];
   const groupInvitations = snapshot.group_invitations ?? [];
@@ -4242,6 +4242,11 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceChannelIn
   const [reactionBusy, setReactionBusy] = useState<{ kind: "direct" | "group" | "workspace"; messageId: string; emoji: string } | null>(null);
   const [reactionError, setReactionError] = useState("");
   useEffect(() => { void runtimePlatform().then(() => setWorkspacesEnabled(true)); }, []);
+  useEffect(() => {
+    if (!initialPairingCode) return;
+    setConnectEntryOpen(false);
+    setWebRtcOnboardingOpen(true);
+  }, [initialPairingCode]);
   useEffect(() => {
     if (!initialInvitation) return;
     const workspaceInvitation = isWorkspaceInvitationValue(initialInvitation);
@@ -5944,7 +5949,7 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceChannelIn
       {selectedWorkspace && workspaceSettingsOpen && <WorkspaceSettingsDialog workspace={selectedWorkspace} conversation={selectedWorkspaceConversation} networkSettings={snapshot.settings} busy={workspaceActionBusy} error={workspaceActionError} onClose={() => setWorkspaceSettingsOpen(false)} onUpdateMetadata={(name, description) => void runWorkspaceAdministration("update_workspace_metadata", { name, description })} onUpdatePolicies={(channelCreation, posting) => void runWorkspaceAdministration("update_workspace_policies", { channel_creation: channelCreation, posting })} onSetNotificationPreference={(conversationId, mode) => void runWorkspaceNotificationPreference(conversationId, mode)} onApprovePropagationNode={(node) => void approveWorkspacePropagationNode(node)} onCloseWorkspace={() => void runWorkspaceLifecycle("close_workspace")} onLeave={() => void runWorkspaceLifecycle("leave_workspace")} onRemove={(confirmation) => void runWorkspaceLifecycle("remove_workspace_data", confirmation)} />}
       {selectedWorkspace && workspaceRetentionOpen && <WorkspaceRetentionDialog workspace={selectedWorkspace} conversationId={selectedWorkspaceConversation?.id} conversationName={selectedWorkspaceDirect?.peer_display_name ?? selectedWorkspaceChannel?.display_name ?? selectedWorkspaceChannel?.name} busy={workspaceActionBusy} error={workspaceActionError} onClose={() => setWorkspaceRetentionOpen(false)} onUpdate={(retentionDays) => void runWorkspaceAdministration("update_workspace_retention", { retention_days: retentionDays })} onPrune={pruneWorkspaceHistory} />}
       {connectEntryOpen && <ConnectEntryDialog onClose={() => setConnectEntryOpen(false)} onInvite={() => { setNewChatStartTab("invite"); setConnectEntryOpen(false); setNewChat(true); }} onJoin={() => { setNewChatStartTab("join"); setConnectEntryOpen(false); setNewChat(true); }} onWebRTC={() => { setConnectEntryOpen(false); setWebRtcOnboardingOpen(true); }} />}
-      {webrtcOnboardingOpen && <WebRTCOnboardingDialog onClose={() => setWebRtcOnboardingOpen(false)} onConnected={(path) => { setWebRtcSessionActive(true); setWebrtcPath(path); }} onFallback={() => { setNewChatStartTab("invite"); setNewChat(true); }} onChanged={async () => { await refresh(true); }} workspaces={(snapshot.workspaces ?? []).map((workspace) => ({ id: workspace.id, name: workspace.name }))} />}
+      {webrtcOnboardingOpen && <WebRTCOnboardingDialog initialPairingCode={initialPairingCode} onClose={() => { setWebRtcOnboardingOpen(false); onPairingHandled?.(); }} onConnected={(path) => { setWebRtcSessionActive(true); setWebrtcPath(path); }} onFallback={() => { setNewChatStartTab("invite"); setNewChat(true); }} onChanged={async () => { await refresh(true); }} workspaces={(snapshot.workspaces ?? []).map((workspace) => ({ id: workspace.id, name: workspace.name }))} />}
       {newChat && <div className={hasForegroundRequest ? "dialog-suspended" : ""} aria-hidden={hasForegroundRequest ? true : undefined}><NewChatDialog initialInvitation={initialInvitation} initialTab={newChatStartTab} remoteProfiles={snapshot.remote_profiles ?? []} onClose={() => { setNewChat(false); onInvitationHandled(); }} onChanged={async () => { await refresh(true); }} onWorkspaceInvitation={(value) => { setNewChat(false); setJoinWorkspaceValue(value); setJoinWorkspaceOpen(true); }} /></div>}
       {newGroup && <div className={hasForegroundRequest ? "dialog-suspended" : ""} aria-hidden={hasForegroundRequest ? true : undefined}><CreateGroupDialog contacts={snapshot.contacts} onClose={() => setNewGroup(false)} onCreated={async (group) => { await refresh(true); selectConversation({ kind: "group", id: group.id }); setNewGroup(false); }} /></div>}
       {contactsOpen && <div className={hasForegroundRequest ? "dialog-suspended" : ""} aria-hidden={hasForegroundRequest ? true : undefined}><ContactsDialog contacts={snapshot.contacts.filter((contact) => contact.trust !== "pending_request")} onClose={() => setContactsOpen(false)} onChanged={async () => { await refresh(true); }} onOpenConversation={async (contact) => { const hidden = hiddenConversationKeys.has(`direct:${contact.id}`); setContactsOpen(false); await restoreAndSelect({ kind: "contact", id: contact.id }, hidden); }} onDeleted={async (contactId) => { if (selection?.kind === "contact" && selection.id === contactId) setSelection(null); setDrafts((current) => { const next = { ...current }; delete next[contactId]; return next; }); setLocallySavedMessages((current) => Object.fromEntries(Object.entries(current).filter(([, message]) => message.contact_id !== contactId))); await refresh(true); }} /></div>}
@@ -5963,6 +5968,7 @@ export default function App() {
   const [theme, setTheme] = useState<Theme>(initialTheme);
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
   const [initialInvitation, setInitialInvitation] = useState("");
+  const [initialPairingCode, setInitialPairingCode] = useState("");
   const [workspaceChannelInvalidation, setWorkspaceChannelInvalidation] = useState<ServiceEvent | null>(null);
   const [notificationTarget, setNotificationTarget] = useState<NotificationOpenTarget | null>(null);
   const [fatal, setFatal] = useState("");
@@ -6055,7 +6061,15 @@ export default function App() {
         if (active) setFatal(errorMessage(reason));
       }
     })();
-    void onInvitation((value) => setInitialInvitation(value)).then(keepCleanup).catch(() => undefined);
+    void onInvitation((value) => {
+      if (value.startsWith("meshchat://pair/")) {
+        setInitialPairingCode(value.slice("meshchat://pair/".length));
+        setInitialInvitation("");
+      } else {
+        setInitialInvitation(value);
+        setInitialPairingCode("");
+      }
+    }).then(keepCleanup).catch(() => undefined);
     void onNotificationOpen(async (notificationId) => {
       try {
         const target = await serviceCommand<NotificationOpenTarget>("open_notification_target", { notification_id: notificationId });
@@ -6123,5 +6137,5 @@ export default function App() {
       />
     );
   }
-  return <Messenger snapshot={snapshot} theme={theme} onThemeChange={setTheme} refresh={refresh} workspaceChannelInvalidation={workspaceChannelInvalidation} notificationTarget={notificationTarget} onNotificationHandled={() => setNotificationTarget(null)} initialInvitation={initialInvitation} onInvitationHandled={() => setInitialInvitation("")} onLock={async () => { await lockService(); setSnapshot(null); setLocked(true); }} />;
+  return <Messenger snapshot={snapshot} theme={theme} onThemeChange={setTheme} refresh={refresh} workspaceChannelInvalidation={workspaceChannelInvalidation} notificationTarget={notificationTarget} onNotificationHandled={() => setNotificationTarget(null)} initialInvitation={initialInvitation} initialPairingCode={initialPairingCode} onPairingHandled={() => setInitialPairingCode("")} onInvitationHandled={() => setInitialInvitation("")} onLock={async () => { await lockService(); setSnapshot(null); setLocked(true); }} />;
 }

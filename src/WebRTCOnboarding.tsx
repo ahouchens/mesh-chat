@@ -264,12 +264,13 @@ async function peerDiagnostics(
   }, null, 2);
 }
 
-export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFallback, workspaces = [] }: {
+export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFallback, workspaces = [], initialPairingCode = "" }: {
   onClose: () => void;
   onChanged: () => Promise<void>;
   onConnected?: (path: WebRTCSessionPath) => void;
   onFallback?: () => void;
   workspaces?: Array<{ id: string; name: string }>;
+  initialPairingCode?: string;
 }) {
   const [phase, setPhase] = useState<Phase>("choose");
   const [offerDocument, setOfferDocument] = useState("");
@@ -337,6 +338,13 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
       .then(setRelaySettings)
       .catch(() => undefined);
   }, []);
+
+  useEffect(() => {
+    if (initialPairingCode) {
+      setOfferInput(initialPairingCode);
+      setPhase("review");
+    }
+  }, [initialPairingCode]);
 
   useEffect(() => {
     if (phase !== "connecting") return;
@@ -739,7 +747,7 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
           {phase === "waiting-answer" && <>
             <h3>Send this offer to the other person</h3>
             <p className="muted">Offer session: <code>{sessionCode(offerDocument)}</code>. The answer must carry the same session.</p>
-            {mailboxCode && <div className="remote-consent"><p>Signaling mailbox code: <code>{mailboxCode}</code></p><div className="webrtc-qr"><QRCodeSVG value={mailboxCode} size={150} level="M" /></div><p className="muted">Give this code to the other person instead of the full offer. This device creates one answer per code.</p><div className="dialog-actions"><button className="button button--secondary" onClick={() => void copy(mailboxCode, "code")}>{copied === "code" ? "Copied" : "Copy code"}</button><button className="button button--secondary" onClick={() => void fetchAnswer()}>Fetch answer</button></div></div>}
+            {mailboxCode && <div className="remote-consent"><p>Signaling mailbox code: <code>{mailboxCode}</code></p><div className="webrtc-qr"><QRCodeSVG value={`meshchat://pair/${mailboxCode}`} size={150} level="M" /></div><p className="muted">Give this link or code to the other person instead of the full offer. This device creates one answer per code.</p><div className="dialog-actions"><button className="button button--secondary" onClick={() => void copy(mailboxCode, "code")}>{copied === "code" ? "Copied" : "Copy code"}</button><button className="button button--secondary" onClick={() => void copy(`meshchat://pair/${mailboxCode}`, "link")}>{copied === "link" ? "Copied" : "Copy link"}</button><button className="button button--secondary" onClick={() => void fetchAnswer()}>Fetch answer</button></div></div>}
             <div className="webrtc-qr"><QRCodeSVG value={offerDocument} size={190} level="L" /></div>
             <textarea className="webrtc-document" readOnly value={offerDocument} rows={5} aria-label="Signed WebRTC offer" />
             <div className="dialog-actions"><button className="button button--secondary" onClick={() => void copy(offerDocument, "offer")}>{copied === "offer" ? <Check size={17} /> : <Copy size={17} />} {copied === "offer" ? "Copied" : "Copy offer"}</button></div>

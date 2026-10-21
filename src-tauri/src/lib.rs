@@ -669,6 +669,8 @@ fn validated_invitation_value(raw: &str) -> Option<String> {
             "meshchat://workspace-device/",
             MAX_WORKSPACE_DEVICE_LINK_PAYLOAD_BYTES,
         )
+    } else if compact.starts_with("meshchat://pair/") {
+        ("meshchat://pair/", MAX_CONNECTION_RESPONSE_PAYLOAD_BYTES)
     } else if compact.starts_with("meshchat://connect/") {
         ("meshchat://connect/", MAX_CONNECTION_RESPONSE_PAYLOAD_BYTES)
     } else if compact.starts_with("meshchat://route/") {
