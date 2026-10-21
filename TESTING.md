@@ -422,6 +422,19 @@ An intermediate 0.2.74 build failed five frontend assertions because normal
 invitations carried `i2p_consent: false`; 0.2.75 sends the field only for I2P
 previews.
 
+## Unified Connect entry, 2026-10-21
+
+**0.6.0 / Android 600** adds a single **Connect** entry:
+
+- Invite someone opens the existing signed invitation flow in Invite mode.
+- I have an invitation opens it directly in Join mode.
+- WebRTC direct or relay opens the signed offer/answer dialog.
+- The connection card now includes **Review request** when a contact approval
+  is pending, not just a count.
+- Existing New chat/new group controls remain for compatibility.
+
+Validation: TypeScript, **237 frontend tests**, and production build passed.
+
 ## Connection card path state, 2026-10-21
 
 **0.5.1 / Android 501** adds path state to the persistent WebRTC connection:

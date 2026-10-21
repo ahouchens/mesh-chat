@@ -1571,8 +1571,8 @@ function SecurityDetails({ fingerprint, destination, open, onOpenChange }: { fin
   );
 }
 
-function NewChatDialog({ initialInvitation, remoteProfiles, onClose, onChanged, onWorkspaceInvitation }: { initialInvitation: string; remoteProfiles: RemoteProfile[]; onClose: () => void; onChanged: () => Promise<void>; onWorkspaceInvitation: (value: string) => void }) {
-  const [tab, setTab] = useState<"invite" | "join">(initialInvitation ? "join" : "invite");
+function NewChatDialog({ initialInvitation, initialTab = "invite", remoteProfiles, onClose, onChanged, onWorkspaceInvitation }: { initialInvitation: string; initialTab?: "invite" | "join"; remoteProfiles: RemoteProfile[]; onClose: () => void; onChanged: () => Promise<void>; onWorkspaceInvitation: (value: string) => void }) {
+  const [tab, setTab] = useState<"invite" | "join">(initialInvitation ? "join" : initialTab);
   const [formats, setFormats] = useState<InvitationFormats | null>(null);
   const [raw, setRaw] = useState(initialInvitation);
   const [preview, setPreview] = useState<InvitationPreview | null>(null);
@@ -4072,6 +4072,30 @@ type WorkspaceDraftValue = {
 
 const DRAFT_SAVE_DELAY_MS = 200;
 
+function ConnectEntryDialog({
+  onClose,
+  onInvite,
+  onJoin,
+  onWebRTC,
+}: {
+  onClose: () => void;
+  onInvite: () => void;
+  onJoin: () => void;
+  onWebRTC: () => void;
+}) {
+  return (
+    <Dialog title="Connect" onClose={onClose}>
+      <div className="stack">
+        <p className="muted">Choose the role for this device. Direct and relayed WebRTC use a signed offer and answer; invitations use the existing signed contact/workspace flow.</p>
+        <button className="button button--primary" onClick={onInvite}>Invite someone</button>
+        <button className="button button--secondary" onClick={onJoin}>I have an invitation</button>
+        <button className="button button--secondary" onClick={onWebRTC}>WebRTC direct or relay</button>
+        <p className="muted">For WebRTC, only one device creates the offer. The other chooses Join with WebRTC inside the next screen.</p>
+      </div>
+    </Dialog>
+  );
+}
+
 function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceChannelInvalidation, notificationTarget, onNotificationHandled, onLock, initialInvitation, onInvitationHandled }: { snapshot: Snapshot; theme: Theme; onThemeChange: (theme: Theme) => void; refresh: (afterCurrent?: boolean) => Promise<Snapshot>; workspaceChannelInvalidation: ServiceEvent | null; notificationTarget: NotificationOpenTarget | null; onNotificationHandled: () => void; onLock: () => Promise<void>; initialInvitation: string; onInvitationHandled: () => void }) {
   const groups = snapshot.groups ?? [];
   const groupMessages = snapshot.group_messages ?? [];
@@ -4100,6 +4124,8 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceChannelIn
   const [drafts, setDrafts] = useState<Record<string, string>>(() => Object.fromEntries(snapshot.drafts.map((draft) => [draft.contact_id, draft.text])));
   const [groupDrafts, setGroupDrafts] = useState<Record<string, string>>(() => Object.fromEntries((snapshot.group_drafts ?? []).map((draft) => [draft.group_id, draft.text])));
   const [newChat, setNewChat] = useState(false);
+  const [newChatStartTab, setNewChatStartTab] = useState<"invite" | "join">("invite");
+  const [connectEntryOpen, setConnectEntryOpen] = useState(false);
   const [newGroup, setNewGroup] = useState(false);
   const [webrtcOnboardingOpen, setWebRtcOnboardingOpen] = useState(false);
   const [webrtcSessionActive, setWebRtcSessionActive] = useState(() => getWebRTCSession() !== null);
@@ -5641,7 +5667,7 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceChannelIn
         <div className="new-conversation-actions">
           <button className="new-chat-button" aria-label="New chat" onClick={() => setNewChat(true)}><Plus size={20} /><span>New chat</span></button>
           <button className="new-group-button" aria-label="New group" onClick={() => setNewGroup(true)}><Users size={19} /><span>New group</span></button>
-          <button className="new-group-button" aria-label="Connect with WebRTC" onClick={() => setWebRtcOnboardingOpen(true)}><QrCode size={19} /><span>WebRTC</span></button>
+          <button className="new-group-button" aria-label="Connect" onClick={() => setConnectEntryOpen(true)}><QrCode size={19} /><span>Connect</span></button>
         </div>
         </> : selectedWorkspace ? <>
           <div className="workspace-sidebar-heading"><div className="workspace-sidebar-heading__avatar">{initials(selectedWorkspace.name)}</div><div><strong>{selectedWorkspace.name}</strong><small>{workspaceStateLabel(selectedWorkspace)}</small></div></div>
@@ -5682,6 +5708,7 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceChannelIn
           <div className="incoming-call-banner" role="status">
             <QrCode size={18} />
             <span><strong>WebRTC path connected · {webrtcPath === "relayed" ? "Relayed" : webrtcPath === "direct" ? "Direct" : "Path pending"}</strong><small>{pending.length > 0 ? `${pending.length} contact ${pending.length === 1 ? "request" : "requests"} awaiting approval.` : "Reticulum packets are using the DataChannel."}</small></span>
+            {pending.length > 0 && <Button variant="secondary" onClick={() => setDismissedRequests((current) => current.filter((id) => id !== pending[0].id))}>Review request</Button>}
             <Button variant="secondary" onClick={() => { void closeWebRTCSession().finally(() => { setWebRtcSessionActive(false); void refresh(true); }); }}>Disconnect</Button>
           </div>
         )}
@@ -5910,8 +5937,9 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceChannelIn
       {selectedWorkspace && workspaceDevicesOpen && <WorkspaceDevicesDialog workspace={selectedWorkspace} transitions={workspaceDeviceTransitions.filter((item) => item.workspace_id === selectedWorkspace.id)} busy={workspaceActionBusy} error={workspaceActionError} onClose={() => setWorkspaceDevicesOpen(false)} onCreate={createWorkspaceDeviceLink} onDecide={(transition, approve) => void runWorkspaceAdministration(transition.transition_kind === "link" ? (approve ? "approve_workspace_device_link" : "decline_workspace_device_link") : (approve ? "approve_workspace_device_removal" : "decline_workspace_device_removal"), transition.transition_kind === "link" ? { link_id: transition.id } : { removal_id: transition.id })} onRemove={(deviceId) => void runWorkspaceAdministration("request_workspace_device_removal", { target_device_id: deviceId })} onReadSync={(enabled) => void runWorkspaceAdministration("set_workspace_read_hint_sync", { enabled })} />}
       {selectedWorkspace && workspaceSettingsOpen && <WorkspaceSettingsDialog workspace={selectedWorkspace} conversation={selectedWorkspaceConversation} networkSettings={snapshot.settings} busy={workspaceActionBusy} error={workspaceActionError} onClose={() => setWorkspaceSettingsOpen(false)} onUpdateMetadata={(name, description) => void runWorkspaceAdministration("update_workspace_metadata", { name, description })} onUpdatePolicies={(channelCreation, posting) => void runWorkspaceAdministration("update_workspace_policies", { channel_creation: channelCreation, posting })} onSetNotificationPreference={(conversationId, mode) => void runWorkspaceNotificationPreference(conversationId, mode)} onApprovePropagationNode={(node) => void approveWorkspacePropagationNode(node)} onCloseWorkspace={() => void runWorkspaceLifecycle("close_workspace")} onLeave={() => void runWorkspaceLifecycle("leave_workspace")} onRemove={(confirmation) => void runWorkspaceLifecycle("remove_workspace_data", confirmation)} />}
       {selectedWorkspace && workspaceRetentionOpen && <WorkspaceRetentionDialog workspace={selectedWorkspace} conversationId={selectedWorkspaceConversation?.id} conversationName={selectedWorkspaceDirect?.peer_display_name ?? selectedWorkspaceChannel?.display_name ?? selectedWorkspaceChannel?.name} busy={workspaceActionBusy} error={workspaceActionError} onClose={() => setWorkspaceRetentionOpen(false)} onUpdate={(retentionDays) => void runWorkspaceAdministration("update_workspace_retention", { retention_days: retentionDays })} onPrune={pruneWorkspaceHistory} />}
+      {connectEntryOpen && <ConnectEntryDialog onClose={() => setConnectEntryOpen(false)} onInvite={() => { setNewChatStartTab("invite"); setConnectEntryOpen(false); setNewChat(true); }} onJoin={() => { setNewChatStartTab("join"); setConnectEntryOpen(false); setNewChat(true); }} onWebRTC={() => { setConnectEntryOpen(false); setWebRtcOnboardingOpen(true); }} />}
       {webrtcOnboardingOpen && <WebRTCOnboardingDialog onClose={() => setWebRtcOnboardingOpen(false)} onConnected={(path) => { setWebRtcSessionActive(true); setWebrtcPath(path); }} onChanged={async () => { await refresh(true); }} workspaces={(snapshot.workspaces ?? []).map((workspace) => ({ id: workspace.id, name: workspace.name }))} />}
-      {newChat && <div className={hasForegroundRequest ? "dialog-suspended" : ""} aria-hidden={hasForegroundRequest ? true : undefined}><NewChatDialog initialInvitation={initialInvitation} remoteProfiles={snapshot.remote_profiles ?? []} onClose={() => { setNewChat(false); onInvitationHandled(); }} onChanged={async () => { await refresh(true); }} onWorkspaceInvitation={(value) => { setNewChat(false); setJoinWorkspaceValue(value); setJoinWorkspaceOpen(true); }} /></div>}
+      {newChat && <div className={hasForegroundRequest ? "dialog-suspended" : ""} aria-hidden={hasForegroundRequest ? true : undefined}><NewChatDialog initialInvitation={initialInvitation} initialTab={newChatStartTab} remoteProfiles={snapshot.remote_profiles ?? []} onClose={() => { setNewChat(false); onInvitationHandled(); }} onChanged={async () => { await refresh(true); }} onWorkspaceInvitation={(value) => { setNewChat(false); setJoinWorkspaceValue(value); setJoinWorkspaceOpen(true); }} /></div>}
       {newGroup && <div className={hasForegroundRequest ? "dialog-suspended" : ""} aria-hidden={hasForegroundRequest ? true : undefined}><CreateGroupDialog contacts={snapshot.contacts} onClose={() => setNewGroup(false)} onCreated={async (group) => { await refresh(true); selectConversation({ kind: "group", id: group.id }); setNewGroup(false); }} /></div>}
       {contactsOpen && <div className={hasForegroundRequest ? "dialog-suspended" : ""} aria-hidden={hasForegroundRequest ? true : undefined}><ContactsDialog contacts={snapshot.contacts.filter((contact) => contact.trust !== "pending_request")} onClose={() => setContactsOpen(false)} onChanged={async () => { await refresh(true); }} onOpenConversation={async (contact) => { const hidden = hiddenConversationKeys.has(`direct:${contact.id}`); setContactsOpen(false); await restoreAndSelect({ kind: "contact", id: contact.id }, hidden); }} onDeleted={async (contactId) => { if (selection?.kind === "contact" && selection.id === contactId) setSelection(null); setDrafts((current) => { const next = { ...current }; delete next[contactId]; return next; }); setLocallySavedMessages((current) => Object.fromEntries(Object.entries(current).filter(([, message]) => message.contact_id !== contactId))); await refresh(true); }} /></div>}
       {settings && <div className={hasForegroundRequest ? "dialog-suspended" : ""} aria-hidden={hasForegroundRequest ? true : undefined}><SettingsDialog snapshot={snapshot} theme={theme} onThemeChange={onThemeChange} onClose={() => setSettings(false)} onSaved={async () => { await refresh(true); }} /></div>}
