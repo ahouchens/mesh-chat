@@ -5,7 +5,7 @@ import { Check, Copy, Phone, RefreshCw, X } from "lucide-react";
 import { serviceCommand } from "./api";
 import { attachWebRTCBridge, type WebRTCBridge } from "./webrtc-onboarding";
 import { rememberWebRTCDiagnostics } from "./webrtc-diagnostics";
-import { setWebRTCSession } from "./webrtc-session";
+import { setWebRTCSession, type WebRTCSessionPath } from "./webrtc-session";
 import type {
   CallIceConfiguration,
   CallSettings,
@@ -132,6 +132,38 @@ async function waitForCandidates(pc: RTCPeerConnection, timeoutMs = 15000): Prom
   });
 }
 
+async function connectionPath(pc: RTCPeerConnection): Promise<WebRTCSessionPath> {
+  try {
+    const stats = await pc.getStats();
+    const candidates = new Map<string, string>();
+    let selected = "";
+    stats.forEach((report) => {
+      const value = report as unknown as Record<string, unknown>;
+      if (value.type === "local-candidate" || value.type === "remote-candidate") {
+        candidates.set(String(value.id), String(value.candidateType ?? ""));
+      }
+      if (value.type === "transport" && value.selectedCandidatePairId) {
+        selected = String(value.selectedCandidatePairId);
+      }
+      if (value.type === "candidate-pair" && value.nominated === true && value.state === "succeeded" && !selected) {
+        selected = String(value.id);
+      }
+    });
+    if (!selected) return "unknown";
+    let relayed = false;
+    stats.forEach((report) => {
+      const value = report as unknown as Record<string, unknown>;
+      if (value.type !== "candidate-pair" || String(value.id) !== selected) return;
+      const local = candidates.get(String(value.localCandidateId));
+      const remote = candidates.get(String(value.remoteCandidateId));
+      if (local === "relay" || remote === "relay") relayed = true;
+    });
+    return relayed ? "relayed" : "direct";
+  } catch {
+    return "unknown";
+  }
+}
+
 async function waitForOpen(channel: RTCDataChannel): Promise<void> {
   if (channel.readyState === "open") return;
   await new Promise<void>((resolve, reject) => {
@@ -235,7 +267,7 @@ async function peerDiagnostics(
 export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, workspaces = [] }: {
   onClose: () => void;
   onChanged: () => Promise<void>;
-  onConnected?: () => void;
+  onConnected?: (path: WebRTCSessionPath) => void;
   workspaces?: Array<{ id: string; name: string }>;
 }) {
   const [phase, setPhase] = useState<Phase>("choose");
@@ -406,12 +438,13 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, worksp
       bridgeRef.current = bridge;
       const pc = pcRef.current;
       if (pc) {
-        setWebRTCSession({ bridge, channel, pc, control: controlRef.current });
+        const path = await connectionPath(pc);
+        setWebRTCSession({ bridge, channel, pc, control: controlRef.current, path, createdAt: Date.now() });
         handedOffRef.current = true;
+        onConnected?.(path);
       }
       setPhase("connected");
       void sendInvitation();
-      onConnected?.();
       await onChanged();
     } catch (reason) {
       const message = errorMessage(reason);

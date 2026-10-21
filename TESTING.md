@@ -422,6 +422,18 @@ An intermediate 0.2.74 build failed five frontend assertions because normal
 invitations carried `i2p_consent: false`; 0.2.75 sends the field only for I2P
 previews.
 
+## Connection card path state, 2026-10-21
+
+**0.5.1 / Android 501** adds path state to the persistent WebRTC connection:
+
+- the session object records `direct`, `relayed`, or `unknown`;
+- after the bridge connects, stats inspect the selected candidate pair and
+  classify relayed paths;
+- the persistent banner shows **Direct** or **Relayed**;
+- the banner shows the number of pending contact approvals.
+
+Validation: TypeScript, **237 frontend tests**, and production build passed.
+
 ## Connection UX phase 1, 2026-10-21
 
 **0.5.0 / Android 500** implements the first connection-UX phase:
