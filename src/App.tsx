@@ -2256,6 +2256,7 @@ function WebRTCCallSettings({ onSaved }: { onSaved: () => Promise<void> }) {
   const [turnUser, setTurnUser] = useState("");
   const [turnCredential, setTurnCredential] = useState("");
   const [turnBrokerUrl, setTurnBrokerUrl] = useState("");
+  const [signalMailboxUrl, setSignalMailboxUrl] = useState("");
   const [turnBrokerConsent, setTurnBrokerConsent] = useState(false);
   const [relayOnly, setRelayOnly] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -2270,6 +2271,7 @@ function WebRTCCallSettings({ onSaved }: { onSaved: () => Promise<void> }) {
       setTurnUrl(value.turn_url ?? "");
       setTurnUser(value.turn_username ?? "");
       setTurnBrokerUrl(value.turn_broker_url ?? "");
+      setSignalMailboxUrl(value.signal_mailbox_url ?? "");
       setTurnBrokerConsent(value.turn_broker_consent ?? false);
       setRelayOnly(value.relay_only);
     }).catch((reason) => setError(errorMessage(reason)));
@@ -2283,6 +2285,7 @@ function WebRTCCallSettings({ onSaved }: { onSaved: () => Promise<void> }) {
         turn_username: turnUser.trim() || null,
         turn_credential: turnCredential || null,
         turn_broker_url: turnBrokerUrl.trim() || null,
+        signal_mailbox_url: signalMailboxUrl.trim() || null,
         turn_broker_consent: turnBrokerConsent,
         relay_only: relayOnly,
       });
@@ -2306,6 +2309,7 @@ function WebRTCCallSettings({ onSaved }: { onSaved: () => Promise<void> }) {
         <label className="field"><span>TURN credential</span><input type="password" value={turnCredential} autoComplete="off" onChange={(event) => { setTurnCredential(event.target.value); setSaved(false); }} /></label>
       </div>
       <label className="field"><span>Cloudflare TURN credential broker <small>Optional HTTPS URL; the API token stays on the broker</small></span><input value={turnBrokerUrl} placeholder="https://mesh-chat-turn.example.workers.dev/credentials" autoCapitalize="off" autoCorrect="off" spellCheck={false} onChange={(event) => { setTurnBrokerUrl(event.target.value); setSaved(false); }} /></label>
+      <label className="field"><span>Signaling mailbox <small>Optional HTTPS Worker; short-lived signed offer/answer exchange</small></span><input value={signalMailboxUrl} placeholder="https://mesh-chat-signal.example.workers.dev" autoCapitalize="off" autoCorrect="off" spellCheck={false} onChange={(event) => { setSignalMailboxUrl(event.target.value); setSaved(false); }} /></label>
       <label className="checkbox-line"><input type="checkbox" checked={turnBrokerConsent} disabled={!turnBrokerUrl.trim()} onChange={(event) => { setTurnBrokerConsent(event.target.checked); setSaved(false); }} /> Use this TURN broker for calls. The relay operator can see IP addresses, timing, and encrypted traffic; it does not get message plaintext.</label>
       {turnBrokerUrl.trim() && !turnBrokerConsent && <p className="direct-host-warning">Relay is disabled. Check the box above and save to use the TURN broker.</p>}
       <div className="dialog-actions">

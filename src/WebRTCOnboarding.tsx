@@ -291,6 +291,7 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
   const [relaySettings, setRelaySettings] = useState<CallSettings | null>(null);
   const [relayBusy, setRelayBusy] = useState(false);
   const [relayError, setRelayError] = useState("");
+  const [mailboxCode, setMailboxCode] = useState("");
   const pcRef = useRef<RTCPeerConnection | null>(null);
   const channelRef = useRef<RTCDataChannel | null>(null);
   const controlRef = useRef<RTCDataChannel | null>(null);
@@ -513,6 +514,10 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
         dtls_fingerprint: fingerprint(sdp),
       });
       setOfferDocument(result.document);
+      if (relaySettings?.signal_mailbox_url) {
+        const published = await serviceCommand<{ session_id: string }>("signal_publish", { document: result.document, role: "offer" });
+        setMailboxCode(published.session_id);
+      }
       setPhase("waiting-answer");
     } catch (reason) {
       const message = errorMessage(reason);
@@ -522,7 +527,7 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
     } finally {
       createOfferBusyRef.current = false;
     }
-  }, [attach, captureDiagnostics, cleanup, setupControl, watchPeer]);
+  }, [attach, captureDiagnostics, cleanup, relaySettings, setupControl, watchPeer]);
 
   const connectAnswer = useCallback(async () => {
     if (connectAnswerBusyRef.current) return;
@@ -570,17 +575,23 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
     setReviewBusy(true);
     setError(""); setPhase("review");
     try {
+      let rawOffer = offerInput.trim();
+      if (!rawOffer.includes("\"type\"")) {
+        const fetched = await serviceCommand<{ document: string }>("signal_fetch", { session_id: rawOffer, role: "offer" });
+        rawOffer = fetched.document;
+        setOfferInput(rawOffer);
+      }
       let parsedOffer: { type?: unknown } = {};
       try {
-        parsedOffer = JSON.parse(offerInput.trim()) as { type?: unknown };
+        parsedOffer = JSON.parse(rawOffer) as { type?: unknown };
       } catch {
-        throw new Error("The offer is not valid JSON. Copy the complete signed offer.");
+        throw new Error("The offer is not valid JSON. Copy the complete signed offer or paste the pairing code.");
       }
       if (parsedOffer.type !== "webrtc_onboarding_offer") {
         throw new Error("That document is not a WebRTC offer. Paste the offer created on the other device, not an answer.");
       }
       const preview = await serviceCommand<OnboardingOfferPreview>("verify_webrtc_onboarding_offer", {
-        document: offerInput.trim(),
+        document: rawOffer,
       });
       setOfferPreview(preview);
       const ice = await serviceCommand<CallIceConfiguration>("call_ice_servers");
@@ -614,6 +625,10 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
         dtls_fingerprint: fingerprint(sdp),
       });
       setAnswerDocument(result.document);
+      if (relaySettings?.signal_mailbox_url) {
+        const published = await serviceCommand<{ session_id: string }>("signal_publish", { document: result.document, role: "answer" });
+        setMailboxCode(published.session_id);
+      }
       setAnswerPreview({ ...preview, sdp, dtls_fingerprint: fingerprint(sdp), document: result.document });
       setPhase("waiting-owner");
     } catch (reason) {
@@ -625,7 +640,7 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
       reviewOfferBusyRef.current = false;
       setReviewBusy(false);
     }
-  }, [attach, captureDiagnostics, cleanup, offerInput, setupControl, watchPeer]);
+  }, [attach, captureDiagnostics, cleanup, offerInput, relaySettings, setupControl, watchPeer]);
 
   const acceptContact = async () => {
     setOnboardingBusy(true);
@@ -653,6 +668,18 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
   const declineContact = () => {
     controlRef.current?.send(JSON.stringify({ type: "invitation_declined" }));
     setOnboarding("declined");
+  };
+
+  const fetchAnswer = async () => {
+    const session = mailboxCode;
+    if (!session) return;
+    try {
+      const fetched = await serviceCommand<{ document: string }>("signal_fetch", { session_id: session, role: "answer" });
+      setAnswerInput(fetched.document);
+    } catch (reason) {
+      setError(errorMessage(reason));
+      setPhase("error");
+    }
   };
 
   const close = () => {
@@ -712,6 +739,7 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
           {phase === "waiting-answer" && <>
             <h3>Send this offer to the other person</h3>
             <p className="muted">Offer session: <code>{sessionCode(offerDocument)}</code>. The answer must carry the same session.</p>
+            {mailboxCode && <div className="remote-consent"><p>Signaling mailbox code: <code>{mailboxCode}</code></p><p className="muted">Give this code to the other person instead of the full offer. This device creates one answer per code.</p><div className="dialog-actions"><button className="button button--secondary" onClick={() => void copy(mailboxCode, "code")}>{copied === "code" ? "Copied" : "Copy code"}</button><button className="button button--secondary" onClick={() => void fetchAnswer()}>Fetch answer</button></div></div>}
             <div className="webrtc-qr"><QRCodeSVG value={offerDocument} size={190} level="L" /></div>
             <textarea className="webrtc-document" readOnly value={offerDocument} rows={5} aria-label="Signed WebRTC offer" />
             <div className="dialog-actions"><button className="button button--secondary" onClick={() => void copy(offerDocument, "offer")}>{copied === "offer" ? <Check size={17} /> : <Copy size={17} />} {copied === "offer" ? "Copied" : "Copy offer"}</button></div>
@@ -719,7 +747,7 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
             <div className="dialog-actions"><button className="button button--primary" disabled={!answerInput.trim()} onClick={() => void connectAnswer()}>Connect</button></div>
           </>}
           {phase === "review" && <>
-            <label className="field"><span>Paste the signed WebRTC offer</span><textarea className="webrtc-document" value={offerInput} onChange={(event) => setOfferInput(event.target.value)} rows={5} spellCheck={false} placeholder="MESH-WEBRTC-OFFER..." /></label>
+            <label className="field"><span>Paste the signed WebRTC offer or mailbox code</span><textarea className="webrtc-document" value={offerInput} onChange={(event) => setOfferInput(event.target.value)} rows={5} spellCheck={false} placeholder="MESH-WEBRTC-OFFER... or mailbox code" /></label>
             <div className="dialog-actions"><button className="button button--secondary" onClick={() => setPhase("choose")}>Back</button><button className="button button--primary" disabled={!offerInput.trim() || reviewBusy} onClick={() => void reviewOffer()}>{reviewBusy ? "Creating answer…" : "Review and create answer"}</button></div>
           </>}
           {phase === "waiting-owner" && <>

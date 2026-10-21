@@ -422,6 +422,19 @@ An intermediate 0.2.74 build failed five frontend assertions because normal
 invitations carried `i2p_consent: false`; 0.2.75 sends the field only for I2P
 previews.
 
+## Signaling mailbox UI, 2026-10-21
+
+**0.7.0 / Android 700** wires the optional mailbox into the WebRTC flow:
+
+- Settings accepts a signaling mailbox URL.
+- Creating an offer publishes it and shows a short pairing code.
+- Joining accepts either the full offer or the pairing code.
+- The answer is published automatically.
+- The offerer can fetch the answer from the mailbox.
+- Documents remain signed; the mailbox only stores them for ten minutes.
+
+Validation: TypeScript, **237 frontend tests**, and production build passed.
+
 ## Connection fallback action, 2026-10-21
 
 **0.6.1 / Android 601** adds **Use invitation instead** to the WebRTC failure
