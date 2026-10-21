@@ -429,6 +429,16 @@ state, opening the signed invitation flow without leaving the user at a dead
 end.
 
 Validation: TypeScript and **237 frontend tests** passed.
+GitHub Actions
+[run 39688768675](https://github.com/ahouchens/mesh-chat/actions/runs/39688768675)
+passed Verify, Windows packaging, Android packaging, and Publish.
+Release: <https://github.com/ahouchens/mesh-chat/releases/tag/v0.6.1>.
+
+| Artifact | SHA-256 |
+|---|---|
+| `Mesh-Chat_0.6.1_x64-setup.exe` | `520bbc3c40de0ff010843c1ea435200b3a887fd23ea80f254a8beee7abd7c009` |
+| `Mesh-Chat_0.6.1_x64_en-US.msi` | `a64654e9ffa855f71a79554a7096c420707c2fbf4d6682be2802ea8dc14a1110` |
+| `mesh-chat-0.6.1-android-arm64-release.apk` | `c0f444824a5060be04fc1e8071f3c3206c1cc029c1d19c8b80adbf4f9929c720` |
 
 ## Unified Connect entry, 2026-10-21
 
