@@ -508,6 +508,8 @@ fn allowed_renderer_command(command: &str) -> bool {
             | "call_settings"
             | "update_call_settings"
             | "call_ice_servers"
+            | "signal_publish"
+            | "signal_fetch"
             | "webrtc_attach"
             | "webrtc_packet"
             | "webrtc_detach"

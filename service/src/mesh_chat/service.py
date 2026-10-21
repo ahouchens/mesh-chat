@@ -38,6 +38,8 @@ from .invitations import (
 from .call_manager import CallManager
 from .call_settings import CallSettings
 from .turn_credentials import fetch_ice_servers
+from .signal_mailbox import fetch as fetch_signal
+from .signal_mailbox import publish as publish_signal
 from .webrtc_interface import WebRTCInterface
 from .webrtc_onboarding import (
     create_onboarding_answer,
@@ -208,6 +210,8 @@ class MeshChatService(
         "call_settings",
         "update_call_settings",
         "call_ice_servers",
+        "signal_publish",
+        "signal_fetch",
         "webrtc_attach",
         "webrtc_packet",
         "webrtc_detach",
@@ -1676,6 +1680,18 @@ class MeshChatService(
                 "iceTransportPolicy": "relay" if self._call_settings.relay_only else "all",
             }
         return self._call_settings.rtc_configuration()
+
+    def signal_publish(self, document: str, role: str) -> dict[str, Any]:
+        base = self._call_settings.signal_mailbox_url
+        if base is None:
+            raise ValidationError("Signaling mailbox is not configured")
+        return publish_signal(base, document, role)
+
+    def signal_fetch(self, session: str, role: str) -> dict[str, Any]:
+        base = self._call_settings.signal_mailbox_url
+        if base is None:
+            raise ValidationError("Signaling mailbox is not configured")
+        return fetch_signal(base, session, role)
 
     def _broker_ice_servers(self, broker: str) -> list[dict[str, Any]]:
         now = time.monotonic()
@@ -3225,6 +3241,12 @@ class MeshChatService(
         if command == "call_ice_servers":
             _payload(value, allowed=set())
             return self.call_ice_servers()
+        if command == "signal_publish":
+            body = _payload(value, allowed={"document", "role"}, required={"document", "role"})
+            return self.signal_publish(body["document"], body["role"])
+        if command == "signal_fetch":
+            body = _payload(value, allowed={"session_id", "role"}, required={"session_id", "role"})
+            return self.signal_fetch(body["session_id"], body["role"])
         if command == "webrtc_attach":
             _payload(value, allowed=set())
             return self.webrtc_attach()

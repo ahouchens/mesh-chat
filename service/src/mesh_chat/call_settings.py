@@ -30,6 +30,7 @@ class CallSettings:
     turn_credential: str | None = None
     turn_broker_url: str | None = field(default_factory=lambda: DEFAULT_TURN_BROKER_URL)
     turn_broker_consent: bool = False
+    signal_mailbox_url: str | None = None
     relay_only: bool = False
 
     @classmethod
@@ -40,7 +41,7 @@ class CallSettings:
             raise ValidationError("Call settings must be an object")
         allowed = {
             "stun_urls", "turn_url", "turn_username", "turn_credential",
-            "turn_broker_url", "turn_broker_consent", "relay_only",
+            "turn_broker_url", "turn_broker_consent", "signal_mailbox_url", "relay_only",
         }
         if set(value) - allowed:
             raise ValidationError("Call settings contain unsupported fields")
@@ -75,12 +76,15 @@ class CallSettings:
             raise ValidationError("TURN broker consent must be boolean")
         if broker_consent and broker is None:
             raise ValidationError("TURN broker consent requires a broker")
+        signal_url = value.get("signal_mailbox_url")
+        if signal_url is not None:
+            signal_url = validate_broker_url(signal_url)
         relay_only = value.get("relay_only", False)
         if not isinstance(relay_only, bool):
             raise ValidationError("Relay-only must be boolean")
         if relay_only and turn_url is None and (broker is None or not broker_consent):
             raise ValidationError("Relay-only requires a consented TURN server")
-        return cls(stun_urls, turn_url, username, credential, broker, broker_consent, relay_only)
+        return cls(stun_urls, turn_url, username, credential, broker, broker_consent, signal_url, relay_only)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -90,6 +94,7 @@ class CallSettings:
             "turn_credential": self.turn_credential,
             "turn_broker_url": self.turn_broker_url,
             "turn_broker_consent": self.turn_broker_consent,
+            "signal_mailbox_url": self.signal_mailbox_url,
             "relay_only": self.relay_only,
         }
 
@@ -103,6 +108,7 @@ class CallSettings:
             "turn_broker_configured": self.turn_broker_url is not None,
             "turn_broker_consent": self.turn_broker_consent,
             "turn_broker_default_url": DEFAULT_TURN_BROKER_URL,
+            "signal_mailbox_url": self.signal_mailbox_url,
             "relay_only": self.relay_only,
         }
 

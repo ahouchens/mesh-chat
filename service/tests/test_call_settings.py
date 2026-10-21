@@ -17,6 +17,7 @@ def test_defaults_use_google_stun_but_no_turn() -> None:
         "turn_broker_configured": DEFAULT_TURN_BROKER_URL is not None,
         "turn_broker_consent": False,
         "turn_broker_default_url": DEFAULT_TURN_BROKER_URL,
+        "signal_mailbox_url": None,
         "relay_only": False,
     }
     assert settings.ice_servers() == [{"urls": ["stun:stun.l.google.com:19302"]}]
@@ -50,6 +51,7 @@ def test_stun_and_turn_are_normalized_and_secretly_scoped() -> None:
         "turn_broker_configured": DEFAULT_TURN_BROKER_URL is not None,
         "turn_broker_consent": False,
         "turn_broker_default_url": DEFAULT_TURN_BROKER_URL,
+        "signal_mailbox_url": None,
         "relay_only": True,
     }
     assert "credential" not in settings.public()
