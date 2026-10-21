@@ -422,6 +422,32 @@ An intermediate 0.2.74 build failed five frontend assertions because normal
 invitations carried `i2p_consent: false`; 0.2.75 sends the field only for I2P
 previews.
 
+## Connection review fixes, 2026-10-21
+
+Bugs found while auditing the mailbox/connection changes:
+
+- `update_call_settings` rejected `signal_mailbox_url` because the command
+  allowlist was not updated; the URL could never be saved.
+- enabling relay from the WebRTC dialog rebuilt the settings payload without
+  the mailbox URL, silently clearing it.
+- approval acknowledgements were sent over whichever control channel happened
+  to be open; they are now gated on the session’s `approvalPending` flag.
+- mailbox publish failures made the whole offer/answer step fail even though
+  the signed document was still usable; publishing is now best-effort.
+- reviewing by mailbox code left `offerDocument` set to the code instead of
+  the signed offer.
+- dialog cleanup did not close the control DataChannel.
+- mailbox codes could survive a new offer and fetch an old answer; they are
+  reset when a new offer/review starts.
+- pairing deep links could overwrite an already active offer; they now apply
+  only when no peer connection exists.
+
+Regression coverage added for accepting and preserving
+`signal_mailbox_url` through a relay-consent update.
+
+Validation: TypeScript, **237 frontend tests**, and the settings/service tests
+passed.
+
 ## Connection UX release, 2026-10-21
 
 **0.8.0 / Android 800** packages the connection improvements:

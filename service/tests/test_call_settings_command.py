@@ -25,9 +25,26 @@ def test_update_call_settings_accepts_broker_consent_payload() -> None:
             "turn_credential": None,
             "turn_broker_url": DEFAULT_TURN_BROKER_URL,
             "turn_broker_consent": True,
+            "signal_mailbox_url": "https://signal.example.workers.dev",
             "relay_only": False,
         },
     )
 
     assert result["turn_broker_consent"] is True
     assert result["turn_broker_configured"] is True
+    assert result["signal_mailbox_url"] == "https://signal.example.workers.dev"
+
+    enabled = service._execute(
+        "update_call_settings",
+        {
+            "stun_urls": result["stun_urls"],
+            "turn_url": result["turn_url"],
+            "turn_username": result["turn_username"],
+            "turn_credential": None,
+            "turn_broker_url": result["turn_broker_url"],
+            "turn_broker_consent": True,
+            "signal_mailbox_url": result["signal_mailbox_url"],
+            "relay_only": False,
+        },
+    )
+    assert enabled["signal_mailbox_url"] == "https://signal.example.workers.dev"

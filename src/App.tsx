@@ -70,7 +70,7 @@ import { ConnectionDiagnostics } from "./ConnectionDiagnostics";
 import { DirectConnectionSetup } from "./DirectConnectionSetup";
 import { DirectRecovery } from "./DirectRecovery";
 import { WebRTCOnboardingDialog } from "./WebRTCOnboarding";
-import { closeWebRTCSession, getWebRTCSession, type WebRTCSessionPath } from "./webrtc-session";
+import { closeWebRTCSession, getWebRTCSession, updateWebRTCSessionApprovalPending, type WebRTCSessionPath } from "./webrtc-session";
 import { lastWebRTCDiagnostics } from "./webrtc-diagnostics";
 import { getEmojiFallbackName } from "./emoji-artwork";
 import {
@@ -4862,9 +4862,11 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceChannelIn
     try {
       await serviceCommand(accept ? "approve_request" : "decline_request", { contact_id: contact.id });
       try {
-        const control = getWebRTCSession()?.control;
-        if (control?.readyState === "open") {
+        const session = getWebRTCSession();
+        const control = session?.control;
+        if (session?.approvalPending && control?.readyState === "open") {
           control.send(JSON.stringify({ type: accept ? "invitation_approved" : "invitation_denied" }));
+          updateWebRTCSessionApprovalPending(false);
         }
       } catch {
         // The approval is already durable; control-channel status is best effort.

@@ -5,7 +5,7 @@ import { Check, Copy, Phone, RefreshCw, X } from "lucide-react";
 import { serviceCommand } from "./api";
 import { attachWebRTCBridge, type WebRTCBridge } from "./webrtc-onboarding";
 import { rememberWebRTCDiagnostics } from "./webrtc-diagnostics";
-import { setWebRTCSession, type WebRTCSessionPath } from "./webrtc-session";
+import { setWebRTCSession, updateWebRTCSessionApprovalPending, type WebRTCSessionPath } from "./webrtc-session";
 import type {
   CallIceConfiguration,
   CallSettings,
@@ -325,6 +325,8 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
     bridgeRef.current = null;
     channelRef.current?.close();
     channelRef.current = null;
+    controlRef.current?.close();
+    controlRef.current = null;
     pcRef.current?.close();
     pcRef.current = null;
   }, []);
@@ -340,7 +342,7 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
   }, []);
 
   useEffect(() => {
-    if (initialPairingCode) {
+    if (initialPairingCode && !pcRef.current) {
       setOfferInput(initialPairingCode);
       setPhase("review");
     }
@@ -417,6 +419,7 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
         setOnboarding("error");
       }
     } else if (message.type === "invitation_accepted" && roleRef.current === "offer") {
+      updateWebRTCSessionApprovalPending(true);
       setOnboarding("waiting-approval");
       await onChanged();
     } else if (message.type === "invitation_approved" && roleRef.current === "join") {
@@ -425,6 +428,7 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
     } else if (message.type === "invitation_denied" && roleRef.current === "join") {
       setOnboarding("declined");
     } else if (message.type === "invitation_declined" && roleRef.current === "offer") {
+      updateWebRTCSessionApprovalPending(false);
       setOnboarding("declined");
     }
   }, [onChanged]);
@@ -449,7 +453,7 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
       const pc = pcRef.current;
       if (pc) {
         const path = await connectionPath(pc);
-        setWebRTCSession({ bridge, channel, pc, control: controlRef.current, path, createdAt: Date.now() });
+        setWebRTCSession({ bridge, channel, pc, control: controlRef.current, path, createdAt: Date.now(), approvalPending: false });
         handedOffRef.current = true;
         onConnected?.(path);
       }
@@ -495,6 +499,8 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
   const createOffer = useCallback(async () => {
     if (createOfferBusyRef.current) return;
     createOfferBusyRef.current = true;
+    setMailboxCode("");
+    setOfferDocument("");
     setError(""); setPhase("creating");
     setAnswerInput(""); setAnswerDocument(""); setAnswerPreview(null);
     try {
@@ -523,8 +529,12 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
       });
       setOfferDocument(result.document);
       if (relaySettings?.signal_mailbox_url) {
-        const published = await serviceCommand<{ session_id: string }>("signal_publish", { document: result.document, role: "offer" });
-        setMailboxCode(published.session_id);
+        try {
+          const published = await serviceCommand<{ session_id: string }>("signal_publish", { document: result.document, role: "offer" });
+          setMailboxCode(published.session_id);
+        } catch {
+          // The full signed offer remains usable; the mailbox is optional.
+        }
       }
       setPhase("waiting-answer");
     } catch (reason) {
@@ -581,6 +591,7 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
     if (reviewOfferBusyRef.current) return;
     reviewOfferBusyRef.current = true;
     setReviewBusy(true);
+    setMailboxCode("");
     setError(""); setPhase("review");
     try {
       let rawOffer = offerInput.trim();
@@ -634,9 +645,14 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
       });
       setAnswerDocument(result.document);
       if (relaySettings?.signal_mailbox_url) {
-        const published = await serviceCommand<{ session_id: string }>("signal_publish", { document: result.document, role: "answer" });
-        setMailboxCode(published.session_id);
+        try {
+          const published = await serviceCommand<{ session_id: string }>("signal_publish", { document: result.document, role: "answer" });
+          setMailboxCode(published.session_id);
+        } catch {
+          // The full signed answer remains usable; the mailbox is optional.
+        }
       }
+      setOfferDocument(rawOffer);
       setAnswerPreview({ ...preview, sdp, dtls_fingerprint: fingerprint(sdp), document: result.document });
       setPhase("waiting-owner");
     } catch (reason) {
@@ -716,6 +732,7 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
         turn_credential: null,
         turn_broker_url: relaySettings.turn_broker_url ?? null,
         turn_broker_consent: true,
+        signal_mailbox_url: relaySettings.signal_mailbox_url ?? null,
         relay_only: relaySettings.relay_only,
       });
       setRelaySettings(updated);

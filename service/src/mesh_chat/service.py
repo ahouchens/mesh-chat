@@ -3233,7 +3233,7 @@ class MeshChatService(
                 value,
                 allowed={
                     "stun_urls", "turn_url", "turn_username", "turn_credential",
-                    "turn_broker_url", "turn_broker_consent", "relay_only",
+                    "turn_broker_url", "turn_broker_consent", "signal_mailbox_url", "relay_only",
                 },
                 required={"stun_urls", "relay_only"},
             )

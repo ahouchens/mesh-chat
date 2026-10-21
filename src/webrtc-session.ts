@@ -9,6 +9,7 @@ export interface WebRTCSession {
   control: RTCDataChannel | null;
   path: WebRTCSessionPath;
   createdAt: number;
+  approvalPending: boolean;
 }
 
 let activeSession: WebRTCSession | null = null;
@@ -22,6 +23,10 @@ export function setWebRTCSession(session: WebRTCSession): void {
 
 export function updateWebRTCSessionPath(path: WebRTCSessionPath): void {
   if (activeSession) activeSession.path = path;
+}
+
+export function updateWebRTCSessionApprovalPending(pending: boolean): void {
+  if (activeSession) activeSession.approvalPending = pending;
 }
 
 export function getWebRTCSession(): WebRTCSession | null {
