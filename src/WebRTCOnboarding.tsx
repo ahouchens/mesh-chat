@@ -6,7 +6,13 @@ import { serviceCommand } from "./api";
 import { attachWebRTCBridge, type WebRTCBridge } from "./webrtc-onboarding";
 import { rememberWebRTCDiagnostics } from "./webrtc-diagnostics";
 import { setWebRTCSession } from "./webrtc-session";
-import type { CallIceConfiguration } from "./types";
+import type {
+  CallIceConfiguration,
+  InvitationFormats,
+  InvitationPreview,
+  WorkspaceInvitationFormats,
+  WorkspaceInvitationPreview,
+} from "./types";
 
 interface OnboardingOfferResult {
   document: string;
@@ -40,6 +46,13 @@ interface OnboardingAnswerPreview {
 }
 
 type Phase = "choose" | "creating" | "waiting-answer" | "review" | "waiting-owner" | "connecting" | "connected" | "error";
+
+type OnboardingState = "idle" | "sending" | "sent" | "preview" | "waiting-approval" | "declined" | "error";
+
+type ControlMessage =
+  | { type: "contact_invitation"; document: string; workspace_document?: string }
+  | { type: "invitation_accepted" }
+  | { type: "invitation_declined" };
 
 function fingerprint(sdp: string): string {
   for (const line of sdp.split(/\r?\n/)) {
@@ -167,7 +180,12 @@ async function peerDiagnostics(
   }, null, 2);
 }
 
-export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected }: { onClose: () => void; onChanged: () => Promise<void>; onConnected?: () => void }) {
+export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, workspaces = [] }: {
+  onClose: () => void;
+  onChanged: () => Promise<void>;
+  onConnected?: () => void;
+  workspaces?: Array<{ id: string; name: string }>;
+}) {
   const [phase, setPhase] = useState<Phase>("choose");
   const [offerDocument, setOfferDocument] = useState("");
   const [answerDocument, setAnswerDocument] = useState("");
@@ -178,8 +196,19 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected }: { on
   const [error, setError] = useState("");
   const [copied, setCopied] = useState("");
   const [diagnostics, setDiagnostics] = useState("");
+  const [onboarding, setOnboarding] = useState<OnboardingState>("idle");
+  const [onboardingError, setOnboardingError] = useState("");
+  const [contactInvitation, setContactInvitation] = useState<InvitationPreview | null>(null);
+  const [workspaceInvitation, setWorkspaceInvitation] = useState<WorkspaceInvitationPreview | null>(null);
+  const [selectedWorkspaceId, setSelectedWorkspaceId] = useState("");
+  const [onboardingBusy, setOnboardingBusy] = useState(false);
   const pcRef = useRef<RTCPeerConnection | null>(null);
   const channelRef = useRef<RTCDataChannel | null>(null);
+  const controlRef = useRef<RTCDataChannel | null>(null);
+  const controlDocumentRef = useRef("");
+  const workspaceDocumentRef = useRef("");
+  const roleRef = useRef<"offer" | "join" | null>(null);
+  const invitationStartedRef = useRef(false);
   const bridgeRef = useRef<WebRTCBridge | null>(null);
   const handedOffRef = useRef(false);
   const iceSummaryRef = useRef<Record<string, unknown> | null>(null);
@@ -223,6 +252,83 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected }: { on
     return () => window.clearTimeout(timer);
   }, [captureDiagnostics, cleanup, phase]);
 
+  const sendInvitation = useCallback(async () => {
+    if (roleRef.current !== "offer" || invitationStartedRef.current || !bridgeRef.current) return;
+    const control = controlRef.current;
+    if (!control || control.readyState !== "open" || !channelRef.current || channelRef.current.readyState !== "open") return;
+    invitationStartedRef.current = true;
+    setOnboarding("sending");
+    setOnboardingError("");
+    try {
+      const created = await serviceCommand<InvitationFormats>("create_invitation", { connection_mode: "webrtc" });
+      let workspaceDocument: string | undefined;
+      if (selectedWorkspaceId) {
+        const workspace = await serviceCommand<WorkspaceInvitationFormats>("create_workspace_invitation", {
+          operation_id: crypto.randomUUID(),
+          workspace_id: selectedWorkspaceId,
+          lifetime_days: 7,
+          connection_mode: "webrtc",
+        });
+        workspaceDocument = workspace.value;
+      }
+      control.send(JSON.stringify({ type: "contact_invitation", document: created.file, workspace_document: workspaceDocument }));
+      setOnboarding("sent");
+    } catch (reason) {
+      invitationStartedRef.current = false;
+      setOnboardingError(errorMessage(reason));
+      setOnboarding("error");
+    }
+  }, [selectedWorkspaceId]);
+
+  const handleControlMessage = useCallback(async (raw: string) => {
+    let message: ControlMessage;
+    try {
+      message = JSON.parse(raw) as ControlMessage;
+    } catch {
+      return;
+    }
+    if (message.type === "contact_invitation" && roleRef.current === "join") {
+      if (typeof message.document !== "string" || !message.document) return;
+      try {
+        const preview = await serviceCommand<InvitationPreview>("preview_invitation", { invitation: message.document });
+        controlDocumentRef.current = message.document;
+        setContactInvitation(preview);
+        if (typeof message.workspace_document === "string" && message.workspace_document) {
+          const workspace = await serviceCommand<WorkspaceInvitationPreview>("preview_workspace_invitation", {
+            invitation: message.workspace_document,
+          });
+          workspaceDocumentRef.current = message.workspace_document;
+          setWorkspaceInvitation(workspace);
+        } else {
+          workspaceDocumentRef.current = "";
+          setWorkspaceInvitation(null);
+        }
+        setOnboardingError("");
+        setOnboarding("preview");
+      } catch (reason) {
+        setOnboardingError(errorMessage(reason));
+        setOnboarding("error");
+      }
+    } else if (message.type === "invitation_accepted" && roleRef.current === "offer") {
+      setOnboarding("waiting-approval");
+      await onChanged();
+    } else if (message.type === "invitation_declined" && roleRef.current === "offer") {
+      setOnboarding("declined");
+    }
+  }, [onChanged]);
+
+  const setupControl = useCallback((control: RTCDataChannel) => {
+    controlRef.current = control;
+    control.onopen = () => { void sendInvitation(); };
+    control.onmessage = (event) => {
+      if (typeof event.data === "string") void handleControlMessage(event.data);
+    };
+    control.onclose = () => {
+      if (onboarding === "preview") setOnboarding("error");
+    };
+    if (control.readyState === "open") void sendInvitation();
+  }, [handleControlMessage, onboarding, sendInvitation]);
+
   const attach = useCallback(async (channel: RTCDataChannel) => {
     try {
       await waitForOpen(channel);
@@ -234,6 +340,7 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected }: { on
         handedOffRef.current = true;
       }
       setPhase("connected");
+      void sendInvitation();
       onConnected?.();
       await onChanged();
     } catch (reason) {
@@ -243,7 +350,7 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected }: { on
       setPhase("error");
       cleanup();
     }
-  }, [captureDiagnostics, cleanup, onChanged, onConnected]);
+  }, [captureDiagnostics, cleanup, onChanged, onConnected, sendInvitation]);
 
   const watchPeer = useCallback((pc: RTCPeerConnection) => {
     const failed = () => {
@@ -278,11 +385,14 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected }: { on
       const ice = await serviceCommand<CallIceConfiguration>("call_ice_servers");
       iceSummaryRef.current = summarizeIce(ice);
       const pc = new RTCPeerConnection({ iceServers: ice.iceServers, iceTransportPolicy: ice.iceTransportPolicy });
+      roleRef.current = "offer";
       const channel = pc.createDataChannel("mesh-reticulum", { ordered: true });
       channel.binaryType = "arraybuffer";
       channel.onopen = () => { void attach(channel); };
       channel.onclose = () => cleanup();
       channel.onerror = () => { setError("The DataChannel failed."); setPhase("error"); };
+      const control = pc.createDataChannel("mesh-onboarding", { ordered: true });
+      setupControl(control);
       pcRef.current = pc;
       channelRef.current = channel;
       watchPeer(pc);
@@ -303,7 +413,7 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected }: { on
       setError(message);
       setPhase("error");
     }
-  }, [attach, captureDiagnostics, cleanup, watchPeer]);
+  }, [attach, captureDiagnostics, cleanup, setupControl, watchPeer]);
 
   const connectAnswer = useCallback(async () => {
     setError(""); setPhase("connecting");
@@ -334,8 +444,14 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected }: { on
       const ice = await serviceCommand<CallIceConfiguration>("call_ice_servers");
       iceSummaryRef.current = summarizeIce(ice);
       const pc = new RTCPeerConnection({ iceServers: ice.iceServers, iceTransportPolicy: ice.iceTransportPolicy });
+      roleRef.current = "join";
       pc.ondatachannel = (event) => {
         const channel = event.channel;
+        if (channel.label === "mesh-onboarding") {
+          setupControl(channel);
+          return;
+        }
+        if (channel.label !== "mesh-reticulum") return;
         channel.binaryType = "arraybuffer";
         channelRef.current = channel;
         channel.onopen = () => { void attach(channel); };
@@ -364,7 +480,35 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected }: { on
       setError(message);
       setPhase("error");
     }
-  }, [attach, captureDiagnostics, cleanup, offerInput, watchPeer]);
+  }, [attach, captureDiagnostics, cleanup, offerInput, setupControl, watchPeer]);
+
+  const acceptContact = async () => {
+    setOnboardingBusy(true);
+    setOnboardingError("");
+    try {
+      if (!controlDocumentRef.current) throw new Error("No contact invitation is available.");
+      await serviceCommand("accept_invitation", { invitation: controlDocumentRef.current });
+      if (workspaceDocumentRef.current) {
+        await serviceCommand("submit_workspace_join", {
+          operation_id: crypto.randomUUID(),
+          invitation: workspaceDocumentRef.current,
+        });
+      }
+      controlRef.current?.send(JSON.stringify({ type: "invitation_accepted" }));
+      setOnboarding("waiting-approval");
+      await onChanged();
+    } catch (reason) {
+      setOnboardingError(errorMessage(reason));
+      setOnboarding("error");
+    } finally {
+      setOnboardingBusy(false);
+    }
+  };
+
+  const declineContact = () => {
+    controlRef.current?.send(JSON.stringify({ type: "invitation_declined" }));
+    setOnboarding("declined");
+  };
 
   const close = () => {
     if (!handedOffRef.current) cleanup();
@@ -386,7 +530,10 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected }: { on
         <div className="dialog__header"><h2 id="webrtc-onboarding-title">Connect with WebRTC</h2><button className="icon-button" onClick={close} aria-label="Close"><X size={20} /></button></div>
         <div className="stack">
           <p className="muted">WebRTC carries Reticulum packets over a direct or relayed DataChannel. The other person must review the signed offer and return a signed answer. This is experimental and does not approve a contact by itself.</p>
-          {phase === "choose" && <div className="dialog-actions"><button className="button button--primary" onClick={() => void createOffer()}><Phone size={17} /> Create WebRTC invitation</button><button className="button button--secondary" onClick={() => { setPhase("review"); setOfferInput(""); }}>Join with WebRTC</button></div>}
+          {phase === "choose" && <>
+            {workspaces.length > 0 && <label className="field"><span>Also invite to workspace <small>Optional; the contact invitation is still sent</small></span><select value={selectedWorkspaceId} onChange={(event) => setSelectedWorkspaceId(event.target.value)}><option value="">Personal contact only</option>{workspaces.map((workspace) => <option key={workspace.id} value={workspace.id}>{workspace.name}</option>)}</select></label>}
+            <div className="dialog-actions"><button className="button button--primary" onClick={() => void createOffer()}><Phone size={17} /> Create WebRTC invitation</button><button className="button button--secondary" onClick={() => { setPhase("review"); setOfferInput(""); }}>Join with WebRTC</button></div>
+          </>}
           {phase === "creating" && <p className="direct-host-status" role="status"><RefreshCw size={17} /> Preparing the signed WebRTC offer…</p>}
           {phase === "waiting-answer" && <>
             <h3>Send this offer to the other person</h3>
@@ -410,8 +557,19 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected }: { on
           {phase === "connecting" && <><p className="direct-host-status" role="status"><RefreshCw size={17} /> Applying the signed answer and opening the DataChannel…</p><p className="muted">If this takes more than 30 seconds, Mesh Chat will stop and report the likely network cause.</p><div className="dialog-actions"><button className="button button--secondary" onClick={close}>Cancel</button></div></>}
           {phase === "connected" && <>
             <p className="direct-host-status" role="status"><Check size={17} /> WebRTC path connected</p>
-            <p className="muted">Reticulum packets are now using this DataChannel. Continue with the normal invitation or workspace join; approval is still required.</p>
-            <div className="dialog-actions"><button className="button button--secondary" onClick={() => void copyDiagnostics()}>{copied === "diagnostics" ? "Copied" : "Copy diagnostics"}</button><button className="button button--primary" onClick={close}>Close and continue</button></div>
+            {onboarding === "preview" && contactInvitation ? <div className="remote-consent">
+              <h3>Contact invitation</h3>
+              <p><strong>{contactInvitation.display_name}</strong> wants to connect over this WebRTC path.</p>
+              {workspaceInvitation && <p>Workspace invitation: <strong>{workspaceInvitation.name}</strong> · {workspaceInvitation.member_count} {workspaceInvitation.member_count === 1 ? "member" : "members"}</p>}
+              <p>Fingerprint: <code>{contactInvitation.fingerprint}</code></p>
+              <p>This accepts the signed invitation and sends a request. The other person must still approve it.</p>
+              <div className="dialog-actions"><button className="button button--primary" disabled={onboardingBusy} onClick={() => void acceptContact()}>{onboardingBusy ? "Accepting…" : "Accept contact"}</button><button className="button button--secondary" disabled={onboardingBusy} onClick={declineContact}>Decline</button></div>
+            </div> : onboarding === "waiting-approval" ? <p className="muted">Contact request sent. Waiting for the other person to approve it. Keep this WebRTC path connected.</p>
+              : onboarding === "sent" ? <p className="muted">Signed contact invitation sent. Waiting for the other person to accept it.</p>
+                : onboarding === "declined" ? <p className="muted">The contact invitation was declined. No contact was added.</p>
+                  : onboarding === "error" ? <p className="form-error" role="alert">{onboardingError}</p>
+                    : <p className="muted">Exchanging a signed contact invitation over this WebRTC path. Approval is still required.</p>}
+            <div className="dialog-actions"><button className="button button--secondary" onClick={() => void copyDiagnostics()}>{copied === "diagnostics" ? "Copied" : "Copy diagnostics"}</button><button className="button button--primary" onClick={close}>Close</button></div>
           </>}
           {(offerPreview || answerPreview) && phase !== "choose" && <p className="muted">Offers are signed and expire automatically. Destination: <code>{(answerPreview?.signer_destination ?? offerPreview?.signer_destination ?? "").slice(0, 12)}</code>…</p>}
           {phase === "error" && <><p className="form-error" role="alert">{error}</p><div className="dialog-actions"><button className="button button--secondary" onClick={() => void copyDiagnostics()}>{copied === "diagnostics" ? "Copied" : "Copy diagnostics"}</button><button className="button button--secondary" onClick={() => setPhase("choose")}>Back</button><button className="button button--primary" onClick={close}>Close</button></div></>}

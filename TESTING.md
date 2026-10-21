@@ -422,6 +422,21 @@ An intermediate 0.2.74 build failed five frontend assertions because normal
 invitations carried `i2p_consent: false`; 0.2.75 sends the field only for I2P
 previews.
 
+## Inline contact and workspace onboarding, 2026-10-21
+
+**0.4.0 / Android 400** removes the second invitation flow after WebRTC connects:
+
+- adds a reliable `mesh-onboarding` DataChannel alongside `mesh-reticulum`;
+- the offerer automatically creates and sends a signed personal invitation
+  over the control channel;
+- the joiner previews the identity/fingerprint and accepts inline;
+- optional workspace invitation is sent and previewed in the same screen;
+- existing owner approval still applies, but no QR/copy/paste is needed;
+- ICE gathering waits up to 15 seconds and diagnostics include local/remote
+  SDP candidate counts.
+
+Validation: TypeScript, **237 frontend tests**, and production build passed.
+
 ## ICE gathering and relay diagnostics, 2026-10-20
 
 **0.3.2 / Android 302** fixes the relay candidate exchange window:
