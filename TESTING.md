@@ -422,6 +422,14 @@ An intermediate 0.2.74 build failed five frontend assertions because normal
 invitations carried `i2p_consent: false`; 0.2.75 sends the field only for I2P
 previews.
 
+## Connection fallback action, 2026-10-21
+
+**0.6.1 / Android 601** adds **Use invitation instead** to the WebRTC failure
+state, opening the signed invitation flow without leaving the user at a dead
+end.
+
+Validation: TypeScript and **237 frontend tests** passed.
+
 ## Unified Connect entry, 2026-10-21
 
 **0.6.0 / Android 600** adds a single **Connect** entry:

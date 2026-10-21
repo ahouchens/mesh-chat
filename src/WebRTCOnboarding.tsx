@@ -264,10 +264,11 @@ async function peerDiagnostics(
   }, null, 2);
 }
 
-export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, workspaces = [] }: {
+export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFallback, workspaces = [] }: {
   onClose: () => void;
   onChanged: () => Promise<void>;
   onConnected?: (path: WebRTCSessionPath) => void;
+  onFallback?: () => void;
   workspaces?: Array<{ id: string; name: string }>;
 }) {
   const [phase, setPhase] = useState<Phase>("choose");
@@ -748,7 +749,7 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, worksp
             <div className="dialog-actions"><button className="button button--secondary" onClick={() => void copyDiagnostics()}>{copied === "diagnostics" ? "Copied" : "Copy diagnostics"}</button><button className="button button--primary" onClick={close}>Close</button></div>
           </>}
           {(offerPreview || answerPreview) && phase !== "choose" && <p className="muted">Offers are signed and expire automatically. Destination: <code>{(answerPreview?.signer_destination ?? offerPreview?.signer_destination ?? "").slice(0, 12)}</code>…</p>}
-          {phase === "error" && <><p className="form-error" role="alert">{error}</p><div className="dialog-actions"><button className="button button--secondary" onClick={() => void copyDiagnostics()}>{copied === "diagnostics" ? "Copied" : "Copy diagnostics"}</button><button className="button button--secondary" onClick={() => setPhase("choose")}>Back</button><button className="button button--primary" onClick={close}>Close</button></div></>}
+          {phase === "error" && <><p className="form-error" role="alert">{error}</p><div className="dialog-actions"><button className="button button--secondary" onClick={() => void copyDiagnostics()}>{copied === "diagnostics" ? "Copied" : "Copy diagnostics"}</button>{onFallback && <button className="button button--secondary" onClick={() => { close(); onFallback(); }}>Use invitation instead</button>}<button className="button button--secondary" onClick={() => setPhase("choose")}>Back</button><button className="button button--primary" onClick={close}>Close</button></div></>}
         </div>
       </section>
     </div>
