@@ -441,6 +441,16 @@ This is intended to distinguish:
 - `local:relay` present but no selected pair → relay reachability failed.
 
 Validation: TypeScript, **237 frontend tests**, and production build passed.
+GitHub Actions
+[run 39531450529](https://github.com/ahouchens/mesh-chat/actions/runs/39531450529)
+passed Verify, Windows packaging, Android packaging, and Publish.
+Release: <https://github.com/ahouchens/mesh-chat/releases/tag/v0.3.0>.
+
+| Artifact | SHA-256 |
+|---|---|
+| `Mesh-Chat_0.3.0_x64-setup.exe` | `9ae869baaa1b35be62bd4e66358ab64dfc04eb0adb669a27b83be08a0079ce30` |
+| `Mesh-Chat_0.3.0_x64_en-US.msi` | `a223f0b4fcc0ea56ec4f6fc17b4f47cac0982126f809f1395fb00f43eb3df133` |
+| `mesh-chat-0.3.0-android-arm64-release.apk` | `71a766e34692fbe9b83e48520807e1eaa3308fd1f448c259415bf39beb0d02d6` |
 
 ## Android certifi startup fix, 2026-10-20
 
