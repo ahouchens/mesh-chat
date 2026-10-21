@@ -4,6 +4,7 @@ export interface WebRTCSession {
   bridge: WebRTCBridge;
   channel: RTCDataChannel;
   pc: RTCPeerConnection;
+  control: RTCDataChannel | null;
 }
 
 let activeSession: WebRTCSession | null = null;

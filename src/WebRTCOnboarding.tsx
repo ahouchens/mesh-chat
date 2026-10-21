@@ -8,6 +8,7 @@ import { rememberWebRTCDiagnostics } from "./webrtc-diagnostics";
 import { setWebRTCSession } from "./webrtc-session";
 import type {
   CallIceConfiguration,
+  CallSettings,
   InvitationFormats,
   InvitationPreview,
   WorkspaceInvitationFormats,
@@ -47,12 +48,14 @@ interface OnboardingAnswerPreview {
 
 type Phase = "choose" | "creating" | "waiting-answer" | "review" | "waiting-owner" | "connecting" | "connected" | "error";
 
-type OnboardingState = "idle" | "sending" | "sent" | "preview" | "waiting-approval" | "declined" | "error";
+type OnboardingState = "idle" | "sending" | "sent" | "preview" | "waiting-approval" | "approved" | "declined" | "error";
 
 type ControlMessage =
   | { type: "contact_invitation"; document: string; workspace_document?: string }
   | { type: "invitation_accepted" }
-  | { type: "invitation_declined" };
+  | { type: "invitation_declined" }
+  | { type: "invitation_approved" }
+  | { type: "invitation_denied" };
 
 function fingerprint(sdp: string): string {
   for (const line of sdp.split(/\r?\n/)) {
@@ -252,6 +255,9 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, worksp
   const [selectedWorkspaceId, setSelectedWorkspaceId] = useState("");
   const [onboardingBusy, setOnboardingBusy] = useState(false);
   const [reviewBusy, setReviewBusy] = useState(false);
+  const [relaySettings, setRelaySettings] = useState<CallSettings | null>(null);
+  const [relayBusy, setRelayBusy] = useState(false);
+  const [relayError, setRelayError] = useState("");
   const pcRef = useRef<RTCPeerConnection | null>(null);
   const channelRef = useRef<RTCDataChannel | null>(null);
   const controlRef = useRef<RTCDataChannel | null>(null);
@@ -291,6 +297,12 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, worksp
   useEffect(() => () => {
     if (!handedOffRef.current) cleanup();
   }, [cleanup]);
+
+  useEffect(() => {
+    void serviceCommand<CallSettings>("call_settings")
+      .then(setRelaySettings)
+      .catch(() => undefined);
+  }, []);
 
   useEffect(() => {
     if (phase !== "connecting") return;
@@ -365,6 +377,11 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, worksp
     } else if (message.type === "invitation_accepted" && roleRef.current === "offer") {
       setOnboarding("waiting-approval");
       await onChanged();
+    } else if (message.type === "invitation_approved" && roleRef.current === "join") {
+      setOnboarding("approved");
+      await onChanged();
+    } else if (message.type === "invitation_denied" && roleRef.current === "join") {
+      setOnboarding("declined");
     } else if (message.type === "invitation_declined" && roleRef.current === "offer") {
       setOnboarding("declined");
     }
@@ -389,7 +406,7 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, worksp
       bridgeRef.current = bridge;
       const pc = pcRef.current;
       if (pc) {
-        setWebRTCSession({ bridge, channel, pc });
+        setWebRTCSession({ bridge, channel, pc, control: controlRef.current });
         handedOffRef.current = true;
       }
       setPhase("connected");
@@ -618,6 +635,28 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, worksp
     await copy(text, "diagnostics");
   };
 
+  const enableRelay = async () => {
+    if (!relaySettings || relayBusy) return;
+    setRelayBusy(true);
+    setRelayError("");
+    try {
+      const updated = await serviceCommand<CallSettings>("update_call_settings", {
+        stun_urls: relaySettings.stun_urls,
+        turn_url: relaySettings.turn_url ?? null,
+        turn_username: relaySettings.turn_username ?? null,
+        turn_credential: null,
+        turn_broker_url: relaySettings.turn_broker_url ?? null,
+        turn_broker_consent: true,
+        relay_only: relaySettings.relay_only,
+      });
+      setRelaySettings(updated);
+    } catch (reason) {
+      setRelayError(errorMessage(reason));
+    } finally {
+      setRelayBusy(false);
+    }
+  };
+
   return (
     <div className="dialog-backdrop" role="presentation" onMouseDown={close}>
       <section className="dialog dialog--wide" role="dialog" aria-modal="true" aria-labelledby="webrtc-onboarding-title" onMouseDown={(event) => event.stopPropagation()}>
@@ -626,6 +665,12 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, worksp
           <p className="muted">WebRTC carries Reticulum packets over a direct or relayed DataChannel. The other person must review the signed offer and return a signed answer. This is experimental and does not approve a contact by itself.</p>
           <p className="muted">Create invitation: this device makes the offer. Join with WebRTC: this device pastes an offer. Use only one role per attempt.</p>
           {phase === "choose" && <>
+            {relaySettings?.turn_broker_configured && !relaySettings.turn_broker_consent && <div className="remote-consent">
+              <h3>Internet relay is available</h3>
+              <p>The built-in community relay can connect devices that cannot reach each other directly. Its operator can see IP addresses, timing, and encrypted traffic; it does not receive message plaintext.</p>
+              <div className="dialog-actions"><button className="button button--primary" disabled={relayBusy} onClick={() => void enableRelay()}>{relayBusy ? "Enabling…" : "Use the relay"}</button></div>
+              {relayError && <p className="form-error" role="alert">{relayError}</p>}
+            </div>}
             {workspaces.length > 0 && <label className="field"><span>Also invite to workspace <small>Optional; the contact invitation is still sent</small></span><select value={selectedWorkspaceId} onChange={(event) => setSelectedWorkspaceId(event.target.value)}><option value="">Personal contact only</option>{workspaces.map((workspace) => <option key={workspace.id} value={workspace.id}>{workspace.name}</option>)}</select></label>}
             <div className="dialog-actions"><button className="button button--primary" onClick={() => void createOffer()}><Phone size={17} /> Create WebRTC invitation</button><button className="button button--secondary" onClick={() => { setPhase("review"); setOfferInput(""); }}>Join with WebRTC</button></div>
           </>}
@@ -662,7 +707,8 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, worksp
               <p>This accepts the signed invitation and sends a request. The other person must still approve it.</p>
               <div className="dialog-actions"><button className="button button--primary" disabled={onboardingBusy} onClick={() => void acceptContact()}>{onboardingBusy ? "Accepting…" : "Accept contact"}</button><button className="button button--secondary" disabled={onboardingBusy} onClick={declineContact}>Decline</button></div>
             </div> : onboarding === "waiting-approval" ? <p className="muted">Contact request sent. Waiting for the other person to approve it. Keep this WebRTC path connected.</p>
-              : onboarding === "sent" ? <p className="muted">Signed contact invitation sent. Waiting for the other person to accept it.</p>
+              : onboarding === "approved" ? <p className="direct-host-status" role="status"><Check size={17} /> Contact approved. You can start messaging.</p>
+                : onboarding === "sent" ? <p className="muted">Signed contact invitation sent. Waiting for the other person to accept it.</p>
                 : onboarding === "declined" ? <p className="muted">The contact invitation was declined. No contact was added.</p>
                   : onboarding === "error" ? <p className="form-error" role="alert">{onboardingError}</p>
                     : <p className="muted">Exchanging a signed contact invitation over this WebRTC path. Approval is still required.</p>}

@@ -422,6 +422,22 @@ An intermediate 0.2.74 build failed five frontend assertions because normal
 invitations carried `i2p_consent: false`; 0.2.75 sends the field only for I2P
 previews.
 
+## Connection UX phase 1, 2026-10-21
+
+**0.5.0 / Android 500** implements the first connection-UX phase:
+
+- the WebRTC chooser shows an inline relay-consent card when the default
+  broker is configured but not enabled;
+- enabling relay from that card persists `turn_broker_consent` through the
+  existing encrypted settings path;
+- the joiner receives `invitation_approved` or `invitation_denied` over the
+  authenticated `mesh-onboarding` control channel after owner action;
+- the joiner’s waiting state resolves to **Contact approved. You can start
+  messaging.** instead of waiting indefinitely;
+- the spec is at `docs/CONNECTION_UX_ARCHITECTURE.md`.
+
+Validation: TypeScript and **237 frontend tests** passed.
+
 ## Role and document-type errors, 2026-10-21
 
 **0.4.5 / Android 405** stops mislabeling offer failures as answer failures:

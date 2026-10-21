@@ -4825,6 +4825,14 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceChannelIn
     setDismissedRequests((current) => current.filter((id) => id !== contact.id));
     try {
       await serviceCommand(accept ? "approve_request" : "decline_request", { contact_id: contact.id });
+      try {
+        const control = getWebRTCSession()?.control;
+        if (control?.readyState === "open") {
+          control.send(JSON.stringify({ type: accept ? "invitation_approved" : "invitation_denied" }));
+        }
+      } catch {
+        // The approval is already durable; control-channel status is best effort.
+      }
       if (accept) {
         selectConversation({ kind: "contact", id: contact.id });
         setNewChat(false);
