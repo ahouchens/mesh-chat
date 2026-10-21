@@ -1761,6 +1761,21 @@ class MeshChatService(
         except Exception as exc:
             raise NetworkUnavailable("Could not attach the WebRTC interface") from exc
         self._webrtc_bridges[bridge_id] = interface
+        # The WebRTC interface is point-to-point and is added after Reticulum
+        # startup. Announce the local LXMF destination on it so the peer can
+        # learn a path/ratchet and the accepted contact request can leave the
+        # outbox instead of waiting for an unrelated announce.
+        try:
+            self.network.reannounce()
+        except Exception:
+            pass
+        for delay in (2.0, 6.0):
+            threading.Thread(
+                target=self._webrtc_announce_later,
+                args=(bridge_id, delay),
+                daemon=True,
+                name="mesh-chat-webrtc-announce",
+            ).start()
         self._changed()
         return {
             "bridge_id": bridge_id,
@@ -1789,6 +1804,16 @@ class MeshChatService(
             interface.detach()
         self._changed()
         return {"state": "closed"}
+
+    def _webrtc_announce_later(self, bridge_id: str, delay: float) -> None:
+        if self._shutdown.wait(delay):
+            return
+        if bridge_id not in self._webrtc_bridges or self.network is None:
+            return
+        try:
+            self.network.reannounce()
+        except Exception:
+            pass
 
     def _webrtc_outbound(self, bridge_id: str, data: bytes) -> None:
         interface = self._webrtc_bridges.get(bridge_id)

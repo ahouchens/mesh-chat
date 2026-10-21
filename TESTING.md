@@ -422,6 +422,20 @@ An intermediate 0.2.74 build failed five frontend assertions because normal
 invitations carried `i2p_consent: false`; 0.2.75 sends the field only for I2P
 previews.
 
+## WebRTC path announcement, 2026-10-21
+
+**0.4.3 / Android 403** fixes the case where Android accepted the contact
+invitation but Windows never received the request:
+
+- each side announces its LXMF destination immediately when the WebRTC
+  interface attaches;
+- reannounces at 2 and 6 seconds to cover a peer that attached later;
+- this provides the path and ratchet needed for the queued contact request to
+  leave the outbox;
+- the contact request retry worker then delivers it normally.
+
+Validation: full service suite **1053 passed, 46 skipped**; targeted tests passed.
+
 ## Answer binding precheck, 2026-10-21
 
 **0.4.2 / Android 402** distinguishes a stale answer from a copy mistake:
