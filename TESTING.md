@@ -438,6 +438,16 @@ Diagnostics from the relay-only failure showed Windows had six TURN URLs and
 a fully relayed path.
 
 Validation: TypeScript, **237 frontend tests**, and production build passed.
+GitHub Actions
+[run 39541470693](https://github.com/ahouchens/mesh-chat/actions/runs/39541470693)
+passed Verify, Windows packaging, Android packaging, and Publish.
+Release: <https://github.com/ahouchens/mesh-chat/releases/tag/v0.3.2>.
+
+| Artifact | SHA-256 |
+|---|---|
+| `Mesh-Chat_0.3.2_x64-setup.exe` | `b38a45e303f733613b9ed0bc1f4fd6f381fd0adf816aaacf2fb7443488945e21` |
+| `Mesh-Chat_0.3.2_x64_en-US.msi` | `5b6639eb0d2304dabf3639b6217512517f61bc97d332411a6a4d725780e8a479` |
+| `mesh-chat-0.3.2-android-arm64-release.apk` | `832b451cc6a94b994c72824a414cf3bfaaba9b5138a7519f80cae5d3436a9cf8` |
 
 ## TURN consent save fix, 2026-10-20
 
