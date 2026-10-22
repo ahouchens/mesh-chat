@@ -1153,3 +1153,17 @@ export interface WorkspaceAccessApplyResult {
   profile: RemoteProfile;
   applied: boolean;
 }
+
+export interface WorkspaceReconnectStatus {
+  workspace_id: string;
+  enabled: boolean;
+  allow_direct_ip_disclosure: boolean;
+  relay_consent_scope: string;
+  ready_count: number;
+  peer_count: number;
+  profiles: Array<{
+    id: string;
+    contact_id: string;
+    effective: { ready: boolean };
+  }>;
+}

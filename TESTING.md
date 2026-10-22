@@ -22,6 +22,65 @@ locally. Frontend/package/native tests and Windows/Android builds run in Actions
 Physical execution follows the
 [Phase 2 device checklist](docs/DIRECT_CONNECTIVITY_PHASE2_DEVICE_TEST.md).
 
+## Workspace-scoped reconnect, 0.9.6
+
+Phase 3 of the [workspace connectivity spec](docs/WORKSPACE_CONNECTIVITY_SPEC.md)
+lets workspace-only devices use the existing opt-in mailbox/WebRTC reconnect
+without creating a Personal contact.
+
+Service:
+
+- `MESHWSR1` wraps a signed pair `connection_capabilities` document with the
+  exact workspace ID, manifest digest, wrapper signer, and expiry. The wrapper
+  and inner capability must have the same current active signer, and the inner
+  peer destination must be this device.
+- Workspace reconnect profiles are keyed by
+  `workspace:<workspace>:<member>:<device>` and default off. Enabling creates one
+  profile per active peer device, issues a fresh pair token/capability, and
+  queues a `workspace_reconnect_capability` control to each device.
+- Inbound wrappers verify the active source, active workspace/device, signer,
+  peer destination, and dates; they store only peer capabilities and never
+  change local consent, membership, authority, or trust.
+- `workspace_reconnect_status` and `workspace_reconnect_consent_set` expose the
+  consent, ready/peer counts, and active revalidation state. Removing a
+  member/device/workspace yields a non-ready profile rather than an
+  authorization.
+- The existing coordinator, request/offer/answer documents, mailbox TTL/rate
+  limits, replay cache, glare control, and retry bounds are reused with
+  synthetic workspace peer keys. No Personal contact is created.
+
+UI:
+
+- **Workspace settings → Automatic reconnect** has an off-by-default toggle and
+  a separate direct-IP-disclosure choice, with ready/peer counts and guidance
+  that both sides must enable, the mailbox must be configured, and the app must
+  be open and unlocked.
+- Saving stops/retries the coordinator's workspace profiles as appropriate.
+
+Validation:
+
+```text
+pytest service/tests:        1104 passed, 46 skipped, 0 failed (280.32 s)
+node scripts/run-frontend-tests.mjs: 264 passed (18 files)
+node --test deploy/cloudflare-signal/worker.test.mjs: 11 passed
+packaged emoji artwork verification: 3 passed
+node node_modules/typescript/bin/tsc -b: passed
+node scripts/run-frontend-build.mjs: passed
+```
+
+The official report is
+`dist/reports/0.9.6/20261022T145501Z-b0e2c650/report.json` (git-ignored):
+`status: passed`, 327.924 s, SHA-256
+`bfe46ad697868b5860aa3a52f9a2a000e0904ef7bc28f1766c375c4fd38fbd19`.
+Gates: `automated: passed`; `physical_device: not-requested`;
+`production_signing: not-requested`.
+
+New coverage includes wrapper round trip/verification, consent-off default,
+per-device capability exchange, no-contact assertion, ready counts after both
+sides enable, synthetic workspace request/offer/answer flow, and the renderer
+consent save. No physical multi-device workspace reconnect, network-switch,
+NAT/TURN, or Android suspension test was performed.
+
 ## Workspace access delivery, 0.9.5
 
 Phase 2b of the [workspace connectivity spec](docs/WORKSPACE_CONNECTIVITY_SPEC.md)

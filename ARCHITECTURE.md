@@ -424,6 +424,14 @@ document to active member devices through the per-device workspace delivery
 path; receipt still requires preview and consent. Applying a recommendation
 changes no membership or authority, and the owner does not become a relay.
 
+Workspace-scoped reconnect reuses the Personal reconnect coordinator without
+creating a contact. Each opted-in workspace device exchanges a `MESHWSR1`
+wrapper around its signed pair capability with every active peer device; profiles
+are keyed by workspace/member/device and default off. Both sides must consent,
+the mailbox must be configured, and active membership is rechecked before any
+offer or answer is accepted. Removing a member/device or workspace makes the
+profile non-ready rather than authorizing a stale peer.
+
 Edits, author deletion, and reactions are canonical `workspace_event` records,
 not mutable renderer commands or replacements for the signed original. The
 service first verifies the mutation envelope and current controls, then resolves

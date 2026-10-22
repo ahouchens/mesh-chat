@@ -5088,6 +5088,39 @@ describe("desktop workspaces", () => {
   });
 });
 
+describe("workspace reconnect consent", () => {
+  it("saves an explicit workspace-scoped reconnect choice", async () => {
+    const current: Snapshot = {
+      ...snapshot(),
+      workspaces: [workspace],
+      workspace_channels: [workspaceChannel],
+      workspace_join_requests: [],
+      workspace_invitations: [],
+      workspace_drafts: [],
+    };
+    const status = { workspace_id: workspace.id, enabled: false, allow_direct_ip_disclosure: false, relay_consent_scope: "workspace", ready_count: 0, peer_count: 0, profiles: [] };
+    api.runtimePlatform.mockResolvedValue("desktop");
+    api.initializeService.mockResolvedValue(current);
+    api.onInvitation.mockResolvedValue(() => undefined);
+    api.onServiceEvent.mockResolvedValue(() => undefined);
+    api.serviceCommand.mockImplementation(async (command: string) => {
+      if (command === "snapshot") return current;
+      if (command === "list_workspace_messages") return { messages: [], next_cursor: null, high_water: 0 } satisfies WorkspaceMessagePage;
+      if (command === "workspace_reconnect_status") return status;
+      if (command === "workspace_reconnect_consent_set") return { ...status, enabled: true };
+      return {};
+    });
+
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Workspace Lakewatcher" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Lakewatcher settings" }));
+    const auto = await screen.findByLabelText("Reconnect this workspace automatically");
+    fireEvent.click(auto);
+    fireEvent.click(screen.getByRole("button", { name: "Save reconnect consent" }));
+    await waitFor(() => expect(api.serviceCommand).toHaveBeenCalledWith("workspace_reconnect_consent_set", { workspace_id: workspace.id, auto_reconnect: true, allow_direct_ip_disclosure: false, relay_consent_scope: "workspace" }));
+  });
+});
+
 describe("workspace access recommendations", () => {
   it("creates a signed access recommendation and applies one only after consent", async () => {
     const current: Snapshot = {

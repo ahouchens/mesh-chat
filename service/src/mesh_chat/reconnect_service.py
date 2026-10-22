@@ -167,8 +167,13 @@ class ReconnectServiceMixin:
         now = _now()
         return {
             "v": PROFILE_VERSION,
-            "id": contact_id if not remote_device_id else f"{contact_id}:{remote_device_id}",
+            "id": contact_id if contact_id.startswith("workspace:") or not remote_device_id else f"{contact_id}:{remote_device_id}",
             "contact_id": contact_id,
+            "scope_kind": "workspace" if contact_id.startswith("workspace:") else "contact",
+            "workspace_id": None,
+            "workspace_name": None,
+            "peer_member_id": None,
+            "peer_display_name": None,
             "local_device_id": self._reconnect_device_id(),
             "remote_device_id": remote_device_id or "",
             "auto_reconnect": False,
@@ -264,6 +269,21 @@ class ReconnectServiceMixin:
         self, profile: dict[str, Any]
     ) -> dict[str, Any]:
         contact = self.store.get("contact", profile.get("contact_id", "")) or {}
+        workspace_authorized = True
+        if profile.get("scope_kind") == "workspace" or str(
+            profile.get("contact_id", "")
+        ).startswith("workspace:"):
+            try:
+                contact = self._workspace_reconnect_contact(profile["contact_id"])
+            except Exception:
+                workspace_authorized = False
+                contact = {
+                    "display_name": profile.get("peer_display_name")
+                    or profile.get("workspace_name")
+                    or "Workspace peer",
+                    "destination_hash": profile.get("peer_destination"),
+                    "trust": "workspace",
+                }
         mailbox = self._profile_mailbox(profile)
         now = _now()
         reasons: list[str] = []
@@ -289,9 +309,16 @@ class ReconnectServiceMixin:
             reasons.append("relay_required")
         if not mailbox["configured"]:
             reasons.append("mailbox_not_configured")
+        if not workspace_authorized:
+            reasons.append("workspace_peer_inactive")
         return {
             "id": profile["id"],
             "contact_id": profile.get("contact_id"),
+            "scope_kind": profile.get("scope_kind", "contact"),
+            "workspace_id": profile.get("workspace_id"),
+            "workspace_name": profile.get("workspace_name"),
+            "peer_member_id": profile.get("peer_member_id"),
+            "peer_display_name": profile.get("peer_display_name"),
             "display_name": contact.get("display_name"),
             "destination_hash": contact.get("destination_hash"),
             "trust": contact.get("trust"),
@@ -357,6 +384,8 @@ class ReconnectServiceMixin:
 
     def _reconnect_contact(self, contact_id: Any) -> dict[str, Any]:
         contact_id = _text(contact_id, "Contact ID")
+        if contact_id.startswith("workspace:"):
+            return self._workspace_reconnect_contact(contact_id)
         contact = self.store.get("contact", contact_id)
         if contact is None:
             raise ValidationError("Contact does not exist")
@@ -366,6 +395,88 @@ class ReconnectServiceMixin:
                 "Auto-reconnect requires an approved, non-blocked contact"
             )
         return contact
+
+    def _workspace_reconnect_contact(self, contact_id: str) -> dict[str, Any]:
+        parts = contact_id.split(":")
+        if len(parts) != 4 or parts[0] != "workspace":
+            raise ValidationError("Workspace reconnect peer is invalid")
+        workspace_id, member_id, device_id = parts[1], parts[2], parts[3]
+        workspace = self._require_workspace(workspace_id)
+        if workspace.get("state") != "active":
+            raise ContactNotApproved("Workspace reconnect requires an active workspace")
+        manifest = self._workspace_current_manifest(workspace)
+        local_member = next(
+            (item for item in manifest.members if item.member_id == workspace.get("local_member_id")),
+            None,
+        )
+        local_device = next(
+            (
+                device
+                for member in manifest.members
+                for device in member.devices
+                if device.device_id == workspace.get("local_device_id")
+            ),
+            None,
+        )
+        member = next(
+            (item for item in manifest.members if item.member_id == member_id),
+            None,
+        )
+        device = next(
+            (item for item in member.devices if item.device_id == device_id), None
+        ) if member is not None and member.status == "active" else None
+        if (
+            local_member is None
+            or local_member.status != "active"
+            or local_device is None
+            or member is None
+            or member.member_id == local_member.member_id
+            or device is None
+            or device.destination_hash == local_device.destination_hash
+        ):
+            raise ContactNotApproved("Workspace reconnect peer is not active")
+        return {
+            "id": contact_id,
+            "destination_hash": device.destination_hash.hex(),
+            "display_name": f"{member.display_name} · {workspace['name']}",
+            "trust": "workspace",
+            "scope_kind": "workspace",
+            "workspace_id": workspace_id,
+            "workspace_name": workspace["name"],
+            "peer_member_id": member_id,
+            "peer_device_id": device_id,
+        }
+
+    def _workspace_reconnect_contact_by_destination(
+        self, destination: str
+    ) -> dict[str, Any] | None:
+        for workspace in self.store.list("workspace"):
+            if workspace.get("state") != "active":
+                continue
+            try:
+                manifest = self._workspace_current_manifest(workspace)
+            except Exception:
+                continue
+            for member in manifest.members:
+                if member.status != "active":
+                    continue
+                for device in member.devices:
+                    if device.destination_hash.hex() == destination:
+                        try:
+                            return self._workspace_reconnect_contact(
+                                f"workspace:{workspace['id']}:{member.member_id}:{device.device_id}"
+                            )
+                        except Exception:
+                            return None
+        return None
+
+    def _reconnect_contact_by_destination(
+        self, destination: str
+    ) -> dict[str, Any] | None:
+        contact = self._contact_by_destination(destination)
+        if contact is not None:
+            return contact
+        return self._workspace_reconnect_contact_by_destination(destination)
 
     def reconnect_consent_set(
         self,
@@ -770,12 +881,12 @@ class ReconnectServiceMixin:
         local = self._require_profile()
         if to_destination != local["destination_hash"]:
             raise IdentityMismatch("Reconnect document is for another device")
-        contact = self._contact_by_destination(signer_destination)
+        contact = self._reconnect_contact_by_destination(signer_destination)
         if contact is None:
             raise ContactNotApproved(
                 "Reconnect document is not from a known contact"
             )
-        if contact.get("trust") not in CONNECTED_TRUST:
+        if contact.get("trust") not in CONNECTED_TRUST and contact.get("trust") != "workspace":
             raise ContactNotApproved(
                 "Reconnect document is not from an approved contact"
             )
@@ -920,8 +1031,11 @@ class ReconnectServiceMixin:
         # offer must target the peer whose answer is being verified.
         if offer.from_destination != local["destination_hash"]:
             raise IdentityMismatch("Reconnect offer was not created by this device")
-        contact = self._contact_by_destination(offer.to_destination)
-        if contact is None or contact.get("trust") not in CONNECTED_TRUST:
+        contact = self._reconnect_contact_by_destination(offer.to_destination)
+        if contact is None or (
+            contact.get("trust") not in CONNECTED_TRUST
+            and contact.get("trust") != "workspace"
+        ):
             raise ContactNotApproved(
                 "Reconnect offer is not addressed to an approved contact"
             )

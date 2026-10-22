@@ -1,7 +1,7 @@
 # Workspace Connectivity and Reachability
 
-Status: Phase 1 implemented in 0.9.3; Phase 2a implemented in 0.9.4; Phase 2b implemented in 0.9.5;
-later phases proposed.
+Status: Phase 1 implemented in 0.9.3; Phase 2a implemented in 0.9.4; Phase 2b
+implemented in 0.9.5; Phase 3 implemented in 0.9.6; later phases proposed.
 
 ## 1. Problem
 
@@ -221,14 +221,39 @@ current manifest.
 Automatically attaching a profile or changing transport policy without explicit
 local consent is out of scope. A recommendation is not a grant.
 
-## 7. Phase 3 — workspace-scoped reconnect
+## 7. Phase 3 — workspace-scoped reconnect (implemented in 0.9.6)
 
-Define signed workspace reconnect capabilities and mailbox rendezvous bound to
-the exact workspace, member, and device, not to a Personal contact. Reuse the
-existing mailbox envelope/rate-limit/TTL machinery; require a current active
-device signature; never create a contact or change membership. The renderer
-coordinator gains workspace profiles alongside contact profiles. This closes the
-workspace-only reconnect gap without weakening contact approval.
+Workspace-only devices can now participate in the same opt-in mailbox reconnect
+protocol as Personal contacts without creating a contact.
+
+- `MESHWSR1:` wraps an ordinary signed `connection_capabilities` document with
+  the exact workspace ID, manifest digest, wrapper signer, and expiry. The
+  wrapper and the inner capability must be signed by the same current active
+  workspace device, and the inner `peer_destination` must be this device.
+- Profiles are keyed by `workspace:<workspace>:<member>:<device>`, not by a
+  contact. No contact, approval, manifest, or workspace authority is created or
+  changed.
+- The workspace toggle is **off by default**. Enabling it requires an explicit
+  per-workspace consent for automatic reconnect and a separate direct-IP
+  disclosure choice. The service creates one profile per active peer device,
+  issues a fresh pair capability/token, and queues a
+  `workspace_reconnect_capability` workspace control to each device.
+- Each recipient verifies the wrapper against its current active membership,
+  verifies the inner capability signer/destination, and stores the peer
+  capability without changing its own consent. Both sides must enable the
+  workspace before the renderer coordinator considers the profile ready.
+- The existing coordinator, offer/answer documents, mailbox TTL/rate limits,
+  replay cache, backoff, one-offer glare control, and two-attempt bound are
+  reused. At every authorization jump the synthetic peer is rechecked against
+  the current workspace manifest; removed devices/workspaces fail closed.
+- `workspace_reconnect_status` and `workspace_reconnect_consent_set` expose the
+  consent/summary; the renderer starts no peer connection before both sides
+  consent and a mailbox session exists.
+
+Known limits: reconnect runs only while the app is open and unlocked; there is
+no takeover when the preferred device is offline; mailbox delivery requires a
+configured `signal_mailbox_url`; no physical multi-device workspace reconnect
+test has been performed.
 
 ## 8. Phase 4 — optional member helper
 
@@ -292,6 +317,20 @@ Phase 2a:
   authority device, uses per-device retry/expiry evidence, and preserves the same
   preview/consent boundary on receipt;
 - no delivery or path result is treated as consent or membership.
+
+Phase 3:
+
+- default workspace reconnect consent is off;
+- enabling creates only workspace-scoped profiles; no contact records exist
+  before or after;
+- `MESHWSR1` wrapper and inner capability are both signed by the same current
+  active device, target this device, and carry an unexpired mailbox session;
+- the recipient stores peer capabilities without changing its own consent;
+- both sides must enable before the coordinator considers a profile ready;
+- active membership/device authorization is rechecked before offer/answer use;
+- mailbox absent, peer absent, removed workspace/device, or missing consent
+  produces an explicit non-ready state rather than a connection;
+- no membership, trust, authority, or read state changes.
 
 ## 13. Known limits
 

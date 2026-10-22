@@ -36,6 +36,10 @@ from .remote import (
     sanitized_profile,
     verify_remote_invitation,
 )
+from .workspace_reconnect import (
+    create_workspace_reconnect_capability,
+    verify_workspace_reconnect_capability,
+)
 from .workspace_access import (
     WORKSPACE_ACCESS_MAX_LIFETIME,
     create_workspace_access_recommendation as build_workspace_access_recommendation,
@@ -18795,6 +18799,9 @@ class WorkspaceServiceMixin:
         if wire.kind == "workspace_access_recommendation":
             self._receive_workspace_access_recommendation(wire)
             return
+        if wire.kind == "workspace_reconnect_capability":
+            self._receive_workspace_reconnect_capability(wire)
+            return
         if wire.kind == "workspace_manifest_root":
             self._receive_workspace_manifest(wire)
         elif wire.kind == "workspace_channel_record":
@@ -19049,6 +19056,251 @@ class WorkspaceServiceMixin:
             "profile": sanitized_profile(attached),
             "applied": True,
         }
+
+    def _workspace_reconnect_peer_id(
+        self, workspace_id: str, member_id: str, device_id: str
+    ) -> str:
+        return f"workspace:{workspace_id}:{member_id}:{device_id}"
+
+    def _workspace_reconnect_profiles(
+        self, workspace_id: str
+    ) -> list[dict[str, Any]]:
+        return [
+            profile
+            for profile in self.store.list("reconnect_profile")
+            if profile.get("workspace_id") == workspace_id
+        ]
+
+    def workspace_reconnect_status(self, workspace_id: Any) -> dict[str, Any]:
+        workspace = self._require_workspace(workspace_id)
+        profiles = self._workspace_reconnect_profiles(workspace["id"])
+        public = [self._reconnect_profile_public(profile) for profile in profiles]
+        return {
+            "workspace_id": workspace["id"],
+            "enabled": any(profile.get("auto_reconnect") for profile in profiles),
+            "allow_direct_ip_disclosure": all(
+                profile.get("allow_direct_ip_disclosure")
+                for profile in profiles
+            )
+            if profiles
+            else False,
+            "relay_consent_scope": "workspace",
+            "profiles": public,
+            "ready_count": sum(
+                1
+                for profile in profiles
+                if profile.get("auto_reconnect")
+                and profile.get("remote_auto_reconnect")
+                and self._profile_mailbox(profile)["session"] is not None
+            ),
+            "peer_count": len(profiles),
+        }
+
+    def workspace_reconnect_consent_set(
+        self,
+        workspace_id: Any,
+        auto_reconnect: Any,
+        allow_direct_ip_disclosure: Any,
+        relay_consent_scope: Any = "workspace",
+    ) -> dict[str, Any]:
+        workspace = self._require_workspace(workspace_id)
+        if workspace.get("state") != "active":
+            raise ValidationError("Workspace reconnect requires an active workspace")
+        if not isinstance(auto_reconnect, bool) or not isinstance(
+            allow_direct_ip_disclosure, bool
+        ):
+            raise ValidationError("Workspace reconnect consent must be boolean")
+        if relay_consent_scope not in {"workspace", "session"}:
+            raise ValidationError("Workspace reconnect relay scope is invalid")
+        manifest = self._workspace_current_manifest(workspace)
+        local_member = next(
+            (
+                item
+                for item in manifest.members
+                if item.member_id == workspace.get("local_member_id")
+            ),
+            None,
+        )
+        local_device = next(
+            (
+                device
+                for member in manifest.members
+                for device in member.devices
+                if device.device_id == workspace.get("local_device_id")
+            ),
+            None,
+        )
+        if (
+            local_member is None
+            or local_member.status != "active"
+            or local_device is None
+        ):
+            raise ContactNotApproved("This device is not an active workspace member")
+        peers = [
+            (member, device)
+            for member in manifest.members
+            if member.status == "active" and member.member_id != local_member.member_id
+            for device in member.devices
+        ]
+        existing = {
+            profile.get("contact_id")
+            for profile in self.store.list("reconnect_profile")
+        }
+        new_profiles = sum(
+            1
+            for member, device in peers
+            if self._workspace_reconnect_peer_id(
+                workspace["id"], member.member_id, device.device_id
+            )
+            not in existing
+        )
+        if len(self.store.list("reconnect_profile")) + new_profiles > 64:
+            raise ValidationError("Too many reconnect profiles")
+        records: list[tuple[str, str, dict[str, Any]]] = []
+        deliveries: list[dict[str, Any]] = []
+        for member, device in peers:
+            peer_id = self._workspace_reconnect_peer_id(
+                workspace["id"], member.member_id, device.device_id
+            )
+            contact = self._workspace_reconnect_contact(peer_id)
+            profile = self._reconnect_profile_for_contact(
+                peer_id, device.device_id
+            )
+            changed = (
+                bool(profile.get("auto_reconnect")) != auto_reconnect
+                or bool(profile.get("allow_direct_ip_disclosure"))
+                != allow_direct_ip_disclosure
+                or profile.get("relay_consent_scope") != relay_consent_scope
+            )
+            profile["scope_kind"] = "workspace"
+            profile["workspace_id"] = workspace["id"]
+            profile["workspace_name"] = workspace["name"]
+            profile["peer_member_id"] = member.member_id
+            profile["peer_display_name"] = member.display_name
+            profile["peer_destination"] = contact["destination_hash"]
+            profile["auto_reconnect"] = auto_reconnect
+            profile["allow_direct_ip_disclosure"] = allow_direct_ip_disclosure
+            profile["relay_consent_scope"] = relay_consent_scope
+            profile["updated_at"] = time.time()
+            self._reconnect_issue_local_capabilities(
+                profile, contact, rotate=changed
+            )
+            wrapper = create_workspace_reconnect_capability(
+                self._call_identity(),
+                workspace_id=workspace["id"],
+                manifest_digest=workspace["manifest_hash"],
+                capability=profile["local_capabilities"],
+            )
+            records.append(("reconnect_profile", profile["id"], profile))
+            deliveries.append(
+                self._workspace_delivery_record(
+                    workspace_id=workspace["id"],
+                    recipient_member_id=member.member_id,
+                    recipient_device=device,
+                    kind="workspace_reconnect_capability",
+                    document=wrapper,
+                    priority=0,
+                )
+            )
+        self.store.put_many(
+            [
+                *records,
+                *[
+                    ("workspace_delivery", delivery["id"], delivery)
+                    for delivery in deliveries
+                ],
+                *self._due_records(add=deliveries),
+            ]
+        )
+        self._workspace_changed(
+            workspace["id"], resource_kind="reconnect_consent"
+        )
+        return self.workspace_reconnect_status(workspace["id"])
+
+    def _receive_workspace_reconnect_capability(
+        self, wire: WorkspaceWirePayload
+    ) -> None:
+        try:
+            wrapper = verify_workspace_reconnect_capability(wire.document)
+            if wrapper.workspace_id != wire.workspace_id:
+                return
+            from .reconnect import verify_connection_capabilities
+
+            capability = verify_connection_capabilities(
+                wrapper.capability, expected_signer=wrapper.signer_destination
+            )
+        except Exception:
+            return
+        workspace = self.store.get(
+            "workspace", self._workspace_record_id(wire.workspace_id)
+        )
+        if workspace is None or workspace.get("state") != "active":
+            return
+        local = self._require_profile()
+        if capability.peer_destination != local["destination_hash"]:
+            return
+        manifest = self._workspace_current_manifest(workspace)
+        local_member = next(
+            (
+                item
+                for item in manifest.members
+                if item.member_id == workspace.get("local_member_id")
+            ),
+            None,
+        )
+        if local_member is None or local_member.status != "active":
+            return
+        source = next(
+            (
+                (member, device)
+                for member in manifest.members
+                if member.status == "active"
+                for device in member.devices
+                if device.destination_hash.hex()
+                == capability.signer_destination
+            ),
+            None,
+        )
+        if source is None:
+            return
+        member, device = source
+        if device.device_id == workspace.get("local_device_id"):
+            return
+        peer_id = self._workspace_reconnect_peer_id(
+            workspace["id"], member.member_id, device.device_id
+        )
+        profile = self._reconnect_profile_for_contact(
+            peer_id, capability.device_id
+        )
+        profile["scope_kind"] = "workspace"
+        profile["workspace_id"] = workspace["id"]
+        profile["workspace_name"] = workspace["name"]
+        profile["peer_member_id"] = member.member_id
+        profile["peer_display_name"] = member.display_name
+        profile["peer_destination"] = device.destination_hash.hex()
+        profile["remote_device_id"] = capability.device_id
+        profile["remote_auto_reconnect"] = capability.auto_reconnect
+        profile["remote_allow_direct_ip_disclosure"] = (
+            capability.allow_direct_ip_disclosure
+        )
+        profile["remote_capabilities"] = capability.serialized
+        profile["remote_capabilities_expires_at"] = capability.expires_at
+        profile["remote_capabilities_issued_at"] = capability.issued_at
+        profile["remote_transports"] = list(capability.transports)
+        profile["remote_mailbox_url"] = capability.mailbox_url
+        profile["remote_mailbox_pair_token"] = capability.mailbox_pair_token
+        profile["remote_mailbox_expires_at"] = capability.mailbox_expires_at or 0
+        if (
+            int(profile.get("reciprocal_since") or 0) == 0
+            and profile.get("auto_reconnect")
+            and capability.auto_reconnect
+        ):
+            profile["reciprocal_since"] = time.time()
+        profile["updated_at"] = time.time()
+        self.store.put("reconnect_profile", profile["id"], profile)
+        self._workspace_changed(
+            workspace["id"], resource_kind="reconnect_capability"
+        )
 
     def create_workspace_access_recommendation(
         self, workspace_id: Any, remote_profile_id: Any, lifetime_days: Any = 7

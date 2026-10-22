@@ -291,6 +291,8 @@ class MeshChatService(
         "submit_workspace_role_change_request",
         "list_workspace_members",
         "workspace_connectivity",
+        "workspace_reconnect_status",
+        "workspace_reconnect_consent_set",
         "workspace_request_paths",
         "create_workspace_access_recommendation",
         "preview_workspace_access_recommendation",
@@ -340,6 +342,8 @@ class MeshChatService(
         "list_workspace_authority_transitions",
         "list_workspace_members",
         "workspace_connectivity",
+        "workspace_reconnect_status",
+        "workspace_reconnect_consent_set",
         "workspace_request_paths",
         "create_workspace_access_recommendation",
         "preview_workspace_access_recommendation",
@@ -3841,6 +3845,32 @@ class MeshChatService(
             if command == "workspace_connectivity":
                 return self.workspace_connectivity(body["workspace_id"])
             return self.workspace_request_paths(body["workspace_id"])
+        if command == "workspace_reconnect_status":
+            body = _payload(
+                value, allowed={"workspace_id"}, required={"workspace_id"}
+            )
+            return self.workspace_reconnect_status(body["workspace_id"])
+        if command == "workspace_reconnect_consent_set":
+            body = _payload(
+                value,
+                allowed={
+                    "workspace_id",
+                    "auto_reconnect",
+                    "allow_direct_ip_disclosure",
+                    "relay_consent_scope",
+                },
+                required={
+                    "workspace_id",
+                    "auto_reconnect",
+                    "allow_direct_ip_disclosure",
+                },
+            )
+            return self.workspace_reconnect_consent_set(
+                body["workspace_id"],
+                body["auto_reconnect"],
+                body["allow_direct_ip_disclosure"],
+                body.get("relay_consent_scope", "workspace"),
+            )
         if command == "create_workspace_access_recommendation":
             body = _payload(
                 value,

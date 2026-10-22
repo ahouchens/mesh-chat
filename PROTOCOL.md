@@ -181,6 +181,38 @@ document and safe summary, and still requires preview plus explicit consent
 before attachment. Delivery retries and evidence remain per device; a delivery
 result is not consent, membership, or a read receipt.
 
+## Workspace reconnect capability v1
+
+Workspace automatic reconnect is opt-in and does not create a Personal contact.
+A `MESHWSR1:` wrapper carries an ordinary signed `connection_capabilities`
+document plus the exact workspace binding. Fields:
+
+- `v` = `1`, `type` = `workspace_reconnect_capability`;
+- `workspace_id`: canonical workspace UUID;
+- `manifest_digest`: 64 lowercase hex characters at issuance;
+- `capability`: the exact signed `connection_capabilities` JSON string;
+- `issued_at`, `expires_at`: integer Unix seconds, equal to the inner
+  capability expiry;
+- `signer_public_key`, `signature`: base64url RNS key and signature over
+  canonical JSON without `signature`.
+
+The verifier rejects wrong version/type/fields, invalid UUID/digest, malformed
+or expired inner capability, expiry mismatch, bad signature, or a wrapper signer
+different from the inner capability signer. The service additionally requires
+the workspace to be active, the source device to be an active manifest device,
+the inner `peer_destination` to be this device, and the source to be a different
+device from the local one. Receipt stores the peer capability only; it never
+changes local consent, membership, authority, or trust.
+
+The wrapper is delivered as workspace control kind
+`workspace_reconnect_capability` to each active peer device when the user enables
+the workspace toggle. Both sides must enable and have a usable mailbox session
+before the renderer coordinator starts. Profiles are keyed by
+`workspace:<workspace>:<member>:<device>` and are revalidated against the current
+manifest before request, offer, answer, and path actions. Removing the member,
+device, or workspace makes the profile non-ready; it does not create a contact
+or grant access.
+
 ## Invitation v1
 
 All entry points carry the same canonical UTF-8 JSON object:

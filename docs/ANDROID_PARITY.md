@@ -17,14 +17,14 @@ battery measurements and Windows↔Android execution remain unqualified. Package
 compilation and desktop topology tests are not Android device evidence. See
 [ADR 0018](adr/0018-authenticated-direct-underlay.md).
 
-This document compares the Android client with the Windows desktop 0.9.5
+This document compares the Android client with the Windows desktop 0.9.6
 implementation. It is a source-and-evidence audit, not a claim that shared code
 automatically behaves the same on a phone. The Android client shares the React
 renderer, Python messaging core, protocol, encrypted record model, and renderer
 command allowlist with desktop, while its lifecycle, storage key, notifications,
 camera, deep links, and packaging are native Android integrations.
 
-As of 0.9.5, Android shares the shipped renderer/service feature set, including
+As of 0.9.6, Android shares the shipped renderer/service feature set, including
 1:1 WebRTC calls and automatic reconnect. It is **not full parity**: Android
 cannot complete an I2P join because it has no bundled/managed router; background
 execution is intentionally unavailable; personal/group per-conversation
@@ -65,6 +65,7 @@ Status labels are deliberately strict:
 | Workspace DMs | 2 | Deterministic pair authorization, isolation from Personal contacts, paging, hiding, erasure, delivery, renderer, and local notification tests exist. Physical Android partition/reconnect is open. |
 | Workspace connectivity diagnostics | 2 | Shared People dialog and service commands report per-device path/delivery state and request missing paths. This is advisory only and does not create a workspace reconnect profile. Physical multi-device path/TURN/NAT and suspension behavior remain open. |
 | Workspace access recommendation | 2 | Shared out-of-band `MESHACCESS1:` document, authority/manifest verification, preview, explicit consent, workspace-scoped profile attach, and per-device automatic delivery. Receipt still requires consent and is not a workspace reconnect profile. Physical Android import/delivery/attach and multi-device routing remain open. |
+| Workspace automatic reconnect | 2 | Shared off-by-default workspace consent, `MESHWSR1` capability exchange, workspace-keyed reconnect profiles, and the existing WebRTC/mailbox coordinator. No Personal contact is created. Physical Android restart/NAT/TURN/suspension tests and the remove/disable paths remain open. |
 | Workspace threads and mentions | 2 | One-level signed threads, structured mentions, independent reads, mutations, paging, and notification precedence are automated. Android notification tap/permission and accessibility behavior remain unverified on hardware. |
 | Workspace search, history recovery, and retention | 2 | Encrypted bounded indexes, authenticated cursors, pruning, gaps, peer-limited recovery, and renderer states are automated. Physical suspension, storage pressure, and long-running recovery are open. |
 | Workspace administration and authority transitions | 2 | Signed owner/admin requests, rotation/transfer, fork suspension, loss diagnostics, and renderer confirmation are automated. Concurrent physical Android partitions and kill points are open. |

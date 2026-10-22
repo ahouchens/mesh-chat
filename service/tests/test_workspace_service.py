@@ -424,6 +424,87 @@ def test_workspace_access_recommendation_is_signed_and_consented(tmp_path):
         member.preview_workspace_access_recommendation(tampered)
 
 
+def test_workspace_reconnect_capabilities_exchange_without_contacts(tmp_path):
+    (
+        owner,
+        owner_network,
+        owner_profile,
+        member,
+        member_network,
+        member_profile,
+        workspace,
+        _member_key,
+        _member_identity,
+    ) = _joined_pair(tmp_path, base=9960)
+    owner._call_settings.signal_mailbox_url = "https://mail.example.test"
+    member._call_settings.signal_mailbox_url = "https://mail.example.test"
+
+    status = owner.workspace_reconnect_consent_set(
+        workspace["id"], True, True, "workspace"
+    )
+    assert status["enabled"] is True
+    assert status["peer_count"] == 1
+    for item in _flush(owner, owner_network):
+        _deliver(
+            member,
+            item,
+            source_profile=owner_profile,
+            recipient_profile=member_profile,
+        )
+    member_status = member.workspace_reconnect_status(workspace["id"])
+    assert member_status["enabled"] is False
+    assert member_status["peer_count"] == 1
+    assert member_status["profiles"][0]["peer_auto_reconnect"] is True
+
+    member.workspace_reconnect_consent_set(workspace["id"], True, True, "workspace")
+    for item in _flush(member, member_network):
+        _deliver(
+            owner,
+            item,
+            source_profile=member_profile,
+            recipient_profile=owner_profile,
+        )
+    owner_status = owner.workspace_reconnect_status(workspace["id"])
+    assert owner_status["ready_count"] == 1
+    assert member.workspace_reconnect_status(workspace["id"])["ready_count"] == 1
+    assert owner.store.list("contact") == []
+    assert member.store.list("contact") == []
+    profiles = owner.reconnect_profiles()["profiles"]
+    workspace_profiles = [item for item in profiles if item.get("scope_kind") == "workspace"]
+    assert len(workspace_profiles) == 1
+    assert workspace_profiles[0]["workspace_id"] == workspace["id"]
+    assert workspace_profiles[0]["contact_id"].startswith("workspace:")
+
+    fingerprint = "sha-256 " + ":".join(["AB"] * 32)
+    sdp = "\r\n".join(
+        [
+            "v=0",
+            "o=- 1 2 IN IP4 127.0.0.1",
+            "s=-",
+            "t=0 0",
+            "a=fingerprint:" + fingerprint,
+            "m=application 9 UDP/DTLS/SCTP webrtc-datachannel",
+            "a=mid:0",
+            "a=sctp-port:5000",
+        ]
+    ) + "\r\n"
+    request = owner.reconnect_request_create(
+        workspace_profiles[0]["contact_id"], str(uuid.uuid4())
+    )
+    member_profile = member.workspace_reconnect_status(workspace["id"])["profiles"][0]
+    offer = member.reconnect_offer_create(
+        member_profile["contact_id"], request["document"], sdp, fingerprint
+    )
+    answer = owner.reconnect_answer_create(
+        workspace_profiles[0]["contact_id"], offer["document"], sdp, fingerprint
+    )
+    verified = member.verify_reconnect_answer(
+        answer["document"], offer["document"]
+    )
+    assert verified["attempt_id"] == request["attempt_id"]
+    assert verified["contact_id"].startswith("workspace:")
+
+
 def test_direct_workspace_binding_rechecks_admission_and_local_identity(tmp_path):
     from dataclasses import replace
     from mesh_chat.direct_binding import BindingAuthority, create_binding

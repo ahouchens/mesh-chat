@@ -604,6 +604,8 @@ fn allowed_renderer_command(command: &str) -> bool {
             | "submit_workspace_role_change_request"
             | "list_workspace_members"
             | "workspace_connectivity"
+            | "workspace_reconnect_status"
+            | "workspace_reconnect_consent_set"
             | "workspace_request_paths"
             | "create_workspace_access_recommendation"
             | "preview_workspace_access_recommendation"
@@ -1710,6 +1712,8 @@ mod tests {
             "submit_workspace_role_change_request",
             "list_workspace_members",
             "workspace_connectivity",
+            "workspace_reconnect_status",
+            "workspace_reconnect_consent_set",
             "workspace_request_paths",
             "create_workspace_access_recommendation",
             "preview_workspace_access_recommendation",
