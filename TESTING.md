@@ -76,6 +76,11 @@ passed on the first attempt for `v0.9.2`. Release:
 | `mesh-chat-0.9.2-android-arm64-release.apk` | 34,302,211 | `e2a0a6efcdc59123e31a5092d689afe5a6308e141e31cb98b52a39e5c450b785` |
 | `SHA256SUMS.txt` | 300 | `324249c3d9c751e14909a5eba6e3a396c9c2d6b2c269fa251aaf6593296aaad3` |
 
+The Android APK is **debug-signed** (`CN=Android Debug`, certificate SHA-256
+`d6dbff63834666bace3d75b49234726e97ccce26d2b9e9516309682e0a33143f`). It is a
+sideload build, not a production or upgrade identity; `aapt2` reports version
+0.9.2 (9002), min API 24, target API 36, ARM64 only.
+
 New tests cover the default-on behavior, memory-only calls, adopting memory
 records after enabling, stopping vault writes after disabling, explicit
 true/false/omitted settings, and invalid values. No physical call, NAT/TURN, or
