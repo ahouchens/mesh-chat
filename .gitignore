@@ -12,6 +12,8 @@ coverage/
 htmlcov/
 .test-tmp/
 .pytest_cache/
+.pytest-temp/
+**/pytest-cache-files-*/
 .ruff_cache/
 .mypy_cache/
 __pycache__/
