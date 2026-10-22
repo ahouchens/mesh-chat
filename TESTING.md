@@ -62,6 +62,22 @@ The official report is
 Gates: `automated: passed`; `physical_device: not-requested`;
 `production_signing: not-requested`.
 
+Publication: GitHub Actions
+[CI run 39850218352](https://github.com/ahouchens/mesh-chat/actions/runs/39850218352)
+and
+[Release run 39850225618](https://github.com/ahouchens/mesh-chat/actions/runs/39850225618)
+passed on the first attempt for `v0.9.12`. Release:
+<https://github.com/ahouchens/mesh-chat/releases/tag/v0.9.12>.
+
+| Artifact | Bytes | SHA-256 (verified by re-download) |
+|---|---:|---|
+| `Mesh-Chat_0.9.12_x64-setup.exe` | 27,891,545 | `3523bb25b51012f098fdd2f06cafa8fdb340347a59863b5a5579ac2acfb71bab` |
+| `Mesh-Chat_0.9.12_x64_en-US.msi` | 29,880,320 | `d60336bed86c5c37415209991b27ea4b856751bfb40cd7ab36c2937ce12cb9d1` |
+| `mesh-chat-0.9.12-android-arm64-release.apk` | 34,387,687 | `9328411682317ceb43d70e55b3f16dda00de0826bf20fb49db5be6543e4f6d56` |
+| `SHA256SUMS.txt` | 303 | `1e5a56c326ec04a516233bd927364947fd7bacff4246ff77cb5ad3d6207eaab1` |
+
+The Android APK is debug-signed; it is not a production or upgrade identity.
+
 ## Owner-offline admission grants, UI stage 0.9.11
 
 Phase 5.2c adds the workspace-settings grant/admission UI.
