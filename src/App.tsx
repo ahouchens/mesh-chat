@@ -71,6 +71,7 @@ import { DirectConnectionSetup } from "./DirectConnectionSetup";
 import { DirectRecovery } from "./DirectRecovery";
 import { WebRTCOnboardingDialog } from "./WebRTCOnboarding";
 import { closeWebRTCSession, getWebRTCSession, updateWebRTCSessionApprovalPending, type WebRTCSessionPath } from "./webrtc-session";
+import { CONNECTION_TRANSPORT_CHOICES, type ConnectionTransportKind } from "./connection-transport";
 import { lastWebRTCDiagnostics } from "./webrtc-diagnostics";
 import { getEmojiFallbackName } from "./emoji-artwork";
 import {
@@ -1571,7 +1572,7 @@ function SecurityDetails({ fingerprint, destination, open, onOpenChange }: { fin
   );
 }
 
-function NewChatDialog({ initialInvitation, initialTab = "invite", remoteProfiles, onClose, onChanged, onWorkspaceInvitation }: { initialInvitation: string; initialTab?: "invite" | "join"; remoteProfiles: RemoteProfile[]; onClose: () => void; onChanged: () => Promise<void>; onWorkspaceInvitation: (value: string) => void }) {
+function NewChatDialog({ initialInvitation, initialTab = "invite", initialConnection = "direct_tcp", remoteProfiles, onClose, onChanged, onWorkspaceInvitation }: { initialInvitation: string; initialTab?: "invite" | "join"; initialConnection?: ConnectionTransportKind; remoteProfiles: RemoteProfile[]; onClose: () => void; onChanged: () => Promise<void>; onWorkspaceInvitation: (value: string) => void }) {
   const [tab, setTab] = useState<"invite" | "join">(initialInvitation ? "join" : initialTab);
   const [formats, setFormats] = useState<InvitationFormats | null>(null);
   const [raw, setRaw] = useState(initialInvitation);
@@ -1579,7 +1580,7 @@ function NewChatDialog({ initialInvitation, initialTab = "invite", remoteProfile
   const [error, setError] = useState("");
   const [inviteError, setInviteError] = useState("");
   const [busy, setBusy] = useState(false);
-  const [connectionChoice, setConnectionChoice] = useState("participant");
+  const [connectionChoice, setConnectionChoice] = useState(initialConnection === "i2p" ? "i2p" : "participant");
   const [remoteConsent, setRemoteConsent] = useState(false);
   const [i2pConsent, setI2PConsent] = useState(false);
   const [doctor, setDoctor] = useState<DirectDoctorReport | null>(null);
@@ -4081,11 +4082,13 @@ function ConnectEntryDialog({
   onInvite,
   onJoin,
   onWebRTC,
+  onTransport,
 }: {
   onClose: () => void;
   onInvite: () => void;
   onJoin: () => void;
   onWebRTC: () => void;
+  onTransport: (kind: ConnectionTransportKind) => void;
 }) {
   return (
     <Dialog title="Connect" onClose={onClose}>
@@ -4094,6 +4097,9 @@ function ConnectEntryDialog({
         <button className="button button--primary" onClick={onInvite}>Invite someone</button>
         <button className="button button--secondary" onClick={onJoin}>I have an invitation</button>
         <button className="button button--secondary" onClick={onWebRTC}>WebRTC direct or relay</button>
+        {CONNECTION_TRANSPORT_CHOICES.filter((choice) => choice.kind !== "webrtc").map((choice) => (
+          <button key={choice.kind} className="button button--ghost" onClick={() => onTransport(choice.kind)}>{choice.label}<small>{choice.description}</small></button>
+        ))}
         <p className="muted">For WebRTC, only one device creates the offer. The other chooses Join with WebRTC inside the next screen.</p>
       </div>
     </Dialog>
@@ -4129,6 +4135,7 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceChannelIn
   const [groupDrafts, setGroupDrafts] = useState<Record<string, string>>(() => Object.fromEntries((snapshot.group_drafts ?? []).map((draft) => [draft.group_id, draft.text])));
   const [newChat, setNewChat] = useState(false);
   const [newChatStartTab, setNewChatStartTab] = useState<"invite" | "join">("invite");
+  const [newChatTransport, setNewChatTransport] = useState<ConnectionTransportKind>("direct_tcp");
   const [connectEntryOpen, setConnectEntryOpen] = useState(false);
   const [newGroup, setNewGroup] = useState(false);
   const [webrtcOnboardingOpen, setWebRtcOnboardingOpen] = useState(false);
@@ -5950,9 +5957,9 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceChannelIn
       {selectedWorkspace && workspaceDevicesOpen && <WorkspaceDevicesDialog workspace={selectedWorkspace} transitions={workspaceDeviceTransitions.filter((item) => item.workspace_id === selectedWorkspace.id)} busy={workspaceActionBusy} error={workspaceActionError} onClose={() => setWorkspaceDevicesOpen(false)} onCreate={createWorkspaceDeviceLink} onDecide={(transition, approve) => void runWorkspaceAdministration(transition.transition_kind === "link" ? (approve ? "approve_workspace_device_link" : "decline_workspace_device_link") : (approve ? "approve_workspace_device_removal" : "decline_workspace_device_removal"), transition.transition_kind === "link" ? { link_id: transition.id } : { removal_id: transition.id })} onRemove={(deviceId) => void runWorkspaceAdministration("request_workspace_device_removal", { target_device_id: deviceId })} onReadSync={(enabled) => void runWorkspaceAdministration("set_workspace_read_hint_sync", { enabled })} />}
       {selectedWorkspace && workspaceSettingsOpen && <WorkspaceSettingsDialog workspace={selectedWorkspace} conversation={selectedWorkspaceConversation} networkSettings={snapshot.settings} busy={workspaceActionBusy} error={workspaceActionError} onClose={() => setWorkspaceSettingsOpen(false)} onUpdateMetadata={(name, description) => void runWorkspaceAdministration("update_workspace_metadata", { name, description })} onUpdatePolicies={(channelCreation, posting) => void runWorkspaceAdministration("update_workspace_policies", { channel_creation: channelCreation, posting })} onSetNotificationPreference={(conversationId, mode) => void runWorkspaceNotificationPreference(conversationId, mode)} onApprovePropagationNode={(node) => void approveWorkspacePropagationNode(node)} onCloseWorkspace={() => void runWorkspaceLifecycle("close_workspace")} onLeave={() => void runWorkspaceLifecycle("leave_workspace")} onRemove={(confirmation) => void runWorkspaceLifecycle("remove_workspace_data", confirmation)} />}
       {selectedWorkspace && workspaceRetentionOpen && <WorkspaceRetentionDialog workspace={selectedWorkspace} conversationId={selectedWorkspaceConversation?.id} conversationName={selectedWorkspaceDirect?.peer_display_name ?? selectedWorkspaceChannel?.display_name ?? selectedWorkspaceChannel?.name} busy={workspaceActionBusy} error={workspaceActionError} onClose={() => setWorkspaceRetentionOpen(false)} onUpdate={(retentionDays) => void runWorkspaceAdministration("update_workspace_retention", { retention_days: retentionDays })} onPrune={pruneWorkspaceHistory} />}
-      {connectEntryOpen && <ConnectEntryDialog onClose={() => setConnectEntryOpen(false)} onInvite={() => { setNewChatStartTab("invite"); setConnectEntryOpen(false); setNewChat(true); }} onJoin={() => { setNewChatStartTab("join"); setConnectEntryOpen(false); setNewChat(true); }} onWebRTC={() => { setConnectEntryOpen(false); setWebRtcOnboardingOpen(true); }} />}
+      {connectEntryOpen && <ConnectEntryDialog onClose={() => setConnectEntryOpen(false)} onInvite={() => { setNewChatStartTab("invite"); setNewChatTransport("direct_tcp"); setConnectEntryOpen(false); setNewChat(true); }} onJoin={() => { setNewChatStartTab("join"); setConnectEntryOpen(false); setNewChat(true); }} onWebRTC={() => { setConnectEntryOpen(false); setWebRtcOnboardingOpen(true); }} onTransport={(kind) => { setNewChatStartTab("invite"); setNewChatTransport(kind); setConnectEntryOpen(false); setNewChat(true); }} />}
       {webrtcOnboardingOpen && <WebRTCOnboardingDialog initialPairingCode={initialPairingCode} onClose={() => { setWebRtcOnboardingOpen(false); onPairingHandled?.(); }} onConnected={(path) => { setWebRtcSessionActive(true); setWebrtcPath(path); }} onFallback={() => { setNewChatStartTab("invite"); setNewChat(true); }} onChanged={async () => { await refresh(true); }} workspaces={(snapshot.workspaces ?? []).map((workspace) => ({ id: workspace.id, name: workspace.name }))} />}
-      {newChat && <div className={hasForegroundRequest ? "dialog-suspended" : ""} aria-hidden={hasForegroundRequest ? true : undefined}><NewChatDialog initialInvitation={initialInvitation} initialTab={newChatStartTab} remoteProfiles={snapshot.remote_profiles ?? []} onClose={() => { setNewChat(false); onInvitationHandled(); }} onChanged={async () => { await refresh(true); }} onWorkspaceInvitation={(value) => { setNewChat(false); setJoinWorkspaceValue(value); setJoinWorkspaceOpen(true); }} /></div>}
+      {newChat && <div className={hasForegroundRequest ? "dialog-suspended" : ""} aria-hidden={hasForegroundRequest ? true : undefined}><NewChatDialog initialInvitation={initialInvitation} initialTab={newChatStartTab} initialConnection={newChatTransport} remoteProfiles={snapshot.remote_profiles ?? []} onClose={() => { setNewChat(false); onInvitationHandled(); }} onChanged={async () => { await refresh(true); }} onWorkspaceInvitation={(value) => { setNewChat(false); setJoinWorkspaceValue(value); setJoinWorkspaceOpen(true); }} /></div>}
       {newGroup && <div className={hasForegroundRequest ? "dialog-suspended" : ""} aria-hidden={hasForegroundRequest ? true : undefined}><CreateGroupDialog contacts={snapshot.contacts} onClose={() => setNewGroup(false)} onCreated={async (group) => { await refresh(true); selectConversation({ kind: "group", id: group.id }); setNewGroup(false); }} /></div>}
       {contactsOpen && <div className={hasForegroundRequest ? "dialog-suspended" : ""} aria-hidden={hasForegroundRequest ? true : undefined}><ContactsDialog contacts={snapshot.contacts.filter((contact) => contact.trust !== "pending_request")} onClose={() => setContactsOpen(false)} onChanged={async () => { await refresh(true); }} onOpenConversation={async (contact) => { const hidden = hiddenConversationKeys.has(`direct:${contact.id}`); setContactsOpen(false); await restoreAndSelect({ kind: "contact", id: contact.id }, hidden); }} onDeleted={async (contactId) => { if (selection?.kind === "contact" && selection.id === contactId) setSelection(null); setDrafts((current) => { const next = { ...current }; delete next[contactId]; return next; }); setLocallySavedMessages((current) => Object.fromEntries(Object.entries(current).filter(([, message]) => message.contact_id !== contactId))); await refresh(true); }} /></div>}
       {settings && <div className={hasForegroundRequest ? "dialog-suspended" : ""} aria-hidden={hasForegroundRequest ? true : undefined}><SettingsDialog snapshot={snapshot} theme={theme} onThemeChange={onThemeChange} onClose={() => setSettings(false)} onSaved={async () => { await refresh(true); }} /></div>}
