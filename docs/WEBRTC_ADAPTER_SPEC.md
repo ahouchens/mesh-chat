@@ -1,7 +1,12 @@
 # WebRTC adapter specification and roadmap
 
-Status: design and early implementation. No native WebRTC media stack exists in
-Mesh Chat yet. The signed call-signaling foundation is being added first.
+Status: partially superseded by the shipped 0.9.1 implementation. WebRTC
+onboarding, automatic reconnect, and 1:1 audio/video calls run
+`RTCPeerConnection` in the WebView renderer; there is no native WebRTC media
+stack. The Python service owns signed signaling, consent, policy, and replay,
+and never owns a peer connection. This document remains the adapter roadmap and
+decision record; where it describes a native peer or forbids renderer ownership,
+the shipped architecture differs as noted in §6.1.
 
 ## 1. Summary
 
@@ -34,11 +39,12 @@ Reticulum paths.
 
 ## 2. Definitions
 
-- **WebRTC adapter** — a native component that creates a peer connection,
-  exchanges signed session descriptions, carries media tracks (and later a
-  DataChannel), and exposes the result to the service.
-- **DataChannel transport** — an ordered, reliable SCTP channel that could
-  carry framed Reticulum packets in a later increment.
+- **WebRTC adapter** — the shipped implementation runs `RTCPeerConnection` in the
+  WebView renderer, exchanges signed session descriptions, carries media tracks,
+  and exposes a `mesh-reticulum` DataChannel to the service. The original
+  native-component plan is not what shipped.
+- **DataChannel transport** — an ordered, reliable SCTP channel that carries
+  framed Reticulum packets; shipped in 0.9.x.
 - **Signaling document** — a signed `call_invite`, `call_answer`,
   `call_candidate`, or `call_hangup` document bound to a contact/workspace and
   session.
@@ -48,8 +54,8 @@ Reticulum paths.
 - **TURN** — a relay used when direct ICE cannot establish a path.
 - **Call session** — an authenticated audio/video session with explicit
   ringing, accept, decline, and hangup states.
-- **Mesh peer connection** — a WebRTC peer connection carrying media, and later
-  optionally a DataChannel.
+- **Mesh peer connection** — a WebRTC peer connection carrying media and a
+  DataChannel for Reticulum packets.
 
 ## 3. Why WebRTC
 
@@ -103,18 +109,19 @@ existing QUIC Offer/Answer/Ready work.
 
 ```text
 React renderer
-  └─ call/connection UI only; no SDP, ICE, sockets, or media keys
+  └─ RTCPeerConnection, DataChannel/media, call/connection UI (WebView)
 Tauri Rust shell / Android plugin
-  └─ native WebRTC peer connection, media devices, permissions
+  └─ permissions, devices, lifecycle, CSP; no peer connection
 Python service
-  └─ identity, signed signaling documents, policy, consent, delivery state
+  └─ identity, signed signaling documents, policy, consent, replay, delivery state
 Reticulum / LXMF
   └─ signaling transport and message/membership protocol
 ```
 
-The renderer must not own a peer connection, camera, microphone, TURN
-credential, or SDP. The service owns identity binding and policy; the native
-host owns media and the WebRTC stack.
+The shipped path differs from the original C5 design: the renderer owns the
+`RTCPeerConnection` because the WebView provides it. The service never owns one;
+it owns identity binding, policy, consent, and replay. The native host supplies
+permissions and media devices.
 
 ### 6.2 Connection path (C5, conditional)
 
@@ -677,6 +684,11 @@ intact.
 
 ## 9. Platform plan
 
+> Superseded for 0.9.1: the shipped path uses the WebView `RTCPeerConnection` on
+> Windows and Android, with native permissions and lifecycle from the shell.
+> The native-library plan below remains a future option, not the current
+> implementation.
+
 ### Windows
 
 - Native WebRTC library in Rust or the sidecar.
@@ -720,8 +732,10 @@ Goal: make call invitation, answer, ICE candidate, and hangup messages
 authenticated and replay-safe without adding media yet.
 
 Implemented foundation: `service/src/mesh_chat/webrtc_signaling.py`, with tests
-in `service/tests/test_webrtc_signaling.py`. It is not yet wired into the
-service command surface or UI.
+in `service/tests/test_webrtc_signaling.py`. It is wired into the service call
+commands (`start_call`, `answer_call`, `add_call_candidate`, `end_call`,
+`restart_call`) and the renderer `CallDialog`; physical call qualification
+remains open.
 
 Scope:
 
@@ -880,27 +894,31 @@ Still open:
 - sleep/resume tests;
 - diagnostics without addresses, credentials, or media keys.
 
-### C5 — Conditional DataChannel adapter
+### C5 — DataChannel adapter (shipped in 0.9.x)
 
 Decision updated by
 [ADR 0023](adr/0023-webrtc-datachannel-onboarding-prototype.md): begin C5.
-Implemented prototype:
-`experiments/webrtc-call/datachannel_onboarding.py` establishes a host-candidate
-DataChannel and exchanges a signed personal invitation and a separately signed
-reply, verifying both destinations.
+The prototype in `experiments/webrtc-call/datachannel_onboarding.py` was the
+starting point.
 
-This is not yet a shipping onboarding path. It does not bridge DataChannel bytes
-into the Python Reticulum interface and is not exposed in the UI. TCP access
-point remains the default onboarding path.
+C5 is now implemented and shipped:
+
+- the renderer creates `RTCPeerConnection`, a `mesh-reticulum` DataChannel, and a
+  `mesh-onboarding` control channel;
+- signed offer/answer documents, QR/copy, and the optional signaling mailbox;
+- the service `webrtc_attach` / `webrtc_packet` / `webrtc_detach` bridge moves
+  bounded Reticulum packets over the channel and reannounces the interface;
+- personal and workspace onboarding run over the control channel;
+- automatic reconnect (0.9.x) creates a fresh peer connection and reuses the same
+  bridge.
 
 Scope remaining:
 
-- DataChannel framing/MTU/backpressure into a Reticulum interface or LXMF bridge;
-- signed WebRTC invitation descriptor;
-- explicit joiner consent and workspace admission;
-- fallback to TCP/Reticulum.
+- C5e physical NAT/TURN/device qualification;
+- browser-client support without the Python service;
+- broader multi-path fallback testing.
 
-Exit criteria:
+Exit criteria remain:
 
 - a real workspace join, approval, receipt, and messages over WebRTC;
 - direct/STUN/TURN visible;

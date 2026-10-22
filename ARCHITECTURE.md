@@ -259,10 +259,11 @@ is sealed in the vault.
 
 The coordinator reports `waiting_for_peer`, `probing`, `offer_pending`,
 `answer_pending`, `connecting`, `connected`, `retry_wait`, `peer_offline`,
-`manual_required`, and `stopped`. It runs at most two attempts, backs off at
-1, 2, 5, 15, 30, and 60 seconds with jitter, and stops on cancellation, consent
-removal, a blocked or deleted contact, capability rejection, or a bounded
-attempt budget. No modal or contact-approval prompt is shown.
+`manual_required`, and `stopped`. It runs at most two concurrent attempts,
+backs off at 1, 2, 5, 15, 30, and 60 seconds with jitter, and stops on
+cancellation, consent removal, a blocked or deleted contact, capability
+rejection, or a bounded attempt budget. No modal or contact-approval prompt is
+shown.
 
 A transport failure never mutates contact, workspace, or membership state. A
 blocked or deleted peer is rejected by the service before the renderer allocates
@@ -293,17 +294,21 @@ consented-TURN policy applies, so a relay sees IP addresses, timing, and
 encrypted media but no plaintext. Call restart renegotiates a fresh media
 session rather than reusing dead ICE. Only approved contacts can call, a call
 never changes trust, and there are no group calls, recording, PSTN bridge, or
-cloud media store. Physical multi-device call and TURN qualification remains
-open.
+cloud media store. Call signaling records persist the negotiated SDP and ICE
+candidates as sealed vault records for the call lifecycle; they are never sent
+to the mailbox or logs. Physical multi-device call and TURN qualification
+remains open.
 
 ### Persistence and privacy
 
 Sealed records hold reconnect profiles, consent, capabilities, attempt state,
-and replay keys. No SDP, ICE credential, DTLS key, or chat plaintext is written
-to the vault or logs. The mailbox necessarily holds the signed offer/answer
-envelope, including the ephemeral SDP it carries, for its ten-minute TTL; that
-is signaling state, not chat state, and it is never reused. TURN credentials are
-fetched from the broker and kept in service memory only.
+and replay keys. Reconnect never writes SDP, ICE credentials, or DTLS keys to
+the vault or logs. Call signaling records separately seal the negotiated SDP
+and ICE candidates for the call lifecycle. The mailbox necessarily holds the
+signed offer/answer envelope, including the ephemeral SDP it carries, for its
+ten-minute TTL; that is signaling state, not chat state, and it is never reused.
+Broker-issued TURN credentials are kept in service memory only; a manually
+configured TURN credential is sealed in call settings.
 
 See [AUTO_RECONNECT_SPEC.md](docs/AUTO_RECONNECT_SPEC.md) for the full consent
 model, wire documents, phases, and test matrix, and

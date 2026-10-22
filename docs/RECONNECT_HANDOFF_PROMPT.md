@@ -1,5 +1,11 @@
 # DSH handoff prompt — finish automatic reconnect
 
+> Historical handoff, kept for context. It describes the repository before
+> 0.9.0 and is not current status; see [TESTING.md](../TESTING.md) and the
+> [automatic reconnect spec](AUTO_RECONNECT_SPEC.md). The “no SDP persisted”
+> invariant below is scoped to reconnect signaling; call signaling records
+> separately seal SDP/ICE candidates for the call lifecycle.
+
 You are continuing implementation in the Mesh Chat repository.
 
 ## Repository state

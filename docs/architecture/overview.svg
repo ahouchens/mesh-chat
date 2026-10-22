@@ -59,7 +59,7 @@
   <rect x="288" y="538" width="220" height="72" rx="8" fill="#ffffff" stroke="#a7f3d0"/>
   <text x="300" y="558" font-size="13" font-weight="700" fill="#065f46">Encrypted vault</text>
   <text x="300" y="576" font-size="11.5" fill="#334155">SQLite + AES-256-GCM</text>
-  <text x="300" y="593" font-size="11.5" fill="#334155">no SDP / ICE / DTLS at rest</text>
+  <text x="300" y="593" font-size="11.5" fill="#334155">reconnect state · call records sealed</text>
 
   <rect x="56" y="620" width="216" height="60" rx="8" fill="#ffffff" stroke="#a7f3d0"/>
   <text x="68" y="640" font-size="13" font-weight="700" fill="#065f46">Outbox + receipts</text>
@@ -91,7 +91,7 @@
   <!-- CENTER: mailbox -->
   <rect x="566" y="100" width="368" height="228" rx="12" fill="#ecfeff" stroke="#06b6d4"/>
   <text x="586" y="128" font-size="18" font-weight="700" fill="#0e7490">Optional signaling mailbox</text>
-  <text x="586" y="149" font-size="12.5" fill="#155e75">Cloudflare Worker + one Durable Object per pair</text>
+  <text x="586" y="149" font-size="12.5" fill="#155e75">Cloudflare Worker + one Durable Object per session</text>
   <text x="586" y="174" font-size="12.5" fill="#155e75">• SHA-256 pair-token hash, pinned on first write</text>
   <text x="586" y="194" font-size="12.5" fill="#155e75">• 10-minute TTL · 48 KiB signed-envelope cap</text>
   <text x="586" y="214" font-size="12.5" fill="#155e75">• roles: request / offer / answer · type checked</text>
@@ -112,7 +112,7 @@
   <text x="586" y="410" font-size="18" font-weight="700" fill="#9a3412">Optional TURN relay</text>
   <text x="586" y="432" font-size="12.5" fill="#7c2d12">Relayed DTLS for WebRTC when direct ICE fails</text>
   <text x="586" y="452" font-size="12.5" fill="#7c2d12">Sees IPs + timing, never chat plaintext</text>
-  <text x="586" y="472" font-size="12.5" fill="#7c2d12">Short-lived credentials; never persisted</text>
+  <text x="586" y="472" font-size="12.5" fill="#7c2d12">Broker credentials short-lived; memory-only</text>
 
   <!-- Network paths -->
   <rect x="566" y="506" width="368" height="424" rx="10" fill="#f1f5f9" stroke="#94a3b8"/>
@@ -147,7 +147,7 @@
   <text x="1016" y="170" font-size="13" fill="#1e3a8a">Reconnect coordinator · verifies status</text>
   <text x="1016" y="192" font-size="13" fill="#1e3a8a">Never approves contacts or changes authority</text>
   <text x="1016" y="212" font-size="13" fill="#1e3a8a">Never sees SDP after the attempt ends</text>
-  <text x="1016" y="232" font-size="13" fill="#1e3a8a">Consent changes share new signed capabilities</text>
+  <text x="1016" y="232" font-size="13" fill="#1e3a8a">Consent changes share capabilities when connected</text>
 
   <line x1="1228" y1="250" x2="1228" y2="274" stroke="#475569" stroke-width="1.5" marker-end="url(#arrow)"/>
   <text x="1240" y="267" font-size="11.5" fill="#64748b">invoke(command)</text>
@@ -155,7 +155,7 @@
   <rect x="996" y="276" width="464" height="94" rx="10" fill="#f5f3ff" stroke="#8b5cf6"/>
   <text x="1016" y="304" font-size="19" font-weight="700" fill="#6d28d9">Tauri 2 shell · Rust</text>
   <text x="1016" y="326" font-size="13" fill="#4c1d95">Credential store · profile path · CSP · allowlist</text>
-  <text x="1016" y="346" font-size="13" fill="#4c1d95">The service only runs while the app is unlocked</text>
+  <text x="1016" y="346" font-size="13" fill="#4c1d95">Reconnect runs only while the app is unlocked</text>
 
   <line x1="1228" y1="370" x2="1228" y2="394" stroke="#475569" stroke-width="1.5" marker-end="url(#arrow)"/>
   <text x="1240" y="387" font-size="11.5" fill="#64748b">stdin/stdout frames</text>
@@ -212,5 +212,5 @@
   <!-- footer -->
   <text x="30" y="1024" font-size="12" fill="#64748b">Capabilities default to auto-reconnect off. A mailbox, TURN server, or access point is optional and explicitly configured; none can approve a contact or read plaintext.</text>
   <text x="30" y="1044" font-size="12" fill="#64748b">The signed request/offer/answer and capability documents expire; replay is rejected across restarts. The worker stores only transient signaling envelopes.</text>
-  <text x="30" y="1064" font-size="12" fill="#64748b">1:1 calls use a separate DTLS-SRTP media session on the same ICE/TURN policy; signed call documents travel over the existing authenticated path.</text>
+  <text x="30" y="1064" font-size="12" fill="#64748b">1:1 calls use a separate DTLS-SRTP media session; call SDP/ICE records are sealed locally for the call lifecycle, never sent to the mailbox.</text>
 </svg>

@@ -225,11 +225,14 @@ Implemented in 0.6.0:
 
 ### Phase 4 — signaling adapter
 
-Implemented in 0.7.0:
+Implemented in 0.7.0 and hardened through 0.9.1:
 
-- Optional community mailbox (Cloudflare Worker + KV).
-- Short-lived opaque signed envelopes.
-- Deep link/QR fallback.
+- Optional community mailbox (Cloudflare Worker + Durable Object; the earlier
+  KV prototype is retired).
+- Short-lived opaque signed envelopes, now with pair capability tokens hashed at
+  rest, request/offer/answer roles, token rotation, and per-token/per-IP rate
+  limits.
+- Deep link/QR fallback; the tokenless manual offer/answer path still works.
 - No central message store.
 
 ### Phase 5 — transport fallback

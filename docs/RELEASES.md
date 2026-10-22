@@ -793,7 +793,7 @@ Prerequisites:
 
 - Node.js 20 or newer and pnpm 11.25.0
 - Python 3.11–3.14
-- Rust 1.77.2 or newer
+- Rust 1.90 or newer
 - [Platform build prerequisites for Tauri 2](https://v2.tauri.app/start/prerequisites/)
 
 Create and activate a virtual environment, then install the pinned service

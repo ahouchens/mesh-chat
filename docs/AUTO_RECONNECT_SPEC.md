@@ -103,7 +103,8 @@ Rules:
 - The responder must also opt in; otherwise it may receive a request but must
   not auto-answer.
 - Relay consent must be re-used only within its declared scope and lifetime.
-- TURN credentials are fetched fresh; they are never persisted.
+- Broker-issued TURN credentials are fetched fresh and never persisted; a
+  manually configured TURN credential is sealed in call settings.
 
 ## 6. State machine and glare
 
@@ -207,7 +208,9 @@ fresh peer connection after signaling succeeds.
 
 ## 9. Mailbox requirements
 
-The existing KV mailbox is a pairing prototype, not a reconnect service.
+The original KV mailbox was a pairing prototype. The shipped Worker now uses one
+Durable Object per session and implements the requirements below (see §18); this
+section records the design rationale.
 
 Required for reconnect:
 
@@ -301,11 +304,9 @@ Manual/device:
 - physical NAT/TURN path;
 - relay outage.
 
-## 15. Phases
+## 15. Phases and current status
 
-### Phase A — capabilities and consent
-
-Implemented primitives:
+### Phase A — capabilities and consent (implemented)
 
 - signed `ConnectionCapabilities` creation and verification;
 - transport list, mailbox capability, consent flags, scope, and expiry;
@@ -313,49 +314,58 @@ Implemented primitives:
 - service tests for signing, tampering, wrong signer, invalid mailbox/expiry,
   glare preference, and replay.
 
-Still open:
+All Phase A items are implemented: capabilities attach to invitations when the
+peer is known and are exchanged at acceptance/approval otherwise; per-contact
+consent defaults to off; a consent or mailbox change issues a new signed
+document and rotates the token. A capability that arrives before its contact
+record is held, then promoted only after approval.
 
-- attach capabilities to real invitations;
-- persist auto-reconnect and IP-disclosure consent per contact/device;
-- default existing contacts to off.
-
-### Phase B — Reticulum reconnect
-
-Implemented protocol primitives:
+### Phase B — reconnect protocol and supervisor (implemented over the mailbox)
 
 - signed `webrtc_reconnect_request`, `webrtc_reconnect_offer`, and
   `webrtc_reconnect_answer`;
 - sender/recipient binding, attempt/session binding, offer-digest binding,
   SDP/DTLS validation, expiry, and signature verification;
-- tests for round trip, wrong-offer rejection, tamper/wrong-signer, glare, and
-  replay.
+- renderer coordinator, service commands, durable replay, Reticulum attach,
+  reannounce, and path readiness;
+- tests for round trip, wrong-offer rejection, tamper/wrong-signer, glare,
+  replay, consent combinations, transport retry, and blocked peers.
 
-Still open:
+Open limitations:
 
-- supervisor state machine;
-- Reticulum delivery and path retry;
-- persisted replay cache;
-- service commands and UI integration;
-- tests 1–3 and 14.
+- automatic signaling uses the optional mailbox only; there is no out-of-band
+  capability/request delivery over LXMF;
+- no initiator takeover when the preferred device is offline;
+- no physical network-switch, NAT/TURN, or multi-device qualification.
 
-### Phase C — mailbox reconnect
+### Phase C — mailbox reconnect (implemented)
 
-- Durable Object/WebSocket mailbox with rotating tokens and rate limits.
-- Presence optional.
-- Tests 4–6, 10, 17.
+- Durable Object per session, pair tokens hashed at rest, rotation, request/
+  offer/answer roles, ten-minute TTL, 48 KiB cap, and per-token/per-IP limits;
+- tokenless compatibility retained for manual onboarding only;
+- wrong/missing token, rotation, role, size, replay, and rate-limit tests.
 
-### Phase D — lifecycle
+Presence is not offered.
 
-- Desktop tray policy.
-- Android foreground service.
-- Resume/reconnect on foreground.
-- Tests 12, 13, 18, device tests.
+### Phase D — lifecycle (not implemented, by design)
 
-### Phase E — UX and cleanup
+- desktop tray policy;
+- Android foreground service;
+- resume/reconnect on foreground;
+- iOS background execution;
+- physical device and battery testing.
 
-- Status card, consent toggles, manual-required messaging.
-- Remove the current “Reconnect opens the manual dialog” behavior.
-- Release evidence.
+Reconnect runs only while the app is open and unlocked.
+
+### Phase E — UX and cleanup (implemented)
+
+- per-contact status, consent toggles, retry/stop/forget, and explicit
+  manual-required messaging;
+- no modal or contact-approval prompt on reconnect;
+- release evidence in `TESTING.md`.
+
+The legacy connection-card **Reconnect** action still opens the manual Connect
+flow; automatic reconnect is a separate per-contact action.
 
 ## 16. Acceptance criteria
 
@@ -364,7 +374,9 @@ Still open:
 2. A peer with no rendezvous is told to reconnect manually; the app does not
    loop or imply success.
 3. No reconnect path bypasses contact/workspace authorization.
-4. No SDP, ICE credential, DTLS key, or plaintext is persisted or logged.
+4. No reconnect SDP, ICE credential, DTLS key, or plaintext is persisted or
+   logged. Call signaling records seal SDP/candidates separately for the call
+   lifecycle.
 5. Simultaneous restarts do not create duplicate sessions.
 6. Replayed or expired documents are rejected, including after restart.
 7. The mailbox cannot enumerate contacts from public destination hashes.
@@ -372,15 +384,27 @@ Still open:
 9. Transport failure does not change contact/workspace state.
 10. Desktop/Android lifecycle behavior matches the documented policy.
 
-## 17. Open decisions
+## 17. Decisions
 
-- Whether the default is auto-reconnect on or off for new contacts.
-- Maximum mailbox reconnect window and retention.
-- Whether presence is offered at all.
-- Whether desktop close-to-tray is the default.
-- Whether Android foreground service is opt-in or default.
-- Whether workspace contacts share capabilities or each device has its own.
-- Durable Object provider and abuse budget.
+Resolved:
+
+- Auto-reconnect defaults to **off** for new and existing contacts.
+- Mailbox sessions last ten minutes; reconnect capabilities last at most seven
+  days; reconnect documents last at most one hour.
+- Presence is not offered.
+- Capabilities are per contact/device. A workspace invitation carries one only
+  when a peer destination is supplied; otherwise the contact capability remains
+  the transport-level consent object.
+- Cloudflare Durable Objects are the mailbox provider, with per-token and
+  per-IP budgets.
+
+Still open:
+
+- desktop close-to-tray policy;
+- Android foreground service and iOS background policy;
+- physical NAT/TURN, network-switch, and battery qualification;
+- whether any out-of-band capability exchange should exist outside a live
+  control channel.
 
 ## 18. Implementation status (0.9.1)
 
@@ -435,15 +459,19 @@ Explicit limits and non-goals in 0.9.1:
   devices are not connected when a toggle changes, the UI says the signed
   settings will be shared on the next live connection; there is no separate
   out-of-band capability message over LXMF.
+- Reconnect signaling itself uses the optional signaling mailbox. There is no
+  automatic request/offer delivery over LXMF or Reticulum alone; without a
+  mailbox the state is **Manual reconnect required**.
 - If the preferred device is offline, the other side stays in **Waiting for
   peer**; there is no probe takeover.
 - Workspace authority and membership are never changed by reconnect. Workspace
   invitations carry capabilities only when a peer destination is supplied;
   otherwise the contact capability remains the transport-level consent object.
-- No SDP, ICE credential, DTLS key, or chat plaintext is persisted locally or
-  logged. The rendezvous mailbox necessarily holds the signed offer/answer
-  envelope, including the ephemeral SDP it carries, for its ten-minute TTL; that
-  is signaling state, not chat state, and it is never reused for a later
-  connection.
+- Reconnect does not persist SDP, ICE credentials, DTLS keys, or chat plaintext
+  locally, and does not log them. The rendezvous mailbox necessarily holds the
+  signed offer/answer envelope, including the ephemeral SDP it carries, for its
+  ten-minute TTL; that is signaling state, not chat state, and it is never
+  reused for a later connection. Call signaling records seal the negotiated SDP
+  and ICE candidates separately for the call lifecycle.
 - No physical-device, NAT/TURN, or iOS/Android lifecycle testing was performed
   for this change.

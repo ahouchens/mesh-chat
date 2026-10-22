@@ -1,9 +1,10 @@
 # C5 DataChannel onboarding bridge specification
 
-Status: C5a–C5d implemented (Python interface + service packet IPC, renderer
+Status: C5a–C5d shipped (Python interface + service packet IPC, renderer
 DataChannel pump, signed QR/copy offer/answer, and inline personal/workspace
 onboarding over a second control DataChannel). C5e physical qualification
-remains open. The 0.2.88 prototype is not a shipping onboarding path.
+remains open. The DataChannel is a supported onboarding and transport path as of
+0.9.x, and automatic reconnect reuses the same bridge.
 
 ## 1. Goal
 

@@ -28,8 +28,9 @@ In short, it solves **Ã¢â‚¬Å“how do a few people message and coordinate
 | **No public endpoint and no directly reachable access point** | **I2P relay invitations.** A signed `MESHI2P1:` / `MESHI2P1W:` envelope carries one `*.b32.i2p` Reticulum access point; the joiner must consent before traffic is relayed. | Each side runs an I2P router with SAM. The access point relays encrypted Reticulum/LXMF traffic; no public IP or port forward is needed on either participant. |
 | **One network path is not enough** | **Explicit fallbacks.** Nearby discovery, signed direct TCP, an operator-run access point, an email/reverse handshake, WebRTC over direct ICE or TURN, and an experimental QUIC underlay. | Each path is a visible choice, never a silent downgrade. See [Reaching another device](#reaching-another-device). |
 | **Manual offer/answer copy/paste for WebRTC** | **Optional signaling mailbox.** A signed request/offer/answer rendezvous with rotating pair tokens, role checks, and per-token/per-IP rate limits. | The mailbox holds only transient signed envelopes for ten minutes; it cannot approve contacts or read plaintext. QR/copy still works without it. |
-| **Restarting both apps usually means another manual exchange** | **Automatic reconnect with reciprocal consent.** A signed capability carries a rotating mailbox token; the app renegotiates a fresh WebRTC transport while both apps are open. | The mailbox is only a rendezvous; no SDP, ICE credential, DTLS key, or message content is stored or reused. Contact approval and workspace authority are not touched. |
+| **Restarting both apps usually means another manual exchange** | **Automatic reconnect with reciprocal consent.** A signed capability carries a rotating mailbox token; the app renegotiates a fresh WebRTC transport while both apps are open. | The mailbox holds the signed envelope, including its ephemeral SDP, only for ten minutes; Mesh Chat never reuses it locally. Contact approval and workspace authority are not touched. |
 | **Voice and video usually need a call server** | **1:1 WebRTC calls.** Audio and video use the same direct/TURN policy; signed call documents travel over the existing authenticated contact path. | Media is peer-to-peer DTLS; there is no recording, group call, PSTN bridge, or media store. A consented TURN relay sees IPs and timing, not chat or media plaintext. |
+| **Alerts usually require a push provider** | **Local mobile notifications.** Live inbound direct, group, and workspace messages can raise a local notification with an opaque ID, hidden-preview option, and open-time reauthorization. | No push service, token registry, or cloud scheduler. The native plugin raises notifications locally; presenting one never changes delivery or read state. |
 | **Cloud chat means cloud-held history and metadata** | **Local-only privacy.** Encrypted vault, sealed local search, no telemetry, analytics, crash upload, CDN, or remote artwork fetch. | Search and history stay on the device; there is no hosted index to query. |
 | **Offline peers and unclear delivery** | **Offline-tolerant delivery.** An optional LXMF propagation node stores recipient-encrypted objects until the recipient fetches them. A durable outbox, deduplication, and per-device evidence cover the rest. | The propagation node is separately consented and never becomes an identity, member, or delivery receipt. |
 | **Desktop and mobile implementations diverge** | **Desktop and mobile.** Tauri 2 shell with a bundled Python service on desktop; embedded CPython on Android and iOS. | Same Rust/Python/React stack and the same data model, with no platform-specific server. |
@@ -64,6 +65,8 @@ Underneath them, one **protected profile** holds everything at rest: the sealed 
 ### Where state lives
 
 All durable application records live in SQLite, but the values are individually sealed: AES-256-GCM on desktop with a fresh nonce and table/record identity as associated data; on mobile, a per-record key derived with HMAC-SHA-256 and RNS's authenticated Token construction. The 32-byte master key is held only in the OS credential store and in service memory. SQLite itself runs in `DELETE` journal mode with `synchronous=FULL`, `temp_store=MEMORY`, and `secure_delete=ON`, so rollback journals contain ciphertext too.
+
+Reconnect profiles, per-contact consent, signed capabilities, attempt state, and replay keys live in the same sealed vault. Reconnect does not persist SDP, ICE credentials, or DTLS keys. Call signaling records do persist the negotiated SDP and ICE candidates as sealed vault records for the call lifecycle; a manually configured TURN credential is also sealed there. Broker-issued TURN credentials stay in service memory only.
 
 A mutating command is not acknowledged until its vault transaction commits. That is why retrying a send after a crash reuses the same logical message and operation identifiers instead of creating a duplicate.
 
@@ -158,17 +161,35 @@ authenticated contact path; the media itself is peer-to-peer DTLS-SRTP.
 Call restart renegotiates a fresh media session rather than reusing dead ICE.
 
 - Only approved contacts can call; a call never creates or changes trust.
+- Call signaling records (SDP and ICE candidates) are sealed in the local vault
+  for the call lifecycle and are never sent to the mailbox.
 - The same direct/TURN policy and relay consent apply. TURN sees IP addresses,
   timing, and encrypted media, never chat or media plaintext.
 - No group calls, recording, PSTN bridge, or cloud media store.
 - Physical multi-device call, NAT, and TURN qualification remains open; see the
   [WebRTC physical test plan](docs/WEBRTC_PHYSICAL_TEST_PLAN.md).
 
+### Local mobile notifications
+
+Mobile builds with the native notification plugin can raise local notifications
+for live inbound direct, group, and workspace messages. The service uses a
+durable authorization-first queue, opaque notification IDs, sealed routes,
+foreground suppression, an optional hidden preview, native acknowledgement, and
+open-time reauthorization. Presenting or tapping a notification never changes
+delivery or read state.
+
+There is no cloud push service, device-token registry, or remote notification
+scheduler. Android may suspend the embedded runtime, so notification timing is
+best effort and no background-delivery guarantee is implied. Physical
+permission, lock-screen, tap, and suspension behavior remains unverified; see
+[Android parity](docs/ANDROID_PARITY.md).
+
 ### Automatic reconnect (open apps only)
 
-After two devices have connected once, Mesh Chat can renegotiate a **fresh**
-WebRTC transport when both apps are opened again. There is no manual
-offer/answer copy/paste and no background daemon.
+After two devices have connected over WebRTC once and exchanged reconnect
+capabilities, Mesh Chat can renegotiate a **fresh** WebRTC transport when both
+apps are opened again. There is no manual offer/answer copy/paste and no
+background daemon.
 
 - Both people must explicitly enable **Reconnect automatically** for that
   contact. Existing contacts default to off, and contact approval alone is not
@@ -251,7 +272,7 @@ Receipts are ordinary end-to-end encrypted LXMF messages. They are never acknowl
 | Android/iOS plugin | Embedded CPython lifecycle, app-private path, Keystore/Keychain access | Renderer data, contact policy, routing decisions |
 | Python service | Identity, consent, durable state, reconnect profiles/capabilities/replay, Reticulum/LXMF integration | OS credential lookup, arbitrary commands, remote control |
 | Optional signaling mailbox | Pair-token hash, transient signed request/offer/answer envelopes, TTL and rate limits | Message plaintext, contact/workspace trust, message history, enumeration from public hashes |
-| WebRTC transport / TURN relay | Ephemeral DTLS/ICE and encrypted DataChannel packets | SDP, ICE credentials, or DTLS keys at rest; consent decisions; message plaintext |
+| WebRTC transport / TURN relay | Ephemeral DTLS/ICE and encrypted DataChannel packets | Persisting SDP, ICE credentials, or DTLS keys on the relay; consent decisions; message plaintext |
 | Reticulum / LXMF | Paths, Links, transport, wire format, encryption | Contact trust, membership, durable-delivery claims |
 | I2P router / access point | I2P tunnels, relay forwarding, connection metadata | Message plaintext, contact trust, membership, delivery receipts |
 
@@ -285,7 +306,7 @@ The threat model is explicit about what is *not* protected: traffic analysis, IP
 | Optional propagation cache (client) | 100 MiB |
 | I2P access points per device | 4 |
 | Managed I2P router | Local `i2pd` with SAM on `127.0.0.1:7656`; low-bandwidth, no transit, no web console/proxies |
-| Attachments, group calls, public channels, push notifications | Not supported |
+| Attachments, group calls, discoverable public channels, push notifications | Not supported |
 | 1:1 calls | WebRTC audio/video over direct ICE or a consented TURN relay; no group calls, recording, or PSTN |
 
 ## Status and verification
@@ -320,12 +341,12 @@ Still open: physical Windows and Android runs, real router/NAT and cellular trav
 | [`deploy/turn/`](deploy/turn/) | Example self-hosted coturn relay for cross-network WebRTC calls |
 | [`docs/architecture/`](docs/architecture/) | Architecture diagram as editable SVG source plus the rendered PNG |
 | [`scripts/`](scripts/) | Build, packaging, release, and verification drivers |
-| [`docs/adr/`](docs/adr/) | Nineteen architecture decision records |
+| [`docs/adr/`](docs/adr/) | Twenty-three architecture decision records |
 | [`service/tests/`](service/tests/) | Unit, integration, and opt-in real-stack harnesses |
 
 ## Build and test
 
-Prerequisites: Node.js 20+, pnpm 11.25.0, Python 3.11Ã¢â‚¬â€œ3.14, Rust 1.77.2+, and the [Tauri 2 platform prerequisites](https://v2.tauri.app/start/prerequisites/).
+Prerequisites: Node.js 20+, pnpm 11.25.0, Python 3.11-3.14, Rust 1.90+, and the [Tauri 2 platform prerequisites](https://v2.tauri.app/start/prerequisites/).
 
 ```sh
 python -m venv .venv
