@@ -422,6 +422,17 @@ An intermediate 0.2.74 build failed five frontend assertions because normal
 invitations carried `i2p_consent: false`; 0.2.75 sends the field only for I2P
 previews.
 
+## Pairing resume, 2026-10-21
+
+- Mailbox pairing codes are persisted for ten minutes.
+- Connect shows **Resume pairing** for a pending joiner-side code.
+- Resuming reopens the WebRTC dialog with the saved code and re-fetches the
+  signed offer.
+- Approved pairings clear the saved code.
+- Expired or malformed entries are discarded.
+
+Validation: TypeScript and **242 frontend tests** passed.
+
 ## Transport choices, 2026-10-21
 
 - Connect now exposes Direct TCP/same-network, approved access point, WebRTC,

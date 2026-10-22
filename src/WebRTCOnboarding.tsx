@@ -6,6 +6,7 @@ import { serviceCommand } from "./api";
 import { attachWebRTCBridge, type WebRTCBridge } from "./webrtc-onboarding";
 import { rememberWebRTCDiagnostics } from "./webrtc-diagnostics";
 import { setWebRTCSession, updateWebRTCSessionApprovalPending, type WebRTCSessionPath } from "./webrtc-session";
+import { clearPairingResume, savePairingResume } from "./pairing-resume";
 import type {
   CallIceConfiguration,
   CallSettings,
@@ -345,6 +346,7 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
     const onApproval = (event: Event) => {
       if (roleRef.current !== "offer") return;
       const approved = Boolean((event as CustomEvent<{ approved?: boolean }>).detail?.approved);
+      if (approved) clearPairingResume();
       updateWebRTCSessionApprovalPending(false);
       setOnboarding(approved ? "approved" : "declined");
     };
@@ -354,6 +356,7 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
 
   useEffect(() => {
     if (initialPairingCode && !pcRef.current) {
+      savePairingResume(initialPairingCode, "answer");
       setOfferInput(initialPairingCode);
       setPhase("review");
     }
@@ -434,6 +437,7 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
       setOnboarding("waiting-approval");
       await onChanged();
     } else if (message.type === "invitation_approved" && roleRef.current === "join") {
+      clearPairingResume();
       setOnboarding("approved");
       await onChanged();
     } else if (message.type === "invitation_denied" && roleRef.current === "join") {
@@ -543,6 +547,7 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
         try {
           const published = await serviceCommand<{ session_id: string }>("signal_publish", { document: result.document, role: "offer" });
           setMailboxCode(published.session_id);
+          savePairingResume(published.session_id, "offer");
         } catch {
           // The full signed offer remains usable; the mailbox is optional.
         }
@@ -659,6 +664,7 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
         try {
           const published = await serviceCommand<{ session_id: string }>("signal_publish", { document: result.document, role: "answer" });
           setMailboxCode(published.session_id);
+          savePairingResume(published.session_id, "answer");
         } catch {
           // The full signed answer remains usable; the mailbox is optional.
         }
