@@ -73,6 +73,22 @@ The official report is
 Gates: `automated: passed`; `physical_device: not-requested`;
 `production_signing: not-requested`.
 
+Publication: GitHub Actions
+[CI run 39807416471](https://github.com/ahouchens/mesh-chat/actions/runs/39807416471)
+and
+[Release run 39807422024](https://github.com/ahouchens/mesh-chat/actions/runs/39807422024)
+passed on the first attempt for `v0.9.7`. Release:
+<https://github.com/ahouchens/mesh-chat/releases/tag/v0.9.7>.
+
+| Artifact | Bytes | SHA-256 (verified by re-download) |
+|---|---:|---|
+| `Mesh-Chat_0.9.7_x64-setup.exe` | 27,863,970 | `ad5294a04c68a8263f38db00311291af82ee1010e8468fe68966f24f57fbb93b` |
+| `Mesh-Chat_0.9.7_x64_en-US.msi` | 29,859,840 | `28e93a381d39ecff2b71bb0ac7aebec7b77934b7914874529d3797712de4bec6` |
+| `mesh-chat-0.9.7-android-arm64-release.apk` | 34,354,838 | `7d07c55c7fef963e4eabdea245d0f3ff182c85ffcec168a57865bfa51c864367` |
+| `SHA256SUMS.txt` | 300 | `e1b89abe5992b7cb5ace58afdee669b36f48f865fe8cf0554c722c740adcdac9` |
+
+The Android APK is debug-signed; it is not a production or upgrade identity.
+
 New coverage includes helper opt-in default/forwarding, source/origin binding,
 helper-disabled behavior, audience-only forward, and one-hop stop. No physical
 multi-device helper or DirectRecovery route test was performed.
