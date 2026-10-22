@@ -61,6 +61,7 @@ from .models import (
     WorkspacePostingPolicy,
     WorkspaceRole,
 )
+from .workspace_delegation import create_delegated_manifest, verify_delegated_manifest
 from .workspace_admission import (
     create_admission_acceptance,
     create_admission_grant,
@@ -3150,7 +3151,11 @@ class WorkspaceServiceMixin:
                 workspace_id=workspace_id,
                 recipient_member_id=member_id,
                 recipient_device=device,
-                kind="workspace_manifest_root",
+                kind=(
+                    "workspace_manifest_delegated"
+                    if manifest.delegation_grant_digest is not None
+                    else "workspace_manifest_root"
+                ),
                 document=manifest.serialized,
                 priority=0,
             )
@@ -5814,6 +5819,126 @@ class WorkspaceServiceMixin:
         record["state"] = "accepted"
         self.store.put("workspace_admission_grant", record["id"], record)
         self._workspace_changed(wire.workspace_id, resource_kind="admission_grant")
+        if record.get("state") == "accepted":
+            self._forward_workspace_admission_requests(record)
+
+    def _forward_workspace_admission_requests(self, record: dict[str, Any]) -> None:
+        workspace = self.store.get(
+            "workspace", self._workspace_record_id(record["workspace_id"])
+        )
+        if workspace is None or workspace.get("state") != "active":
+            return
+        manifest = self._workspace_current_manifest(workspace)
+        admin = find_member(manifest, record["admin_member_id"])
+        device = next(
+            (
+                item
+                for item in (admin.devices if admin is not None else ())
+                if item.device_id == record["admin_device_id"]
+            ),
+            None,
+        )
+        if admin is None or admin.status != "active" or device is None:
+            return
+        deliveries = []
+        for request in self.store.list("workspace_join_request"):
+            if (
+                request.get("workspace_id") != workspace["id"]
+                or request.get("state") != "pending"
+            ):
+                continue
+            invitation = self.store.get(
+                "workspace_invitation", request.get("invitation_id", "")
+            )
+            if invitation is None or invitation.get("state") != "active":
+                continue
+            document = json.dumps(
+                {"request": request, "invitation": invitation},
+                ensure_ascii=False,
+                separators=(",", ":"),
+                sort_keys=True,
+            )
+            deliveries.append(
+                self._workspace_delivery_record(
+                    workspace_id=workspace["id"],
+                    recipient_member_id=admin.member_id,
+                    recipient_device=device,
+                    kind="workspace_admission_pending",
+                    document=document,
+                    priority=0,
+                )
+            )
+        if deliveries:
+            self.store.put_many(
+                [
+                    *[
+                        ("workspace_delivery", delivery["id"], delivery)
+                        for delivery in deliveries
+                    ],
+                    *self._due_records(add=deliveries),
+                ]
+            )
+            self._workspace_changed(workspace["id"], resource_kind="join_request")
+
+    def _receive_workspace_admission_pending(
+        self, wire: WorkspaceWirePayload
+    ) -> None:
+        try:
+            value = json.loads(wire.document)
+        except json.JSONDecodeError:
+            return
+        if not isinstance(value, dict) or set(value) != {"request", "invitation"}:
+            return
+        request = value["request"]
+        invitation = value["invitation"]
+        if not isinstance(request, dict) or not isinstance(invitation, dict):
+            return
+        if (
+            request.get("workspace_id") != wire.workspace_id
+            or invitation.get("workspace_id") != wire.workspace_id
+            or request.get("state") != "pending"
+            or invitation.get("state") != "active"
+        ):
+            return
+        workspace = self.store.get(
+            "workspace", self._workspace_record_id(wire.workspace_id)
+        )
+        if workspace is None or workspace.get("state") != "active":
+            return
+        if workspace.get("local_role") != "admin":
+            return
+        grant = next(
+            (
+                item
+                for item in self.store.list("workspace_admission_grant")
+                if item.get("workspace_id") == wire.workspace_id
+                and item.get("state") == "accepted"
+                and item.get("admin_device_id") == workspace.get("local_device_id")
+            ),
+            None,
+        )
+        if grant is None:
+            return
+        join = verify_workspace_join(
+            request.get("document"), invitation=invitation.get("document")
+        )
+        if join.workspace_id != wire.workspace_id or join.member_id != request.get("member_id"):
+            return
+        invitation_id = self._workspace_invitation_record_id(join.invite_nonce)
+        if invitation.get("id") != invitation_id:
+            return
+        request_id = self.store.opaque_id("workspace-join", join.digest)
+        if request.get("id") != request_id:
+            return
+        if self.store.get("workspace_join_request", request_id) is not None:
+            return
+        self.store.put_many(
+            [
+                ("workspace_join_request", request_id, request),
+                ("workspace_invitation", invitation_id, invitation),
+            ]
+        )
+        self._workspace_changed(wire.workspace_id, resource_kind="join_request")
 
     def approve_workspace_join(
         self,
@@ -5828,8 +5953,31 @@ class WorkspaceServiceMixin:
         if replay is not None:
             return replay
         workspace = self._require_workspace(workspace_id)
-        if workspace.get("state") != "active" or workspace.get("local_role") != "owner":
-            raise ContactNotApproved("Only the active workspace owner can approve joins")
+        if workspace.get("state") != "active":
+            raise ContactNotApproved("Workspace is not active")
+        is_owner = workspace.get("local_role") == "owner"
+        grant_record: dict[str, Any] | None = None
+        if not is_owner:
+            if workspace.get("local_role") != "admin" or self._identity is None:
+                raise ContactNotApproved("Only the owner or an accepted admission admin can approve joins")
+            grant_record = next(
+                (
+                    item
+                    for item in sorted(
+                        self.store.list("workspace_admission_grant"),
+                        key=lambda record: float(record.get("created_at", 0)),
+                        reverse=True,
+                    )
+                    if item.get("workspace_id") == workspace_id
+                    and item.get("state") == "accepted"
+                    and item.get("admin_device_id") == workspace.get("local_device_id")
+                    and float(item.get("expires_at", 0)) > time.time()
+                    and int(item.get("use_count", 0)) < int(item.get("max_admissions", 0))
+                ),
+                None,
+            )
+            if grant_record is None:
+                raise ContactNotApproved("No accepted admission grant is available")
         if not isinstance(request_id, str):
             raise ValidationError("Workspace join request ID is invalid")
         request = self.store.get("workspace_join_request", request_id)
@@ -5865,21 +6013,43 @@ class WorkspaceServiceMixin:
                 [join.device.serialized],
             )
         )
-        next_raw = create_workspace_manifest(
-            identity,
-            workspace_id=workspace_id,
-            epoch=current.epoch + 1,
-            previous_manifest_hash=current.digest,
-            name=current.name,
-            description=current.description,
-            authority_device_id=current.authority_device_id,
-            members=member_inputs,
-            retention_days=current.retention_days,
-            channel_creation=current.channel_creation,
-            posting=current.posting,
-            invitation_requests=current.invitation_requests,
+        next_raw = (
+            create_workspace_manifest(
+                identity,
+                workspace_id=workspace_id,
+                epoch=current.epoch + 1,
+                previous_manifest_hash=current.digest,
+                name=current.name,
+                description=current.description,
+                authority_device_id=current.authority_device_id,
+                members=member_inputs,
+                retention_days=current.retention_days,
+                channel_creation=current.channel_creation,
+                posting=current.posting,
+                invitation_requests=current.invitation_requests,
+            )
+            if is_owner
+            else create_delegated_manifest(
+                identity,
+                previous=current,
+                grant=grant_record["offer"],
+                acceptance=grant_record["acceptance"],
+                new_member=WorkspaceManifestMemberInput(
+                    join.member_id,
+                    join.device.display_name,
+                    WorkspaceRole.MEMBER,
+                    [join.device.serialized],
+                ),
+            )
         )
-        next_manifest = verify_workspace_manifest_transition(next_raw, current)
+        next_manifest = (
+            verify_workspace_manifest_transition(next_raw, current)
+            if is_owner
+            else verify_delegated_manifest(next_raw, previous=current)
+        )
+        if grant_record is not None:
+            grant_record["use_count"] = next_manifest.delegation_grant_use or 0
+            grant_record["state"] = "accepted"
         existing_recipients = self._workspace_manifest_recipients(
             current, excluding_member_id=workspace["local_member_id"]
         )
@@ -5975,6 +6145,11 @@ class WorkspaceServiceMixin:
                 self._manifest_record(next_manifest),
             ),
             self._manifest_epoch_record(next_manifest),
+            *(
+                [("workspace_admission_grant", grant_record["id"], grant_record)]
+                if grant_record is not None
+                else []
+            ),
             ("workspace_join_request", request_id, request),
             ("workspace_invitation", request["invitation_id"], invitation),
             *callback_records,
@@ -9298,6 +9473,64 @@ class WorkspaceServiceMixin:
             },
         )
         self._set_workspace_sync_issue(wire.workspace_id, reason)
+
+    def _receive_workspace_delegated_manifest(
+        self, wire: WorkspaceWirePayload
+    ) -> bool:
+        workspace = self.store.get(
+            "workspace", self._workspace_record_id(wire.workspace_id)
+        )
+        if workspace is None or workspace.get("state") in {"closed", "forked"}:
+            return False
+        try:
+            current = self._workspace_current_manifest(workspace)
+            incoming = verify_delegated_manifest(wire.document, previous=current)
+        except MeshChatError:
+            return False
+        if incoming.workspace_id != wire.workspace_id:
+            return False
+        existing = self.store.get(
+            "workspace_manifest_epoch",
+            self._workspace_manifest_epoch_id(wire.workspace_id, incoming.epoch),
+        )
+        if existing is not None:
+            if existing.get("digest") != incoming.digest:
+                workspace["state"] = "forked"
+                workspace["security_error"] = "manifest_fork"
+                self.store.put(
+                    "workspace", self._workspace_record_id(wire.workspace_id), workspace
+                )
+                self._workspace_changed(wire.workspace_id, resource_kind="security")
+            return existing.get("digest") == incoming.digest
+        if incoming.epoch > current.epoch + 1:
+            self._store_pending_workspace_control(wire, "missing_manifest_predecessor")
+            return False
+        if incoming.epoch <= current.epoch:
+            return False
+        self._apply_manifest_to_workspace(workspace, incoming)
+        self._apply_manifest_public_identities(workspace, incoming)
+        records = [
+            ("workspace", self._workspace_record_id(workspace["id"]), workspace),
+            (
+                "workspace_manifest",
+                self._workspace_manifest_record_id(incoming.digest),
+                self._manifest_record(incoming),
+            ),
+            self._manifest_epoch_record(incoming),
+        ]
+        if isinstance(incoming.delegation_grant_digest, str):
+            grant = self.store.get(
+                "workspace_admission_grant", incoming.delegation_grant_digest
+            )
+            if grant is not None:
+                grant["use_count"] = incoming.delegation_grant_use or 0
+                grant["state"] = "accepted"
+                records.append(
+                    ("workspace_admission_grant", grant["id"], grant)
+                )
+        self.store.put_many(records)
+        self._workspace_changed(wire.workspace_id, resource_kind="manifest")
+        return True
 
     def _receive_workspace_manifest(
         self, wire: WorkspaceWirePayload, *, drain_pending: bool = True
@@ -19067,6 +19300,12 @@ class WorkspaceServiceMixin:
             return
         if wire.kind == "workspace_admission_acceptance":
             self._receive_workspace_admission_acceptance(wire)
+            return
+        if wire.kind == "workspace_admission_pending":
+            self._receive_workspace_admission_pending(wire)
+            return
+        if wire.kind == "workspace_manifest_delegated":
+            self._receive_workspace_delegated_manifest(wire)
             return
         if wire.kind == "workspace_manifest_root":
             self._receive_workspace_manifest(wire)

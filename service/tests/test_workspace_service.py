@@ -15,7 +15,7 @@ import RNS
 
 from mesh_chat.errors import ContactNotApproved, IdentityMismatch, StaleCursor, ValidationError
 from mesh_chat.invitations import readable_fingerprint
-from mesh_chat.models import DeliveryState
+from mesh_chat.models import DeliveryState, WorkspaceRole
 from mesh_chat.service import MeshChatService
 from mesh_chat.vault import VaultStore
 from mesh_chat.workspace_protocol import (
@@ -31,6 +31,7 @@ from mesh_chat.workspace_protocol import (
     verify_workspace_admin_request,
     verify_workspace_manifest,
 )
+from mesh_chat.workspace_delegation import create_delegated_manifest, verify_delegated_manifest
 from mesh_chat.workspace_wire import WorkspaceWirePayload, parse_workspace_payload
 from mesh_chat.workspace_service import (
     normalize_workspace_search_text,
@@ -555,6 +556,47 @@ def test_workspace_admission_grant_delivery_and_acceptance(tmp_path):
         )
     owner_grants = owner.list_workspace_admission_grants(workspace["id"])
     assert owner_grants and owner_grants[0]["state"] == "accepted"
+
+    owner_workspace = owner._require_workspace(workspace["id"])
+    owner_manifest = owner._workspace_current_manifest(owner_workspace)
+    member_workspace = member._require_workspace(workspace["id"])
+    member._apply_manifest_to_workspace(member_workspace, owner_manifest)
+    member.store.put_many([
+        ("workspace", member._workspace_record_id(workspace["id"]), member_workspace),
+        ("workspace_manifest", member._workspace_manifest_record_id(owner_manifest.digest), member._manifest_record(owner_manifest)),
+        member._manifest_epoch_record(owner_manifest),
+    ])
+    third_identity = RNS.Identity()
+    third_id = str(uuid.uuid4())
+    third_card = create_workspace_device_card(
+        third_identity,
+        workspace_id=workspace["id"],
+        member_id=third_id,
+        device_id=str(uuid.uuid4()),
+        display_name="Casey",
+    )
+    delegated_raw = create_delegated_manifest(
+        member._identity,
+        previous=owner_manifest,
+        grant=owner_grants[0]["grant"],
+        acceptance=owner_grants[0]["acceptance"],
+        new_member=WorkspaceManifestMemberInput(
+            third_id, "Casey", WorkspaceRole.MEMBER, [third_card]
+        ),
+    )
+    delegated = verify_delegated_manifest(delegated_raw, previous=owner_manifest)
+    wire = WorkspaceWirePayload(
+        kind="workspace_manifest_delegated",
+        logical_id=str(uuid.uuid4()),
+        workspace_id=workspace["id"],
+        expires_at=int(time.time()) + 600,
+        document=delegated_raw,
+    )
+    current_member = member._workspace_current_manifest(member._require_workspace(workspace["id"]))
+    assert current_member.digest == owner_manifest.digest
+    verify_delegated_manifest(delegated_raw, previous=current_member)
+    assert member._receive_workspace_delegated_manifest(wire)
+    assert member._require_workspace(workspace["id"])["manifest_hash"] == delegated.digest
 
 
 def test_workspace_connection_helper_relays_one_hop_only(tmp_path):

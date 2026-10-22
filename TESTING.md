@@ -22,6 +22,51 @@ locally. Frontend/package/native tests and Windows/Android builds run in Actions
 Physical execution follows the
 [Phase 2 device checklist](docs/DIRECT_CONNECTIVITY_PHASE2_DEVICE_TEST.md).
 
+## Owner-offline admission grants, delegated backend 0.9.10
+
+Phase 5.2b adds the delegated-admission backend. There is still no grant or
+admission UI, and owner-offline admission is not exposed to users.
+
+Implemented:
+
+- owner forwards pending join requests plus their invitations to the accepted
+  admin device as `workspace_admission_pending`;
+- `approve_workspace_join` accepts an active admin holding a valid accepted
+  grant, builds a chained v2 delegated manifest, verifies it, and advances the
+  grant use count;
+- v2 manifests are delivered as `workspace_manifest_delegated`, verified against
+  the current manifest, applied by recipients, and recorded as the new epoch;
+- invalid, stale, or fork-conflicting v2 manifests fail closed;
+- the owner v1 approval path is unchanged.
+
+Not implemented in this stage:
+
+- grant/admission UI;
+- owner-return normalization and fork/revocation UX;
+- pre-v2 client fail-closed delivery handling;
+- physical qualification.
+
+Coverage includes a chained delegated manifest created from an accepted grant
+and applied by a recipient as the new workspace epoch.
+
+Validation:
+
+```text
+pytest service/tests:        1108 passed, 46 skipped, 0 failed (260.16 s)
+node scripts/run-frontend-tests.mjs: 264 passed (18 files)
+node --test deploy/cloudflare-signal/worker.test.mjs: 11 passed
+packaged emoji artwork verification: 3 passed
+node node_modules/typescript/bin/tsc -b: passed
+node scripts/run-frontend-build.mjs: passed
+```
+
+The official report is
+`dist/reports/0.9.10/20261022T184929Z-1ec2e3d8/report.json` (git-ignored):
+`status: passed`, 296.412 s, SHA-256
+`789138e3ff9e63a23b31b5a15362370883bddf1ae293b32466f140468e1420ec`.
+Gates: `automated: passed`; `physical_device: not-requested`;
+`production_signing: not-requested`.
+
 ## Owner-offline admission grants, service stage 0.9.9
 
 Phase 5.2a adds the **grant lifecycle service** on top of the 0.9.8 protocol

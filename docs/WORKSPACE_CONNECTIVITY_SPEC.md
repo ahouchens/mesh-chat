@@ -3,7 +3,8 @@
 Status: Phase 1 implemented in 0.9.3; Phase 2a implemented in 0.9.4; Phase 2b
 implemented in 0.9.5; Phase 3 implemented in 0.9.6; Phase 4 implemented in
 0.9.7; Phase 5 protocol primitives implemented in 0.9.8; grant lifecycle service
-implemented in 0.9.9; admission/UI pending; later phases proposed.
+implemented in 0.9.9; delegated admission backend implemented in 0.9.10;
+UI/qualification pending; later phases proposed.
 
 ## 1. Problem
 
@@ -350,12 +351,25 @@ Implemented and tested, with no service/UI admission path enabled yet:
   grant, no v2 manifest is delivered, and there is no UI. Owner-offline joins
   remain queued.
 
-### Phase 5.2b — delegated admission (planned)
+### Phase 5.2b — delegated admission backend (implemented in 0.9.10)
 
-Admin admission of pending joins, v2 manifest delivery/application, owner-return
-and fork handling, revocation/expiry, pre-v2 fail-closed behavior, UI, and
-physical qualification. Until 5.2b ships, owner-offline joins remain queued and
-the UI states the limitation.
+- The owner forwards pending join requests and their invitations to the accepted
+  admin device as workspace_admission_pending after acceptance.
+- pprove_workspace_join accepts an active admin with an accepted, unexpired
+  grant and creates a chained workspace_manifest_delegated v2 snapshot.
+- The v2 manifest is delivered as workspace_manifest_delegated, verified
+  against the current manifest, and applied by recipients; grant use counts are
+  updated.
+- Owner admission remains the unchanged v1 path.
+- There is still no grant/admission UI, no owner-return/revocation UX, and no
+  pre-v2 fail-closed delivery handling. Owner-offline admission is therefore not
+  exposed to users yet.
+
+### Phase 5.2c — UI, conflicts, and qualification (planned)
+
+Grant/admission UI, owner-return normalization, fork/revocation/expiry UX,
+pre-v2 fail-closed handling, end-to-end tests, and physical qualification. Until
+5.2c ships, owner-offline joins remain queued in the UI.
 
 ## 10. Phase 6 — workspace DM calls
 
