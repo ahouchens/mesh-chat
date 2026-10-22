@@ -296,6 +296,9 @@ class MeshChatService(
         "workspace_helper_status",
         "workspace_helper_consent_set",
         "relay_workspace_connection_update",
+        "create_workspace_admission_grant",
+        "accept_workspace_admission_grant",
+        "list_workspace_admission_grants",
         "workspace_request_paths",
         "create_workspace_access_recommendation",
         "preview_workspace_access_recommendation",
@@ -350,6 +353,9 @@ class MeshChatService(
         "workspace_helper_status",
         "workspace_helper_consent_set",
         "relay_workspace_connection_update",
+        "create_workspace_admission_grant",
+        "accept_workspace_admission_grant",
+        "list_workspace_admission_grants",
         "workspace_request_paths",
         "create_workspace_access_recommendation",
         "preview_workspace_access_recommendation",
@@ -3906,6 +3912,39 @@ class MeshChatService(
                 body["relationship_id"],
                 body["helper_device_id"],
             )
+        if command == "create_workspace_admission_grant":
+            body = _payload(
+                value,
+                allowed={
+                    "workspace_id",
+                    "admin_member_id",
+                    "admin_device_id",
+                    "max_admissions",
+                    "lifetime_days",
+                },
+                required={"workspace_id", "admin_member_id", "admin_device_id"},
+            )
+            return self.create_workspace_admission_grant(
+                body["workspace_id"],
+                body["admin_member_id"],
+                body["admin_device_id"],
+                body.get("max_admissions", 5),
+                body.get("lifetime_days", 7),
+            )
+        if command == "accept_workspace_admission_grant":
+            body = _payload(
+                value,
+                allowed={"workspace_id", "grant_id"},
+                required={"workspace_id", "grant_id"},
+            )
+            return self.accept_workspace_admission_grant(
+                body["workspace_id"], body["grant_id"]
+            )
+        if command == "list_workspace_admission_grants":
+            body = _payload(
+                value, allowed={"workspace_id"}, required={"workspace_id"}
+            )
+            return self.list_workspace_admission_grants(body["workspace_id"])
         if command == "create_workspace_access_recommendation":
             body = _payload(
                 value,

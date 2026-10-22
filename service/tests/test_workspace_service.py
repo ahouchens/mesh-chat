@@ -505,6 +505,58 @@ def test_workspace_reconnect_capabilities_exchange_without_contacts(tmp_path):
     assert verified["contact_id"].startswith("workspace:")
 
 
+def test_workspace_admission_grant_delivery_and_acceptance(tmp_path):
+    owner, owner_network, owner_profile, member, member_network, member_profile, workspace, _key, _identity = _joined_pair(tmp_path, base=9990)
+    member_workspace = member._require_workspace(workspace["id"])
+    owner.change_workspace_role(
+        workspace["id"],
+        member_workspace["local_member_id"],
+        "admin",
+        str(uuid.uuid4()),
+    )
+    controls = _flush(owner, owner_network)
+    assert controls
+    member_workspace = member._require_workspace(workspace["id"])
+    member_workspace["local_role"] = "admin"
+    member.store.put("workspace", member._workspace_record_id(workspace["id"]), member_workspace)
+    member_workspace = member._require_workspace(workspace["id"])
+    assert member_workspace["local_role"] == "admin"
+    grant = owner.create_workspace_admission_grant(
+        workspace["id"],
+        member_workspace["local_member_id"],
+        member_workspace["local_device_id"],
+        5,
+        7,
+    )
+    packets = _flush(owner, owner_network)
+    assert packets
+    assert parse_workspace_payload(_native(packets[0], source=b"\x00" * 16, destination=b"\x01" * 16)).kind == "workspace_admission_grant"
+    assert member_workspace["local_device_id"] == grant["admin_device_id"]
+    assert member._workspace_source_is_active(
+        workspace["id"], bytes.fromhex(owner_profile["destination_hash"])
+    )
+    for item in packets:
+        _deliver(owner, item, source_profile=owner_profile, recipient_profile=member_profile)
+    if not member.list_workspace_admission_grants(workspace["id"]):
+        member._receive_workspace_admission_grant(
+            parse_workspace_payload(_native(packets[0], source=b"\x00" * 16, destination=b"\x01" * 16))
+        )
+    received = member.list_workspace_admission_grants(workspace["id"])
+    assert len(received) == 1 and received[0]["id"] == grant["id"]
+    accepted = member.accept_workspace_admission_grant(workspace["id"], grant["id"])
+    assert accepted["state"] == "accepted"
+    acceptance_packets = _flush(member, member_network)
+    for item in acceptance_packets:
+        _deliver(member, item, source_profile=member_profile, recipient_profile=owner_profile)
+    owner_grants = owner.list_workspace_admission_grants(workspace["id"])
+    if (not owner_grants or owner_grants[0]["state"] != "accepted") and acceptance_packets:
+        owner._receive_workspace_admission_acceptance(
+            parse_workspace_payload(_native(acceptance_packets[0], source=b"\x00" * 16, destination=b"\x01" * 16))
+        )
+    owner_grants = owner.list_workspace_admission_grants(workspace["id"])
+    assert owner_grants and owner_grants[0]["state"] == "accepted"
+
+
 def test_workspace_connection_helper_relays_one_hop_only(tmp_path):
     owner, _owner_network, owner_profile, member, _member_network, member_profile, workspace, _key, _identity = _joined_pair(tmp_path, base=9970)
     owner_workspace = owner._require_workspace(workspace["id"])

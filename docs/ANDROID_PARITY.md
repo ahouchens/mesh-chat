@@ -17,14 +17,14 @@ battery measurements and Windows↔Android execution remain unqualified. Package
 compilation and desktop topology tests are not Android device evidence. See
 [ADR 0018](adr/0018-authenticated-direct-underlay.md).
 
-This document compares the Android client with the Windows desktop 0.9.8
+This document compares the Android client with the Windows desktop 0.9.9
 implementation. It is a source-and-evidence audit, not a claim that shared code
 automatically behaves the same on a phone. The Android client shares the React
 renderer, Python messaging core, protocol, encrypted record model, and renderer
 command allowlist with desktop, while its lifecycle, storage key, notifications,
 camera, deep links, and packaging are native Android integrations.
 
-As of 0.9.8, Android shares the shipped renderer/service feature set, including
+As of 0.9.9, Android shares the shipped renderer/service feature set, including
 1:1 WebRTC calls and automatic reconnect. It is **not full parity**: Android
 cannot complete an I2P join because it has no bundled/managed router; background
 execution is intentionally unavailable; personal/group per-conversation

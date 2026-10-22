@@ -609,6 +609,9 @@ fn allowed_renderer_command(command: &str) -> bool {
             | "workspace_helper_status"
             | "workspace_helper_consent_set"
             | "relay_workspace_connection_update"
+            | "create_workspace_admission_grant"
+            | "accept_workspace_admission_grant"
+            | "list_workspace_admission_grants"
             | "workspace_request_paths"
             | "create_workspace_access_recommendation"
             | "preview_workspace_access_recommendation"
@@ -1720,6 +1723,9 @@ mod tests {
             "workspace_helper_status",
             "workspace_helper_consent_set",
             "relay_workspace_connection_update",
+            "create_workspace_admission_grant",
+            "accept_workspace_admission_grant",
+            "list_workspace_admission_grants",
             "workspace_request_paths",
             "create_workspace_access_recommendation",
             "preview_workspace_access_recommendation",

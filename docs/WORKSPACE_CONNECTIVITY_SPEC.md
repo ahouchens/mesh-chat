@@ -2,8 +2,8 @@
 
 Status: Phase 1 implemented in 0.9.3; Phase 2a implemented in 0.9.4; Phase 2b
 implemented in 0.9.5; Phase 3 implemented in 0.9.6; Phase 4 implemented in
-0.9.7; Phase 5 protocol primitives implemented in 0.9.8; service/UI planned for
-0.9.9; later phases proposed.
+0.9.7; Phase 5 protocol primitives implemented in 0.9.8; grant lifecycle service
+implemented in 0.9.9; admission/UI pending; later phases proposed.
 
 ## 1. Problem
 
@@ -335,11 +335,26 @@ Implemented and tested, with no service/UI admission path enabled yet:
 - The app does not expose grant creation, acceptance, admission, or v2 delivery
   until the Phase 5.2 service/UI increment.
 
-### Phase 5.2 — service/UI (planned)
+### Phase 5.2a — grant lifecycle service (implemented in 0.9.9)
 
-Grant issuance/acceptance storage and visibility, admin admission of pending
-joins, v2 wire delivery, owner-return/fork handling, revocation/expiry, UI, and
-physical qualification. Until 5.2 ships, owner-offline joins remain queued and
+- Owner command create_workspace_admission_grant selects an active admin
+  member/device and stores the signed grant; the grant is delivered to that
+  admin as workspace control kind workspace_admission_grant.
+- The selected admin lists received grants with
+  list_workspace_admission_grants and accepts one with
+  ccept_workspace_admission_grant; the signed acceptance is delivered to the
+  owner authority as workspace_admission_acceptance.
+- The owner records the acceptance; both sides show offered/accepted state.
+- Grants are bound to the current manifest and expire after seven days.
+- No admission path is enabled yet: an admin cannot yet approve a join from a
+  grant, no v2 manifest is delivered, and there is no UI. Owner-offline joins
+  remain queued.
+
+### Phase 5.2b — delegated admission (planned)
+
+Admin admission of pending joins, v2 manifest delivery/application, owner-return
+and fork handling, revocation/expiry, pre-v2 fail-closed behavior, UI, and
+physical qualification. Until 5.2b ships, owner-offline joins remain queued and
 the UI states the limitation.
 
 ## 10. Phase 6 — workspace DM calls

@@ -22,6 +22,52 @@ locally. Frontend/package/native tests and Windows/Android builds run in Actions
 Physical execution follows the
 [Phase 2 device checklist](docs/DIRECT_CONNECTIVITY_PHASE2_DEVICE_TEST.md).
 
+## Owner-offline admission grants, service stage 0.9.9
+
+Phase 5.2a adds the **grant lifecycle service** on top of the 0.9.8 protocol
+primitives. It does not enable owner-offline admission yet.
+
+Implemented:
+
+- `create_workspace_admission_grant` for the active owner authority: validates
+  an active admin member/device, signs a grant, stores it, and queues it to that
+  admin device.
+- `workspace_admission_grant` delivery and receive handling, restricted to the
+  selected admin device.
+- `list_workspace_admission_grants` for owners/admins and
+  `accept_workspace_admission_grant` for the selected admin device.
+- Signed `workspace_admission_acceptance` delivery back to the owner authority
+  and acceptance state visibility on both sides.
+- Grant expiry, workspace/start-manifest binding, and admin device binding.
+
+Not implemented in this stage:
+
+- admin admission of a pending join;
+- v2 delegated-manifest delivery/application;
+- owner-return, fork/revocation UX;
+- pre-v2 fail-closed delivery;
+- any grant UI.
+
+Owner-offline joins remain queued in 0.9.9.
+
+Validation:
+
+```text
+pytest service/tests:        1108 passed, 46 skipped, 0 failed (262.27 s)
+node scripts/run-frontend-tests.mjs: 264 passed (18 files)
+node --test deploy/cloudflare-signal/worker.test.mjs: 11 passed
+packaged emoji artwork verification: 3 passed
+node node_modules/typescript/bin/tsc -b: passed
+node scripts/run-frontend-build.mjs: passed
+```
+
+The official report is
+`dist/reports/0.9.9/20261022T175145Z-e1cde8eb/report.json` (git-ignored):
+`status: passed`, 328.207 s, SHA-256
+`0aaaccd5f8fb547d67fb4c7250b591ed6a565210ba9bf8a99cc110b01bb33a75`.
+Gates: `automated: passed`; `physical_device: not-requested`;
+`production_signing: not-requested`.
+
 ## Owner-offline admission grants, protocol stage 0.9.8
 
 Phase 5.1 of the [workspace connectivity spec](docs/WORKSPACE_CONNECTIVITY_SPEC.md)

@@ -61,6 +61,12 @@ from .models import (
     WorkspacePostingPolicy,
     WorkspaceRole,
 )
+from .workspace_admission import (
+    create_admission_acceptance,
+    create_admission_grant,
+    verify_admission_acceptance,
+    verify_admission_grant,
+)
 from .workspace_protocol import (
     DEFAULT_INVITATION_LIFETIME_SECONDS,
     MAX_ACTIVE_MEMBERS,
@@ -5559,6 +5565,255 @@ class WorkspaceServiceMixin:
         ):
             return None
         return email_digest, pending
+
+    def create_workspace_admission_grant(
+        self,
+        workspace_id: Any,
+        admin_member_id: Any,
+        admin_device_id: Any,
+        max_admissions: Any = 5,
+        lifetime_days: Any = 7,
+    ) -> dict[str, Any]:
+        workspace = self._require_workspace(workspace_id)
+        if (
+            workspace.get("state") != "active"
+            or workspace.get("local_role") != "owner"
+            or workspace.get("local_device_id") != workspace.get("authority_device_id")
+        ):
+            raise ContactNotApproved("Only the active workspace authority can grant admission")
+        if not isinstance(admin_member_id, str) or not isinstance(admin_device_id, str):
+            raise ValidationError("Admission grant admin is invalid")
+        if (
+            isinstance(max_admissions, bool)
+            or not isinstance(max_admissions, int)
+            or not 1 <= max_admissions <= 5
+            or isinstance(lifetime_days, bool)
+            or not isinstance(lifetime_days, int)
+            or not 1 <= lifetime_days <= 7
+        ):
+            raise ValidationError("Admission grant limits are invalid")
+        manifest = self._workspace_current_manifest(workspace)
+        admin = find_member(manifest, admin_member_id)
+        device = next(
+            (
+                item
+                for item in (admin.devices if admin is not None else ())
+                if item.device_id == admin_device_id
+            ),
+            None,
+        )
+        if admin is None or admin.status != "active" or admin.role.value != "admin" or device is None:
+            raise ValidationError("Admission grant admin is not an active admin device")
+        identity = self._identity
+        if identity is None:
+            raise ValidationError("Local identity is unavailable")
+        now = time.time()
+        raw = create_admission_grant(
+            identity,
+            workspace_id=workspace["id"],
+            start_manifest_hash=manifest.digest,
+            admin_member_id=admin.member_id,
+            admin_device_id=device.device_id,
+            admin_device_card=device.serialized,
+            max_admissions=max_admissions,
+            lifetime_seconds=lifetime_days * 24 * 60 * 60,
+            now=int(now),
+        )
+        checked = verify_admission_grant(raw, now=int(now))
+        record = {
+            "id": checked.digest,
+            "workspace_id": workspace["id"],
+            "offer": raw,
+            "acceptance": None,
+            "state": "offered",
+            "admin_member_id": admin.member_id,
+            "admin_device_id": device.device_id,
+            "max_admissions": max_admissions,
+            "created_at": now,
+            "expires_at": checked.expires_at,
+            "use_count": 0,
+        }
+        delivery = self._workspace_delivery_record(
+            workspace_id=workspace["id"],
+            recipient_member_id=admin.member_id,
+            recipient_device=device,
+            kind="workspace_admission_grant",
+            document=raw,
+            priority=0,
+        )
+        self.store.put_many(
+            [
+                ("workspace_admission_grant", checked.digest, record),
+                ("workspace_delivery", delivery["id"], delivery),
+                *self._due_records(add=[delivery]),
+            ]
+        )
+        self._workspace_changed(workspace["id"], resource_kind="admission_grant")
+        return self._public_workspace_admission_grant(record, include_offer=True)
+
+    def accept_workspace_admission_grant(
+        self, workspace_id: Any, grant_id: Any
+    ) -> dict[str, Any]:
+        workspace = self._require_workspace(workspace_id)
+        if workspace.get("state") != "active" or workspace.get("local_role") != "admin":
+            raise ContactNotApproved("Only a workspace admin can accept an admission grant")
+        if not isinstance(grant_id, str):
+            raise ValidationError("Admission grant ID is invalid")
+        record = self.store.get("workspace_admission_grant", grant_id)
+        if (
+            record is None
+            or record.get("workspace_id") != workspace["id"]
+            or record.get("state") not in {"offered", "accepted"}
+        ):
+            raise ValidationError("Admission grant is unavailable")
+        offer = record.get("offer")
+        identity = self._identity
+        if not isinstance(offer, str) or identity is None:
+            raise ValidationError("Admission grant is unavailable")
+        checked = verify_admission_grant(offer)
+        if checked.admin_destination != RNS.Destination.hash(
+            identity, "lxmf", "delivery"
+        ).hex():
+            raise IdentityMismatch("Admission grant is for another device")
+        acceptance = create_admission_acceptance(identity, grant=offer)
+        verify_admission_acceptance(acceptance, offer)
+        record["acceptance"] = acceptance
+        record["state"] = "accepted"
+        manifest = self._workspace_current_manifest(workspace)
+        owner = next(
+            (
+                (member, device)
+                for member in manifest.members
+                if member.status == "active"
+                for device in member.devices
+                if device.device_id == manifest.authority_device_id
+            ),
+            None,
+        )
+        deliveries = []
+        if owner is not None:
+            delivery = self._workspace_delivery_record(
+                workspace_id=workspace["id"],
+                recipient_member_id=owner[0].member_id,
+                recipient_device=owner[1],
+                kind="workspace_admission_acceptance",
+                document=acceptance,
+                priority=0,
+            )
+            deliveries.append(delivery)
+        self.store.put_many(
+            [
+                ("workspace_admission_grant", grant_id, record),
+                *[
+                    ("workspace_delivery", delivery["id"], delivery)
+                    for delivery in deliveries
+                ],
+                *self._due_records(add=deliveries),
+            ]
+        )
+        self._workspace_changed(workspace["id"], resource_kind="admission_grant")
+        return self._public_workspace_admission_grant(record, include_offer=True)
+
+    def list_workspace_admission_grants(self, workspace_id: Any) -> list[dict[str, Any]]:
+        workspace = self._require_workspace(workspace_id)
+        if workspace.get("local_role") not in {"owner", "admin"}:
+            return []
+        return [
+            self._public_workspace_admission_grant(record, include_offer=True)
+            for record in sorted(
+                self.store.list("workspace_admission_grant"),
+                key=lambda item: float(item.get("created_at", 0)),
+                reverse=True,
+            )
+            if record.get("workspace_id") == workspace["id"]
+        ]
+
+    @staticmethod
+    def _public_workspace_admission_grant(
+        record: dict[str, Any], *, include_offer: bool = False
+    ) -> dict[str, Any]:
+        public = {
+            "id": record["id"],
+            "workspace_id": record["workspace_id"],
+            "state": record["state"],
+            "admin_member_id": record["admin_member_id"],
+            "admin_device_id": record["admin_device_id"],
+            "max_admissions": record["max_admissions"],
+            "created_at": record["created_at"],
+            "expires_at": record["expires_at"],
+            "use_count": record["use_count"],
+            "accepted": bool(record.get("acceptance")),
+        }
+        if include_offer:
+            public["grant"] = record["offer"]
+            public["acceptance"] = record.get("acceptance")
+        return public
+
+    def _receive_workspace_admission_grant(
+        self, wire: WorkspaceWirePayload
+    ) -> None:
+        try:
+            checked = verify_admission_grant(wire.document)
+        except MeshChatError:
+            return
+        if checked.workspace_id != wire.workspace_id:
+            return
+        workspace = self.store.get(
+            "workspace", self._workspace_record_id(wire.workspace_id)
+        )
+        if workspace is None or workspace.get("state") != "active":
+            return
+        manifest = self._workspace_current_manifest(workspace)
+        if checked.authority_destination != manifest.authority_destination.hex():
+            return
+        if workspace.get("local_device_id") != checked.admin_device_id:
+            return
+        if self.store.get("workspace_admission_grant", checked.digest) is not None:
+            return
+        record = {
+            "id": checked.digest,
+            "workspace_id": wire.workspace_id,
+            "offer": wire.document,
+            "acceptance": None,
+            "state": "offered",
+            "admin_member_id": checked.admin_member_id,
+            "admin_device_id": checked.admin_device_id,
+            "max_admissions": checked.max_admissions,
+            "created_at": time.time(),
+            "expires_at": checked.expires_at,
+            "use_count": 0,
+        }
+        self.store.put("workspace_admission_grant", checked.digest, record)
+        self._workspace_changed(wire.workspace_id, resource_kind="admission_grant")
+
+    def _receive_workspace_admission_acceptance(
+        self, wire: WorkspaceWirePayload
+    ) -> None:
+        try:
+            value = json.loads(wire.document)
+        except json.JSONDecodeError:
+            return
+        if not isinstance(value, dict):
+            return
+        grant_id = value.get("grant_digest")
+        if not isinstance(grant_id, str):
+            return
+        record = self.store.get("workspace_admission_grant", grant_id)
+        if record is None or record.get("workspace_id") != wire.workspace_id:
+            return
+        offer = record.get("offer")
+        if not isinstance(offer, str):
+            return
+        try:
+            checked = verify_admission_acceptance(wire.document, offer)
+        except MeshChatError:
+            return
+        if checked.workspace_id != wire.workspace_id:
+            return
+        record["acceptance"] = wire.document
+        record["state"] = "accepted"
+        self.store.put("workspace_admission_grant", record["id"], record)
+        self._workspace_changed(wire.workspace_id, resource_kind="admission_grant")
 
     def approve_workspace_join(
         self,
@@ -18806,6 +19061,12 @@ class WorkspaceServiceMixin:
             self._receive_workspace_connection_relay(
                 wire, getattr(native, "source_hash", None)
             )
+            return
+        if wire.kind == "workspace_admission_grant":
+            self._receive_workspace_admission_grant(wire)
+            return
+        if wire.kind == "workspace_admission_acceptance":
+            self._receive_workspace_admission_acceptance(wire)
             return
         if wire.kind == "workspace_manifest_root":
             self._receive_workspace_manifest(wire)
