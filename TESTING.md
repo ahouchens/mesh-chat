@@ -62,6 +62,20 @@ The official report is
 Gates: `automated: passed`; `physical_device: not-requested`;
 `production_signing: not-requested`.
 
+Publication: GitHub Actions
+[CI run 39726333832](https://github.com/ahouchens/mesh-chat/actions/runs/39726333832)
+and
+[Release run 39726337610](https://github.com/ahouchens/mesh-chat/actions/runs/39726337610)
+passed on the first attempt for `v0.9.2`. Release:
+<https://github.com/ahouchens/mesh-chat/releases/tag/v0.9.2>.
+
+| Artifact | Bytes | SHA-256 (verified by re-download) |
+|---|---:|---|
+| `Mesh-Chat_0.9.2_x64-setup.exe` | 27,836,166 | `68c2477080e6e08591726cdc00256e40be8b74640c57d0d2f8113d9e84b6d79c` |
+| `Mesh-Chat_0.9.2_x64_en-US.msi` | 29,822,976 | `805ae0af8a1cd5f1007afeaa6a469c1605d805bd997e5a64090be0189a6f1347` |
+| `mesh-chat-0.9.2-android-arm64-release.apk` | 34,302,211 | `e2a0a6efcdc59123e31a5092d689afe5a6308e141e31cb98b52a39e5c450b785` |
+| `SHA256SUMS.txt` | 300 | `324249c3d9c751e14909a5eba6e3a396c9c2d6b2c269fa251aaf6593296aaad3` |
+
 New tests cover the default-on behavior, memory-only calls, adopting memory
 records after enabling, stopping vault writes after disabling, explicit
 true/false/omitted settings, and invalid values. No physical call, NAT/TURN, or
