@@ -62,6 +62,22 @@ The official report is
 Gates: `automated: passed`; `physical_device: not-requested`;
 `production_signing: not-requested`.
 
+Publication: GitHub Actions
+[CI run 39857200952](https://github.com/ahouchens/mesh-chat/actions/runs/39857200952)
+and
+[Release run 39857207211](https://github.com/ahouchens/mesh-chat/actions/runs/39857207211)
+passed on the first attempt for `v0.9.13`. Release:
+<https://github.com/ahouchens/mesh-chat/releases/tag/v0.9.13>.
+
+| Artifact | Bytes | SHA-256 (verified by re-download) |
+|---|---:|---|
+| `Mesh-Chat_0.9.13_x64-setup.exe` | 27,889,336 | `e1239dbe79cc2893452ae57b666394733d39540a10e084eea1dd9601ba0edd42` |
+| `Mesh-Chat_0.9.13_x64_en-US.msi` | 29,880,320 | `d1bdb703b0458fbc87be0d0cb5de9660430993d546a0b01ce73e9cd2ff316acd` |
+| `mesh-chat-0.9.13-android-arm64-release.apk` | 34,387,732 | `1571096d96fbdf6bc2f19d4c531cbfd605f89791c1b2b20f5dce8195410538d9` |
+| `SHA256SUMS.txt` | 303 | `3cba491786c309cf33d9400aaa94aa2ed5c73c7af6491a66eb676d9d388f86ea` |
+
+The Android APK is debug-signed; it is not a production or upgrade identity.
+
 ## Owner-offline admission grants, revocation stage 0.9.12
 
 Phase 5.2c adds owner revocation of an admission grant.
