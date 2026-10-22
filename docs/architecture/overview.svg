@@ -212,4 +212,5 @@
   <!-- footer -->
   <text x="30" y="1024" font-size="12" fill="#64748b">Capabilities default to auto-reconnect off. A mailbox, TURN server, or access point is optional and explicitly configured; none can approve a contact or read plaintext.</text>
   <text x="30" y="1044" font-size="12" fill="#64748b">The signed request/offer/answer and capability documents expire; replay is rejected across restarts. The worker stores only transient signaling envelopes.</text>
+  <text x="30" y="1064" font-size="12" fill="#64748b">1:1 calls use a separate DTLS-SRTP media session on the same ICE/TURN policy; signed call documents travel over the existing authenticated path.</text>
 </svg>

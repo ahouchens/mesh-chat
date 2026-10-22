@@ -2,7 +2,7 @@
 
 **Server-free, end-to-end encrypted messaging for small groups Ã¢â‚¬â€ built directly on Reticulum and LXMF.**
 
-Mesh Chat is a desktop and mobile messenger with no account service, no signaling service, no key directory, no hosted relay, and no required always-on machine. Each installation creates its own Reticulum identity; a message is an ordinary LXMF message addressed to another person's device. The application adds the parts a messenger needs Ã¢â‚¬â€ explicit consent, signed invitations, group and workspace authority, an encrypted local history, and honest delivery evidence.
+Mesh Chat is a desktop and mobile messenger with no required account service, signaling service, key directory, hosted relay, or always-on machine. Each installation creates its own Reticulum identity; a message is an ordinary LXMF message addressed to another person's device. The application adds the parts a messenger needs - explicit consent, signed invitations, group and workspace authority, an encrypted local history, and honest delivery evidence. Optional I2P, TURN, and signaling-mailbox infrastructure can be enabled explicitly; none is an authority, message store, or trust decision.
 
 The design accepts real trade-offs. Delivery depends on peers being reachable, history lives only on the devices that received it, and no operator can recover a lost identity. For a small trusted team, that is the point.
 
@@ -12,7 +12,7 @@ An optional **I2P relay path** can bootstrap a workspace or 1:1 connection when 
 
 ## What problem it solves
 
-Mesh Chat addresses a specific gap: **private small-group messaging without an account provider, signaling service, key directory, hosted relay, or always-on server.**
+Mesh Chat addresses a specific gap: **private small-group messaging without requiring an account provider, signaling service, key directory, hosted relay, or always-on server.**
 
 Reticulum and LXMF already provide identities, routing, and encryption. Mesh Chat adds the messenger/application layer those protocols do not: consent, invitations, group and workspace authority, durable local state, and delivery evidence.
 
@@ -29,6 +29,7 @@ In short, it solves **Ã¢â‚¬Å“how do a few people message and coordinate
 | **One network path is not enough** | **Explicit fallbacks.** Nearby discovery, signed direct TCP, an operator-run access point, an email/reverse handshake, WebRTC over direct ICE or TURN, and an experimental QUIC underlay. | Each path is a visible choice, never a silent downgrade. See [Reaching another device](#reaching-another-device). |
 | **Manual offer/answer copy/paste for WebRTC** | **Optional signaling mailbox.** A signed request/offer/answer rendezvous with rotating pair tokens, role checks, and per-token/per-IP rate limits. | The mailbox holds only transient signed envelopes for ten minutes; it cannot approve contacts or read plaintext. QR/copy still works without it. |
 | **Restarting both apps usually means another manual exchange** | **Automatic reconnect with reciprocal consent.** A signed capability carries a rotating mailbox token; the app renegotiates a fresh WebRTC transport while both apps are open. | The mailbox is only a rendezvous; no SDP, ICE credential, DTLS key, or message content is stored or reused. Contact approval and workspace authority are not touched. |
+| **Voice and video usually need a call server** | **1:1 WebRTC calls.** Audio and video use the same direct/TURN policy; signed call documents travel over the existing authenticated contact path. | Media is peer-to-peer DTLS; there is no recording, group call, PSTN bridge, or media store. A consented TURN relay sees IPs and timing, not chat or media plaintext. |
 | **Cloud chat means cloud-held history and metadata** | **Local-only privacy.** Encrypted vault, sealed local search, no telemetry, analytics, crash upload, CDN, or remote artwork fetch. | Search and history stay on the device; there is no hosted index to query. |
 | **Offline peers and unclear delivery** | **Offline-tolerant delivery.** An optional LXMF propagation node stores recipient-encrypted objects until the recipient fetches them. A durable outbox, deduplication, and per-device evidence cover the rest. | The propagation node is separately consented and never becomes an identity, member, or delivery receipt. |
 | **Desktop and mobile implementations diverge** | **Desktop and mobile.** Tauri 2 shell with a bundled Python service on desktop; embedded CPython on Android and iOS. | Same Rust/Python/React stack and the same data model, with no platform-specific server. |
@@ -39,7 +40,7 @@ In short, it solves **Ã¢â‚¬Å“how do a few people message and coordinate
 - **Asynchronous delivery without infrastructure.** An offline recipient needs an explicitly approved propagation node; there is no push service.
 - **Identity or authority-key recovery.** Lost keys are not recoverable, and lost workspace authority freezes administration.
 - **Anonymity.** IP endpoints, timing, and traffic analysis remain exposed; I2P hides participant IP addresses from each other but the access point and the I2P network still see relay metadata. There is no anonymity claim.
-- **Broad messenger scope.** Attachments, calls, discoverable public channels, cloud backup, remote push, and multi-owner membership are out of scope.
+- **Broad messenger scope.** Attachments, group calls, discoverable public channels, cloud backup, remote push, and multi-owner membership are out of scope. 1:1 audio/video calls are supported and described below.
 - **Background reconnection.** Automatic reconnect runs only while the app is open and unlocked. There is no background daemon, push notification, live session migration, tray keep-alive, or iOS background execution.
 - **Production assurance.** The project describes itself as a security-sensitive prototype: it has not been independently audited, and physical-device, packaging, and platform gates remain open. See [Status and verification](#status-and-verification) and [THREAT_MODEL.md](THREAT_MODEL.md).
 
@@ -148,6 +149,20 @@ after approval. Tokens rotate with a new signed capability. See
 ### I2P relay (opt-in)
 
 **I2P is opt-in and not the default.** A normal invitation still starts with nearby/direct/participant-hosted/remote choices. I2P is selected explicitly, and the joiner sees the access point and must consent before traffic is relayed. The access point is a Reticulum `I2PInterface` node addressed by `*.b32.i2p`; it relays encrypted Reticulum/LXMF traffic and does not see message plaintext. Windows bundles and manages `i2pd`; Android has the settings and consent UI but no bundled I2P router yet, so Android cannot complete an I2P join as of 0.9.1.
+
+### 1:1 WebRTC calls
+
+A call is a separate WebRTC session from the Reticulum DataChannel. Signed call
+invite, answer, candidate, and hangup documents travel over the existing
+authenticated contact path; the media itself is peer-to-peer DTLS-SRTP.
+Call restart renegotiates a fresh media session rather than reusing dead ICE.
+
+- Only approved contacts can call; a call never creates or changes trust.
+- The same direct/TURN policy and relay consent apply. TURN sees IP addresses,
+  timing, and encrypted media, never chat or media plaintext.
+- No group calls, recording, PSTN bridge, or cloud media store.
+- Physical multi-device call, NAT, and TURN qualification remains open; see the
+  [WebRTC physical test plan](docs/WEBRTC_PHYSICAL_TEST_PLAN.md).
 
 ### Automatic reconnect (open apps only)
 
@@ -270,7 +285,8 @@ The threat model is explicit about what is *not* protected: traffic analysis, IP
 | Optional propagation cache (client) | 100 MiB |
 | I2P access points per device | 4 |
 | Managed I2P router | Local `i2pd` with SAM on `127.0.0.1:7656`; low-bandwidth, no transit, no web console/proxies |
-| Attachments, calls, public channels, push notifications | Not supported |
+| Attachments, group calls, public channels, push notifications | Not supported |
+| 1:1 calls | WebRTC audio/video over direct ICE or a consented TURN relay; no group calls, recording, or PSTN |
 
 ## Status and verification
 
@@ -284,7 +300,7 @@ The threat model is explicit about what is *not* protected: traffic analysis, IP
 
 Automated verification is substantial: Python, Vitest, Worker, and Rust suites, plus opt-in real-stack harnesses - a four-process A -> B -> C -> D Reticulum/LXMF topology, a two-process direct-LAN harness, a three-process remote-access harness, a packaged-sidecar harness, and QUIC fabric/recovery runs in CI. The recorded evidence, exact hashes, and per-version notes are in [TESTING.md](TESTING.md).
 
-Still open: physical Windows and Android runs, real router/NAT and cellular traversal, propagation independence, crash-injection matrices, hostile-input fuzzing, accessibility review, macOS/Linux/iOS packages, and an independent security review. Automatic reconnect has automated coverage only: no two-device restart, NAT/TURN, Android/iOS lifecycle, or battery/backoff test was performed on hardware. CI passing is not a substitute for those gates.
+Still open: physical Windows and Android runs, real router/NAT and cellular traversal, physical multi-device calls, propagation independence, crash-injection matrices, hostile-input fuzzing, accessibility review, macOS/Linux/iOS packages, and an independent security review. Automatic reconnect has automated coverage only: no two-device restart, NAT/TURN, Android/iOS lifecycle, or battery/backoff test was performed on hardware. CI passing is not a substitute for those gates.
 
 ## Repository map
 

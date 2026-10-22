@@ -284,6 +284,18 @@ The connection is never treated as an in-place migration: every attempt creates
 a new peer connection and new DTLS keys, and `approvalPending` remains false for
 a transport reconnect.
 
+### 1:1 calls
+
+A call is a separate `RTCPeerConnection` with audio/video tracks. Signed call
+invite, answer, candidate, and hangup documents travel over the existing
+authenticated contact path; media is peer-to-peer DTLS-SRTP. The same direct or
+consented-TURN policy applies, so a relay sees IP addresses, timing, and
+encrypted media but no plaintext. Call restart renegotiates a fresh media
+session rather than reusing dead ICE. Only approved contacts can call, a call
+never changes trust, and there are no group calls, recording, PSTN bridge, or
+cloud media store. Physical multi-device call and TURN qualification remains
+open.
+
 ### Persistence and privacy
 
 Sealed records hold reconnect profiles, consent, capabilities, attempt state,
