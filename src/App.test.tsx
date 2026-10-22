@@ -5088,6 +5088,66 @@ describe("desktop workspaces", () => {
   });
 });
 
+describe("workspace access recommendations", () => {
+  it("creates a signed access recommendation and applies one only after consent", async () => {
+    const current: Snapshot = {
+      ...snapshot(),
+      workspaces: [workspace],
+      workspace_channels: [workspaceChannel],
+      workspace_join_requests: [],
+      workspace_invitations: [],
+      workspace_drafts: [],
+    };
+    const accessProfile = {
+      id: "r".repeat(64), label: "Workspace relay", origin: "manual" as const, expires_at: 4102444800,
+      endpoint_count: 1, connected_endpoint_count: 0, state: "approved" as const, path_available: false,
+      ratchet_ready: false, offline_delivery_recommended: false, offline_delivery_approved: false,
+      offline_delivery_available: false, propagation_identifier: null, scope_count: 1, retry_count: 0,
+      last_error: null, last_connected_at: null, capabilities: ["reticulum_tcp"], allow_private: false,
+    };
+    const accessPreview = {
+      workspace_id: workspace.id, workspace_name: workspace.name,
+      profile: { id: accessProfile.id, label: accessProfile.label, endpoint_count: 1, expires_at: accessProfile.expires_at, capabilities: ["reticulum_tcp"], private_endpoint_warning: false, propagation_identifier: null, privacy_disclosure: "The access-point operator can observe connection metadata, not message contents." },
+      profile_label: accessProfile.label, endpoint_count: 1, expires_at: accessProfile.expires_at, requires_consent: true,
+    };
+    api.runtimePlatform.mockResolvedValue("desktop");
+    api.initializeService.mockResolvedValue(current);
+    api.onInvitation.mockResolvedValue(() => undefined);
+    api.onServiceEvent.mockResolvedValue(() => undefined);
+    api.serviceCommand.mockImplementation(async (command: string) => {
+      if (command === "snapshot") return current;
+      if (command === "list_workspace_messages") return { messages: [], next_cursor: null, high_water: 0 } satisfies WorkspaceMessagePage;
+      if (command === "list_remote_profiles") return { profiles: [accessProfile] };
+      if (command === "create_workspace_access_recommendation") return {
+        workspace_id: workspace.id, workspace_name: workspace.name, profile_id: accessProfile.id,
+        profile_label: accessProfile.label, endpoint_count: 1, expires_at: accessProfile.expires_at,
+        recommendation: "MESHACCESS1:test", text: "MESHACCESS1:test",
+      };
+      if (command === "preview_workspace_access_recommendation") return accessPreview;
+      if (command === "apply_workspace_access_recommendation") return { workspace_id: workspace.id, workspace_name: workspace.name, profile: accessProfile, applied: true };
+      return {};
+    });
+
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Workspace Lakewatcher" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Lakewatcher settings" }));
+    fireEvent.click(await screen.findByRole("button", { name: /Workspace access point/ }));
+    const access = await screen.findByRole("dialog", { name: /Workspace access point/ });
+    const createButton = within(access).getByRole("button", { name: "Create recommendation" }) as HTMLButtonElement;
+    await waitFor(() => expect(createButton.disabled).toBe(false));
+    fireEvent.click(createButton);
+    const complete = await within(access).findByLabelText("Complete recommendation") as HTMLTextAreaElement;
+    expect(complete.value).toBe("MESHACCESS1:test");
+    fireEvent.change(within(access).getByLabelText("Recommendation"), { target: { value: "MESHACCESS1:test" } });
+    fireEvent.click(within(access).getByRole("button", { name: "Preview" }));
+    expect(await within(access).findByText(/The access-point operator can observe connection metadata/)).toBeTruthy();
+    const consent = within(access).getByLabelText(/I consent to attach this access point/);
+    fireEvent.click(consent);
+    fireEvent.click(within(access).getByRole("button", { name: "Attach access point" }));
+    await waitFor(() => expect(api.serviceCommand).toHaveBeenCalledWith("apply_workspace_access_recommendation", { recommendation: "MESHACCESS1:test", consent: true }));
+  });
+});
+
 describe("notification routing", () => {
   it("closes an unavailable notification dialog with Android Back", async () => {
     const current = snapshot();

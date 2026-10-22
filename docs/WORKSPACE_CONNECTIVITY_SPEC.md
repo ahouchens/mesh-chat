@@ -1,6 +1,7 @@
 # Workspace Connectivity and Reachability
 
-Status: Phase 1 implemented in 0.9.3; later phases proposed.
+Status: Phase 1 implemented in 0.9.3; Phase 2a implemented in 0.9.4; later
+phases proposed.
 
 ## 1. Problem
 
@@ -160,11 +161,53 @@ section:
 
 ## 6. Phase 2 — shared workspace access recommendation
 
-Owner-signed, workspace-scoped recommendation of an approved access topology
-(for example a Remote Connection Profile or propagation node). Each member must
-separately consent before attaching it. It is advisory and revocable; it cannot
-grant membership, approve a device, or make the owner a relay. Target: reduce
-the manual per-pair setup burden without hiding who can observe metadata.
+### Phase 2a — out-of-band recommendation (implemented in 0.9.4)
+
+The owner authority device can turn an already-approved Remote Connection
+Profile into a `MESHACCESS1:` **workspace access recommendation**. The document
+is signed by the current workspace authority and binds:
+
+- the workspace ID;
+- the exact current manifest digest;
+- the canonical remote profile (access endpoints and optional propagation node);
+- creation and expiry times.
+
+The service verifies the signature, profile, dates and canonical bytes before
+use. An import is accepted only when the local workspace is active, the digest
+matches the current manifest, the signer is the current authority destination,
+and the local member is active. A stale manifest, old authority, expired
+document, or tampered bytes fail closed.
+
+Distribution is out-of-band: the owner copies or shares the complete text through
+any channel already used for invitations. This deliberately avoids requiring a
+working member path to deliver the access recommendation. Each member previews
+the operator disclosure and must explicitly consent before the profile is
+attached with workspace scope. Applying it does not grant membership, approve a
+device, change authority, or make the owner a relay.
+
+Commands:
+
+- `create_workspace_access_recommendation` — active owner authority device only;
+- `preview_workspace_access_recommendation` — verify against the current
+  manifest and return a safe disclosure;
+- `apply_workspace_access_recommendation` — require consent and attach the
+  profile to the workspace scope.
+
+The renderer exposes this as **Workspace settings → Workspace access point**:
+owners select an approved profile and create/copy the recommendation; any active
+member can paste, preview, consent, and attach one.
+
+### Phase 2b — automatic delivery (remaining)
+
+Deliver a recommendation to already-connected members through a signed,
+bounded workspace control envelope, with the same verification and consent
+rules. It must not require the owner to relay chat or become a transport node.
+The out-of-band Phase 2a path remains the fallback when no path exists.
+
+### Phase 2c — automatic access (not planned)
+
+Automatically attaching a profile or changing transport policy without explicit
+local consent is out of scope. A recommendation is not a grant.
 
 ## 7. Phase 3 — workspace-scoped reconnect
 
@@ -222,6 +265,18 @@ Phase 1:
 - service and renderer tests pass, including a network-less/unknown case.
 
 Later phases require their own protocol review and physical multi-device gates.
+
+Phase 2a:
+
+- only the active owner authority device can create a recommendation;
+- the document binds the workspace, current manifest digest, canonical profile,
+  and expiry, and fails on tamper, wrong signer, stale manifest, expiry, or
+  inactive membership;
+- no profile is attached before explicit local consent;
+- attachment uses workspace scope and does not create a contact, approve a
+  device, change authority, or make the owner a relay;
+- out-of-band import works without a member path; automatic delivery is not
+  claimed.
 
 ## 13. Known limits
 

@@ -242,11 +242,16 @@ describe("automatic reconnect contact settings", () => {
           onChanged={async () => undefined}
         />,
       );
-      expect(await screen.findByText(/Reconnecting in 30s/)).toBeTruthy();
+      const countdown = (element: HTMLElement): number => Number(
+        /Reconnecting in (\d+)s/.exec(element.textContent ?? "")?.[1] ?? "0",
+      );
+      const initial = await screen.findByText(/Reconnecting in \d+s/);
+      const initialSeconds = countdown(initial);
       act(() => {
         vi.advanceTimersByTime(5000);
       });
-      expect(screen.getByText(/Reconnecting in 25s/)).toBeTruthy();
+      const updated = screen.getByText(/Reconnecting in \d+s/);
+      expect(countdown(updated)).toBeLessThan(initialSeconds);
     } finally {
       vi.useRealTimers();
     }

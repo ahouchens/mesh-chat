@@ -415,6 +415,13 @@ workspace devices. Neither command changes membership, trust, routes, settings,
 or delivery state, and neither converts a path or propagation proof into a
 receipt. See [WORKSPACE_CONNECTIVITY_SPEC.md](docs/WORKSPACE_CONNECTIVITY_SPEC.md).
 
+The owner authority can also sign an out-of-band `MESHACCESS1:` workspace access
+recommendation over an approved Remote Connection Profile. It binds the
+workspace, current manifest digest, canonical profile and expiry. A member must
+preview it against the current authority and separately consent before the
+profile is attached with workspace scope; applying it changes no membership or
+authority and the owner does not become a relay.
+
 Edits, author deletion, and reactions are canonical `workspace_event` records,
 not mutable renderer commands or replacements for the signed original. The
 service first verifies the mutation envelope and current controls, then resolves

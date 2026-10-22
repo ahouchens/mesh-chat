@@ -827,7 +827,7 @@ export type RemoteProfileState = "approved" | "connecting" | "connected" | "acce
 export interface RemoteProfile {
   id: string;
   label: string;
-  origin: "manual" | "personal_invitation" | "workspace_invitation";
+  origin: "manual" | "personal_invitation" | "workspace_invitation" | "workspace_access";
   expires_at: number;
   endpoint_count: number;
   connected_endpoint_count: number;
@@ -1114,4 +1114,32 @@ export interface WorkspaceConnectivity {
     stored_deliveries: number;
   };
   members: WorkspaceConnectivityMember[];
+}
+
+export interface WorkspaceAccessRecommendation {
+  workspace_id: string;
+  workspace_name: string;
+  profile_id: string;
+  profile_label: string;
+  endpoint_count: number;
+  expires_at: number;
+  recommendation: string;
+  text: string;
+}
+
+export interface WorkspaceAccessPreview {
+  workspace_id: string;
+  workspace_name: string;
+  profile: RemoteProfilePreview;
+  profile_label: string;
+  endpoint_count: number;
+  expires_at: number;
+  requires_consent: boolean;
+}
+
+export interface WorkspaceAccessApplyResult {
+  workspace_id: string;
+  workspace_name: string;
+  profile: RemoteProfile;
+  applied: boolean;
 }

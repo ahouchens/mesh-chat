@@ -605,6 +605,9 @@ fn allowed_renderer_command(command: &str) -> bool {
             | "list_workspace_members"
             | "workspace_connectivity"
             | "workspace_request_paths"
+            | "create_workspace_access_recommendation"
+            | "preview_workspace_access_recommendation"
+            | "apply_workspace_access_recommendation"
             | "list_workspace_admin_requests"
             | "list_workspace_admin_history"
             | "get_workspace_admin_request"
@@ -1704,6 +1707,9 @@ mod tests {
             "list_workspace_members",
             "workspace_connectivity",
             "workspace_request_paths",
+            "create_workspace_access_recommendation",
+            "preview_workspace_access_recommendation",
+            "apply_workspace_access_recommendation",
             "list_workspace_admin_requests",
             "list_workspace_admin_history",
             "get_workspace_admin_request",

@@ -22,6 +22,64 @@ locally. Frontend/package/native tests and Windows/Android builds run in Actions
 Physical execution follows the
 [Phase 2 device checklist](docs/DIRECT_CONNECTIVITY_PHASE2_DEVICE_TEST.md).
 
+## Workspace access recommendations, 0.9.4
+
+Phase 2a of the [workspace connectivity spec](docs/WORKSPACE_CONNECTIVITY_SPEC.md)
+adds an owner-signed, out-of-band access-point recommendation. It is not a
+workspace reconnect profile and does not make the owner a relay.
+
+Service:
+
+- `MESHACCESS1:` carries the workspace ID, exact current manifest digest, the
+  canonical Remote Connection Profile, creation/expiry, authority public key,
+  and signature over canonical bytes.
+- `create_workspace_access_recommendation` is restricted to the active owner
+  authority device. It fails for non-authority devices, inactive workspaces,
+  expired profiles, invalid lifetimes, or profiles that fail canonical
+  validation.
+- `preview_workspace_access_recommendation` is network-free and requires the
+  current manifest, the current authority destination, and an active local
+  member. Tampered, stale, expired, wrong-authority, or non-member documents
+  fail closed.
+- `apply_workspace_access_recommendation` requires an explicit consent boolean
+  and attaches the profile with workspace scope and origin `workspace_access`.
+  It does not create a contact, approve a device, change membership/authority,
+  enable transport, or make the owner a relay.
+- Added to the service and Rust command allowlists.
+
+UI:
+
+- **Workspace settings → Workspace access point** lets the owner select an
+  approved profile, create/copy a recommendation, and preview/apply one.
+- Any active member can paste a recommendation, review the operator disclosure,
+  consent, and attach it to the workspace.
+- The panel explains that the recommendation is out-of-band and that an access
+  point sees connection metadata, not message contents.
+
+Validation:
+
+```text
+pytest service/tests:        1103 passed, 46 skipped, 0 failed (285.37 s)
+node scripts/run-frontend-tests.mjs: 263 passed (18 files)
+node --test deploy/cloudflare-signal/worker.test.mjs: 11 passed
+packaged emoji artwork verification: 3 passed
+node node_modules/typescript/bin/tsc -b: passed
+node scripts/run-frontend-build.mjs: passed
+```
+
+The official report is
+`dist/reports/0.9.4/20261022T131527Z-ded61ce3/report.json` (git-ignored):
+`status: passed`, 334.417 s, SHA-256
+`76eb0cdc64b4154a672ce7b9b11bc8d2a097acdedc823836cde9f1a755d22482`.
+Gates: `automated: passed`; `physical_device: not-requested`;
+`production_signing: not-requested`.
+
+New tests cover document round trip, tamper/expiry/invalid fields, wrong
+authority rejection, owner-only creation, member preview, consent enforcement,
+workspace scope attachment, command dispatch, and the renderer
+create/preview/consent/apply flow. No physical multi-member access-point test
+was performed.
+
 ## Workspace connectivity diagnostics, 0.9.3
 
 Phase 1 of the [workspace connectivity spec](docs/WORKSPACE_CONNECTIVITY_SPEC.md)

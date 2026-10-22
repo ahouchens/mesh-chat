@@ -292,6 +292,9 @@ class MeshChatService(
         "list_workspace_members",
         "workspace_connectivity",
         "workspace_request_paths",
+        "create_workspace_access_recommendation",
+        "preview_workspace_access_recommendation",
+        "apply_workspace_access_recommendation",
         "list_workspace_admin_requests",
         "list_workspace_admin_history",
         "get_workspace_admin_request",
@@ -334,6 +337,9 @@ class MeshChatService(
         "list_workspace_members",
         "workspace_connectivity",
         "workspace_request_paths",
+        "create_workspace_access_recommendation",
+        "preview_workspace_access_recommendation",
+        "apply_workspace_access_recommendation",
         "list_workspace_admin_requests",
         "list_workspace_admin_history",
         "get_workspace_admin_request",
@@ -3827,6 +3833,33 @@ class MeshChatService(
             if command == "workspace_connectivity":
                 return self.workspace_connectivity(body["workspace_id"])
             return self.workspace_request_paths(body["workspace_id"])
+        if command == "create_workspace_access_recommendation":
+            body = _payload(
+                value,
+                allowed={"workspace_id", "remote_profile_id", "lifetime_days"},
+                required={"workspace_id", "remote_profile_id"},
+            )
+            return self.create_workspace_access_recommendation(
+                body["workspace_id"],
+                body["remote_profile_id"],
+                body.get("lifetime_days", 7),
+            )
+        if command == "preview_workspace_access_recommendation":
+            body = _payload(
+                value, allowed={"recommendation"}, required={"recommendation"}
+            )
+            return self.preview_workspace_access_recommendation(
+                body["recommendation"]
+            )
+        if command == "apply_workspace_access_recommendation":
+            body = _payload(
+                value,
+                allowed={"recommendation", "consent"},
+                required={"recommendation", "consent"},
+            )
+            return self.apply_workspace_access_recommendation(
+                body["recommendation"], body["consent"]
+            )
         if command == "list_workspace_members":
             body = _payload(
                 value, allowed={"workspace_id"}, required={"workspace_id"}

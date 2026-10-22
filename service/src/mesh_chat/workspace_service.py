@@ -33,7 +33,13 @@ from .remote import (
     add_profile_scope,
     create_remote_workspace_invitation,
     remote_invitation_formats,
+    sanitized_profile,
     verify_remote_invitation,
+)
+from .workspace_access import (
+    WORKSPACE_ACCESS_MAX_LIFETIME,
+    create_workspace_access_recommendation as build_workspace_access_recommendation,
+    verify_workspace_access_recommendation,
 )
 from .participant import (
     create_email_invitation,
@@ -18837,6 +18843,109 @@ class WorkspaceServiceMixin:
             self._receive_workspace_display_name_request(wire)
         elif wire.kind == "workspace_display_name_decision":
             self._receive_workspace_display_name_decision(wire)
+
+    def create_workspace_access_recommendation(
+        self, workspace_id: Any, remote_profile_id: Any, lifetime_days: Any = 7
+    ) -> dict[str, Any]:
+        """Create an owner-signed, out-of-band workspace access recommendation."""
+
+        workspace = self._require_workspace(workspace_id)
+        if workspace.get("state") != "active":
+            raise ValidationError("Workspace access is available only for an active workspace")
+        if (
+            workspace.get("local_role") != "owner"
+            or workspace.get("local_device_id") != workspace.get("authority_device_id")
+        ):
+            raise ContactNotApproved("Only the active workspace authority can recommend an access point")
+        if (
+            isinstance(lifetime_days, bool)
+            or not isinstance(lifetime_days, int)
+            or not 1 <= lifetime_days <= 30
+        ):
+            raise ValidationError("Workspace access lifetime is invalid")
+        identity = self._identity
+        if identity is None:
+            raise ValidationError("Local identity is unavailable")
+        profile_record = self._require_remote_profile(remote_profile_id)
+        profile = profile_record.get("profile")
+        if not isinstance(profile, dict):
+            raise ValidationError("Remote profile is unavailable")
+        now = time.time()
+        if float(profile.get("expires_at", 0)) <= now:
+            raise ValidationError("Remote profile has expired")
+        lifetime_seconds = min(
+            lifetime_days * 24 * 60 * 60, WORKSPACE_ACCESS_MAX_LIFETIME
+        )
+        raw = build_workspace_access_recommendation(
+            identity,
+            workspace_id=workspace["id"],
+            manifest_digest=workspace["manifest_hash"],
+            profile=profile,
+            now=int(now),
+            lifetime_seconds=lifetime_seconds,
+        )
+        checked = verify_workspace_access_recommendation(raw, now=int(now))
+        return {
+            "workspace_id": workspace["id"],
+            "workspace_name": workspace["name"],
+            "profile_id": checked.profile["id"],
+            "profile_label": checked.profile["label"],
+            "endpoint_count": len(checked.profile["endpoints"]),
+            "expires_at": checked.expires_at,
+            "recommendation": raw,
+            "text": raw,
+        }
+
+    def preview_workspace_access_recommendation(self, raw: Any) -> dict[str, Any]:
+        """Verify a recommendation against the current workspace authority."""
+
+        checked = verify_workspace_access_recommendation(raw)
+        workspace = self._require_workspace(checked.workspace_id)
+        if workspace.get("state") != "active":
+            raise ContactNotApproved("Workspace access requires an active workspace")
+        if checked.manifest_digest != workspace.get("manifest_hash"):
+            raise ValidationError("Workspace access recommendation is stale")
+        manifest = self._workspace_current_manifest(workspace)
+        if checked.authority_destination != manifest.authority_destination.hex():
+            raise IdentityMismatch("Workspace access recommendation is not from the current authority")
+        if not any(
+            member.member_id == workspace.get("local_member_id")
+            and member.status == "active"
+            for member in manifest.members
+        ):
+            raise ContactNotApproved("This device is not an active workspace member")
+        preview = self.preview_remote_profile(checked.profile)
+        return {
+            "workspace_id": workspace["id"],
+            "workspace_name": workspace["name"],
+            "profile": preview,
+            "profile_label": checked.profile["label"],
+            "endpoint_count": len(checked.profile["endpoints"]),
+            "expires_at": checked.expires_at,
+            "requires_consent": True,
+        }
+
+    def apply_workspace_access_recommendation(
+        self, raw: Any, consent: Any
+    ) -> dict[str, Any]:
+        """Attach a recommended access point to this workspace after consent."""
+
+        if not isinstance(consent, bool) or not consent:
+            raise ValidationError("Workspace access point consent is required")
+        checked = verify_workspace_access_recommendation(raw)
+        preview = self.preview_workspace_access_recommendation(raw)
+        record = self._approve_remote_document(
+            checked.profile,
+            origin="workspace_access",
+            scope_kind="workspace",
+            scope_id=checked.workspace_id,
+        )
+        return {
+            "workspace_id": checked.workspace_id,
+            "workspace_name": preview["workspace_name"],
+            "profile": sanitized_profile(record),
+            "applied": True,
+        }
 
     def workspace_connectivity(self, workspace_id: Any) -> dict[str, Any]:
         """Report advisory per-device workspace reachability.

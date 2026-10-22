@@ -346,6 +346,58 @@ def test_workspace_connectivity_reports_paths_and_requests_missing_ones(tmp_path
     assert via_command["summary"]["active_devices"] == 2
 
 
+def test_workspace_access_recommendation_is_signed_and_consented(tmp_path):
+    (
+        owner,
+        _owner_network,
+        _owner_profile,
+        member,
+        _member_network,
+        _member_profile,
+        workspace,
+        _member_key,
+        _member_identity,
+    ) = _joined_pair(tmp_path, base=9900)
+    profile = owner.create_manual_remote_profile(
+        "Workspace relay", [{"host": "93.184.216.34", "port": 4242}]
+    )
+
+    created = owner.create_workspace_access_recommendation(
+        workspace["id"], profile["id"], 7
+    )
+    assert created["text"].startswith("MESHACCESS1:")
+    assert created["workspace_id"] == workspace["id"]
+    assert created["profile_id"] == profile["id"]
+    with pytest.raises(ContactNotApproved):
+        member.create_workspace_access_recommendation(
+            workspace["id"], profile["id"], 7
+        )
+
+    via_command = owner._execute(
+        "create_workspace_access_recommendation",
+        {"workspace_id": workspace["id"], "remote_profile_id": profile["id"], "lifetime_days": 7},
+    )
+    assert via_command["text"].startswith("MESHACCESS1:")
+
+    preview = member.preview_workspace_access_recommendation(created["text"])
+    assert preview["workspace_id"] == workspace["id"]
+    assert preview["profile_label"] == "Workspace relay"
+    assert preview["requires_consent"] is True
+
+    with pytest.raises(ValidationError):
+        member.apply_workspace_access_recommendation(created["text"], False)
+
+    applied = member.apply_workspace_access_recommendation(created["text"], True)
+    assert applied["applied"] is True
+    record = member.store.get("remote_profile", profile["id"])
+    assert record is not None
+    assert {"kind": "workspace", "id": workspace["id"]} in record["scopes"]
+
+    tampered = created["text"][:-2] + "AA"
+    with pytest.raises((IdentityMismatch, ValidationError)):
+        member.preview_workspace_access_recommendation(tampered)
+
+
 def test_direct_workspace_binding_rechecks_admission_and_local_identity(tmp_path):
     from dataclasses import replace
     from mesh_chat.direct_binding import BindingAuthority, create_binding
