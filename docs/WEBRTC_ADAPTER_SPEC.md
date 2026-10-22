@@ -786,11 +786,11 @@ Exit criteria:
 
 Device spike implemented: `experiments/webrtc-call/live.py` captures the real
 Windows microphone, sends it through the WebRTC/Opus path, and can monitor the
-decoded audio. It is still local-only; service signaling, durable call state,
-permissions, and UI are not wired yet.
+decoded audio. The shipped service/UI call path is described in C1a below.
 
-C1a implemented: `service/src/mesh_chat/call_manager.py` persists call records,
-signs/verifies C0a documents, and exposes start/answer/candidate/end operations.
+C1a implemented: `service/src/mesh_chat/call_manager.py` stores call records by
+default (configurable memory-only via `store_call_signaling`), signs/verifies
+C0a documents, and exposes start/answer/candidate/end operations.
 `CALL_SIGNAL` messages carry those documents over the existing LXMF path. The
 service commands are `start_call`, `answer_call`, `add_call_candidate`,
 `call_media`, and `end_call`.

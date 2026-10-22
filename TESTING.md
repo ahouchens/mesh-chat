@@ -22,6 +22,51 @@ locally. Frontend/package/native tests and Windows/Android builds run in Actions
 Physical execution follows the
 [Phase 2 device checklist](docs/DIRECT_CONNECTIVITY_PHASE2_DEVICE_TEST.md).
 
+## Configurable call signaling storage, 0.9.2
+
+Call signaling records no longer have to be sealed in the vault. The new
+`store_call_signaling` call setting defaults to **on** and preserves the shipped
+behavior; disabling it keeps SDP and ICE candidates in service memory so calls
+still work while the process is alive, but call history and restart state are
+lost on a service restart. The toggle in **Settings → WebRTC calls** explains
+that existing sealed records are not deleted when it is turned off.
+
+Service changes:
+
+- `CallSettings.store_call_signaling` defaults to true, validates as a boolean,
+  and is included in the public settings payload and vault record.
+- `CallManager` writes records to both its in-memory active table and the vault
+  when enabled. When disabled, create/answer/candidate/restart/hangup still work
+  from memory; reads, active-call listing, rate limiting, and history pruning
+  only consult memory.
+- Enabling storage later adopts records created in memory; disabling it stops
+  new reads/writes of sealed records but does not delete them.
+- `update_call_settings` applies the setting to the running manager and
+  preserves the current choice when an older client omits the field.
+
+Validation:
+
+```text
+pytest service/tests:        1098 passed, 46 skipped, 0 failed (284.06 s)
+node scripts/run-frontend-tests.mjs: 262 passed (18 files)
+node --test deploy/cloudflare-signal/worker.test.mjs: 11 passed
+packaged emoji artwork verification: 3 passed
+node node_modules/typescript/bin/tsc -b: passed
+node scripts/run-frontend-build.mjs: passed
+```
+
+The official report is
+`dist/reports/0.9.2/20261022T050230Z-d2628c93/report.json` (git-ignored):
+`status: passed`, 329.207 s, SHA-256
+`618f4762d27aaa1eda449fa611b29af276f05d00ed23057fcd436892c6926382`.
+Gates: `automated: passed`; `physical_device: not-requested`;
+`production_signing: not-requested`.
+
+New tests cover the default-on behavior, memory-only calls, adopting memory
+records after enabling, stopping vault writes after disabling, explicit
+true/false/omitted settings, and invalid values. No physical call, NAT/TURN, or
+mobile lifecycle test was performed.
+
 ## Automatic reconnect hardening, 0.9.1
 
 A code audit of the 0.9.0 checklist found four gaps; this release closes them:

@@ -88,12 +88,13 @@ and expects the app to allocate a transport or change trust.
   service before the renderer allocates an `RTCPeerConnection`. A transport,
   TURN, or mailbox failure never changes trust.
 - **Local secrecy.** Reconnect never persists SDP, ICE credentials, DTLS keys, or
-  chat plaintext, and none are logged. The mailbox holds the signed
+  chat plaintext, and none are logged. Call signaling records store the
+  negotiated SDP and ICE candidates in the vault by default; the
+  `store_call_signaling` setting can keep them in service memory only, at the
+  cost of losing call history/restart state. The mailbox holds the signed
   offer/answer envelope, including its ephemeral SDP, only for the ten-minute
-  TTL. Call signaling records separately seal the negotiated SDP and ICE
-  candidates for the call lifecycle. Broker-issued TURN credentials stay in
-  service memory; a manually configured TURN credential is sealed in call
-  settings.
+  TTL. Broker-issued TURN credentials stay in service memory; a manually
+  configured TURN credential is sealed in call settings.
 - **Reciprocal auto-answer.** A responder verifies that the request is from an
   approved contact with reciprocal consent before creating an offer. A capability
   received before its contact record is held without granting trust and promoted
@@ -120,8 +121,8 @@ execution.
 - A reconnect, signaling, relay, or transport failure never changes contact,
   workspace, or device trust.
 - Reconnect never persists SDP, ICE credentials, or DTLS keys locally or in
-  logs; call signaling records seal SDP and ICE candidates only for the call
-  lifecycle, and broker-issued TURN credentials stay in service memory.
+  logs; call signaling records store SDP/ICE only when `store_call_signaling` is
+  enabled (the default), and broker-issued TURN credentials stay in memory.
 - Local contacts, group membership and controls, messages, drafts, outbox work, receipts, identity and ratchet state are not persisted as plaintext.
 - Network acknowledgments never overstate recipient application persistence.
 - Group membership and posting authority cannot be changed without a valid,

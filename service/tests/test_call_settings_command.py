@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import threading
 from types import SimpleNamespace
+from unittest.mock import Mock
 
 from mesh_chat.call_settings import CallSettings, DEFAULT_TURN_BROKER_URL
 from mesh_chat.service import MeshChatService
@@ -15,6 +16,7 @@ def test_update_call_settings_accepts_broker_consent_payload() -> None:
     service._turn_ice_cache = None
     service._changed = lambda: None
     service.store = SimpleNamespace(put=lambda *args, **kwargs: None)
+    service.calls = SimpleNamespace(set_persist=lambda *_args, **_kwargs: None)
     service._call_identity = lambda: None
 
     result = service._execute(
@@ -77,3 +79,45 @@ def test_signal_commands_require_configured_mailbox(monkeypatch) -> None:
         ("publish", "https://signal.example.workers.dev", "offer"),
         ("fetch", "https://signal.example.workers.dev", "answer"),
     ]
+
+
+def test_update_call_settings_applies_call_record_storage() -> None:
+    service = object.__new__(MeshChatService)
+    service._call_settings = CallSettings.from_dict(None)
+    service._turn_ice_lock = threading.Lock()
+    service._turn_ice_cache = None
+    service._changed = lambda: None
+    service.store = SimpleNamespace(put=lambda *args, **kwargs: None)
+    service.calls = SimpleNamespace(set_persist=Mock())
+
+    result = service._execute(
+        "update_call_settings",
+        {
+            "stun_urls": ["stun:stun.example.org"],
+            "relay_only": False,
+            "store_call_signaling": False,
+        },
+    )
+
+    assert result["store_call_signaling"] is False
+    service.calls.set_persist.assert_called_once_with(False)
+
+
+def test_update_call_settings_keeps_storage_choice_when_omitted() -> None:
+    service = object.__new__(MeshChatService)
+    service._call_settings = CallSettings.from_dict(
+        {"stun_urls": [], "relay_only": False, "store_call_signaling": False}
+    )
+    service._turn_ice_lock = threading.Lock()
+    service._turn_ice_cache = None
+    service._changed = lambda: None
+    service.store = SimpleNamespace(put=lambda *args, **kwargs: None)
+    service.calls = SimpleNamespace(set_persist=Mock())
+
+    result = service._execute(
+        "update_call_settings",
+        {"stun_urls": [], "relay_only": False},
+    )
+
+    assert result["store_call_signaling"] is False
+    service.calls.set_persist.assert_called_once_with(False)

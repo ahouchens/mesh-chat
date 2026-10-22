@@ -2271,6 +2271,7 @@ function WebRTCCallSettings({ onSaved }: { onSaved: () => Promise<void> }) {
   const [signalMailboxUrl, setSignalMailboxUrl] = useState("");
   const [turnBrokerConsent, setTurnBrokerConsent] = useState(false);
   const [relayOnly, setRelayOnly] = useState(false);
+  const [storeCallSignaling, setStoreCallSignaling] = useState(true);
   const [busy, setBusy] = useState(false);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState("");
@@ -2286,6 +2287,7 @@ function WebRTCCallSettings({ onSaved }: { onSaved: () => Promise<void> }) {
       setSignalMailboxUrl(value.signal_mailbox_url ?? "");
       setTurnBrokerConsent(value.turn_broker_consent ?? false);
       setRelayOnly(value.relay_only);
+      setStoreCallSignaling(value.store_call_signaling ?? true);
     }).catch((reason) => setError(errorMessage(reason)));
   }, []);
   const save = async () => {
@@ -2300,6 +2302,7 @@ function WebRTCCallSettings({ onSaved }: { onSaved: () => Promise<void> }) {
         signal_mailbox_url: signalMailboxUrl.trim() || null,
         turn_broker_consent: turnBrokerConsent,
         relay_only: relayOnly,
+        store_call_signaling: storeCallSignaling,
       });
       setSettings(result);
       setTurnCredential("");
@@ -2330,6 +2333,7 @@ function WebRTCCallSettings({ onSaved }: { onSaved: () => Promise<void> }) {
       </div>
       {settings?.turn_broker_default_url && <p className="muted">Global default: <code>{settings.turn_broker_default_url}</code>. You can override it with a community broker or disable it.</p>}
       <label className="checkbox-line"><input type="checkbox" checked={relayOnly} onChange={(event) => { setRelayOnly(event.target.checked); setSaved(false); }} /> Relay-only: never try a direct path. This requires a TURN server and shows every call as relayed.</label>
+      <label className="checkbox-line"><input type="checkbox" checked={storeCallSignaling} onChange={(event) => { setStoreCallSignaling(event.target.checked); setSaved(false); }} /> Store call signaling records (SDP and ICE candidates) in the encrypted vault. On by default; turn off to keep them in service memory only. Calls still work, but call history and restart state are lost when the service restarts. Existing records are not deleted.</label>
       <p className="muted">{settings?.turn_broker_configured && settings.turn_broker_consent ? "Cloudflare TURN credentials are fetched from the configured broker and refreshed per session." : settings?.turn_broker_configured ? "A TURN broker is configured but not enabled. Enable it above to use the relay." : settings?.turn_configured ? "TURN is configured. Credentials stay in the encrypted service record and are released only to an active call." : "No TURN server configured. Calls work only on a shared LAN or when direct host candidates are reachable."}</p>
       {saved && <p className="muted" role="status">Call settings saved.</p>}
       {error && <p className="form-error" role="alert">{error}</p>}

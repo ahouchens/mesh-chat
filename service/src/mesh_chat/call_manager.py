@@ -31,11 +31,12 @@ CALL_HISTORY_SECONDS = 24 * 60 * 60
 
 
 class CallManager:
-    """Durable call signaling without owning the media device.
+    """Call signaling without owning the media device.
 
-    The manager signs and verifies call documents, persists call state, and
-    hands outgoing documents to the service transport. The WebRTC media adapter
-    supplies SDP/fingerprints and attaches or reads audio separately.
+    The manager signs and verifies call documents, stores call state (sealed in
+    the vault by default, or memory-only when configured), and hands outgoing
+    documents to the service transport. The WebRTC media adapter supplies
+    SDP/fingerprints and attaches or reads audio separately.
     """
 
     def __init__(
@@ -45,11 +46,59 @@ class CallManager:
         *,
         now: Callable[[], float] = time.time,
         new_id: Callable[[], str] | None = None,
+        persist: bool = True,
     ) -> None:
         self.store = store
         self.send_document = send_document
         self.now = now
         self.new_id = new_id or (lambda: uuid.uuid4().hex)
+        self.persist = bool(persist)
+        # Active records are always available in memory so calls keep working
+        # when sealed call-signaling storage is disabled.
+        self._memory: dict[str, dict[str, Any]] = {}
+
+    def set_persist(self, persist: bool) -> None:
+        """Change whether new/updated call records are written to the vault.
+
+        Disabling does not delete existing sealed records; it stops reading and
+        writing them. Enabling adopts records created in memory while disabled.
+        """
+
+        enabled = bool(persist)
+        was_enabled = self.persist
+        self.persist = enabled
+        if enabled and not was_enabled:
+            for record in self._memory.values():
+                self.store.put("call", record["id"], record)
+
+    def _write(self, record: dict[str, Any]) -> None:
+        self._memory[record["id"]] = record
+        if self.persist:
+            self.store.put("call", record["id"], record)
+
+    def _get(self, call_id: str) -> dict[str, Any] | None:
+        record = self._memory.get(call_id)
+        if record is not None:
+            return record
+        if not self.persist:
+            return None
+        stored = self.store.get("call", call_id)
+        if stored is not None:
+            self._memory[call_id] = stored
+        return stored
+
+    def _list(self) -> list[dict[str, Any]]:
+        records: dict[str, dict[str, Any]] = {}
+        if self.persist:
+            for record in self.store.list("call"):
+                records[record["id"]] = record
+        records.update(self._memory)
+        return list(records.values())
+
+    def _delete(self, call_id: str) -> None:
+        self._memory.pop(call_id, None)
+        if self.persist:
+            self.store.delete("call", call_id)
 
     def start(
         self,
@@ -94,7 +143,7 @@ class CallManager:
             "expires_at": int(self.now()) + 600,
             "ring_expires_at": self.now() + RING_SECONDS,
         }
-        self.store.put("call", call_id, record)
+        self._write(record)
         self.send_document(contact["id"], invite)
         return self.public(record)
 
@@ -113,7 +162,7 @@ class CallManager:
             )
             if invite.caller_destination != contact["destination_hash"].lower():
                 raise IdentityMismatch("Call invitation signer does not match the contact")
-            existing = self.store.get("call", invite.call_id)
+            existing = self._get(invite.call_id)
             if existing is not None:
                 return None
             record = {
@@ -137,7 +186,7 @@ class CallManager:
                 "expires_at": invite.expires_at,
                 "ring_expires_at": min(self.now() + RING_SECONDS, invite.expires_at),
             }
-            self.store.put("call", invite.call_id, record)
+            self._write(record)
             return self.public(record)
 
         if kind == "call_answer":
@@ -159,7 +208,7 @@ class CallManager:
                 state=_advance(record["state"], "answer"),
                 updated_at=self.now(),
             )
-            self.store.put("call", call_id, record)
+            self._write(record)
             return self.public(record)
 
         if kind == "call_candidate":
@@ -177,7 +226,7 @@ class CallManager:
                 record["candidates"] = record["candidates"][-MAX_CANDIDATES + 1 :]
             record["candidates"].append(candidate.candidate)
             record["updated_at"] = self.now()
-            self.store.put("call", call_id, record)
+            self._write(record)
             return self.public(record)
 
         if kind == "call_renegotiate":
@@ -208,7 +257,7 @@ class CallManager:
             record["generation"] = update.generation
             record["state"] = "connecting"
             record["updated_at"] = self.now()
-            self.store.put("call", call_id, record)
+            self._write(record)
             return self.public(record)
 
         if kind == "call_hangup":
@@ -224,7 +273,7 @@ class CallManager:
             )
             record["state"] = _hangup_state(hangup.reason)
             record["updated_at"] = self.now()
-            self.store.put("call", call_id, record)
+            self._write(record)
             return self.public(record)
 
         raise ValidationError("Call document type is unsupported")
@@ -243,7 +292,7 @@ class CallManager:
         if self.now() > float(record.get("ring_expires_at", 0)):
             record["state"] = "no_answer"
             record["updated_at"] = self.now()
-            self.store.put("call", call_id, record)
+            self._write(record)
             raise ValidationError("This call invitation has expired")
         invite = verify_call_invite(
             record["invite"],
@@ -264,7 +313,7 @@ class CallManager:
             state=_advance(record["state"], "accept"),
             updated_at=self.now(),
         )
-        self.store.put("call", call_id, record)
+        self._write(record)
         self.send_document(record["contact_id"], answer)
         return self.public(record)
 
@@ -297,7 +346,7 @@ class CallManager:
             state="connecting",
             updated_at=self.now(),
         )
-        self.store.put("call", call_id, record)
+        self._write(record)
         self.send_document(record["contact_id"], document)
         return self.public(record)
 
@@ -335,7 +384,7 @@ class CallManager:
             state="connecting",
             updated_at=self.now(),
         )
-        self.store.put("call", call_id, record)
+        self._write(record)
         self.send_document(record["contact_id"], document)
         return self.public(record)
 
@@ -354,7 +403,7 @@ class CallManager:
         )
         record["candidates"].append(candidate)
         record["updated_at"] = self.now()
-        self.store.put("call", call_id, record)
+        self._write(record)
         self.send_document(record["contact_id"], document)
         return self.public(record)
 
@@ -365,17 +414,17 @@ class CallManager:
         )
         record["state"] = _hangup_state(reason)
         record["updated_at"] = self.now()
-        self.store.put("call", call_id, record)
+        self._write(record)
         self.send_document(record["contact_id"], document)
         return self.public(record)
 
     def _prune_history(self) -> None:
         cutoff = self.now() - CALL_HISTORY_SECONDS
-        for record in self.store.list("call"):
+        for record in self._list():
             if record.get("state") in ACTIVE_STATES:
                 continue
             if float(record.get("updated_at", 0)) < cutoff:
-                self.store.delete("call", record["id"])
+                self._delete(record["id"])
 
     def _enforce_rate_limit(self, contact_id: str) -> None:
         calls = [
@@ -391,7 +440,7 @@ class CallManager:
 
     def active(self) -> list[dict[str, Any]]:
         calls = []
-        for record in self.store.list("call"):
+        for record in self._list():
             if record.get("state") not in ACTIVE_STATES:
                 continue
             if (
@@ -400,7 +449,7 @@ class CallManager:
             ):
                 record["state"] = "no_answer"
                 record["updated_at"] = self.now()
-                self.store.put("call", record["id"], record)
+                self._write(record)
                 continue
             calls.append(record)
         calls.sort(key=lambda record: record.get("updated_at", 0), reverse=True)
@@ -429,7 +478,7 @@ class CallManager:
     def _require_call(self, call_id: str) -> dict[str, Any]:
         if not isinstance(call_id, str):
             raise ValidationError("Call ID is invalid")
-        record = self.store.get("call", call_id)
+        record = self._get(call_id)
         if record is None:
             raise ValidationError("Call is unknown")
         return record

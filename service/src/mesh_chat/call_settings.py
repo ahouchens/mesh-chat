@@ -32,6 +32,11 @@ class CallSettings:
     turn_broker_consent: bool = False
     signal_mailbox_url: str | None = None
     relay_only: bool = False
+    # Sealed call records (negotiated SDP and ICE candidates) are stored in the
+    # vault by default so an active call survives a service restart. Turning
+    # this off keeps them in service memory only; calls still work while the
+    # process is alive.
+    store_call_signaling: bool = True
 
     @classmethod
     def from_dict(cls, value: dict[str, Any] | None) -> "CallSettings":
@@ -42,6 +47,7 @@ class CallSettings:
         allowed = {
             "stun_urls", "turn_url", "turn_username", "turn_credential",
             "turn_broker_url", "turn_broker_consent", "signal_mailbox_url", "relay_only",
+            "store_call_signaling",
         }
         if set(value) - allowed:
             raise ValidationError("Call settings contain unsupported fields")
@@ -84,7 +90,20 @@ class CallSettings:
             raise ValidationError("Relay-only must be boolean")
         if relay_only and turn_url is None and (broker is None or not broker_consent):
             raise ValidationError("Relay-only requires a consented TURN server")
-        return cls(stun_urls, turn_url, username, credential, broker, broker_consent, signal_url, relay_only)
+        store_call_signaling = value.get("store_call_signaling", True)
+        if not isinstance(store_call_signaling, bool):
+            raise ValidationError("Call signaling storage must be boolean")
+        return cls(
+            stun_urls=stun_urls,
+            turn_url=turn_url,
+            turn_username=username,
+            turn_credential=credential,
+            turn_broker_url=broker,
+            turn_broker_consent=broker_consent,
+            signal_mailbox_url=signal_url,
+            relay_only=relay_only,
+            store_call_signaling=store_call_signaling,
+        )
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -96,6 +115,7 @@ class CallSettings:
             "turn_broker_consent": self.turn_broker_consent,
             "signal_mailbox_url": self.signal_mailbox_url,
             "relay_only": self.relay_only,
+            "store_call_signaling": self.store_call_signaling,
         }
 
     def public(self) -> dict[str, Any]:
@@ -110,6 +130,7 @@ class CallSettings:
             "turn_broker_default_url": DEFAULT_TURN_BROKER_URL,
             "signal_mailbox_url": self.signal_mailbox_url,
             "relay_only": self.relay_only,
+            "store_call_signaling": self.store_call_signaling,
         }
 
     def ice_servers(self) -> list[dict[str, Any]]:

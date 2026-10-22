@@ -294,18 +294,21 @@ consented-TURN policy applies, so a relay sees IP addresses, timing, and
 encrypted media but no plaintext. Call restart renegotiates a fresh media
 session rather than reusing dead ICE. Only approved contacts can call, a call
 never changes trust, and there are no group calls, recording, PSTN bridge, or
-cloud media store. Call signaling records persist the negotiated SDP and ICE
-candidates as sealed vault records for the call lifecycle; they are never sent
-to the mailbox or logs. Physical multi-device call and TURN qualification
-remains open.
+cloud media store. Call signaling records store the negotiated SDP and ICE
+candidates in the vault by default; `store_call_signaling` in call settings can
+keep them in service memory only, in which case calls still work but history and
+restart state are lost when the service restarts. Physical multi-device call and
+TURN qualification remains open.
 
 ### Persistence and privacy
 
 Sealed records hold reconnect profiles, consent, capabilities, attempt state,
 and replay keys. Reconnect never writes SDP, ICE credentials, or DTLS keys to
-the vault or logs. Call signaling records separately seal the negotiated SDP
-and ICE candidates for the call lifecycle. The mailbox necessarily holds the
-signed offer/answer envelope, including the ephemeral SDP it carries, for its
+the vault or logs. Call signaling records store the negotiated SDP and ICE
+candidates in the vault by default, controlled by
+`store_call_signaling`; when disabled they stay in service memory only and are
+never sent to the mailbox or logs. The mailbox necessarily holds the signed
+offer/answer envelope, including the ephemeral SDP it carries, for its
 ten-minute TTL; that is signaling state, not chat state, and it is never reused.
 Broker-issued TURN credentials are kept in service memory only; a manually
 configured TURN credential is sealed in call settings.

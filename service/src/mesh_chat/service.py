@@ -428,8 +428,12 @@ class MeshChatService(
         settings_record = store.get("settings", "network")
         self.settings = NetworkSettings.from_dict(settings_record)
         self._i2p_router = I2PRouterManager(profile_dir)
-        self.calls = CallManager(store, self._send_call_document)
         self._call_settings = CallSettings.from_dict(store.get("call_settings", "default"))
+        self.calls = CallManager(
+            store,
+            self._send_call_document,
+            persist=self._call_settings.store_call_signaling,
+        )
         self._turn_ice_lock = threading.Lock()
         self._turn_ice_cache: tuple[float, list[dict[str, Any]]] | None = None
         self._webrtc_bridges: dict[str, WebRTCInterface] = {}
@@ -1693,6 +1697,7 @@ class MeshChatService(
         settings = CallSettings.from_dict(value)
         self.store.put("call_settings", "default", settings.to_dict())
         self._call_settings = settings
+        self.calls.set_persist(settings.store_call_signaling)
         with self._turn_ice_lock:
             self._turn_ice_cache = None
         self._changed()
@@ -3291,9 +3296,12 @@ class MeshChatService(
                 allowed={
                     "stun_urls", "turn_url", "turn_username", "turn_credential",
                     "turn_broker_url", "turn_broker_consent", "signal_mailbox_url", "relay_only",
+                    "store_call_signaling",
                 },
                 required={"stun_urls", "relay_only"},
             )
+            if "store_call_signaling" not in body:
+                body["store_call_signaling"] = self._call_settings.store_call_signaling
             return self.update_call_settings(body)
         if command == "call_ice_servers":
             _payload(value, allowed=set())

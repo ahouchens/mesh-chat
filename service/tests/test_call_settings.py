@@ -19,6 +19,7 @@ def test_defaults_use_google_stun_but_no_turn() -> None:
         "turn_broker_default_url": DEFAULT_TURN_BROKER_URL,
         "signal_mailbox_url": None,
         "relay_only": False,
+        "store_call_signaling": True,
     }
     assert settings.ice_servers() == [{"urls": ["stun:stun.l.google.com:19302"]}]
 
@@ -53,6 +54,7 @@ def test_stun_and_turn_are_normalized_and_secretly_scoped() -> None:
         "turn_broker_default_url": DEFAULT_TURN_BROKER_URL,
         "signal_mailbox_url": None,
         "relay_only": True,
+        "store_call_signaling": True,
     }
     assert "credential" not in settings.public()
     assert settings.rtc_configuration() == {
@@ -132,6 +134,21 @@ def test_invalid_turn_broker_urls_fail_closed(value: dict) -> None:
 def test_invalid_call_settings_fail_closed(value: dict) -> None:
     with pytest.raises(ValidationError):
         CallSettings.from_dict(value)
+
+
+def test_call_signaling_storage_defaults_on_and_can_be_disabled() -> None:
+    assert CallSettings.from_dict(None).store_call_signaling is True
+    disabled = CallSettings.from_dict(
+        {
+            "stun_urls": [],
+            "relay_only": False,
+            "store_call_signaling": False,
+        }
+    )
+    assert disabled.store_call_signaling is False
+    assert disabled.public()["store_call_signaling"] is False
+    with pytest.raises(ValidationError):
+        CallSettings.from_dict({"store_call_signaling": "yes"})
 
 
 def test_turn_credentials_require_turn() -> None:

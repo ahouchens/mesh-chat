@@ -1,6 +1,6 @@
 # Automatic reconnect and signaling capabilities
 
-Status: implemented in 0.9.1 for the open-app, foreground case. The renderer
+Status: implemented in 0.9.1 and refined in 0.9.2 for the open-app, foreground case. The renderer
 coordinator, signed capabilities, per-contact consent, mailbox capability
 tokens, durable replay state, and the per-contact UI are in place. There is no
 background daemon, push notification, live session migration, or iOS
@@ -375,8 +375,8 @@ flow; automatic reconnect is a separate per-contact action.
    loop or imply success.
 3. No reconnect path bypasses contact/workspace authorization.
 4. No reconnect SDP, ICE credential, DTLS key, or plaintext is persisted or
-   logged. Call signaling records seal SDP/candidates separately for the call
-   lifecycle.
+   logged. Call signaling records store SDP/candidates separately for the call
+   lifecycle by default; `store_call_signaling` can keep them memory-only.
 5. Simultaneous restarts do not create duplicate sessions.
 6. Replayed or expired documents are rejected, including after restart.
 7. The mailbox cannot enumerate contacts from public destination hashes.
@@ -406,7 +406,7 @@ Still open:
 - whether any out-of-band capability exchange should exist outside a live
   control channel.
 
-## 18. Implementation status (0.9.1)
+## 18. Implementation status (0.9.2)
 
 Implemented in this release:
 
@@ -448,7 +448,7 @@ Implemented in this release:
   **Stop**, and **Forget auto-reconnect**. No modal or contact-approval prompt is
   shown.
 
-Explicit limits and non-goals in 0.9.1:
+Explicit limits and non-goals in 0.9.2:
 
 - Reconnect runs only while the app is open and unlocked. Locking the app tears
   the coordinator down. There is no background service, tray keep-alive, push
@@ -471,7 +471,8 @@ Explicit limits and non-goals in 0.9.1:
   locally, and does not log them. The rendezvous mailbox necessarily holds the
   signed offer/answer envelope, including the ephemeral SDP it carries, for its
   ten-minute TTL; that is signaling state, not chat state, and it is never
-  reused for a later connection. Call signaling records seal the negotiated SDP
-  and ICE candidates separately for the call lifecycle.
+  reused for a later connection. Call signaling records store the negotiated SDP
+  and ICE candidates separately by default; `store_call_signaling` can keep them
+  in service memory only.
 - No physical-device, NAT/TURN, or iOS/Android lifecycle testing was performed
   for this change.

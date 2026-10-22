@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import copy
+
 import pytest
 import RNS
 
@@ -26,13 +28,19 @@ class MemoryStore:
         self.data: dict[str, dict[str, dict]] = {}
 
     def put(self, kind: str, record_id: str, value: dict) -> None:
-        self.data.setdefault(kind, {})[record_id] = value
+        # Match VaultStore's serialization boundary: later mutation of the
+        # caller's dict must not silently update the stored record.
+        self.data.setdefault(kind, {})[record_id] = copy.deepcopy(value)
 
     def get(self, kind: str, record_id: str) -> dict | None:
-        return self.data.get(kind, {}).get(record_id)
+        value = self.data.get(kind, {}).get(record_id)
+        return copy.deepcopy(value) if value is not None else None
 
     def list(self, kind: str) -> list[dict]:
-        return list(self.data.get(kind, {}).values())
+        return [copy.deepcopy(value) for value in self.data.get(kind, {}).values()]
+
+    def delete(self, kind: str, record_id: str) -> None:
+        self.data.get(kind, {}).pop(record_id, None)
 
 
 def _destination(identity: RNS.Identity) -> str:
@@ -144,6 +152,84 @@ def test_wrong_signer_is_rejected() -> None:
 
     with pytest.raises(IdentityMismatch):
         callee_manager.receive(callee, _contact(stranger), sent[0][1])
+
+
+def test_call_signaling_is_persisted_by_default() -> None:
+    caller = RNS.Identity()
+    callee = RNS.Identity()
+    store = MemoryStore()
+    manager = CallManager(
+        store,
+        lambda _contact_id, _document: None,
+        now=lambda: NOW,
+        new_id=lambda: "call_persist_default_01",
+    )
+    manager.start(
+        caller,
+        _contact(callee),
+        media="audio",
+        sdp=SDP,
+        dtls_fingerprint=FINGERPRINT,
+    )
+    assert store.get("call", "call_persist_default_01") is not None
+    reopened = CallManager(store, lambda _contact_id, _document: None, now=lambda: NOW)
+    assert reopened.get("call_persist_default_01")["state"] == "dialing"
+
+
+def test_call_signaling_can_stay_in_memory_only() -> None:
+    caller = RNS.Identity()
+    callee = RNS.Identity()
+    store = MemoryStore()
+    manager = CallManager(
+        store,
+        lambda _contact_id, _document: None,
+        now=lambda: NOW,
+        new_id=lambda: "call_memory_only_01",
+        persist=False,
+    )
+    started = manager.start(
+        caller,
+        _contact(callee),
+        media="audio",
+        sdp=SDP,
+        dtls_fingerprint=FINGERPRINT,
+    )
+    assert started["state"] == "dialing"
+    assert store.list("call") == []
+    assert manager.get("call_memory_only_01")["state"] == "dialing"
+
+    reopened = CallManager(store, lambda _contact_id, _document: None, now=lambda: NOW, persist=False)
+    with pytest.raises(ValidationError):
+        reopened.get("call_memory_only_01")
+
+    # Enabling storage adopts the in-memory record for later restarts.
+    manager.set_persist(True)
+    assert store.get("call", "call_memory_only_01") is not None
+    restarted = CallManager(store, lambda _contact_id, _document: None, now=lambda: NOW)
+    assert restarted.get("call_memory_only_01")["state"] == "dialing"
+
+
+def test_disabling_call_storage_stops_new_writes() -> None:
+    caller = RNS.Identity()
+    callee = RNS.Identity()
+    store = MemoryStore()
+    manager = CallManager(
+        store,
+        lambda _contact_id, _document: None,
+        now=lambda: NOW,
+        new_id=lambda: "call_toggle_0001",
+    )
+    manager.start(
+        caller,
+        _contact(callee),
+        media="audio",
+        sdp=SDP,
+        dtls_fingerprint=FINGERPRINT,
+    )
+    manager.set_persist(False)
+    manager.end(caller, "call_toggle_0001", "completed")
+    assert store.get("call", "call_toggle_0001")["state"] == "dialing"
+    assert manager.get("call_toggle_0001")["state"] == "ended"
 
 
 def test_unapproved_contact_cannot_start() -> None:

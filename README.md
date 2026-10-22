@@ -8,7 +8,7 @@ The design accepts real trade-offs. Delivery depends on peers being reachable, h
 
 An optional **I2P relay path** can bootstrap a workspace or 1:1 connection when neither device has a public endpoint. It is an explicit, consented fallback: the invitation carries one signed `*.b32.i2p` access point, both sides need an I2P router, and the access point relays encrypted Reticulum traffic rather than creating a direct link. I2P is not the default, is not available on Android yet, and does not replace the direct/LAN/access-point paths.
 
-> **Status Ã¢â‚¬â€ security-sensitive prototype.** The source tree is at 0.9.1. It has not been independently audited, and several physical-device and packaging gates are still open. Read [Status and verification](#status-and-verification) before relying on it.
+> **Status Ã¢â‚¬â€ security-sensitive prototype.** The source tree is at 0.9.2. It has not been independently audited, and several physical-device and packaging gates are still open. Read [Status and verification](#status-and-verification) before relying on it.
 
 ## What problem it solves
 
@@ -66,7 +66,7 @@ Underneath them, one **protected profile** holds everything at rest: the sealed 
 
 All durable application records live in SQLite, but the values are individually sealed: AES-256-GCM on desktop with a fresh nonce and table/record identity as associated data; on mobile, a per-record key derived with HMAC-SHA-256 and RNS's authenticated Token construction. The 32-byte master key is held only in the OS credential store and in service memory. SQLite itself runs in `DELETE` journal mode with `synchronous=FULL`, `temp_store=MEMORY`, and `secure_delete=ON`, so rollback journals contain ciphertext too.
 
-Reconnect profiles, per-contact consent, signed capabilities, attempt state, and replay keys live in the same sealed vault. Reconnect does not persist SDP, ICE credentials, or DTLS keys. Call signaling records do persist the negotiated SDP and ICE candidates as sealed vault records for the call lifecycle; a manually configured TURN credential is also sealed there. Broker-issued TURN credentials stay in service memory only.
+Reconnect profiles, per-contact consent, signed capabilities, attempt state, and replay keys live in the same sealed vault. Reconnect does not persist SDP, ICE credentials, or DTLS keys. Call signaling records store the negotiated SDP and ICE candidates by default so an active call survives a service restart; this can be disabled in **Settings → WebRTC calls → Store call signaling records**, in which case they remain in service memory only. A manually configured TURN credential is sealed in call settings. Broker-issued TURN credentials stay in service memory only.
 
 A mutating command is not acknowledged until its vault transaction commits. That is why retrying a send after a crash reuses the same logical message and operation identifiers instead of creating a duplicate.
 
@@ -151,7 +151,7 @@ after approval. Tokens rotate with a new signed capability. See
 
 ### I2P relay (opt-in)
 
-**I2P is opt-in and not the default.** A normal invitation still starts with nearby/direct/participant-hosted/remote choices. I2P is selected explicitly, and the joiner sees the access point and must consent before traffic is relayed. The access point is a Reticulum `I2PInterface` node addressed by `*.b32.i2p`; it relays encrypted Reticulum/LXMF traffic and does not see message plaintext. Windows bundles and manages `i2pd`; Android has the settings and consent UI but no bundled I2P router yet, so Android cannot complete an I2P join as of 0.9.1.
+**I2P is opt-in and not the default.** A normal invitation still starts with nearby/direct/participant-hosted/remote choices. I2P is selected explicitly, and the joiner sees the access point and must consent before traffic is relayed. The access point is a Reticulum `I2PInterface` node addressed by `*.b32.i2p`; it relays encrypted Reticulum/LXMF traffic and does not see message plaintext. Windows bundles and manages `i2pd`; Android has the settings and consent UI but no bundled I2P router yet, so Android cannot complete an I2P join as of 0.9.2.
 
 ### 1:1 WebRTC calls
 
@@ -161,8 +161,11 @@ authenticated contact path; the media itself is peer-to-peer DTLS-SRTP.
 Call restart renegotiates a fresh media session rather than reusing dead ICE.
 
 - Only approved contacts can call; a call never creates or changes trust.
-- Call signaling records (SDP and ICE candidates) are sealed in the local vault
-  for the call lifecycle and are never sent to the mailbox.
+- Call signaling records (SDP and ICE candidates) are stored in the encrypted
+  vault by default; **Settings → WebRTC calls → Store call signaling records**
+  can keep them in service memory only. Turning it off still allows calls, but
+  call history and restart state are lost when the service restarts. Existing
+  sealed records are not deleted by the toggle.
 - The same direct/TURN policy and relay consent apply. TURN sees IP addresses,
   timing, and encrypted media, never chat or media plaintext.
 - No group calls, recording, PSTN bridge, or cloud media store.
@@ -308,13 +311,14 @@ The threat model is explicit about what is *not* protected: traffic analysis, IP
 | Managed I2P router | Local `i2pd` with SAM on `127.0.0.1:7656`; low-bandwidth, no transit, no web console/proxies |
 | Attachments, group calls, discoverable public channels, push notifications | Not supported |
 | 1:1 calls | WebRTC audio/video over direct ICE or a consented TURN relay; no group calls, recording, or PSTN |
+| Call signaling records | Stored in the encrypted vault by default; optional memory-only mode (no SDP/ICE persistence) |
 
 ## Status and verification
 
 | Platform | What exists | Recorded verification |
 | --- | --- | --- |
-| Windows x64 | MSI and NSIS installers, standalone executable plus service sidecar, bundled/managed `i2pd`, I2P invitation and consent UI, 1:1 audio/video call surface, automatic reconnect UI | 0.9.1 published; CI tests/build passed; installer launch and device testing not performed |
-| Android arm64 | Debug APK, plus release/AAB signing path; I2P settings and invitation preview, 1:1 audio/video call surface, automatic reconnect UI | 0.9.1 release APK published; no bundled I2P router; no physical call or reconnect test in the recorded run |
+| Windows x64 | MSI and NSIS installers, standalone executable plus service sidecar, bundled/managed `i2pd`, I2P invitation and consent UI, 1:1 audio/video call surface, automatic reconnect UI | 0.9.2 release candidate; 0.9.1 published; installer launch and device testing not performed |
+| Android arm64 | Debug APK, plus release/AAB signing path; I2P settings and invitation preview, 1:1 audio/video call surface, automatic reconnect UI | 0.9.2 release candidate; 0.9.1 release APK published; no bundled I2P router; no physical call or reconnect test in the recorded run |
 | macOS | Build path, FileVault adapter | No package built or run in this repository |
 | Linux | Build path, fscrypt/dm-crypt adapters | No package built or run in this repository |
 | iOS | Plugin and build script | Requires macOS and Xcode; not built or run in this repository |
