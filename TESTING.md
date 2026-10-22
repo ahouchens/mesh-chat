@@ -64,6 +64,20 @@ The official report is
 Gates: `automated: passed`; `physical_device: not-requested`;
 `production_signing: not-requested`.
 
+Publication: GitHub Actions
+[CI run 39720371674](https://github.com/ahouchens/mesh-chat/actions/runs/39720371674)
+and
+[Release run 39720375357](https://github.com/ahouchens/mesh-chat/actions/runs/39720375357)
+passed on the first attempt for `v0.9.1`. Release:
+<https://github.com/ahouchens/mesh-chat/releases/tag/v0.9.1>.
+
+| Artifact | Bytes | SHA-256 (verified by re-download) |
+|---|---:|---|
+| `Mesh-Chat_0.9.1_x64-setup.exe` | 27,828,710 | `df06ce6dfcda4415bbee199afd5b4d9d4fbccf368a052099a917444c6f58bec0` |
+| `Mesh-Chat_0.9.1_x64_en-US.msi` | 29,822,976 | `2162598caf728f833fadabcac3ebb23806fb56ca5d1630e76f711c99b27fd17f` |
+| `mesh-chat-0.9.1-android-arm64-release.apk` | 34,302,211 | `9c33d6e48683b2ac6d84c3d68f188051e58af7fd39ec76f72727001febfa97b6` |
+| `SHA256SUMS.txt` | 300 | `b34c1d8fa68adaca2d53bec93f83db623d453ed31d8e7c6643b40ef7cbbc1d47` |
+
 New tests include the pending-capability hold/promote/approval flows, explicit
 capability metadata (`transports`, issued/expiry), no-peer-on-rejection,
 transport-failure retry, and the live reconnecting countdown. No installer
