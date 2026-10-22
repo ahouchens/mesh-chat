@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
@@ -216,5 +216,39 @@ describe("automatic reconnect contact settings", () => {
     expect(await screen.findByText("Connected")).toBeTruthy();
     expect(screen.getByText("Connected over the community relay.")).toBeTruthy();
     expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("counts down the retry delay instead of showing a frozen label", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      mocks.serviceCommand.mockResolvedValue(
+        payload(profile({ auto_reconnect: true, peer_auto_reconnect: true })),
+      );
+      const nextAttemptAt = Math.floor(Date.now() / 1000) + 30;
+      render(
+        <ReconnectSettings
+          contact={CONTACT}
+          coordinator={coordinator({
+            profileId: "profile-1",
+            contactId: "contact-1",
+            displayName: "Alex",
+            state: "retry_wait",
+            detail: "network_unavailable",
+            attempts: 1,
+            nextAttemptAt,
+            path: null,
+            updatedAt: 1,
+          })}
+          onChanged={async () => undefined}
+        />,
+      );
+      expect(await screen.findByText(/Reconnecting in 30s/)).toBeTruthy();
+      act(() => {
+        vi.advanceTimersByTime(5000);
+      });
+      expect(screen.getByText(/Reconnecting in 25s/)).toBeTruthy();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

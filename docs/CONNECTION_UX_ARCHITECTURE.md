@@ -243,7 +243,7 @@ Implemented for the supported paths:
   a restart.
 - Reconnect and diagnostics actions are available from the connection card.
 
-Phase 5 also includes automatic reconnect for the open-app case since 0.9.0:
+Phase 5 also includes automatic reconnect for the open-app case since 0.9.1:
 
 - Reciprocal, per-contact consent is required; it defaults to off.
 - A signed capability carries the mailbox rendezvous token; tokens rotate with

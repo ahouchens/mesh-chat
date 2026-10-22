@@ -47,12 +47,14 @@ from .signal_mailbox import publish as publish_signal
 from .webrtc_signaling import _b64decode, _destination_for_public_key
 
 PROFILE_KIND = "reconnect_profile"
+PENDING_KIND = "reconnect_pending_capability"
 REPLAY_KIND = "reconnect_replay"
 STATE_KIND = "reconnect_state"
 DEVICE_KIND = "reconnect_device"
 PROFILE_VERSION = 1
 SESSION_DOMAIN = "mesh-chat:reconnect:session:v1:"
 MAX_PROFILES = 64
+MAX_PENDING_CAPABILITIES = 32
 MAX_DETAIL = 160
 MAX_REPLAY_TTL = 3600
 CONNECTED_TRUST = {TrustState.APPROVED.value, TrustState.VERIFIED.value}
@@ -306,6 +308,14 @@ class ReconnectServiceMixin:
             ),
             "has_local_capabilities": bool(profile.get("local_capabilities")),
             "has_peer_capabilities": bool(profile.get("remote_capabilities")),
+            "transports": list(profile.get("transports") or []),
+            "peer_transports": list(profile.get("remote_transports") or []),
+            "capabilities_issued_at": int(
+                profile.get("local_capabilities_issued_at") or 0
+            ),
+            "peer_capabilities_issued_at": int(
+                profile.get("remote_capabilities_issued_at") or 0
+            ),
             "capabilities_expires_at": int(
                 profile.get("local_capabilities_expires_at") or 0
             ),
@@ -329,6 +339,7 @@ class ReconnectServiceMixin:
         }
 
     def reconnect_profiles(self) -> dict[str, Any]:
+        self._reconnect_promote_all()
         profile = self.store.get("profile", "local") or {}
         return {
             "local_device_id": self._reconnect_device_id(),
@@ -461,6 +472,8 @@ class ReconnectServiceMixin:
         verified = verify_connection_capabilities(serialized, now=now)
         profile["local_capabilities"] = serialized
         profile["local_capabilities_expires_at"] = verified.expires_at
+        profile["local_capabilities_issued_at"] = verified.issued_at
+        profile["transports"] = list(verified.transports)
         profile["mailbox_url"] = verified.mailbox_url
         profile["mailbox_pair_token"] = verified.mailbox_pair_token
         profile["mailbox_expires_at"] = verified.mailbox_expires_at or 0
@@ -475,9 +488,12 @@ class ReconnectServiceMixin:
             raise IdentityMismatch("Connection capabilities are for another device")
         contact = self._contact_by_destination(unverified.signer_destination)
         if contact is None:
-            raise ContactNotApproved(
-                "Connection capabilities are not from a known contact"
-            )
+            # A joiner's capability can arrive over the control channel before
+            # its LXMF contact request reaches this device. Hold the signed,
+            # peer-bound document without granting any trust; it is promoted
+            # only after a contact exists and is approved.
+            pending = self._hold_pending_capability(unverified, document)
+            return {"profile": None, "pending": pending}
         # A pending contact is an identity already bound by a signed invitation.
         # Storing its rendezvous capability never approves it: all reconnect
         # document verification and attempt creation still require an approved,
@@ -493,6 +509,38 @@ class ReconnectServiceMixin:
         verified = verify_connection_capabilities(
             document, expected_signer=contact["destination_hash"]
         )
+        profile = self._store_remote_capabilities(contact, verified)
+        self.store.delete(PENDING_KIND, verified.signer_destination)
+        self._changed()
+        return {"profile": self._reconnect_profile_public(profile), "pending": False}
+
+    def _hold_pending_capability(
+        self,
+        verified,
+        document: str,
+    ) -> bool:
+        now = _now()
+        for record_id, record in self.store.items(PENDING_KIND):
+            if int(record.get("expires_at") or 0) <= now:
+                self.store.delete(PENDING_KIND, record_id)
+        existing = self.store.get(PENDING_KIND, verified.signer_destination)
+        if existing is None and len(self.store.items(PENDING_KIND)) >= MAX_PENDING_CAPABILITIES:
+            raise ValidationError("Too many pending reconnect capabilities")
+        self.store.put(
+            PENDING_KIND,
+            verified.signer_destination,
+            {
+                "v": PROFILE_VERSION,
+                "signer_destination": verified.signer_destination,
+                "device_id": verified.device_id,
+                "document": document,
+                "expires_at": verified.expires_at,
+                "received_at": now,
+            },
+        )
+        return True
+
+    def _store_remote_capabilities(self, contact, verified) -> dict[str, Any]:
         now = _now()
         profile = self._reconnect_profile_for_contact(
             contact["id"], verified.device_id
@@ -506,6 +554,8 @@ class ReconnectServiceMixin:
         )
         profile["remote_capabilities"] = verified.serialized
         profile["remote_capabilities_expires_at"] = verified.expires_at
+        profile["remote_capabilities_issued_at"] = verified.issued_at
+        profile["remote_transports"] = list(verified.transports)
         profile["remote_mailbox_url"] = verified.mailbox_url
         profile["remote_mailbox_pair_token"] = verified.mailbox_pair_token
         profile["remote_mailbox_expires_at"] = verified.mailbox_expires_at or 0
@@ -515,8 +565,36 @@ class ReconnectServiceMixin:
             profile["reciprocal_since"] = now
         profile["updated_at"] = now
         self.store.put(PROFILE_KIND, profile["id"], profile)
-        self._changed()
-        return {"profile": self._reconnect_profile_public(profile)}
+        return profile
+
+    def _reconnect_promote_pending(self, destination: str) -> bool:
+        pending = self.store.get(PENDING_KIND, destination)
+        if pending is None:
+            return False
+        if int(pending.get("expires_at") or 0) <= _now():
+            self.store.delete(PENDING_KIND, destination)
+            return False
+        contact = self._contact_by_destination(destination)
+        if contact is None or contact.get("trust") not in {
+            TrustState.AWAITING_CONSENT.value,
+            TrustState.PENDING_REQUEST.value,
+            *CONNECTED_TRUST,
+        }:
+            return False
+        try:
+            verified = verify_connection_capabilities(
+                pending["document"], expected_signer=destination
+            )
+        except Exception:
+            self.store.delete(PENDING_KIND, destination)
+            return False
+        self._store_remote_capabilities(contact, verified)
+        self.store.delete(PENDING_KIND, destination)
+        return True
+
+    def _reconnect_promote_all(self) -> None:
+        for record_id in [item[0] for item in self.store.items(PENDING_KIND)]:
+            self._reconnect_promote_pending(record_id)
 
     def reconnect_capabilities_get(self, contact_id: Any) -> dict[str, Any]:
         contact = self._reconnect_contact(contact_id)

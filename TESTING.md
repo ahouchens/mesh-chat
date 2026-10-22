@@ -22,6 +22,54 @@ locally. Frontend/package/native tests and Windows/Android builds run in Actions
 Physical execution follows the
 [Phase 2 device checklist](docs/DIRECT_CONNECTIVITY_PHASE2_DEVICE_TEST.md).
 
+## Automatic reconnect hardening, 0.9.1
+
+A code audit of the 0.9.0 checklist found four gaps; this release closes them:
+
+- **No peer connection before authorization.** The probing device now creates
+  and publishes its signed request first, verifies the peer's signed offer, and
+  only then allocates an `RTCPeerConnection`. A blocked, deleted, or rejected
+  peer fails before any transport resource exists. A test asserts that a
+  rejected offer produces zero peers.
+- **Capabilities are not lost when the dialog closes.** A verified capability
+  that arrives before its contact record is held as a signed, expiring,
+  peer-bound document and promoted only after a contact exists and is approved.
+  Approval messages are sent whenever the control channel is bound to the
+  contact, not only while the onboarding dialog is mounted and `approvalPending`
+  is set. Holding never grants trust; blocked contacts are still rejected.
+- **No request/offer thrash.** The prober reuses one attempt ID and one signed
+  request across retries, so a responder's offer cannot be invalidated by a
+  concurrent retry. The responder bounds its offer attempts and reports **Peer
+  offline** instead of looping. A per-profile stop also cancels that profile's
+  in-flight loop instead of letting it overwrite the stopped state.
+- **Honest status.** The connected state reports whether a Reticulum path is
+  ready, still pending, or unavailable, and **Reconnecting in Ns** re-renders
+  once a second instead of showing a frozen number.
+
+Validation on this tree (Node 24, Python 3.13, Windows):
+
+```text
+pytest service/tests:        1092 passed, 46 skipped, 0 failed (275.35 s)
+node scripts/run-frontend-tests.mjs: 262 passed (18 files)
+node --test deploy/cloudflare-signal/worker.test.mjs: 11 passed
+packaged emoji artwork verification: 3 passed
+node node_modules/typescript/bin/tsc -b: passed
+node scripts/run-frontend-build.mjs: passed
+```
+
+The official report is
+`dist/reports/0.9.1/20261022T035845Z-4852d91b/report.json` (git-ignored):
+`status: passed`, 327.746 s, SHA-256
+`d5d703f625f4c24a701d0a4ad6df6c72d0d188c208bbce4b549dfc7282898f79`.
+Gates: `automated: passed`; `physical_device: not-requested`;
+`production_signing: not-requested`.
+
+New tests include the pending-capability hold/promote/approval flows, explicit
+capability metadata (`transports`, issued/expiry), no-peer-on-rejection,
+transport-failure retry, and the live reconnecting countdown. No installer
+launch, physical-device, NAT/TURN, network-switch, or mobile-lifecycle test was
+performed.
+
 ## Automatic reconnect, 0.9.0
 
 Automatic reconnect is implemented for the open, unlocked app. The Python

@@ -114,6 +114,15 @@ export function ReconnectSettings({
   const entry: ReconnectEntry | undefined = Object.values(snapshot.entries).find(
     (item) => item.contactId === contact.id,
   );
+  const retryPending = entry?.state === "retry_wait";
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    if (!retryPending) return;
+    // The label reads the current clock, so re-render once per second while a
+    // backoff is pending to keep "Reconnecting in Ns" honest.
+    const timer = window.setInterval(() => setTick((value) => value + 1), 1000);
+    return () => window.clearInterval(timer);
+  }, [retryPending]);
 
   const save = async (
     autoReconnect: boolean,

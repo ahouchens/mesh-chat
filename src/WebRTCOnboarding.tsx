@@ -162,7 +162,6 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
   const connectAnswerBusyRef = useRef(false);
   const bridgeRef = useRef<WebRTCBridge | null>(null);
   const handedOffRef = useRef(false);
-  const pendingCapabilitiesRef = useRef("");
   const iceSummaryRef = useRef<Record<string, unknown> | null>(null);
 
   const captureDiagnostics = useCallback(async (phase: string, message: string): Promise<string> => {
@@ -203,15 +202,7 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
     const onApproval = (event: Event) => {
       if (roleRef.current !== "offer") return;
       const approved = Boolean((event as CustomEvent<{ approved?: boolean }>).detail?.approved);
-      if (approved) {
-        clearPairingResume();
-        // The joiner's capability arrived before approval, when storing it
-        // would have failed the approved-contact check. Approval is now
-        // durable, so it is safe to verify and store.
-        const pending = pendingCapabilitiesRef.current;
-        pendingCapabilitiesRef.current = "";
-        if (pending) void storeReconnectCapabilities(pending).catch(() => undefined);
-      }
+      if (approved) clearPairingResume();
       updateWebRTCSessionApprovalPending(false);
       setOnboarding(approved ? "approved" : "declined");
     };
@@ -299,9 +290,10 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
       }
     } else if (message.type === "invitation_accepted" && roleRef.current === "offer") {
       if (typeof message.capabilities === "string" && message.capabilities) {
-        // The joiner's signed reconnect capability arrives with its acceptance.
-        // Store it only after approval has made the contact trusted.
-        pendingCapabilitiesRef.current = message.capabilities;
+        // The joiner's signed capability arrives with its acceptance. The
+        // service holds it until approval if the contact request has not
+        // arrived yet; storing it never approves the contact.
+        await storeReconnectCapabilities(message.capabilities).catch(() => undefined);
       }
       updateWebRTCSessionApprovalPending(true);
       setOnboarding("waiting-approval");

@@ -1,6 +1,6 @@
 # Automatic reconnect and signaling capabilities
 
-Status: implemented in 0.9.0 for the open-app, foreground case. The renderer
+Status: implemented in 0.9.1 for the open-app, foreground case. The renderer
 coordinator, signed capabilities, per-contact consent, mailbox capability
 tokens, durable replay state, and the per-contact UI are in place. There is no
 background daemon, push notification, live session migration, or iOS
@@ -132,7 +132,7 @@ Glare control:
 - If the preferred device is offline, its request never arrives. The other side
   stays in **Waiting for peer** and does not invent an offer or spin a second
   session; the UI reports peer-offline/manual rather than claiming imminent
-  success. There is no initiator takeover in 0.9.0.
+  success. There is no initiator takeover in 0.9.1.
 - Every attempt has an idempotency key. Retries may repeat a request; replay of
   a completed offer/answer is rejected after acceptance.
 - One active attempt per peer/device at a time.
@@ -382,7 +382,7 @@ Still open:
 - Whether workspace contacts share capabilities or each device has its own.
 - Durable Object provider and abuse budget.
 
-## 18. Implementation status (0.9.0)
+## 18. Implementation status (0.9.1)
 
 Implemented in this release:
 
@@ -395,25 +395,36 @@ Implemented in this release:
 - The service owns profiles, consent, signatures, replay state, mailbox
   publish/fetch, and verification bridges. The renderer owns the
   RTCPeerConnection.
+- No RTCPeerConnection is allocated until the signed request/offer has been
+  verified and the contact, consent, and capability checks pass. A blocked or
+  deleted peer is rejected first.
+- A capability that arrives before its contact record (for example over the
+  control channel, ahead of the LXMF request) is held as a signed, expiring,
+  peer-bound document. It is promoted only after a contact exists and is
+  approved, and it never grants trust by itself.
+- Approval capabilities are sent whenever the control channel is bound to the
+  contact, not only while the onboarding dialog is mounted.
 - The renderer coordinator starts only while the unlocked Messenger shell is
   mounted, limits itself to two concurrent attempts, uses 1/2/5/15/30/60-second
   jittered backoff, and stops on consent removal, block/deletion, capability
   rejection, or user cancellation.
+- The probing device reuses one attempt ID and one signed request across
+  retries, so a responder's offer cannot be invalidated by a concurrent retry.
+  The responder bounds its offer attempts instead of looping forever.
 - The Cloudflare Worker enforces pair capability tokens (hashed at rest),
   request/offer/answer role and type matching, token rotation, and per-token and
   per-IP rate limits while keeping the tokenless manual onboarding path.
 - After a reconnect the bridge is attached through webrtc_attach, which
   reannounces immediately and again after 2 and 6 seconds. The coordinator then
-  polls Reticulum path status and distinguishes path_not_ready from
-
-etwork_unavailable instead of declaring messaging ready at channel open.
+  polls Reticulum path status, distinguishes `path_not_ready` from
+  `network_unavailable`, and reports which one the connected state is in.
 - The contact panel exposes **Reconnect automatically**, **Allow direct IP
-  disclosure**, a status line (Waiting for peer, Reconnecting in Ns,
+  disclosure**, a ticking status line (Waiting for peer, Reconnecting in Ns,
   Connected, Peer offline, Manual reconnect required), and **Retry now**,
   **Stop**, and **Forget auto-reconnect**. No modal or contact-approval prompt is
   shown.
 
-Explicit limits and non-goals in 0.9.0:
+Explicit limits and non-goals in 0.9.1:
 
 - Reconnect runs only while the app is open and unlocked. Locking the app tears
   the coordinator down. There is no background service, tray keep-alive, push

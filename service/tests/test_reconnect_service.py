@@ -691,6 +691,86 @@ def test_reconnect_commands_are_dispatched(tmp_path: Path, mailbox: FakeMailbox)
         blair.close()
 
 
+def test_capability_for_an_unknown_contact_is_held_then_promoted(
+    tmp_path: Path, mailbox: FakeMailbox
+) -> None:
+    alex, _, alex_destination = _service(
+        tmp_path / "alex", "Alex", device_id="dev-aaaa-0001"
+    )
+    blair, _, blair_destination = _service(
+        tmp_path / "blair", "Blair", device_id="dev-bbbb-0002"
+    )
+    try:
+        _add_contact(blair, "contact-alex", alex._call_identity(), alex_destination)
+        capability = blair.reconnect_consent_set(
+            "contact-alex", True, True
+        )["capabilities"]
+        # Blair's capability arrives before Alex has a contact record for it
+        # (for example over the control channel, ahead of the LXMF request).
+        held = alex.reconnect_capabilities_store(capability)
+        assert held["pending"] is True
+        assert held["profile"] is None
+        assert alex.reconnect_profiles()["profiles"] == []
+
+        _add_contact(alex, "contact-blair", blair._call_identity(), blair_destination)
+        profiles = alex.reconnect_profiles()["profiles"]
+        assert len(profiles) == 1
+        assert profiles[0]["has_peer_capabilities"] is True
+        assert profiles[0]["peer_auto_reconnect"] is True
+        assert profiles[0]["peer_transports"] == ["webrtc"]
+        assert profiles[0]["peer_capabilities_issued_at"] > 0
+        assert alex.store.get("reconnect_pending_capability", blair_destination) is None
+    finally:
+        blair.close()
+
+
+def test_local_capability_metadata_is_explicit(
+    tmp_path: Path, mailbox: FakeMailbox
+) -> None:
+    alex, blair_id, blair, _ = _pair(tmp_path)
+    try:
+        result = alex.reconnect_consent_set(blair_id, True, True)
+        profile = result["profile"]
+        assert profile["transports"] == ["webrtc"]
+        assert profile["capabilities_issued_at"] > 0
+        assert profile["capabilities_expires_at"] > profile["capabilities_issued_at"]
+    finally:
+        blair.close()
+
+
+def test_pending_capability_is_promoted_on_approval(
+    tmp_path: Path, mailbox: FakeMailbox
+) -> None:
+    alex, _, alex_destination = _service(
+        tmp_path / "alex", "Alex", device_id="dev-aaaa-0001"
+    )
+    blair, _, blair_destination = _service(
+        tmp_path / "blair", "Blair", device_id="dev-bbbb-0002"
+    )
+    try:
+        _add_contact(blair, "contact-alex", alex._call_identity(), alex_destination)
+        capability = blair.reconnect_consent_set(
+            "contact-alex", True, True
+        )["capabilities"]
+        assert alex.reconnect_capabilities_store(capability)["pending"] is True
+
+        _add_contact(
+            alex,
+            "contact-blair",
+            blair._call_identity(),
+            blair_destination,
+            trust=TrustState.PENDING_REQUEST,
+        )
+        approved = alex.approve_request("contact-blair")
+        assert "reconnect_capabilities" in approved
+        profiles = alex.reconnect_profiles()["profiles"]
+        assert profiles[0]["has_peer_capabilities"] is True
+        assert profiles[0]["peer_auto_reconnect"] is True
+        assert alex.store.get("reconnect_pending_capability", blair_destination) is None
+    finally:
+        blair.close()
+
+
 def test_invalid_mailbox_token_is_rejected_by_the_transport() -> None:
     from mesh_chat import signal_mailbox
 

@@ -171,6 +171,7 @@ export function reconnectStatusDetail(entry: ReconnectEntry | undefined): string
   }
   if (entry.state === "peer_offline") return "The peer has not answered. They may be offline.";
   if (entry.state === "connected") {
+    if (entry.detail) return entry.detail;
     return entry.path === "relayed"
       ? "Connected over the community relay."
       : entry.path === "direct"
@@ -231,6 +232,7 @@ export class ReconnectCoordinator {
   private running = false;
   private generation = 0;
   private peers = new Map<string, CoordinatorPeer>();
+  private stoppedProfiles = new Set<string>();
   private active = false;
 
   constructor(deps: ReconnectCoordinatorDeps) {
@@ -254,6 +256,7 @@ export class ReconnectCoordinator {
     if (this.active) return;
     this.active = true;
     this.running = true;
+    this.stoppedProfiles.clear();
     this.generation += 1;
     this.emit();
     void this.run(this.generation);
@@ -277,6 +280,7 @@ export class ReconnectCoordinator {
     this.closePeers(contactId);
     for (const entry of Object.values(this.entries)) {
       if (contactId && entry.contactId !== contactId) continue;
+      this.stoppedProfiles.add(entry.profileId);
       entry.state = "stopped";
       entry.detail = "Stopped by you";
       entry.nextAttemptAt = null;
@@ -297,6 +301,7 @@ export class ReconnectCoordinator {
     this.running = true;
     for (const entry of Object.values(this.entries)) {
       if (contactId && entry.contactId !== contactId) continue;
+      this.stoppedProfiles.delete(entry.profileId);
       entry.state = "waiting_for_peer";
       entry.detail = "Retrying now";
       entry.attempts = 0;
@@ -370,6 +375,10 @@ export class ReconnectCoordinator {
     detail = "",
     attemptId?: string,
   ): void {
+    if (this.stoppedProfiles.has(profile.id) && state !== "stopped") {
+      // A late await must not overwrite an explicit stop.
+      return;
+    }
     const entry = this.entries[profile.id] ?? {
       profileId: profile.id,
       contactId: profile.contact_id,
@@ -478,7 +487,7 @@ export class ReconnectCoordinator {
     peer: CoordinatorPeer,
     profile: ReconnectProfile,
     generation: number,
-  ): Promise<WebRTCSessionPath> {
+  ): Promise<{ path: WebRTCSessionPath; pathState: "ready" | "pending" | "unavailable" | "unknown" }> {
     this.setState(profile, "connecting", "Opening the DataChannel");
     await peer.open();
     await this.deps.attach(peer, profile);
@@ -488,23 +497,47 @@ export class ReconnectCoordinator {
       entry.path = path;
       this.emit();
     }
+    let pathState: "ready" | "pending" | "unavailable" | "unknown" = "unknown";
     if (this.deps.pathStatus) {
       // Attaching the bridge announces the interface; Reticulum may need a
       // moment to learn a path. Report the distinction instead of pretending
       // messaging is ready the instant the DataChannel opens.
+      pathState = "pending";
       const deadline = this.clock() + PATH_TIMEOUT_MS;
       while (this.clock() < deadline && generation === this.generation) {
         try {
           const status = await this.deps.pathStatus(profile.contact_id);
-          if (status.has_path) break;
-          if (status.state === "network_unavailable") break;
+          if (status.has_path) {
+            pathState = "ready";
+            break;
+          }
+          if (status.state === "network_unavailable") {
+            pathState = "unavailable";
+            break;
+          }
         } catch {
+          pathState = "unknown";
           break;
         }
         if (!(await this.wait(1000, generation))) break;
       }
     }
-    return path;
+    return { path, pathState };
+  }
+
+  private connectedDetail(result: {
+    pathState: "ready" | "pending" | "unavailable" | "unknown";
+  }): string {
+    switch (result.pathState) {
+      case "ready":
+        return "Fresh WebRTC transport attached; Reticulum path ready.";
+      case "pending":
+        return "Fresh WebRTC transport attached; waiting for a Reticulum path.";
+      case "unavailable":
+        return "Fresh WebRTC transport attached; Reticulum networking is unavailable.";
+      default:
+        return "Fresh WebRTC transport attached.";
+    }
   }
 
   private async runProber(
@@ -512,32 +545,71 @@ export class ReconnectCoordinator {
     generation: number,
   ): Promise<void> {
     let attempt = 0;
-    while (this.running && generation === this.generation) {
+    // One attempt id and one signed request are reused across retries. The
+    // spec allows a request to be repeated; regenerating it on every retry
+    // races the responder's offer and makes the two sides chase each other.
+    let attemptId = makeAttemptId();
+    let requestDocument = "";
+    while (
+      this.running &&
+      generation === this.generation &&
+      !this.stoppedProfiles.has(profile.id)
+    ) {
       if (!this.isReady(profile)) return;
       this.setState(profile, "probing", "Publishing a signed reconnect request");
       let peer: CoordinatorPeer | null = null;
-      const attemptId = makeAttemptId();
       try {
-        const ice = await this.deps.ice(profile);
-        peer = this.deps.createPeer(ice, "answer");
-        this.peers.set(profile.id, peer);
-        const request = await this.deps.requestCreate(profile.contact_id, attemptId);
-        await this.deps.publish(profile.id, request.document, "request");
+        // Authorization and consent are checked before any peer connection is
+        // allocated: the signed request is created first, and the peer's offer
+        // is verified before an RTCPeerConnection exists.
+        if (!requestDocument) {
+          requestDocument = (
+            await this.deps.requestCreate(profile.contact_id, attemptId)
+          ).document;
+        }
+        await this.deps.publish(profile.id, requestDocument, "request");
+        let offer: { sdp: string; attempt_id: string } | null = null;
+        const verifiedOffer: { value: { sdp: string; attempt_id: string } | null } = {
+          value: null,
+        };
         const offerDocument = await this.poll(
           profile,
           "offer",
           REQUEST_POLL_MS,
           generation,
           async (document) => {
-            const verified = await this.deps.verifyOffer(document);
-            return verified.attempt_id === attemptId;
+            try {
+              const verified = await this.deps.verifyOffer(document);
+              if (verified.attempt_id !== attemptId) return false;
+              verifiedOffer.value = verified;
+              return true;
+            } catch (reason) {
+              if (
+                ["mailbox_unauthorized", "contact_not_approved", "identity_mismatch"].includes(
+                  errorCode(reason),
+                )
+              ) {
+                throw reason;
+              }
+              return false;
+            }
           },
         );
-        if (!offerDocument) {
+        offer = verifiedOffer.value;
+        if (!offerDocument || !offer) {
+          if (
+            !this.running ||
+            generation !== this.generation ||
+            this.stoppedProfiles.has(profile.id)
+          ) {
+            return;
+          }
           this.setState(profile, "waiting_for_peer", "The peer has not answered yet");
           throw new Error("offer_timeout");
         }
-        const offer = await this.deps.verifyOffer(offerDocument);
+        const ice = await this.deps.ice(profile);
+        peer = this.deps.createPeer(ice, "answer");
+        this.peers.set(profile.id, peer);
         const sdp = await peer.createAnswer(offer.sdp);
         const answer = await this.deps.answerCreate(
           profile.contact_id,
@@ -546,11 +618,15 @@ export class ReconnectCoordinator {
           this.deps.fingerprint?.(sdp) ?? fingerprintOf(sdp),
         );
         await this.deps.publish(profile.id, answer.document, "answer");
-        const path = await this.afterOpen(peer, profile, generation);
-        this.setState(profile, "connected", "Fresh WebRTC transport attached");
+        const attached = await this.afterOpen(peer, profile, generation);
+        if (!this.running || generation !== this.generation) {
+          peer.close();
+          this.peers.delete(profile.id);
+          return;
+        }
+        this.setState(profile, "connected", this.connectedDetail(attached));
         this.peers.delete(profile.id);
         // A connected profile keeps its transport until the user disconnects.
-        void path;
         return;
       } catch (reason) {
         peer?.close();
@@ -568,6 +644,12 @@ export class ReconnectCoordinator {
         ) {
           this.setState(profile, "manual_required", code);
           return;
+        }
+        if (code === "invalid_request") {
+          // A rejected or expired request needs a fresh signature, not a
+          // fresh peer connection.
+          requestDocument = "";
+          attemptId = makeAttemptId();
         }
         attempt += 1;
         const entry = this.entries[profile.id];
@@ -591,7 +673,12 @@ export class ReconnectCoordinator {
     profile: ReconnectProfile,
     generation: number,
   ): Promise<void> {
-    while (this.running && generation === this.generation) {
+    let attempt = 0;
+    while (
+      this.running &&
+      generation === this.generation &&
+      !this.stoppedProfiles.has(profile.id)
+    ) {
       if (!this.isReady(profile)) return;
       this.setState(profile, "waiting_for_peer", "Waiting for a signed reconnect request");
       let requestDocument: string | null = null;
@@ -606,14 +693,24 @@ export class ReconnectCoordinator {
         this.setState(profile, "manual_required", safeMessage(reason));
         return;
       }
-      if (!requestDocument) return;
+      if (!requestDocument) {
+        if (
+          !this.running ||
+          generation !== this.generation ||
+          this.stoppedProfiles.has(profile.id)
+        ) {
+          return;
+        }
+        continue;
+      }
       let peer: CoordinatorPeer | null = null;
       try {
         const verified = await this.deps.verifyRequest(requestDocument);
         if (verified.contact_id !== profile.contact_id) {
-          // A request for another contact in this pair's mailbox is a
-          // protocol error, not something to act on.
-          continue;
+          // A request for another contact in this pair's mailbox is a protocol
+          // error, not something to answer.
+          this.setState(profile, "manual_required", "request_for_another_contact");
+          return;
         }
         const ice = await this.deps.ice(profile);
         peer = this.deps.createPeer(ice, "offer");
@@ -627,22 +724,57 @@ export class ReconnectCoordinator {
         );
         await this.deps.publish(profile.id, offer.document, "offer");
         this.setState(profile, "answer_pending", "Waiting for the answer");
+        let answer: { sdp: string } | null = null;
+        const verifiedAnswer: { value: { sdp: string } | null } = { value: null };
         const answerDocument = await this.poll(
           profile,
           "answer",
           ANSWER_POLL_MS,
           generation,
+          async (document) => {
+            try {
+              const value = await this.deps.verifyAnswer(document, offer.document);
+              verifiedAnswer.value = value;
+              return true;
+            } catch (reason) {
+              if (
+                ["mailbox_unauthorized", "contact_not_approved"].includes(
+                  errorCode(reason),
+                )
+              ) {
+                throw reason;
+              }
+              return false;
+            }
+          },
         );
-        if (!answerDocument) {
-          this.setState(profile, "waiting_for_peer", "The peer did not answer the offer");
+        answer = verifiedAnswer.value;
+        if (!answerDocument || !answer) {
           peer.close();
           this.peers.delete(profile.id);
+          if (
+            !this.running ||
+            generation !== this.generation ||
+            this.stoppedProfiles.has(profile.id)
+          ) {
+            return;
+          }
+          attempt += 1;
+          if (attempt > MAX_ATTEMPTS) {
+            this.setState(profile, "peer_offline", "The peer did not answer the offer");
+            return;
+          }
+          this.setState(profile, "waiting_for_peer", "The peer did not answer the offer");
           continue;
         }
-        const answer = await this.deps.verifyAnswer(answerDocument, offer.document);
         await peer.applyAnswer(answer.sdp);
-        await this.afterOpen(peer, profile, generation);
-        this.setState(profile, "connected", "Fresh WebRTC transport attached");
+        const attached = await this.afterOpen(peer, profile, generation);
+        if (!this.running || generation !== this.generation) {
+          peer.close();
+          this.peers.delete(profile.id);
+          return;
+        }
+        this.setState(profile, "connected", this.connectedDetail(attached));
         this.peers.delete(profile.id);
         return;
       } catch (reason) {
@@ -660,6 +792,11 @@ export class ReconnectCoordinator {
         }
         if (!this.isReady(profile)) {
           this.setState(profile, "manual_required", "consent_removed");
+          return;
+        }
+        attempt += 1;
+        if (attempt > MAX_ATTEMPTS) {
+          this.setState(profile, "peer_offline", "No answer after repeated attempts");
           return;
         }
         const delay = code === "mailbox_rate_limited" ? 60000 : this.backoff(0);

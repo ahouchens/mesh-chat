@@ -764,6 +764,7 @@ class MeshChatService(
             # a locally deleted conversation without replacing its trust or
             # cryptographic identity.
             self._unhide_conversation("direct", existing["id"])
+            self._reconnect_promote_pending(existing["destination_hash"])
             self._changed()
             return {
                 **existing,
@@ -794,6 +795,7 @@ class MeshChatService(
             self.network.remember_contact(invitation.public_identity, invitation.destination_hash)
         self._apply_contact_hints(contact)
         self._ensure_contact_request(contact)
+        self._reconnect_promote_pending(contact["destination_hash"])
         self._changed()
         return {
             **contact,
@@ -1363,6 +1365,9 @@ class MeshChatService(
         # `sending`, then immediately submit the same durable packet again.
         self._flush_contact(contact_id)
         self._changed()
+        # A capability received before the contact request arrived is held
+        # pending; approval is the point where it becomes usable.
+        self._reconnect_promote_pending(contact["destination_hash"])
         # The joiner knows this destination from the signed invitation, so an
         # approved contact is exactly when both sides can exchange signed
         # reconnect capabilities. Approval itself never enables reconnect.

@@ -4909,7 +4909,13 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceChannelIn
         const session = getWebRTCSession();
         const control = session?.control;
         if (accept) updateWebRTCSessionContact(contact.id);
-        if (session?.approvalPending && control?.readyState === "open") {
+        // Send the approval whenever the channel is bound to this contact,
+        // even if the onboarding dialog was closed and approvalPending was
+        // cleared. Capability exchange must not depend on dialog lifetime.
+        if (
+          (session?.approvalPending || session?.contactId === contact.id) &&
+          control?.readyState === "open"
+        ) {
           control.send(JSON.stringify({
             type: accept ? "invitation_approved" : "invitation_denied",
             ...(accept && approval.reconnect_capabilities

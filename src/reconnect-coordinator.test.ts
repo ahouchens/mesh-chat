@@ -46,7 +46,7 @@ function profile(overrides: Partial<ReconnectProfile> = {}): ReconnectProfile {
   };
 }
 
-function fakePeer(role: "offer" | "answer") {
+function fakePeer(role: "offer" | "answer", failFirstOpen = false) {
   const peer = {
     role,
     offers: 0,
@@ -54,6 +54,7 @@ function fakePeer(role: "offer" | "answer") {
     applied: 0,
     opened: 0,
     closed: 0,
+    failFirstOpen,
     createOffer: async () => {
       peer.offers += 1;
       return SDP;
@@ -67,6 +68,9 @@ function fakePeer(role: "offer" | "answer") {
     },
     open: async () => {
       peer.opened += 1;
+      if (failFirstOpen && peer.opened === 1) {
+        throw new Error("network switched");
+      }
       return { readyState: "open" };
     },
     path: async () => "direct" as const,
@@ -96,6 +100,7 @@ function harness(options: {
   verifyAnswer?: (document: string) => Promise<{ sdp: string; attempt_id: string }>;
   pathStatus?: () => Promise<{ has_path: boolean; state: string; reason: string | null }>;
   hasSession?: () => boolean;
+  failFirstOpen?: boolean;
 }): Harness {
   const mailbox = options.mailbox ?? new Map<string, string>();
   const published: Harness["published"] = [];
@@ -103,6 +108,7 @@ function harness(options: {
   const peers: Array<ReturnType<typeof fakePeer>> = [];
   const clock = { value: 1_800_000_000_000 };
   let attached = 0;
+  let sleepCount = 0;
 
   const deps: ReconnectCoordinatorDeps = {
     profiles: async () => ({
@@ -163,7 +169,7 @@ function harness(options: {
     },
     ice: async () => ({ iceServers: [], iceTransportPolicy: "all" }),
     createPeer: (_ice, role) => {
-      const peer = fakePeer(role);
+      const peer = fakePeer(role, Boolean(options.failFirstOpen && peers.length === 0));
       peers.push(peer);
       return peer as CoordinatorPeer;
     },
@@ -176,12 +182,21 @@ function harness(options: {
     random: () => 0.5,
     sleep: async (ms: number) => {
       clock.value += ms;
-      await Promise.resolve();
+      sleepCount += 1;
+      // Yield to the macrotask queue occasionally so two coordinators sharing
+      // a fake clock cannot starve each other's polling loops.
+      if (sleepCount % 32 === 0) {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      } else {
+        await Promise.resolve();
+      }
     },
     fingerprint: () => "sha-256 " + "AB:".repeat(31) + "AB",
   };
+  const coordinator = new ReconnectCoordinator(deps);
+  coordinators.push(coordinator);
   return {
-    coordinator: new ReconnectCoordinator(deps),
+    coordinator,
     mailbox,
     published,
     statuses,
@@ -193,7 +208,16 @@ function harness(options: {
   };
 }
 
-afterEach(() => {
+const coordinators: ReconnectCoordinator[] = [];
+
+afterEach(async () => {
+  // Stop every coordinator so an intentionally passive "waiting for peer"
+  // loop cannot keep running (and starving the runner) after its test.
+  await Promise.all(
+    coordinators.splice(0).map((coordinator) =>
+      coordinator.stop().catch(() => undefined),
+    ),
+  );
   vi.useRealTimers();
 });
 
@@ -341,6 +365,38 @@ describe("automatic reconnect coordinator", () => {
     expect(rejected.coordinator.snapshot().entries["profile-1"]?.detail).toBe(
       "mailbox_unauthorized",
     );
+    // The offer was rejected before any RTCPeerConnection was allocated.
+    expect(rejected.peers).toHaveLength(0);
+  });
+
+  it("retries with a fresh transport after a network-path failure", async () => {
+    const mailbox = new Map<string, string>();
+    const retried = harness({
+      profiles: [profile()],
+      mailbox,
+      failFirstOpen: true,
+      onPublish: (profileId, role, document) => {
+        if (role !== "request") return;
+        mailbox.set(
+          `${profileId}/offer`,
+          JSON.stringify({
+            type: "webrtc_reconnect_offer",
+            attempt_id: (JSON.parse(document) as { attempt_id: string }).attempt_id,
+          }),
+        );
+      },
+    });
+    await retried.coordinator.start();
+    await vi.waitFor(
+      () => {
+        expect(retried.coordinator.snapshot().entries["profile-1"]?.state).toBe("connected");
+      },
+      { timeout: 6000 },
+    );
+    expect(retried.peers.length).toBeGreaterThanOrEqual(2);
+    expect(retried.peers[0].opened).toBe(1);
+    expect(retried.published.filter((item) => item.role === "request").length).toBeGreaterThanOrEqual(2);
+    expect(retried.statuses).toContain("retry_wait");
   });
 
   it("stops publishing after the user stops the attempt", async () => {
