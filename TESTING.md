@@ -431,6 +431,14 @@ previews.
 - WebRTC transport close is exception-safe.
 
 Validation: TypeScript and **242 frontend tests** passed.
+GitHub Actions [run 39705263840](https://github.com/ahouchens/mesh-chat/actions/runs/39705263840)
+passed. Release: <https://github.com/ahouchens/mesh-chat/releases/tag/v0.8.2>.
+
+| Artifact | SHA-256 |
+|---|---|
+| `Mesh-Chat_0.8.2_x64-setup.exe` | `98401dc55cb6e4cbf72181c734bbcdbe3e4d07cc8c5c4f4ee003fd1636cc462d` |
+| `Mesh-Chat_0.8.2_x64_en-US.msi` | `a8e8c219cad37344a7bdc0bfcb23efa4561a027fc66da6bc557c0822a03271c8` |
+| `mesh-chat-0.8.2-android-arm64-release.apk` | `a388ef44b409fca9ceb11664c7ed445190063982b81931a81cc6f8a767116562` |
 
 ## Pairing resume, 2026-10-21
 
