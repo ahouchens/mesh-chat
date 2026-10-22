@@ -64,6 +64,22 @@ The official report is
 Gates: `automated: passed`; `physical_device: not-requested`;
 `production_signing: not-requested`.
 
+Publication: GitHub Actions
+[CI run 39861393302](https://github.com/ahouchens/mesh-chat/actions/runs/39861393302)
+and
+[Release run 39861398313](https://github.com/ahouchens/mesh-chat/actions/runs/39861398313)
+passed on the first attempt for `v0.9.14`. Release:
+<https://github.com/ahouchens/mesh-chat/releases/tag/v0.9.14>.
+
+| Artifact | Bytes | SHA-256 (verified by re-download) |
+|---|---:|---|
+| `Mesh-Chat_0.9.14_x64-setup.exe` | 27,894,937 | `1755c5e40048b30bca6767ed1d7ed8a8ce3d0704750cbc0aac1f23465d9f1c1b` |
+| `Mesh-Chat_0.9.14_x64_en-US.msi` | 29,888,512 | `3a9700b35957303c168db9458b4ebcb295847bb3e8629414b72d4cae4953828b` |
+| `mesh-chat-0.9.14-android-arm64-release.apk` | 34,387,742 | `52af9ae8ab5a47bc4ea5305f354db36746cae42a15212fc179f6298883c21a86` |
+| `SHA256SUMS.txt` | 303 | `ea72721ed8ce0016b806bee6543f56d4cc9b1427ef77a0a21dbee62c58edea34` |
+
+The Android APK is debug-signed; it is not a production or upgrade identity.
+
 ## Owner-offline admission grants, owner-return stage 0.9.13
 
 Phase 5.2c adds owner-return normalization.
