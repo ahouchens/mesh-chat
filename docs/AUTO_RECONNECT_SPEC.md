@@ -429,5 +429,10 @@ Explicit limits and non-goals in 0.9.0:
 - Workspace authority and membership are never changed by reconnect. Workspace
   invitations carry capabilities only when a peer destination is supplied;
   otherwise the contact capability remains the transport-level consent object.
+- No SDP, ICE credential, DTLS key, or chat plaintext is persisted locally or
+  logged. The rendezvous mailbox necessarily holds the signed offer/answer
+  envelope, including the ephemeral SDP it carries, for its ten-minute TTL; that
+  is signaling state, not chat state, and it is never reused for a later
+  connection.
 - No physical-device, NAT/TURN, or iOS/Android lifecycle testing was performed
   for this change.

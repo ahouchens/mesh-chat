@@ -76,6 +76,13 @@ older than the project minimum. The run is recorded in
 failures previously reported in `test_direct_setup_pipeline.py` did not
 reproduce in this run; the 46 skips are opt-in native/network harnesses.
 
+The official pipeline report is
+`dist/reports/0.9.0/20261022T024828Z-54433a88/report.json` (git-ignored):
+`status: passed`, 304.822 s, report SHA-256
+`9c7b833bfcab078f6334b93ef521ee9a78b6184bcf7647e7fbaeb3cbdd97e0b8`.
+Gates: `automated: passed`; `physical_device: not-requested`;
+`production_signing: not-requested`.
+
 Not performed for this change: a desktop or Android package build, two physical
 devices, real NAT/TURN traversal, network switching, Android/iOS lifecycle or
 battery behavior, and any claim that reconnect works while an app is closed.
