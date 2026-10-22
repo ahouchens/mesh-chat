@@ -83,11 +83,28 @@ The official pipeline report is
 Gates: `automated: passed`; `physical_device: not-requested`;
 `production_signing: not-requested`.
 
-Not performed for this change: a desktop or Android package build, two physical
-devices, real NAT/TURN traversal, network switching, Android/iOS lifecycle or
-battery behavior, and any claim that reconnect works while an app is closed.
-No release artifact was published from this environment; version metadata is
-0.9.0 and the source tree is the release candidate.
+Publication: GitHub Actions
+[CI run 39713907074](https://github.com/ahouchens/mesh-chat/actions/runs/39713907074)
+and
+[Release run 39713914888](https://github.com/ahouchens/mesh-chat/actions/runs/39713914888)
+passed after retries. The early attempts failed before checkout in the
+`Set up pnpm and Node.js` step with
+`Could not reach https://registry.npmjs.org/... : timed out after 30s`; the same
+step succeeded on retry and every test/build/publish job then passed. This was a
+runner-to-registry fetch timeout, not a source or test failure. Release:
+<https://github.com/ahouchens/mesh-chat/releases/tag/v0.9.0>.
+
+| Artifact | Bytes | SHA-256 (verified by re-download) |
+|---|---:|---|
+| `Mesh-Chat_0.9.0_x64-setup.exe` | 27,831,976 | `5c805e678bd2ae43fe2ccd7d8d788d266222bc6b2fc6b99479b9647edd186a89` |
+| `Mesh-Chat_0.9.0_x64_en-US.msi` | 29,822,976 | `d8ee753f9870a99688616a534a6a54f7f90fcc43a2d2998af8188237c5589ad5` |
+| `mesh-chat-0.9.0-android-arm64-release.apk` | 34,302,180 | `3516527a138ac13e866cd8433b9cddc69f6e4ebd5a185ac975d62eb58913eed8` |
+| `SHA256SUMS.txt` | 300 | `07cdecb3f104213ba93582b1fd9c54967e75f6324c68f0b386d52675f3a81705` |
+
+Not performed for this change: installer launch, two physical devices, real
+NAT/TURN traversal, network switching, Android/iOS lifecycle or battery
+behavior, and any claim that reconnect works while an app is closed. The packages
+are CI-built release artifacts, not device-tested builds.
 
 ## Copied workspace invitation regression, 2026-10-18
 
