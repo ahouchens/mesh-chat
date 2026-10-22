@@ -380,6 +380,7 @@ Desktop installers must be built on their target operating system. Android build
 | [PROTOCOL.md](PROTOCOL.md) | Exact signed documents, LXMF fields, limits, delivery evidence |
 | [WORKSPACE_SPEC.md](WORKSPACE_SPEC.md) | Product scope, roles, requirements, and release gates for workspaces |
 | [docs/WORKSPACE_CONNECTIVITY_SPEC.md](docs/WORKSPACE_CONNECTIVITY_SPEC.md) | Workspace reachability, signed access recommendations, scoped reconnect, and the one-hop helper |
+| [docs/PHYSICAL_QA_SCENARIOS.md](docs/PHYSICAL_QA_SCENARIOS.md) | Physical-device scenarios and evidence gates for reconnect, helper, owner-offline admission, calls, WebRTC invitations, Android, and packaging |
 | [THREAT_MODEL.md](THREAT_MODEL.md) | Adversaries, controls, metadata leakage, and open security blockers |
 | [TESTING.md](TESTING.md) | Recorded verification, acceptance matrix, and exact artifact evidence |
 | [docs/RELEASES.md](docs/RELEASES.md) | Release-by-release notes and installation history for earlier versions |

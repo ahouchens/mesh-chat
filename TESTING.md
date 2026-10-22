@@ -20,7 +20,9 @@ this is controlled evidence, not router reachability. Linux runs under the sysca
 audit and retains endpoint-free provenance. Never build or run this native harness
 locally. Frontend/package/native tests and Windows/Android builds run in Actions.
 Physical execution follows the
-[Phase 2 device checklist](docs/DIRECT_CONNECTIVITY_PHASE2_DEVICE_TEST.md).
+[Phase 2 device checklist](docs/DIRECT_CONNECTIVITY_PHASE2_DEVICE_TEST.md). The
+full physical scenario matrix for versions through 0.9.15 is in the
+[Physical QA scenarios](docs/PHYSICAL_QA_SCENARIOS.md).
 
 ## WebRTC workspace invitation and Phase 5 closure, 0.9.15
 
