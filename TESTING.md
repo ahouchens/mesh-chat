@@ -422,6 +422,17 @@ An intermediate 0.2.74 build failed five frontend assertions because normal
 invitations carried `i2p_consent: false`; 0.2.75 sends the field only for I2P
 previews.
 
+## Reconnect capabilities, 2026-10-21
+
+- Added signed `ConnectionCapabilities` with transport list, mailbox
+  capability, auto-reconnect/IP-disclosure consent, relay scope, and expiry.
+- Added canonical signature verification, expected-signer binding, tamper
+  rejection, and strict mailbox/expiry validation.
+- Added deterministic initiator and bounded replay-cache primitives.
+- **4** reconnect tests passed.
+
+Not yet wired to invitations, service persistence, supervisor, or UI.
+
 ## Transport choices and pairing resume, 0.8.2
 
 - Connect exposes Direct TCP, approved access point, WebRTC, and I2P choices.

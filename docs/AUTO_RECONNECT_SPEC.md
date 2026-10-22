@@ -1,8 +1,10 @@
 # Automatic reconnect and signaling capabilities
 
-Status: proposed. This spec replaces the “Phase 5 — transport fallback” hand-wave
-in `CONNECTION_UX_ARCHITECTURE.md` with a concrete design. It does not claim that
-automatic reconnect is already implemented.
+Status: proposed. Phase A primitives are implemented in
+`service/src/mesh_chat/reconnect.py`; supervisor, transport, mailbox, and UI
+integration remain. This spec replaces the “Phase 5 — transport fallback”
+hand-wave in `CONNECTION_UX_ARCHITECTURE.md` with a concrete design. It does
+not claim that automatic reconnect is already implemented.
 
 ## 1. Purpose
 
@@ -294,9 +296,19 @@ Manual/device:
 
 ### Phase A — capabilities and consent
 
-- Add signed `ConnectionCapabilities` to invitations.
-- Persist auto-reconnect and IP-disclosure consent per contact/device.
-- Default existing contacts to off.
+Implemented primitives:
+
+- signed `ConnectionCapabilities` creation and verification;
+- transport list, mailbox capability, consent flags, scope, and expiry;
+- replay cache and deterministic initiator helper;
+- service tests for signing, tampering, wrong signer, invalid mailbox/expiry,
+  glare preference, and replay.
+
+Still open:
+
+- attach capabilities to real invitations;
+- persist auto-reconnect and IP-disclosure consent per contact/device;
+- default existing contacts to off.
 
 ### Phase B — Reticulum reconnect
 

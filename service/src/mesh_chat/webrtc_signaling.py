@@ -529,6 +529,12 @@ def _keys(kind: str) -> set[str]:
             "v", "type", "call_id", "role", "generation", "sdp", "dtls_fingerprint",
             "created_at", "expires_at", "signer_destination", "signer_public_key", "signature",
         }
+    if kind == "connection_capabilities":
+        return {
+            "v", "type", "peer_destination", "device_id", "transports",
+            "auto_reconnect", "allow_direct_ip_disclosure", "relay_consent_scope",
+            "mailbox", "issued_at", "expires_at", "signer_public_key", "signature",
+        }
     if kind == "webrtc_onboarding_offer":
         return {
             "v", "type", "session_id", "sdp", "dtls_fingerprint",
