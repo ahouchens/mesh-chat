@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import threading
 from types import SimpleNamespace
 
@@ -48,3 +49,31 @@ def test_update_call_settings_accepts_broker_consent_payload() -> None:
         },
     )
     assert enabled["signal_mailbox_url"] == "https://signal.example.workers.dev"
+
+
+def test_signal_commands_require_configured_mailbox(monkeypatch) -> None:
+    service = object.__new__(MeshChatService)
+    service._call_settings = CallSettings.from_dict(
+        {
+            "stun_urls": ["stun:example.org"],
+            "signal_mailbox_url": "https://signal.example.workers.dev",
+            "relay_only": False,
+        }
+    )
+    calls: list[tuple[str, str, str]] = []
+    monkeypatch.setattr(
+        "mesh_chat.service.publish_signal",
+        lambda base, document, role: calls.append(("publish", base, role)) or {"ok": True},
+    )
+    monkeypatch.setattr(
+        "mesh_chat.service.fetch_signal",
+        lambda base, session, role: calls.append(("fetch", base, role)) or {"ok": True},
+    )
+
+    document = json.dumps({"session_id": "a" * 24})
+    assert service._execute("signal_publish", {"document": document, "role": "offer"}) == {"ok": True}
+    assert service._execute("signal_fetch", {"session_id": "a" * 24, "role": "answer"}) == {"ok": True}
+    assert calls == [
+        ("publish", "https://signal.example.workers.dev", "offer"),
+        ("fetch", "https://signal.example.workers.dev", "answer"),
+    ]
