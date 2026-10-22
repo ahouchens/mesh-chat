@@ -3,9 +3,10 @@ main = "worker.js"
 compatibility_date = "2026-10-21"
 workers_dev = true
 
-# Create a KV namespace and replace the placeholder:
-#   wrangler kv namespace create SIGNALS
-# Then paste its id below and deploy with `wrangler deploy`.
-[[kv_namespaces]]
-binding = "SIGNALS"
-id = "REPLACE_WITH_KV_NAMESPACE_ID"
+[[durable_objects.bindings]]
+name = "SIGNALS"
+class_name = "SignalRoom"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["SignalRoom"]

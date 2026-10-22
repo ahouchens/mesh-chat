@@ -6,19 +6,20 @@ online. It is **not a message store** and does not carry chat traffic.
 - `PUT /signal/<session>/offer` stores a signed offer for 10 minutes.
 - `PUT /signal/<session>/answer` stores a signed answer for 10 minutes.
 - `GET /signal/<session>/offer|answer` returns the signed document.
-- Documents are canonical signed JSON; the Worker only checks the session ID
-  and size.
-- KV TTL deletes both entries automatically.
+- Each session is a Durable Object with strongly consistent storage and an
+  alarm that deletes expired documents.
+- Documents are canonical signed JSON; the Worker checks type and size.
 
 The relay/Worker still cannot approve contacts or read message plaintext.
 
 ## Deploy
 
 ```bash
-npx wrangler kv namespace create SIGNALS
-# paste the returned id into wrangler.toml
 npx wrangler deploy
 ```
+
+No KV namespace is required. The Worker creates one Durable Object per
+signaling session. Wrangler creates the SQLite-backed class on first deploy.
 
 The endpoint is:
 

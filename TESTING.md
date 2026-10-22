@@ -422,6 +422,18 @@ An intermediate 0.2.74 build failed five frontend assertions because normal
 invitations carried `i2p_consent: false`; 0.2.75 sends the field only for I2P
 previews.
 
+## Durable Object signaling mailbox, 2026-10-21
+
+- Replaced the KV signaling mailbox with one Durable Object per session.
+- Strongly consistent offer/answer storage.
+- Alarm-based expiry removes documents after ten minutes.
+- Worker checks document type and size.
+- No KV namespace required; `wrangler deploy` creates the SQLite-backed class.
+- Worker syntax check passed.
+
+This is mailbox infrastructure; app-side reconnect supervisor integration is
+still pending.
+
 ## Reconnect capabilities, 2026-10-21
 
 - Added signed `ConnectionCapabilities` with transport list, mailbox
