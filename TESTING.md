@@ -422,6 +422,16 @@ An intermediate 0.2.74 build failed five frontend assertions because normal
 invitations carried `i2p_consent: false`; 0.2.75 sends the field only for I2P
 previews.
 
+## Transport choices and pairing resume, 0.8.2
+
+- Connect exposes Direct TCP, approved access point, WebRTC, and I2P choices.
+- Direct/I2P open the invitation flow with a matching initial connection mode.
+- Mailbox pairing codes persist for ten minutes and can be resumed after a
+  restart.
+- WebRTC transport close is exception-safe.
+
+Validation: TypeScript and **242 frontend tests** passed.
+
 ## Pairing resume, 2026-10-21
 
 - Mailbox pairing codes are persisted for ten minutes.

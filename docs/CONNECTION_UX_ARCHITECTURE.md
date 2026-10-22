@@ -234,11 +234,17 @@ Implemented in 0.7.0:
 
 ### Phase 5 — transport fallback
 
-Partial:
+Implemented for the supported paths:
 
-- Direct → TURN retry and invitation fallback are implemented.
-- Direct TCP/access-point/I2P adapters and true resume are not.
-- Reconnect and resume endpoint behavior remains open.
+- Direct → TURN selection is handled by ICE candidate pairing; a relay-only
+  policy remains an explicit setting.
+- Relay consent and invitation fallback are available from the failure state.
+- A pending joiner-side mailbox pairing can be resumed for ten minutes after
+  a restart.
+- Reconnect and diagnostics actions are available from the connection card.
+
+Not implemented: live WebRTC session migration across app restarts, which
+requires both peers to renegotiate with a new peer connection.
 
 ## 8. Acceptance criteria
 
