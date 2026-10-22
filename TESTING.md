@@ -422,6 +422,22 @@ An intermediate 0.2.74 build failed five frontend assertions because normal
 invitations carried `i2p_consent: false`; 0.2.75 sends the field only for I2P
 previews.
 
+## Connection fixes and entry consolidation, 0.8.1
+
+- Removed the sidebar New chat button; invitations start at Connect.
+- Removed the legacy WebRTC bridge option from invitation forms.
+- Fixed mailbox settings persistence and relay-consent preservation.
+- Gated approval acknowledgements on the pending WebRTC session.
+- Made mailbox publish best-effort, reset stale pairing codes, and closed the
+  control channel during cleanup.
+- Synchronized an open offerer dialog after owner approval.
+- Added service regression coverage for mailbox settings and publish/fetch.
+
+Validation: TypeScript, **237 frontend tests**, and signal/settings tests
+passed. The full service suite retains six pre-existing
+`test_direct_setup_pipeline.py` workspace-admission failures, reproduced on
+the 0.8.0 baseline.
+
 ## Connect entry consolidation, 2026-10-21
 
 - Removed the redundant sidebar **New chat** button; invitation entry now
