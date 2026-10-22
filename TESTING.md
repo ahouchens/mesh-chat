@@ -67,6 +67,23 @@ The official report is
 Gates: `automated: passed`; `physical_device: not-requested`;
 `production_signing: not-requested`.
 
+Publication: GitHub Actions
+[CI run 39835524059](https://github.com/ahouchens/mesh-chat/actions/runs/39835524059)
+and
+[Release run 39835530258](https://github.com/ahouchens/mesh-chat/actions/runs/39835530258)
+passed on the first attempt for `v0.9.10`. Release:
+<https://github.com/ahouchens/mesh-chat/releases/tag/v0.9.10>.
+
+| Artifact | Bytes | SHA-256 (verified by re-download) |
+|---|---:|---|
+| `Mesh-Chat_0.9.10_x64-setup.exe` | 27,886,804 | `b7aae8ad147d900c5b12fde09cc9ee375123b6c6293dd5dc904cc6adb867a967` |
+| `Mesh-Chat_0.9.10_x64_en-US.msi` | 29,880,320 | `a39177c06bd527e88918e5fd18adaa2cf4ba69cc87a624ae581aa1208e58dce8` |
+| `mesh-chat-0.9.10-android-arm64-release.apk` | 34,387,668 | `08b35ad5676712dcbba198a62168c00d89fbd1a1c30c62f9104f97d5ea74f5c2` |
+| `SHA256SUMS.txt` | 303 | `a8c1c05e67828a6bdc20f8fc8d026779ec3b16ab60e1228b716431bdb85e8eb0` |
+
+The Android APK is debug-signed; it is not a production or upgrade identity.
+There is still no grant/admission UI; owner-offline joins remain queued in the UI.
+
 ## Owner-offline admission grants, service stage 0.9.9
 
 Phase 5.2a adds the **grant lifecycle service** on top of the 0.9.8 protocol
