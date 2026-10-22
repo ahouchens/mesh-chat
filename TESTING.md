@@ -68,6 +68,23 @@ The official report is
 Gates: `automated: passed`; `physical_device: not-requested`;
 `production_signing: not-requested`.
 
+Publication: GitHub Actions
+[CI run 39827278444](https://github.com/ahouchens/mesh-chat/actions/runs/39827278444)
+and
+[Release run 39827287818](https://github.com/ahouchens/mesh-chat/actions/runs/39827287818)
+passed on the first attempt for `v0.9.9`. Release:
+<https://github.com/ahouchens/mesh-chat/releases/tag/v0.9.9>.
+
+| Artifact | Bytes | SHA-256 (verified by re-download) |
+|---|---:|---|
+| `Mesh-Chat_0.9.9_x64-setup.exe` | 27,877,776 | `a5efa3d260ee71b3a6979a6c3c7f02445e5d33b1765dc81e3f263712d805f49f` |
+| `Mesh-Chat_0.9.9_x64_en-US.msi` | 29,868,032 | `26dbd36b8049d8715a7aff6d1e66261c2e28c752ee9b7b98b951c27f451eb765` |
+| `mesh-chat-0.9.9-android-arm64-release.apk` | 34,371,413 | `f7fe1a0e39c3a2d79ef0e8c9a35bcfdeefb85435ed3c99f3470dcf530268cc8a` |
+| `SHA256SUMS.txt` | 300 | `138c46e1e6430aea6988151e3bc512977aded37c618231d222baaf5c0c48848d` |
+
+The Android APK is debug-signed; it is not a production or upgrade identity.
+No owner-offline admission UI or admission path is enabled in this release.
+
 ## Owner-offline admission grants, protocol stage 0.9.8
 
 Phase 5.1 of the [workspace connectivity spec](docs/WORKSPACE_CONNECTIVITY_SPEC.md)
