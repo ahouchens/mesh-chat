@@ -7,7 +7,7 @@ You are continuing implementation in the Mesh Chat repository.
 - Primary repo: `C:\Users\webte\Desktop\MeshProject\mesh-chat`
 - Mirror repo: `C:\Users\webte\Documents\ChatGPT\Mesh P2P connected chat`
 - Branch: `main`
-- Current HEAD: `84a40f0` (`Accept reconnect documents in signaling mailbox`)
+- Current HEAD: `4b36dbe` (handoff prompt; reconnect protocol at `84a40f0`)
 - Latest published release: `0.8.2`
 - Do not reset, clear, or migrate app data.
 
