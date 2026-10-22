@@ -438,6 +438,15 @@ passed. The full service suite retains six pre-existing
 `test_direct_setup_pipeline.py` workspace-admission failures, reproduced on
 the 0.8.0 baseline.
 
+GitHub Actions [run 39698761052](https://github.com/ahouchens/mesh-chat/actions/runs/39698761052)
+passed. Release: <https://github.com/ahouchens/mesh-chat/releases/tag/v0.8.1>.
+
+| Artifact | SHA-256 |
+|---|---|
+| `Mesh-Chat_0.8.1_x64-setup.exe` | `a69bb5d5c775b3985537ed251c5057655009fbd652427839f055ba5be1259575` |
+| `Mesh-Chat_0.8.1_x64_en-US.msi` | `a9d45b69358de9cc478b5ca2102e2a6eda80c4ee7bb39b03669a00d1542f7498` |
+| `mesh-chat-0.8.1-android-arm64-release.apk` | `6f6444a61b08fbfb3a80456f02c19e716bda015e97854051b04014a6aca0262b` |
+
 ## Connect entry consolidation, 2026-10-21
 
 - Removed the redundant sidebar **New chat** button; invitation entry now
