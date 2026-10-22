@@ -4542,6 +4542,15 @@ describe("desktop workspaces", () => {
     api.serviceCommand.mockImplementation(async (command: string) => {
       if (command === "snapshot") return current;
       if (command === "list_workspace_messages") return { messages: [], next_cursor: null, high_water: 0 } satisfies WorkspaceMessagePage;
+      if (command === "workspace_connectivity" || command === "workspace_request_paths") return {
+        workspace_id: workspace.id,
+        generated_at: 12,
+        summary: { active_members: 2, active_devices: 2, reachable_devices: 1, attention_devices: 1, pending_deliveries: 1, stored_deliveries: 0 },
+        members: [
+          { id: workspace.local_member_id, display_name: "Alex", role: "owner", status: "active", devices: [{ id: workspace.local_device_id, display_name: "Alex device", is_local: true, state: "local", path_known: false, route_kind: "local", pending_deliveries: 0, stored_deliveries: 0, last_delivery_state: null, last_attempt_at: null, last_reached_at: null }] },
+          { id: member.id, display_name: member.display_name, role: "member", status: "active", devices: [{ id: member.device.id, display_name: "Bailey device", is_local: false, state: "queued", path_known: false, route_kind: "unavailable", pending_deliveries: 1, stored_deliveries: 0, last_delivery_state: "queued", last_attempt_at: 12, last_reached_at: null }] },
+        ],
+      };
       return {};
     });
 
@@ -4549,6 +4558,10 @@ describe("desktop workspaces", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Workspace Lakewatcher" }));
     fireEvent.click(await screen.findByRole("button", { name: "People in Lakewatcher" }));
     let dialog = screen.getByRole("dialog");
+    expect(await within(dialog).findByRole("heading", { name: "Connectivity" })).toBeTruthy();
+    expect(within(dialog).getByText(/1 of 2 member devices/)).toBeTruthy();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Request missing paths" }));
+    await waitFor(() => expect(api.serviceCommand).toHaveBeenCalledWith("workspace_request_paths", { workspace_id: workspace.id }));
     fireEvent.click(within(dialog).getByRole("button", { name: "Approve" }));
     await waitFor(() => expect(api.serviceCommand).toHaveBeenCalledWith("decide_workspace_display_name", expect.objectContaining({ workspace_id: workspace.id, request_id: "name-request", approve: true, operation_id: expect.any(String) })));
     fireEvent.click(within(dialog).getByRole("button", { name: /Remove/i }));

@@ -1070,3 +1070,48 @@ export interface RouteUpdatePreview {
   expires_at: number;
   connection_results?: ParticipantCandidateResult[];
 }
+
+export type WorkspaceConnectivityState =
+  | "local"
+  | "reachable"
+  | "recently_reached"
+  | "store_and_forward"
+  | "queued"
+  | "unreachable"
+  | "unknown";
+
+export interface WorkspaceConnectivityDevice {
+  id: string;
+  display_name: string;
+  is_local: boolean;
+  state: WorkspaceConnectivityState;
+  path_known: boolean;
+  route_kind: string;
+  pending_deliveries: number;
+  stored_deliveries: number;
+  last_delivery_state: string | null;
+  last_attempt_at: number | null;
+  last_reached_at: number | null;
+}
+
+export interface WorkspaceConnectivityMember {
+  id: string;
+  display_name: string;
+  role: string;
+  status: string;
+  devices: WorkspaceConnectivityDevice[];
+}
+
+export interface WorkspaceConnectivity {
+  workspace_id: string;
+  generated_at: number;
+  summary: {
+    active_members: number;
+    active_devices: number;
+    reachable_devices: number;
+    attention_devices: number;
+    pending_deliveries: number;
+    stored_deliveries: number;
+  };
+  members: WorkspaceConnectivityMember[];
+}

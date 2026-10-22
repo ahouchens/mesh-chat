@@ -603,6 +603,8 @@ fn allowed_renderer_command(command: &str) -> bool {
             | "submit_workspace_member_removal_request"
             | "submit_workspace_role_change_request"
             | "list_workspace_members"
+            | "workspace_connectivity"
+            | "workspace_request_paths"
             | "list_workspace_admin_requests"
             | "list_workspace_admin_history"
             | "get_workspace_admin_request"
@@ -1700,6 +1702,8 @@ mod tests {
             "submit_workspace_member_removal_request",
             "submit_workspace_role_change_request",
             "list_workspace_members",
+            "workspace_connectivity",
+            "workspace_request_paths",
             "list_workspace_admin_requests",
             "list_workspace_admin_history",
             "get_workspace_admin_request",

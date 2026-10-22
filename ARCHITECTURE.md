@@ -407,6 +407,14 @@ conversation indexes, read state, drafts, and local hidden state keep their
 presentation independent from Personal. Learning either participant's removal
 makes retained history read-only and cancels every unhanded leg for that DM.
 
+The workspace **People → Connectivity** view is advisory. It derives per-device
+path and delivery state from the current verified manifest and existing
+per-device delivery legs; `workspace_connectivity` is read-only and
+`workspace_request_paths` only asks Reticulum for missing paths for active
+workspace devices. Neither command changes membership, trust, routes, settings,
+or delivery state, and neither converts a path or propagation proof into a
+receipt. See [WORKSPACE_CONNECTIVITY_SPEC.md](docs/WORKSPACE_CONNECTIVITY_SPEC.md).
+
 Edits, author deletion, and reactions are canonical `workspace_event` records,
 not mutable renderer commands or replacements for the signed original. The
 service first verifies the mutation envelope and current controls, then resolves

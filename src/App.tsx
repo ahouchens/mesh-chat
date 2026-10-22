@@ -121,6 +121,7 @@ import type {
   WorkspaceAuthorityTransition,
   WorkspaceChannel,
   WorkspaceChannelTransfer,
+  WorkspaceConnectivity,
   WorkspaceDisplayNameRequest,
   WorkspaceDeviceLinkFormats,
   WorkspaceDeviceLinkPreview,
@@ -3109,6 +3110,18 @@ function newOperationId(): string {
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
+function workspaceConnectivityLabel(state: string): string {
+  return ({
+    local: "This device",
+    reachable: "Path known",
+    recently_reached: "Recently reached",
+    store_and_forward: "Stored for delivery",
+    queued: "Queued · no path",
+    unreachable: "Unreachable",
+    unknown: "No path yet",
+  } as Record<string, string>)[state] ?? state;
+}
+
 function workspaceStateLabel(workspace: Workspace): string {
   const joinStatus = workspaceJoinStatus(workspace);
   if (joinStatus) return joinStatus.headline;
@@ -3530,6 +3543,24 @@ function WorkspacePeopleDialog({ workspace, requests, adminRequests, busy, error
   const [displayName, setDisplayName] = useState(local?.display_name ?? "");
   const [invitationPolicy, setInvitationPolicy] = useState(workspace.policies.invitation_requests);
   const [confirmRemoval, setConfirmRemoval] = useState<{ id: string; name: string; request: boolean } | null>(null);
+  const [connectivity, setConnectivity] = useState<WorkspaceConnectivity | null>(null);
+  const [connectivityBusy, setConnectivityBusy] = useState(false);
+  const [connectivityError, setConnectivityError] = useState("");
+  const loadConnectivity = async (requestPaths: boolean) => {
+    setConnectivityBusy(true);
+    setConnectivityError("");
+    try {
+      const command = requestPaths ? "workspace_request_paths" : "workspace_connectivity";
+      setConnectivity(await serviceCommand<WorkspaceConnectivity>(command, { workspace_id: workspace.id }));
+    } catch (reason) {
+      setConnectivityError(errorMessage(reason));
+    } finally {
+      setConnectivityBusy(false);
+    }
+  };
+  useEffect(() => {
+    if (workspace.state === "active") void loadConnectivity(false);
+  }, [workspace.id, workspace.state]);
   const invitationAllowed = workspace.local_role === "owner"
     || workspace.policies.invitation_requests === "all_members_request"
     || (workspace.local_role === "admin" && workspace.policies.invitation_requests === "owner_and_admins");
@@ -3547,6 +3578,21 @@ function WorkspacePeopleDialog({ workspace, requests, adminRequests, busy, error
         {member.id === workspace.local_member_id && <ShieldCheck size={16} aria-label="Signed member" />}
       </span></div>;
     })}</div>
+    {workspace.state === "active" && <section className="workspace-connectivity" aria-labelledby="workspace-connectivity-heading">
+      <div className="workspace-connectivity__heading"><h3 id="workspace-connectivity-heading">Connectivity</h3><Button variant="secondary" disabled={connectivityBusy} onClick={() => void loadConnectivity(true)}>{connectivityBusy ? "Checking…" : "Request missing paths"}</Button></div>
+      <p className="muted">Workspace membership is authorization, not a network route. The owner is not a relay. If devices cannot reach each other, use a shared access point or an approved propagation node. “Stored for delivery” is not a receipt.</p>
+      {connectivityError && <p className="form-error" role="alert">{connectivityError}</p>}
+      {connectivity?.summary && connectivity.members && <>
+        <p className="workspace-connectivity__summary" role="status">{connectivity.summary.reachable_devices} of {connectivity.summary.active_devices} member devices are reachable or recently reached · {connectivity.summary.pending_deliveries} queued · {connectivity.summary.stored_deliveries} stored for delivery.</p>
+        <div className="workspace-connectivity__rows">
+          {connectivity.members.flatMap((member) => member.devices.map((device) => <div className={`workspace-connectivity__row workspace-connectivity__row--${device.state}`} key={`${member.id}:${device.id}`}>
+            <span><strong>{member.display_name}{device.is_local ? " (this device)" : ""}</strong><small>{device.display_name !== member.display_name ? `${device.display_name} · ` : ""}{device.is_local ? "local" : device.route_kind}{device.pending_deliveries > 0 ? ` · ${device.pending_deliveries} queued` : ""}{device.last_reached_at ? ` · last reached ${formatTime(device.last_reached_at)}` : ""}</small></span>
+            <span className={`workspace-connectivity__badge workspace-connectivity__badge--${device.state}`}>{workspaceConnectivityLabel(device.state)}</span>
+          </div>))}
+        </div>
+        <p className="muted">Path requests are asynchronous and bounded to active workspace devices. A path is not presence; a delivery is not a read receipt.</p>
+      </>}
+    </section>}
     {confirmRemoval && <div className="group-confirm" role="alertdialog" aria-label={confirmRemoval.request ? "Confirm removal request" : "Confirm member removal"}><p><strong>{confirmRemoval.request ? "Request removal" : "Remove"} {confirmRemoval.name}?</strong><span>{confirmRemoval.request ? "This stays pending until the owner reviews it." : "Their future workspace deliveries stop after the signed manifest arrives. Existing retained copies cannot be erased."}</span></p><div><Button variant="ghost" disabled={busy} onClick={() => setConfirmRemoval(null)}>Cancel</Button><Button variant="danger" disabled={busy} onClick={() => { if (confirmRemoval.request) onSubmitAdminRequest("member_removal", confirmRemoval.id); else onRemove(confirmRemoval.id); setConfirmRemoval(null); }}>{confirmRemoval.request ? "Submit request" : "Confirm removal"}</Button></div></div>}
     {workspace.state === "active" && invitationAllowed && workspace.members.filter((member) => member.status === "active").length < 8 && workspace.local_role !== "owner" && <div className="workspace-name-request"><h3>Invitation request</h3><p className="muted">The owner must approve before a signed one-use invitation exists.</p><Button disabled={busy} onClick={() => onSubmitAdminRequest("invitation")}>Request invitation</Button></div>}
     {workspace.state === "active" && workspace.local_role === "owner" && <form className="workspace-name-request" onSubmit={(event) => { event.preventDefault(); onInvitationPolicy(invitationPolicy); }}><h3>Invitation-request policy</h3><label>Who may request an invitation<select value={invitationPolicy} onChange={(event) => setInvitationPolicy(event.target.value as typeof invitationPolicy)}><option value="owner_only">Owner only</option><option value="owner_and_admins">Owner and administrators</option><option value="all_members_request">All active members may request</option></select></label><Button disabled={busy || invitationPolicy === workspace.policies.invitation_requests}>Publish signed policy update</Button></form>}

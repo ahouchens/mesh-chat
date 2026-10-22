@@ -290,6 +290,8 @@ class MeshChatService(
         "submit_workspace_member_removal_request",
         "submit_workspace_role_change_request",
         "list_workspace_members",
+        "workspace_connectivity",
+        "workspace_request_paths",
         "list_workspace_admin_requests",
         "list_workspace_admin_history",
         "get_workspace_admin_request",
@@ -330,6 +332,8 @@ class MeshChatService(
         "list_workspace_tombstones",
         "list_workspace_authority_transitions",
         "list_workspace_members",
+        "workspace_connectivity",
+        "workspace_request_paths",
         "list_workspace_admin_requests",
         "list_workspace_admin_history",
         "get_workspace_admin_request",
@@ -3816,6 +3820,13 @@ class MeshChatService(
                 body.get("target_member_id"), body.get("requested_role"),
                 body.get("note", ""),
             )
+        if command in {"workspace_connectivity", "workspace_request_paths"}:
+            body = _payload(
+                value, allowed={"workspace_id"}, required={"workspace_id"}
+            )
+            if command == "workspace_connectivity":
+                return self.workspace_connectivity(body["workspace_id"])
+            return self.workspace_request_paths(body["workspace_id"])
         if command == "list_workspace_members":
             body = _payload(
                 value, allowed={"workspace_id"}, required={"workspace_id"}

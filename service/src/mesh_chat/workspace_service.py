@@ -202,6 +202,17 @@ DEFAULT_ADMIN_REQUEST_PAGE = 50
 MAX_INERT_ADMIN_DECISIONS = 64
 ADMIN_REPLAY_RETENTION_SECONDS = 90 * 24 * 60 * 60
 MAX_PENDING_AUTHORITY_TRANSITIONS = 32
+CONNECTIVITY_RECENT_SECONDS = 10 * 60
+CONNECTIVITY_PENDING_STATES = {
+    DeliveryState.WAITING_FOR_KEYS.value,
+    DeliveryState.QUEUED.value,
+    DeliveryState.SENDING.value,
+}
+CONNECTIVITY_FAILED_STATES = {
+    DeliveryState.FAILED.value,
+    DeliveryState.EXPIRED.value,
+    DeliveryState.CANCELLED.value,
+}
 AUTHORITY_FROZEN_OPERATIONS = {
     "approve_workspace_device_link",
     "approve_workspace_device_removal",
@@ -18826,6 +18837,192 @@ class WorkspaceServiceMixin:
             self._receive_workspace_display_name_request(wire)
         elif wire.kind == "workspace_display_name_decision":
             self._receive_workspace_display_name_decision(wire)
+
+    def workspace_connectivity(self, workspace_id: Any) -> dict[str, Any]:
+        """Report advisory per-device workspace reachability.
+
+        This reads the current verified manifest and existing delivery legs. It
+        never changes membership, trust, routes, settings, or delivery state,
+        and it does not treat a path or a propagation proof as a human receipt.
+        """
+
+        workspace = self._require_workspace(workspace_id)
+        if workspace.get("state") != "active":
+            raise ValidationError("Workspace connectivity is available only for an active workspace")
+        manifest = self._workspace_current_manifest(workspace)
+        local_member_id = workspace.get("local_member_id")
+        local_device_id = workspace.get("local_device_id")
+        deliveries: dict[str, list[dict[str, Any]]] = defaultdict(list)
+        for delivery in self.store.list("workspace_delivery"):
+            if delivery.get("workspace_id") != workspace["id"]:
+                continue
+            device_id = delivery.get("recipient_device_id")
+            if isinstance(device_id, str):
+                deliveries[device_id].append(delivery)
+
+        now = time.time()
+        members: list[dict[str, Any]] = []
+        active_devices = 0
+        reachable_devices = 0
+        attention_devices = 0
+        pending_deliveries = 0
+        stored_deliveries = 0
+        for member in manifest.members:
+            if member.status != "active":
+                continue
+            devices: list[dict[str, Any]] = []
+            for device in member.devices:
+                active_devices += 1
+                is_local = (
+                    member.member_id == local_member_id
+                    and device.device_id == local_device_id
+                )
+                path_known = False
+                route_kind = "local" if is_local else "unavailable"
+                if not is_local and self.network is not None:
+                    try:
+                        path_known = bool(
+                            self.network.path_known(device.destination_hash)
+                        )
+                        if path_known:
+                            route_kind = self.network.route_kind(
+                                device.destination_hash
+                            )
+                    except Exception:
+                        path_known = False
+                        route_kind = "unavailable"
+                records = deliveries.get(device.device_id, [])
+                pending = sum(
+                    1
+                    for record in records
+                    if record.get("state") in CONNECTIVITY_PENDING_STATES
+                )
+                stored = sum(
+                    1
+                    for record in records
+                    if record.get("state") == DeliveryState.STORED_FOR_DELIVERY.value
+                )
+                latest = max(
+                    records,
+                    key=lambda record: float(
+                        record.get("last_attempt_at")
+                        or record.get("reached_at")
+                        or record.get("created_at")
+                        or 0
+                    ),
+                    default=None,
+                )
+                reached_at = max(
+                    (
+                        float(record["reached_at"])
+                        for record in records
+                        if record.get("reached_at")
+                    ),
+                    default=None,
+                )
+                last_state = (
+                    str(latest.get("state"))
+                    if latest is not None and latest.get("state")
+                    else None
+                )
+                if is_local:
+                    state = "local"
+                elif path_known:
+                    state = "reachable"
+                    reachable_devices += 1
+                elif (
+                    reached_at is not None
+                    and now - reached_at <= CONNECTIVITY_RECENT_SECONDS
+                ):
+                    state = "recently_reached"
+                    reachable_devices += 1
+                elif stored and last_state == DeliveryState.STORED_FOR_DELIVERY.value:
+                    state = "store_and_forward"
+                elif pending:
+                    state = "queued"
+                elif last_state in CONNECTIVITY_FAILED_STATES:
+                    state = "unreachable"
+                else:
+                    state = "unknown"
+                if state in {"queued", "unreachable", "unknown"}:
+                    attention_devices += 1
+                pending_deliveries += pending
+                stored_deliveries += stored
+                devices.append(
+                    {
+                        "id": device.device_id,
+                        "display_name": device.display_name,
+                        "is_local": is_local,
+                        "state": state,
+                        "path_known": path_known,
+                        "route_kind": route_kind,
+                        "pending_deliveries": pending,
+                        "stored_deliveries": stored,
+                        "last_delivery_state": last_state,
+                        "last_attempt_at": (
+                            float(latest["last_attempt_at"])
+                            if latest is not None and latest.get("last_attempt_at")
+                            else None
+                        ),
+                        "last_reached_at": reached_at,
+                    }
+                )
+            members.append(
+                {
+                    "id": member.member_id,
+                    "display_name": member.display_name,
+                    "role": member.role.value,
+                    "status": member.status,
+                    "devices": devices,
+                }
+            )
+        return {
+            "workspace_id": workspace["id"],
+            "generated_at": now,
+            "summary": {
+                "active_members": len(members),
+                "active_devices": active_devices,
+                "reachable_devices": reachable_devices,
+                "attention_devices": attention_devices,
+                "pending_deliveries": pending_deliveries,
+                "stored_deliveries": stored_deliveries,
+            },
+            "members": members,
+        }
+
+    def workspace_request_paths(self, workspace_id: Any) -> dict[str, Any]:
+        """Ask Reticulum for missing paths to active workspace devices.
+
+        This is an explicit, bounded path request. It does not probe endpoints,
+        open a listener, enable transport, or attach a profile.
+        """
+
+        workspace = self._require_workspace(workspace_id)
+        if workspace.get("state") != "active":
+            raise ValidationError("Workspace path requests are available only for an active workspace")
+        manifest = self._workspace_current_manifest(workspace)
+        local_member_id = workspace.get("local_member_id")
+        local_device_id = workspace.get("local_device_id")
+        if self.network is not None:
+            for member in manifest.members:
+                if member.status != "active":
+                    continue
+                for device in member.devices:
+                    if (
+                        member.member_id == local_member_id
+                        and device.device_id == local_device_id
+                    ):
+                        continue
+                    try:
+                        if self.network.path_known(device.destination_hash):
+                            continue
+                    except Exception:
+                        pass
+                    try:
+                        self.network.request_path(device.destination_hash)
+                    except Exception:
+                        continue
+        return self.workspace_connectivity(workspace["id"])
 
     def workspace_snapshot(self) -> dict[str, Any]:
         now = time.time()

@@ -22,6 +22,60 @@ locally. Frontend/package/native tests and Windows/Android builds run in Actions
 Physical execution follows the
 [Phase 2 device checklist](docs/DIRECT_CONNECTIVITY_PHASE2_DEVICE_TEST.md).
 
+## Workspace connectivity diagnostics, 0.9.3
+
+Phase 1 of the [workspace connectivity spec](docs/WORKSPACE_CONNECTIVITY_SPEC.md)
+makes per-device workspace reachability visible and gives users an explicit,
+bounded path request. It does not create a workspace reconnect profile or an
+all-to-all topology.
+
+Service:
+
+- `workspace_connectivity` reads the current verified manifest and existing
+  per-device delivery legs and returns advisory states (`local`, `reachable`,
+  `recently_reached`, `store_and_forward`, `queued`, `unreachable`, `unknown`),
+  safe route labels, pending/stored counts, and last evidence times.
+- `workspace_request_paths` requests Reticulum paths only for active remote
+  workspace devices whose path is not currently known, then returns a fresh
+  status. It does not probe endpoints, open listeners, enable transport, or
+  attach a profile.
+- Neither command changes membership, trust, routes, settings, or delivery
+  state. A path is not presence; a propagation proof is not delivery; a
+  delivery is not a read receipt.
+- Both commands are in the service and Rust command allowlists.
+
+UI:
+
+- **Workspace → People and administration → Connectivity** shows summary counts,
+  one row per member device with a state badge, route label, pending count, and
+  last-reached time, plus **Request missing paths**.
+- The panel explains that membership is not a route, the owner is not a relay,
+  and a shared access point or propagation node is a separate topology choice.
+- The panel is shared with Android; physical multi-device path, NAT/TURN, and
+  suspension behavior remain unverified.
+
+Validation:
+
+```text
+pytest service/tests:        1099 passed, 46 skipped, 0 failed (281.13 s)
+node scripts/run-frontend-tests.mjs: 262 passed (18 files)
+node --test deploy/cloudflare-signal/worker.test.mjs: 11 passed
+packaged emoji artwork verification: 3 passed
+node node_modules/typescript/bin/tsc -b: passed
+node scripts/run-frontend-build.mjs: passed
+```
+
+The official report is
+`dist/reports/0.9.3/20261022T122749Z-59581113/report.json` (git-ignored):
+`status: passed`, 326.593 s, SHA-256
+`a091344d4d73eafba9b322f39eed68ce46438936d550dea33fbc85216aaf2957`.
+Gates: `automated: passed`; `physical_device: not-requested`;
+`production_signing: not-requested`.
+
+New tests cover path-known and local/remote states, missing-path state after a
+route disappears, command dispatch, and path requests only for active remote
+devices. No physical multi-member workspace connection was tested.
+
 ## Configurable call signaling storage, 0.9.2
 
 Call signaling records no longer have to be sealed in the vault. The new

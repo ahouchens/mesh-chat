@@ -45,6 +45,8 @@ class RecordingWorkspaceNetwork:
     def __init__(self) -> None:
         self.sent: list[dict[str, Any]] = []
         self.remembered: list[bytes] = []
+        self.path_available = True
+        self.requested_paths: list[bytes] = []
 
     def invitation_hints(self) -> list[dict[str, Any]]:
         return []
@@ -56,10 +58,13 @@ class RecordingWorkspaceNetwork:
         return True
 
     def path_known(self, _destination: bytes) -> bool:
-        return True
+        return self.path_available
 
-    def request_path(self, _destination: bytes) -> None:
-        pass
+    def request_path(self, destination: bytes) -> None:
+        self.requested_paths.append(destination)
+
+    def route_kind(self, _destination: bytes) -> str:
+        return "nearby" if self.path_available else "unavailable"
 
     def send_with_fields(self, **value: Any) -> str:
         self.sent.append(value)
@@ -284,6 +289,61 @@ def _joined_pair(
         member_key,
         member_identity,
     )
+
+
+def test_workspace_connectivity_reports_paths_and_requests_missing_ones(tmp_path):
+    (
+        owner,
+        owner_network,
+        _owner_profile,
+        member,
+        _member_network,
+        member_profile,
+        workspace,
+        _member_key,
+        _member_identity,
+    ) = _joined_pair(tmp_path, base=9800)
+
+    status = owner.workspace_connectivity(workspace["id"])
+    assert status["summary"]["active_members"] == 2
+    assert status["summary"]["active_devices"] == 2
+    assert status["summary"]["reachable_devices"] == 1
+    owner_device = next(
+        device
+        for item in status["members"]
+        for device in item["devices"]
+        if device["is_local"]
+    )
+    member_device = next(
+        device
+        for item in status["members"]
+        for device in item["devices"]
+        if not device["is_local"]
+    )
+    assert owner_device["state"] == "local"
+    assert member_device["state"] == "reachable"
+    assert member_device["route_kind"] == "nearby"
+    assert member_device["path_known"] is True
+
+    owner_network.path_available = False
+    status = owner.workspace_connectivity(workspace["id"])
+    member_device = next(
+        device
+        for item in status["members"]
+        for device in item["devices"]
+        if not device["is_local"]
+    )
+    assert member_device["path_known"] is False
+    assert member_device["state"] != "reachable"
+
+    owner.workspace_request_paths(workspace["id"])
+    assert bytes.fromhex(member_profile["destination_hash"]) in owner_network.requested_paths
+
+    via_command = owner._execute(
+        "workspace_connectivity", {"workspace_id": workspace["id"]}
+    )
+    assert via_command["workspace_id"] == workspace["id"]
+    assert via_command["summary"]["active_devices"] == 2
 
 
 def test_direct_workspace_binding_rechecks_admission_and_local_identity(tmp_path):

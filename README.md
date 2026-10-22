@@ -8,7 +8,7 @@ The design accepts real trade-offs. Delivery depends on peers being reachable, h
 
 An optional **I2P relay path** can bootstrap a workspace or 1:1 connection when neither device has a public endpoint. It is an explicit, consented fallback: the invitation carries one signed `*.b32.i2p` access point, both sides need an I2P router, and the access point relays encrypted Reticulum traffic rather than creating a direct link. I2P is not the default, is not available on Android yet, and does not replace the direct/LAN/access-point paths.
 
-> **Status Ã¢â‚¬â€ security-sensitive prototype.** The source tree is at 0.9.2. It has not been independently audited, and several physical-device and packaging gates are still open. Read [Status and verification](#status-and-verification) before relying on it.
+> **Status Ã¢â‚¬â€ security-sensitive prototype.** The source tree is at 0.9.3. It has not been independently audited, and several physical-device and packaging gates are still open. Read [Status and verification](#status-and-verification) before relying on it.
 
 ## What problem it solves
 
@@ -225,8 +225,9 @@ A group or workspace is a small signed state machine, not a hosted room:
 - Each **channel** has its own manager-signed chain of records; a private channel adds a signed roster chain that is delivered only to its members.
 - Each **message, edit, deletion, reaction, thread reply, and mention list** is a canonical signed event. It binds its author device, per-device sequence and predecessor, the exact manifest and channel heads it was authorized under, and (for private content) a frozen audience. Events arriving before their controls stay inert in a bounded queue rather than becoming visible.
 - **Delivery is per device.** A workspace event is copied to each active recipient device, including the sender's other linked devices. Aggregates count devices ("3 of 4 reached") and never turn one receipt into group-wide proof.
+- **Membership is not a route.** Admission bootstraps the joiner to the owner/authority device; ordinary events then need a usable Reticulum path between each sender and recipient device. The owner is not automatically a relay. The workspace **People → Connectivity** panel shows per-device path and delivery state and can request missing paths; a shared access point or approved propagation node is still a separate, consented topology choice. See [Workspace connectivity spec](docs/WORKSPACE_CONNECTIVITY_SPEC.md).
 
-Roles are operational, not co-authority: administrators can create and post under an `owner_and_admins` policy and manage channels whose signing key they hold, but only the owner's authority device can change membership, policy, retention, or ownership. Authority can be rotated to another device of the same owner, or transferred to a named member with that member's countersignature. If the authority key is permanently lost, ordinary chat keeps working and administration freezes Ã¢â‚¬â€ the app explains the replacement-workspace path instead of pretending to recover.
+Roles are operational, not co-authority: administrators can create and post under an `owner_and_admins` policy and manage channels whose signing key they hold, but only the owner's authority device can change membership, policy, retention, or ownership. Authority can be rotated to another device of the same owner, or transferred to a named member with that member's countersignature. If the authority key is permanently lost, ordinary chat keeps working and administration freezes - the app explains the replacement-workspace path instead of pretending to recover.
 
 ## Message lifecycle
 
@@ -317,8 +318,8 @@ The threat model is explicit about what is *not* protected: traffic analysis, IP
 
 | Platform | What exists | Recorded verification |
 | --- | --- | --- |
-| Windows x64 | MSI and NSIS installers, standalone executable plus service sidecar, bundled/managed `i2pd`, I2P invitation and consent UI, 1:1 audio/video call surface, automatic reconnect UI | 0.9.2 published; CI tests/build passed; installer launch and device testing not performed |
-| Android arm64 | Debug APK, plus release/AAB signing path; I2P settings and invitation preview, 1:1 audio/video call surface, automatic reconnect UI | Debug-signed 0.9.2 release APK published; no bundled I2P router; no physical call or reconnect test in the recorded run |
+| Windows x64 | MSI and NSIS installers, standalone executable plus service sidecar, bundled/managed `i2pd`, I2P invitation and consent UI, 1:1 audio/video call surface, automatic reconnect UI | 0.9.3 release candidate; 0.9.2 published; installer launch and device testing not performed |
+| Android arm64 | Debug APK, plus release/AAB signing path; I2P settings and invitation preview, 1:1 audio/video call surface, automatic reconnect UI | 0.9.3 release candidate; Debug-signed 0.9.2 release APK published; no bundled I2P router; no physical call or reconnect test in the recorded run |
 | macOS | Build path, FileVault adapter | No package built or run in this repository |
 | Linux | Build path, fscrypt/dm-crypt adapters | No package built or run in this repository |
 | iOS | Plugin and build script | Requires macOS and Xcode; not built or run in this repository |
@@ -372,6 +373,7 @@ Desktop installers must be built on their target operating system. Android build
 | [ARCHITECTURE.md](ARCHITECTURE.md) | Component boundaries, signaling/reconnect internals, workspace internals, persistence, crash consistency |
 | [PROTOCOL.md](PROTOCOL.md) | Exact signed documents, LXMF fields, limits, delivery evidence |
 | [WORKSPACE_SPEC.md](WORKSPACE_SPEC.md) | Product scope, roles, requirements, and release gates for workspaces |
+| [docs/WORKSPACE_CONNECTIVITY_SPEC.md](docs/WORKSPACE_CONNECTIVITY_SPEC.md) | Reachability model, Phase 1 diagnostics, and the workspace reconnect/access roadmap |
 | [THREAT_MODEL.md](THREAT_MODEL.md) | Adversaries, controls, metadata leakage, and open security blockers |
 | [TESTING.md](TESTING.md) | Recorded verification, acceptance matrix, and exact artifact evidence |
 | [docs/RELEASES.md](docs/RELEASES.md) | Release-by-release notes and installation history for earlier versions |
