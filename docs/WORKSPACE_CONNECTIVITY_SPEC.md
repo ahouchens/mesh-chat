@@ -1,7 +1,8 @@
 # Workspace Connectivity and Reachability
 
 Status: Phase 1 implemented in 0.9.3; Phase 2a implemented in 0.9.4; Phase 2b
-implemented in 0.9.5; Phase 3 implemented in 0.9.6; later phases proposed.
+implemented in 0.9.5; Phase 3 implemented in 0.9.6; Phase 4 implemented in 0.9.7;
+later phases proposed.
 
 ## 1. Problem
 
@@ -255,13 +256,39 @@ no takeover when the preferred device is offline; mailbox delivery requires a
 configured `signal_mailbox_url`; no physical multi-device workspace reconnect
 test has been performed.
 
-## 8. Phase 4 — optional member helper
+## 8. Phase 4 — optional member helper (implemented in 0.9.7)
 
-After explicit opt-in, a reachable active workspace device may carry a bounded,
-audience-bound connection capsule between two current devices. One helper hop
-only; no chat, history, receipts, membership, or transport forwarding. This is
-the roadmap's participant-assisted recovery and remains optional and
-non-authoritative.
+A reachable active workspace device can now carry **one signed connection
+update** between two other active devices. This is the participant-assisted
+recovery path from the roadmap, implemented without a hosted rendezvous.
+
+- The helper feature is **off by default**. A member must explicitly opt in with
+  `workspace_helper_consent_set` before this device will relay anything.
+- The sender uses `relay_workspace_connection_update` with an established
+  workspace/direct relationship ID and a selected active helper device. The
+  service exports the sender's existing signed `mesh-recover:` update and wraps
+  it in a bounded `workspace_connection_relay` control containing the workspace,
+  origin device, audience device, and document.
+- The first hop verifies the native source equals the claimed origin device and
+  that origin/audience are current active devices. If the audience is this
+  device, it applies the update through the existing DirectRecovery verifier.
+  Otherwise, an opted-in helper queues the same wrapper to the audience only.
+- A second helper receiving a wrapper whose native source is not the origin
+  ignores it, so forwarding stops at one hop. The recipient applies the original
+  signed document; the helper cannot forge or alter its audience, endpoints,
+  membership, or receipts.
+- Helpers see the connection-update document (endpoints and timing) inside their
+  own encrypted delivery. They do not see chat, history, message receipts,
+  workspace authority, or private keys, and they cannot approve membership.
+
+UI: **Workspace settings → Direct connections → One-hop helper relay** exposes
+the opt-in checkbox, a helper selector for the sender's own updates, and a
+**Send via helper** action per established relationship. The manual copy/import
+path remains available when no helper is reachable.
+
+Limits: helper relay is manual per update, requires both endpoints to share a
+reachable helper, and does not create a route by itself; the signed DirectRecovery
+document must still be valid. No physical multi-device helper test was performed.
 
 ## 9. Phase 5 — owner-availability policy
 
@@ -331,6 +358,20 @@ Phase 3:
 - mailbox absent, peer absent, removed workspace/device, or missing consent
   produces an explicit non-ready state rather than a connection;
 - no membership, trust, authority, or read state changes.
+
+Phase 4:
+
+- helper relaying is off by default and requires explicit local consent;
+- sender must own the exported connection update and select a current active
+  helper that is neither the local nor the audience device;
+- the first hop binds the wrapper origin to the native source and active
+  manifest devices;
+- a helper forwards to the audience only; a wrapper whose native source is not
+  the origin stops after one hop;
+- the recipient applies the original signed DirectRecovery document, never a
+  helper-modified substitute;
+- helper visibility is limited to connection endpoints/timing, not chat,
+  history, receipts, authority, or keys.
 
 ## 13. Known limits
 

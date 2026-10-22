@@ -432,6 +432,15 @@ the mailbox must be configured, and active membership is rechecked before any
 offer or answer is accepted. Removing a member/device or workspace makes the
 profile non-ready rather than authorizing a stale peer.
 
+An opted-in workspace device can also act as a **one-hop connection-update
+helper**. The sender wraps an existing signed `mesh-recover:` document with the
+origin and audience device IDs; the helper checks the native source against the
+origin, forwards only to the audience, and marks its own local opt-in. The
+recipient verifies the original DirectRecovery document, not the relay wrapper.
+A second helper sees a native source that is not the origin and ignores the
+wrapper. Helpers see connection endpoints/timing only; they cannot approve
+membership, read chat, alter authority, or forge receipts.
+
 Edits, author deletion, and reactions are canonical `workspace_event` records,
 not mutable renderer commands or replacements for the signed original. The
 service first verifies the mutation envelope and current controls, then resolves

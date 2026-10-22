@@ -293,6 +293,9 @@ class MeshChatService(
         "workspace_connectivity",
         "workspace_reconnect_status",
         "workspace_reconnect_consent_set",
+        "workspace_helper_status",
+        "workspace_helper_consent_set",
+        "relay_workspace_connection_update",
         "workspace_request_paths",
         "create_workspace_access_recommendation",
         "preview_workspace_access_recommendation",
@@ -344,6 +347,9 @@ class MeshChatService(
         "workspace_connectivity",
         "workspace_reconnect_status",
         "workspace_reconnect_consent_set",
+        "workspace_helper_status",
+        "workspace_helper_consent_set",
+        "relay_workspace_connection_update",
         "workspace_request_paths",
         "create_workspace_access_recommendation",
         "preview_workspace_access_recommendation",
@@ -3870,6 +3876,35 @@ class MeshChatService(
                 body["auto_reconnect"],
                 body["allow_direct_ip_disclosure"],
                 body.get("relay_consent_scope", "workspace"),
+            )
+        if command == "workspace_helper_status":
+            body = _payload(
+                value, allowed={"workspace_id"}, required={"workspace_id"}
+            )
+            return self.workspace_helper_status(body["workspace_id"])
+        if command == "workspace_helper_consent_set":
+            body = _payload(
+                value,
+                allowed={"workspace_id", "enabled"},
+                required={"workspace_id", "enabled"},
+            )
+            return self.workspace_helper_consent_set(
+                body["workspace_id"], body["enabled"]
+            )
+        if command == "relay_workspace_connection_update":
+            body = _payload(
+                value,
+                allowed={"workspace_id", "relationship_id", "helper_device_id"},
+                required={
+                    "workspace_id",
+                    "relationship_id",
+                    "helper_device_id",
+                },
+            )
+            return self.relay_workspace_connection_update(
+                body["workspace_id"],
+                body["relationship_id"],
+                body["helper_device_id"],
             )
         if command == "create_workspace_access_recommendation":
             body = _payload(

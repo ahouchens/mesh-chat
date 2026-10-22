@@ -18802,6 +18802,11 @@ class WorkspaceServiceMixin:
         if wire.kind == "workspace_reconnect_capability":
             self._receive_workspace_reconnect_capability(wire)
             return
+        if wire.kind == "workspace_connection_relay":
+            self._receive_workspace_connection_relay(
+                wire, getattr(native, "source_hash", None)
+            )
+            return
         if wire.kind == "workspace_manifest_root":
             self._receive_workspace_manifest(wire)
         elif wire.kind == "workspace_channel_record":
@@ -19300,6 +19305,221 @@ class WorkspaceServiceMixin:
         self.store.put("reconnect_profile", profile["id"], profile)
         self._workspace_changed(
             workspace["id"], resource_kind="reconnect_capability"
+        )
+
+    def workspace_helper_status(self, workspace_id: Any) -> dict[str, Any]:
+        workspace = self._require_workspace(workspace_id)
+        return {
+            "workspace_id": workspace["id"],
+            "enabled": bool(workspace.get("allow_connection_helper", False)),
+        }
+
+    def workspace_helper_consent_set(
+        self, workspace_id: Any, enabled: Any
+    ) -> dict[str, Any]:
+        workspace = self._require_workspace(workspace_id)
+        if workspace.get("state") != "active":
+            raise ValidationError("Connection helper consent requires an active workspace")
+        if not isinstance(enabled, bool):
+            raise ValidationError("Connection helper consent must be boolean")
+        workspace["allow_connection_helper"] = enabled
+        workspace["updated_at"] = time.time()
+        self.store.put(
+            "workspace", self._workspace_record_id(workspace["id"]), workspace
+        )
+        self._workspace_changed(
+            workspace["id"], resource_kind="connection_helper"
+        )
+        return self.workspace_helper_status(workspace["id"])
+
+    def relay_workspace_connection_update(
+        self,
+        workspace_id: Any,
+        relationship_id: Any,
+        helper_device_id: Any,
+    ) -> dict[str, Any]:
+        workspace = self._require_workspace(workspace_id)
+        if workspace.get("state") != "active":
+            raise ValidationError("Connection relay requires an active workspace")
+        if not isinstance(relationship_id, str) or not isinstance(
+            helper_device_id, str
+        ):
+            raise ValidationError("Connection relay input is invalid")
+        record = self.store.get("direct_relationship", relationship_id)
+        if (
+            record is None
+            or record.get("scope", {}).get("kind") != "workspace"
+            or record.get("scope", {}).get("workspace_id") != workspace["id"]
+        ):
+            raise ValidationError("Connection relay relationship is unavailable")
+        if record.get("scope", {}).get("issuer_device_id") != workspace.get(
+            "local_device_id"
+        ):
+            raise ValidationError(
+                "Only the device that created this connection update can relay it"
+            )
+        exported = self._direct_recovery.export(relationship_id)
+        if exported.get("state") != "ready" or not exported.get("text"):
+            raise ValidationError("Connection update is still being prepared")
+        document = exported["text"]
+        if (
+            not isinstance(document, str)
+            or not document.startswith("mesh-recover:")
+            or len(document.encode("utf-8")) > 16 * 1024
+        ):
+            raise ValidationError("Connection update is invalid")
+        audience_device_id = record.get("scope", {}).get("audience_device_id")
+        manifest = self._workspace_current_manifest(workspace)
+        helper = None
+        for member in manifest.members:
+            if member.status != "active":
+                continue
+            for device in member.devices:
+                if device.device_id == helper_device_id:
+                    helper = (member, device)
+                    break
+            if helper is not None:
+                break
+        if (
+            helper is None
+            or helper[0].member_id == workspace.get("local_member_id")
+            or helper[1].device_id == workspace.get("local_device_id")
+            or helper[1].device_id == audience_device_id
+        ):
+            raise ValidationError("Connection relay helper is not an eligible active device")
+        wrapper = json.dumps(
+            {
+                "v": 1,
+                "type": "workspace_connection_relay",
+                "workspace_id": workspace["id"],
+                "origin_device_id": workspace.get("local_device_id"),
+                "audience_device_id": audience_device_id,
+                "document": document,
+            },
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+        delivery = self._workspace_delivery_record(
+            workspace_id=workspace["id"],
+            recipient_member_id=helper[0].member_id,
+            recipient_device=helper[1],
+            kind="workspace_connection_relay",
+            document=wrapper,
+            priority=0,
+        )
+        self.store.put_many(
+            [
+                ("workspace_delivery", delivery["id"], delivery),
+                *self._due_records(add=[delivery]),
+            ]
+        )
+        self._workspace_changed(
+            workspace["id"], resource_kind="connection_relay"
+        )
+        return {
+            "workspace_id": workspace["id"],
+            "helper_device_id": helper_device_id,
+            "sent": True,
+        }
+
+    def _receive_workspace_connection_relay(
+        self, wire: WorkspaceWirePayload, source: bytes | None
+    ) -> None:
+        try:
+            value = json.loads(wire.document)
+        except json.JSONDecodeError:
+            return
+        expected = {
+            "v",
+            "type",
+            "workspace_id",
+            "origin_device_id",
+            "audience_device_id",
+            "document",
+        }
+        if (
+            not isinstance(value, dict)
+            or set(value) != expected
+            or value["v"] != 1
+            or value["type"] != "workspace_connection_relay"
+            or value["workspace_id"] != wire.workspace_id
+            or not isinstance(value["origin_device_id"], str)
+            or not isinstance(value["audience_device_id"], str)
+            or not isinstance(value["document"], str)
+            or not value["document"].startswith("mesh-recover:")
+            or len(value["document"].encode("utf-8")) > 16 * 1024
+        ):
+            return
+        workspace = self.store.get(
+            "workspace", self._workspace_record_id(wire.workspace_id)
+        )
+        if workspace is None or workspace.get("state") != "active":
+            return
+        manifest = self._workspace_current_manifest(workspace)
+        local_device_id = workspace.get("local_device_id")
+        source_device = None
+        for member in manifest.members:
+            if member.status != "active":
+                continue
+            for device in member.devices:
+                if device.device_id == value["origin_device_id"]:
+                    source_device = device
+                    break
+            if source_device is not None:
+                break
+        if source_device is None or source is None:
+            return
+        audience = None
+        for member in manifest.members:
+            if member.status != "active":
+                continue
+            for device in member.devices:
+                if device.device_id == value["audience_device_id"]:
+                    audience = (member, device)
+                    break
+            if audience is not None:
+                break
+        if audience is None:
+            return
+        if audience[1].device_id == local_device_id:
+            try:
+                self._direct_recovery.receive(
+                    value["document"],
+                    source=None,
+                    workspace_id=wire.workspace_id,
+                )
+            except Exception:
+                return
+            self._workspace_changed(
+                workspace["id"], resource_kind="connection_relay"
+            )
+            return
+        if source != source_device.destination_hash:
+            return
+        if not workspace.get("allow_connection_helper", False):
+            return
+        if (
+            audience[1].device_id == value["origin_device_id"]
+            or workspace.get("local_device_id") == audience[1].device_id
+        ):
+            return
+        delivery = self._workspace_delivery_record(
+            workspace_id=workspace["id"],
+            recipient_member_id=audience[0].member_id,
+            recipient_device=audience[1],
+            kind="workspace_connection_relay",
+            document=wire.document,
+            priority=0,
+        )
+        self.store.put_many(
+            [
+                ("workspace_delivery", delivery["id"], delivery),
+                *self._due_records(add=[delivery]),
+            ]
+        )
+        self._workspace_changed(
+            workspace["id"], resource_kind="connection_relay"
         )
 
     def create_workspace_access_recommendation(

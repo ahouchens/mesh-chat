@@ -505,6 +505,89 @@ def test_workspace_reconnect_capabilities_exchange_without_contacts(tmp_path):
     assert verified["contact_id"].startswith("workspace:")
 
 
+def test_workspace_connection_helper_relays_one_hop_only(tmp_path):
+    owner, _owner_network, owner_profile, member, _member_network, member_profile, workspace, _key, _identity = _joined_pair(tmp_path, base=9970)
+    owner_workspace = owner._require_workspace(workspace["id"])
+    member_workspace = member._require_workspace(workspace["id"])
+    wrapper = json.dumps(
+        {
+            "v": 1,
+            "type": "workspace_connection_relay",
+            "workspace_id": workspace["id"],
+            "origin_device_id": owner_workspace["local_device_id"],
+            "audience_device_id": member_workspace["local_device_id"],
+            "document": "mesh-recover:test",
+        },
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+    wire = WorkspaceWirePayload(
+        kind="workspace_connection_relay",
+        logical_id=str(uuid.uuid4()),
+        workspace_id=workspace["id"],
+        expires_at=int(time.time()) + 600,
+        document=wrapper,
+    )
+    source = bytes.fromhex(owner_profile["destination_hash"])
+
+    owner._receive_workspace_connection_relay(wire, source=source)
+    assert not [
+        item
+        for item in owner.store.list("workspace_delivery")
+        if item.get("workspace_id") == workspace["id"]
+        and item.get("kind") == "workspace_connection_relay"
+    ]
+
+    owner.workspace_helper_consent_set(workspace["id"], True)
+    owner._receive_workspace_connection_relay(wire, source=source)
+    relays = [
+        item
+        for item in owner.store.list("workspace_delivery")
+        if item.get("workspace_id") == workspace["id"]
+        and item.get("kind") == "workspace_connection_relay"
+    ]
+    assert len(relays) == 1
+    assert relays[0]["recipient_device_id"] == member_workspace["local_device_id"]
+
+    owner._receive_workspace_connection_relay(
+        wire, source=bytes.fromhex(member_profile["destination_hash"])
+    )
+    assert len(
+        [
+            item
+            for item in owner.store.list("workspace_delivery")
+            if item.get("workspace_id") == workspace["id"]
+            and item.get("kind") == "workspace_connection_relay"
+        ]
+    ) == 1
+
+    received = []
+    owner._direct_recovery.receive = lambda document, **kwargs: received.append((document, kwargs))
+    forwarded = json.dumps(
+        {
+            "v": 1,
+            "type": "workspace_connection_relay",
+            "workspace_id": workspace["id"],
+            "origin_device_id": member_workspace["local_device_id"],
+            "audience_device_id": owner_workspace["local_device_id"],
+            "document": "mesh-recover:test",
+        },
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+    owner._receive_workspace_connection_relay(
+        WorkspaceWirePayload(
+            kind="workspace_connection_relay",
+            logical_id=str(uuid.uuid4()),
+            workspace_id=workspace["id"],
+            expires_at=int(time.time()) + 600,
+            document=forwarded,
+        ),
+        source=bytes.fromhex(member_profile["destination_hash"]),
+    )
+    assert received and received[0][0] == "mesh-recover:test"
+
+
 def test_direct_workspace_binding_rechecks_admission_and_local_identity(tmp_path):
     from dataclasses import replace
     from mesh_chat.direct_binding import BindingAuthority, create_binding

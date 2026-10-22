@@ -22,6 +22,61 @@ locally. Frontend/package/native tests and Windows/Android builds run in Actions
 Physical execution follows the
 [Phase 2 device checklist](docs/DIRECT_CONNECTIVITY_PHASE2_DEVICE_TEST.md).
 
+## One-hop workspace connection helper, 0.9.7
+
+Phase 4 of the [workspace connectivity spec](docs/WORKSPACE_CONNECTIVITY_SPEC.md)
+lets an opted-in active workspace device relay one existing signed
+DirectRecovery connection update between two other active devices.
+
+Service:
+
+- Helper relaying is off by default (`workspace_helper_consent_set`). No member
+  becomes a helper implicitly.
+- `relay_workspace_connection_update` requires an established
+  workspace/direct relationship owned by this device and an active helper that
+  is neither the local nor the audience device. It wraps the existing exact
+  `mesh-recover:` document; it does not create a new route, admission, or
+  authority.
+- `workspace_connection_relay` is a bounded workspace control with workspace ID,
+  origin device, audience device, and the signed document. The first helper must
+  see a native source equal to the origin and current active origin/audience
+  devices; it forwards only to the audience and only when local helper consent is
+  enabled.
+- If this device is the audience, it applies the original document through
+  DirectRecovery. A second helper sees a native source different from the origin
+  and ignores the wrapper, bounding delivery to one hop.
+- Helpers see connection endpoints/timing, not chat, history, receipts,
+  membership, authority, or keys. The recipient verifies the original signature,
+  scope, audience, expiry, and replay.
+
+UI:
+
+- **Workspace settings → Direct connections → One-hop helper relay** has the
+  opt-in checkbox, a helper selector, and **Send via helper** per established
+  relationship. Manual copy/import remains available.
+
+Validation:
+
+```text
+pytest service/tests:        1105 passed, 46 skipped, 0 failed (280.14 s)
+node scripts/run-frontend-tests.mjs: 264 passed (18 files)
+node --test deploy/cloudflare-signal/worker.test.mjs: 11 passed
+packaged emoji artwork verification: 3 passed
+node node_modules/typescript/bin/tsc -b: passed
+node scripts/run-frontend-build.mjs: passed
+```
+
+The official report is
+`dist/reports/0.9.7/20261022T153658Z-bfd7ad5d/report.json` (git-ignored):
+`status: passed`, 326.841 s, SHA-256
+`47b23c16923940b30f0639a25ef6d110e89089b617cc2802dfcf833aed0dac5a`.
+Gates: `automated: passed`; `physical_device: not-requested`;
+`production_signing: not-requested`.
+
+New coverage includes helper opt-in default/forwarding, source/origin binding,
+helper-disabled behavior, audience-only forward, and one-hop stop. No physical
+multi-device helper or DirectRecovery route test was performed.
+
 ## Workspace-scoped reconnect, 0.9.6
 
 Phase 3 of the [workspace connectivity spec](docs/WORKSPACE_CONNECTIVITY_SPEC.md)

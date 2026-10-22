@@ -213,6 +213,31 @@ manifest before request, offer, answer, and path actions. Removing the member,
 device, or workspace makes the profile non-ready; it does not create a contact
 or grant access.
 
+## Workspace connection relay v1
+
+A workspace member may opt in to relay one already-signed DirectRecovery
+connection update between two active devices. The relay payload is workspace
+control kind `workspace_connection_relay` with canonical JSON fields:
+
+- `v` = `1`, `type` = `workspace_connection_relay`;
+- `workspace_id`: canonical workspace UUID;
+- `origin_device_id`, `audience_device_id`: active workspace device IDs;
+- `document`: one exact `mesh-recover:` signed connection update, at most 16 KiB.
+
+The sender must own the relationship/update and select an active helper that is
+neither the local nor the audience device. The first hop requires the native
+LXMF source to equal the origin device destination and both IDs to be current
+active devices. If this device is the audience, it applies the original document
+through DirectRecovery; otherwise it forwards the wrapper only when local helper
+consent is enabled. A second helper sees a native source different from the
+origin and ignores the wrapper, bounding delivery to one hop.
+
+The helper never changes the signed document or supplies authority; the
+recipient verifies signature, workspace scope, audience, expiry, and replay on
+the original document. The helper can observe connection endpoints and timing
+inside its own encrypted delivery, not chat, history, receipts, private keys, or
+membership. Relaying is off by default and is a manual per-update action.
+
 ## Invitation v1
 
 All entry points carry the same canonical UTF-8 JSON object:

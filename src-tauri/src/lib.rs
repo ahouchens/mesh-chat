@@ -606,6 +606,9 @@ fn allowed_renderer_command(command: &str) -> bool {
             | "workspace_connectivity"
             | "workspace_reconnect_status"
             | "workspace_reconnect_consent_set"
+            | "workspace_helper_status"
+            | "workspace_helper_consent_set"
+            | "relay_workspace_connection_update"
             | "workspace_request_paths"
             | "create_workspace_access_recommendation"
             | "preview_workspace_access_recommendation"
@@ -1714,6 +1717,9 @@ mod tests {
             "workspace_connectivity",
             "workspace_reconnect_status",
             "workspace_reconnect_consent_set",
+            "workspace_helper_status",
+            "workspace_helper_consent_set",
+            "relay_workspace_connection_update",
             "workspace_request_paths",
             "create_workspace_access_recommendation",
             "preview_workspace_access_recommendation",
