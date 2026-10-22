@@ -74,6 +74,22 @@ The official report is
 Gates: `automated: passed`; `physical_device: not-requested`;
 `production_signing: not-requested`.
 
+Publication: GitHub Actions
+[CI run 39786125795](https://github.com/ahouchens/mesh-chat/actions/runs/39786125795)
+and
+[Release run 39786130122](https://github.com/ahouchens/mesh-chat/actions/runs/39786130122)
+passed on the first attempt for `v0.9.4`. Release:
+<https://github.com/ahouchens/mesh-chat/releases/tag/v0.9.4>.
+
+| Artifact | Bytes | SHA-256 (verified by re-download) |
+|---|---:|---|
+| `Mesh-Chat_0.9.4_x64-setup.exe` | 27,845,872 | `26eaa81d33498dc420a0929e806ff897d72bb43478ec1ab0660984ade92d1d89` |
+| `Mesh-Chat_0.9.4_x64_en-US.msi` | 29,839,360 | `0b2eec7051ba111e703e95056b668dc92e28f975039e05039f35ad9057320f82` |
+| `mesh-chat-0.9.4-android-arm64-release.apk` | 34,318,405 | `e9620c4aa7b1d2f0d214df3329edcec914251d1b937bc9789632c342eda9524c` |
+| `SHA256SUMS.txt` | 300 | `cca0d17880bdfb7b05b7101ac53cf1e5855e67d6c2ff07a56c5ef114b0662047` |
+
+The Android APK is debug-signed; it is not a production or upgrade identity.
+
 New tests cover document round trip, tamper/expiry/invalid fields, wrong
 authority rejection, owner-only creation, member preview, consent enforcement,
 workspace scope attachment, command dispatch, and the renderer
