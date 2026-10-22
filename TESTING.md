@@ -72,6 +72,23 @@ The official report is
 Gates: `automated: passed`; `physical_device: not-requested`;
 `production_signing: not-requested`.
 
+Publication: GitHub Actions
+[CI run 39779352782](https://github.com/ahouchens/mesh-chat/actions/runs/39779352782)
+and
+[Release run 39779358050](https://github.com/ahouchens/mesh-chat/actions/runs/39779358050)
+passed on the first attempt for `v0.9.3`. Release:
+<https://github.com/ahouchens/mesh-chat/releases/tag/v0.9.3>.
+
+| Artifact | Bytes | SHA-256 (verified by re-download) |
+|---|---:|---|
+| `Mesh-Chat_0.9.3_x64-setup.exe` | 27,838,621 | `9f32fb0e5b76c4ef4a7763a2156d68e2399557bff17ba09c420d5c67f0c5799c` |
+| `Mesh-Chat_0.9.3_x64_en-US.msi` | 29,827,072 | `46554660bed5b2904450cf199ed3046d0ea845de1da2cc74fa0939240275ee8b` |
+| `mesh-chat-0.9.3-android-arm64-release.apk` | 34,318,322 | `4b4056510f62eef94326503caa8f8d4fb49a02ef63c5f67b107e0de19cf3e56a` |
+| `SHA256SUMS.txt` | 300 | `7085ea3108ef1039106cfe91b678de3c8b27de699469f7c811bee17c3aa794fa` |
+
+The Android APK is debug-signed, like 0.9.2; it is not a production or upgrade
+identity.
+
 New tests cover path-known and local/remote states, missing-path state after a
 route disappears, command dispatch, and path requests only for active remote
 devices. No physical multi-member workspace connection was tested.
