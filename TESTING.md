@@ -66,6 +66,22 @@ The official report is
 Gates: `automated: passed`; `physical_device: not-requested`;
 `production_signing: not-requested`.
 
+Publication: GitHub Actions
+[CI run 39867425526](https://github.com/ahouchens/mesh-chat/actions/runs/39867425526)
+and
+[Release run 39867430180](https://github.com/ahouchens/mesh-chat/actions/runs/39867430180)
+passed on the first attempt for `v0.9.15`. Release:
+<https://github.com/ahouchens/mesh-chat/releases/tag/v0.9.15>.
+
+| Artifact | Bytes | SHA-256 (verified by re-download) |
+|---|---:|---|
+| `Mesh-Chat_0.9.15_x64-setup.exe` | 27,894,674 | `95933f2101897f77ed22438228a2008a024bb601b427bfc75a7b7f29db08f6c2` |
+| `Mesh-Chat_0.9.15_x64_en-US.msi` | 29,884,416 | `ab0934ce8d5986beb80b317b53006b90efd6ca8c08f92f353ee63c487a125719` |
+| `mesh-chat-0.9.15-android-arm64-release.apk` | 34,387,649 | `139e2c02aadfb2682953fd6a2d872cc7e78e77522b1e5b73aeabe82c84b5398f` |
+| `SHA256SUMS.txt` | 303 | `98a18b5745f4221e84a0f1320f70bd1aad13afd141e7468de4e75d7071dbc90a` |
+
+The Android APK is debug-signed; it is not a production or upgrade identity.
+
 ## Workspace DM calls, 0.9.14
 
 Phase 6 adds 1:1 calls from a workspace DM without creating a Personal contact.
