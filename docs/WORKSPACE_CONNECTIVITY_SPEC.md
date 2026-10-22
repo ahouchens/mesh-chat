@@ -143,7 +143,8 @@ section:
 - summary counts: reachable devices / active devices, queued deliveries;
 - one row per member device with a state badge, route label, pending count and
   last-reached time;
-- a **Request missing paths** action and a refresh action;
+- a **Request missing paths** action that also refreshes the status; reopening
+  the dialog refreshes it as well;
 - explicit copy that membership is not a route, that the owner is not a relay,
   and that a propagation-node proof is not delivery.
 
@@ -152,8 +153,8 @@ section:
 - Only active members in the current verified manifest are listed.
 - No destinations beyond the already-public workspace member model, no endpoints,
   no public identities, no message text, and no credentials cross the boundary.
-- The command requires an existing active/participating workspace; it does not
-  expose another profile's workspace.
+- The command requires an existing active workspace; it does not expose another
+  profile's workspace.
 - Connectivity output is not signed, not replicated, and never enters a
   manifest, channel, receipt, or delivery decision.
 
