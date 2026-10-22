@@ -32,4 +32,18 @@ describe("connection transport choices", () => {
     await transport.close();
     expect(closed).toEqual(["bridge", "control", "channel", "pc"]);
   });
+
+  it("closes the remaining resources when the bridge close fails", async () => {
+    const closed: string[] = [];
+    const session = {
+      bridge: { close: async () => { closed.push("bridge"); throw new Error("bridge failed"); } },
+      channel: { close: () => { closed.push("channel"); } },
+      control: { close: () => { closed.push("control"); } },
+      pc: { close: () => { closed.push("pc"); } },
+      path: "direct",
+    } as unknown as WebRTCSession;
+
+    await expect(webRTCTransport(session).close()).rejects.toThrow("bridge failed");
+    expect(closed).toEqual(["bridge", "control", "channel", "pc"]);
+  });
 });

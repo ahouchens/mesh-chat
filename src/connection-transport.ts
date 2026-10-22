@@ -30,10 +30,13 @@ export function webRTCTransport(session: WebRTCSession): ConnectionTransport {
     kind: "webrtc",
     path: session.path,
     close: async () => {
-      await session.bridge.close();
-      session.control?.close();
-      session.channel.close();
-      session.pc.close();
+      try {
+        await session.bridge.close();
+      } finally {
+        session.control?.close();
+        session.channel.close();
+        session.pc.close();
+      }
     },
   };
 }
