@@ -2590,7 +2590,18 @@ class WorkspaceServiceMixin:
         )
         if record is None:
             return None
-        manifest = verify_workspace_manifest(record["serialized"])
+        value = json.loads(record["serialized"])
+        if isinstance(value, dict) and value.get("type") == "workspace_manifest_delegated":
+            previous = self._workspace_manifest_at_epoch(
+                record["workspace_id"], int(record["epoch"]) - 1
+            )
+            if previous is None:
+                raise ValidationError("Delegated manifest predecessor is unavailable")
+            manifest = verify_delegated_manifest(
+                record["serialized"], previous=previous
+            )
+        else:
+            manifest = verify_workspace_manifest(record["serialized"])
         if manifest.digest != digest:
             raise ValidationError("Stored workspace manifest digest changed")
         return manifest
@@ -5732,6 +5743,92 @@ class WorkspaceServiceMixin:
             )
             if record.get("workspace_id") == workspace["id"]
         ]
+
+    def end_workspace_admission_grant(
+        self, workspace_id: Any, grant_id: Any
+    ) -> dict[str, Any]:
+        workspace = self._require_workspace(workspace_id)
+        if (
+            workspace.get("state") != "active"
+            or workspace.get("local_role") != "owner"
+            or workspace.get("local_device_id") != workspace.get("authority_device_id")
+        ):
+            raise ContactNotApproved("Only the active workspace authority can end an admission grant")
+        if not isinstance(grant_id, str):
+            raise ValidationError("Admission grant ID is invalid")
+        record = self.store.get("workspace_admission_grant", grant_id)
+        if record is None or record.get("workspace_id") != workspace["id"]:
+            raise ValidationError("Admission grant is unavailable")
+        if record.get("state") == "revoked":
+            return self._public_workspace_admission_grant(record, include_offer=True)
+        identity = self._identity
+        if identity is None:
+            raise ValidationError("Local identity is unavailable")
+        current = self._workspace_current_manifest(workspace)
+        records: list[tuple[str, str, dict[str, Any]]] = []
+        deliveries: list[dict[str, Any]] = []
+        admin = find_member(current, record["admin_member_id"])
+        admin_device = next(
+            (
+                item
+                for item in (admin.devices if admin is not None else ())
+                if item.device_id == record["admin_device_id"]
+            ),
+            None,
+        )
+        if admin is not None and admin_device is not None:
+            deliveries.append(
+                self._workspace_delivery_record(
+                    workspace_id=workspace["id"],
+                    recipient_member_id=admin.member_id,
+                    recipient_device=admin_device,
+                    kind="workspace_admission_revocation",
+                    document=json.dumps(
+                        {"grant_id": record["id"], "reason": "owner_ended_delegation"},
+                        separators=(",", ":"),
+                        sort_keys=True,
+                    ),
+                    priority=0,
+                )
+            )
+        record["state"] = "revoked"
+        record["revoked_at"] = time.time()
+        records.append(("workspace_admission_grant", record["id"], record))
+        records.extend(
+            [("workspace_delivery", delivery["id"], delivery) for delivery in deliveries]
+        )
+        records.extend(self._due_records(add=deliveries))
+        self.store.put_many(records)
+        self._workspace_changed(workspace["id"], resource_kind="admission_grant")
+        return self._public_workspace_admission_grant(record, include_offer=True)
+
+    def _receive_workspace_admission_revocation(
+        self, wire: WorkspaceWirePayload, source_hash: Any
+    ) -> None:
+        try:
+            value = json.loads(wire.document)
+        except json.JSONDecodeError:
+            return
+        if not isinstance(value, dict) or set(value) != {"grant_id", "reason"}:
+            return
+        grant_id = value.get("grant_id")
+        if not isinstance(grant_id, str):
+            return
+        workspace = self.store.get(
+            "workspace", self._workspace_record_id(wire.workspace_id)
+        )
+        if workspace is None or workspace.get("state") != "active":
+            return
+        manifest = self._workspace_current_manifest(workspace)
+        if source_hash != manifest.authority_destination:
+            return
+        record = self.store.get("workspace_admission_grant", grant_id)
+        if record is None or record.get("workspace_id") != wire.workspace_id:
+            return
+        record["state"] = "revoked"
+        record["revoked_at"] = time.time()
+        self.store.put("workspace_admission_grant", record["id"], record)
+        self._workspace_changed(wire.workspace_id, resource_kind="admission_grant")
 
     @staticmethod
     def _public_workspace_admission_grant(
@@ -19303,6 +19400,11 @@ class WorkspaceServiceMixin:
             return
         if wire.kind == "workspace_admission_pending":
             self._receive_workspace_admission_pending(wire)
+            return
+        if wire.kind == "workspace_admission_revocation":
+            self._receive_workspace_admission_revocation(
+                wire, getattr(native, "source_hash", None)
+            )
             return
         if wire.kind == "workspace_manifest_delegated":
             self._receive_workspace_delegated_manifest(wire)

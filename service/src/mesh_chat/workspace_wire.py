@@ -41,6 +41,7 @@ WORKSPACE_WIRE_KINDS = frozenset(
         "workspace_admission_grant",
         "workspace_admission_acceptance",
         "workspace_admission_pending",
+        "workspace_admission_revocation",
         "workspace_manifest_delegated",
         "workspace_device_link",
         "workspace_device_removal",

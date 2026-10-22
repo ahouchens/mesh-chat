@@ -299,6 +299,7 @@ class MeshChatService(
         "create_workspace_admission_grant",
         "accept_workspace_admission_grant",
         "list_workspace_admission_grants",
+        "end_workspace_admission_grant",
         "workspace_request_paths",
         "create_workspace_access_recommendation",
         "preview_workspace_access_recommendation",
@@ -356,6 +357,7 @@ class MeshChatService(
         "create_workspace_admission_grant",
         "accept_workspace_admission_grant",
         "list_workspace_admission_grants",
+        "end_workspace_admission_grant",
         "workspace_request_paths",
         "create_workspace_access_recommendation",
         "preview_workspace_access_recommendation",
@@ -3945,6 +3947,15 @@ class MeshChatService(
                 value, allowed={"workspace_id"}, required={"workspace_id"}
             )
             return self.list_workspace_admission_grants(body["workspace_id"])
+        if command == "end_workspace_admission_grant":
+            body = _payload(
+                value,
+                allowed={"workspace_id", "grant_id"},
+                required={"workspace_id", "grant_id"},
+            )
+            return self.end_workspace_admission_grant(
+                body["workspace_id"], body["grant_id"]
+            )
         if command == "create_workspace_access_recommendation":
             body = _payload(
                 value,

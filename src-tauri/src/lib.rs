@@ -612,6 +612,7 @@ fn allowed_renderer_command(command: &str) -> bool {
             | "create_workspace_admission_grant"
             | "accept_workspace_admission_grant"
             | "list_workspace_admission_grants"
+            | "end_workspace_admission_grant"
             | "workspace_request_paths"
             | "create_workspace_access_recommendation"
             | "preview_workspace_access_recommendation"
@@ -1726,6 +1727,7 @@ mod tests {
             "create_workspace_admission_grant",
             "accept_workspace_admission_grant",
             "list_workspace_admission_grants",
+            "end_workspace_admission_grant",
             "workspace_request_paths",
             "create_workspace_access_recommendation",
             "preview_workspace_access_recommendation",

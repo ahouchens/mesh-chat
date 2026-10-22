@@ -4,7 +4,8 @@ Status: Phase 1 implemented in 0.9.3; Phase 2a implemented in 0.9.4; Phase 2b
 implemented in 0.9.5; Phase 3 implemented in 0.9.6; Phase 4 implemented in
 0.9.7; Phase 5 protocol primitives implemented in 0.9.8; grant lifecycle service
 implemented in 0.9.9; delegated admission backend implemented in 0.9.10; grant/admission UI
-implemented in 0.9.11; owner-return/conflict UX pending; later phases proposed.
+implemented in 0.9.11; owner revocation implemented in 0.9.12; owner-return
+normalization and conflict UX pending; later phases proposed.
 
 ## 1. Problem
 
@@ -376,9 +377,13 @@ Implemented and tested, with no service/UI admission path enabled yet:
   accepted grant; no separate join UI is required.
 - The owner authority remains owner; the grant is not a role or ownership
   transfer.
+- The owner can end a grant from the same section. The service marks it revoked
+  and delivers workspace_admission_revocation to the selected admin device;
+  the admin can no longer approve joins from it.
 
-Not yet implemented: owner-return normalization, fork/revocation/expiry UX,
-pre-v2 fail-closed delivery, end-to-end multi-device tests, and physical
+Not yet implemented: automatic owner-return normalization into a v1 manifest
+(the next owner semantic change already extends the v2 head), fork-resolution
+UI, pre-v2 fail-closed delivery, end-to-end multi-device tests, and physical
 qualification. Owner-offline admission is exposed but not physically qualified.
 
 ## 10. Phase 6 — workspace DM calls

@@ -598,6 +598,31 @@ def test_workspace_admission_grant_delivery_and_acceptance(tmp_path):
     assert member._receive_workspace_delegated_manifest(wire)
     assert member._require_workspace(workspace["id"])["manifest_hash"] == delegated.digest
 
+    assert owner._receive_workspace_delegated_manifest(wire)
+    ended = owner.end_workspace_admission_grant(workspace["id"], grant["id"])
+    assert ended["state"] == "revoked"
+    revocations = _flush(owner, owner_network)
+    for item in revocations:
+        _deliver(owner, item, source_profile=owner_profile, recipient_profile=member_profile)
+    member_grant = member.store.get("workspace_admission_grant", grant["id"])
+    if member_grant is not None and member_grant.get("state") != "revoked":
+        revocation = next(
+            (
+                item
+                for item in revocations
+                if parse_workspace_payload(
+                    _native(item, source=b"\x00" * 16, destination=b"\x01" * 16)
+                ).kind == "workspace_admission_revocation"
+            ),
+            None,
+        )
+        if revocation is not None:
+            member._receive_workspace_admission_revocation(
+                parse_workspace_payload(_native(revocation, source=b"\x00" * 16, destination=b"\x01" * 16)),
+                bytes.fromhex(owner_profile["destination_hash"]),
+            )
+    assert member.store.get("workspace_admission_grant", grant["id"])["state"] == "revoked"
+
 
 def test_workspace_connection_helper_relays_one_hop_only(tmp_path):
     owner, _owner_network, owner_profile, member, _member_network, member_profile, workspace, _key, _identity = _joined_pair(tmp_path, base=9970)

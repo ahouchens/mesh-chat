@@ -3820,12 +3820,18 @@ function WorkspaceAdmissionGrants({ workspace }: { workspace: Workspace }) {
     catch (reason) { setError(errorMessage(reason)); }
     finally { setBusy(false); }
   };
+  const end = async (grantId: string) => {
+    setBusy(true); setError("");
+    try { await serviceCommand("end_workspace_admission_grant", { workspace_id: workspace.id, grant_id: grantId }); await refresh(); }
+    catch (reason) { setError(errorMessage(reason)); }
+    finally { setBusy(false); }
+  };
   if (!owner && workspace.local_role !== "admin") return null;
   return <section className="form-stack" aria-labelledby="admission-grants-title">
     <h3 id="admission-grants-title">Owner-offline admission grants</h3>
     <p className="muted">An owner-signed grant lets one admin device admit up to five pending joins for seven days while the owner is offline. The admin must accept it. Every admission is a signed workspace manifest; owner authority never moves.</p>
     {owner && <div className="form-stack"><label>Admin<select value={selectedAdmin?.id ?? ""} onChange={(event) => { setAdminMemberId(event.target.value); const next = candidates.find((member) => member.id === event.target.value); setAdminDeviceId(next?.devices?.[0]?.id ?? next?.device.id ?? ""); }}>{candidates.map((member) => <option key={member.id} value={member.id}>{member.display_name}</option>)}{!candidates.length && <option value="">No active admin</option>}</select></label><label>Admin device<select value={adminDeviceId} onChange={(event) => setAdminDeviceId(event.target.value)}>{adminDevices.map((device) => <option key={device.id} value={device.id}>{device.id.slice(0, 8)} · {device.fingerprint.slice(0, 12)}</option>)}</select></label><Button disabled={busy || !selectedAdmin || !adminDeviceId} onClick={() => void create()}>{busy ? "Creating…" : "Create five-admission grant"}</Button></div>}
-    {grants.map((grant) => <div className="workspace-directory-status" key={grant.id}><span><strong>{grant.state === "accepted" ? "Accepted" : grant.state === "offered" ? "Waiting for admin" : grant.state}</strong> · {grant.use_count}/{grant.max_admissions} used · expires {new Date(grant.expires_at * 1000).toLocaleString()}</span>{!owner && grant.state === "offered" && <Button disabled={busy} onClick={() => void accept(grant.id)}>Accept grant</Button>}</div>)}
+    {grants.map((grant) => <div className="workspace-directory-status" key={grant.id}><span><strong>{grant.state === "accepted" ? "Accepted" : grant.state === "offered" ? "Waiting for admin" : grant.state === "revoked" ? "Revoked" : grant.state}</strong> · {grant.use_count}/{grant.max_admissions} used · expires {new Date(grant.expires_at * 1000).toLocaleString()}</span><span>{!owner && grant.state === "offered" && <Button disabled={busy} onClick={() => void accept(grant.id)}>Accept grant</Button>}{owner && grant.state !== "revoked" && <Button variant="ghost" disabled={busy} onClick={() => void end(grant.id)}>End delegation</Button>}</span></div>)}
     {!grants.length && <p className="muted">No admission grants for this workspace.</p>}
     {error && <p className="form-error" role="alert">{error}</p>}
   </section>;
