@@ -244,7 +244,9 @@ Implemented for the supported paths:
 - Reconnect and diagnostics actions are available from the connection card.
 
 Not implemented: live WebRTC session migration across app restarts, which
-requires both peers to renegotiate with a new peer connection.
+requires both peers to renegotiate with a new peer connection. See
+[AUTO_RECONNECT_SPEC.md](AUTO_RECONNECT_SPEC.md) for the reconnect design,
+capability discovery, consent model, and lifecycle policy.
 
 ## 8. Acceptance criteria
 

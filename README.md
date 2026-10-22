@@ -1,4 +1,4 @@
-﻿# Mesh Chat
+# Mesh Chat
 
 **Server-free, end-to-end encrypted messaging for small groups Ã¢â‚¬â€ built directly on Reticulum and LXMF.**
 
@@ -257,6 +257,7 @@ Desktop installers must be built on their target operating system. Android build
 | [Cloudflare signaling mailbox](deploy/cloudflare-signal/README.md) | Optional 10-minute signed offer/answer mailbox to remove copy/paste |
 | [Community relay spec](docs/COMMUNITY_RELAY_SPEC.md) | Opt-in default/community relays, TURN + Reticulum access point, consent, failover, and no central store |
 | [Connection UX architecture](docs/CONNECTION_UX_ARCHITECTURE.md) | Unified connection object, transport/signaling adapters, inline relay consent, and approval UX |
+| [Automatic reconnect spec](docs/AUTO_RECONNECT_SPEC.md) | Independent rendezvous, capabilities, consent, glare control, mailbox hardening, and lifecycle policy |
 | [WebRTC physical test plan](docs/WEBRTC_PHYSICAL_TEST_PLAN.md) | Windows/Android call, TURN, foreground-service, and privacy qualification matrix |
 | [docs/ANDROID_PARITY.md](docs/ANDROID_PARITY.md) | Android capability status and the physical test matrix |
 | [deploy/remote-access](deploy/remote-access/README.md) | Running an access point or propagation node without becoming a Mesh Chat service |
