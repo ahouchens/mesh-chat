@@ -3,8 +3,8 @@
 Status: Phase 1 implemented in 0.9.3; Phase 2a implemented in 0.9.4; Phase 2b
 implemented in 0.9.5; Phase 3 implemented in 0.9.6; Phase 4 implemented in
 0.9.7; Phase 5 protocol primitives implemented in 0.9.8; grant lifecycle service
-implemented in 0.9.9; delegated admission backend implemented in 0.9.10;
-UI/qualification pending; later phases proposed.
+implemented in 0.9.9; delegated admission backend implemented in 0.9.10; grant/admission UI
+implemented in 0.9.11; owner-return/conflict UX pending; later phases proposed.
 
 ## 1. Problem
 
@@ -365,11 +365,21 @@ Implemented and tested, with no service/UI admission path enabled yet:
   pre-v2 fail-closed delivery handling. Owner-offline admission is therefore not
   exposed to users yet.
 
-### Phase 5.2c — UI, conflicts, and qualification (planned)
+### Phase 5.2c — grant/admission UI (implemented in 0.9.11)
 
-Grant/admission UI, owner-return normalization, fork/revocation/expiry UX,
-pre-v2 fail-closed handling, end-to-end tests, and physical qualification. Until
-5.2c ships, owner-offline joins remain queued in the UI.
+- Workspace settings exposes an **Owner-offline admission grants** section for
+  owners and admins.
+- The owner selects an active admin member/device and creates a five-admission,
+  seven-day grant; the list shows offered/accepted state, uses, and expiry.
+- The selected admin accepts a received grant from the same section.
+- The existing pending-join Approve action now works for an admin with an
+  accepted grant; no separate join UI is required.
+- The owner authority remains owner; the grant is not a role or ownership
+  transfer.
+
+Not yet implemented: owner-return normalization, fork/revocation/expiry UX,
+pre-v2 fail-closed delivery, end-to-end multi-device tests, and physical
+qualification. Owner-offline admission is exposed but not physically qualified.
 
 ## 10. Phase 6 — workspace DM calls
 

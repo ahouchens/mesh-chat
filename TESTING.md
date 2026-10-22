@@ -22,6 +22,47 @@ locally. Frontend/package/native tests and Windows/Android builds run in Actions
 Physical execution follows the
 [Phase 2 device checklist](docs/DIRECT_CONNECTIVITY_PHASE2_DEVICE_TEST.md).
 
+## Owner-offline admission grants, UI stage 0.9.11
+
+Phase 5.2c adds the workspace-settings grant/admission UI.
+
+Implemented:
+
+- **Owner-offline admission grants** section in Workspace settings for owners and
+  admins.
+- Owner selects an active admin member and device, creates a five-admission,
+  seven-day grant, and sees offered/accepted state, uses, and expiry.
+- Selected admin sees the received grant and can accept it.
+- The existing pending-join Approve action now works for an admin with an
+  accepted grant.
+- Manifest, grant, and acceptance state continue to be signed and verified by
+  the service.
+
+Not implemented in this stage:
+
+- owner-return normalization;
+- fork/revocation/expiry UX beyond the displayed expiry;
+- pre-v2 client fail-closed delivery;
+- physical multi-device qualification.
+
+Validation:
+
+```text
+pytest service/tests:        1108 passed, 46 skipped, 0 failed (259.54 s)
+node scripts/run-frontend-tests.mjs: 264 passed (18 files)
+node --test deploy/cloudflare-signal/worker.test.mjs: 11 passed
+packaged emoji artwork verification: 3 passed
+node node_modules/typescript/bin/tsc -b: passed
+node scripts/run-frontend-build.mjs: passed
+```
+
+The official report is
+`dist/reports/0.9.11/20261022T192008Z-b3793a4d/report.json` (git-ignored):
+`status: passed`, 300.181 s, SHA-256
+`b81e5edc5b5631e056ba5d4c7c53ae0fd64ed84bcb77c925201f275bf975786a`.
+Gates: `automated: passed`; `physical_device: not-requested`;
+`production_signing: not-requested`.
+
 ## Owner-offline admission grants, delegated backend 0.9.10
 
 Phase 5.2b adds the delegated-admission backend. There is still no grant or
