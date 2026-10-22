@@ -160,6 +160,9 @@ class VerifiedWorkspaceManifest:
     authority_transition_digest: str | None = None
     authority_signer_destination: bytes | None = None
     device_transition_digest: str | None = None
+    delegated_signer_destination: bytes | None = None
+    delegation_grant_digest: str | None = None
+    delegation_grant_use: int | None = None
 
 
 @dataclass(frozen=True, slots=True)

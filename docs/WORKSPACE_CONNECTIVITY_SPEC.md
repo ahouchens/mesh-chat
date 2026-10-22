@@ -1,8 +1,9 @@
 # Workspace Connectivity and Reachability
 
 Status: Phase 1 implemented in 0.9.3; Phase 2a implemented in 0.9.4; Phase 2b
-implemented in 0.9.5; Phase 3 implemented in 0.9.6; Phase 4 implemented in 0.9.7;
-later phases proposed.
+implemented in 0.9.5; Phase 3 implemented in 0.9.6; Phase 4 implemented in
+0.9.7; Phase 5 protocol primitives implemented in 0.9.8; service/UI planned for
+0.9.9; later phases proposed.
 
 ## 1. Problem
 
@@ -290,13 +291,56 @@ Limits: helper relay is manual per update, requires both endpoints to share a
 reachable helper, and does not create a route by itself; the signed DirectRecovery
 document must still be valid. No physical multi-device helper test was performed.
 
-## 9. Phase 5 — owner-availability policy
+## 9. Phase 5 — owner-offline admission grants
 
-Allow an owner-signed policy to delegate specific membership-request approvals
-to an administrator, or support a multi-device authority arrangement. Requires a
-protocol/security review because it changes the single-authority model. Until
-then, owner-offline joins/removals/policy changes remain queued and the UI states
-the limitation. Ordinary chat among reachable members continues.
+The current model has one owner authority device, so an admin cannot safely sign
+a membership manifest without a new protocol. Phase 5 adds **pre-authorized
+admission grants** rather than sharing or replacing the owner authority:
+
+- The owner signs one `workspace_admission_grant` while online, bound to the
+  workspace, start manifest, a selected active **admin** member/device (with its
+  signed device card), a 32-byte nonce, expiry up to seven days, and at most five
+  admissions.
+- The selected admin must countersign a `workspace_admission_acceptance` bound to
+  the exact grant digest. The first delegated manifest carries both documents so
+  every member can verify the admin knowingly accepted the role.
+- Each admission is a full `workspace_manifest_delegated` v2 snapshot, signed by
+  the accepted admin. It retains the owner as owner and the owner authority
+  device, and adds exactly one active member. Existing members, roles, devices,
+  policies, retention, name, description, status, and authority are unchanged.
+- A grant is used in a chain: use 1 extends the grant's start manifest; use N
+  extends the prior delegated manifest with the same grant. `grant_use` never
+  exceeds `max_admissions`; reuse from a different base or grant is rejected.
+- The admin may admit any currently pending join request with a valid signed
+  invitation; it cannot add an arbitrary device card or pre-designate a member.
+- Older clients reject the v2 document and show an update-required state. They
+  never silently ignore a delegated admission.
+- A competing owner manifest, grant reuse from another base, or a non-admission
+  change freezes the workspace under the existing fork rules; the owner resolves
+  it. The owner remains final and can end the grant by publishing a v1 manifest.
+- All members see the grant, acceptance, use index, and each delegated admission.
+
+### Phase 5.1 — protocol primitives (implemented in 0.9.8)
+
+Implemented and tested, with no service/UI admission path enabled yet:
+
+- `workspace_admission_grant` and `workspace_admission_acceptance` canonical
+  signed documents with exact-field parsing, admin device-card binding, nonce,
+  expiry, and tamper/signature failure tests.
+- `workspace_manifest_delegated` v2 full-snapshot creation and verification:
+  owner/authority retention, grant/acceptance validation, admin signature,
+  chained `grant_use`, one-new-member admission-only diff, and rejection of
+  policy/role/removal/name/authority changes.
+- `VerifiedWorkspaceManifest` carries delegated signer/grant/use metadata.
+- The app does not expose grant creation, acceptance, admission, or v2 delivery
+  until the Phase 5.2 service/UI increment.
+
+### Phase 5.2 — service/UI (planned)
+
+Grant issuance/acceptance storage and visibility, admin admission of pending
+joins, v2 wire delivery, owner-return/fork handling, revocation/expiry, UI, and
+physical qualification. Until 5.2 ships, owner-offline joins remain queued and
+the UI states the limitation.
 
 ## 10. Phase 6 — workspace DM calls
 

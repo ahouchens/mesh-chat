@@ -441,6 +441,13 @@ A second helper sees a native source that is not the origin and ignores the
 wrapper. Helpers see connection endpoints/timing only; they cannot approve
 membership, read chat, alter authority, or forge receipts.
 
+0.9.8 adds the Phase 5 owner-offline admission protocol primitives: an
+owner-signed, admin-accepted admission grant and a full v2 delegated manifest
+signed by that admin. The v2 verifier enforces the owner/authority snapshot,
+admission-only diffs, chained grant use, expiry, and admin signature. These
+documents are not yet enabled by the workspace service or UI; owner-offline
+joins therefore remain queued until the Phase 5.2 service/UI increment.
+
 Edits, author deletion, and reactions are canonical `workspace_event` records,
 not mutable renderer commands or replacements for the signed original. The
 service first verifies the mutation envelope and current controls, then resolves

@@ -22,6 +22,46 @@ locally. Frontend/package/native tests and Windows/Android builds run in Actions
 Physical execution follows the
 [Phase 2 device checklist](docs/DIRECT_CONNECTIVITY_PHASE2_DEVICE_TEST.md).
 
+## Owner-offline admission grants, protocol stage 0.9.8
+
+Phase 5.1 of the [workspace connectivity spec](docs/WORKSPACE_CONNECTIVITY_SPEC.md)
+adds only protocol primitives and verifiers. The workspace service and UI do
+**not** yet issue grants, accept them, deliver v2 delegated manifests, or admit
+members while the owner is offline. Owner-offline joins remain queued in 0.9.8.
+
+Protocol coverage:
+
+- `workspace_admission_grant` round trip, owner signature, admin device-card
+  binding, workspace/start-manifest binding, nonce, expiry, and tamper rejection.
+- `workspace_admission_acceptance` binds the exact grant digest and admin
+  destination; wrong admin/signature and tampered acceptance are rejected.
+- `workspace_manifest_delegated` v2 full-snapshot creation and verification:
+  owner/authority retention, admin signature, grant/acceptance checks, chained
+  `grant_use` 1..5, and exactly one new active non-owner member.
+- Existing members, devices, roles, status, name, description, policies,
+  retention, and authority must remain unchanged; removal, policy changes, and
+  new admins are rejected.
+- Pre-v2 clients are not modified in this stage; the fail-closed delivery path is
+  a Phase 5.2 integration requirement.
+
+Validation:
+
+```text
+pytest service/tests:        1107 passed, 46 skipped, 0 failed (262.17 s)
+node scripts/run-frontend-tests.mjs: 264 passed (18 files)
+node --test deploy/cloudflare-signal/worker.test.mjs: 11 passed
+packaged emoji artwork verification: 3 passed
+node node_modules/typescript/bin/tsc -b: passed
+node scripts/run-frontend-build.mjs: passed
+```
+
+The official report is
+`dist/reports/0.9.8/20261022T165548Z-5bb539a9/report.json` (git-ignored):
+`status: passed`, 297.105 s, SHA-256
+`09856ca43dd06be3e04ca972dbad49d6a9e5143fa085337f80959c55db883bc0`.
+Gates: `automated: passed`; `physical_device: not-requested`;
+`production_signing: not-requested`.
+
 ## One-hop workspace connection helper, 0.9.7
 
 Phase 4 of the [workspace connectivity spec](docs/WORKSPACE_CONNECTIVITY_SPEC.md)

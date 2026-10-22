@@ -238,6 +238,43 @@ the original document. The helper can observe connection endpoints and timing
 inside its own encrypted delivery, not chat, history, receipts, private keys, or
 membership. Relaying is off by default and is a manual per-update action.
 
+## Workspace admission grants v1 and delegated manifest v2
+
+Phase 5 adds owner-offline admission without sharing the owner authority key.
+
+`workspace_admission_grant` fields:
+
+- `v` = `1`, `type` = `workspace_admission_grant`;
+- `workspace_id`, `start_manifest_hash`;
+- `admin_member_id`, `admin_device_id`, `admin_destination`, and the exact
+  signed `admin_device_card`;
+- `max_admissions` (1-5), `issued_at`, `expires_at` (at most seven days), and a
+  32-byte `nonce`;
+- `signer_public_key`, `signature` by the owner authority.
+
+`workspace_admission_acceptance` binds the exact grant digest, workspace, admin
+destination, acceptance time, admin public key, and signature. The admin device
+must match the grant's card/destination.
+
+A delegated admission is a full `workspace_manifest_delegated` v2 snapshot
+carrying all v1-equivalent manifest fields plus `grant`, `grant_acceptance`,
+`grant_use` (1-5), and `delegated_signer_destination`. The owner and authority
+device remain unchanged; the admin signature is verified against the accepted
+grant's admin card. Use 1 must extend the grant's start manifest; use N must
+extend the prior delegated manifest with the same grant, and may not exceed
+`max_admissions`. The only permitted change is exactly one new active non-owner
+member; existing members/devices/roles/status and name, description, policies,
+retention, and authority must be identical.
+
+Pre-v2 clients reject the unknown document and expose an update-required state;
+they do not ignore the admission silently. A competing owner manifest, grant
+reuse from another base, or any non-admission change triggers the existing fork
+freeze. The owner remains final and ends delegation by publishing a v1 manifest.
+
+0.9.8 implements these protocol primitives and verifiers only. Grant creation,
+acceptance, v2 delivery, and admin admission UI are enabled in the Phase 5.2
+service/UI increment.
+
 ## Invitation v1
 
 All entry points carry the same canonical UTF-8 JSON object:
