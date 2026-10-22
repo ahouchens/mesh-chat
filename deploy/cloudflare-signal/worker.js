@@ -2,6 +2,13 @@ const MAX_DOCUMENT_BYTES = 48 * 1024;
 const TTL_SECONDS = 600;
 const SESSION = /^[A-Za-z0-9_-]{16,80}$/;
 const ROLES = new Set(["offer", "answer"]);
+const DOCUMENT_TYPES = new Set([
+  "webrtc_onboarding_offer",
+  "webrtc_onboarding_answer",
+  "webrtc_reconnect_request",
+  "webrtc_reconnect_offer",
+  "webrtc_reconnect_answer",
+]);
 
 function cors(body, status = 200) {
   return new Response(body === undefined ? null : JSON.stringify(body), {
@@ -44,9 +51,7 @@ export class SignalRoom {
       try {
         const parsed = JSON.parse(document);
         if (!parsed || typeof parsed !== "object") return cors({ error: "document_invalid" }, 400);
-        if (parsed.type !== "webrtc_onboarding_offer" && parsed.type !== "webrtc_onboarding_answer") {
-          return cors({ error: "document_invalid" }, 400);
-        }
+        if (!DOCUMENT_TYPES.has(parsed.type)) return cors({ error: "document_invalid" }, 400);
       } catch {
         return cors({ error: "document_invalid" }, 400);
       }
