@@ -3918,6 +3918,11 @@ class WorkspaceServiceMixin:
                 else str(direct.get("peer_display_name", "Former member"))
             ),
             "peer_short_id": _short_id(peer_member_id) if peer_member_id else "",
+            "peer_device_id": (
+                peer.devices[0].device_id
+                if peer is not None and peer.status == "active" and peer.devices
+                else ""
+            ),
             "state": "open" if active else "read_only",
             "unread_count": int(direct.get("unread_count", 0)),
             "notification_preference": self._workspace_notification_preference(
@@ -19444,6 +19449,21 @@ class WorkspaceServiceMixin:
             self._receive_workspace_admission_revocation(
                 wire, getattr(native, "source_hash", None)
             )
+            return
+        if wire.kind == "workspace_call_signal":
+            source_hash = getattr(native, "source_hash", None)
+            if (
+                self._identity is not None
+                and isinstance(source_hash, bytes)
+                and (
+                    peer := self._workspace_reconnect_contact_by_destination(
+                        source_hash.hex()
+                    )
+                )
+                is not None
+            ):
+                if self.calls.receive(self._identity, peer, wire.document) is not None:
+                    self._workspace_changed(wire.workspace_id, resource_kind="call")
             return
         if wire.kind == "workspace_manifest_delegated":
             self._receive_workspace_delegated_manifest(wire)

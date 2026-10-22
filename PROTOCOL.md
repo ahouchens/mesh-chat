@@ -271,6 +271,11 @@ they do not ignore the admission silently. A competing owner manifest, grant
 reuse from another base, or any non-admission change triggers the existing fork
 freeze. The owner remains final and ends delegation by publishing a v1 manifest.
 
+Workspace call signaling uses the existing signed call document as workspace
+control kind workspace_call_signal, addressed to one active workspace device.
+The call manager accepts the synthetic workspace peer only while the
+workspace and both devices are active. No Personal contact is created.
+
 0.9.8 implements these protocol primitives and verifiers only. Grant creation,
 acceptance, v2 delivery, and admin admission UI are enabled in the Phase 5.2
 service/UI increment.

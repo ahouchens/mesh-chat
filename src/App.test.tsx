@@ -3854,6 +3854,7 @@ describe("desktop workspaces", () => {
       peer_member_id: member.id,
       peer_display_name: member.display_name,
       peer_short_id: member.short_id,
+      peer_device_id: member.device.id,
       state: "open",
       unread_count: 0,
       created_at: 10,

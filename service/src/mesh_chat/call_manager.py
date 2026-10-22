@@ -485,7 +485,7 @@ class CallManager:
 
     @staticmethod
     def _require_approved(contact: dict[str, Any]) -> None:
-        if contact.get("trust") not in {"approved", "verified"}:
+        if contact.get("trust") not in {"approved", "verified", "workspace"}:
             raise ValidationError("Calls require an approved contact")
 
 

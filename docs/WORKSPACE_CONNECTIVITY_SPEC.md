@@ -5,7 +5,8 @@ implemented in 0.9.5; Phase 3 implemented in 0.9.6; Phase 4 implemented in
 0.9.7; Phase 5 protocol primitives implemented in 0.9.8; grant lifecycle service
 implemented in 0.9.9; delegated admission backend implemented in 0.9.10; grant/admission UI
 implemented in 0.9.11; owner revocation implemented in 0.9.12; owner-return normalization implemented in
-0.9.13; conflict UX pending; later phases proposed.
+0.9.13; workspace DM call signaling implemented in 0.9.14; conflict UX and
+physical call qualification pending.
 
 ## 1. Problem
 
@@ -390,11 +391,18 @@ Not yet implemented: fork-resolution UI, pre-v2 fail-closed delivery, end-to-end
 multi-device tests, and physical qualification. Owner-offline admission is
 exposed but not physically qualified.
 
-## 10. Phase 6 — workspace DM calls
+## 10. Phase 6 — workspace DM calls (implemented in 0.9.14)
 
-Reuse the existing 1:1 call signaling and media path with workspace participant
-authorization instead of Personal contact approval. Calls remain 1:1; group
-calls are a separate deferred design.
+Workspace DMs reuse the existing 1:1 call signaling and media path. The selected
+workspace peer device is addressed as a synthetic workspace peer; call invites,
+answers, ICE, hangup, and restart documents travel as workspace_call_signal
+through the existing encrypted workspace delivery queue. The call manager accepts
+the signed 	rust: workspace synthetic peer only while the workspace and both
+devices are active. Calls remain 1:1; group calls are a separate deferred design.
+
+The workspace DM header exposes audio/video call actions and the existing call
+dialog. No Personal contact is created. Physical audio/video and NAT/TURN
+qualification remains open.
 
 ## 11. Phase 7 — WebRTC workspace invitation
 

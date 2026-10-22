@@ -1634,14 +1634,57 @@ class MeshChatService(
             raise NetworkUnavailable("Local identity is not ready for calls")
         return self._identity
 
+    def _require_call_peer(self, contact_id: str) -> dict[str, Any]:
+        if isinstance(contact_id, str) and contact_id.startswith("workspace:"):
+            return self._workspace_reconnect_contact(contact_id)
+        return self._require_contact(contact_id)
+
     def _send_call_document(self, contact_id: str, document: str) -> None:
-        contact = self._require_contact(contact_id)
-        if contact["trust"] not in {TrustState.APPROVED.value, TrustState.VERIFIED.value}:
-            raise ContactNotApproved("Calls require an approved contact")
         if not isinstance(document, str) or not document:
             raise ValidationError("Call document is empty")
         if len(document.encode("utf-8")) > MAX_TEXT_BYTES:
             raise ValidationError("Call document is too large")
+        if contact_id.startswith("workspace:"):
+            contact = self._workspace_reconnect_contact(contact_id)
+            workspace = self._require_workspace(contact["workspace_id"])
+            manifest = self._workspace_current_manifest(workspace)
+            member = next(
+                (
+                    item
+                    for item in manifest.members
+                    if item.member_id == contact["peer_member_id"]
+                ),
+                None,
+            )
+            device = next(
+                (
+                    item
+                    for item in (member.devices if member is not None else ())
+                    if item.device_id == contact["peer_device_id"]
+                ),
+                None,
+            )
+            if member is None or device is None or member.status != "active":
+                raise ContactNotApproved("Workspace call peer is not active")
+            delivery = self._workspace_delivery_record(
+                workspace_id=workspace["id"],
+                recipient_member_id=member.member_id,
+                recipient_device=device,
+                kind="workspace_call_signal",
+                document=document,
+                priority=1,
+            )
+            self.store.put_many(
+                [
+                    ("workspace_delivery", delivery["id"], delivery),
+                    *self._due_records(add=[delivery]),
+                ]
+            )
+            self._workspace_changed(workspace["id"], resource_kind="call")
+            return
+        contact = self._require_contact(contact_id)
+        if contact["trust"] not in {TrustState.APPROVED.value, TrustState.VERIFIED.value}:
+            raise ContactNotApproved("Calls require an approved contact")
         message = self._create_outbound(contact, MessageKind.CALL_SIGNAL, document)
         self._attempt(message["id"])
 
@@ -1652,7 +1695,7 @@ class MeshChatService(
         sdp: str,
         dtls_fingerprint: str,
     ) -> dict[str, Any]:
-        contact = self._require_contact(contact_id)
+        contact = self._require_call_peer(contact_id)
         result = self.calls.start(
             self._call_identity(),
             contact,

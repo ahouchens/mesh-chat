@@ -852,13 +852,15 @@ function callFingerprint(sdp: string): string {
   throw new Error("The call could not be secured (no DTLS fingerprint).");
 }
 
+type CallPeer = { id: string; display_name: string };
+
 function CallDialog({
   contact,
   initialCall,
   onClose,
   onChanged,
 }: {
-  contact: Contact;
+  contact: CallPeer;
   initialCall?: CallSummary;
   onClose: () => void;
   onChanged: () => Promise<void>;
@@ -4189,7 +4191,7 @@ function WorkspaceConversation({ workspace, channel, page, draft, mentionMemberI
   </section>;
 }
 
-function WorkspaceDirectConversation({ workspace, direct, page, draft, mentionMemberIds, loading, sending, error, reactionTargetId, reactionCatalogOpen, reactionBusyEmoji, reactionError, headerMenuOpen, onHeaderMenuOpenChange, onDraft, onSend, onLoadOlder, onHideMessage, onOpenThread, onEdit, onDelete, onToggleReactionPicker, onReactionCatalogOpenChange, onCloseReactionPicker, onSetReaction, onBack, onHideConversation, onPeople }: { workspace: Workspace; direct: WorkspaceDirect; page: WorkspaceMessagePage | null; draft: string; mentionMemberIds: string[]; loading: boolean; sending: boolean; error: string; reactionTargetId: string | null; reactionCatalogOpen: boolean; reactionBusyEmoji: string | null; reactionError: string; headerMenuOpen: boolean; onHeaderMenuOpenChange: (open: boolean) => void; onDraft: (value: string, mentionMemberIds: string[]) => void; onSend: () => void; onLoadOlder: () => void; onHideMessage: (eventId: string) => void; onOpenThread: (eventId: string) => void; onEdit: (eventId: string, text: string, mentionMemberIds: string[]) => void; onDelete: (eventId: string) => void; onToggleReactionPicker: (eventId: string) => void; onReactionCatalogOpenChange: (eventId: string, open: boolean) => void; onCloseReactionPicker: () => void; onSetReaction: (eventId: string, emoji: string, active: boolean) => void; onBack: () => void; onHideConversation: () => void; onPeople: () => void }) {
+function WorkspaceDirectConversation({ workspace, direct, page, draft, mentionMemberIds, loading, sending, error, reactionTargetId, reactionCatalogOpen, reactionBusyEmoji, reactionError, headerMenuOpen, onHeaderMenuOpenChange, onDraft, onSend, onLoadOlder, onHideMessage, onOpenThread, onEdit, onDelete, onToggleReactionPicker, onReactionCatalogOpenChange, onCloseReactionPicker, onSetReaction, onBack, onHideConversation, onPeople, onCall }: { workspace: Workspace; direct: WorkspaceDirect; page: WorkspaceMessagePage | null; draft: string; mentionMemberIds: string[]; loading: boolean; sending: boolean; error: string; reactionTargetId: string | null; reactionCatalogOpen: boolean; reactionBusyEmoji: string | null; reactionError: string; headerMenuOpen: boolean; onHeaderMenuOpenChange: (open: boolean) => void; onDraft: (value: string, mentionMemberIds: string[]) => void; onSend: () => void; onLoadOlder: () => void; onHideMessage: (eventId: string) => void; onOpenThread: (eventId: string) => void; onEdit: (eventId: string, text: string, mentionMemberIds: string[]) => void; onDelete: (eventId: string) => void; onToggleReactionPicker: (eventId: string) => void; onReactionCatalogOpenChange: (eventId: string, open: boolean) => void; onCloseReactionPicker: () => void; onSetReaction: (eventId: string, emoji: string, active: boolean) => void; onBack: () => void; onHideConversation: () => void; onPeople: () => void; onCall: (media: "audio" | "video") => void }) {
   const [attachmentWarning, setAttachmentWarning] = useState("");
   const [tombstonesOpen, setTombstonesOpen] = useState(false);
   const readOnly = workspace.state !== "active" || direct.state !== "open";
@@ -4201,6 +4203,8 @@ function WorkspaceDirectConversation({ workspace, direct, page, draft, mentionMe
       <button className="icon-button mobile-only mobile-back" type="button" onClick={onBack} aria-label={`Back to ${workspace.name}`}><ArrowLeft size={21} /></button>
       <div className="conversation__identity"><Avatar name={direct.peer_display_name} small /><span><h1>{direct.peer_display_name}</h1><small>{workspace.name} · workspace DM · {direct.peer_short_id}</small></span></div>
       <div className="workspace-header-actions">
+        <button className="icon-button" onClick={() => onCall("audio")} aria-label={`Audio call ${direct.peer_display_name}`} title="Audio call"><Phone size={18} /></button>
+        <button className="icon-button" onClick={() => onCall("video")} aria-label={`Video call ${direct.peer_display_name}`} title="Video call"><Video size={18} /></button>
         <button className="icon-button" onClick={onPeople} aria-label={`People in ${workspace.name}`} title="People"><Users size={18} /></button>
         <button className="icon-button compact-hidden" onClick={() => setTombstonesOpen(true)} aria-label={`Deleted messages with ${direct.peer_display_name}`} title="Deleted-message history"><Trash2 size={18} /></button>
         <button className="icon-button compact-hidden" onClick={onHideConversation} aria-label={`Hide workspace conversation with ${direct.peer_display_name}`} title="Hide locally"><EyeOff size={18} /></button>
@@ -4423,9 +4427,21 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceChannelIn
     return () => { void reconnectCoordinator.stop(); };
   }, [reconnectCoordinator]);
   const [callContactId, setCallContactId] = useState<string | null>(null);
+  const [callPeerOverride, setCallPeerOverride] = useState<CallPeer | null>(null);
   const [callSummary, setCallSummary] = useState<CallSummary | undefined>(undefined);
   const incomingCall = (snapshot.calls ?? []).find((call) => call.direction === "inbound" && call.state === "ringing");
-  const callContact = snapshot.contacts.find((contact) => contact.id === callContactId);
+  const callPeerFor = (contactId: string | null): CallPeer | undefined => {
+    if (!contactId) return undefined;
+    if (callPeerOverride?.id === contactId) return callPeerOverride;
+    const direct = snapshot.contacts.find((contact) => contact.id === contactId);
+    if (direct) return direct;
+    if (!contactId.startsWith("workspace:")) return undefined;
+    const [, workspaceId, memberId] = contactId.split(":");
+    const workspace = workspaces.find((item) => item.id === workspaceId);
+    const member = workspace?.members.find((item) => item.id === memberId);
+    return workspace && member ? { id: contactId, display_name: `${member.display_name} · ${workspace.name}` } : undefined;
+  };
+  const callContact = callPeerFor(callContactId);
   const [workspacesEnabled, setWorkspacesEnabled] = useState(false);
   const [activeSpaceId, setActiveSpaceId] = useState<"personal" | string>("personal");
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(true);
@@ -6036,7 +6052,7 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceChannelIn
         {incomingCall && !callContactId && (
           <div className="incoming-call-banner" role="status">
             <Phone size={18} />
-            <span><strong>Incoming {incomingCall.media === "video" ? "video" : "audio"} call</strong><small>{snapshot.contacts.find((contact) => contact.id === incomingCall.contact_id)?.display_name ?? "An approved contact"} is calling.</small></span>
+            <span><strong>Incoming {incomingCall.media === "video" ? "video" : "audio"} call</strong><small>{callPeerFor(incomingCall.contact_id)?.display_name ?? "An approved contact"} is calling.</small></span>
             <Button onClick={() => { setCallSummary(incomingCall); setCallContactId(incomingCall.contact_id); }}>Review</Button>
           </div>
         )}
@@ -6044,7 +6060,7 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceChannelIn
           <CallDialog
             contact={callContact}
             initialCall={callSummary}
-            onClose={() => { setCallContactId(null); setCallSummary(undefined); }}
+            onClose={() => { setCallContactId(null); setCallPeerOverride(null); setCallSummary(undefined); }}
             onChanged={async () => { await refresh(true); }}
           />
         )}
@@ -6122,6 +6138,16 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceChannelIn
             onBack={() => setMobileSidebarOpen(true)}
             onHideConversation={() => void hideWorkspaceDirect()}
             onPeople={() => setWorkspacePeopleOpen(true)}
+            onCall={() => {
+              if (!selectedWorkspaceDirect.peer_device_id) {
+                setWorkspaceError("This workspace member has no active device for a call.");
+                return;
+              }
+              const peerId = `workspace:${selectedWorkspace.id}:${selectedWorkspaceDirect.peer_member_id}:${selectedWorkspaceDirect.peer_device_id}`;
+              setCallPeerOverride({ id: peerId, display_name: selectedWorkspaceDirect.peer_display_name });
+              setCallSummary(undefined);
+              setCallContactId(peerId);
+            }}
           />
         ) : selectedWorkspaceChannel ? (
           <WorkspaceConversation

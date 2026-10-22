@@ -311,6 +311,7 @@ export interface WorkspaceDirect {
   peer_member_id: string;
   peer_display_name: string;
   peer_short_id: string;
+  peer_device_id: string;
   state: "open" | "read_only";
   unread_count: number;
   notification_preference?: WorkspaceNotificationPreference;

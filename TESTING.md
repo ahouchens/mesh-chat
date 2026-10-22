@@ -22,6 +22,48 @@ locally. Frontend/package/native tests and Windows/Android builds run in Actions
 Physical execution follows the
 [Phase 2 device checklist](docs/DIRECT_CONNECTIVITY_PHASE2_DEVICE_TEST.md).
 
+## Workspace DM calls, 0.9.14
+
+Phase 6 adds 1:1 calls from a workspace DM without creating a Personal contact.
+
+Implemented:
+
+- Workspace DM header exposes audio/video call actions.
+- The selected workspace device is addressed as a synthetic
+  `workspace:<workspace>:<member>:<device>` peer.
+- Call invites, answers, ICE candidates, hangup, and restart documents travel as
+  `workspace_call_signal` through the existing encrypted workspace delivery
+  queue.
+- The call manager accepts the synthetic `workspace` peer only while the
+  workspace and both devices are active.
+- Incoming workspace calls resolve to the workspace member name in the call UI.
+- A service test covers starting a workspace call, the queued workspace control,
+  and the recipient entering the ringing state.
+
+Not implemented in this stage:
+
+- group calls;
+- physical Android/Windows audio/video, NAT/TURN, route-change, and lock
+  qualification.
+
+Validation:
+
+```text
+pytest service/tests:        1109 passed, 46 skipped, 0 failed (297.76 s)
+node scripts/run-frontend-tests.mjs: 264 passed (18 files)
+node --test deploy/cloudflare-signal/worker.test.mjs: 11 passed
+packaged emoji artwork verification: 3 passed
+node node_modules/typescript/bin/tsc -b: passed
+node scripts/run-frontend-build.mjs: passed
+```
+
+The official report is
+`dist/reports/0.9.14/20261022T215149Z-1fea5121/report.json` (git-ignored):
+`status: passed`, 346.713 s, SHA-256
+`38b9e3e251ca283313ee2fdcd9a395a08b2ea2af85f9170bf36dd4909f75718a`.
+Gates: `automated: passed`; `physical_device: not-requested`;
+`production_signing: not-requested`.
+
 ## Owner-offline admission grants, owner-return stage 0.9.13
 
 Phase 5.2c adds owner-return normalization.

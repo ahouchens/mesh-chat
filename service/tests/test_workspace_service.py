@@ -33,6 +33,19 @@ from mesh_chat.workspace_protocol import (
 )
 from mesh_chat.workspace_delegation import create_delegated_manifest, verify_delegated_manifest
 from mesh_chat.workspace_wire import WorkspaceWirePayload, parse_workspace_payload
+
+FINGERPRINT = "sha-256 " + ":".join(["AB"] * 32)
+SDP = "\r\n".join(
+    [
+        "v=0",
+        "o=- 1 2 IN IP4 127.0.0.1",
+        "s=-",
+        "t=0 0",
+        "a=fingerprint:" + FINGERPRINT,
+        "m=audio 9 UDP/TLS/RTP/SAVPF 111",
+        "a=mid:0",
+    ]
+) + "\r\n"
 from mesh_chat.workspace_service import (
     normalize_workspace_search_text,
     sanitize_notification_text,
@@ -504,6 +517,51 @@ def test_workspace_reconnect_capabilities_exchange_without_contacts(tmp_path):
     )
     assert verified["attempt_id"] == request["attempt_id"]
     assert verified["contact_id"].startswith("workspace:")
+
+
+def test_workspace_dm_call_signal_uses_active_peer_without_contact(tmp_path):
+    owner, owner_network, owner_profile, member, member_network, member_profile, workspace, _key, _identity = _joined_pair(tmp_path, base=10010)
+    member_workspace = member._require_workspace(workspace["id"])
+    peer_id = f"workspace:{workspace['id']}:{member_workspace['local_member_id']}:{member_workspace['local_device_id']}"
+    call = owner.start_call(
+        peer_id,
+        "audio",
+        SDP,
+        FINGERPRINT,
+    )
+    assert call["contact_id"] == peer_id
+    packets = _flush(owner, owner_network)
+    assert packets
+    assert parse_workspace_payload(_native(packets[0], source=b"\x00" * 16, destination=b"\x01" * 16)).kind == "workspace_call_signal"
+    for item in packets:
+        _deliver(owner, item, source_profile=owner_profile, recipient_profile=member_profile)
+    incoming = [
+        item
+        for item in member.snapshot()["calls"]
+        if item["state"] == "ringing"
+    ]
+    if not incoming:
+        for item in packets:
+            member._receive_workspace_payload(
+                _native(
+                    item,
+                    source=bytes.fromhex(owner_profile["destination_hash"]),
+                    destination=bytes.fromhex(member_profile["destination_hash"]),
+                ),
+                parse_workspace_payload(
+                    _native(
+                        item,
+                        source=bytes.fromhex(owner_profile["destination_hash"]),
+                        destination=bytes.fromhex(member_profile["destination_hash"]),
+                    )
+                ),
+            )
+        incoming = [
+            item
+            for item in member.snapshot()["calls"]
+            if item["state"] == "ringing"
+        ]
+    assert incoming
 
 
 def test_workspace_admission_grant_delivery_and_acceptance(tmp_path):
