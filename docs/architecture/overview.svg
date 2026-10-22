@@ -10,19 +10,19 @@
 
   <rect x="0" y="0" width="1500" height="1080" fill="#ffffff"/>
   <text x="30" y="36" font-size="21" font-weight="700" fill="#0f172a">Mesh Chat architecture (0.9.15)</text>
-  <text x="30" y="58" font-size="13" fill="#64748b">Server-free messaging over Reticulum, with an optional signaling mailbox for automatic reconnect</text>
+  <text x="30" y="58" font-size="13" fill="#64748b">Server-free messaging over Reticulum; automatic reconnect, workspace admission, helper, calls, and WebRTC invite transfer</text>
 
   <!-- DEVICE A -->
   <rect x="20" y="76" width="524" height="912" rx="14" fill="#f8fafc" stroke="#cbd5e1"/>
-  <text x="40" y="104" font-size="12" font-weight="700" letter-spacing="1.2" fill="#64748b">ONE DEVICE · desktop · Android · iOS</text>
+  <text x="40" y="104" font-size="12" font-weight="700" letter-spacing="1.2" fill="#64748b">ONE DEVICE · desktop · Android</text>
 
   <!-- Renderer A -->
   <rect x="40" y="118" width="484" height="132" rx="10" fill="#eff6ff" stroke="#3b82f6"/>
   <text x="60" y="146" font-size="19" font-weight="700" fill="#1d4ed8">React renderer</text>
   <text x="60" y="170" font-size="13" fill="#1e3a8a">Chats · groups · workspaces · threads · search</text>
-  <text x="60" y="192" font-size="13" font-weight="600" fill="#1e3a8a">Reconnect coordinator · fresh RTCPeerConnection</text>
-  <text x="60" y="212" font-size="13" fill="#1e3a8a">Status and consent panel · no modal · no keys</text>
-  <text x="60" y="232" font-size="13" fill="#1e3a8a">Backoff, one-offer glare control, stop/retry</text>
+  <text x="60" y="190" font-size="13" fill="#1e3a8a">Workspace grants · calls · WebRTC invite transfer</text>
+  <text x="60" y="210" font-size="13" font-weight="600" fill="#1e3a8a">Reconnect coordinator · fresh RTCPeerConnection</text>
+  <text x="60" y="230" font-size="12.5" fill="#1e3a8a">Status/consent · no modal · no keys · backoff/glare</text>
 
   <line x1="282" y1="250" x2="282" y2="274" stroke="#475569" stroke-width="1.5" marker-end="url(#arrow)"/>
   <text x="294" y="267" font-size="11.5" fill="#64748b">invoke(command) · allowlisted and size-capped</text>
@@ -43,7 +43,7 @@
 
   <rect x="56" y="456" width="216" height="72" rx="8" fill="#ffffff" stroke="#a7f3d0"/>
   <text x="68" y="476" font-size="13" font-weight="700" fill="#065f46">Signed documents</text>
-  <text x="68" y="494" font-size="11.5" fill="#334155">invitations · capabilities</text>
+  <text x="68" y="494" font-size="11.5" fill="#334155">invitations · grants · v2 manifests</text>
   <text x="68" y="511" font-size="11.5" fill="#334155">reconnect request / offer / answer</text>
 
   <rect x="288" y="456" width="220" height="72" rx="8" fill="#ffffff" stroke="#a7f3d0"/>
@@ -134,6 +134,12 @@
   <text x="586" y="884" font-size="11.5" font-style="italic" fill="#64748b">Only reciprocal opt-ins run. Blocked peers are rejected</text>
   <text x="586" y="900" font-size="11.5" font-style="italic" fill="#64748b">before any RTCPeerConnection exists.</text>
 
+  <!-- Workspace control -->
+  <rect x="566" y="944" width="368" height="66" rx="10" fill="#eef2ff" stroke="#6366f1"/>
+  <text x="586" y="966" font-size="14" font-weight="700" fill="#4338ca">Workspace control (0.9.7–0.9.15)</text>
+  <text x="586" y="986" font-size="11.5" fill="#312e81">admission grant → v2 manifest → owner return</text>
+  <text x="586" y="1002" font-size="11.5" fill="#312e81">one-hop helper · workspace calls · WebRTC invite</text>
+
   <!-- Reticulum path link between devices -->
   <line x1="524" y1="771" x2="566" y2="771" stroke="#0f766e" stroke-width="2" stroke-dasharray="5 4" marker-end="url(#arrow-teal)"/>
   <line x1="934" y1="771" x2="976" y2="771" stroke="#0f766e" stroke-width="2" stroke-dasharray="5 4" marker-end="url(#arrow-teal)"/>
@@ -144,10 +150,10 @@
 
   <rect x="996" y="118" width="464" height="132" rx="10" fill="#eff6ff" stroke="#3b82f6"/>
   <text x="1016" y="146" font-size="19" font-weight="700" fill="#1d4ed8">React renderer</text>
-  <text x="1016" y="170" font-size="13" fill="#1e3a8a">Reconnect coordinator · verifies status</text>
-  <text x="1016" y="192" font-size="13" fill="#1e3a8a">Never approves contacts or changes authority</text>
-  <text x="1016" y="212" font-size="13" fill="#1e3a8a">Never sees SDP after the attempt ends</text>
-  <text x="1016" y="232" font-size="13" fill="#1e3a8a">Consent changes share capabilities when connected</text>
+  <text x="1016" y="170" font-size="13" fill="#1e3a8a">Workspace grants · calls · WebRTC invite transfer</text>
+  <text x="1016" y="190" font-size="13" fill="#1e3a8a">Reconnect coordinator · verifies status</text>
+  <text x="1016" y="210" font-size="13" fill="#1e3a8a">Never approves contacts or changes authority</text>
+  <text x="1016" y="230" font-size="12.5" fill="#1e3a8a">Consent changes share capabilities when connected</text>
 
   <line x1="1228" y1="250" x2="1228" y2="274" stroke="#475569" stroke-width="1.5" marker-end="url(#arrow)"/>
   <text x="1240" y="267" font-size="11.5" fill="#64748b">invoke(command)</text>
@@ -212,5 +218,5 @@
   <!-- footer -->
   <text x="30" y="1024" font-size="12" fill="#64748b">Capabilities default to auto-reconnect off. A mailbox, TURN server, or access point is optional and explicitly configured; none can approve a contact or read plaintext.</text>
   <text x="30" y="1044" font-size="12" fill="#64748b">The signed request/offer/answer and capability documents expire; replay is rejected across restarts. The worker stores only transient signaling envelopes.</text>
-  <text x="30" y="1064" font-size="12" fill="#64748b">1:1 calls use a separate DTLS-SRTP media session; call SDP/ICE records are sealed locally by default, can be memory-only, and are never sent to the mailbox.</text>
+  <text x="30" y="1064" font-size="12" fill="#64748b">Calls use a separate DTLS-SRTP media session; workspace calls use workspace-scoped signaling and create no Personal contact.</text>
 </svg>
