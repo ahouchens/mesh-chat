@@ -63,6 +63,22 @@ The official report is
 Gates: `automated: passed`; `physical_device: not-requested`;
 `production_signing: not-requested`.
 
+Publication: GitHub Actions
+[CI run 39839958074](https://github.com/ahouchens/mesh-chat/actions/runs/39839958074)
+and
+[Release run 39839964028](https://github.com/ahouchens/mesh-chat/actions/runs/39839964028)
+passed on the first attempt for `v0.9.11`. Release:
+<https://github.com/ahouchens/mesh-chat/releases/tag/v0.9.11>.
+
+| Artifact | Bytes | SHA-256 (verified by re-download) |
+|---|---:|---|
+| `Mesh-Chat_0.9.11_x64-setup.exe` | 27,888,415 | `0e0d0dd40f7d298cada22dd72ed78538f81391aa1810c6003cdeaead99b3ecf1` |
+| `Mesh-Chat_0.9.11_x64_en-US.msi` | 29,880,320 | `993ddaa66a2e3a81ec35f3573af32d899702bd55a7c9892cd9dc6d421a78ea7a` |
+| `mesh-chat-0.9.11-android-arm64-release.apk` | 34,387,598 | `443bc951e7f3285bb53a23de7ce64d69ec18e9f013ed44006a6238ee4396312b` |
+| `SHA256SUMS.txt` | 303 | `7e7bfeb39db458aafe2617c75ca4daabb4ad355d67091d13b494424a81dec491` |
+
+The Android APK is debug-signed; it is not a production or upgrade identity.
+
 ## Owner-offline admission grants, delegated backend 0.9.10
 
 Phase 5.2b adds the delegated-admission backend. There is still no grant or
