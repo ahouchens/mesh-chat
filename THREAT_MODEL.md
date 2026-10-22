@@ -54,11 +54,69 @@ No third-party operator is introduced by default. Personal and workspace Interne
 
 Residual risks include traffic analysis, denial of service, gateway collusion, an operator retaining ciphertext or metadata, DNS resolver compromise that returns only attacker-controlled public addresses, compromised endpoints, and Android suspension delaying reconnection or propagation retrieval. First contact can require both apps to be open until path announcements and ratchets arrive. Remote access and propagation are not cloud push and do not guarantee background delivery.
 
+## WebRTC signaling mailbox and automatic reconnect
+
+The optional signaling mailbox is a new untrusted rendezvous operator. It can
+observe and manipulate signaling; it is never an identity, membership authority,
+delivery receipt, or message store. Automatic reconnect adds a second adversary
+class: a peer or relay that presents stale, replayed, or misaddressed documents
+and expects the app to allocate a transport or change trust.
+
+- **Mailbox confidentiality and integrity.** Every reconnect document is
+  canonical, signed, expiring, and bound to sender, recipient, device, attempt,
+  session, and (for an answer) the offer digest. The operator sees signed
+  envelopes, source IPs, and timing, but no message plaintext and no contact or
+  workspace state it could forge.
+- **Capability authentication.** Reconnect always requires a pair token sent as
+  `X-Mesh-Token`. The Worker stores only its SHA-256 hash, pins it on the first
+  authenticated write, rejects wrong or missing tokens, and accepts rotation
+  only from the current holder. A leaked token permits rendezvous abuse for that
+  pair, not contact approval or decryption.
+- **Abuse limits.** Ten-minute sessions, a 48 KiB envelope cap, role/type
+  matching, and per-token and per-client-IP read/write budgets bound storage and
+  request floods. The Worker's alarm deletes expired documents and counters.
+  Sessions remain tokenless only for the manual onboarding path; reconnect is
+  never tokenless.
+- **Consent, not approval.** Reconnect requires local and peer auto-reconnect
+  consent, a separate direct-IP-disclosure decision, and an approved,
+  non-blocked contact. It never creates or approves a contact, workspace member,
+  or device, and never changes workspace authority.
+- **Replay and expiry.** The replay cache is durable and sealed, one answer is
+  accepted per offer digest, and expired or tampered documents are rejected
+  before a peer connection exists. A restart does not clear replay state.
+- **Transport isolation.** A blocked, deleted, or rejected peer is refused by the
+  service before the renderer allocates an `RTCPeerConnection`. A transport,
+  TURN, or mailbox failure never changes trust.
+- **Local secrecy.** No SDP, ICE credential, DTLS key, or chat plaintext is
+  persisted or logged. The mailbox holds the signed offer/answer envelope,
+  including its ephemeral SDP, only for the ten-minute TTL. TURN credentials are
+  short-lived and stay in service memory.
+- **Reciprocal auto-answer.** A responder verifies that the request is from an
+  approved contact with reciprocal consent before creating an offer. A capability
+  received before its contact record is held without granting trust and promoted
+  only after approval.
+- **Focus and UI.** Reconnect never opens a modal, steals focus, or repeats a
+  contact-approval prompt.
+
+Residual risks: the mailbox operator and TURN relay can still observe signaling
+or media IP addresses, timing, sizes, and which pair is attempting a connection;
+they can selectively delay, drop, or replay envelopes within their validity
+window. A leaked pair token allows denial of service against that pair's
+rendezvous. Reconnect exists only while both apps are open and unlocked, so
+absence of a connection is not proof that a peer is offline. There is no
+background daemon, push notification, live session migration, or iOS background
+execution.
+
 ## Security goals
 
 - No required application infrastructure or hidden public mesh connection.
 - Chat text and sensitive application metadata remain confidential to endpoints across transport and propagation devices.
 - A contact identity cannot be silently substituted after approval or verification.
+- Automatic reconnect requires reciprocal, explicitly recorded consent and never
+  approves a contact, workspace member, or device.
+- A reconnect, signaling, relay, or transport failure never changes contact,
+  workspace, or device trust.
+- SDP, ICE credentials, and DTLS keys are never persisted locally or logged.
 - Local contacts, group membership and controls, messages, drafts, outbox work, receipts, identity and ratchet state are not persisted as plaintext.
 - Network acknowledgments never overstate recipient application persistence.
 - Group membership and posting authority cannot be changed without a valid,

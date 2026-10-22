@@ -141,6 +141,162 @@ The desktop sidecar reserves stdout for framed responses/events and discards det
 6. Sending waits for acceptable recipient ratchet material. Direct messages use LXMF Links; propagated messages are permitted only when a configured approved propagation node exists and recipient ratchet encryption is confirmed before handoff.
 7. A native direct proof becomes `received_by_endpoint`; a propagation upload proof becomes `stored_for_delivery`. Only an authenticated Mesh Chat receipt becomes `delivered`. An I2P-relayed path uses the same LXMF evidence; the transport is different, not the delivery semantics.
 
+## WebRTC signaling and automatic reconnect
+
+WebRTC is an optional transport, not an authority. It carries ordinary Reticulum
+packets over an encrypted DataChannel after both sides have exchanged signed
+documents. A peer with no inbound path can use direct ICE or a consented TURN
+relay; an optional signaling mailbox removes the manual offer/answer copy/paste
+and provides the rendezvous needed to reconnect after both apps restart.
+
+### Ownership boundary
+
+```text
+Device A                                          Optional rendezvous                       Device B
+┌─────────────────────────────┐                  ┌──────────────────────────┐              ┌─────────────────────────────┐
+│ React renderer              │                  │ Cloudflare Worker        │              │ React renderer              │
+│  reconnect coordinator      │                  │  Durable Object / pair   │              │  reconnect coordinator      │
+│  RTCPeerConnection          │                  │  SHA-256 token hash      │              │  RTCPeerConnection          │
+│         │ invoke()          │                  │  10-min TTL / 48 KiB     │              │         │ invoke()          │
+│ Tauri shell                 │                  │  per-token/IP limits     │              │ Tauri shell                 │
+│         │ stdin/stdout      │  signed docs     │  roles: request/offer/   │  signed docs │         │ stdin/stdout      │
+│ Python service              │  + X-Mesh-Token  │          answer          │  + token     │ Python service              │
+│  consent/capabilities/replay├─────────────────>│  no plaintext / trust    │<─────────────┤  consent/capabilities/replay│
+│         │                   │                  └──────────────────────────┘              │         │                   │
+│ Reticulum/LXMF              │                                                             │ Reticulum/LXMF              │
+└─────────────┬───────────────┘                                                             └───────────────┬─────────────┘
+              └──────────────── WebRTC DataChannel: Reticulum packets (direct or TURN) ─────────────────────┘
+```
+
+- The **renderer** owns every `RTCPeerConnection`, the DataChannel, and the
+  retry loop. It cannot sign, read the vault, or approve a contact.
+- The **Python service** owns per-contact consent, signed capabilities,
+  signature verification, replay state, and mailbox HTTP. It never owns a peer
+  connection.
+- The **optional mailbox** owns only transient signed envelopes. It cannot
+  approve anything, enumerate contacts from public destination hashes, or read
+  plaintext.
+- The **Tauri shell and vault** are unchanged: the mailbox URL and tokens live in
+  the sealed service store, and the renderer never receives a token.
+
+This split is deliberate. A Python supervisor cannot keep a WebView peer
+connection alive after the renderer exits, and a renderer cannot be trusted with
+contact authorization. Automatic reconnect therefore runs only while the app is
+open and unlocked; on lock or quit the coordinator is torn down.
+
+### Capability exchange and consent
+
+Each device signs a `connection_capabilities` document for one contact. It binds
+the sender, recipient, device ID, transports, optional mailbox URL and pair
+token, its own auto-reconnect and direct-IP-disclosure consent, relay scope, and
+an expiry (at most seven days). Existing contacts default to **auto-reconnect
+off**, and contact approval is not consent to reconnect.
+
+Capabilities are attached to an invitation when the peer destination is already
+known. Otherwise they are exchanged when the invitation is accepted or the owner
+approves it, and later consent changes produce a new signed document that is
+sent over the authenticated WebRTC control channel. A capability that arrives
+before its contact record (for example over the control channel, ahead of the
+LXMF request) is held as a signed, expiring, peer-bound document and promoted
+only after a contact exists and is approved. Holding never grants trust.
+
+The pair token is a rotating rendezvous capability, not a public identity. A
+mailbox change or a consent change rotates it. Direct IP disclosure is a
+separate flag: without it, the coordinator requests a relay-only ICE policy when
+a consented relay is available; with no relay it reports that reconnect is not
+ready instead of leaking host candidates.
+
+### Request, offer, and answer
+
+The signed documents are bound to both identities, the device, an attempt ID, a
+nonce, an expiry, and (for the answer) the offer digest.
+
+```text
+A coordinator        A service            mailbox             B service            B coordinator
+     │ requestCreate ──>│                    │                    │                    │
+     │<── signed req ───│                    │                    │                    │
+     │ publish("request", token) ──────────>│                    │                    │
+     │                    │                    │<── fetch(request) ─┤                    │
+     │                    │                    │   verify contact / consent / device / expiry
+     │                    │                    │<── publish(offer) ─┤ (creates one PC)
+     │ fetch(offer) ─────────────────────────>│                    │                    │
+     │ verify offer, create answer (PC now)   │                    │                    │
+     │ publish("answer") ────────────────────>│────────────────────┼── fetch(answer) ──>│
+     │                    │                    │                    │ verify + apply      │
+     │◄────────────────── WebRTC DataChannel established ───────────────────────────────>│
+     │ attach bridge, reannounce, wait for path, report connected                          │
+```
+
+Only the lexicographically lower device ID publishes the request; the other
+side verifies it and creates the single offer. This request-first order follows
+the document bindings in `reconnect.py` (the request recipient signs the offer)
+and means simultaneous starts cannot produce two offers. There is no probe
+takeover: if the preferred device is offline, the other side stays in **Waiting
+for peer**.
+
+The prober reuses one attempt ID and one signed request across retries, so a
+responder's offer is not invalidated by a concurrent retry. The responder bounds
+its offer attempts. One answer is accepted per offer digest; a replayed or
+expired document is rejected, including after a restart because the replay cache
+is sealed in the vault.
+
+### Mailbox authentication and abuse limits
+
+- Roles are `request`, `offer`, and `answer`; each accepts only its document
+  type. A reconnect document is rejected without a token.
+- The Worker stores the SHA-256 hash of the pair token, pinned on the first
+  authenticated write. Every later read and write must present it. A rotation is
+  accepted only from the current token holder and replaces the hash.
+- Sessions expire after ten minutes and documents are capped at 48 KiB. The
+  alarm deletes expired documents and counters.
+- Per-token and per-client-IP write/read budgets are enforced per minute.
+- Tokenless sessions remain readable and writable for the manual onboarding
+  offer/answer path. A room that has accepted a token cannot be read without it.
+- The mailbox stores no message, contact graph, workspace record, or long-term
+  presence history. Its operators see signed envelopes, source IPs, and timing.
+
+### State, retry, and failure handling
+
+The coordinator reports `waiting_for_peer`, `probing`, `offer_pending`,
+`answer_pending`, `connecting`, `connected`, `retry_wait`, `peer_offline`,
+`manual_required`, and `stopped`. It runs at most two attempts, backs off at
+1, 2, 5, 15, 30, and 60 seconds with jitter, and stops on cancellation, consent
+removal, a blocked or deleted contact, capability rejection, or a bounded
+attempt budget. No modal or contact-approval prompt is shown.
+
+A transport failure never mutates contact, workspace, or membership state. A
+blocked or deleted peer is rejected by the service before the renderer allocates
+an `RTCPeerConnection`, and no request, offer, or answer is created without
+reciprocal consent.
+
+### Reticulum after reconnect
+
+The DataChannel is not a Reticulum path by itself. After the channel opens, the
+renderer calls `webrtc_attach`, which installs the bridge interface and
+reannounces immediately, then again after 2 and 6 seconds. The coordinator polls
+Reticulum path status and reports the result as:
+
+- **ready** - a path/ratchet is available;
+- **pending** - the bridge is attached but no path has arrived yet;
+- **unavailable** - Reticulum networking itself is unavailable.
+
+The connection is never treated as an in-place migration: every attempt creates
+a new peer connection and new DTLS keys, and `approvalPending` remains false for
+a transport reconnect.
+
+### Persistence and privacy
+
+Sealed records hold reconnect profiles, consent, capabilities, attempt state,
+and replay keys. No SDP, ICE credential, DTLS key, or chat plaintext is written
+to the vault or logs. The mailbox necessarily holds the signed offer/answer
+envelope, including the ephemeral SDP it carries, for its ten-minute TTL; that
+is signaling state, not chat state, and it is never reused. TURN credentials are
+fetched from the broker and kept in service memory only.
+
+See [AUTO_RECONNECT_SPEC.md](docs/AUTO_RECONNECT_SPEC.md) for the full consent
+model, wire documents, phases, and test matrix, and
+[deploy/cloudflare-signal](deploy/cloudflare-signal/README.md) for the Worker.
+
 ## Private groups and channels
 
 Private groups do not introduce another transport or a shared group key. One

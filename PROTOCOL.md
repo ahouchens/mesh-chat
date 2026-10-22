@@ -1006,3 +1006,162 @@ carry no RNS packets. There are no new unauthenticated UDP frames or observer
 services. See [ADR 0019](docs/adr/0019-server-free-traversal.md) for bounds and
 the remaining review and qualification gates. No-address discovery failures do
 not become reachable merely because both peers can initiate checks.
+
+# WebRTC signaling and reconnect documents (0.9.1)
+
+These documents are separate from LXMF chat payloads. They are canonical signed
+JSON, expire, and bind both identities. They are used only for WebRTC rendezvous
+and capability discovery; a valid signature is never authorization to create a
+contact, approve one, or change workspace authority.
+
+## Connection capabilities
+
+Type: `connection_capabilities`, version `1`. Exactly these fields:
+
+```json
+{
+  "v": 1,
+  "type": "connection_capabilities",
+  "peer_destination": "<32-hex recipient>",
+  "device_id": "<8-80 chars, [A-Za-z0-9._:-]>",
+  "transports": ["webrtc"],
+  "auto_reconnect": false,
+  "allow_direct_ip_disclosure": false,
+  "relay_consent_scope": "contact",
+  "issued_at": 0,
+  "expires_at": 0,
+  "signer_public_key": "<base64url RNS public key>",
+  "mailbox": {
+    "url": "https://<worker>/",
+    "pair_token": "<16-160 chars, [A-Za-z0-9_-]>",
+    "expires_at": 0
+  },
+  "signature": "<base64url>"
+}
+```
+
+- `peer_destination` is the recipient. The signer destination is derived from
+  `signer_public_key` and must equal the contact destination.
+- `transports` is a non-empty unique subset of `webrtc`, `direct_tcp`,
+  `access_point`, and `i2p`. Current reconnect uses `webrtc`.
+- `auto_reconnect` and `allow_direct_ip_disclosure` are independent booleans.
+  They are the sender's own consent, never a grant to the receiver.
+- `relay_consent_scope` is `contact`, `session`, or `workspace`.
+- `expires_at` is at most seven days after `issued_at`; `mailbox.expires_at` is
+  at most 30 days after issuance. A mailbox object needs all three fields.
+- Existing contacts without a capability, or with `auto_reconnect: false`, cannot
+  reconnect automatically. A consent or mailbox change requires a new signed
+  document and rotates the pair token.
+
+## Reconnect request
+
+Type: `webrtc_reconnect_request`. The preferred (lexicographically lower device
+ID) side publishes it.
+
+```json
+{
+  "v": 1,
+  "type": "webrtc_reconnect_request",
+  "from": "<32-hex sender>",
+  "to": "<32-hex recipient>",
+  "device_id": "<sender device>",
+  "attempt_id": "<16-80 chars>",
+  "nonce": "<16-80 chars>",
+  "issued_at": 0,
+  "expires_at": 0,
+  "signer_public_key": "<base64url>",
+  "signature": "<base64url>"
+}
+```
+
+`from` must equal the signer destination. Retries may repeat the same request;
+the prober reuses one attempt ID and one signed request across retries.
+
+## Reconnect offer
+
+Type: `webrtc_reconnect_offer`. The request recipient creates it, so the request
+and offer are signed by different devices.
+
+```json
+{
+  "v": 1,
+  "type": "webrtc_reconnect_offer",
+  "from": "<request recipient>",
+  "to": "<request sender>",
+  "attempt_id": "<same as request>",
+  "session_id": "<16-80 chars>",
+  "sdp": "v=0...",
+  "dtls_fingerprint": "sha-256 AA:...",
+  "nonce": "<same as request>",
+  "issued_at": 0,
+  "expires_at": 0,
+  "signer_public_key": "<base64url>",
+  "signature": "<base64url>"
+}
+```
+
+The SDP must be a WebRTC DataChannel offer, contain exactly one
+`a=fingerprint:` line, and contain the declared fingerprint. Expiry is at most
+the request expiry and one hour from issuance.
+
+## Reconnect answer
+
+Type: `webrtc_reconnect_answer`. The original requester creates it.
+
+```json
+{
+  "v": 1,
+  "type": "webrtc_reconnect_answer",
+  "from": "<request sender>",
+  "to": "<offer sender>",
+  "attempt_id": "<same as offer>",
+  "session_id": "<same as offer>",
+  "offer_digest": "<sha256 of the exact offer document>",
+  "sdp": "v=0...",
+  "dtls_fingerprint": "sha-256 AA:...",
+  "nonce": "<same as offer>",
+  "issued_at": 0,
+  "expires_at": 0,
+  "signer_public_key": "<base64url>",
+  "signature": "<base64url>"
+}
+```
+
+Verification checks the attempt, session, and exact offer digest before the SDP.
+One answer is accepted per offer digest; the durable replay record survives a
+restart. Expiry is at most the offer expiry and one hour from issuance.
+
+## Mailbox transport
+
+The optional Worker exposes:
+
+```text
+PUT /signal/<session>/<role>    X-Mesh-Token: <pair token>
+GET /signal/<session>/<role>    X-Mesh-Token: <pair token>
+```
+
+Roles are `request`, `offer`, and `answer`; each accepts only its document type.
+The session is derived from the pair token (SHA-256, 40 hex characters), so the
+operator cannot enumerate pairs from public destination hashes. The first
+authenticated write pins the token hash; later reads and writes require it.
+Rotation uses `X-Mesh-Token-New` from the current holder. Documents and counters
+expire after ten minutes; the envelope cap is 48 KiB. Reconnect document types
+are rejected without a token. Tokenless offer/answer remains available only for
+manual onboarding.
+
+## Authorization order
+
+Before an `RTCPeerConnection` is created, the service and renderer check, in
+order:
+
+1. canonical shape, exact key set, signature, and signer-derived destination;
+2. `from` equals the signer and `to` equals this device;
+3. the signer is an existing contact and the contact is approved or verified,
+   not blocked, deleted, or identity-changed;
+4. the document is unexpired and the replay key is unused;
+5. reciprocal auto-reconnect consent exists for the contact;
+6. for an offer or answer, the attempt, session, and offer digest bind;
+7. for a capability, the recipient matches this device.
+
+Failure at any step is reported without creating a peer connection and without
+changing contact, workspace, or device trust.

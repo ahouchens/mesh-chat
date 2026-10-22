@@ -24,9 +24,10 @@ In short, it solves **Ã¢â‚¬Å“how do a few people message and coordinate
 | **Unsolicited contact and unclear trust** | **Explicit consent.** Invitations are signed and single-use; the recipient reviews the inviter, fingerprint, and workspace details before approving. | Trust is established peer-to-peer. Delivery never implies approval. |
 | **Group chat normally needs a hosted room** | **Private groups.** Up to eight people, owner-signed membership, an announcement-channel mode, and per-recipient delivery state. | One logical message becomes one separately encrypted copy per member. There is no group server and no shared group key. |
 | **Workspace collaboration normally needs a server** | **Shared workspaces.** Up to eight people, 32 public/private channels including `#general`, workspace DMs, one-level threads, mentions, edits, deletion tombstones, reactions, local search, and cooperative retention. | One authority-signed manifest chain describes membership; every device receives its own signed copy of each event. |
-| **First contact usually needs STUN, TURN, or a rendezvous service** | **Direct Internet invitations.** A temporary listener on the inviter's device asks their router for a mapping, then signs the resulting endpoint and credential into the invitation. | PCP ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ UPnP IGD ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ NAT-PMP on the participant's router. No rendezvous, STUN, TURN, or Mesh Chat service is contacted. |
+| **First contact usually needs STUN, TURN, or a rendezvous service** | **Direct Internet invitations.** A temporary listener on the inviter's device asks their router for a mapping, then signs the resulting endpoint and credential into the invitation. | PCP -> UPnP IGD -> NAT-PMP on the participant's router. No rendezvous, STUN, TURN, or Mesh Chat service is contacted. |
 | **No public endpoint and no directly reachable access point** | **I2P relay invitations.** A signed `MESHI2P1:` / `MESHI2P1W:` envelope carries one `*.b32.i2p` Reticulum access point; the joiner must consent before traffic is relayed. | Each side runs an I2P router with SAM. The access point relays encrypted Reticulum/LXMF traffic; no public IP or port forward is needed on either participant. |
-| **One network path is not enough** | **Explicit fallbacks.** Nearby discovery, signed direct TCP, an operator-run access point, an email/reverse handshake, and an experimental QUIC underlay. | Each path is a visible choice, never a silent downgrade. See [Reaching another device](#reaching-another-device). |
+| **One network path is not enough** | **Explicit fallbacks.** Nearby discovery, signed direct TCP, an operator-run access point, an email/reverse handshake, WebRTC over direct ICE or TURN, and an experimental QUIC underlay. | Each path is a visible choice, never a silent downgrade. See [Reaching another device](#reaching-another-device). |
+| **Manual offer/answer copy/paste for WebRTC** | **Optional signaling mailbox.** A signed request/offer/answer rendezvous with rotating pair tokens, role checks, and per-token/per-IP rate limits. | The mailbox holds only transient signed envelopes for ten minutes; it cannot approve contacts or read plaintext. QR/copy still works without it. |
 | **Restarting both apps usually means another manual exchange** | **Automatic reconnect with reciprocal consent.** A signed capability carries a rotating mailbox token; the app renegotiates a fresh WebRTC transport while both apps are open. | The mailbox is only a rendezvous; no SDP, ICE credential, DTLS key, or message content is stored or reused. Contact approval and workspace authority are not touched. |
 | **Cloud chat means cloud-held history and metadata** | **Local-only privacy.** Encrypted vault, sealed local search, no telemetry, analytics, crash upload, CDN, or remote artwork fetch. | Search and history stay on the device; there is no hosted index to query. |
 | **Offline peers and unclear delivery** | **Offline-tolerant delivery.** An optional LXMF propagation node stores recipient-encrypted objects until the recipient fetches them. A durable outbox, deduplication, and per-device evidence cover the rest. | The propagation node is separately consented and never becomes an identity, member, or delivery receipt. |
@@ -39,18 +40,23 @@ In short, it solves **Ã¢â‚¬Å“how do a few people message and coordinate
 - **Identity or authority-key recovery.** Lost keys are not recoverable, and lost workspace authority freezes administration.
 - **Anonymity.** IP endpoints, timing, and traffic analysis remain exposed; I2P hides participant IP addresses from each other but the access point and the I2P network still see relay metadata. There is no anonymity claim.
 - **Broad messenger scope.** Attachments, calls, discoverable public channels, cloud backup, remote push, and multi-owner membership are out of scope.
+- **Background reconnection.** Automatic reconnect runs only while the app is open and unlocked. There is no background daemon, push notification, live session migration, tray keep-alive, or iOS background execution.
 - **Production assurance.** The project describes itself as a security-sensitive prototype: it has not been independently audited, and physical-device, packaging, and platform gates remain open. See [Status and verification](#status-and-verification) and [THREAT_MODEL.md](THREAT_MODEL.md).
 
 ## Architecture
 
-![Mesh Chat architecture: renderer, Tauri shell, Python service, Reticulum/LXMF with optional I2P, protected profile, and the network paths they use](docs/architecture/overview.png)
+![Mesh Chat architecture: a renderer with the reconnect coordinator, the Tauri shell, a Python service with signed reconnect profiles and a signaling adapter, an optional Cloudflare signaling mailbox, an optional TURN relay, Reticulum/LXMF, and the protected profile](docs/architecture/overview.png)
+
+Diagram source: [docs/architecture/overview.svg](docs/architecture/overview.svg).
 
 The application is four cooperating layers plus the network below them. Reticulum already owns identity, routing, and encryption across very different links, so Mesh Chat does not re-implement any of that: it adds only the application semantics those layers do not provide.
 
-1. **React renderer** Ã¢â‚¬â€ the conversation list, chats, groups, workspaces, threads, search, and settings. It holds UI state and drafts only. It never receives a private key, the vault key, a filesystem path, or a socket.
-2. **Tauri 2 shell (Rust)** Ã¢â‚¬â€ the only component allowed to start and stop the messaging service. It retrieves or creates a 32-byte vault key in the operating system's credential store, supplies the app-private profile path, validates every renderer command against a named allowlist and a size limit, and applies a strict content security policy.
-3. **`mesh-chat-service` (Python 3.11+)** Ã¢â‚¬â€ the security boundary. It parses and verifies every signed document, owns contact/group/workspace consent, commits state to the vault, runs the outbox and receipt jobs, and hands messages to LXMF only after the local transaction is durable. It speaks a framed stdin/stdout protocol; there is no localhost HTTP or WebSocket control server.
-4. **Reticulum 1.5.5 + LXMF 1.2.0** Ã¢â‚¬â€ the pinned reference stack. Reticulum supplies identities, destinations, paths, Links, and transport; LXMF supplies message serialization plus direct and propagated delivery. Mesh Chat adds no custom cipher, group key, or routing envelope. An optional Reticulum `I2PInterface` can carry the same LXMF traffic over I2P when a local `i2pd` router and an access point are explicitly configured. An optional **community relay** (TURN plus a Reticulum TCP access point) can carry encrypted packets when direct Internet paths fail; it is not an authority and does not store messages.
+1. **React renderer** - the conversation list, chats, groups, workspaces, threads, search, and settings. It holds UI state, drafts, and the reconnect coordinator that owns every `RTCPeerConnection`. It never receives a private key, the vault key, a filesystem path, or a socket, and it never approves a contact or changes workspace authority.
+2. **Tauri 2 shell (Rust)** - the only component allowed to start and stop the messaging service. It retrieves or creates a 32-byte vault key in the operating system's credential store, supplies the app-private profile path, validates every renderer command against a named allowlist and a size limit, and applies a strict content security policy.
+3. **`mesh-chat-service` (Python 3.11+)** - the security boundary. It parses and verifies every signed document, owns contact/group/workspace consent, commits state to the vault, runs the outbox and receipt jobs, and hands messages to LXMF only after the local transaction is durable. It also stores per-contact reconnect consent and signed capabilities, maintains the durable replay cache, and publishes or fetches transient signed signaling envelopes with a pair token. It speaks a framed stdin/stdout protocol; there is no localhost HTTP or WebSocket control server.
+4. **Reticulum 1.5.5 + LXMF 1.2.0** - the pinned reference stack. Reticulum supplies identities, destinations, paths, Links, and transport; LXMF supplies message serialization plus direct and propagated delivery. Mesh Chat adds no custom cipher, group key, or routing envelope. An optional Reticulum `I2PInterface` can carry the same LXMF traffic over I2P when a local `i2pd` router and an access point are explicitly configured. An optional **community relay** (TURN plus a Reticulum TCP access point) can carry encrypted packets when direct Internet paths fail, and an optional **signaling mailbox** can exchange signed WebRTC rendezvous documents; neither is an authority and neither stores messages.
+
+Automatic reconnect deliberately crosses all four layers. The renderer owns the fresh transport, the service owns consent, signatures, and replay state, and the optional mailbox carries only transient signed envelopes. No layer can substitute for another: a valid signature is not authorization, and the mailbox operator cannot approve a contact.
 
 Underneath them, one **protected profile** holds everything at rest: the sealed vault, Reticulum path/ratchet state, and the LXMF message store. The service verifies OS-level encryption for that directory (and enables NTFS EFS on Windows when needed) and refuses to start if it cannot confirm it Ã¢â‚¬â€ FileVault, fscrypt / dm-crypt / LUKS, or an app-private Android/iOS container.
 
@@ -71,7 +77,8 @@ Reticulum routes packets, but it cannot make an arbitrary NAT accept an inbound 
 | **v3 Ã¢â‚¬â€ participant-hosted** | `MESHCHAT3:` / `MESHWORKSPACE3:` | The inviter opens a short-lived, invitation-scoped listener on their device and asks their router to publish it; the signed envelope carries the public endpoints and a fresh Reticulum IFAC credential | Inviter online; router mapping succeeds |
 | **v4 Ã¢â‚¬â€ email-ready** | `MESHCHAT4:` / `MESHWORKSPACE4:` | Outbound-first attempt, with an optional signed callback and role reversal if the invitee must host instead | An out-of-band channel to exchange signed documents |
 | **I2P relay** | `MESHI2P1:` / `MESHI2P1W:` | A signed outer envelope around the complete inner invitation, carrying one validated `*.b32.i2p` access point, its expiry, and the owner binding | Each side runs an I2P router with SAM; the access point is reachable through I2P |
-| **Direct setup** | `mesh-direct:` | Signed Offer ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ Answer ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ Ready over an experimental QUIC underlay, then an isolated bootstrap interpreter | Both sides can reach each other; physical qualification pending |
+| **Direct setup** | `mesh-direct:` | Signed offer -> answer -> ready over an experimental QUIC underlay, then an isolated bootstrap interpreter | Both sides can reach each other; physical qualification pending |
+| **WebRTC transport** | `meshchat://pair/<code>` (optional) | A signed offer/answer transferred by copy, QR, or the optional signaling mailbox; Reticulum packets then travel over the encrypted DataChannel | ICE reaches a direct pair, or a consented TURN relay is configured |
 
 Accepting an invitation never creates trust by itself. The recipient reviews the inviter, fingerprint, and workspace details, and the request must still be approved. The first contact on a shared path is bounded by invitation expiry, single use, and explicit consent.
 
@@ -105,7 +112,42 @@ override the built-in default, or disable the broker. The built-in default is
 the user enables relay consent** and can be changed at any time. See
 [the community relay spec](docs/COMMUNITY_RELAY_SPEC.md).
 
-**I2P is an opt-in relay, not the default.** A normal invitation still starts with nearby/direct/participant-hosted/remote choices. I2P is selected explicitly, and the joiner sees the access point and must consent. The access point is a Reticulum `I2PInterface` node addressed by `*.b32.i2p`; it relays encrypted Reticulum/LXMF traffic and does not see message plaintext. Windows bundles and manages `i2pd`; Android has the settings and consent UI but no bundled I2P router yet, so Android cannot complete an I2P join as of 0.9.1.
+### WebRTC and the optional signaling mailbox
+
+WebRTC carries Reticulum packets over an encrypted DataChannel, so a peer with
+no inbound path can still message after ICE finds a direct or relayed pair. A
+manual flow remains available: create a signed offer, transfer it by copy or QR,
+and return a signed answer.
+
+An optional Cloudflare Worker removes that copy/paste for both onboarding and
+automatic reconnect:
+
+- One Durable Object per session, a 10-minute TTL, and a 48 KiB cap per signed
+  envelope. It stores no messages, contact graph, or history.
+- Reconnect documents are a signed `request`, `offer`, and `answer`. They bind
+  sender, recipient, device, attempt, session, SDP fingerprint, expiry, and
+  signature.
+- Reconnect requires a pair capability token, sent as `X-Mesh-Token`. The Worker
+  stores only its SHA-256 hash, pins it on first authenticated write, supports
+  holder-authorized rotation, and rejects mismatches. The tokenless manual
+  onboarding path remains compatible.
+- Per-token and per-client-IP rate limits bound abuse. Role and document-type
+  matching prevents placing an answer in the offer slot.
+- The mailbox cannot approve a contact, workspace member, or device, and never
+  sees plaintext. A mailbox URL is configured in **Settings → WebRTC calls**;
+  without one the app says **Manual reconnect required** instead of looping.
+
+The same signed capability exchange is what enables automatic reconnect:
+capabilities are shared when an invitation is accepted and approved, or over
+the authenticated control channel while connected. A capability arriving before
+its contact record is held as a signed, expiring document and promoted only
+after approval. Tokens rotate with a new signed capability. See
+[the automatic reconnect spec](docs/AUTO_RECONNECT_SPEC.md) and
+[the mailbox deployment guide](deploy/cloudflare-signal/README.md).
+
+### I2P relay (opt-in)
+
+**I2P is opt-in and not the default.** A normal invitation still starts with nearby/direct/participant-hosted/remote choices. I2P is selected explicitly, and the joiner sees the access point and must consent before traffic is relayed. The access point is a Reticulum `I2PInterface` node addressed by `*.b32.i2p`; it relays encrypted Reticulum/LXMF traffic and does not see message plaintext. Windows bundles and manages `i2pd`; Android has the settings and consent UI but no bundled I2P router yet, so Android cannot complete an I2P join as of 0.9.1.
 
 ### Automatic reconnect (open apps only)
 
@@ -189,14 +231,18 @@ Receipts are ordinary end-to-end encrypted LXMF messages. They are never acknowl
 
 | Component | Owns | Must not own |
 | --- | --- | --- |
-| React renderer | Presentation, in-memory drafts, validated view models | Vault key, private identity, paths, process launch, arbitrary navigation |
+| React renderer | Presentation, in-memory drafts, validated view models, the reconnect coordinator and its `RTCPeerConnection` | Vault key, private identity, paths, process launch, arbitrary navigation, contact approval |
 | Tauri shell | Credential entry, profile path, IPC validation, process and deep-link lifetime | Routing, message encryption, chat persistence |
 | Android/iOS plugin | Embedded CPython lifecycle, app-private path, Keystore/Keychain access | Renderer data, contact policy, routing decisions |
-| Python service | Identity, consent, durable state, Reticulum/LXMF integration | OS credential lookup, arbitrary commands, remote control |
+| Python service | Identity, consent, durable state, reconnect profiles/capabilities/replay, Reticulum/LXMF integration | OS credential lookup, arbitrary commands, remote control |
+| Optional signaling mailbox | Pair-token hash, transient signed request/offer/answer envelopes, TTL and rate limits | Message plaintext, contact/workspace trust, message history, enumeration from public hashes |
+| WebRTC transport / TURN relay | Ephemeral DTLS/ICE and encrypted DataChannel packets | SDP, ICE credentials, or DTLS keys at rest; consent decisions; message plaintext |
 | Reticulum / LXMF | Paths, Links, transport, wire format, encryption | Contact trust, membership, durable-delivery claims |
 | I2P router / access point | I2P tunnels, relay forwarding, connection metadata | Message plaintext, contact trust, membership, delivery receipts |
 
-The wire uses native RNS identities and destination encryption with ratchets enforced before any send. Invitations are re-derived and signature-checked; a destination that does not match the embedded identity is rejected. Every inbound message must pass native signature validation, exact destination matching, schema validation, expiry checks, and a trust-policy check before it enters the vault. Unknown senders may only create a bounded pending contact request; a workspace has exactly one unknown-source exception Ã¢â‚¬â€ a fully verified join.
+The wire uses native RNS identities and destination encryption with ratchets enforced before any send. Invitations are re-derived and signature-checked; a destination that does not match the embedded identity is rejected. Every inbound message must pass native signature validation, exact destination matching, schema validation, expiry checks, and a trust-policy check before it enters the vault. Unknown senders may only create a bounded pending contact request; a workspace has exactly one unknown-source exception: a fully verified join.
+
+Reconnect documents are authorized separately from message delivery: the signer must be an approved, non-blocked contact; the recipient and device must match this installation; reciprocal consent must exist; and the durable replay key must be unused. Those checks happen before any `RTCPeerConnection` is allocated. A transport or mailbox failure never changes trust.
 
 The threat model is explicit about what is *not* protected: traffic analysis, IP endpoints and timing, propagation-node metadata, a compromised unlocked endpoint, and content already delivered to another member. There is no anonymity claim, no remote-erasure promise, and no recovery after permanent authority-key loss. Read [THREAT_MODEL.md](THREAT_MODEL.md) for the full list of adversaries, controls, and residual risks.
 
@@ -215,6 +261,12 @@ The threat model is explicit about what is *not* protected: traffic analysis, IP
 | Default cooperative retention | 90 days (30 / 90 / 365 / indefinite) |
 | Local search | Exact tokens; 25 results by default, 50 maximum |
 | IPC frame / renderer payload | 4 MiB / 32 KiB default |
+| Signaling mailbox TTL / envelope cap | 10 minutes / 48 KiB |
+| Mailbox rate limits | 30 writes and 120 reads per token per minute; 120 and 480 per client IP |
+| Reconnect capability / document expiry | 7 days / 1 hour maximum |
+| Reconnect concurrency / backoff | 2 concurrent attempts; 1/2/5/15/30/60 s jittered, capped at 60 s |
+| Reconnect attempt budget | Bounded per profile; stopped by the user, consent removal, block/deletion, capability rejection, or expiry |
+| Reconnect window | While the app is open and unlocked only; mailbox envelopes expire after 10 minutes |
 | Optional propagation cache (client) | 100 MiB |
 | I2P access points per device | 4 |
 | Managed I2P router | Local `i2pd` with SAM on `127.0.0.1:7656`; low-bandwidth, no transit, no web console/proxies |
@@ -230,22 +282,27 @@ The threat model is explicit about what is *not* protected: traffic analysis, IP
 | Linux | Build path, fscrypt/dm-crypt adapters | No package built or run in this repository |
 | iOS | Plugin and build script | Requires macOS and Xcode; not built or run in this repository |
 
-Automated verification is substantial: Python, Vitest, and Rust suites, plus opt-in real-stack harnesses Ã¢â‚¬â€ a four-process AÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢BÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢CÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢D Reticulum/LXMF topology, a two-process direct-LAN harness, a three-process remote-access harness, a packaged-sidecar harness, and QUIC fabric/recovery runs in CI. The recorded evidence, exact hashes, and per-version notes are in [TESTING.md](TESTING.md).
+Automated verification is substantial: Python, Vitest, Worker, and Rust suites, plus opt-in real-stack harnesses - a four-process A -> B -> C -> D Reticulum/LXMF topology, a two-process direct-LAN harness, a three-process remote-access harness, a packaged-sidecar harness, and QUIC fabric/recovery runs in CI. The recorded evidence, exact hashes, and per-version notes are in [TESTING.md](TESTING.md).
 
-Still open: physical WindowsÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬ÂAndroid runs, real router/NAT and cellular traversal, propagation independence, crash-injection matrices, hostile-input fuzzing, accessibility review, macOS/Linux/iOS packages, and an independent security review. Automatic reconnect has automated coverage only: no two-device restart, NAT/TURN, Android/iOS lifecycle, or battery/backoff test was performed on hardware. CI passing is not a substitute for those gates.
+Still open: physical Windows and Android runs, real router/NAT and cellular traversal, propagation independence, crash-injection matrices, hostile-input fuzzing, accessibility review, macOS/Linux/iOS packages, and an independent security review. Automatic reconnect has automated coverage only: no two-device restart, NAT/TURN, Android/iOS lifecycle, or battery/backoff test was performed on hardware. CI passing is not a substitute for those gates.
 
 ## Repository map
 
 | Path | Contents |
 | --- | --- |
-| [`service/src/mesh_chat/`](service/src/mesh_chat/) | Protocol documents, vault, RNS/LXMF adapters, I2P router/invitation support, personal/group/workspace/remote services |
+| [`service/src/mesh_chat/`](service/src/mesh_chat/) | Protocol documents, vault, RNS/LXMF adapters, I2P router/invitation support, reconnect profiles/capabilities/signaling, personal/group/workspace/remote services |
+| [`service/src/mesh_chat/reconnect.py`](service/src/mesh_chat/reconnect.py), [`reconnect_service.py`](service/src/mesh_chat/reconnect_service.py) | Signed reconnect request/offer/answer, capability verification, per-contact consent, durable replay, mailbox commands |
 | [`src/`](src/) | React messenger interface; no identity or vault access |
+| [`src/reconnect-coordinator.ts`](src/reconnect-coordinator.ts), [`src/reconnect-runtime.ts`](src/reconnect-runtime.ts), [`src/ReconnectSettings.tsx`](src/ReconnectSettings.tsx) | Renderer-owned RTCPeerConnection coordinator, production wiring, and per-contact consent/status UI |
 | [`src-tauri/`](src-tauri/) | Rust shell: command allowlist, IPC, sidecar lifecycle, CSP, deep links |
 | [`vendor/`](vendor/) | Bundled Windows `i2pd` binary and its BSD-3-Clause license |
 | [`plugins/tauri-plugin-mesh-runtime/`](plugins/tauri-plugin-mesh-runtime/) | Android/iOS embedded-Python bridge and native device key storage |
 | [`experiments/direct-fabric/`](experiments/direct-fabric/) | Rust QUIC underlay proof used by the direct-setup path |
+| [`deploy/cloudflare-signal/`](deploy/cloudflare-signal/) | Optional Worker + Durable Object signaling mailbox: pair-token auth, request/offer/answer roles, rate limits, and tests |
+| [`deploy/cloudflare-turn/`](deploy/cloudflare-turn/) | Short-lived TURN credential broker; the long-term API token stays server-side |
 | [`deploy/remote-access/`](deploy/remote-access/) | Example self-hosted Reticulum transport and LXMF propagation host |
 | [`deploy/turn/`](deploy/turn/) | Example self-hosted coturn relay for cross-network WebRTC calls |
+| [`docs/architecture/`](docs/architecture/) | Architecture diagram as editable SVG source plus the rendered PNG |
 | [`scripts/`](scripts/) | Build, packaging, release, and verification drivers |
 | [`docs/adr/`](docs/adr/) | Nineteen architecture decision records |
 | [`service/tests/`](service/tests/) | Unit, integration, and opt-in real-stack harnesses |
@@ -260,7 +317,8 @@ python -m venv .venv
 python -m pip install -r service/requirements-dev.lock
 pnpm install --frozen-lockfile
 
-python scripts/test.py                    # Python + frontend + artwork + typecheck + build
+python scripts/test.py                    # Python + frontend + Worker + artwork + typecheck + build
+node --test deploy/cloudflare-signal/worker.test.mjs   # mailbox tests on their own
 python scripts/release.py build --platform all
 ```
 
@@ -270,7 +328,7 @@ Desktop installers must be built on their target operating system. Android build
 
 | Document | Why read it |
 | --- | --- |
-| [ARCHITECTURE.md](ARCHITECTURE.md) | Component boundaries, workspace internals, persistence, crash consistency |
+| [ARCHITECTURE.md](ARCHITECTURE.md) | Component boundaries, signaling/reconnect internals, workspace internals, persistence, crash consistency |
 | [PROTOCOL.md](PROTOCOL.md) | Exact signed documents, LXMF fields, limits, delivery evidence |
 | [WORKSPACE_SPEC.md](WORKSPACE_SPEC.md) | Product scope, roles, requirements, and release gates for workspaces |
 | [THREAT_MODEL.md](THREAT_MODEL.md) | Adversaries, controls, metadata leakage, and open security blockers |
@@ -283,7 +341,7 @@ Desktop installers must be built on their target operating system. Android build
 | [C5 DataChannel bridge spec](docs/C5_DATACHANNEL_BRIDGE_SPEC.md) | Reticulum-over-DataChannel bridge, IPC, signaling, onboarding, and TURN policy |
 | [Relay deployment](deploy/relay/README.md) | One-command TURN relay with TCP/UDP 443, credentials, and VPS hardening |
 | [Cloudflare TURN broker](deploy/cloudflare-turn/README.md) | Short-lived Cloudflare TURN credentials without shipping the API token |
-| [Cloudflare signaling mailbox](deploy/cloudflare-signal/README.md) | Optional 10-minute signed offer/answer mailbox to remove copy/paste |
+| [Cloudflare signaling mailbox](deploy/cloudflare-signal/README.md) | Optional 10-minute signed request/offer/answer mailbox with pair tokens, rotation, rate limits, and tests |
 | [Community relay spec](docs/COMMUNITY_RELAY_SPEC.md) | Opt-in default/community relays, TURN + Reticulum access point, consent, failover, and no central store |
 | [Connection UX architecture](docs/CONNECTION_UX_ARCHITECTURE.md) | Unified connection object, transport/signaling adapters, inline relay consent, and approval UX |
 | [Automatic reconnect spec](docs/AUTO_RECONNECT_SPEC.md) | Independent rendezvous, capabilities, consent, glare control, mailbox hardening, and lifecycle policy |

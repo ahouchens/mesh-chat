@@ -1,0 +1,215 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1500" height="1080" viewBox="0 0 1500 1080" font-family="Segoe UI, Helvetica, Arial, sans-serif">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#475569"/>
+    </marker>
+    <marker id="arrow-teal" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#0f766e"/>
+    </marker>
+  </defs>
+
+  <rect x="0" y="0" width="1500" height="1080" fill="#ffffff"/>
+  <text x="30" y="36" font-size="21" font-weight="700" fill="#0f172a">Mesh Chat architecture (0.9.1)</text>
+  <text x="30" y="58" font-size="13" fill="#64748b">Server-free messaging over Reticulum, with an optional signaling mailbox for automatic reconnect</text>
+
+  <!-- DEVICE A -->
+  <rect x="20" y="76" width="524" height="912" rx="14" fill="#f8fafc" stroke="#cbd5e1"/>
+  <text x="40" y="104" font-size="12" font-weight="700" letter-spacing="1.2" fill="#64748b">ONE DEVICE · desktop · Android · iOS</text>
+
+  <!-- Renderer A -->
+  <rect x="40" y="118" width="484" height="132" rx="10" fill="#eff6ff" stroke="#3b82f6"/>
+  <text x="60" y="146" font-size="19" font-weight="700" fill="#1d4ed8">React renderer</text>
+  <text x="60" y="170" font-size="13" fill="#1e3a8a">Chats · groups · workspaces · threads · search</text>
+  <text x="60" y="192" font-size="13" font-weight="600" fill="#1e3a8a">Reconnect coordinator · fresh RTCPeerConnection</text>
+  <text x="60" y="212" font-size="13" fill="#1e3a8a">Status and consent panel · no modal · no keys</text>
+  <text x="60" y="232" font-size="13" fill="#1e3a8a">Backoff, one-offer glare control, stop/retry</text>
+
+  <line x1="282" y1="250" x2="282" y2="274" stroke="#475569" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <text x="294" y="267" font-size="11.5" fill="#64748b">invoke(command) · allowlisted and size-capped</text>
+
+  <!-- Shell A -->
+  <rect x="40" y="276" width="484" height="94" rx="10" fill="#f5f3ff" stroke="#8b5cf6"/>
+  <text x="60" y="304" font-size="19" font-weight="700" fill="#6d28d9">Tauri 2 shell · Rust</text>
+  <text x="60" y="326" font-size="13" fill="#4c1d95">Vault key · profile path · strict CSP · command allowlist</text>
+  <text x="60" y="346" font-size="13" fill="#4c1d95">Owns service lifetime, deep links, mobile runtime</text>
+
+  <line x1="282" y1="370" x2="282" y2="394" stroke="#475569" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <text x="294" y="387" font-size="11.5" fill="#64748b">stdin/stdout JSON frames · no localhost server</text>
+
+  <!-- Service A -->
+  <rect x="40" y="396" width="484" height="300" rx="10" fill="#ecfdf5" stroke="#10b981"/>
+  <text x="60" y="424" font-size="19" font-weight="700" fill="#047857">mesh-chat-service · Python</text>
+  <text x="60" y="444" font-size="12.5" fill="#065f46">Trust, consent, signatures, replay, durable state, signaling</text>
+
+  <rect x="56" y="456" width="216" height="72" rx="8" fill="#ffffff" stroke="#a7f3d0"/>
+  <text x="68" y="476" font-size="13" font-weight="700" fill="#065f46">Signed documents</text>
+  <text x="68" y="494" font-size="11.5" fill="#334155">invitations · capabilities</text>
+  <text x="68" y="511" font-size="11.5" fill="#334155">reconnect request / offer / answer</text>
+
+  <rect x="288" y="456" width="220" height="72" rx="8" fill="#ffffff" stroke="#a7f3d0"/>
+  <text x="300" y="476" font-size="13" font-weight="700" fill="#065f46">Reconnect profiles</text>
+  <text x="300" y="494" font-size="11.5" fill="#334155">reciprocal consent · pair token</text>
+  <text x="300" y="511" font-size="11.5" fill="#334155">durable replay cache · expiries</text>
+
+  <rect x="56" y="538" width="216" height="72" rx="8" fill="#ffffff" stroke="#a7f3d0"/>
+  <text x="68" y="558" font-size="13" font-weight="700" fill="#065f46">Signaling adapter</text>
+  <text x="68" y="576" font-size="11.5" fill="#334155">publish/fetch by profile id</text>
+  <text x="68" y="593" font-size="11.5" fill="#334155">token header · pending capabilities</text>
+
+  <rect x="288" y="538" width="220" height="72" rx="8" fill="#ffffff" stroke="#a7f3d0"/>
+  <text x="300" y="558" font-size="13" font-weight="700" fill="#065f46">Encrypted vault</text>
+  <text x="300" y="576" font-size="11.5" fill="#334155">SQLite + AES-256-GCM</text>
+  <text x="300" y="593" font-size="11.5" fill="#334155">no SDP / ICE / DTLS at rest</text>
+
+  <rect x="56" y="620" width="216" height="60" rx="8" fill="#ffffff" stroke="#a7f3d0"/>
+  <text x="68" y="640" font-size="13" font-weight="700" fill="#065f46">Outbox + receipts</text>
+  <text x="68" y="659" font-size="11.5" fill="#334155">idempotent durable work</text>
+
+  <rect x="288" y="620" width="220" height="60" rx="8" fill="#ffffff" stroke="#a7f3d0"/>
+  <text x="300" y="640" font-size="13" font-weight="700" fill="#065f46">Reticulum bridge</text>
+  <text x="300" y="659" font-size="11.5" fill="#334155">attach · reannounce · path poll</text>
+
+  <line x1="282" y1="696" x2="282" y2="720" stroke="#475569" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <text x="294" y="713" font-size="11.5" fill="#64748b">LXMF handoff only after the vault commits</text>
+
+  <!-- Reticulum A -->
+  <rect x="40" y="722" width="484" height="98" rx="10" fill="#faf5ff" stroke="#8b5cf6"/>
+  <text x="60" y="750" font-size="19" font-weight="700" fill="#6d28d9">Reticulum 1.5.5 + LXMF 1.2.0</text>
+  <text x="60" y="772" font-size="13" fill="#4c1d95">identity · destinations · paths · ratchets · Links</text>
+  <text x="60" y="792" font-size="13" fill="#4c1d95">optional I2PInterface · WebRTC DataChannel bridge</text>
+  <text x="60" y="812" font-size="12" fill="#6d28d9">Plaintext exists only on the endpoint.</text>
+
+  <!-- Profile A -->
+  <rect x="40" y="834" width="484" height="80" rx="10" fill="#fffbeb" stroke="#f59e0b"/>
+  <text x="60" y="860" font-size="16" font-weight="700" fill="#92400e">Protected profile (one per installation)</text>
+  <text x="60" y="880" font-size="12.5" fill="#78350f">sealed vault · RNS state · LXMF store · i2p router</text>
+  <text x="60" y="899" font-size="12.5" fill="#78350f">OS-encrypted; the service refuses to start otherwise</text>
+
+  <text x="40" y="942" font-size="12" font-style="italic" fill="#475569">Reconnect runs only while this app is open and unlocked.</text>
+  <text x="40" y="960" font-size="12" font-style="italic" fill="#475569">No background daemon · no push · no live session migration.</text>
+
+  <!-- CENTER: mailbox -->
+  <rect x="566" y="100" width="368" height="228" rx="12" fill="#ecfeff" stroke="#06b6d4"/>
+  <text x="586" y="128" font-size="18" font-weight="700" fill="#0e7490">Optional signaling mailbox</text>
+  <text x="586" y="149" font-size="12.5" fill="#155e75">Cloudflare Worker + one Durable Object per pair</text>
+  <text x="586" y="174" font-size="12.5" fill="#155e75">• SHA-256 pair-token hash, pinned on first write</text>
+  <text x="586" y="194" font-size="12.5" fill="#155e75">• 10-minute TTL · 48 KiB signed-envelope cap</text>
+  <text x="586" y="214" font-size="12.5" fill="#155e75">• roles: request / offer / answer · type checked</text>
+  <text x="586" y="234" font-size="12.5" fill="#155e75">• per-token and per-IP rate limits</text>
+  <text x="586" y="254" font-size="12.5" fill="#155e75">• reconnect always requires a token</text>
+  <text x="586" y="278" font-size="12.5" font-weight="700" fill="#0f766e">Sees: signed envelopes, IPs, timing.</text>
+  <text x="586" y="297" font-size="12.5" font-weight="700" fill="#0f766e">Never: message plaintext, contact trust, membership.</text>
+  <text x="586" y="316" font-size="11.5" fill="#64748b">Tokenless manual onboarding offer/answer still works.</text>
+
+  <!-- mailbox arrows to both services -->
+  <path d="M 524 470 L 548 470 L 548 340 L 610 340 L 610 328" fill="none" stroke="#0f766e" stroke-width="1.6" marker-start="url(#arrow-teal)" marker-end="url(#arrow-teal)"/>
+  <path d="M 996 470 L 972 470 L 972 340 L 890 340 L 890 328" fill="none" stroke="#0f766e" stroke-width="1.6" marker-start="url(#arrow-teal)" marker-end="url(#arrow-teal)"/>
+  <text x="566" y="354" font-size="11.5" fill="#0f766e">Mailbox link: signed request/offer/answer + X-Mesh-Token (service ↔ Worker).</text>
+  <text x="566" y="370" font-size="11.5" fill="#64748b">Capabilities move over the authenticated control channel, not the mailbox.</text>
+
+  <!-- TURN -->
+  <rect x="566" y="382" width="368" height="104" rx="10" fill="#fff7ed" stroke="#f97316"/>
+  <text x="586" y="410" font-size="18" font-weight="700" fill="#9a3412">Optional TURN relay</text>
+  <text x="586" y="432" font-size="12.5" fill="#7c2d12">Relayed DTLS for WebRTC when direct ICE fails</text>
+  <text x="586" y="452" font-size="12.5" fill="#7c2d12">Sees IPs + timing, never chat plaintext</text>
+  <text x="586" y="472" font-size="12.5" fill="#7c2d12">Short-lived credentials; never persisted</text>
+
+  <!-- Network paths -->
+  <rect x="566" y="506" width="368" height="424" rx="10" fill="#f1f5f9" stroke="#94a3b8"/>
+  <text x="586" y="534" font-size="18" font-weight="700" fill="#334155">Network paths</text>
+  <circle cx="592" cy="558" r="3.5" fill="#3b82f6"/><text x="606" y="563" font-size="12.5" fill="#334155">Nearby discovery · local TCP fallback</text>
+  <circle cx="592" cy="584" r="3.5" fill="#3b82f6"/><text x="606" y="589" font-size="12.5" fill="#334155">Signed direct TCP endpoint hints</text>
+  <circle cx="592" cy="610" r="3.5" fill="#3b82f6"/><text x="606" y="615" font-size="12.5" fill="#334155">Participant-hosted Internet (PCP/UPnP/NAT-PMP)</text>
+  <circle cx="592" cy="636" r="3.5" fill="#8b5cf6"/><text x="606" y="641" font-size="12.5" fill="#334155">Remote access point · outbound dial</text>
+  <circle cx="592" cy="662" r="3.5" fill="#06b6d4"/><text x="606" y="667" font-size="12.5" fill="#334155">I2P access point · local i2pd + SAM</text>
+  <circle cx="592" cy="688" r="3.5" fill="#0f766e"/><text x="606" y="693" font-size="12.5" fill="#334155">WebRTC DataChannel · direct or TURN-relayed</text>
+  <circle cx="592" cy="714" r="3.5" fill="#f59e0b"/><text x="606" y="719" font-size="12.5" fill="#334155">LXMF propagation · opt-in store-and-forward</text>
+  <circle cx="592" cy="740" r="3.5" fill="#ef4444"/><text x="606" y="745" font-size="12.5" fill="#334155">QUIC direct underlay · experimental</text>
+  <line x1="586" y1="762" x2="914" y2="762" stroke="#cbd5e1"/>
+  <text x="586" y="786" font-size="12" font-weight="700" fill="#334155">Automatic reconnect after both apps restart:</text>
+  <text x="586" y="806" font-size="12" fill="#334155">1. preferred device publishes a signed request</text>
+  <text x="586" y="824" font-size="12" fill="#334155">2. the other verifies it and creates the single offer</text>
+  <text x="586" y="842" font-size="12" fill="#334155">3. preferred device answers; both apply it</text>
+  <text x="586" y="860" font-size="12" fill="#334155">4. fresh PC + DataChannel; attach, reannounce, path</text>
+  <text x="586" y="884" font-size="11.5" font-style="italic" fill="#64748b">Only reciprocal opt-ins run. Blocked peers are rejected</text>
+  <text x="586" y="900" font-size="11.5" font-style="italic" fill="#64748b">before any RTCPeerConnection exists.</text>
+
+  <!-- Reticulum path link between devices -->
+  <line x1="524" y1="771" x2="566" y2="771" stroke="#0f766e" stroke-width="2" stroke-dasharray="5 4" marker-end="url(#arrow-teal)"/>
+  <line x1="934" y1="771" x2="976" y2="771" stroke="#0f766e" stroke-width="2" stroke-dasharray="5 4" marker-end="url(#arrow-teal)"/>
+
+  <!-- DEVICE B -->
+  <rect x="976" y="76" width="504" height="912" rx="14" fill="#f8fafc" stroke="#cbd5e1"/>
+  <text x="996" y="104" font-size="12" font-weight="700" letter-spacing="1.2" fill="#64748b">THE OTHER DEVICE · same stack</text>
+
+  <rect x="996" y="118" width="464" height="132" rx="10" fill="#eff6ff" stroke="#3b82f6"/>
+  <text x="1016" y="146" font-size="19" font-weight="700" fill="#1d4ed8">React renderer</text>
+  <text x="1016" y="170" font-size="13" fill="#1e3a8a">Reconnect coordinator · verifies status</text>
+  <text x="1016" y="192" font-size="13" fill="#1e3a8a">Never approves contacts or changes authority</text>
+  <text x="1016" y="212" font-size="13" fill="#1e3a8a">Never sees SDP after the attempt ends</text>
+  <text x="1016" y="232" font-size="13" fill="#1e3a8a">Consent changes share new signed capabilities</text>
+
+  <line x1="1228" y1="250" x2="1228" y2="274" stroke="#475569" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <text x="1240" y="267" font-size="11.5" fill="#64748b">invoke(command)</text>
+
+  <rect x="996" y="276" width="464" height="94" rx="10" fill="#f5f3ff" stroke="#8b5cf6"/>
+  <text x="1016" y="304" font-size="19" font-weight="700" fill="#6d28d9">Tauri 2 shell · Rust</text>
+  <text x="1016" y="326" font-size="13" fill="#4c1d95">Credential store · profile path · CSP · allowlist</text>
+  <text x="1016" y="346" font-size="13" fill="#4c1d95">The service only runs while the app is unlocked</text>
+
+  <line x1="1228" y1="370" x2="1228" y2="394" stroke="#475569" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <text x="1240" y="387" font-size="11.5" fill="#64748b">stdin/stdout frames</text>
+
+  <rect x="996" y="396" width="464" height="300" rx="10" fill="#ecfdf5" stroke="#10b981"/>
+  <text x="1016" y="424" font-size="19" font-weight="700" fill="#047857">mesh-chat-service · Python</text>
+  <text x="1016" y="444" font-size="12.5" fill="#065f46">Independent verifier; never trusts the mailbox or renderer</text>
+
+  <rect x="1012" y="456" width="210" height="72" rx="8" fill="#ffffff" stroke="#a7f3d0"/>
+  <text x="1024" y="476" font-size="13" font-weight="700" fill="#065f46">Verify sender</text>
+  <text x="1024" y="494" font-size="11.5" fill="#334155">approved, non-blocked contact</text>
+  <text x="1024" y="511" font-size="11.5" fill="#334155">recipient + device + expiry</text>
+
+  <rect x="1234" y="456" width="210" height="72" rx="8" fill="#ffffff" stroke="#a7f3d0"/>
+  <text x="1246" y="476" font-size="13" font-weight="700" fill="#065f46">Reciprocal consent</text>
+  <text x="1246" y="494" font-size="11.5" fill="#334155">auto-reconnect + IP disclosure</text>
+  <text x="1246" y="511" font-size="11.5" fill="#334155">both sides must opt in</text>
+
+  <rect x="1012" y="538" width="210" height="72" rx="8" fill="#ffffff" stroke="#a7f3d0"/>
+  <text x="1024" y="558" font-size="13" font-weight="700" fill="#065f46">Replay + expiry</text>
+  <text x="1024" y="576" font-size="11.5" fill="#334155">durable across restart</text>
+  <text x="1024" y="593" font-size="11.5" fill="#334155">one answer accepted once</text>
+
+  <rect x="1234" y="538" width="210" height="72" rx="8" fill="#ffffff" stroke="#a7f3d0"/>
+  <text x="1246" y="558" font-size="13" font-weight="700" fill="#065f46">No transport trust</text>
+  <text x="1246" y="576" font-size="11.5" fill="#334155">failure never changes contact</text>
+  <text x="1246" y="593" font-size="11.5" fill="#334155">or workspace state</text>
+
+  <rect x="1012" y="620" width="210" height="60" rx="8" fill="#ffffff" stroke="#a7f3d0"/>
+  <text x="1024" y="640" font-size="13" font-weight="700" fill="#065f46">Attach fresh bridge</text>
+  <text x="1024" y="659" font-size="11.5" fill="#334155">reannounce at 0/2/6 s</text>
+
+  <rect x="1234" y="620" width="210" height="60" rx="8" fill="#ffffff" stroke="#a7f3d0"/>
+  <text x="1246" y="640" font-size="13" font-weight="700" fill="#065f46">Path readiness</text>
+  <text x="1246" y="659" font-size="11.5" fill="#334155">ready / pending / unavailable</text>
+
+  <line x1="1228" y1="696" x2="1228" y2="720" stroke="#475569" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <text x="1240" y="713" font-size="11.5" fill="#64748b">LXMF handoff after commit</text>
+
+  <rect x="996" y="722" width="464" height="98" rx="10" fill="#faf5ff" stroke="#8b5cf6"/>
+  <text x="1016" y="750" font-size="19" font-weight="700" fill="#6d28d9">Reticulum + LXMF</text>
+  <text x="1016" y="772" font-size="13" fill="#4c1d95">same identity, routing, and ratchet rules</text>
+  <text x="1016" y="792" font-size="13" fill="#4c1d95">DataChannel carries the same Reticulum packets</text>
+  <text x="1016" y="812" font-size="12" fill="#6d28d9">No custom cipher, group key, or message store</text>
+
+  <rect x="996" y="834" width="464" height="80" rx="10" fill="#fffbeb" stroke="#f59e0b"/>
+  <text x="1016" y="860" font-size="16" font-weight="700" fill="#92400e">Protected profile</text>
+  <text x="1016" y="880" font-size="12.5" fill="#78350f">sealed vault · RNS state · LXMF store</text>
+  <text x="1016" y="899" font-size="12.5" fill="#78350f">Reconnect state is local; the mailbox stores no history</text>
+
+  <text x="996" y="942" font-size="12" font-style="italic" fill="#475569">Approval is one explicit action; reconnect never repeats it.</text>
+  <text x="996" y="960" font-size="12" font-style="italic" fill="#475569">Capability tokens rotate with a new signed document.</text>
+
+  <!-- footer -->
+  <text x="30" y="1024" font-size="12" fill="#64748b">Capabilities default to auto-reconnect off. A mailbox, TURN server, or access point is optional and explicitly configured; none can approve a contact or read plaintext.</text>
+  <text x="30" y="1044" font-size="12" fill="#64748b">The signed request/offer/answer and capability documents expire; replay is rejected across restarts. The worker stores only transient signaling envelopes.</text>
+</svg>
