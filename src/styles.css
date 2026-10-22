@@ -726,3 +726,33 @@ html.native-qr-scanning,
 @media (prefers-contrast: more) {
   :root { --line: #78817c; }.button--primary { background: #08271b; }.field input, .field textarea, .composer textarea { border-width: 2px; }
 }
+
+/* Automatic reconnect (per-contact consent and status) */
+.reconnect-settings {
+  display: grid;
+  gap: 10px;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface-2, rgba(255, 255, 255, 0.04));
+}
+.reconnect-settings__heading {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.reconnect-settings__heading span { display: grid; gap: 2px; }
+.reconnect-settings__heading small { color: var(--muted); }
+.reconnect-status { color: var(--muted); }
+.reconnect-status--warning { color: var(--amber-700, #9a6400); }
+.reconnect-hints {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  color: var(--muted);
+  font-size: 0.92rem;
+}
+.reconnect-hints li { display: flex; gap: 8px; align-items: flex-start; }
+.reconnect-hints svg { flex: 0 0 auto; margin-top: 2px; }

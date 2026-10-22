@@ -5,8 +5,17 @@ import { Check, Copy, Phone, RefreshCw, X } from "lucide-react";
 import { serviceCommand } from "./api";
 import { attachWebRTCBridge, type WebRTCBridge } from "./webrtc-onboarding";
 import { rememberWebRTCDiagnostics } from "./webrtc-diagnostics";
-import { setWebRTCSession, updateWebRTCSessionApprovalPending, type WebRTCSessionPath } from "./webrtc-session";
+import { setWebRTCSession, updateWebRTCSessionApprovalPending, updateWebRTCSessionContact, type WebRTCSessionPath } from "./webrtc-session";
 import { clearPairingResume, savePairingResume } from "./pairing-resume";
+import { storeReconnectCapabilities } from "./reconnect-control";
+import {
+  connectionPath,
+  fingerprint,
+  peerDiagnostics,
+  summarizeIce,
+  waitForCandidates,
+  waitForOpen,
+} from "./webrtc-peer";
 import type {
   CallIceConfiguration,
   CallSettings,
@@ -53,17 +62,11 @@ type OnboardingState = "idle" | "sending" | "sent" | "preview" | "waiting-approv
 
 type ControlMessage =
   | { type: "contact_invitation"; document: string; workspace_document?: string }
-  | { type: "invitation_accepted" }
+  | { type: "invitation_accepted"; capabilities?: string }
   | { type: "invitation_declined" }
-  | { type: "invitation_approved" }
-  | { type: "invitation_denied" };
-
-function fingerprint(sdp: string): string {
-  for (const line of sdp.split(/\r?\n/)) {
-    if (line.startsWith("a=fingerprint:")) return line.slice("a=fingerprint:".length).trim();
-  }
-  throw new Error("The offer has no DTLS fingerprint.");
-}
+  | { type: "invitation_approved"; capabilities?: string }
+  | { type: "invitation_denied" }
+  | { type: "connection_capabilities"; document: string };
 
 function documentType(value: string): string {
   try {
@@ -118,153 +121,6 @@ async function sha256Hex(value: string): Promise<string> {
   return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
-async function waitForCandidates(pc: RTCPeerConnection, timeoutMs = 15000): Promise<void> {
-  if (pc.iceGatheringState === "complete") return;
-  await new Promise<void>((resolve) => {
-    const timeout = window.setTimeout(resolve, timeoutMs);
-    const onChange = () => {
-      if (pc.iceGatheringState === "complete") {
-        window.clearTimeout(timeout);
-        pc.removeEventListener("icegatheringstatechange", onChange);
-        resolve();
-      }
-    };
-    pc.addEventListener("icegatheringstatechange", onChange);
-  });
-}
-
-async function connectionPath(pc: RTCPeerConnection): Promise<WebRTCSessionPath> {
-  try {
-    const stats = await pc.getStats();
-    const candidates = new Map<string, string>();
-    let selected = "";
-    stats.forEach((report) => {
-      const value = report as unknown as Record<string, unknown>;
-      if (value.type === "local-candidate" || value.type === "remote-candidate") {
-        candidates.set(String(value.id), String(value.candidateType ?? ""));
-      }
-      if (value.type === "transport" && value.selectedCandidatePairId) {
-        selected = String(value.selectedCandidatePairId);
-      }
-      if (value.type === "candidate-pair" && value.nominated === true && value.state === "succeeded" && !selected) {
-        selected = String(value.id);
-      }
-    });
-    if (!selected) return "unknown";
-    let relayed = false;
-    stats.forEach((report) => {
-      const value = report as unknown as Record<string, unknown>;
-      if (value.type !== "candidate-pair" || String(value.id) !== selected) return;
-      const local = candidates.get(String(value.localCandidateId));
-      const remote = candidates.get(String(value.remoteCandidateId));
-      if (local === "relay" || remote === "relay") relayed = true;
-    });
-    return relayed ? "relayed" : "direct";
-  } catch {
-    return "unknown";
-  }
-}
-
-async function waitForOpen(channel: RTCDataChannel): Promise<void> {
-  if (channel.readyState === "open") return;
-  await new Promise<void>((resolve, reject) => {
-    const timeout = window.setTimeout(() => reject(new Error("The DataChannel did not open.")), 20000);
-    channel.addEventListener("open", () => { window.clearTimeout(timeout); resolve(); }, { once: true });
-    channel.addEventListener("error", () => { window.clearTimeout(timeout); reject(new Error("The DataChannel failed.")); }, { once: true });
-  });
-}
-
-function summarizeIce(ice: CallIceConfiguration): Record<string, unknown> {
-  const urls = ice.iceServers.flatMap((server) =>
-    Array.isArray(server.urls) ? server.urls : [server.urls],
-  );
-  return {
-    transportPolicy: ice.iceTransportPolicy,
-    stun: urls.filter((url) => url.startsWith("stun:") || url.startsWith("stuns:")).length,
-    turn: urls.filter((url) => url.startsWith("turn:") || url.startsWith("turns:")).length,
-    credentialPresent: ice.iceServers.some((server) => Boolean(server.credential)),
-  };
-}
-
-async function peerDiagnostics(
-  pc: RTCPeerConnection,
-  phase: string,
-  error: string,
-  iceSummary: Record<string, unknown> | null,
-): Promise<string> {
-  const stats = await pc.getStats();
-  const candidates = new Map<string, Record<string, unknown>>();
-  const pairs: Array<Record<string, unknown>> = [];
-  let selectedPairId = "";
-  let dataChannel: Record<string, unknown> | null = null;
-  stats.forEach((report) => {
-    const value = report as unknown as Record<string, unknown>;
-    const type = value.type;
-    if (type === "local-candidate" || type === "remote-candidate") {
-      candidates.set(String(value.id), {
-        side: type === "local-candidate" ? "local" : "remote",
-        candidateType: value.candidateType,
-        protocol: value.protocol,
-        relayProtocol: value.relayProtocol,
-        networkType: value.networkType,
-      });
-    } else if (type === "candidate-pair") {
-      pairs.push({
-        id: value.id,
-        state: value.state,
-        nominated: value.nominated,
-        bytesSent: value.bytesSent,
-        bytesReceived: value.bytesReceived,
-        localCandidateId: value.localCandidateId,
-        remoteCandidateId: value.remoteCandidateId,
-      });
-    } else if (type === "transport" && value.selectedCandidatePairId) {
-      selectedPairId = String(value.selectedCandidatePairId);
-    } else if (type === "data-channel") {
-      dataChannel = {
-        state: value.state,
-        messagesSent: value.messagesSent,
-        messagesReceived: value.messagesReceived,
-        bytesSent: value.bytesSent,
-        bytesReceived: value.bytesReceived,
-      };
-    }
-  });
-  const selected = pairs.find((pair) => pair.id === selectedPairId)
-    ?? pairs.find((pair) => pair.nominated === true && pair.state === "succeeded")
-    ?? pairs.find((pair) => pair.state === "succeeded")
-    ?? null;
-  const selectedPair = selected ? {
-    state: selected.state,
-    nominated: selected.nominated,
-    bytesSent: selected.bytesSent,
-    bytesReceived: selected.bytesReceived,
-    local: candidates.get(String(selected.localCandidateId)) ?? null,
-    remote: candidates.get(String(selected.remoteCandidateId)) ?? null,
-  } : null;
-  const countCandidates = (sdp?: string) =>
-    (sdp?.match(/^a=candidate:/gm) ?? []).length;
-  return JSON.stringify({
-    timestamp: new Date().toISOString(),
-    phase,
-    error: error || undefined,
-    connectionState: pc.connectionState,
-    iceConnectionState: pc.iceConnectionState,
-    iceGatheringState: pc.iceGatheringState,
-    iceConfiguration: iceSummary,
-    localSdpCandidates: countCandidates(pc.localDescription?.sdp),
-    remoteSdpCandidates: countCandidates(pc.remoteDescription?.sdp),
-    selectedPair,
-    candidateTypes: [...new Set([...candidates.values()].map((candidate) => `${candidate.side}:${candidate.candidateType}`))],
-    pairStates: pairs.reduce<Record<string, number>>((counts, pair) => {
-      const state = String(pair.state ?? "unknown");
-      counts[state] = (counts[state] ?? 0) + 1;
-      return counts;
-    }, {}),
-    dataChannel,
-  }, null, 2);
-}
-
 export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFallback, workspaces = [], initialPairingCode = "" }: {
   onClose: () => void;
   onChanged: () => Promise<void>;
@@ -306,6 +162,7 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
   const connectAnswerBusyRef = useRef(false);
   const bridgeRef = useRef<WebRTCBridge | null>(null);
   const handedOffRef = useRef(false);
+  const pendingCapabilitiesRef = useRef("");
   const iceSummaryRef = useRef<Record<string, unknown> | null>(null);
 
   const captureDiagnostics = useCallback(async (phase: string, message: string): Promise<string> => {
@@ -346,7 +203,15 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
     const onApproval = (event: Event) => {
       if (roleRef.current !== "offer") return;
       const approved = Boolean((event as CustomEvent<{ approved?: boolean }>).detail?.approved);
-      if (approved) clearPairingResume();
+      if (approved) {
+        clearPairingResume();
+        // The joiner's capability arrived before approval, when storing it
+        // would have failed the approved-contact check. Approval is now
+        // durable, so it is safe to verify and store.
+        const pending = pendingCapabilitiesRef.current;
+        pendingCapabilitiesRef.current = "";
+        if (pending) void storeReconnectCapabilities(pending).catch(() => undefined);
+      }
       updateWebRTCSessionApprovalPending(false);
       setOnboarding(approved ? "approved" : "declined");
     };
@@ -433,15 +298,27 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
         setOnboarding("error");
       }
     } else if (message.type === "invitation_accepted" && roleRef.current === "offer") {
+      if (typeof message.capabilities === "string" && message.capabilities) {
+        // The joiner's signed reconnect capability arrives with its acceptance.
+        // Store it only after approval has made the contact trusted.
+        pendingCapabilitiesRef.current = message.capabilities;
+      }
       updateWebRTCSessionApprovalPending(true);
       setOnboarding("waiting-approval");
       await onChanged();
     } else if (message.type === "invitation_approved" && roleRef.current === "join") {
+      if (typeof message.capabilities === "string" && message.capabilities) {
+        await storeReconnectCapabilities(message.capabilities).catch(() => undefined);
+      }
       clearPairingResume();
       setOnboarding("approved");
       await onChanged();
     } else if (message.type === "invitation_denied" && roleRef.current === "join") {
       setOnboarding("declined");
+    } else if (message.type === "connection_capabilities") {
+      if (typeof message.document === "string" && message.document) {
+        await storeReconnectCapabilities(message.document).catch(() => undefined);
+      }
     } else if (message.type === "invitation_declined" && roleRef.current === "offer") {
       updateWebRTCSessionApprovalPending(false);
       setOnboarding("declined");
@@ -688,14 +565,23 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
     setOnboardingError("");
     try {
       if (!controlDocumentRef.current) throw new Error("No contact invitation is available.");
-      await serviceCommand("accept_invitation", { invitation: controlDocumentRef.current });
+      const accepted = await serviceCommand<{ id?: string; reconnect_capabilities?: string }>(
+        "accept_invitation",
+        { invitation: controlDocumentRef.current },
+      );
+      if (accepted.id) updateWebRTCSessionContact(accepted.id);
       if (workspaceDocumentRef.current) {
         await serviceCommand("submit_workspace_join", {
           operation_id: crypto.randomUUID(),
           invitation: workspaceDocumentRef.current,
         });
       }
-      controlRef.current?.send(JSON.stringify({ type: "invitation_accepted" }));
+      controlRef.current?.send(JSON.stringify({
+        type: "invitation_accepted",
+        ...(accepted.reconnect_capabilities
+          ? { capabilities: accepted.reconnect_capabilities }
+          : {}),
+      }));
       setOnboarding("waiting-approval");
       await onChanged();
     } catch (reason) {

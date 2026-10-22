@@ -243,10 +243,18 @@ Implemented for the supported paths:
   a restart.
 - Reconnect and diagnostics actions are available from the connection card.
 
-Not implemented: live WebRTC session migration across app restarts, which
-requires both peers to renegotiate with a new peer connection. See
-[AUTO_RECONNECT_SPEC.md](AUTO_RECONNECT_SPEC.md) for the reconnect design,
-capability discovery, consent model, and lifecycle policy.
+Phase 5 also includes automatic reconnect for the open-app case since 0.9.0:
+
+- Reciprocal, per-contact consent is required; it defaults to off.
+- A signed capability carries the mailbox rendezvous token; tokens rotate with
+  a new signed document.
+- The renderer coordinator renegotiates a fresh WebRTC transport when both apps
+  are open and unlocked, without manual offer/answer copy/paste.
+- A missing mailbox shows an explicit **Manual reconnect required** state.
+- No live session migration, background daemon, push notification, or
+  contact/workspace approval bypass is claimed. See
+  [AUTO_RECONNECT_SPEC.md](AUTO_RECONNECT_SPEC.md) for the protocol, consent
+  model, glare control, and lifecycle policy.
 
 ## 8. Acceptance criteria
 

@@ -70,7 +70,10 @@ import { ConnectionDiagnostics } from "./ConnectionDiagnostics";
 import { DirectConnectionSetup } from "./DirectConnectionSetup";
 import { DirectRecovery } from "./DirectRecovery";
 import { WebRTCOnboardingDialog } from "./WebRTCOnboarding";
-import { closeWebRTCSession, getWebRTCSession, updateWebRTCSessionApprovalPending, type WebRTCSessionPath } from "./webrtc-session";
+import { ReconnectSettings } from "./ReconnectSettings";
+import { createReconnectCoordinator } from "./reconnect-runtime";
+import type { ReconnectCoordinator } from "./reconnect-coordinator";
+import { closeWebRTCSession, getWebRTCSession, updateWebRTCSessionApprovalPending, updateWebRTCSessionContact, type WebRTCSessionPath } from "./webrtc-session";
 import { CONNECTION_TRANSPORT_CHOICES, type ConnectionTransportKind } from "./connection-transport";
 import { loadPairingResume } from "./pairing-resume";
 import { lastWebRTCDiagnostics } from "./webrtc-diagnostics";
@@ -2004,12 +2007,14 @@ function ContactsDialog({
   onChanged,
   onOpenConversation,
   onDeleted,
+  reconnect,
 }: {
   contacts: Contact[];
   onClose: () => void;
   onChanged: () => Promise<void>;
   onOpenConversation: (contact: Contact) => Promise<void>;
   onDeleted: (contactId: string) => Promise<void>;
+  reconnect: ReconnectCoordinator | null;
 }) {
   const sorted = useMemo(
     () => [...contacts].sort((left, right) => left.display_name.localeCompare(right.display_name)),
@@ -2129,6 +2134,11 @@ function ContactsDialog({
                 {canRestoreBlocked && <Button variant="secondary" disabled={busy} onClick={() => void run("unblock_contact")}>Unblock contact</Button>}
               </div>
               <SecurityDetails fingerprint={selected.fingerprint} destination={selected.destination_hash} />
+              <ReconnectSettings
+                contact={selected}
+                coordinator={reconnect}
+                onChanged={onChanged}
+              />
               {selected.route_status === "reconnecting_automatically" && <p className="direct-host-status" role="status"><RefreshCw size={17} /> Reconnecting automatically using the stored signed route.</p>}
               {selected.route_status === "reconnect_update_required" && !reconnectFormats && <section className="direct-host-warning"><p>Every known path is gone. Create a signed route update and send it through email or another sharing app; identity approval stays unchanged.</p><Button disabled={busy} onClick={() => void createReconnect()}><Share2 size={17} /> {busy ? "Preparing…" : "Send reconnect update"}</Button></section>}
               {reconnectFormats && <ConnectionDocumentShare formats={reconnectFormats} kind="route" />}
@@ -4152,6 +4162,19 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceChannelIn
   const [webrtcOnboardingOpen, setWebRtcOnboardingOpen] = useState(false);
   const [webrtcSessionActive, setWebRtcSessionActive] = useState(() => getWebRTCSession() !== null);
   const [webrtcPath, setWebrtcPath] = useState<WebRTCSessionPath>(() => getWebRTCSession()?.path ?? "unknown");
+  // Reconnect is renderer-owned because the WebView owns RTCPeerConnection.
+  // This component only exists while the service is unlocked, so the
+  // coordinator can never run while the app is locked.
+  const refreshRef = useRef(refresh);
+  useEffect(() => { refreshRef.current = refresh; }, [refresh]);
+  const [reconnectCoordinator] = useState(() => createReconnectCoordinator({
+    refresh: async () => { await refreshRef.current(true); },
+    onSession: (path) => { setWebRtcSessionActive(true); setWebrtcPath(path); },
+  }));
+  useEffect(() => {
+    void reconnectCoordinator.start();
+    return () => { void reconnectCoordinator.stop(); };
+  }, [reconnectCoordinator]);
   const [callContactId, setCallContactId] = useState<string | null>(null);
   const [callSummary, setCallSummary] = useState<CallSummary | undefined>(undefined);
   const incomingCall = (snapshot.calls ?? []).find((call) => call.direction === "inbound" && call.state === "ringing");
@@ -4878,12 +4901,21 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceChannelIn
     setRequestError("");
     setDismissedRequests((current) => current.filter((id) => id !== contact.id));
     try {
-      await serviceCommand(accept ? "approve_request" : "decline_request", { contact_id: contact.id });
+      const approval = await serviceCommand<{ reconnect_capabilities?: string }>(
+        accept ? "approve_request" : "decline_request",
+        { contact_id: contact.id },
+      );
       try {
         const session = getWebRTCSession();
         const control = session?.control;
+        if (accept) updateWebRTCSessionContact(contact.id);
         if (session?.approvalPending && control?.readyState === "open") {
-          control.send(JSON.stringify({ type: accept ? "invitation_approved" : "invitation_denied" }));
+          control.send(JSON.stringify({
+            type: accept ? "invitation_approved" : "invitation_denied",
+            ...(accept && approval.reconnect_capabilities
+              ? { capabilities: approval.reconnect_capabilities }
+              : {}),
+          }));
           updateWebRTCSessionApprovalPending(false);
         }
       } catch {
@@ -5972,7 +6004,7 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceChannelIn
       {webrtcOnboardingOpen && <WebRTCOnboardingDialog initialPairingCode={initialPairingCode || (resumePairingOpen ? resumePairingCode : "")} onClose={() => { setWebRtcOnboardingOpen(false); setResumePairingOpen(false); onPairingHandled?.(); }} onConnected={(path) => { setWebRtcSessionActive(true); setWebrtcPath(path); }} onFallback={() => { setNewChatStartTab("invite"); setNewChat(true); }} onChanged={async () => { await refresh(true); }} workspaces={(snapshot.workspaces ?? []).map((workspace) => ({ id: workspace.id, name: workspace.name }))} />}
       {newChat && <div className={hasForegroundRequest ? "dialog-suspended" : ""} aria-hidden={hasForegroundRequest ? true : undefined}><NewChatDialog initialInvitation={initialInvitation} initialTab={newChatStartTab} initialConnection={newChatTransport} remoteProfiles={snapshot.remote_profiles ?? []} onClose={() => { setNewChat(false); onInvitationHandled(); }} onChanged={async () => { await refresh(true); }} onWorkspaceInvitation={(value) => { setNewChat(false); setJoinWorkspaceValue(value); setJoinWorkspaceOpen(true); }} /></div>}
       {newGroup && <div className={hasForegroundRequest ? "dialog-suspended" : ""} aria-hidden={hasForegroundRequest ? true : undefined}><CreateGroupDialog contacts={snapshot.contacts} onClose={() => setNewGroup(false)} onCreated={async (group) => { await refresh(true); selectConversation({ kind: "group", id: group.id }); setNewGroup(false); }} /></div>}
-      {contactsOpen && <div className={hasForegroundRequest ? "dialog-suspended" : ""} aria-hidden={hasForegroundRequest ? true : undefined}><ContactsDialog contacts={snapshot.contacts.filter((contact) => contact.trust !== "pending_request")} onClose={() => setContactsOpen(false)} onChanged={async () => { await refresh(true); }} onOpenConversation={async (contact) => { const hidden = hiddenConversationKeys.has(`direct:${contact.id}`); setContactsOpen(false); await restoreAndSelect({ kind: "contact", id: contact.id }, hidden); }} onDeleted={async (contactId) => { if (selection?.kind === "contact" && selection.id === contactId) setSelection(null); setDrafts((current) => { const next = { ...current }; delete next[contactId]; return next; }); setLocallySavedMessages((current) => Object.fromEntries(Object.entries(current).filter(([, message]) => message.contact_id !== contactId))); await refresh(true); }} /></div>}
+      {contactsOpen && <div className={hasForegroundRequest ? "dialog-suspended" : ""} aria-hidden={hasForegroundRequest ? true : undefined}><ContactsDialog contacts={snapshot.contacts.filter((contact) => contact.trust !== "pending_request")} reconnect={reconnectCoordinator} onClose={() => setContactsOpen(false)} onChanged={async () => { await refresh(true); }} onOpenConversation={async (contact) => { const hidden = hiddenConversationKeys.has(`direct:${contact.id}`); setContactsOpen(false); await restoreAndSelect({ kind: "contact", id: contact.id }, hidden); }} onDeleted={async (contactId) => { if (selection?.kind === "contact" && selection.id === contactId) setSelection(null); setDrafts((current) => { const next = { ...current }; delete next[contactId]; return next; }); setLocallySavedMessages((current) => Object.fromEntries(Object.entries(current).filter(([, message]) => message.contact_id !== contactId))); await refresh(true); }} /></div>}
       {settings && <div className={hasForegroundRequest ? "dialog-suspended" : ""} aria-hidden={hasForegroundRequest ? true : undefined}><SettingsDialog snapshot={snapshot} theme={theme} onThemeChange={onThemeChange} onClose={() => setSettings(false)} onSaved={async () => { await refresh(true); }} /></div>}
       {notificationTarget && !notificationTarget.available && <Dialog title="Notification unavailable" onClose={onNotificationHandled}><div className="form-stack"><p>{notificationTarget.message ?? "This notification is no longer available or authorized on this device."}</p><p className="muted">Mesh Chat did not open stale content or change any read state.</p><Button onClick={onNotificationHandled}>Done</Button></div></Dialog>}
       {deleteTarget && <div className={hasForegroundRequest ? "dialog-suspended" : ""} aria-hidden={hasForegroundRequest ? true : undefined}><DeleteConversationDialog kind={deleteTarget.kind === "contact" ? "direct" : "group"} name={deleteTargetName} busy={deleteBusy} error={deleteError} onCancel={() => { if (!deleteBusy) { setDeleteError(""); setDeleteTarget(null); } }} onConfirm={() => void deleteConversation()} /></div>}

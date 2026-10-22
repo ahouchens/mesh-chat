@@ -1,0 +1,1039 @@
+"""Automatic reconnect state, consent, and signed signaling capabilities.
+
+The renderer owns the ``RTCPeerConnection``; this module owns everything that
+must survive a renderer restart: per-contact consent, signed connection
+capabilities, the pair mailbox capability, replay state, and the last reported
+attempt state. Nothing here persists SDP, ICE credentials, or DTLS keys.
+
+Security rules enforced here:
+
+- a reconnect document must be signed by an approved, non-blocked contact and
+  addressed to this device;
+- reconnect never creates a contact, approves one, or changes workspace
+  authority;
+- reciprocal consent is required before a request, offer, or answer is created;
+- capability documents are verified before their mailbox token is stored;
+- replay keys are durable across restarts.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import secrets
+import time
+from typing import Any
+
+from .errors import (
+    ContactNotApproved,
+    IdentityMismatch,
+    ReconnectReplayed,
+    ValidationError,
+)
+from .models import TrustState
+from .reconnect import (
+    MAX_CAPABILITY_SECONDS,
+    create_connection_capabilities,
+    create_reconnect_answer,
+    create_reconnect_offer,
+    create_reconnect_request,
+    preferred_initiator,
+    verify_connection_capabilities,
+    verify_reconnect_answer,
+    verify_reconnect_offer,
+    verify_reconnect_request,
+)
+from .signal_mailbox import fetch as fetch_signal
+from .signal_mailbox import publish as publish_signal
+from .webrtc_signaling import _b64decode, _destination_for_public_key
+
+PROFILE_KIND = "reconnect_profile"
+REPLAY_KIND = "reconnect_replay"
+STATE_KIND = "reconnect_state"
+DEVICE_KIND = "reconnect_device"
+PROFILE_VERSION = 1
+SESSION_DOMAIN = "mesh-chat:reconnect:session:v1:"
+MAX_PROFILES = 64
+MAX_DETAIL = 160
+MAX_REPLAY_TTL = 3600
+CONNECTED_TRUST = {TrustState.APPROVED.value, TrustState.VERIFIED.value}
+STATES = {
+    "idle",
+    "waiting_for_peer",
+    "probing",
+    "offer_pending",
+    "answer_pending",
+    "connecting",
+    "connected",
+    "retry_wait",
+    "peer_offline",
+    "manual_required",
+    "stopped",
+}
+ROLES = {"request", "offer", "answer"}
+
+
+def reconnect_session_id(token: str) -> str:
+    """Derive the mailbox session for one pair capability.
+
+    The session is public (it appears in the mailbox URL) but unguessable
+    without the token, so the operator cannot enumerate pairs from public
+    destination hashes.
+    """
+
+    if not isinstance(token, str) or not token:
+        raise ValidationError("Mailbox pairing token is invalid")
+    return hashlib.sha256(
+        (SESSION_DOMAIN + token).encode("utf-8")
+    ).hexdigest()[:40]
+
+
+def _now() -> int:
+    return int(time.time())
+
+
+def _text(value: Any, label: str, *, limit: int = 200) -> str:
+    if not isinstance(value, str) or not value or len(value) > limit:
+        raise ValidationError(f"{label} is invalid")
+    if "\n" in value or "\r" in value:
+        raise ValidationError(f"{label} is invalid")
+    return value
+
+
+class ReconnectServiceMixin:
+    # ------------------------------------------------------------------ device
+
+    def _reconnect_device_id(self) -> str:
+        record = self.store.get(DEVICE_KIND, "local")
+        if record is not None and isinstance(record.get("device_id"), str):
+            return record["device_id"]
+        device = "dev-" + secrets.token_hex(12)
+        self.store.put(
+            DEVICE_KIND,
+            "local",
+            {"v": PROFILE_VERSION, "device_id": device, "created_at": _now()},
+        )
+        return device
+
+    # ---------------------------------------------------------------- profiles
+
+    def _reconnect_profiles_raw(self) -> list[dict[str, Any]]:
+        return sorted(
+            self.store.list(PROFILE_KIND),
+            key=lambda profile: float(profile.get("updated_at", 0)),
+            reverse=True,
+        )
+
+    def _reconnect_profile(self, profile_id: Any) -> dict[str, Any]:
+        profile_id = _text(profile_id, "Reconnect profile ID")
+        profile = self.store.get(PROFILE_KIND, profile_id)
+        if profile is None:
+            raise ValidationError("Reconnect profile does not exist")
+        return profile
+
+    def _reconnect_profile_for_contact(
+        self,
+        contact_id: str,
+        remote_device_id: str | None = None,
+    ) -> dict[str, Any]:
+        matches = [
+            profile
+            for profile in self.store.list(PROFILE_KIND)
+            if profile.get("contact_id") == contact_id
+        ]
+        if remote_device_id:
+            for profile in matches:
+                if profile.get("remote_device_id") == remote_device_id:
+                    return profile
+        else:
+            for profile in matches:
+                if not profile.get("remote_device_id"):
+                    return profile
+        if not matches:
+            profile = self._new_profile(contact_id, remote_device_id)
+            self.store.put(PROFILE_KIND, profile["id"], profile)
+            return profile
+        profile = dict(matches[0])
+        if remote_device_id and not profile.get("remote_device_id"):
+            profile["remote_device_id"] = remote_device_id
+        return profile
+
+    def _new_profile(
+        self, contact_id: str, remote_device_id: str | None
+    ) -> dict[str, Any]:
+        if len(self.store.list(PROFILE_KIND)) >= MAX_PROFILES:
+            raise ValidationError("Too many reconnect profiles")
+        now = _now()
+        return {
+            "v": PROFILE_VERSION,
+            "id": contact_id if not remote_device_id else f"{contact_id}:{remote_device_id}",
+            "contact_id": contact_id,
+            "local_device_id": self._reconnect_device_id(),
+            "remote_device_id": remote_device_id or "",
+            "auto_reconnect": False,
+            "allow_direct_ip_disclosure": False,
+            "relay_consent_scope": "contact",
+            "remote_auto_reconnect": False,
+            "remote_allow_direct_ip_disclosure": False,
+            "mailbox_url": None,
+            "mailbox_pair_token": None,
+            "mailbox_expires_at": 0,
+            "remote_mailbox_url": None,
+            "remote_mailbox_pair_token": None,
+            "remote_mailbox_expires_at": 0,
+            "local_capabilities": None,
+            "local_capabilities_expires_at": 0,
+            "remote_capabilities": None,
+            "remote_capabilities_expires_at": 0,
+            "state": "idle",
+            "active": False,
+            "attempt_id": "",
+            "last_attempt_at": 0,
+            "last_error": "",
+            "created_at": now,
+            "updated_at": now,
+        }
+
+    # ---------------------------------------------------------------- mailbox
+
+    @staticmethod
+    def _profile_mailbox(profile: dict[str, Any]) -> dict[str, Any]:
+        now = _now()
+        local_ok = bool(
+            profile.get("mailbox_url")
+            and profile.get("mailbox_pair_token")
+            and int(profile.get("mailbox_expires_at") or 0) > now
+        )
+        remote_ok = bool(
+            profile.get("remote_mailbox_url")
+            and profile.get("remote_mailbox_pair_token")
+            and int(profile.get("remote_mailbox_expires_at") or 0) > now
+        )
+        local = {
+            "url": profile.get("mailbox_url"),
+            "token": profile.get("mailbox_pair_token"),
+        }
+        remote = {
+            "url": profile.get("remote_mailbox_url"),
+            "token": profile.get("remote_mailbox_pair_token"),
+        }
+        local_device = str(profile.get("local_device_id") or "")
+        remote_device = str(profile.get("remote_device_id") or "")
+        # Until a signed peer capability arrives there is no device to compare;
+        # fall back to the local mailbox so a single-sided profile is usable.
+        preferred = (
+            preferred_initiator(local_device, remote_device)
+            if local_device and remote_device
+            else False
+        )
+        ordered = [(local, local_ok), (remote, remote_ok)]
+        if not preferred:
+            ordered.reverse()
+        for candidate, usable in ordered:
+            if usable:
+                return {
+                    "configured": True,
+                    "preferred": preferred,
+                    "url": candidate["url"],
+                    "token": candidate["token"],
+                    "session": reconnect_session_id(candidate["token"]),
+                    "source": "local" if candidate is local else "remote",
+                }
+        return {
+            "configured": False,
+            "preferred": preferred,
+            "url": None,
+            "token": None,
+            "session": None,
+            "source": None,
+        }
+
+    def _reconnect_relay_available(self) -> bool:
+        """True when a consented relay can hide direct host/srflx candidates."""
+
+        settings = self._call_settings
+        return bool(
+            settings.turn_url
+            or (settings.turn_broker_url and settings.turn_broker_consent)
+        )
+
+    # ------------------------------------------------------------------ public
+
+    def _reconnect_profile_public(
+        self, profile: dict[str, Any]
+    ) -> dict[str, Any]:
+        contact = self.store.get("contact", profile.get("contact_id", "")) or {}
+        mailbox = self._profile_mailbox(profile)
+        now = _now()
+        reasons: list[str] = []
+        if not profile.get("local_capabilities"):
+            reasons.append("local_capabilities_missing")
+        if not profile.get("remote_capabilities"):
+            reasons.append("peer_capabilities_missing")
+        if profile.get("remote_capabilities") and int(
+            profile.get("remote_capabilities_expires_at") or 0
+        ) <= now:
+            reasons.append("peer_capabilities_expired")
+        if profile.get("local_capabilities") and int(
+            profile.get("local_capabilities_expires_at") or 0
+        ) <= now:
+            reasons.append("local_capabilities_expired")
+        if not profile.get("auto_reconnect"):
+            reasons.append("consent_missing")
+        if profile.get("remote_capabilities") and not profile.get(
+            "remote_auto_reconnect"
+        ):
+            reasons.append("peer_consent_missing")
+        if not profile.get("allow_direct_ip_disclosure") and not self._reconnect_relay_available():
+            reasons.append("relay_required")
+        if not mailbox["configured"]:
+            reasons.append("mailbox_not_configured")
+        return {
+            "id": profile["id"],
+            "contact_id": profile.get("contact_id"),
+            "display_name": contact.get("display_name"),
+            "destination_hash": contact.get("destination_hash"),
+            "trust": contact.get("trust"),
+            "local_device_id": profile.get("local_device_id"),
+            "remote_device_id": profile.get("remote_device_id") or None,
+            "auto_reconnect": bool(profile.get("auto_reconnect")),
+            "allow_direct_ip_disclosure": bool(
+                profile.get("allow_direct_ip_disclosure")
+            ),
+            "relay_consent_scope": profile.get("relay_consent_scope", "contact"),
+            "peer_auto_reconnect": bool(profile.get("remote_auto_reconnect")),
+            "peer_allow_direct_ip_disclosure": bool(
+                profile.get("remote_allow_direct_ip_disclosure")
+            ),
+            "has_local_capabilities": bool(profile.get("local_capabilities")),
+            "has_peer_capabilities": bool(profile.get("remote_capabilities")),
+            "capabilities_expires_at": int(
+                profile.get("local_capabilities_expires_at") or 0
+            ),
+            "peer_capabilities_expires_at": int(
+                profile.get("remote_capabilities_expires_at") or 0
+            ),
+            "state": profile.get("state", "idle"),
+            "active": bool(profile.get("active")),
+            "last_attempt_at": int(profile.get("last_attempt_at") or 0),
+            "last_error": profile.get("last_error", ""),
+            "updated_at": int(profile.get("updated_at") or 0),
+            "effective": {
+                "ready": not reasons,
+                "configured": mailbox["configured"],
+                "preferred": mailbox["preferred"],
+                "session": mailbox["session"],
+                "mailbox_url": mailbox["url"],
+                "source": mailbox["source"],
+                "reasons": reasons,
+            },
+        }
+
+    def reconnect_profiles(self) -> dict[str, Any]:
+        profile = self.store.get("profile", "local") or {}
+        return {
+            "local_device_id": self._reconnect_device_id(),
+            "local_destination": profile.get("destination_hash"),
+            "mailbox_configured": bool(
+                getattr(self._call_settings, "signal_mailbox_url", None)
+            ),
+            "profiles": [
+                self._reconnect_profile_public(item)
+                for item in self._reconnect_profiles_raw()
+            ],
+        }
+
+    # ----------------------------------------------------------------- consent
+
+    def _reconnect_contact(self, contact_id: Any) -> dict[str, Any]:
+        contact_id = _text(contact_id, "Contact ID")
+        contact = self.store.get("contact", contact_id)
+        if contact is None:
+            raise ValidationError("Contact does not exist")
+        if contact.get("trust") not in CONNECTED_TRUST:
+            # Includes pending, blocked, identity-changed, and deleted contacts.
+            raise ContactNotApproved(
+                "Auto-reconnect requires an approved, non-blocked contact"
+            )
+        return contact
+
+    def reconnect_consent_set(
+        self,
+        contact_id: Any,
+        auto_reconnect: Any,
+        allow_direct_ip_disclosure: Any,
+        relay_consent_scope: Any = "contact",
+        rotate_token: Any = False,
+    ) -> dict[str, Any]:
+        contact = self._reconnect_contact(contact_id)
+        if not isinstance(auto_reconnect, bool) or not isinstance(
+            allow_direct_ip_disclosure, bool
+        ):
+            raise ValidationError("Reconnect consent must be boolean")
+        if relay_consent_scope not in {"contact", "session", "workspace"}:
+            raise ValidationError("Relay consent scope is invalid")
+        if not isinstance(rotate_token, bool):
+            raise ValidationError("Reconnect token rotation must be boolean")
+        profile = self._reconnect_profile_for_contact(contact["id"])
+        changed = (
+            bool(profile.get("auto_reconnect")) != auto_reconnect
+            or bool(profile.get("allow_direct_ip_disclosure"))
+            != allow_direct_ip_disclosure
+            or profile.get("relay_consent_scope", "contact") != relay_consent_scope
+        )
+        profile["auto_reconnect"] = auto_reconnect
+        profile["allow_direct_ip_disclosure"] = allow_direct_ip_disclosure
+        profile["relay_consent_scope"] = relay_consent_scope
+        now = _now()
+        stale = (
+            not profile.get("local_capabilities")
+            or profile.get("mailbox_url")
+            != getattr(self._call_settings, "signal_mailbox_url", None)
+            or int(profile.get("local_capabilities_expires_at") or 0) <= now
+        )
+        if changed or rotate_token or stale:
+            self._reconnect_issue_local_capabilities(
+                profile, contact, rotate=changed or rotate_token
+            )
+        profile["updated_at"] = _now()
+        self.store.put(PROFILE_KIND, profile["id"], profile)
+        self._changed()
+        return {
+            "profile": self._reconnect_profile_public(profile),
+            "capabilities": profile.get("local_capabilities"),
+            "changed": changed,
+        }
+
+    def reconnect_capabilities_create(
+        self,
+        contact_id: Any,
+        rotate_token: Any = True,
+    ) -> dict[str, Any]:
+        contact = self._reconnect_contact(contact_id)
+        if not isinstance(rotate_token, bool):
+            raise ValidationError("Reconnect token rotation must be boolean")
+        profile = self._reconnect_profile_for_contact(contact["id"])
+        self._reconnect_issue_local_capabilities(profile, contact, rotate=rotate_token)
+        profile["updated_at"] = _now()
+        self.store.put(PROFILE_KIND, profile["id"], profile)
+        self._changed()
+        return {
+            "profile": self._reconnect_profile_public(profile),
+            "capabilities": profile.get("local_capabilities"),
+        }
+
+    def _reconnect_issue_local_capabilities(
+        self,
+        profile: dict[str, Any],
+        contact: dict[str, Any],
+        *,
+        rotate: bool,
+    ) -> None:
+        identity = self._call_identity()
+        mailbox_url = getattr(self._call_settings, "signal_mailbox_url", None)
+        token = profile.get("mailbox_pair_token")
+        if (
+            rotate
+            or not token
+            or profile.get("mailbox_url") != mailbox_url
+        ):
+            token = secrets.token_urlsafe(32) if mailbox_url else None
+        now = _now()
+        expires_at = now + MAX_CAPABILITY_SECONDS
+        mailbox_expires_at = (
+            min(expires_at - 60, now + 30 * 24 * 60 * 60) if mailbox_url else None
+        )
+        serialized = create_connection_capabilities(
+            identity,
+            peer_destination=contact["destination_hash"],
+            device_id=self._reconnect_device_id(),
+            transports=["webrtc"],
+            auto_reconnect=bool(profile.get("auto_reconnect")),
+            allow_direct_ip_disclosure=bool(
+                profile.get("allow_direct_ip_disclosure")
+            ),
+            relay_consent_scope=profile.get("relay_consent_scope", "contact"),
+            mailbox_url=mailbox_url,
+            mailbox_pair_token=token,
+            mailbox_expires_at=mailbox_expires_at,
+            expires_at=expires_at,
+            now=now,
+        )
+        verified = verify_connection_capabilities(serialized, now=now)
+        profile["local_capabilities"] = serialized
+        profile["local_capabilities_expires_at"] = verified.expires_at
+        profile["mailbox_url"] = verified.mailbox_url
+        profile["mailbox_pair_token"] = verified.mailbox_pair_token
+        profile["mailbox_expires_at"] = verified.mailbox_expires_at or 0
+        profile["local_device_id"] = verified.device_id
+
+    def reconnect_capabilities_store(self, document: Any) -> dict[str, Any]:
+        if not isinstance(document, str):
+            raise ValidationError("Connection capabilities must be text")
+        unverified = verify_connection_capabilities(document)
+        local = self._require_profile()
+        if unverified.peer_destination != local["destination_hash"]:
+            raise IdentityMismatch("Connection capabilities are for another device")
+        contact = self._contact_by_destination(unverified.signer_destination)
+        if contact is None:
+            raise ContactNotApproved(
+                "Connection capabilities are not from a known contact"
+            )
+        # A pending contact is an identity already bound by a signed invitation.
+        # Storing its rendezvous capability never approves it: all reconnect
+        # document verification and attempt creation still require an approved,
+        # non-blocked contact.
+        if contact.get("trust") not in {
+            TrustState.AWAITING_CONSENT.value,
+            TrustState.PENDING_REQUEST.value,
+            *CONNECTED_TRUST,
+        }:
+            raise ContactNotApproved(
+                "Connection capabilities are not from a usable contact"
+            )
+        verified = verify_connection_capabilities(
+            document, expected_signer=contact["destination_hash"]
+        )
+        now = _now()
+        profile = self._reconnect_profile_for_contact(
+            contact["id"], verified.device_id
+        )
+        # A peer never changes local consent. Only its own declared consent and
+        # rendezvous details are recorded, and only after signature checks.
+        profile["remote_device_id"] = verified.device_id
+        profile["remote_auto_reconnect"] = verified.auto_reconnect
+        profile["remote_allow_direct_ip_disclosure"] = (
+            verified.allow_direct_ip_disclosure
+        )
+        profile["remote_capabilities"] = verified.serialized
+        profile["remote_capabilities_expires_at"] = verified.expires_at
+        profile["remote_mailbox_url"] = verified.mailbox_url
+        profile["remote_mailbox_pair_token"] = verified.mailbox_pair_token
+        profile["remote_mailbox_expires_at"] = verified.mailbox_expires_at or 0
+        if int(profile.get("reciprocal_since") or 0) == 0 and (
+            profile.get("auto_reconnect") and verified.auto_reconnect
+        ):
+            profile["reciprocal_since"] = now
+        profile["updated_at"] = now
+        self.store.put(PROFILE_KIND, profile["id"], profile)
+        self._changed()
+        return {"profile": self._reconnect_profile_public(profile)}
+
+    def reconnect_capabilities_get(self, contact_id: Any) -> dict[str, Any]:
+        contact = self._reconnect_contact(contact_id)
+        profile = self._reconnect_profile_for_contact(contact["id"])
+        return {
+            "profile": self._reconnect_profile_public(profile),
+            "local_capabilities": profile.get("local_capabilities"),
+            "peer_capabilities": profile.get("remote_capabilities"),
+        }
+
+    # ------------------------------------------------------------------ replay
+
+    def reconnect_replay_check(self, key: Any, ttl: Any = 600) -> dict[str, Any]:
+        key = _text(key, "Reconnect replay key")
+        if len(key) < 8:
+            raise ValidationError("Reconnect replay key is invalid")
+        if isinstance(ttl, bool) or not isinstance(ttl, int) or not 1 <= ttl <= MAX_REPLAY_TTL:
+            raise ValidationError("Reconnect replay lifetime is invalid")
+        now = _now()
+        accepted = True
+        for record_id, record in self.store.items(REPLAY_KIND):
+            expiry = int(record.get("expires_at") or 0)
+            if expiry <= now:
+                self.store.delete(REPLAY_KIND, record_id)
+                continue
+            if record_id == key:
+                accepted = False
+        if accepted:
+            self.store.put(
+                REPLAY_KIND,
+                key,
+                {"v": PROFILE_VERSION, "key": key, "expires_at": now + ttl},
+            )
+        return {"accepted": accepted, "key": key}
+
+    def _reconnect_remember(self, key: str, ttl: int) -> bool:
+        now = _now()
+        for record_id, record in self.store.items(REPLAY_KIND):
+            if int(record.get("expires_at") or 0) <= now:
+                self.store.delete(REPLAY_KIND, record_id)
+        if self.store.get(REPLAY_KIND, key) is not None:
+            return False
+        self.store.put(
+            REPLAY_KIND,
+            key,
+            {"v": PROFILE_VERSION, "key": key, "expires_at": now + ttl},
+        )
+        return True
+
+    # ------------------------------------------------------------------ status
+
+    def reconnect_status(
+        self,
+        state: Any = None,
+        detail: Any = None,
+        attempt_id: Any = None,
+    ) -> dict[str, Any]:
+        record = self.store.get(STATE_KIND, "current") or {
+            "v": PROFILE_VERSION,
+            "state": "idle",
+            "detail": "",
+            "attempt_id": "",
+            "updated_at": 0,
+        }
+        if state is not None:
+            if state not in STATES:
+                raise ValidationError("Reconnect state is invalid")
+            if detail is not None and (
+                not isinstance(detail, str) or len(detail) > MAX_DETAIL
+            ):
+                raise ValidationError("Reconnect detail is invalid")
+            if attempt_id is not None and not isinstance(attempt_id, str):
+                raise ValidationError("Reconnect attempt is invalid")
+            record = {
+                **record,
+                "state": state,
+                "detail": detail or "",
+                "attempt_id": attempt_id or "",
+                "updated_at": _now(),
+            }
+            self.store.put(STATE_KIND, "current", record)
+        profile = self.store.get("profile", "local") or {}
+        return {
+            **record,
+            "local_device_id": self._reconnect_device_id(),
+            "local_destination": profile.get("destination_hash"),
+            "mailbox_configured": bool(
+                getattr(self._call_settings, "signal_mailbox_url", None)
+            ),
+            "profiles": [
+                self._reconnect_profile_public(item)
+                for item in self._reconnect_profiles_raw()
+            ],
+        }
+
+    def reconnect_start(self, contact_id: Any = None) -> dict[str, Any]:
+        targets = (
+            [self._reconnect_contact(contact_id)]
+            if contact_id is not None
+            else [
+                contact
+                for contact in self.store.list("contact")
+                if contact.get("trust") in CONNECTED_TRUST
+            ]
+        )
+        changed = False
+        for contact in targets:
+            profile = self._reconnect_profile_for_contact(contact["id"])
+            if profile.get("auto_reconnect") and profile.get("remote_auto_reconnect"):
+                profile["active"] = True
+                profile["state"] = "waiting_for_peer"
+                profile["last_error"] = ""
+                profile["updated_at"] = _now()
+                self.store.put(PROFILE_KIND, profile["id"], profile)
+                changed = True
+        if changed:
+            self._changed()
+        return self.reconnect_status()
+
+    def reconnect_stop(self, contact_id: Any = None) -> dict[str, Any]:
+        if contact_id is not None:
+            profile_id = _text(contact_id, "Reconnect profile ID")
+            profiles = [
+                profile
+                for profile in self._reconnect_profiles_raw()
+                if profile.get("contact_id") == profile_id
+                or profile.get("id") == profile_id
+            ]
+        else:
+            profiles = self._reconnect_profiles_raw()
+        for profile in profiles:
+            if not profile.get("active") and profile.get("state") == "stopped":
+                continue
+            profile["active"] = False
+            profile["state"] = "stopped"
+            profile["updated_at"] = _now()
+            self.store.put(PROFILE_KIND, profile["id"], profile)
+        if contact_id is None:
+            # A per-contact stop must not claim the whole supervisor is stopped.
+            self.store.put(
+                STATE_KIND,
+                "current",
+                {
+                    "v": PROFILE_VERSION,
+                    "state": "stopped",
+                    "detail": "",
+                    "attempt_id": "",
+                    "updated_at": _now(),
+                },
+            )
+        self._changed()
+        return self.reconnect_status()
+
+    # --------------------------------------------------------------- documents
+
+    def _reconnect_require_consent(
+        self, contact: dict[str, Any]
+    ) -> dict[str, Any]:
+        profile = self._reconnect_profile_for_contact(contact["id"])
+        if not profile.get("auto_reconnect"):
+            raise ContactNotApproved("Auto-reconnect consent is not enabled here")
+        if not profile.get("remote_auto_reconnect"):
+            raise ContactNotApproved(
+                "The contact has not consented to automatic reconnect"
+            )
+        if self._profile_mailbox(profile)["session"] is None:
+            raise ValidationError("Signaling mailbox is not configured")
+        return profile
+
+    def _reconnect_authorize(
+        self, signer_destination: str, to_destination: str
+    ) -> dict[str, Any]:
+        local = self._require_profile()
+        if to_destination != local["destination_hash"]:
+            raise IdentityMismatch("Reconnect document is for another device")
+        contact = self._contact_by_destination(signer_destination)
+        if contact is None:
+            raise ContactNotApproved(
+                "Reconnect document is not from a known contact"
+            )
+        if contact.get("trust") not in CONNECTED_TRUST:
+            raise ContactNotApproved(
+                "Reconnect document is not from an approved contact"
+            )
+        return contact
+
+    def reconnect_request_create(
+        self, contact_id: Any, attempt_id: Any, nonce: Any = None
+    ) -> dict[str, Any]:
+        contact = self._reconnect_contact(contact_id)
+        profile = self._reconnect_require_consent(contact)
+        if nonce is None:
+            nonce = secrets.token_urlsafe(18)
+        document = create_reconnect_request(
+            self._call_identity(),
+            to_destination=contact["destination_hash"],
+            device_id=self._reconnect_device_id(),
+            attempt_id=attempt_id,
+            nonce=nonce,
+        )
+        request = verify_reconnect_request(document)
+        now = _now()
+        profile["attempt_id"] = request.attempt_id
+        profile["last_attempt_at"] = now
+        profile["state"] = "probing"
+        profile["updated_at"] = now
+        self.store.put(PROFILE_KIND, profile["id"], profile)
+        self._changed()
+        return {
+            "document": request.serialized,
+            "attempt_id": request.attempt_id,
+            "expires_at": request.expires_at,
+            "profile": self._reconnect_profile_public(profile),
+        }
+
+    def reconnect_offer_create(
+        self,
+        contact_id: Any,
+        request_document: Any,
+        sdp: Any,
+        dtls_fingerprint: Any,
+    ) -> dict[str, Any]:
+        contact = self._reconnect_contact(contact_id)
+        profile = self._reconnect_require_consent(contact)
+        request = self._verify_reconnect_request_document(request_document)
+        self._reconnect_authorize(request.signer_destination, request.to_destination)
+        if request.signer_destination != contact["destination_hash"]:
+            raise IdentityMismatch("Reconnect request is from another contact")
+        document = create_reconnect_offer(
+            self._call_identity(),
+            request,
+            sdp=sdp,
+            dtls_fingerprint=dtls_fingerprint,
+        )
+        offer = verify_reconnect_offer(document)
+        now = _now()
+        profile["attempt_id"] = offer.attempt_id
+        profile["last_attempt_at"] = now
+        profile["state"] = "offer_pending"
+        profile["updated_at"] = now
+        self.store.put(PROFILE_KIND, profile["id"], profile)
+        self._changed()
+        return {
+            "document": offer.serialized,
+            "attempt_id": offer.attempt_id,
+            "session_id": offer.session_id,
+            "expires_at": offer.expires_at,
+            "profile": self._reconnect_profile_public(profile),
+        }
+
+    def reconnect_answer_create(
+        self,
+        contact_id: Any,
+        offer_document: Any,
+        sdp: Any,
+        dtls_fingerprint: Any,
+    ) -> dict[str, Any]:
+        contact = self._reconnect_contact(contact_id)
+        profile = self._reconnect_require_consent(contact)
+        offer = self._verify_reconnect_offer_document(offer_document)
+        self._reconnect_authorize(offer.signer_destination, offer.to_destination)
+        if offer.signer_destination != contact["destination_hash"]:
+            raise IdentityMismatch("Reconnect offer is from another contact")
+        document = create_reconnect_answer(
+            self._call_identity(),
+            offer,
+            sdp=sdp,
+            dtls_fingerprint=dtls_fingerprint,
+        )
+        answer = verify_reconnect_answer(document, offer)
+        profile["state"] = "answer_pending"
+        profile["updated_at"] = _now()
+        self.store.put(PROFILE_KIND, profile["id"], profile)
+        self._changed()
+        return {
+            "document": answer.serialized,
+            "attempt_id": answer.attempt_id,
+            "session_id": answer.session_id,
+            "expires_at": answer.expires_at,
+            "profile": self._reconnect_profile_public(profile),
+        }
+
+    def verify_reconnect_request(self, document: Any) -> dict[str, Any]:
+        request = self._verify_reconnect_request_document(document)
+        contact = self._reconnect_authorize(
+            request.signer_destination, request.to_destination
+        )
+        profile = self._reconnect_profile_for_contact(contact["id"])
+        return {
+            "attempt_id": request.attempt_id,
+            "from_destination": request.from_destination,
+            "to_destination": request.to_destination,
+            "device_id": request.device_id,
+            "expires_at": request.expires_at,
+            "contact_id": contact["id"],
+            "profile_id": profile["id"],
+        }
+
+    def verify_reconnect_offer(self, document: Any) -> dict[str, Any]:
+        offer = self._verify_reconnect_offer_document(document)
+        contact = self._reconnect_authorize(
+            offer.signer_destination, offer.to_destination
+        )
+        profile = self._reconnect_profile_for_contact(contact["id"])
+        return {
+            "attempt_id": offer.attempt_id,
+            "session_id": offer.session_id,
+            "from_destination": offer.from_destination,
+            "to_destination": offer.to_destination,
+            "sdp": offer.sdp,
+            "dtls_fingerprint": offer.dtls_fingerprint,
+            "expires_at": offer.expires_at,
+            "contact_id": contact["id"],
+            "profile_id": profile["id"],
+        }
+
+    def verify_reconnect_answer(
+        self, document: Any, offer_document: Any
+    ) -> dict[str, Any]:
+        offer = self._verify_reconnect_offer_document(offer_document)
+        local = self._require_profile()
+        # This side created the offer, so it must be the offer's sender and the
+        # offer must target the peer whose answer is being verified.
+        if offer.from_destination != local["destination_hash"]:
+            raise IdentityMismatch("Reconnect offer was not created by this device")
+        contact = self._contact_by_destination(offer.to_destination)
+        if contact is None or contact.get("trust") not in CONNECTED_TRUST:
+            raise ContactNotApproved(
+                "Reconnect offer is not addressed to an approved contact"
+            )
+        if not isinstance(document, str):
+            raise ValidationError("Reconnect answer must be text")
+        answer = verify_reconnect_answer(document, offer)
+        self._reconnect_authorize(
+            answer.signer_destination, answer.to_destination
+        )
+        if answer.signer_destination != contact["destination_hash"]:
+            raise IdentityMismatch("Reconnect answer is from another contact")
+        key = f"answer:{answer.session_id}:{answer.offer_digest}"
+        if not self._reconnect_remember(
+            key, max(60, min(MAX_REPLAY_TTL, offer.expires_at - _now()))
+        ):
+            raise ReconnectReplayed("Reconnect answer was already accepted")
+        profile = self._reconnect_profile_for_contact(contact["id"])
+        profile["state"] = "connecting"
+        profile["updated_at"] = _now()
+        self.store.put(PROFILE_KIND, profile["id"], profile)
+        self._changed()
+        return {
+            "attempt_id": answer.attempt_id,
+            "session_id": answer.session_id,
+            "from_destination": answer.from_destination,
+            "to_destination": answer.to_destination,
+            "sdp": answer.sdp,
+            "dtls_fingerprint": answer.dtls_fingerprint,
+            "expires_at": answer.expires_at,
+            "contact_id": contact["id"],
+            "profile_id": profile["id"],
+        }
+
+    @staticmethod
+    def _verify_reconnect_request_document(document: Any):
+        if not isinstance(document, str):
+            raise ValidationError("Reconnect request must be text")
+        return verify_reconnect_request(document)
+
+    @staticmethod
+    def _verify_reconnect_offer_document(document: Any):
+        if not isinstance(document, str):
+            raise ValidationError("Reconnect offer must be text")
+        return verify_reconnect_offer(document)
+
+    # ------------------------------------------------------------------ mailbox
+
+    def _reconnect_publish_target(self, profile_id: Any) -> tuple[dict[str, Any], dict[str, Any]]:
+        profile = self._reconnect_profile(profile_id)
+        mailbox = self._profile_mailbox(profile)
+        if mailbox["session"] is None:
+            raise ValidationError("Signaling mailbox is not configured")
+        return profile, mailbox
+
+    def reconnect_publish(
+        self, profile_id: Any, document: Any, role: Any
+    ) -> dict[str, Any]:
+        if role not in ROLES:
+            raise ValidationError("Signaling role is invalid")
+        if not isinstance(document, str):
+            raise ValidationError("Signaling document is invalid")
+        self._reconnect_local_signer(document)
+        profile, mailbox = self._reconnect_publish_target(profile_id)
+        published = publish_signal(
+            mailbox["url"],
+            document,
+            role,
+            token=mailbox["token"],
+            session=mailbox["session"],
+        )
+        return {
+            "session_id": published["session_id"],
+            "role": published["role"],
+            "expires_in": published["expires_in"],
+            "rotated": published.get("rotated", False),
+            "profile_id": profile["id"],
+        }
+
+    def reconnect_fetch(self, profile_id: Any, role: Any) -> dict[str, Any]:
+        if role not in ROLES:
+            raise ValidationError("Signaling role is invalid")
+        profile, mailbox = self._reconnect_publish_target(profile_id)
+        fetched = fetch_signal(
+            mailbox["url"],
+            mailbox["session"],
+            role,
+            token=mailbox["token"],
+            pending=True,
+        )
+        return {
+            "document": fetched.get("document"),
+            "pending": bool(fetched.get("pending")),
+            "session_id": mailbox["session"],
+            "role": role,
+            "profile_id": profile["id"],
+        }
+
+    def reconnect_path_status(self, contact_id: Any) -> dict[str, Any]:
+        """Report whether Reticulum already has a path after a reconnect.
+
+        Announcement over the freshly attached interface is asynchronous, so
+        the renderer polls this instead of declaring messaging ready as soon
+        as the DataChannel opens. A missing network is distinct from a path
+        that has not arrived yet.
+        """
+
+        contact = self._reconnect_contact(contact_id)
+        if self.network is None:
+            return {
+                "state": "network_unavailable",
+                "has_path": False,
+                "ready": False,
+                "reason": "network_unavailable",
+            }
+        destination = bytes.fromhex(contact["destination_hash"])
+        has_path = bool(self.network.path_known(destination))
+        ready = bool(self.network.recipient_ready(destination))
+        if not has_path:
+            try:
+                self.network.request_path(destination)
+            except Exception:
+                pass
+        return {
+            "state": "path_available" if has_path else "path_pending",
+            "has_path": has_path,
+            "ready": ready,
+            "reason": None if has_path else "path_not_ready",
+        }
+
+    def _reconnect_local_signer(self, document: str) -> None:
+        try:
+            import json
+
+            value = json.loads(document)
+            public_key = _b64decode(value["signer_public_key"])
+            signer = _destination_for_public_key(public_key)
+        except Exception as exc:
+            raise ValidationError("Signaling document is invalid") from exc
+        local = self._require_profile()
+        if signer != local["destination_hash"]:
+            raise IdentityMismatch("Signaling document is not signed by this device")
+
+    # ------------------------------------------------------------- invitations
+
+    def _invitation_capabilities(
+        self, peer_destination: Any
+    ) -> str | None:
+        """Attach connection capabilities when the peer is already known."""
+
+        if peer_destination is None or self._identity is None:
+            return None
+        if not isinstance(peer_destination, str):
+            raise ValidationError("Peer destination is invalid")
+        contact = self._contact_by_destination(peer_destination.lower())
+        contact_id = (
+            contact["id"]
+            if contact
+            else f"invitation:{peer_destination.lower()}"
+        )
+        profile = self._reconnect_profile_for_contact(contact_id)
+        contact_view = contact or {
+            "id": contact_id,
+            "destination_hash": peer_destination.lower(),
+        }
+        self._reconnect_issue_local_capabilities(profile, contact_view, rotate=False)
+        profile["updated_at"] = _now()
+        self.store.put(PROFILE_KIND, profile["id"], profile)
+        return profile.get("local_capabilities")
+
+    def _contact_capabilities(self, contact: dict[str, Any]) -> str | None:
+        """Create or refresh this device's capability for a known contact.
+
+        A pending contact is allowed: the signed invitation already bound the
+        peer destination, and accepting an invitation is what lets both sides
+        advertise a rendezvous. Capabilities never approve anything.
+        """
+
+        if contact.get("trust") not in {
+            TrustState.AWAITING_CONSENT.value,
+            TrustState.PENDING_REQUEST.value,
+            *CONNECTED_TRUST,
+        }:
+            return None
+        if self._identity is None:
+            # Approval must stay durable even if the service started without a
+            # local identity. Capabilities are an optional transport hint and
+            # are reissued on the next explicit consent action.
+            return None
+        profile = self._reconnect_profile_for_contact(contact["id"])
+        self._reconnect_issue_local_capabilities(profile, contact, rotate=False)
+        profile["updated_at"] = _now()
+        self.store.put(PROFILE_KIND, profile["id"], profile)
+        return profile.get("local_capabilities")

@@ -18,6 +18,8 @@ export default defineConfig({
       "plugins/**",
       ".test-tmp/**",
       "scripts/**",
+      ".pytest_cache/**",
+      "**/pytest-cache-files-*/**",
     ],
   },
 });

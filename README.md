@@ -8,7 +8,7 @@ The design accepts real trade-offs. Delivery depends on peers being reachable, h
 
 An optional **I2P relay path** can bootstrap a workspace or 1:1 connection when neither device has a public endpoint. It is an explicit, consented fallback: the invitation carries one signed `*.b32.i2p` access point, both sides need an I2P router, and the access point relays encrypted Reticulum traffic rather than creating a direct link. I2P is not the default, is not available on Android yet, and does not replace the direct/LAN/access-point paths.
 
-> **Status Ã¢â‚¬â€ security-sensitive prototype.** The source tree is at 0.8.2. It has not been independently audited, and several physical-device and packaging gates are still open. Read [Status and verification](#status-and-verification) before relying on it.
+> **Status Ã¢â‚¬â€ security-sensitive prototype.** The source tree is at 0.9.0. It has not been independently audited, and several physical-device and packaging gates are still open. Read [Status and verification](#status-and-verification) before relying on it.
 
 ## What problem it solves
 
@@ -27,6 +27,7 @@ In short, it solves **Ã¢â‚¬Å“how do a few people message and coordinate
 | **First contact usually needs STUN, TURN, or a rendezvous service** | **Direct Internet invitations.** A temporary listener on the inviter's device asks their router for a mapping, then signs the resulting endpoint and credential into the invitation. | PCP ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ UPnP IGD ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ NAT-PMP on the participant's router. No rendezvous, STUN, TURN, or Mesh Chat service is contacted. |
 | **No public endpoint and no directly reachable access point** | **I2P relay invitations.** A signed `MESHI2P1:` / `MESHI2P1W:` envelope carries one `*.b32.i2p` Reticulum access point; the joiner must consent before traffic is relayed. | Each side runs an I2P router with SAM. The access point relays encrypted Reticulum/LXMF traffic; no public IP or port forward is needed on either participant. |
 | **One network path is not enough** | **Explicit fallbacks.** Nearby discovery, signed direct TCP, an operator-run access point, an email/reverse handshake, and an experimental QUIC underlay. | Each path is a visible choice, never a silent downgrade. See [Reaching another device](#reaching-another-device). |
+| **Restarting both apps usually means another manual exchange** | **Automatic reconnect with reciprocal consent.** A signed capability carries a rotating mailbox token; the app renegotiates a fresh WebRTC transport while both apps are open. | The mailbox is only a rendezvous; no SDP, ICE credential, DTLS key, or message content is stored or reused. Contact approval and workspace authority are not touched. |
 | **Cloud chat means cloud-held history and metadata** | **Local-only privacy.** Encrypted vault, sealed local search, no telemetry, analytics, crash upload, CDN, or remote artwork fetch. | Search and history stay on the device; there is no hosted index to query. |
 | **Offline peers and unclear delivery** | **Offline-tolerant delivery.** An optional LXMF propagation node stores recipient-encrypted objects until the recipient fetches them. A durable outbox, deduplication, and per-device evidence cover the rest. | The propagation node is separately consented and never becomes an identity, member, or delivery receipt. |
 | **Desktop and mobile implementations diverge** | **Desktop and mobile.** Tauri 2 shell with a bundled Python service on desktop; embedded CPython on Android and iOS. | Same Rust/Python/React stack and the same data model, with no platform-specific server. |
@@ -104,7 +105,35 @@ override the built-in default, or disable the broker. The built-in default is
 the user enables relay consent** and can be changed at any time. See
 [the community relay spec](docs/COMMUNITY_RELAY_SPEC.md).
 
-**I2P is an opt-in relay, not the default.** A normal invitation still starts with nearby/direct/participant-hosted/remote choices. I2P is selected explicitly, and the joiner sees the access point and must consent. The access point is a Reticulum `I2PInterface` node addressed by `*.b32.i2p`; it relays encrypted Reticulum/LXMF traffic and does not see message plaintext. Windows bundles and manages `i2pd`; Android has the settings and consent UI but no bundled I2P router yet, so Android cannot complete an I2P join in 0.8.2.
+**I2P is an opt-in relay, not the default.** A normal invitation still starts with nearby/direct/participant-hosted/remote choices. I2P is selected explicitly, and the joiner sees the access point and must consent. The access point is a Reticulum `I2PInterface` node addressed by `*.b32.i2p`; it relays encrypted Reticulum/LXMF traffic and does not see message plaintext. Windows bundles and manages `i2pd`; Android has the settings and consent UI but no bundled I2P router yet, so Android cannot complete an I2P join as of 0.9.0.
+
+### Automatic reconnect (open apps only)
+
+After two devices have connected once, Mesh Chat can renegotiate a **fresh**
+WebRTC transport when both apps are opened again. There is no manual
+offer/answer copy/paste and no background daemon.
+
+- Both people must explicitly enable **Reconnect automatically** for that
+  contact. Existing contacts default to off, and contact approval alone is not
+  consent to reconnect.
+- A signed `ConnectionCapabilities` document carries a rotating mailbox pair
+  token. The Cloudflare signaling Worker stores only its SHA-256 hash and
+  requires it for every reconnect read and write.
+- The preferred (lower device ID) side publishes a signed request; the other
+  side verifies it, creates the WebRTC offer, and the preferred side answers.
+  Only one side probes, so simultaneous starts produce one offer.
+- Reconnect never creates or approves a contact, never changes workspace
+  authority, and rejects blocked or deleted peers before a peer connection
+  exists. Expired, tampered, and replayed documents are rejected, including
+  after a restart.
+- Consent changes are shared over the authenticated WebRTC control channel.
+  If the devices are not connected when a setting changes, the UI says the
+  signed settings will be shared on the next live connection.
+- With no signaling mailbox, the app reports **Manual reconnect required**
+  instead of looping.
+- Reconnect only runs while the app is open and unlocked. Locking, quitting, or
+  removing consent stops it. Live session migration, push notifications, iOS
+  background execution, and an Android foreground service are not implemented.
 
 ## Workspaces: authority without a server
 
@@ -195,7 +224,7 @@ The threat model is explicit about what is *not* protected: traffic analysis, IP
 
 | Platform | What exists | Recorded verification |
 | --- | --- | --- |
-| Windows x64 | MSI and NSIS installers, standalone executable plus service sidecar, bundled/managed `i2pd`, I2P invitation and consent UI, 1:1 audio/video call surface | 0.8.2 published; installer launch not rerun after the temporary-folder disk fix |
+| Windows x64 | MSI and NSIS installers, standalone executable plus service sidecar, bundled/managed `i2pd`, I2P invitation and consent UI, 1:1 audio/video call surface, automatic reconnect UI | 0.9.0 source verified (TypeScript, frontend, service, Worker, build); 0.8.2 artifacts published; 0.9.0 installer launch and device testing not performed |
 | Android arm64 | Debug APK, plus release/AAB signing path; I2P settings and invitation preview, 1:1 audio/video call surface | Built and package-inspected; no bundled I2P router and no physical call test in the recorded run |
 | macOS | Build path, FileVault adapter | No package built or run in this repository |
 | Linux | Build path, fscrypt/dm-crypt adapters | No package built or run in this repository |
@@ -203,7 +232,7 @@ The threat model is explicit about what is *not* protected: traffic analysis, IP
 
 Automated verification is substantial: Python, Vitest, and Rust suites, plus opt-in real-stack harnesses Ã¢â‚¬â€ a four-process AÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢BÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢CÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢D Reticulum/LXMF topology, a two-process direct-LAN harness, a three-process remote-access harness, a packaged-sidecar harness, and QUIC fabric/recovery runs in CI. The recorded evidence, exact hashes, and per-version notes are in [TESTING.md](TESTING.md).
 
-Still open: physical WindowsÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬ÂAndroid runs, real router/NAT and cellular traversal, propagation independence, crash-injection matrices, hostile-input fuzzing, accessibility review, macOS/Linux/iOS packages, and an independent security review. CI passing is not a substitute for those gates.
+Still open: physical WindowsÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬ÂAndroid runs, real router/NAT and cellular traversal, propagation independence, crash-injection matrices, hostile-input fuzzing, accessibility review, macOS/Linux/iOS packages, and an independent security review. Automatic reconnect has automated coverage only: no two-device restart, NAT/TURN, Android/iOS lifecycle, or battery/backoff test was performed on hardware. CI passing is not a substitute for those gates.
 
 ## Repository map
 

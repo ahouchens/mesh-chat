@@ -1,10 +1,12 @@
 # Automatic reconnect and signaling capabilities
 
-Status: proposed. Phase A primitives are implemented in
-`service/src/mesh_chat/reconnect.py`; supervisor, transport, mailbox, and UI
-integration remain. This spec replaces the “Phase 5 — transport fallback”
-hand-wave in `CONNECTION_UX_ARCHITECTURE.md` with a concrete design. It does
-not claim that automatic reconnect is already implemented.
+Status: implemented in 0.9.0 for the open-app, foreground case. The renderer
+coordinator, signed capabilities, per-contact consent, mailbox capability
+tokens, durable replay state, and the per-contact UI are in place. There is no
+background daemon, push notification, live session migration, or iOS
+background execution; reconnect only runs while the app is open and unlocked.
+See [implementation status](#18-implementation-status-090) for what is and is
+not covered.
 
 ## 1. Purpose
 
@@ -121,9 +123,16 @@ IDLE
 Glare control:
 
 - The preferred initiator is the lexicographically lower **device** identity.
-- The other side waits `probe_timeout` (suggest 2–3 s), then sends a probe.
-- If the preferred initiator does not answer within `offer_timeout`, the other
-  side may become the initiator for that attempt.
+- Only the preferred device publishes a signed `reconnect_request`. The other
+  side never probes, so simultaneous starts produce one request and one offer.
+- The request's recipient creates the WebRTC offer and publishes it; the
+  preferred device answers and publishes the answer. This follows the signed
+  document bindings in `reconnect.py`, where `create_reconnect_offer` must be
+  signed by the request recipient.
+- If the preferred device is offline, its request never arrives. The other side
+  stays in **Waiting for peer** and does not invent an offer or spin a second
+  session; the UI reports peer-offline/manual rather than claiming imminent
+  success. There is no initiator takeover in 0.9.0.
 - Every attempt has an idempotency key. Retries may repeat a request; replay of
   a completed offer/answer is rejected after acceptance.
 - One active attempt per peer/device at a time.
@@ -372,3 +381,53 @@ Still open:
 - Whether Android foreground service is opt-in or default.
 - Whether workspace contacts share capabilities or each device has its own.
 - Durable Object provider and abuse budget.
+
+## 18. Implementation status (0.9.0)
+
+Implemented in this release:
+
+- ConnectionCapabilities are attached to contact and workspace invitation
+  results when the peer is already known, and are exchanged at invitation
+  acceptance / owner approval otherwise.
+- Per-contact consent is persisted with **auto-reconnect off by default** and a
+  separate direct-IP-disclosure flag. A consent change issues a new signed
+  capability; a mailbox change rotates the pair token.
+- The service owns profiles, consent, signatures, replay state, mailbox
+  publish/fetch, and verification bridges. The renderer owns the
+  RTCPeerConnection.
+- The renderer coordinator starts only while the unlocked Messenger shell is
+  mounted, limits itself to two concurrent attempts, uses 1/2/5/15/30/60-second
+  jittered backoff, and stops on consent removal, block/deletion, capability
+  rejection, or user cancellation.
+- The Cloudflare Worker enforces pair capability tokens (hashed at rest),
+  request/offer/answer role and type matching, token rotation, and per-token and
+  per-IP rate limits while keeping the tokenless manual onboarding path.
+- After a reconnect the bridge is attached through webrtc_attach, which
+  reannounces immediately and again after 2 and 6 seconds. The coordinator then
+  polls Reticulum path status and distinguishes path_not_ready from
+
+etwork_unavailable instead of declaring messaging ready at channel open.
+- The contact panel exposes **Reconnect automatically**, **Allow direct IP
+  disclosure**, a status line (Waiting for peer, Reconnecting in Ns,
+  Connected, Peer offline, Manual reconnect required), and **Retry now**,
+  **Stop**, and **Forget auto-reconnect**. No modal or contact-approval prompt is
+  shown.
+
+Explicit limits and non-goals in 0.9.0:
+
+- Reconnect runs only while the app is open and unlocked. Locking the app tears
+  the coordinator down. There is no background service, tray keep-alive, push
+  notification, iOS background execution, or Android foreground service.
+- A pending RTCPeerConnection is never migrated. Every reconnect negotiates a
+  fresh transport and new DTLS keys.
+- Consent delivery uses the authenticated WebRTC control channel. If the two
+  devices are not connected when a toggle changes, the UI says the signed
+  settings will be shared on the next live connection; there is no separate
+  out-of-band capability message over LXMF.
+- If the preferred device is offline, the other side stays in **Waiting for
+  peer**; there is no probe takeover.
+- Workspace authority and membership are never changed by reconnect. Workspace
+  invitations carry capabilities only when a peer destination is supplied;
+  otherwise the contact capability remains the transport-level consent object.
+- No physical-device, NAT/TURN, or iOS/Android lifecycle testing was performed
+  for this change.

@@ -642,6 +642,8 @@ export interface WorkspaceInvitationFormats {
   connection_reply_available?: boolean;
   host_session_id?: string;
   methods?: ParticipantHosting["methods"];
+  /** Signed ConnectionCapabilities for this device, when the peer is known. */
+  reconnect_capabilities?: string | null;
 }
 
 export interface WorkspaceDeviceLinkPreview {
@@ -1031,6 +1033,8 @@ export interface InvitationFormats {
   connection_reply_available?: boolean;
   host_session_id?: string;
   methods?: ParticipantHosting["methods"];
+  /** Signed ConnectionCapabilities for this device, when the peer is known. */
+  reconnect_capabilities?: string | null;
 }
 
 export interface ConnectionDocumentFormats {

@@ -76,6 +76,7 @@ from .participant import (
 )
 from .participant_service import ParticipantAccessServiceMixin
 from .reactions import ReactionServiceMixin
+from .reconnect_service import ReconnectServiceMixin
 from .remote import (
     create_remote_personal_invitation,
     remote_invitation_formats,
@@ -153,6 +154,7 @@ def _payload(
 
 
 class MeshChatService(
+    ReconnectServiceMixin,
     ReactionServiceMixin,
     GroupServiceMixin,
     WorkspaceServiceMixin,
@@ -212,6 +214,24 @@ class MeshChatService(
         "call_ice_servers",
         "signal_publish",
         "signal_fetch",
+        "reconnect_profiles",
+        "reconnect_consent_set",
+        "reconnect_capabilities_create",
+        "reconnect_capabilities_store",
+        "reconnect_capabilities_get",
+        "reconnect_replay_check",
+        "reconnect_status",
+        "reconnect_start",
+        "reconnect_stop",
+        "reconnect_request_create",
+        "reconnect_offer_create",
+        "reconnect_answer_create",
+        "reconnect_publish",
+        "reconnect_fetch",
+        "reconnect_path_status",
+        "verify_reconnect_request",
+        "verify_reconnect_offer",
+        "verify_reconnect_answer",
         "webrtc_attach",
         "webrtc_packet",
         "webrtc_detach",
@@ -1343,7 +1363,14 @@ class MeshChatService(
         # `sending`, then immediately submit the same durable packet again.
         self._flush_contact(contact_id)
         self._changed()
-        return contact
+        # The joiner knows this destination from the signed invitation, so an
+        # approved contact is exactly when both sides can exchange signed
+        # reconnect capabilities. Approval itself never enables reconnect.
+        capabilities = self._contact_capabilities(contact)
+        return {
+            **contact,
+            **({"reconnect_capabilities": capabilities} if capabilities else {}),
+        }
 
     def decline_request(self, contact_id: str) -> dict[str, Any]:
         contact = self._require_contact(contact_id)
@@ -1681,17 +1708,34 @@ class MeshChatService(
             }
         return self._call_settings.rtc_configuration()
 
-    def signal_publish(self, document: str, role: str) -> dict[str, Any]:
+    def signal_publish(
+        self,
+        document: str,
+        role: str,
+        session_id: str | None = None,
+        mailbox_token: str | None = None,
+    ) -> dict[str, Any]:
         base = self._call_settings.signal_mailbox_url
         if base is None:
             raise ValidationError("Signaling mailbox is not configured")
-        return publish_signal(base, document, role)
+        return publish_signal(
+            base,
+            document,
+            role,
+            token=mailbox_token,
+            session=session_id,
+        )
 
-    def signal_fetch(self, session: str, role: str) -> dict[str, Any]:
+    def signal_fetch(
+        self,
+        session: str,
+        role: str,
+        mailbox_token: str | None = None,
+    ) -> dict[str, Any]:
         base = self._call_settings.signal_mailbox_url
         if base is None:
             raise ValidationError("Signaling mailbox is not configured")
-        return fetch_signal(base, session, role)
+        return fetch_signal(base, session, role, token=mailbox_token)
 
     def _broker_ice_servers(self, broker: str) -> list[dict[str, Any]]:
         now = time.monotonic()
@@ -3029,27 +3073,35 @@ class MeshChatService(
                 value, allowed={
                     "remote_profile_id", "connection_mode", "manual_setup_id",
                     "external_host", "external_port", "i2p_access_point", "i2p_label",
+                    "peer_destination",
                 }
             )
-            return self.invitation(
+            result = dict(self.invitation(
                 body.get("remote_profile_id"), body.get("connection_mode"),
                 body.get("manual_setup_id"), body.get("external_host"),
                 body.get("external_port"), body.get("i2p_access_point"),
                 body.get("i2p_label"),
-            )
+            ))
+            capabilities = self._invitation_capabilities(body.get("peer_destination"))
+            if capabilities:
+                result["reconnect_capabilities"] = capabilities
+            return result
         if command in {"preview_invitation", "accept_invitation"}:
             body = _payload(
                 value, allowed={"invitation", "i2p_consent"}, required={"invitation"}
             )
             if not isinstance(body["invitation"], str):
                 raise ValidationError("Invitation must be text")
-            return (
-                self.preview_invitation(body["invitation"])
-                if command == "preview_invitation"
-                else self.accept_invitation(
-                    body["invitation"], i2p_consent=body.get("i2p_consent") is True
-                )
-            )
+            if command == "preview_invitation":
+                return self.preview_invitation(body["invitation"])
+            accepted = dict(self.accept_invitation(
+                body["invitation"], i2p_consent=body.get("i2p_consent") is True
+            ))
+            contact = self.store.get("contact", str(accepted.get("id", "")))
+            capabilities = self._contact_capabilities(contact) if contact else None
+            if capabilities:
+                accepted["reconnect_capabilities"] = capabilities
+            return accepted
         if command == "create_connection_reply":
             body = _payload(
                 value,
@@ -3242,11 +3294,146 @@ class MeshChatService(
             _payload(value, allowed=set())
             return self.call_ice_servers()
         if command == "signal_publish":
-            body = _payload(value, allowed={"document", "role"}, required={"document", "role"})
-            return self.signal_publish(body["document"], body["role"])
+            body = _payload(
+                value,
+                allowed={"document", "role", "session_id", "mailbox_token"},
+                required={"document", "role"},
+            )
+            return self.signal_publish(
+                body["document"],
+                body["role"],
+                body.get("session_id"),
+                body.get("mailbox_token"),
+            )
         if command == "signal_fetch":
-            body = _payload(value, allowed={"session_id", "role"}, required={"session_id", "role"})
-            return self.signal_fetch(body["session_id"], body["role"])
+            body = _payload(
+                value,
+                allowed={"session_id", "role", "mailbox_token"},
+                required={"session_id", "role"},
+            )
+            return self.signal_fetch(
+                body["session_id"], body["role"], body.get("mailbox_token")
+            )
+        if command == "reconnect_profiles":
+            _payload(value, allowed=set())
+            return self.reconnect_profiles()
+        if command == "reconnect_consent_set":
+            body = _payload(
+                value,
+                allowed={
+                    "contact_id",
+                    "auto_reconnect",
+                    "allow_direct_ip_disclosure",
+                    "relay_consent_scope",
+                    "rotate_token",
+                },
+                required={"contact_id", "auto_reconnect", "allow_direct_ip_disclosure"},
+            )
+            return self.reconnect_consent_set(
+                body["contact_id"],
+                body["auto_reconnect"],
+                body["allow_direct_ip_disclosure"],
+                body.get("relay_consent_scope", "contact"),
+                body.get("rotate_token", False),
+            )
+        if command == "reconnect_capabilities_create":
+            body = _payload(
+                value,
+                allowed={"contact_id", "rotate_token"},
+                required={"contact_id"},
+            )
+            return self.reconnect_capabilities_create(
+                body["contact_id"], body.get("rotate_token", True)
+            )
+        if command == "reconnect_capabilities_store":
+            body = _payload(
+                value, allowed={"document"}, required={"document"}
+            )
+            return self.reconnect_capabilities_store(body["document"])
+        if command == "reconnect_capabilities_get":
+            body = _payload(value, allowed={"contact_id"}, required={"contact_id"})
+            return self.reconnect_capabilities_get(body["contact_id"])
+        if command == "reconnect_replay_check":
+            body = _payload(value, allowed={"key", "ttl"}, required={"key"})
+            return self.reconnect_replay_check(body["key"], body.get("ttl", 600))
+        if command == "reconnect_status":
+            body = _payload(
+                value, allowed={"state", "detail", "attempt_id"}, required=set()
+            )
+            return self.reconnect_status(
+                body.get("state"), body.get("detail"), body.get("attempt_id")
+            )
+        if command == "reconnect_start":
+            body = _payload(value, allowed={"contact_id"}, required=set())
+            return self.reconnect_start(body.get("contact_id"))
+        if command == "reconnect_stop":
+            body = _payload(value, allowed={"contact_id"}, required=set())
+            return self.reconnect_stop(body.get("contact_id"))
+        if command == "reconnect_request_create":
+            body = _payload(
+                value,
+                allowed={"contact_id", "attempt_id", "nonce"},
+                required={"contact_id", "attempt_id"},
+            )
+            return self.reconnect_request_create(
+                body["contact_id"], body["attempt_id"], body.get("nonce")
+            )
+        if command == "reconnect_offer_create":
+            body = _payload(
+                value,
+                allowed={"contact_id", "request_document", "sdp", "dtls_fingerprint"},
+                required={"contact_id", "request_document", "sdp", "dtls_fingerprint"},
+            )
+            return self.reconnect_offer_create(
+                body["contact_id"],
+                body["request_document"],
+                body["sdp"],
+                body["dtls_fingerprint"],
+            )
+        if command == "reconnect_answer_create":
+            body = _payload(
+                value,
+                allowed={"contact_id", "offer_document", "sdp", "dtls_fingerprint"},
+                required={"contact_id", "offer_document", "sdp", "dtls_fingerprint"},
+            )
+            return self.reconnect_answer_create(
+                body["contact_id"],
+                body["offer_document"],
+                body["sdp"],
+                body["dtls_fingerprint"],
+            )
+        if command == "reconnect_publish":
+            body = _payload(
+                value,
+                allowed={"profile_id", "document", "role"},
+                required={"profile_id", "document", "role"},
+            )
+            return self.reconnect_publish(
+                body["profile_id"], body["document"], body["role"]
+            )
+        if command == "reconnect_fetch":
+            body = _payload(
+                value, allowed={"profile_id", "role"}, required={"profile_id", "role"}
+            )
+            return self.reconnect_fetch(body["profile_id"], body["role"])
+        if command == "reconnect_path_status":
+            body = _payload(value, allowed={"contact_id"}, required={"contact_id"})
+            return self.reconnect_path_status(body["contact_id"])
+        if command == "verify_reconnect_request":
+            body = _payload(value, allowed={"document"}, required={"document"})
+            return self.verify_reconnect_request(body["document"])
+        if command == "verify_reconnect_offer":
+            body = _payload(value, allowed={"document"}, required={"document"})
+            return self.verify_reconnect_offer(body["document"])
+        if command == "verify_reconnect_answer":
+            body = _payload(
+                value,
+                allowed={"document", "offer_document"},
+                required={"document", "offer_document"},
+            )
+            return self.verify_reconnect_answer(
+                body["document"], body["offer_document"]
+            )
         if command == "webrtc_attach":
             _payload(value, allowed=set())
             return self.webrtc_attach()
@@ -3380,10 +3567,11 @@ class MeshChatService(
                     "external_port",
                     "i2p_access_point",
                     "i2p_label",
+                    "peer_destination",
                 },
                 required={"operation_id", "workspace_id"},
             )
-            return self.create_workspace_invitation_command(
+            outcome = dict(self.create_workspace_invitation_command(
                 body["workspace_id"],
                 body["operation_id"],
                 body.get("lifetime_days", 7),
@@ -3394,7 +3582,11 @@ class MeshChatService(
                 body.get("external_port"),
                 body.get("i2p_access_point"),
                 body.get("i2p_label"),
-            )
+            ))
+            capabilities = self._invitation_capabilities(body.get("peer_destination"))
+            if capabilities:
+                outcome["reconnect_capabilities"] = capabilities
+            return outcome
         if command == "preview_workspace_invitation":
             body = _payload(
                 value, allowed={"invitation"}, required={"invitation"}

@@ -81,6 +81,24 @@ class NetworkUnavailable(MeshChatError):
     code = "network_unavailable"
 
 
+class MailboxUnauthorized(MeshChatError):
+    """The signaling capability token was missing, wrong, or rotated."""
+
+    code = "mailbox_unauthorized"
+
+
+class MailboxRateLimited(MeshChatError):
+    """The signaling mailbox per-token or per-IP budget is exhausted."""
+
+    code = "mailbox_rate_limited"
+
+
+class ReconnectReplayed(MeshChatError):
+    """A reconnect document was already accepted by this device."""
+
+    code = "reconnect_replayed"
+
+
 class NativeUnavailable(ValidationError):
     """The private native channel closed or stopped answering.
 

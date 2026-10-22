@@ -63,11 +63,11 @@ def test_signal_commands_require_configured_mailbox(monkeypatch) -> None:
     calls: list[tuple[str, str, str]] = []
     monkeypatch.setattr(
         "mesh_chat.service.publish_signal",
-        lambda base, document, role: calls.append(("publish", base, role)) or {"ok": True},
+        lambda base, document, role, **kwargs: calls.append(("publish", base, role)) or {"ok": True},
     )
     monkeypatch.setattr(
         "mesh_chat.service.fetch_signal",
-        lambda base, session, role: calls.append(("fetch", base, role)) or {"ok": True},
+        lambda base, session, role, **kwargs: calls.append(("fetch", base, role)) or {"ok": True},
     )
 
     document = json.dumps({"session_id": "a" * 24})

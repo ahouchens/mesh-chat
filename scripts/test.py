@@ -69,6 +69,7 @@ def main() -> int:
             ]
         )
     run([node, "scripts/run-frontend-tests.mjs"])
+    run([node, "--test", "deploy/cloudflare-signal/worker.test.mjs"])
     run([node, "--test", "scripts/verify_packaged_emoji_artwork.test.mjs"])
     run([node, "node_modules/typescript/bin/tsc", "-b"])
     run([node, "scripts/run-frontend-build.mjs"])

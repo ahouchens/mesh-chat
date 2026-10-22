@@ -10,6 +10,8 @@ export interface WebRTCSession {
   path: WebRTCSessionPath;
   createdAt: number;
   approvalPending: boolean;
+  /** Contact approved on this channel, once known. Capability messages are contact-scoped. */
+  contactId?: string;
 }
 
 let activeSession: WebRTCSession | null = null;
@@ -27,6 +29,11 @@ export function updateWebRTCSessionPath(path: WebRTCSessionPath): void {
 
 export function updateWebRTCSessionApprovalPending(pending: boolean): void {
   if (activeSession) activeSession.approvalPending = pending;
+}
+
+/** Bind the live channel to a contact so capability messages cannot cross peers. */
+export function updateWebRTCSessionContact(contactId: string): void {
+  if (activeSession && contactId) activeSession.contactId = contactId;
 }
 
 export function getWebRTCSession(): WebRTCSession | null {

@@ -22,6 +22,66 @@ locally. Frontend/package/native tests and Windows/Android builds run in Actions
 Physical execution follows the
 [Phase 2 device checklist](docs/DIRECT_CONNECTIVITY_PHASE2_DEVICE_TEST.md).
 
+## Automatic reconnect, 0.9.0
+
+Automatic reconnect is implemented for the open, unlocked app. The Python
+service owns profiles, per-contact consent, signed capabilities, mailbox
+publish/fetch, verification, and durable replay state; the renderer owns the
+fresh `RTCPeerConnection`. There is no background daemon, push notification,
+live session migration, or iOS/Android background execution.
+
+What is covered:
+
+- `ConnectionCapabilities` attach to contact/workspace invitation results when
+  a peer destination is supplied, and are returned by invitation acceptance and
+  owner approval. Auto-reconnect defaults to off; direct IP disclosure is a
+  separate flag.
+- Consent changes issue a new signed capability; mailbox changes rotate the
+  pair token. New capabilities are shared over the authenticated WebRTC control
+  channel and only when the channel is bound to that contact.
+- The Cloudflare Worker pins a SHA-256 capability hash on first authenticated
+  write, requires the token for reconnect reads and writes, supports
+  holder-authorized rotation, enforces request/offer/answer type matching, and
+  applies per-token/per-IP rate limits. The tokenless manual onboarding path
+  still works.
+- The renderer coordinator starts only while the unlocked Messenger shell is
+  mounted, caps concurrency at two, uses 1/2/5/15/30/60-second jittered backoff,
+  and stops on consent removal, blocked/deleted peers, rejected capabilities,
+  or user cancellation. It never opens a dialog or asks for contact approval.
+- Only the preferred device publishes a request; the other side creates the
+  single offer. Simultaneous starts therefore produce one offer.
+- After attach, `webrtc_attach` reannounces immediately and at 2 s and 6 s; the
+  coordinator polls path status and distinguishes `path_not_ready` from
+  `network_unavailable`.
+- A missing mailbox reports **Manual reconnect required** and opens no peer
+  connection.
+
+Validation on this tree (Node 24, Python 3.13, Windows):
+
+```text
+pytest service/tests:        1089 passed, 46 skipped, 0 failed (270.66 s)
+node scripts/run-frontend-tests.mjs: 260 passed (18 files)
+node --test deploy/cloudflare-signal/worker.test.mjs: 11 passed
+packaged emoji artwork verification: 3 passed
+node node_modules/typescript/bin/tsc -b: passed
+node scripts/run-frontend-build.mjs: passed
+```
+
+The service count includes 17 reconnect-service tests, 6 protocol tests, and 11
+mailbox-token tests. The frontend count includes 9 coordinator tests, 5 control
+channel tests, and 4 contact-panel tests. The full pipeline was run with
+`MESH_CHAT_NODE` pointing at Node 24 because the machine's default `node` is
+older than the project minimum. The run is recorded in
+`dist/reports/final-test-090.log` (not committed). The six workspace-admission
+failures previously reported in `test_direct_setup_pipeline.py` did not
+reproduce in this run; the 46 skips are opt-in native/network harnesses.
+
+Not performed for this change: a desktop or Android package build, two physical
+devices, real NAT/TURN traversal, network switching, Android/iOS lifecycle or
+battery behavior, and any claim that reconnect works while an app is closed.
+No release artifact was published from this environment; version metadata is
+0.9.0 and the source tree is the release candidate.
+
 ## Copied workspace invitation regression, 2026-10-18
 
 The follow-up already-saved-workspace screen includes the local public status in
@@ -431,8 +491,10 @@ previews.
 - No KV namespace required; `wrangler deploy` creates the SQLite-backed class.
 - Worker syntax check passed.
 
-This is mailbox infrastructure; app-side reconnect supervisor integration is
-still pending.
+This was the mailbox infrastructure baseline. The 0.9.0 follow-up added pair
+capability tokens, request/offer/answer roles, token rotation, rate limits, the
+service reconnect API, the renderer coordinator, and the per-contact UI; see
+[Automatic reconnect, 0.9.0](#automatic-reconnect-090) above.
 
 ## Reconnect capabilities, 2026-10-21
 
@@ -445,7 +507,8 @@ still pending.
   recipient, attempt, session, offer-digest, SDP, DTLS, and expiry binding.
 - **6** reconnect tests passed.
 
-Not yet wired to invitations, service persistence, supervisor, or UI.
+The primitives were later wired to invitations, service persistence, the
+renderer coordinator, and the contact UI in 0.9.0.
 
 ## Transport choices and pairing resume, 0.8.2
 

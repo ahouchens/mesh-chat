@@ -1,6 +1,6 @@
 {
   "name": "mesh-chat",
-  "version": "0.8.2",
+  "version": "0.9.0",
   "private": true,
   "license": "MIT",
   "type": "module",
@@ -9,6 +9,7 @@
     "build": "tsc -b && node scripts/run-frontend-build.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:worker": "node --test deploy/cloudflare-signal/worker.test.mjs",
     "verify": "node scripts/run-python.mjs scripts/release.py verify",
     "release:check": "node scripts/run-python.mjs scripts/release.py check",
     "release:version": "node scripts/run-python.mjs scripts/release.py version",
