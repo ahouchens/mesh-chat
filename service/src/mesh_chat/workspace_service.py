@@ -4700,7 +4700,10 @@ class WorkspaceServiceMixin:
             outcome["methods"] = sorted({item["path"] for item in access["endpoints"]})
             record["participant_host_id"] = host_session_id
             record["expires_at"] = float(outcome["expires_at"])
-        elif connection_mode not in {None, "nearby", "remote", "webrtc"}:
+        elif connection_mode == "webrtc":
+            outcome["connection_mode"] = "webrtc"
+            outcome["transfer"] = "webrtc_data_channel"
+        elif connection_mode not in {None, "nearby", "remote"}:
             raise ValidationError("Workspace invitation connection mode is invalid")
         elif remote_profile_id is not None:
             remote_record = self._require_remote_profile(remote_profile_id)
@@ -5594,7 +5597,12 @@ class WorkspaceServiceMixin:
         admin_device_id: Any,
         max_admissions: Any = 5,
         lifetime_days: Any = 7,
+        v2_ready: Any = False,
     ) -> dict[str, Any]:
+        if v2_ready is not True:
+            raise ContactNotApproved(
+                "Confirm every active member device supports delegated admission before creating a grant"
+            )
         workspace = self._require_workspace(workspace_id)
         if (
             workspace.get("state") != "active"

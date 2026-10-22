@@ -3966,6 +3966,7 @@ class MeshChatService(
                     "admin_device_id",
                     "max_admissions",
                     "lifetime_days",
+                    "v2_ready",
                 },
                 required={"workspace_id", "admin_member_id", "admin_device_id"},
             )
@@ -3975,6 +3976,7 @@ class MeshChatService(
                 body["admin_device_id"],
                 body.get("max_admissions", 5),
                 body.get("lifetime_days", 7),
+                body.get("v2_ready", False),
             )
         if command == "accept_workspace_admission_grant":
             body = _payload(

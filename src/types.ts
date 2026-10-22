@@ -639,7 +639,8 @@ export interface WorkspaceInvitationFormats {
   expires_at: number;
   remote_profile_id?: string;
   access_point_reachable?: boolean;
-  connection_mode?: "participant" | "email" | "i2p";
+  connection_mode?: "participant" | "email" | "i2p" | "webrtc";
+  transfer?: "webrtc_data_channel";
   connection_reply_available?: boolean;
   host_session_id?: string;
   methods?: ParticipantHosting["methods"];
@@ -1032,7 +1033,8 @@ export interface InvitationFormats {
   expires_at: number;
   remote_profile_id?: string;
   access_point_reachable?: boolean;
-  connection_mode?: "participant" | "email" | "i2p";
+  connection_mode?: "participant" | "email" | "i2p" | "webrtc";
+  transfer?: "webrtc_data_channel";
   connection_reply_available?: boolean;
   host_session_id?: string;
   methods?: ParticipantHosting["methods"];

@@ -22,6 +22,50 @@ locally. Frontend/package/native tests and Windows/Android builds run in Actions
 Physical execution follows the
 [Phase 2 device checklist](docs/DIRECT_CONNECTIVITY_PHASE2_DEVICE_TEST.md).
 
+## WebRTC workspace invitation and Phase 5 closure, 0.9.15
+
+Phase 7 and the remaining Phase 5 UI/gates are implemented.
+
+Phase 7:
+
+- With an active WebRTC session, the workspace invite dialog offers **WebRTC
+  DataChannel (connected)**.
+- The owner creates the normal signed workspace invitation and sends it as a
+  bounded `workspace_invitation` control message over the session control
+  channel.
+- The peer opens the standard signed workspace join dialog prefilled with the
+  transferred invitation. The DataChannel is only a transfer path; the normal
+  signature, expiry, single-use, and owner/admin approval checks still apply.
+- Service coverage verifies the `webrtc` invitation mode and transfer marker.
+
+Phase 5 closure:
+
+- Workspace settings shows the signed-history conflict type and local head,
+  supports copying conflict details, and allows local data removal while still
+  refusing to choose between histories.
+- Grant creation requires the owner to confirm every active member device
+  supports v2 delegated manifests before a grant can be issued.
+- Pre-v2 clients that are already installed remain an inherent limitation; they
+  cannot be retroactively taught to fail closed.
+
+Validation:
+
+```text
+pytest service/tests:        1110 passed, 46 skipped, 0 failed (282.96 s)
+node scripts/run-frontend-tests.mjs: 264 passed (18 files)
+node --test deploy/cloudflare-signal/worker.test.mjs: 11 passed
+packaged emoji artwork verification: 3 passed
+node node_modules/typescript/bin/tsc -b: passed
+node scripts/run-frontend-build.mjs: passed
+```
+
+The official report is
+`dist/reports/0.9.15/20261022T224038Z-fc5f9246/report.json` (git-ignored):
+`status: passed`, 332.172 s, SHA-256
+`1b62b7c8c6f004d3669f350484076176290b2e64836f40691052ec50750bd79c`.
+Gates: `automated: passed`; `physical_device: not-requested`;
+`production_signing: not-requested`.
+
 ## Workspace DM calls, 0.9.14
 
 Phase 6 adds 1:1 calls from a workspace DM without creating a Personal contact.

@@ -519,6 +519,18 @@ def test_workspace_reconnect_capabilities_exchange_without_contacts(tmp_path):
     assert verified["contact_id"].startswith("workspace:")
 
 
+def test_workspace_webrtc_invitation_records_data_channel_transfer(tmp_path):
+    owner, _network, _profile, _member, _member_network, _member_profile, workspace, _key, _identity = _joined_pair(tmp_path, base=10300)
+    invitation = owner.create_workspace_invitation_command(
+        workspace["id"],
+        _op(10310),
+        connection_mode="webrtc",
+    )
+    assert invitation["connection_mode"] == "webrtc"
+    assert invitation["transfer"] == "webrtc_data_channel"
+    assert invitation["text"]
+
+
 def test_workspace_dm_call_signal_uses_active_peer_without_contact(tmp_path):
     owner, owner_network, owner_profile, member, member_network, member_profile, workspace, _key, _identity = _joined_pair(tmp_path, base=10010)
     member_workspace = member._require_workspace(workspace["id"])
@@ -586,6 +598,7 @@ def test_workspace_admission_grant_delivery_and_acceptance(tmp_path):
         member_workspace["local_device_id"],
         5,
         7,
+        True,
     )
     packets = _flush(owner, owner_network)
     assert packets
