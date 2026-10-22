@@ -75,6 +75,22 @@ The official report is
 Gates: `automated: passed`; `physical_device: not-requested`;
 `production_signing: not-requested`.
 
+Publication: GitHub Actions
+[CI run 39800915424](https://github.com/ahouchens/mesh-chat/actions/runs/39800915424)
+and
+[Release run 39800923116](https://github.com/ahouchens/mesh-chat/actions/runs/39800923116)
+passed on the first attempt for `v0.9.6`. Release:
+<https://github.com/ahouchens/mesh-chat/releases/tag/v0.9.6>.
+
+| Artifact | Bytes | SHA-256 (verified by re-download) |
+|---|---:|---|
+| `Mesh-Chat_0.9.6_x64-setup.exe` | 27,861,603 | `bf3925c81bb409466a20c96b5dc1f54793cde567b22521f7120995a2c02aee0f` |
+| `Mesh-Chat_0.9.6_x64_en-US.msi` | 29,847,552 | `67c220fd35ddaf410ab72d2e0442d0671af1ff492bddcfd926bc08a1b230162e` |
+| `mesh-chat-0.9.6-android-arm64-release.apk` | 34,354,896 | `bd6cbb4e0abcb30effd4c7acae0b7843d803a0a41e47725c90bcfbcd7e169a81` |
+| `SHA256SUMS.txt` | 300 | `d53f7fa3ee814e100552e71535f838f5b509cb2a1756631744275a2b366f733a` |
+
+The Android APK is debug-signed; it is not a production or upgrade identity.
+
 New coverage includes wrapper round trip/verification, consent-off default,
 per-device capability exchange, no-contact assertion, ready counts after both
 sides enable, synthetic workspace request/offer/answer flow, and the renderer
