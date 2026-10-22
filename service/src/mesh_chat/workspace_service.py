@@ -18792,6 +18792,9 @@ class WorkspaceServiceMixin:
         if wire.kind == "workspace_connection_update":
             self._direct_recovery.receive(wire.document,source=getattr(native,"source_hash",None),workspace_id=wire.workspace_id)
             return
+        if wire.kind == "workspace_access_recommendation":
+            self._receive_workspace_access_recommendation(wire)
+            return
         if wire.kind == "workspace_manifest_root":
             self._receive_workspace_manifest(wire)
         elif wire.kind == "workspace_channel_record":
@@ -18843,6 +18846,209 @@ class WorkspaceServiceMixin:
             self._receive_workspace_display_name_request(wire)
         elif wire.kind == "workspace_display_name_decision":
             self._receive_workspace_display_name_decision(wire)
+
+    @staticmethod
+    def _workspace_access_recommendation_id(document: str) -> str:
+        return hashlib.sha256(document.encode("utf-8")).hexdigest()
+
+    def _receive_workspace_access_recommendation(
+        self, wire: WorkspaceWirePayload
+    ) -> None:
+        try:
+            checked = verify_workspace_access_recommendation(wire.document)
+        except MeshChatError:
+            return
+        if checked.workspace_id != wire.workspace_id:
+            return
+        workspace = self.store.get(
+            "workspace", self._workspace_record_id(wire.workspace_id)
+        )
+        if workspace is None or workspace.get("state") not in {
+            "active",
+            "incomplete_sync",
+        }:
+            return
+        record_id = self._workspace_access_recommendation_id(wire.document)
+        if self.store.get("workspace_access_recommendation", record_id) is not None:
+            return
+        now = time.time()
+        self.store.put(
+            "workspace_access_recommendation",
+            record_id,
+            {
+                "id": record_id,
+                "workspace_id": wire.workspace_id,
+                "document": wire.document,
+                "manifest_digest": checked.manifest_digest,
+                "profile_label": checked.profile["label"],
+                "endpoint_count": len(checked.profile["endpoints"]),
+                "expires_at": checked.expires_at,
+                "authority_destination": checked.authority_destination,
+                "received_at": now,
+                "state": "available",
+            },
+        )
+        self._workspace_changed(
+            wire.workspace_id, resource_kind="access_recommendation"
+        )
+
+    def send_workspace_access_recommendation(
+        self,
+        workspace_id: Any,
+        recommendation: Any,
+        operation_id: Any,
+    ) -> dict[str, Any]:
+        workspace = self._require_workspace(workspace_id)
+        if workspace.get("state") != "active":
+            raise ValidationError("Workspace access is available only for an active workspace")
+        if (
+            workspace.get("local_role") != "owner"
+            or workspace.get("local_device_id") != workspace.get("authority_device_id")
+        ):
+            raise ContactNotApproved("Only the active workspace authority can send an access recommendation")
+        if not isinstance(recommendation, str):
+            raise ValidationError("Workspace access recommendation is invalid")
+        checked = verify_workspace_access_recommendation(recommendation)
+        if checked.workspace_id != workspace["id"]:
+            raise ValidationError("Workspace access recommendation is for another workspace")
+        if checked.manifest_digest != workspace.get("manifest_hash"):
+            raise ValidationError("Workspace access recommendation is stale")
+        manifest = self._workspace_current_manifest(workspace)
+        if checked.authority_destination != manifest.authority_destination.hex():
+            raise IdentityMismatch("Workspace access recommendation is not from the current authority")
+        operation_id, digest, replay = self._workspace_operation(
+            "send_workspace_access_recommendation",
+            operation_id,
+            {"workspace_id": workspace["id"], "recommendation": recommendation},
+        )
+        if replay is not None:
+            return replay
+        deliveries = []
+        for member in manifest.members:
+            if member.status != "active":
+                continue
+            for device in member.devices:
+                if (
+                    member.member_id == workspace.get("local_member_id")
+                    and device.device_id == workspace.get("local_device_id")
+                ):
+                    continue
+                deliveries.append(
+                    self._workspace_delivery_record(
+                        workspace_id=workspace["id"],
+                        recipient_member_id=member.member_id,
+                        recipient_device=device,
+                        kind="workspace_access_recommendation",
+                        document=recommendation,
+                        priority=0,
+                    )
+                )
+        outcome = {
+            "workspace_id": workspace["id"],
+            "sent_devices": len(deliveries),
+            "expires_at": checked.expires_at,
+        }
+        committed = self.store.commit_operation(
+            operation_id,
+            digest,
+            outcome,
+            [
+                *[
+                    ("workspace_delivery", delivery["id"], delivery)
+                    for delivery in deliveries
+                ],
+                *self._due_records(add=deliveries),
+            ],
+        )
+        self._workspace_changed(
+            workspace["id"], resource_kind="access_recommendation"
+        )
+        return committed
+
+    def list_workspace_access_recommendations(
+        self, workspace_id: Any
+    ) -> dict[str, Any]:
+        workspace = self._require_workspace(workspace_id)
+        if workspace.get("state") != "active":
+            raise ValidationError("Workspace access is available only for an active workspace")
+        now = time.time()
+        recommendations = []
+        for record in self.store.list("workspace_access_recommendation"):
+            if (
+                record.get("workspace_id") != workspace["id"]
+                or record.get("state") != "available"
+                or float(record.get("expires_at", 0)) <= now
+            ):
+                continue
+            recommendations.append(
+                {
+                    "id": record["id"],
+                    "workspace_id": record["workspace_id"],
+                    "profile_label": record.get("profile_label", "Access point"),
+                    "endpoint_count": int(record.get("endpoint_count", 0)),
+                    "expires_at": record.get("expires_at"),
+                    "received_at": record.get("received_at"),
+                    "stale": record.get("manifest_digest")
+                    != workspace.get("manifest_hash"),
+                }
+            )
+        recommendations.sort(
+            key=lambda item: float(item.get("received_at", 0)), reverse=True
+        )
+        return {"recommendations": recommendations}
+
+    def _workspace_access_recommendation_record(
+        self, workspace_id: Any, recommendation_id: Any
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        workspace = self._require_workspace(workspace_id)
+        if not isinstance(recommendation_id, str) or len(recommendation_id) != 64:
+            raise ValidationError("Workspace access recommendation ID is invalid")
+        record = self.store.get(
+            "workspace_access_recommendation", recommendation_id
+        )
+        if record is None or record.get("workspace_id") != workspace["id"]:
+            raise ValidationError("Workspace access recommendation does not exist")
+        return workspace, record
+
+    def preview_workspace_access_recommendation_by_id(
+        self, workspace_id: Any, recommendation_id: Any
+    ) -> dict[str, Any]:
+        _, record = self._workspace_access_recommendation_record(
+            workspace_id, recommendation_id
+        )
+        preview = self.preview_workspace_access_recommendation(record["document"])
+        return {**preview, "id": record["id"]}
+
+    def apply_workspace_access_recommendation_by_id(
+        self, workspace_id: Any, recommendation_id: Any, consent: Any
+    ) -> dict[str, Any]:
+        if not isinstance(consent, bool) or not consent:
+            raise ValidationError("Workspace access point consent is required")
+        workspace, record = self._workspace_access_recommendation_record(
+            workspace_id, recommendation_id
+        )
+        preview = self.preview_workspace_access_recommendation(record["document"])
+        checked = verify_workspace_access_recommendation(record["document"])
+        attached = self._approve_remote_document(
+            checked.profile,
+            origin="workspace_access",
+            scope_kind="workspace",
+            scope_id=workspace["id"],
+        )
+        record["state"] = "applied"
+        record["updated_at"] = time.time()
+        self.store.put(
+            "workspace_access_recommendation", record["id"], record
+        )
+        self._workspace_changed(
+            workspace["id"], resource_kind="access_recommendation"
+        )
+        return {
+            "workspace_id": workspace["id"],
+            "workspace_name": preview["workspace_name"],
+            "profile": sanitized_profile(attached),
+            "applied": True,
+        }
 
     def create_workspace_access_recommendation(
         self, workspace_id: Any, remote_profile_id: Any, lifetime_days: Any = 7

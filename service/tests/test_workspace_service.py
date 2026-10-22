@@ -349,11 +349,11 @@ def test_workspace_connectivity_reports_paths_and_requests_missing_ones(tmp_path
 def test_workspace_access_recommendation_is_signed_and_consented(tmp_path):
     (
         owner,
-        _owner_network,
-        _owner_profile,
+        owner_network,
+        owner_profile,
         member,
-        _member_network,
-        _member_profile,
+        member_network,
+        member_profile,
         workspace,
         _member_key,
         _member_identity,
@@ -379,19 +379,45 @@ def test_workspace_access_recommendation_is_signed_and_consented(tmp_path):
     )
     assert via_command["text"].startswith("MESHACCESS1:")
 
-    preview = member.preview_workspace_access_recommendation(created["text"])
+    sent = owner.send_workspace_access_recommendation(
+        workspace["id"], created["text"], _op(9950)
+    )
+    assert sent["sent_devices"] == 1
+    for item in _flush(owner, owner_network):
+        _deliver(
+            member,
+            item,
+            source_profile=owner_profile,
+            recipient_profile=member_profile,
+        )
+    received = member.list_workspace_access_recommendations(workspace["id"])
+    assert len(received["recommendations"]) == 1
+    recommendation_id = received["recommendations"][0]["id"]
+    preview = member.preview_workspace_access_recommendation_by_id(
+        workspace["id"], recommendation_id
+    )
     assert preview["workspace_id"] == workspace["id"]
     assert preview["profile_label"] == "Workspace relay"
     assert preview["requires_consent"] is True
 
     with pytest.raises(ValidationError):
-        member.apply_workspace_access_recommendation(created["text"], False)
+        member.apply_workspace_access_recommendation_by_id(
+            workspace["id"], recommendation_id, False
+        )
 
-    applied = member.apply_workspace_access_recommendation(created["text"], True)
+    applied = member.apply_workspace_access_recommendation_by_id(
+        workspace["id"], recommendation_id, True
+    )
     assert applied["applied"] is True
     record = member.store.get("remote_profile", profile["id"])
     assert record is not None
     assert {"kind": "workspace", "id": workspace["id"]} in record["scopes"]
+
+    preview = member.preview_workspace_access_recommendation(created["text"])
+    assert preview["workspace_id"] == workspace["id"]
+    with pytest.raises(ValidationError):
+        member.apply_workspace_access_recommendation(created["text"], False)
+    assert member.apply_workspace_access_recommendation(created["text"], True)["applied"] is True
 
     tampered = created["text"][:-2] + "AA"
     with pytest.raises((IdentityMismatch, ValidationError)):

@@ -419,8 +419,10 @@ The owner authority can also sign an out-of-band `MESHACCESS1:` workspace access
 recommendation over an approved Remote Connection Profile. It binds the
 workspace, current manifest digest, canonical profile and expiry. A member must
 preview it against the current authority and separately consent before the
-profile is attached with workspace scope; applying it changes no membership or
-authority and the owner does not become a relay.
+profile is attached with workspace scope. The owner may also queue the same
+document to active member devices through the per-device workspace delivery
+path; receipt still requires preview and consent. Applying a recommendation
+changes no membership or authority, and the owner does not become a relay.
 
 Edits, author deletion, and reactions are canonical `workspace_event` records,
 not mutable renderer commands or replacements for the signed original. The

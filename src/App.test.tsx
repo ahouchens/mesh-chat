@@ -5118,6 +5118,8 @@ describe("workspace access recommendations", () => {
       if (command === "snapshot") return current;
       if (command === "list_workspace_messages") return { messages: [], next_cursor: null, high_water: 0 } satisfies WorkspaceMessagePage;
       if (command === "list_remote_profiles") return { profiles: [accessProfile] };
+      if (command === "list_workspace_access_recommendations") return { recommendations: [] };
+      if (command === "send_workspace_access_recommendation") return { sent_devices: 1 };
       if (command === "create_workspace_access_recommendation") return {
         workspace_id: workspace.id, workspace_name: workspace.name, profile_id: accessProfile.id,
         profile_label: accessProfile.label, endpoint_count: 1, expires_at: accessProfile.expires_at,
@@ -5138,6 +5140,8 @@ describe("workspace access recommendations", () => {
     fireEvent.click(createButton);
     const complete = await within(access).findByLabelText("Complete recommendation") as HTMLTextAreaElement;
     expect(complete.value).toBe("MESHACCESS1:test");
+    fireEvent.click(within(access).getByRole("button", { name: "Send to workspace members" }));
+    await waitFor(() => expect(api.serviceCommand).toHaveBeenCalledWith("send_workspace_access_recommendation", expect.objectContaining({ workspace_id: workspace.id, recommendation: "MESHACCESS1:test", operation_id: expect.any(String) })));
     fireEvent.change(within(access).getByLabelText("Recommendation"), { target: { value: "MESHACCESS1:test" } });
     fireEvent.click(within(access).getByRole("button", { name: "Preview" }));
     expect(await within(access).findByText(/The access-point operator can observe connection metadata/)).toBeTruthy();

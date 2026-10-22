@@ -1,7 +1,7 @@
 # Workspace Connectivity and Reachability
 
-Status: Phase 1 implemented in 0.9.3; Phase 2a implemented in 0.9.4; later
-phases proposed.
+Status: Phase 1 implemented in 0.9.3; Phase 2a implemented in 0.9.4; Phase 2b implemented in 0.9.5;
+later phases proposed.
 
 ## 1. Problem
 
@@ -197,12 +197,24 @@ The renderer exposes this as **Workspace settings → Workspace access point**:
 owners select an approved profile and create/copy the recommendation; any active
 member can paste, preview, consent, and attach one.
 
-### Phase 2b — automatic delivery (remaining)
+### Phase 2b — automatic delivery (implemented in 0.9.5)
 
-Deliver a recommendation to already-connected members through a signed,
-bounded workspace control envelope, with the same verification and consent
-rules. It must not require the owner to relay chat or become a transport node.
-The out-of-band Phase 2a path remains the fallback when no path exists.
+The owner authority can queue the same signed recommendation to every active
+workspace member device through the existing per-device workspace delivery
+machinery (`send_workspace_access_recommendation`, wire kind
+`workspace_access_recommendation`). The recommendation is one signed document,
+not a per-device grant; delivery retries, expiry, and partial-delivery evidence
+remain per device.
+
+Recipients verify the authority signature and store only the signed document and
+safe summary. They cannot attach it without the same preview and explicit
+consent. The out-of-band Phase 2a path remains available when no member path
+exists. Automatic delivery cannot make the owner a relay, grant membership, or
+change transport policy.
+
+Delivery to the local authority device is skipped. A stale recommendation remains
+visible as stale and cannot be applied until the owner reissues it against the
+current manifest.
 
 ### Phase 2c — automatic access (not planned)
 
@@ -275,8 +287,11 @@ Phase 2a:
 - no profile is attached before explicit local consent;
 - attachment uses workspace scope and does not create a contact, approve a
   device, change authority, or make the owner a relay;
-- out-of-band import works without a member path; automatic delivery is not
-  claimed.
+- out-of-band import works without a member path;
+- automatic delivery queues only to active member devices, skips the local
+  authority device, uses per-device retry/expiry evidence, and preserves the same
+  preview/consent boundary on receipt;
+- no delivery or path result is treated as consent or membership.
 
 ## 13. Known limits
 

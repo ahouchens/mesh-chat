@@ -120,6 +120,7 @@ import type {
   WorkspaceAccessApplyResult,
   WorkspaceAccessPreview,
   WorkspaceAccessRecommendation,
+  WorkspaceAccessRecommendationSummary,
   WorkspaceAdminRequest,
   WorkspaceAuthorityTransition,
   WorkspaceChannel,
@@ -3653,7 +3654,22 @@ function WorkspaceAccessDialog({ workspace, onClose, onSaved }: { workspace: Wor
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [received, setReceived] = useState<WorkspaceAccessRecommendationSummary[]>([]);
+  const [receivedPreview, setReceivedPreview] = useState<WorkspaceAccessPreview | null>(null);
+  const [receivedId, setReceivedId] = useState<string | null>(null);
+  const [receivedConsent, setReceivedConsent] = useState(false);
   const owner = workspace.local_role === "owner" && workspace.local_device_id === workspace.authority_device_id && workspace.state === "active";
+  const loadReceived = async () => {
+    try {
+      const value = await serviceCommand<{ recommendations: WorkspaceAccessRecommendationSummary[] }>("list_workspace_access_recommendations", { workspace_id: workspace.id });
+      setReceived(value.recommendations ?? []);
+    } catch {
+      setReceived([]);
+    }
+  };
+  useEffect(() => {
+    if (workspace.state === "active") void loadReceived();
+  }, [workspace.id, workspace.state]);
   useEffect(() => {
     if (!owner) return;
     void serviceCommand<{ profiles: RemoteProfile[] }>("list_remote_profiles")
@@ -3667,6 +3683,32 @@ function WorkspaceAccessDialog({ workspace, onClose, onSaved }: { workspace: Wor
       setCreated(result);
       setRecommendation(result.text);
       setNotice("Recommendation created. Share the complete text with members.");
+    } catch (reason) { setError(errorMessage(reason)); } finally { setBusy(false); }
+  };
+  const send = async () => {
+    if (!created) return;
+    setBusy(true); setError(""); setNotice("");
+    try {
+      const result = await serviceCommand<{ sent_devices: number }>("send_workspace_access_recommendation", { workspace_id: workspace.id, recommendation: created.text, operation_id: newOperationId() });
+      setNotice(`Queued the recommendation for ${result.sent_devices} active member device${result.sent_devices === 1 ? "" : "s"}. Delivery remains retryable.`);
+    } catch (reason) { setError(errorMessage(reason)); } finally { setBusy(false); }
+  };
+  const reviewReceived = async (id: string) => {
+    setBusy(true); setError(""); setNotice(""); setReceivedPreview(null); setReceivedConsent(false);
+    try {
+      const result = await serviceCommand<WorkspaceAccessPreview>("preview_workspace_access_recommendation_by_id", { workspace_id: workspace.id, recommendation_id: id });
+      setReceivedPreview(result); setReceivedId(id);
+    } catch (reason) { setError(errorMessage(reason)); } finally { setBusy(false); }
+  };
+  const applyReceived = async () => {
+    if (!receivedId) return;
+    setBusy(true); setError(""); setNotice("");
+    try {
+      const result = await serviceCommand<WorkspaceAccessApplyResult>("apply_workspace_access_recommendation_by_id", { workspace_id: workspace.id, recommendation_id: receivedId, consent: receivedConsent });
+      setNotice(`Attached “${result.profile.label}” to this workspace.`);
+      setReceivedPreview(null); setReceivedId(null); setReceivedConsent(false);
+      await loadReceived();
+      await onSaved();
     } catch (reason) { setError(errorMessage(reason)); } finally { setBusy(false); }
   };
   const check = async () => {
@@ -3686,7 +3728,8 @@ function WorkspaceAccessDialog({ workspace, onClose, onSaved }: { workspace: Wor
   };
   return <Dialog title={`Workspace access point · ${workspace.name}`} onClose={onClose}><div className="form-stack">
     <p className="muted">An access point is a shared, consented transport. It can make workspace member devices reachable through one operator, but it does not grant membership or authority. The operator sees connection metadata, not message contents.</p>
-    {owner && <section className="workspace-name-request"><h3>Share an approved access point</h3>{profiles.length === 0 ? <p className="muted">No approved remote profiles are available. Approve one under Settings → Remote connections first.</p> : <><label>Access point<select value={profileId} onChange={(event) => { setProfileId(event.target.value); setCreated(null); }}>{profiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.label} · {profile.endpoint_count} endpoint{profile.endpoint_count === 1 ? "" : "s"}</option>)}</select></label><Button variant="secondary" disabled={busy || !profileId} onClick={() => void create()}>{busy ? "Preparing…" : "Create recommendation"}</Button></>}{created && <><label>Complete recommendation<textarea readOnly rows={4} value={created.text} aria-label="Workspace access recommendation" onFocus={(event) => event.currentTarget.select()} /></label><p className="muted">Expires {formatExpiry(created.expires_at)}. Send the entire value; anyone with it still needs to consent.</p><Button variant="ghost" onClick={() => void navigator.clipboard.writeText(created.text).then(() => setNotice("Recommendation copied.")).catch(() => setError("Could not copy."))}>Copy recommendation</Button></>}</section>}
+    {received.length > 0 && <section className="workspace-name-request"><h3>Received for this workspace</h3><p className="muted">These recommendations were delivered by the current owner authority. A stale one must be resent after the next manifest.</p>{received.map((item) => <div className="workspace-invitation-row" key={item.id}><span><strong>{item.profile_label}</strong><small>{item.endpoint_count} endpoint{item.endpoint_count === 1 ? "" : "s"} · expires {formatExpiry(item.expires_at)}{item.stale ? " · stale" : ""}</small></span><span><Button variant="secondary" disabled={busy || item.stale} onClick={() => void reviewReceived(item.id)}>Review</Button></span></div>)}{receivedPreview && receivedId && <div className="workspace-access-preview"><p><strong>{receivedPreview.profile_label}</strong> · {receivedPreview.endpoint_count} endpoint{receivedPreview.endpoint_count === 1 ? "" : "s"} · expires {formatExpiry(receivedPreview.expires_at)}</p><p className="muted">{receivedPreview.profile.privacy_disclosure}</p><label className="checkbox-line"><input type="checkbox" checked={receivedConsent} onChange={(event) => setReceivedConsent(event.target.checked)} /> I consent to attach this access point to {workspace.name}. I understand the operator can observe connection metadata.</label><Button disabled={busy || !receivedConsent} onClick={() => void applyReceived()}>Attach access point</Button></div>}</section>}
+    {owner && <section className="workspace-name-request"><h3>Share an approved access point</h3>{profiles.length === 0 ? <p className="muted">No approved remote profiles are available. Approve one under Settings → Remote connections first.</p> : <><label>Access point<select value={profileId} onChange={(event) => { setProfileId(event.target.value); setCreated(null); }}>{profiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.label} · {profile.endpoint_count} endpoint{profile.endpoint_count === 1 ? "" : "s"}</option>)}</select></label><Button variant="secondary" disabled={busy || !profileId} onClick={() => void create()}>{busy ? "Preparing…" : "Create recommendation"}</Button></>}{created && <><label>Complete recommendation<textarea readOnly rows={4} value={created.text} aria-label="Workspace access recommendation" onFocus={(event) => event.currentTarget.select()} /></label><p className="muted">Expires {formatExpiry(created.expires_at)}. Send the entire value; anyone with it still needs to consent.</p><Button variant="ghost" onClick={() => void navigator.clipboard.writeText(created.text).then(() => setNotice("Recommendation copied.")).catch(() => setError("Could not copy."))}>Copy recommendation</Button><Button variant="secondary" disabled={busy} onClick={() => void send()}>{busy ? "Sending…" : "Send to workspace members"}</Button></>}</section>}
     <section className="workspace-name-request"><h3>Apply a recommendation</h3><p className="muted">Verify the current owner authority and preview the access-point disclosure before attaching it to this device.</p><label>Recommendation<textarea rows={4} value={recommendation} onChange={(event) => { setRecommendation(event.target.value); setPreview(null); setConsent(false); }} placeholder="MESHACCESS1:…" spellCheck={false} /></label><Button variant="secondary" disabled={busy || !recommendation.trim()} onClick={() => void check()}>{busy ? "Checking…" : "Preview"}</Button>{preview && <div className="workspace-access-preview"><p><strong>{preview.profile_label}</strong> · {preview.endpoint_count} endpoint{preview.endpoint_count === 1 ? "" : "s"} · expires {formatExpiry(preview.expires_at)}</p><p className="muted">{preview.profile.privacy_disclosure}</p><label className="checkbox-line"><input type="checkbox" checked={consent} onChange={(event) => setConsent(event.target.checked)} /> I consent to attach this access point to {workspace.name}. I understand the operator can observe connection metadata.</label><Button disabled={busy || !consent} onClick={() => void apply()}>Attach access point</Button></div>}</section>
     {notice && <p className="direct-host-status" role="status">{notice}</p>}
     {error && <p className="form-error" role="alert">{error}</p>}

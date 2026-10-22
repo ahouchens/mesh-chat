@@ -22,6 +22,59 @@ locally. Frontend/package/native tests and Windows/Android builds run in Actions
 Physical execution follows the
 [Phase 2 device checklist](docs/DIRECT_CONNECTIVITY_PHASE2_DEVICE_TEST.md).
 
+## Workspace access delivery, 0.9.5
+
+Phase 2b of the [workspace connectivity spec](docs/WORKSPACE_CONNECTIVITY_SPEC.md)
+adds per-device automatic delivery of the owner-signed access recommendation.
+Receipt is not consent and does not attach anything by itself.
+
+Service:
+
+- `send_workspace_access_recommendation` requires the active owner authority
+  device and a recommendation bound to the current local manifest. It queues one
+  `workspace_access_recommendation` control delivery per active member device,
+  excluding the local authority device, through the existing retry/expiry
+  scheduler.
+- Inbound control payloads verify the `MESHACCESS1` bytes, workspace ID, source
+  activity, and expiry before storing only the signed document and safe summary.
+  They do not attach a profile, change authority, or send a read receipt.
+- `list_workspace_access_recommendations` exposes safe summaries and a stale
+  flag; `preview_workspace_access_recommendation_by_id` and
+  `apply_workspace_access_recommendation_by_id` preserve the preview/consent
+  boundary, with `apply` requiring an explicit consent boolean.
+- Commands are in the service and Rust allowlists.
+
+UI:
+
+- **Workspace settings → Workspace access point** now lists recommendations
+  received for the workspace, with stale state and a Review action.
+- The owner can **Send to workspace members** after creating a recommendation;
+  the out-of-band copy remains available.
+- Review shows the operator disclosure; attachment still requires explicit
+  consent.
+
+Validation:
+
+```text
+pytest service/tests:        1103 passed, 46 skipped, 0 failed (280.69 s)
+node scripts/run-frontend-tests.mjs: 263 passed (18 files)
+node --test deploy/cloudflare-signal/worker.test.mjs: 11 passed
+packaged emoji artwork verification: 3 passed
+node node_modules/typescript/bin/tsc -b: passed
+node scripts/run-frontend-build.mjs: passed
+```
+
+The official report is
+`dist/reports/0.9.5/20261022T135545Z-f0da3f70/report.json` (git-ignored):
+`status: passed`, 327.258 s, SHA-256
+`4530a16594d8168e5b7c1436830ddb5b14747a4e8cd8945f2c5b6147c90530a7`.
+Gates: `automated: passed`; `physical_device: not-requested`;
+`production_signing: not-requested`.
+
+Tests cover owner-only send, per-device delivery, inbound storage, stale state,
+received preview/consent/apply, sender UI queueing, and the out-of-band fallback.
+No physical multi-member access-point or suspension test was performed.
+
 ## Workspace access recommendations, 0.9.4
 
 Phase 2a of the [workspace connectivity spec](docs/WORKSPACE_CONNECTIVITY_SPEC.md)

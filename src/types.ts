@@ -1137,6 +1137,16 @@ export interface WorkspaceAccessPreview {
   requires_consent: boolean;
 }
 
+export interface WorkspaceAccessRecommendationSummary {
+  id: string;
+  workspace_id: string;
+  profile_label: string;
+  endpoint_count: number;
+  expires_at: number;
+  received_at: number;
+  stale: boolean;
+}
+
 export interface WorkspaceAccessApplyResult {
   workspace_id: string;
   workspace_name: string;
