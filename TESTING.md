@@ -429,7 +429,9 @@ previews.
 - Added canonical signature verification, expected-signer binding, tamper
   rejection, and strict mailbox/expiry validation.
 - Added deterministic initiator and bounded replay-cache primitives.
-- **4** reconnect tests passed.
+- Added signed reconnect request/offer/answer documents with sender,
+  recipient, attempt, session, offer-digest, SDP, DTLS, and expiry binding.
+- **6** reconnect tests passed.
 
 Not yet wired to invitations, service persistence, supervisor, or UI.
 

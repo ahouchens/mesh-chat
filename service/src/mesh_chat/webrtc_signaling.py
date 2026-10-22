@@ -535,6 +535,23 @@ def _keys(kind: str) -> set[str]:
             "auto_reconnect", "allow_direct_ip_disclosure", "relay_consent_scope",
             "mailbox", "issued_at", "expires_at", "signer_public_key", "signature",
         }
+    if kind == "webrtc_reconnect_request":
+        return {
+            "v", "type", "from", "to", "device_id", "attempt_id", "nonce",
+            "issued_at", "expires_at", "signer_public_key", "signature",
+        }
+    if kind == "webrtc_reconnect_offer":
+        return {
+            "v", "type", "from", "to", "attempt_id", "session_id", "sdp",
+            "dtls_fingerprint", "nonce", "issued_at", "expires_at",
+            "signer_public_key", "signature",
+        }
+    if kind == "webrtc_reconnect_answer":
+        return {
+            "v", "type", "from", "to", "attempt_id", "session_id",
+            "offer_digest", "sdp", "dtls_fingerprint", "nonce", "issued_at",
+            "expires_at", "signer_public_key", "signature",
+        }
     if kind == "webrtc_onboarding_offer":
         return {
             "v", "type", "session_id", "sdp", "dtls_fingerprint",

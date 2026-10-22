@@ -10,11 +10,30 @@ from mesh_chat.invitations import canonical_bytes
 from mesh_chat.reconnect import (
     ReconnectReplayCache,
     create_connection_capabilities,
+    create_reconnect_answer,
+    create_reconnect_offer,
+    create_reconnect_request,
     preferred_initiator,
     verify_connection_capabilities,
+    verify_reconnect_answer,
+    verify_reconnect_offer,
+    verify_reconnect_request,
 )
 
 NOW = 1_800_000_000
+FINGERPRINT = "sha-256 " + ":".join(["AB"] * 32)
+SDP = "\r\n".join(
+    [
+        "v=0",
+        "o=- 1 2 IN IP4 127.0.0.1",
+        "s=-",
+        "t=0 0",
+        "a=fingerprint:" + FINGERPRINT,
+        "m=application 9 UDP/DTLS/SCTP webrtc-datachannel",
+        "a=mid:0",
+        "a=sctp-port:5000",
+    ]
+) + "\r\n"
 
 
 def destination(identity: RNS.Identity) -> str:
@@ -94,6 +113,75 @@ def test_capabilities_reject_invalid_mailbox_and_expiry() -> None:
     )
     with pytest.raises(ValidationError):
         verify_connection_capabilities(raw, now=NOW + 8 * 24 * 60 * 60)
+
+
+def test_reconnect_request_offer_answer_binding() -> None:
+    owner = RNS.Identity()
+    peer = RNS.Identity()
+    owner_destination = destination(owner)
+    peer_destination = destination(peer)
+    request_raw = create_reconnect_request(
+        owner,
+        to_destination=peer_destination,
+        device_id="device:test-owner",
+        attempt_id="attempt-0123456789",
+        nonce="nonce-0123456789",
+        expires_at=NOW + 300,
+        now=NOW,
+    )
+    request = verify_reconnect_request(request_raw, now=NOW)
+    assert request.to_destination == peer_destination
+    assert request.signer_destination
+
+    offer_raw = create_reconnect_offer(
+        peer,
+        request,
+        sdp=SDP,
+        dtls_fingerprint=FINGERPRINT,
+        expires_at=NOW + 240,
+        now=NOW,
+    )
+    offer = verify_reconnect_offer(offer_raw, now=NOW)
+    assert offer.attempt_id == request.attempt_id
+    assert offer.to_destination == request.from_destination
+
+    answer_raw = create_reconnect_answer(
+        owner,
+        offer,
+        sdp=SDP,
+        dtls_fingerprint=FINGERPRINT,
+        expires_at=NOW + 180,
+        now=NOW,
+    )
+    answer = verify_reconnect_answer(answer_raw, offer, now=NOW)
+    assert answer.offer_digest == offer.digest
+    assert answer.session_id == offer.session_id
+
+
+def test_reconnect_answer_rejects_other_offer() -> None:
+    owner = RNS.Identity()
+    peer = RNS.Identity()
+    request_raw = create_reconnect_request(
+        owner,
+        to_destination=destination(peer),
+        device_id="device:test-owner",
+        attempt_id="attempt-0123456789",
+        nonce="nonce-0123456789",
+        now=NOW,
+    )
+    request = verify_reconnect_request(request_raw, now=NOW)
+    offer = verify_reconnect_offer(
+        create_reconnect_offer(peer, request, sdp=SDP, dtls_fingerprint=FINGERPRINT, now=NOW),
+        now=NOW,
+    )
+    answer_raw = create_reconnect_answer(owner, offer, sdp=SDP, dtls_fingerprint=FINGERPRINT, now=NOW)
+    other = RNS.Identity()
+    other_offer = verify_reconnect_offer(
+        create_reconnect_offer(other, request, sdp=SDP, dtls_fingerprint=FINGERPRINT, now=NOW),
+        now=NOW,
+    )
+    with pytest.raises(IdentityMismatch):
+        verify_reconnect_answer(answer_raw, other_offer, now=NOW)
 
 
 def test_glare_preference_and_replay_cache() -> None:

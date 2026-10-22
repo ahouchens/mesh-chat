@@ -312,10 +312,22 @@ Still open:
 
 ### Phase B — Reticulum reconnect
 
-- Add request/offer/answer documents.
-- Supervisor state machine, idempotency, replay cache.
-- Reannounce/reattach path handling.
-- Tests 1–3, 14.
+Implemented protocol primitives:
+
+- signed `webrtc_reconnect_request`, `webrtc_reconnect_offer`, and
+  `webrtc_reconnect_answer`;
+- sender/recipient binding, attempt/session binding, offer-digest binding,
+  SDP/DTLS validation, expiry, and signature verification;
+- tests for round trip, wrong-offer rejection, tamper/wrong-signer, glare, and
+  replay.
+
+Still open:
+
+- supervisor state machine;
+- Reticulum delivery and path retry;
+- persisted replay cache;
+- service commands and UI integration;
+- tests 1–3 and 14.
 
 ### Phase C — mailbox reconnect
 
