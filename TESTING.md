@@ -422,6 +422,16 @@ An intermediate 0.2.74 build failed five frontend assertions because normal
 invitations carried `i2p_consent: false`; 0.2.75 sends the field only for I2P
 previews.
 
+## Transport choices, 2026-10-21
+
+- Connect now exposes Direct TCP/same-network, approved access point, WebRTC,
+  and I2P choices.
+- Direct/I2P choices open the invitation flow with the matching initial
+  connection mode.
+- `ConnectionTransport` descriptor and WebRTC close-order tests added.
+
+Validation: TypeScript and **239 frontend tests** passed.
+
 ## Connection fixes and entry consolidation, 0.8.1
 
 - Removed the sidebar New chat button; invitations start at Connect.
