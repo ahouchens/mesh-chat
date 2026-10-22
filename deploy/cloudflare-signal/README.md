@@ -26,9 +26,9 @@ The endpoint is:
 https://mesh-chat-signal.<subdomain>.workers.dev
 ```
 
-Add it as the **signaling mailbox URL** in Mesh Chat settings when the UI
-lands. Until then this is infrastructure only; the manual QR/copy path remains
-the default.
+Add it as the **Signaling mailbox** URL in Mesh Chat settings
+(**Settings → WebRTC calls**). The manual QR/copy path remains available when
+the mailbox is unset.
 
 ## Security
 

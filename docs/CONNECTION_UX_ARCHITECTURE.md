@@ -199,12 +199,16 @@ Do not dump the user back to a blank dialog.
 
 ### Phase 1 — inline consent and approval acknowledgement
 
+Implemented in 0.5.0.
+
 - Relay consent is shown in the WebRTC connection dialog, not only Settings.
 - Joiner receives **approval acknowledged** over the authenticated control
-  channel after the owner approves, instead of waiting indefinitely.
+  channel after the owner approves.
 - Connection UI distinguishes “request created” from “request delivered.”
 
 ### Phase 2 — connection object and card
+
+Implemented in 0.5.1–0.6.1.
 
 - Persistent connection object and card.
 - Pending-request inbox/badge.
@@ -212,28 +216,29 @@ Do not dump the user back to a blank dialog.
 
 ### Phase 3 — unified wizard
 
+Implemented in 0.6.0:
+
 - One Connect flow.
-- WebRTC becomes a transport choice inside it.
-- Contact/workspace purpose selected before transport.
-- Remove the separate WebRTC sidebar flow.
+- WebRTC is a transport choice inside it.
+- The separate sidebar New chat entry was removed in 0.6.x.
+- Contact/workspace purpose is selected in the invitation step.
 
 ### Phase 4 — signaling adapter
 
-In progress:
+Implemented in 0.7.0:
 
-- `deploy/cloudflare-signal` implements a 10-minute signed offer/answer
-  mailbox using Cloudflare KV (48 KiB cap, random session ID, no messages);
-- app-side settings/fetch integration is still pending.
-
-- Optional community mailbox (Cloudflare Worker + Durable Object/KV).
+- Optional community mailbox (Cloudflare Worker + KV).
 - Short-lived opaque signed envelopes.
 - Deep link/QR fallback.
 - No central message store.
 
 ### Phase 5 — transport fallback
 
-- Direct → TURN → access point fallback with explicit consent.
-- Reconnect and resume.
+Partial:
+
+- Direct → TURN retry and invitation fallback are implemented.
+- Direct TCP/access-point/I2P adapters and true resume are not.
+- Reconnect and resume endpoint behavior remains open.
 
 ## 8. Acceptance criteria
 
