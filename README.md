@@ -1,6 +1,6 @@
 # Mesh Chat
 
-**Server-free, end-to-end encrypted messaging for small groups Ã¢â‚¬â€ built directly on Reticulum and LXMF.**
+**Server-free, end-to-end encrypted messaging for small groups — built directly on Reticulum and LXMF.**
 
 Mesh Chat is a desktop and mobile messenger with no required account service, signaling service, key directory, hosted relay, or always-on machine. Each installation creates its own Reticulum identity; a message is an ordinary LXMF message addressed to another person's device. The application adds the parts a messenger needs - explicit consent, signed invitations, group and workspace authority, an encrypted local history, and honest delivery evidence. Optional I2P, TURN, and signaling-mailbox infrastructure can be enabled explicitly; none is an authority, message store, or trust decision.
 
@@ -8,7 +8,7 @@ The design accepts real trade-offs. Delivery depends on peers being reachable, h
 
 An optional **I2P relay path** can bootstrap a workspace or 1:1 connection when neither device has a public endpoint. It is an explicit, consented fallback: the invitation carries one signed `*.b32.i2p` access point, both sides need an I2P router, and the access point relays encrypted Reticulum traffic rather than creating a direct link. I2P is not the default, is not available on Android yet, and does not replace the direct/LAN/access-point paths.
 
-> **Status Ã¢â‚¬â€ security-sensitive prototype.** The source tree is at 0.9.15. It has not been independently audited, and several physical-device and packaging gates are still open. Read [Status and verification](#status-and-verification) before relying on it.
+> **Status — security-sensitive prototype.** The source tree is at 0.9.15. It has not been independently audited, and several physical-device and packaging gates are still open. Read [Status and verification](#status-and-verification) before relying on it.
 
 ## What problem it solves
 
@@ -16,7 +16,7 @@ Mesh Chat addresses a specific gap: **private small-group messaging without requ
 
 Reticulum and LXMF already provide identities, routing, and encryption. Mesh Chat adds the messenger/application layer those protocols do not: consent, invitations, group and workspace authority, durable local state, and delivery evidence.
 
-In short, it solves **Ã¢â‚¬Å“how do a few people message and coordinate privately without trusting or paying for a messaging service?Ã¢â‚¬Â** Ã¢â‚¬â€ while accepting weaker reachability, recovery, and metadata-privacy guarantees than a hosted messenger.
+In short, it solves **“how do a few people message and coordinate privately without trusting or paying for a messaging service?”** — while accepting weaker reachability, recovery, and metadata-privacy guarantees than a hosted messenger.
 
 | Problem | What Mesh Chat provides | How it stays server-free |
 | --- | --- | --- |
@@ -60,7 +60,7 @@ The application is four cooperating layers plus the network below them. Reticulu
 
 Automatic reconnect deliberately crosses all four layers. The renderer owns the fresh transport, the service owns consent, signatures, and replay state, and the optional mailbox carries only transient signed envelopes. No layer can substitute for another: a valid signature is not authorization, and the mailbox operator cannot approve a contact.
 
-Underneath them, one **protected profile** holds everything at rest: the sealed vault, Reticulum path/ratchet state, and the LXMF message store. The service verifies OS-level encryption for that directory (and enables NTFS EFS on Windows when needed) and refuses to start if it cannot confirm it Ã¢â‚¬â€ FileVault, fscrypt / dm-crypt / LUKS, or an app-private Android/iOS container.
+Underneath them, one **protected profile** holds everything at rest: the sealed vault, Reticulum path/ratchet state, and the LXMF message store. The service verifies OS-level encryption for that directory (and enables NTFS EFS on Windows when needed) and refuses to start if it cannot confirm it — FileVault, fscrypt / dm-crypt / LUKS, or an app-private Android/iOS container.
 
 ### Where state lives
 
@@ -76,10 +76,10 @@ Reticulum routes packets, but it cannot make an arbitrary NAT accept an inbound 
 
 | Invitation | Prefix | What it bootstraps | Requirement |
 | --- | --- | --- | --- |
-| **v1 Ã¢â‚¬â€ nearby** | `MESHCHAT1:` / `MESHWORKSPACE1:` | Reticulum nearby discovery, plus optional signed TCP host/port hints | Both devices on a reachable network |
-| **v2 Ã¢â‚¬â€ access point** | `MESHCHAT2:` / `MESHWORKSPACE2:` | Outbound TCP to an explicitly approved operator-run Reticulum transport | A third-party or self-hosted access point |
-| **v3 Ã¢â‚¬â€ participant-hosted** | `MESHCHAT3:` / `MESHWORKSPACE3:` | The inviter opens a short-lived, invitation-scoped listener on their device and asks their router to publish it; the signed envelope carries the public endpoints and a fresh Reticulum IFAC credential | Inviter online; router mapping succeeds |
-| **v4 Ã¢â‚¬â€ email-ready** | `MESHCHAT4:` / `MESHWORKSPACE4:` | Outbound-first attempt, with an optional signed callback and role reversal if the invitee must host instead | An out-of-band channel to exchange signed documents |
+| **v1 — nearby** | `MESHCHAT1:` / `MESHWORKSPACE1:` | Reticulum nearby discovery, plus optional signed TCP host/port hints | Both devices on a reachable network |
+| **v2 — access point** | `MESHCHAT2:` / `MESHWORKSPACE2:` | Outbound TCP to an explicitly approved operator-run Reticulum transport | A third-party or self-hosted access point |
+| **v3 — participant-hosted** | `MESHCHAT3:` / `MESHWORKSPACE3:` | The inviter opens a short-lived, invitation-scoped listener on their device and asks their router to publish it; the signed envelope carries the public endpoints and a fresh Reticulum IFAC credential | Inviter online; router mapping succeeds |
+| **v4 — email-ready** | `MESHCHAT4:` / `MESHWORKSPACE4:` | Outbound-first attempt, with an optional signed callback and role reversal if the invitee must host instead | An out-of-band channel to exchange signed documents |
 | **I2P relay** | `MESHI2P1:` / `MESHI2P1W:` | A signed outer envelope around the complete inner invitation, carrying one validated `*.b32.i2p` access point, its expiry, and the owner binding | Each side runs an I2P router with SAM; the access point is reachable through I2P |
 | **Direct setup** | `mesh-direct:` | Signed offer -> answer -> ready over an experimental QUIC underlay, then an isolated bootstrap interpreter | Both sides can reach each other; physical qualification pending |
 | **WebRTC transport** | `meshchat://pair/<code>` (optional) | A signed offer/answer transferred by copy, QR, or the optional signaling mailbox; Reticulum packets then travel over the encrypted DataChannel | ICE reaches a direct pair, or a consented TURN relay is configured |
@@ -110,7 +110,7 @@ TURN API token stays on the broker, while Mesh Chat receives short-lived
 `iceServers` credentials. Self-hosted coturn remains available at
 [deploy/relay](deploy/relay/README.md).
 
-In **Settings Ã¢â€ â€™ WebRTC calls**, users can enter a Cloudflare TURN broker URL,
+In **Settings → WebRTC calls**, users can enter a Cloudflare TURN broker URL,
 override the built-in default, or disable the broker. The built-in default is
 `https://staether.webtechalex.workers.dev/credentials`; it is **not used until
 the user enables relay consent** and can be changed at any time. See

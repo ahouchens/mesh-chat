@@ -3828,7 +3828,7 @@ Artifact hashes for this run:
   package, Tauri configuration, Cargo lock entry, renderer expectation, and
   desktop release-publisher expectation. Android uses version name 0.2.9 and
   version code 2009.
-- The reaction extension supports exactly ðŸ‘, â¤ï¸, ðŸ˜‚, ðŸ˜®, ðŸ˜¢, and ðŸŽ‰ in direct
+- The reaction extension supports exactly 👍, ❤️, 😂, 😮, 😢, and 🎉 in direct
   chats, private groups, and announcement channels. Each actor has at most one
   active reaction per message. Choosing another emoji replaces it; choosing the
   current emoji again removes it. Active announcement-channel readers may
@@ -3844,7 +3844,7 @@ Artifact hashes for this run:
   documented skips**. Python bytecode compilation also passed.
 - The renderer suite passed **47 tests**, including keyboard-accessible picker
   behavior, replacement/removal, direct/group/channel permissions, Android
-  Back handling, and a 320Ã—480 clipping regression. TypeScript checking and the
+  Back handling, and a 320×480 clipping regression. TypeScript checking and the
   production Vite build passed.
 - All **4 Rust release tests** passed. Both opt-in signed direct-LAN scenarios
   passed (**2 tests**), and the opt-in real three-hop topology passed (**1
@@ -3856,8 +3856,8 @@ Artifact hashes for this run:
   first-seen-wins; a later higher revision restores convergence.
 - The exact frozen 0.2.9 Windows sidecar passed the EFS-protected two-peer
   packaged harness (**2 tests passed**). Through production framed IPC and the
-  native network path it completed bidirectional chat and receipts, phone ðŸ‘
-  add, desktop ðŸ˜‚ add, desktop replacement with â¤ï¸, phone removal, convergence
+  native network path it completed bidirectional chat and receipts, phone 👍
+  add, desktop 😂 add, desktop replacement with ❤️, phone removal, convergence
   after every update, local deletion/reopen, content-free stderr, and clean
   shutdown.
 - The immutable Windows executable, sidecar, MSI, NSIS, and portable ZIP were
@@ -3933,14 +3933,14 @@ Artifact hashes for this run:
 - The exact frozen 0.2.10 Windows sidecar passed the EFS-protected packaged
   two-peer harness (**2 tests passed**). Through production framed IPC and the
   native network path it completed phone-first and desktop-reply chat plus
-  application receipts; a multi-code-point ðŸ‘©ðŸ½â€ðŸŒ¾ reaction; desktop ðŸ˜‚ add and
-  replacement with â¤ï¸; removal and convergence; local deletion/reopen;
+  application receipts; a multi-code-point 👩🏽‍🌾 reaction; desktop 😂 add and
+  replacement with ❤️; removal and convergence; local deletion/reopen;
   content-free stderr; and clean shutdown.
 - The frozen 0.2.10 sidecar also passed the EFS-protected mixed-version harness
   against the exact 0.2.9 sidecar (**3 packaged tests passed** when run together).
   Ordinary chat remained bidirectional before and after reaction traffic, the
   original six reactions interoperated in both directions, 0.2.9 safely ignored
-  an expanded ðŸ‘©ðŸ½â€ðŸŒ¾ reaction, and both peers stayed alive and shut down
+  an expanded 👩🏽‍🌾 reaction, and both peers stayed alive and shut down
   cleanly without private stderr output.
 - The immutable Windows application, sidecar, MSI, NSIS, and portable ZIP were
   published and hashed. The application and NSIS executable report file and
@@ -3989,8 +3989,8 @@ Artifact hashes for this run:
   persistent reaction state.
 - The renderer now uses local palette-optimized sprite sheets derived from
   Twemoji 17.0.3 at pinned commit
-  `b6b55fef1e8636b540a6d016a4729ca8cdf2e60b`. One 16Ã—16 curated sheet covers
-  all **253 of 253** picker choices. Eight 32Ã—16 general sheets cover another
+  `b6b55fef1e8636b540a6d016a4729ca8cdf2e60b`. One 16×16 curated sheet covers
+  all **253 of 253** picker choices. Eight 32×16 general sheets cover another
   3,691 sequences, for **3,944 of 3,963** fully-qualified Emoji 18 sequences
   with bundled pictorial artwork.
 - The remaining 19 sequences are new Emoji 18 entries not present in that
