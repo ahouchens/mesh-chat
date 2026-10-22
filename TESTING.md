@@ -71,6 +71,22 @@ The official report is
 Gates: `automated: passed`; `physical_device: not-requested`;
 `production_signing: not-requested`.
 
+Publication: GitHub Actions
+[CI run 39792160299](https://github.com/ahouchens/mesh-chat/actions/runs/39792160299)
+and
+[Release run 39792165966](https://github.com/ahouchens/mesh-chat/actions/runs/39792165966)
+passed on the first attempt for `v0.9.5`. Release:
+<https://github.com/ahouchens/mesh-chat/releases/tag/v0.9.5>.
+
+| Artifact | Bytes | SHA-256 (verified by re-download) |
+|---|---:|---|
+| `Mesh-Chat_0.9.5_x64-setup.exe` | 27,848,502 | `8608f176f55cb89054c3d8f46ecf42644c5d2074bdba52b5e624745b11fdc394` |
+| `Mesh-Chat_0.9.5_x64_en-US.msi` | 29,839,360 | `2091899abe90c0494bcc385cb3894c47d8d2381d7dc41d539997932388820ca1` |
+| `mesh-chat-0.9.5-android-arm64-release.apk` | 34,338,520 | `9c97b6b37d449defcc8ecbe4082d834f304ebd4a2bdcb0964892b27fc510ec09` |
+| `SHA256SUMS.txt` | 300 | `e6b09946895f0a052bf5e43d7c6136b8962de7ff2d257e4758ad3f85996665d4` |
+
+The Android APK is debug-signed; it is not a production or upgrade identity.
+
 Tests cover owner-only send, per-device delivery, inbound storage, stale state,
 received preview/consent/apply, sender UI queueing, and the out-of-band fallback.
 No physical multi-member access-point or suspension test was performed.
