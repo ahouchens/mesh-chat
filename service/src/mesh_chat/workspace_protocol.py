@@ -163,6 +163,7 @@ class VerifiedWorkspaceManifest:
     delegated_signer_destination: bytes | None = None
     delegation_grant_digest: str | None = None
     delegation_grant_use: int | None = None
+    delegation_end: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -1055,6 +1056,7 @@ def create_workspace_manifest(
     removal_checkpoint_digests: Iterable[str] = (),
     authority_transition_digest: str | None = None,
     device_transition_digest: str | None = None,
+    delegation_end: bool = False,
     now: int | None = None,
 ) -> str:
     workspace_id = _validate_uuid(workspace_id, "Workspace ID")
@@ -1186,6 +1188,8 @@ def create_workspace_manifest(
         unsigned["authority_signer_destination"] = authority_destination.hex()
     if checked_device_transition is not None:
         unsigned["device_transition_digest"] = checked_device_transition
+    if delegation_end:
+        unsigned["delegation_end"] = True
     return _sign(authority_identity, unsigned)
 
 
@@ -1225,6 +1229,14 @@ def verify_workspace_manifest(
         )
     if transition_digest is not None and device_transition_digest is not None:
         raise ValidationError("Workspace manifest transition is ambiguous")
+    delegation_end = False
+    if "delegation_end" in value:
+        fields.add("delegation_end")
+        if value.get("delegation_end") is not True:
+            raise ValidationError("Workspace delegation end marker is invalid")
+        delegation_end = True
+        if transition_digest is not None or device_transition_digest is not None:
+            raise ValidationError("Workspace delegation end transition is invalid")
     _require_fields(
         value,
         fields,
@@ -1395,6 +1407,7 @@ def verify_workspace_manifest(
         authority_transition_digest=transition_digest,
         authority_signer_destination=authority_signer_destination,
         device_transition_digest=device_transition_digest,
+        delegation_end=delegation_end,
     )
 
 
@@ -1552,6 +1565,17 @@ def verify_workspace_manifest_transition(
     )
     if checkpoints_changed and not removed_member:
         raise ValidationError("Workspace removal checkpoints changed without a removal")
+    change_count = sum(
+        (
+            bool(added),
+            bool(status_changes),
+            bool(display_name_changes),
+            bool(role_changes),
+            metadata_changed,
+            policies_changed,
+            retention_changed,
+        )
+    )
     if manifest.status == "closed":
         if (
             added
@@ -1566,17 +1590,15 @@ def verify_workspace_manifest_transition(
             raise ValidationError(
                 "Workspace closure cannot change membership or metadata"
             )
-    elif sum(
-        (
-            bool(added),
-            bool(status_changes),
-            bool(display_name_changes),
-            bool(role_changes),
-            metadata_changed,
-            policies_changed,
-            retention_changed,
-        )
-    ) != 1:
+    elif (
+        manifest.delegation_end
+        and previous.delegation_grant_digest is not None
+        and change_count == 0
+    ):
+        # Owner-return normalization: a v1 manifest that ends a delegated
+        # admission chain without changing membership or policy.
+        pass
+    elif change_count != 1:
         # Publish exactly one semantic change per epoch so concurrent owner
         # operations have a deterministic predecessor and replay boundary.
         raise ValidationError("Workspace manifest transition is not enabled")

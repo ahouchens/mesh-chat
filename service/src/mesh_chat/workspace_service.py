@@ -5767,6 +5767,45 @@ class WorkspaceServiceMixin:
         current = self._workspace_current_manifest(workspace)
         records: list[tuple[str, str, dict[str, Any]]] = []
         deliveries: list[dict[str, Any]] = []
+        if current.delegation_grant_digest is not None:
+            next_raw = create_workspace_manifest(
+                identity,
+                workspace_id=workspace["id"],
+                epoch=current.epoch + 1,
+                previous_manifest_hash=current.digest,
+                name=current.name,
+                description=current.description,
+                authority_device_id=current.authority_device_id,
+                members=self._workspace_manifest_member_inputs(current),
+                retention_days=current.retention_days,
+                channel_creation=current.channel_creation,
+                posting=current.posting,
+                invitation_requests=current.invitation_requests,
+                delegation_end=True,
+            )
+            next_manifest = verify_workspace_manifest_transition(next_raw, current)
+            deliveries.extend(
+                self._workspace_manifest_deliveries(
+                    workspace["id"],
+                    [next_manifest],
+                    self._workspace_manifest_recipients(
+                        current, excluding_member_id=workspace["local_member_id"]
+                    ),
+                )
+            )
+            self._apply_manifest_to_workspace(workspace, next_manifest)
+            self._apply_manifest_public_identities(workspace, next_manifest)
+            records.extend(
+                [
+                    ("workspace", self._workspace_record_id(workspace["id"]), workspace),
+                    (
+                        "workspace_manifest",
+                        self._workspace_manifest_record_id(next_manifest.digest),
+                        self._manifest_record(next_manifest),
+                    ),
+                    self._manifest_epoch_record(next_manifest),
+                ]
+            )
         admin = find_member(current, record["admin_member_id"])
         admin_device = next(
             (

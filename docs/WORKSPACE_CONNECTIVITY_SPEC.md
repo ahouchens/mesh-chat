@@ -4,8 +4,8 @@ Status: Phase 1 implemented in 0.9.3; Phase 2a implemented in 0.9.4; Phase 2b
 implemented in 0.9.5; Phase 3 implemented in 0.9.6; Phase 4 implemented in
 0.9.7; Phase 5 protocol primitives implemented in 0.9.8; grant lifecycle service
 implemented in 0.9.9; delegated admission backend implemented in 0.9.10; grant/admission UI
-implemented in 0.9.11; owner revocation implemented in 0.9.12; owner-return
-normalization and conflict UX pending; later phases proposed.
+implemented in 0.9.11; owner revocation implemented in 0.9.12; owner-return normalization implemented in
+0.9.13; conflict UX pending; later phases proposed.
 
 ## 1. Problem
 
@@ -381,10 +381,14 @@ Implemented and tested, with no service/UI admission path enabled yet:
   and delivers workspace_admission_revocation to the selected admin device;
   the admin can no longer approve joins from it.
 
-Not yet implemented: automatic owner-return normalization into a v1 manifest
-(the next owner semantic change already extends the v2 head), fork-resolution
-UI, pre-v2 fail-closed delivery, end-to-end multi-device tests, and physical
-qualification. Owner-offline admission is exposed but not physically qualified.
+0.9.13 adds owner-return normalization. A v1 manifest with the optional
+delegation_end marker may extend a v2 delegated head with no membership or
+policy change, signing the workspace back to a normal v1 head. The owner end
+action publishes this manifest and revokes the grant.
+
+Not yet implemented: fork-resolution UI, pre-v2 fail-closed delivery, end-to-end
+multi-device tests, and physical qualification. Owner-offline admission is
+exposed but not physically qualified.
 
 ## 10. Phase 6 — workspace DM calls
 

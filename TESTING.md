@@ -22,6 +22,46 @@ locally. Frontend/package/native tests and Windows/Android builds run in Actions
 Physical execution follows the
 [Phase 2 device checklist](docs/DIRECT_CONNECTIVITY_PHASE2_DEVICE_TEST.md).
 
+## Owner-offline admission grants, owner-return stage 0.9.13
+
+Phase 5.2c adds owner-return normalization.
+
+Implemented:
+
+- A v1 manifest may carry `delegation_end: true` when it extends a delegated v2
+  head.
+- The normalization manifest must preserve membership, name, description,
+  policies, retention, and authority; it returns the workspace to a normal
+  owner-signed v1 head.
+- Ending an accepted grant publishes this normalization manifest and revokes the
+  grant. The selected admin receives both the v1 head and the revocation.
+- Service tests cover the v2 admission, the v1 normalization, and the admin-side
+  revocation state.
+
+Not implemented in this stage:
+
+- explicit fork-resolution UI;
+- pre-v2 client fail-closed delivery;
+- physical multi-device qualification.
+
+Validation:
+
+```text
+pytest service/tests:        1108 passed, 46 skipped, 0 failed (294.73 s)
+node scripts/run-frontend-tests.mjs: 264 passed (18 files)
+node --test deploy/cloudflare-signal/worker.test.mjs: 11 passed
+packaged emoji artwork verification: 3 passed
+node node_modules/typescript/bin/tsc -b: passed
+node scripts/run-frontend-build.mjs: passed
+```
+
+The official report is
+`dist/reports/0.9.13/20261022T211937Z-ce2c999f/report.json` (git-ignored):
+`status: passed`, 348.812 s, SHA-256
+`130c3bc28e61f425e9a95e32e2aea6f0ab26da58b8e1f594156c254d6f8cc6ef`.
+Gates: `automated: passed`; `physical_device: not-requested`;
+`production_signing: not-requested`.
+
 ## Owner-offline admission grants, revocation stage 0.9.12
 
 Phase 5.2c adds owner revocation of an admission grant.

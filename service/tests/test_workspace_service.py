@@ -601,6 +601,8 @@ def test_workspace_admission_grant_delivery_and_acceptance(tmp_path):
     assert owner._receive_workspace_delegated_manifest(wire)
     ended = owner.end_workspace_admission_grant(workspace["id"], grant["id"])
     assert ended["state"] == "revoked"
+    restored = owner._workspace_current_manifest(owner._require_workspace(workspace["id"]))
+    assert restored.delegation_grant_digest is None and restored.delegation_end is True
     revocations = _flush(owner, owner_network)
     for item in revocations:
         _deliver(owner, item, source_profile=owner_profile, recipient_profile=member_profile)
