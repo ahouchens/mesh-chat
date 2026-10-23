@@ -24,6 +24,33 @@ Physical execution follows the
 full physical scenario matrix for versions through 0.9.15 is in the
 [Physical QA scenarios](docs/PHYSICAL_QA_SCENARIOS.md).
 
+## WebRTC SDP structure diagnostics, 0.9.28
+
+- Adds SDP structure to diagnostics: media lines, BUNDLE group, MID values, ICE
+  ufrag values, ICE password lengths (never passwords), setup role, and ICE
+  options.
+- This distinguishes a missing remote candidate from an SDP m-line/MID/ICE
+  credential mismatch.
+- Adds tests for SDP structure and password redaction.
+
+Validation:
+
+```text
+pytest service/tests:        1121 passed, 46 skipped, 0 failed (251.10 s)
+node scripts/run-frontend-tests.mjs: 278 passed (21 files)
+node --test deploy/cloudflare-signal/worker.test.mjs: 11 passed
+packaged emoji artwork verification: 3 passed
+node node_modules/typescript/bin/tsc -b: passed
+node scripts/run-frontend-build.mjs: passed
+```
+
+The official report is
+`dist/reports/0.9.28/20261023T181102Z-37ff8f58/report.json` (git-ignored):
+`status: passed`, 299.962 s, SHA-256
+`7391d88a4df4e10cd7b610268a1251d685a049a08c73b85f1f9154352bf0a813`.
+Gates: `automated: passed`; `physical_device: not-requested`;
+`production_signing: not-requested`.
+
 ## Expanded WebRTC diagnostics, 0.9.27
 
 - Diagnostics now include environment/WebView identity, signaling state,

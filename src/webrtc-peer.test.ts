@@ -5,6 +5,7 @@ import {
   peerDiagnostics,
   redactIceUrl,
   sdpCandidateSummary,
+  sdpStructure,
   summarizeIce,
 } from "./webrtc-peer";
 
@@ -150,6 +151,30 @@ describe("WebRTC diagnostics", () => {
       tcpTypes: { passive: 1 },
       endOfCandidates: true,
     });
+  });
+
+  it("describes SDP structure without exposing the ICE password", () => {
+    const structure = sdpStructure([
+      "v=0",
+      "m=application 9 UDP/DTLS/SCTP webrtc-datachannel",
+      "a=mid:0",
+      "a=ice-ufrag:localUfrag",
+      "a=ice-pwd:super-secret-password",
+      "a=setup:actpass",
+      "a=ice-options:trickle",
+      "a=group:BUNDLE 0",
+    ].join("\r\n"));
+    expect(structure).toMatchObject({
+      media: ["m=application 9 UDP/DTLS/SCTP webrtc-datachannel"],
+      bundle: ["0"],
+      mids: ["0"],
+      iceUfrags: ["localUfrag"],
+      icePwdLengths: [21],
+      setup: ["actpass"],
+      iceOptions: ["trickle"],
+      endOfCandidates: false,
+    });
+    expect(JSON.stringify(structure)).not.toContain("super-secret-password");
   });
 
   it("includes remote candidates, pair details, transports, and environment", async () => {

@@ -146,6 +146,23 @@ export function sdpCandidateSummary(sdp?: string): Record<string, unknown> {
   };
 }
 
+/** Describe SDP structure without exposing ICE passwords or fingerprints. */
+export function sdpStructure(sdp?: string): Record<string, unknown> {
+  const lines = (sdp ?? "").split(/\r?\n/);
+  const values = (prefix: string) =>
+    lines.filter((line) => line.startsWith(prefix)).map((line) => line.slice(prefix.length).trim());
+  return {
+    media: lines.filter((line) => line.startsWith("m=")),
+    bundle: values("a=group:BUNDLE "),
+    mids: values("a=mid:"),
+    iceUfrags: values("a=ice-ufrag:"),
+    icePwdLengths: values("a=ice-pwd:").map((value) => value.length),
+    setup: values("a=setup:"),
+    iceOptions: values("a=ice-options:"),
+    endOfCandidates: lines.includes("a=end-of-candidates"),
+  };
+}
+
 /** A redacted summary: counts, sanitized endpoint URLs, and booleans. */
 export function summarizeIce(ice: CallIceConfiguration): Record<string, unknown> {
   const urls = ice.iceServers.flatMap((server) =>
@@ -275,8 +292,14 @@ export async function peerDiagnostics(
       localDescriptionType: pc.localDescription?.type ?? null,
       remoteDescriptionType: pc.remoteDescription?.type ?? null,
       iceConfiguration: iceSummary,
-      localSdp: sdpCandidateSummary(pc.localDescription?.sdp),
-      remoteSdp: sdpCandidateSummary(pc.remoteDescription?.sdp),
+      localSdp: {
+        ...sdpCandidateSummary(pc.localDescription?.sdp),
+        structure: sdpStructure(pc.localDescription?.sdp),
+      },
+      remoteSdp: {
+        ...sdpCandidateSummary(pc.remoteDescription?.sdp),
+        structure: sdpStructure(pc.remoteDescription?.sdp),
+      },
       selectedPair,
       candidateTypes: [
         ...new Set(

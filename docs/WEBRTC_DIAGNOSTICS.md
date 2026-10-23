@@ -15,6 +15,9 @@ addresses, TURN usernames, TURN credentials, ICE passwords, or SDP bodies.
   (scheme, host, port, transport), and whether any credential was supplied.
 - `localSdp` / `remoteSdp` — candidate count, candidate types, protocols,
   address families, TCP types, and whether `a=end-of-candidates` was present.
+  Their `structure` object records the media lines, BUNDLE group, MID values,
+  ICE ufrag values, ICE password lengths (never the password), setup role, and
+  ICE options.
 - `candidates` — each local and remote candidate's type, protocol, relay
   protocol, address family, port, network type, and sanitized TURN URL.
 - `pairs` — every candidate pair with state, nomination, byte counters, request
