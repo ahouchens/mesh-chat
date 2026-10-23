@@ -50,6 +50,22 @@ The official report is
 Gates: `automated: passed`; `physical_device: not-requested`;
 `production_signing: not-requested`.
 
+Publication: GitHub Actions
+[CI run 39904084578](https://github.com/ahouchens/mesh-chat/actions/runs/39904084578)
+and
+[Release run 39904088485](https://github.com/ahouchens/mesh-chat/actions/runs/39904088485)
+passed for `v0.9.22`. Release:
+<https://github.com/ahouchens/mesh-chat/releases/tag/v0.9.22>.
+
+| Artifact | Bytes | SHA-256 (verified by re-download) |
+|---|---:|---|
+| `Mesh-Chat_0.9.22_x64-setup.exe` | 27,903,356 | `c97ee00ac7f7f1419cadd74f35610700baf33bbef38185a0306d216302b6a86a` |
+| `Mesh-Chat_0.9.22_x64_en-US.msi` | 29,892,608 | `4e447808aa58694ce4f312a6cf226c3f6751e2b408264c5df76414803be2c1eb` |
+| `mesh-chat-0.9.22-android-arm64-release.apk` | 34,387,878 | `628af34519539802e0fc767bb446d32b9e3fe3bff88374133455315d553c6efc` |
+| `SHA256SUMS.txt` | 303 | `9b53630c8ce4d56b6b1250f7f3dd22e9467057ce3b9f185e6124103a9c7e1170` |
+
+The Android APK is debug-signed; it is not a production or upgrade identity.
+
 ## Multi-peer WebRTC sessions, 0.9.21
 
 Fixes the single-global-session limitation:
