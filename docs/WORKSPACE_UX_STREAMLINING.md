@@ -1,6 +1,6 @@
 # Workspace UX streamlining
 
-Status: implemented in 0.9.19.
+Status: implemented in 0.9.19; defect fixes in 0.9.20.
 
 ## 1. Pending-joins inbox
 
@@ -14,12 +14,18 @@ known join requests. It opens a review dialog containing:
 - approve and decline actions.
 
 The foreground join-request dialog also offers **Member** or **Administrator**
-before approval. The role is applied in the signed admission manifest, so it is
-not a second, unsigned local edit.
+before approval. The admission is always a protocol-compatible member
+manifest; when the owner selects Administrator, Mesh Chat immediately follows it
+with a second owner-signed role-change manifest. This keeps pre-existing clients
+compatible instead of introducing an admin-admission manifest they would reject.
 
-Admission-grant admins can only admit **members**. The backend rejects an
-administrator role from a delegated admission, preventing a grant from becoming
-a privilege-escalation path.
+Admission-grant admins cannot choose **Administrator**. They can only admit
+members, and the role-change command remains owner-only, so a grant cannot
+become a privilege-escalation path.
+
+If the second role manifest fails, the member remains admitted as a member and
+the UI reports that the administrator role change failed. This partial outcome
+is explicit rather than being presented as a successful admin admission.
 
 ## 2. Explicit invitation chooser and delivery status
 
@@ -50,7 +56,8 @@ action, because they have no participant host.
 
 ## 3. Workspace setup checklist
 
-The owner's empty-workspace view now shows a dismissible setup checklist:
+The owner's workspace view now shows a dismissible setup card above the selected
+conversation:
 
 1. Create the first channel.
 2. Invite the first member.
@@ -60,7 +67,7 @@ Each step links to the relevant existing action. Completion is derived from
 current channel/member state; the connectivity step is marked locally when the
 owner opens People. The checklist can be dismissed per workspace.
 
-This is intentionally an inline empty-state card, not another modal.
+This is intentionally an inline workspace card, not another modal.
 
 ## Remaining follow-ups
 
@@ -71,3 +78,13 @@ This is intentionally an inline empty-state card, not another modal.
 - accessibility pass over the new card grid and dialog controls.
 
 Physical multi-device verification remains in the existing QA matrix.
+
+## 0.9.20 defect fixes
+
+- Administrator-at-approval is a protocol-compatible two-step transition: a normal member admission manifest followed immediately by an owner-signed role-change manifest. The member protocol never receives an admin admission it would reject.
+- Pending join requests are exposed only to workspace owners and admins, not ordinary members.
+- Contact invitation prompts are capped and expired/dismissed prompts are pruned.
+- Contact invitations no longer reuse a caller operation ID across recipients; each send creates a fresh invitation.
+- Invitation mode is persisted on the invitation record for the active-invitations list.
+- The setup checklist safely handles unavailable local storage and is keyed per workspace.
+- A full workspace now cannot issue another contact invitation.

@@ -4710,6 +4710,8 @@ class WorkspaceServiceMixin:
             outcome["transfer"] = "verified_contact"
         elif connection_mode not in {None, "nearby", "remote"}:
             raise ValidationError("Workspace invitation connection mode is invalid")
+        elif connection_mode == "nearby":
+            outcome["connection_mode"] = "nearby"
         elif remote_profile_id is not None:
             remote_record = self._require_remote_profile(remote_profile_id)
             if remote_record.get("state") == "expired":
@@ -4722,12 +4724,14 @@ class WorkspaceServiceMixin:
                 invite.expires_at, remote_record["profile"]["expires_at"]
             )
             outcome["remote_profile_id"] = remote_profile_id
+            outcome["connection_mode"] = "remote"
             outcome["access_point_reachable"] = (
                 int(remote_record.get("connected_endpoints", 0)) > 0
             )
             remote_record = add_profile_scope(
                 dict(remote_record), "pending_invitation", invitation_id
             )
+        record["connection_mode"] = outcome.get("connection_mode")
         committed = self.store.commit_operation(
             operation_id,
             digest,
@@ -4754,7 +4758,6 @@ class WorkspaceServiceMixin:
         self,
         workspace_id: Any,
         contact_id: Any,
-        operation_id: Any = None,
     ) -> dict[str, Any]:
         workspace = self._require_workspace(workspace_id)
         if workspace.get("state") != "active" or workspace.get("local_role") != "owner":
@@ -4768,6 +4771,8 @@ class WorkspaceServiceMixin:
         }:
             raise ContactNotApproved("Workspace invitations require a verified contact")
         manifest = self._workspace_current_manifest(workspace)
+        if len(active_members(manifest)) >= MAX_ACTIVE_MEMBERS:
+            raise ValidationError("A workspace supports at most eight active people")
         if any(
             device.destination_hash.hex() == contact.get("destination_hash")
             for member in manifest.members
@@ -4777,7 +4782,7 @@ class WorkspaceServiceMixin:
             raise ValidationError("Contact is already an active workspace device")
         invitation = self.create_workspace_invitation_command(
             workspace_id,
-            operation_id if isinstance(operation_id, str) and operation_id else str(uuid.uuid4()),
+            str(uuid.uuid4()),
             7,
             connection_mode="contact",
         )
@@ -4788,6 +4793,7 @@ class WorkspaceServiceMixin:
             invitation=invitation["value"],
         )
         self._attempt(message["id"])
+        current_message = self.store.get("message", message["id"]) or message
         invitation_record = self.store.get(
             "workspace_invitation", invitation["id"]
         )
@@ -4803,7 +4809,7 @@ class WorkspaceServiceMixin:
             "contact_id": contact_id,
             "invitation": invitation,
             "message_id": message["id"],
-            "message_state": message["state"],
+            "message_state": current_message["state"],
             "sent": True,
         }
 
@@ -6162,11 +6168,8 @@ class WorkspaceServiceMixin:
         workspace_id: Any,
         request_id: Any,
         operation_id: Any,
-        role: Any = "member",
     ) -> dict[str, Any]:
-        if role not in {"member", "admin"}:
-            raise ValidationError("Workspace join role is invalid")
-        payload = {"workspace_id": workspace_id, "request_id": request_id, "role": role}
+        payload = {"workspace_id": workspace_id, "request_id": request_id}
         operation_id, digest, replay = self._workspace_operation(
             "approve_workspace_join", operation_id, payload
         )
@@ -6176,8 +6179,6 @@ class WorkspaceServiceMixin:
         if workspace.get("state") != "active":
             raise ContactNotApproved("Workspace is not active")
         is_owner = workspace.get("local_role") == "owner"
-        if not is_owner and role != "member":
-            raise ContactNotApproved("Admission grants can only add members")
         grant_record: dict[str, Any] | None = None
         if not is_owner:
             if workspace.get("local_role") != "admin" or self._identity is None:
@@ -6231,7 +6232,7 @@ class WorkspaceServiceMixin:
             WorkspaceManifestMemberInput(
                 join.member_id,
                 join.device.display_name,
-                WorkspaceRole.ADMIN if role == "admin" else WorkspaceRole.MEMBER,
+                WorkspaceRole.MEMBER,
                 [join.device.serialized],
             )
         )
@@ -6259,7 +6260,7 @@ class WorkspaceServiceMixin:
                 new_member=WorkspaceManifestMemberInput(
                     join.member_id,
                     join.device.display_name,
-                    WorkspaceRole.ADMIN if role == "admin" else WorkspaceRole.MEMBER,
+                    WorkspaceRole.MEMBER,
                     [join.device.serialized],
                 ),
             )
@@ -20792,6 +20793,14 @@ class WorkspaceServiceMixin:
                 for channel in stored_channels
             )
         ]
+        manageable_workspace_ids = {
+            item["id"]
+            for item in stored_workspaces
+            if item.get("local_role") in {
+                WorkspaceRole.OWNER.value,
+                WorkspaceRole.ADMIN.value,
+            }
+        }
         requests = [
             {
                 key: value
@@ -20800,6 +20809,7 @@ class WorkspaceServiceMixin:
             }
             for item in self.store.list("workspace_join_request")
             if item.get("state") == "pending"
+            and item.get("workspace_id") in manageable_workspace_ids
         ]
         name_requests = [
             {

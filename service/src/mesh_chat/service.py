@@ -2694,6 +2694,11 @@ class MeshChatService(
         return {"dismissed": True}
 
     def _receive_workspace_contact_invite(self, contact: dict[str, Any], app: Any) -> None:
+        if contact.get("trust") not in {
+            TrustState.APPROVED.value,
+            TrustState.VERIFIED.value,
+        }:
+            return
         invitation_raw = getattr(app, "invitation", None)
         if not isinstance(invitation_raw, str) or not invitation_raw:
             return
@@ -2707,6 +2712,19 @@ class MeshChatService(
         existing = self.store.get("workspace_contact_invite", prompt_id)
         if existing is not None and existing.get("state") != "dismissed":
             self._ensure_receipt(contact, app.logical_id, app.conversation_id)
+            return
+        now = time.time()
+        for stale in self.store.list("workspace_contact_invite"):
+            if (
+                stale.get("state") == "dismissed"
+                or float(stale.get("expires_at", 0)) <= now
+            ):
+                self.store.delete("workspace_contact_invite", stale["id"])
+        if len([
+            item
+            for item in self.store.list("workspace_contact_invite")
+            if item.get("state") == "pending"
+        ]) >= 32:
             return
         preview = invitation.preview()
         self.store.put(
@@ -2724,7 +2742,7 @@ class MeshChatService(
                 "invitation": invitation_raw,
                 "contact_id": contact["id"],
                 "contact_display_name": contact["display_name"],
-                "received_at": time.time(),
+                "received_at": now,
                 "state": "pending",
             },
         )
@@ -3756,11 +3774,11 @@ class MeshChatService(
         if command == "invite_contact_to_workspace":
             body = _payload(
                 value,
-                allowed={"workspace_id", "contact_id", "operation_id"},
+                allowed={"workspace_id", "contact_id"},
                 required={"workspace_id", "contact_id"},
             )
             return self.invite_contact_to_workspace(
-                body["workspace_id"], body["contact_id"], body.get("operation_id")
+                body["workspace_id"], body["contact_id"]
             )
         if command == "dismiss_workspace_invitation_prompt":
             body = _payload(
@@ -3794,15 +3812,12 @@ class MeshChatService(
         if command in {"approve_workspace_join", "decline_workspace_join"}:
             body = _payload(
                 value,
-                allowed={"operation_id", "workspace_id", "request_id", "role"},
+                allowed={"operation_id", "workspace_id", "request_id"},
                 required={"operation_id", "workspace_id", "request_id"},
             )
             return (
                 self.approve_workspace_join(
-                    body["workspace_id"],
-                    body["request_id"],
-                    body["operation_id"],
-                    body.get("role", "member"),
+                    body["workspace_id"], body["request_id"], body["operation_id"]
                 )
                 if command == "approve_workspace_join"
                 else self.decline_workspace_join(

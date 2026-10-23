@@ -1987,17 +1987,24 @@ function WorkspaceSetupChecklist({
   onConnectivity: () => void;
 }) {
   const storageKey = `mesh-chat-workspace-setup-${workspace.id}`;
-  const [dismissed, setDismissed] = useState(() => localStorage.getItem(storageKey) === "dismissed");
-  const [connectivityChecked, setConnectivityChecked] = useState(() => localStorage.getItem(`${storageKey}-connectivity`) === "checked");
+  const readSetupFlag = (key: string) => {
+    try { return localStorage.getItem(key); } catch { return null; }
+  };
+  const writeSetupFlag = (key: string, value: string) => {
+    try { localStorage.setItem(key, value); } catch { /* private mode */ }
+  };
+  const [dismissed, setDismissed] = useState(() => readSetupFlag(storageKey) === "dismissed");
+  const [connectivityChecked, setConnectivityChecked] = useState(() => readSetupFlag(`${storageKey}-connectivity`) === "checked");
   if (dismissed) return null;
   const steps = [
     { key: "channel", title: "Create the first channel", detail: "Channels organize workspace messages and control who receives them.", done: channelCount > 0, action: onCreateChannel, label: "Create channel" },
     { key: "invite", title: "Invite your first member", detail: "Each person receives a single-use signed invitation and must be approved.", done: activeMemberCount > 1, action: onInvite, label: "Invite people" },
-    { key: "connectivity", title: "Review connectivity", detail: "Check that member devices have a usable route before relying on delivery.", done: connectivityChecked, action: () => { localStorage.setItem(`${storageKey}-connectivity`, "checked"); setConnectivityChecked(true); onConnectivity(); }, label: "Open People" },
+    { key: "connectivity", title: "Review connectivity", detail: "Check that member devices have a usable route before relying on delivery.", done: connectivityChecked, action: () => { writeSetupFlag(`${storageKey}-connectivity`, "checked"); setConnectivityChecked(true); onConnectivity(); }, label: "Open People" },
   ];
   const completed = steps.filter((step) => step.done).length;
+  if (completed === steps.length) return null;
   return <section className="workspace-setup" aria-labelledby={`workspace-setup-${workspace.id}`}>
-    <div className="workspace-setup__head"><div><p className="eyebrow">Getting started</p><h2 id={`workspace-setup-${workspace.id}`}>Finish setting up {workspace.name}</h2><p>{completed} of {steps.length} steps complete. You can reopen these actions from the workspace sidebar.</p></div><button type="button" className="button button--ghost" onClick={() => { localStorage.setItem(storageKey, "dismissed"); setDismissed(true); }}>Dismiss</button></div>
+    <div className="workspace-setup__head"><div><p className="eyebrow">Getting started</p><h2 id={`workspace-setup-${workspace.id}`}>Finish setting up {workspace.name}</h2><p>{completed} of {steps.length} steps complete. You can reopen these actions from the workspace sidebar.</p></div><button type="button" className="button button--ghost" onClick={() => { writeSetupFlag(storageKey, "dismissed"); setDismissed(true); }}>Dismiss</button></div>
     <ol>{steps.map((step) => <li key={step.key} className={step.done ? "workspace-setup__step workspace-setup__step--done" : "workspace-setup__step"}><span className="workspace-setup__check" aria-hidden="true">{step.done ? <Check size={15} /> : null}</span><span><strong>{step.title}</strong><small>{step.detail}</small></span>{!step.done && <Button variant="secondary" onClick={step.action}>{step.label}</Button>}</li>)}</ol>
   </section>;
 }
@@ -2076,8 +2083,8 @@ function WorkspacePendingJoinsDialog({
             <div><Avatar name={request.display_name} small /><span><strong>{request.display_name}</strong><small>{workspace.name} · {request.member_id.replaceAll("-", "").slice(0, 6)}</small></span></div>
             <p className="request-fingerprint">{request.fingerprint}</p>
             <small className="muted">{request.destination_hash}</small>
-            {workspace.local_role === "owner" && <label className="field"><span>Role</span><select value={role} disabled={busy} onChange={(event) => setRoles((current) => ({ ...current, [request.id]: event.target.value as "member" | "admin" }))}><option value="member">Member</option><option value="admin">Administrator</option></select></label>}
-            <div className="dialog-actions"><Button variant="ghost" disabled={busy} onClick={() => onDecline(request)}>Decline</Button><Button disabled={busy} onClick={() => onApprove(request, role)}>{busy ? "Responding…" : "Approve"}</Button></div>
+            {workspace.local_role === "owner" && <label className="field"><span>Role</span><select aria-label={`Role for ${request.display_name}`} value={role} disabled={busy} onChange={(event) => setRoles((current) => ({ ...current, [request.id]: event.target.value as "member" | "admin" }))}><option value="member">Member</option><option value="admin">Administrator</option></select></label>}
+            <div className="dialog-actions"><Button variant="ghost" disabled={busy} aria-label={`Decline ${request.display_name}`} onClick={() => onDecline(request)}>Decline</Button><Button disabled={busy} aria-label={`Approve ${request.display_name}`} onClick={() => onApprove(request, role)}>{busy ? "Responding…" : "Approve"}</Button></div>
           </section>;
         })}
         {error && <p className="form-error" role="alert">{error}</p>}
@@ -3485,12 +3492,16 @@ function WorkspaceInviteDialog({ workspace, existingInvitations, remoteProfiles,
   });
   const sendContactInvite = async () => {
     if (!contactId || contactBusy) return;
+    const selectedContact = contacts.find((candidate) => candidate.id === contactId);
     setContactBusy(true); setContactFeedback(""); setContactError("");
     try {
-      const result = await serviceCommand<{ sent: boolean; message_state?: string }>("invite_contact_to_workspace", {
+      const result = await serviceCommand<{ sent: boolean; message_state?: string; invitation: WorkspaceInvitationFormats }>("invite_contact_to_workspace", {
         workspace_id: workspace.id,
         contact_id: contactId,
       });
+      if (result.invitation) {
+        setExisting((current) => [...current, { ...result.invitation, offered_manifest_digest: "", state: "active", created_at: Date.now() / 1000, contact_id: contactId, contact_display_name: selectedContact?.display_name, delivery_state: result.message_state }]);
+      }
       setContactFeedback(`Workspace invitation queued over the existing verified contact route${result.message_state ? ` (${result.message_state})` : ""}.`);
       setContactId("");
     } catch (reason) {
@@ -5414,8 +5425,16 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceChannelIn
         setMobileSidebarOpen(true);
       }
     };
+    let roleWarning = "";
     try {
-      await serviceCommand(accept ? "approve_workspace_join" : "decline_workspace_join", { operation_id: newOperationId(), workspace_id: request.workspace_id, request_id: request.id, ...(accept ? { role } : {}) });
+      await serviceCommand(accept ? "approve_workspace_join" : "decline_workspace_join", { operation_id: newOperationId(), workspace_id: request.workspace_id, request_id: request.id });
+      if (accept && role === "admin") {
+        try {
+          await serviceCommand("change_workspace_role", { operation_id: newOperationId(), workspace_id: request.workspace_id, member_id: request.member_id, role: "admin" });
+        } catch (reason) {
+          roleWarning = `Member admitted, but the administrator role change failed: ${errorMessage(reason)}`;
+        }
+      }
     } catch (reason) {
       try {
         const latest = await refresh(true);
@@ -5423,7 +5442,15 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceChannelIn
         const latestWorkspace = (latest.workspaces ?? []).find((candidate) => candidate.id === request.workspace_id);
         const admitted = latestWorkspace?.members.some((member) => member.id === request.member_id && member.status === "active") === true;
         if ((accept && admitted) || (!accept && !stillPending && !admitted)) {
+          if (accept && admitted && role === "admin") {
+            try {
+              await serviceCommand("change_workspace_role", { operation_id: newOperationId(), workspace_id: request.workspace_id, member_id: request.member_id, role: "admin" });
+            } catch (roleReason) {
+              roleWarning = `Member admitted, but the administrator role change failed: ${errorMessage(roleReason)}`;
+            }
+          }
           applyLocalDecision();
+          if (roleWarning) setWorkspaceActionError(roleWarning);
           setWorkspaceActionBusy(false);
           return;
         }
@@ -5440,10 +5467,11 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceChannelIn
       return;
     }
     applyLocalDecision();
+    if (roleWarning) setWorkspaceActionError(roleWarning);
     try {
       await refresh(true);
     } catch {
-      setWorkspaceActionError("The workspace decision was saved. This view will update automatically when Mesh Chat refreshes.");
+      setWorkspaceActionError(roleWarning ? `${roleWarning} The workspace view could not refresh yet.` : "The workspace decision was saved. This view will update automatically when Mesh Chat refreshes.");
     }
     finally { setWorkspaceActionBusy(false); }
   };
@@ -6239,6 +6267,7 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceChannelIn
             onChanged={async () => { await refresh(true); }}
           />
         )}
+        {selectedWorkspace?.state === "active" && selectedWorkspace.local_role === "owner" && <div className="workspace-setup-wrap"><WorkspaceSetupChecklist key={selectedWorkspace.id} workspace={selectedWorkspace} channelCount={selectedWorkspaceChannels.length} activeMemberCount={selectedWorkspace.members.filter((member) => member.status === "active").length} onInvite={() => setInviteWorkspaceOpen(true)} onCreateChannel={() => setWorkspaceCreateChannelOpen(true)} onConnectivity={() => setWorkspacePeopleOpen(true)} /></div>}
         {selectedWorkspace ? (workspaceSearchOpen ? (
           <WorkspaceSearchView
             workspace={selectedWorkspace}
@@ -6473,7 +6502,7 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceChannelIn
       {incomingRequest && <IncomingRequestDialog contact={incomingRequest} busy={requestBusy === incomingRequest.id} error={requestError} onAccept={() => void respondToRequest(incomingRequest, true)} onDecline={() => void respondToRequest(incomingRequest, false)} onClose={() => { setRequestError(""); setDismissedRequests((current) => [...new Set([...current, incomingRequest.id])]); }} />}
       {foregroundGroupInvitation && <GroupInvitationDialog invitation={foregroundGroupInvitation} busy={groupInvitationBusy === foregroundGroupInvitation.id} error={groupInvitationError} onAccept={() => void respondToGroupInvitation(foregroundGroupInvitation, true)} onDecline={() => void respondToGroupInvitation(foregroundGroupInvitation, false)} onClose={() => { setGroupInvitationError(""); setDismissedGroupInvitations((current) => [...new Set([...current, foregroundGroupInvitation.id])]); }} />}
       {pendingJoinsOpen && <WorkspacePendingJoinsDialog requests={workspaceJoinRequests} workspaces={workspaces} busy={workspaceActionBusy} error={workspaceJoinRequestError} onApprove={(request, role) => void respondToWorkspaceJoin(request, true, role)} onDecline={(request) => void respondToWorkspaceJoin(request, false)} onClose={() => setPendingJoinsOpen(false)} />}
-      {foregroundWorkspaceJoinRequest && foregroundWorkspaceJoinWorkspace && <WorkspaceJoinRequestDialog request={foregroundWorkspaceJoinRequest} workspace={foregroundWorkspaceJoinWorkspace} busy={workspaceActionBusy} error={workspaceJoinRequestError} canGrantAdmin={foregroundWorkspaceJoinWorkspace.local_role === "owner"} onApprove={(role) => void respondToWorkspaceJoin(foregroundWorkspaceJoinRequest, true, role)} onDecline={() => void respondToWorkspaceJoin(foregroundWorkspaceJoinRequest, false)} onClose={() => { setWorkspaceJoinRequestError(""); setDismissedWorkspaceJoinRequests((current) => [...new Set([...current, foregroundWorkspaceJoinRequest.id])]); }} />}
+      {foregroundWorkspaceJoinRequest && foregroundWorkspaceJoinWorkspace && <WorkspaceJoinRequestDialog key={foregroundWorkspaceJoinRequest.id} request={foregroundWorkspaceJoinRequest} workspace={foregroundWorkspaceJoinWorkspace} busy={workspaceActionBusy} error={workspaceJoinRequestError} canGrantAdmin={foregroundWorkspaceJoinWorkspace.local_role === "owner"} onApprove={(role) => void respondToWorkspaceJoin(foregroundWorkspaceJoinRequest, true, role)} onDecline={() => void respondToWorkspaceJoin(foregroundWorkspaceJoinRequest, false)} onClose={() => { setWorkspaceJoinRequestError(""); setDismissedWorkspaceJoinRequests((current) => [...new Set([...current, foregroundWorkspaceJoinRequest.id])]); }} />}
     </main>
   );
 }

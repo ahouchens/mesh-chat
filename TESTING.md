@@ -24,6 +24,48 @@ Physical execution follows the
 full physical scenario matrix for versions through 0.9.15 is in the
 [Physical QA scenarios](docs/PHYSICAL_QA_SCENARIOS.md).
 
+## Workspace UX defect fixes, 0.9.20
+
+Defects found in the 0.9.19 audit and fixed:
+
+- **Administrator-at-approval broke protocol verification.** A v1 admission
+  manifest cannot add a non-member role. Approval now always admits as a member,
+  then the owner immediately applies a second owner-signed role-change manifest.
+  A failed second step leaves the member admitted and reports the partial result.
+- **Pending join requests were visible to ordinary members.** The snapshot now
+  exposes pending joins only to workspace owners and administrators.
+- **The invitation chooser could dead-end for some paths.** The explicit email
+  and same-network paths now have their own create actions.
+- **Invitation mode was not persisted.** Active invitations now retain and display
+  their selected connection mode.
+- **Contact invitations could reuse a caller operation ID across recipients.**
+  Each send now creates a fresh invitation and never reuses a nested operation.
+- **Contact invitation prompts were unbounded.** Pending prompts are capped and
+  expired/dismissed prompts are pruned.
+- **Contact invitations could be issued for a full workspace.** The service now
+  rejects them before creating the invitation.
+- **Setup-checklist storage could throw in private/restricted WebViews.** Storage
+  access is guarded and the checklist is keyed per workspace.
+- **Role-selection input validation** no longer assumes a hashable role value.
+
+Validation:
+
+```text
+pytest service/tests:        1115 passed, 46 skipped, 0 failed (247.65 s)
+node scripts/run-frontend-tests.mjs: 265 passed (18 files)
+node --test deploy/cloudflare-signal/worker.test.mjs: 11 passed
+packaged emoji artwork verification: 3 passed
+node node_modules/typescript/bin/tsc -b: passed
+node scripts/run-frontend-build.mjs: passed
+```
+
+The official report is
+`dist/reports/0.9.20/20261023T032130Z-db19462e/report.json` (git-ignored):
+`status: passed`, 283.664 s, SHA-256
+`a5bb52ab4d7643d74166151123b26fae65d323ac50d82baa29519320a8cf243b`.
+Gates: `automated: passed`; `physical_device: not-requested`;
+`production_signing: not-requested`.
+
 ## Workspace UX streamlining, 0.9.19
 
 Implements the three requested improvements in

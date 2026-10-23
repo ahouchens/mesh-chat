@@ -311,12 +311,12 @@ Text remains in LXMF Content. Mesh Chat uses upstream-reserved `FIELD_CUSTOM_TYP
 | Key | Value |
 | --- | --- |
 | `1` | schema version `1` |
-| `2` | `chat`, `reaction`, `receipt`, `contact_request`, `contact_accept`, `contact_decline`, `route_update`, `group_invite`, `group_accept`, `group_manifest`, `group_chat`, `group_reaction`, `group_receipt`, or `group_leave_request` |
+| `2` | `chat`, `reaction`, `receipt`, `contact_request`, `contact_accept`, `contact_decline`, `route_update`, `call_signal`, `workspace_invite`, `group_invite`, `group_accept`, `group_manifest`, `group_chat`, `group_reaction`, `group_receipt`, or `group_leave_request` |
 | `3` | random 16-byte logical delivery UUID |
 | `4` | deterministic 16-byte pairwise conversation UUID |
 | `5` | authenticated application expiry timestamp |
 | `6` | optional 16-byte receipt reference |
-| `7` | signed invitation JSON, only for a contact request |
+| `7` | signed invitation JSON: a Personal contact request or a verified-contact workspace invitation; workspace invitations must have empty text |
 | `8` | group UUID, only for a group payload |
 | `9` | nonnegative membership epoch, only for a group payload |
 | `10` | 32-byte SHA-256 digest of the referenced group manifest |

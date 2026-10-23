@@ -3600,7 +3600,11 @@ describe("desktop workspaces", () => {
     fireEvent.click(within(dialog).getByRole("button", { name: "Approve as administrator" }));
     await waitFor(() => expect(api.serviceCommand).toHaveBeenCalledWith(
       "approve_workspace_join",
-      expect.objectContaining({ workspace_id: workspace.id, request_id: request.id, role: "admin", operation_id: expect.any(String) }),
+      expect.objectContaining({ workspace_id: workspace.id, request_id: request.id, operation_id: expect.any(String) }),
+    ));
+    await waitFor(() => expect(api.serviceCommand).toHaveBeenCalledWith(
+      "change_workspace_role",
+      expect.objectContaining({ workspace_id: workspace.id, member_id: request.member_id, role: "admin", operation_id: expect.any(String) }),
     ));
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "Workspace join request" })).toBeNull());
     expect(screen.getByRole("button", { name: "Workspace Lakewatcher" })).toBeTruthy();
