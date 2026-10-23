@@ -444,6 +444,13 @@ signed join, owner/admin approval, and manifest application. No invitation is
 trusted merely because it arrived over the DataChannel: the standard signed
 document is still verified, single-use, expiring, and owner/admin-approved.
 
+When the invite dialog is opened with a configured TURN relay, it now says
+explicitly that TURN relays WebRTC only and cannot make participant hosting
+reachable through carrier NAT. If no WebRTC DataChannel is active, the dialog can
+open WebRTC onboarding to establish one. The guided direct-setup view also keeps
+the signed email-ready invitation visible and copyable when direct checks fail,
+so a CGNAT block is not a dead end.
+
 The open WebRTC bridge continues to carry Reticulum packets; the control channel
 carries only the invitation transfer. Physical Android/Windows transfer and
 NAT/TURN qualification remains open.

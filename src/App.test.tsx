@@ -4457,7 +4457,7 @@ describe("desktop workspaces", () => {
     expect(within(dialog).getByText(/effective direct-host expiry/i)).toBeTruthy();
   });
 
-  it("starts the guided controller from Invite and exposes only its current message", async () => {
+  it("starts the guided controller from Invite and exposes the email invitation fallback", async () => {
     const current: Snapshot = { ...snapshot(), workspaces:[workspace], workspace_channels:[workspaceChannel], workspace_join_requests:[], workspace_invitations:[], workspace_drafts:[] };
     api.runtimePlatform.mockResolvedValue("desktop");
     api.initializeService.mockResolvedValue(current);
@@ -4478,8 +4478,8 @@ describe("desktop workspaces", () => {
     await waitFor(() => expect(api.serviceCommand).toHaveBeenCalledWith("prepare_direct_offer", { invitation_id:"guided-invite" }));
     const dialog = screen.getByRole("dialog");
     expect(await within(dialog).findByText("No public address on this device")).toBeTruthy();
-    expect(within(dialog).queryByText("Copy complete invitation")).toBeNull();
-    expect(within(dialog).queryByDisplayValue("MESHWORKSPACE-legacy")).toBeNull();
+    expect(within(dialog).getByRole("button", { name:"Copy complete invitation" })).toBeTruthy();
+    expect(within(dialog).getByRole("textbox", { name:"Workspace invitation text" })).toHaveProperty("value", "MESHWORKSPACE-legacy");
     expect(within(dialog).getAllByRole("button", { name:"Copy connection message" })).toHaveLength(1);
     expect(api.serviceCommand).toHaveBeenCalledWith("create_workspace_invitation", expect.objectContaining({ connection_mode:"email" }));
   });

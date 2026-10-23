@@ -24,6 +24,39 @@ Physical execution follows the
 full physical scenario matrix for versions through 0.9.15 is in the
 [Physical QA scenarios](docs/PHYSICAL_QA_SCENARIOS.md).
 
+## Workspace invitation TURN fallback, 0.9.17
+
+The workspace invite dialog now:
+
+- detects a configured/enabled TURN relay;
+- explains that TURN relays WebRTC calls/DataChannel traffic but cannot make
+  participant-hosted direct joining reachable through carrier NAT;
+- offers **Connect over WebRTC/TURN first** when no DataChannel is active;
+- keeps the signed email-ready invitation visible and copyable during the guided
+  direct-setup failure state.
+
+The guided email invitation is no longer hidden behind a failed direct check.
+The existing WebRTC onboarding flow remains the path to establish the
+TURN-backed DataChannel.
+
+Validation:
+
+```text
+pytest service/tests:        1113 passed, 46 skipped, 0 failed (293.44 s)
+node scripts/run-frontend-tests.mjs: 264 passed (18 files)
+node --test deploy/cloudflare-signal/worker.test.mjs: 11 passed
+packaged emoji artwork verification: 3 passed
+node node_modules/typescript/bin/tsc -b: passed
+node scripts/run-frontend-build.mjs: passed
+```
+
+The official report is
+`dist/reports/0.9.17/20261023T004350Z-6bff2afb/report.json` (git-ignored):
+`status: passed`, 354.43 s, SHA-256
+`ed1772c0726bfec5ce6d8e3421401c4773268016ad34286a6c10ad814fed9031`.
+Gates: `automated: passed`; `physical_device: not-requested`;
+`production_signing: not-requested`.
+
 ## Workspace admission and call audit hardening, 0.9.16
 
 An audit of the 0.9.15 workspace admission/call paths found and fixed:
