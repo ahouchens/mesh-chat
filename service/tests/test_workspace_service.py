@@ -546,34 +546,89 @@ def test_workspace_dm_call_signal_uses_active_peer_without_contact(tmp_path):
     assert packets
     assert parse_workspace_payload(_native(packets[0], source=b"\x00" * 16, destination=b"\x01" * 16)).kind == "workspace_call_signal"
     for item in packets:
-        _deliver(owner, item, source_profile=owner_profile, recipient_profile=member_profile)
+        _deliver(member, item, source_profile=owner_profile, recipient_profile=member_profile)
     incoming = [
         item
         for item in member.snapshot()["calls"]
         if item["state"] == "ringing"
     ]
-    if not incoming:
-        for item in packets:
-            member._receive_workspace_payload(
-                _native(
-                    item,
-                    source=bytes.fromhex(owner_profile["destination_hash"]),
-                    destination=bytes.fromhex(member_profile["destination_hash"]),
-                ),
-                parse_workspace_payload(
-                    _native(
-                        item,
-                        source=bytes.fromhex(owner_profile["destination_hash"]),
-                        destination=bytes.fromhex(member_profile["destination_hash"]),
-                    )
-                ),
-            )
-        incoming = [
-            item
-            for item in member.snapshot()["calls"]
-            if item["state"] == "ringing"
-        ]
     assert incoming
+
+
+def test_workspace_admin_can_admit_join_while_owner_offline(tmp_path):
+    owner, owner_network, owner_profile, member, member_network, member_profile, workspace, _key, _identity = _joined_pair(tmp_path, base=10500)
+    member_workspace = member._require_workspace(workspace["id"])
+    owner.change_workspace_role(
+        workspace["id"],
+        member_workspace["local_member_id"],
+        "admin",
+        _op(10504),
+    )
+    for item in _flush(owner, owner_network):
+        _deliver(member, item, source_profile=owner_profile, recipient_profile=member_profile)
+    assert member._require_workspace(workspace["id"])["local_role"] == "admin"
+    invitation = owner.create_workspace_invitation_command(workspace["id"], _op(10510))
+    third, third_network = _service(
+        tmp_path / "third", RNS.Identity(), "Casey", vault_key=os.urandom(32)
+    )
+    third_profile = third._require_profile()
+    third.submit_workspace_join(invitation["text"], _op(10511))
+    for item in _flush(third, third_network):
+        _deliver(owner, item, source_profile=third_profile, recipient_profile=owner_profile)
+    request = next(
+        item
+        for item in owner.workspace_snapshot()["workspace_join_requests"]
+        if item["workspace_id"] == workspace["id"]
+    )
+    grant = owner.create_workspace_admission_grant(
+        workspace["id"],
+        member_workspace["local_member_id"],
+        member_workspace["local_device_id"],
+        5,
+        7,
+        True,
+    )
+    for item in _flush(owner, owner_network):
+        _deliver(member, item, source_profile=owner_profile, recipient_profile=member_profile)
+    member.accept_workspace_admission_grant(workspace["id"], grant["id"])
+    for item in _flush(member, member_network):
+        _deliver(owner, item, source_profile=member_profile, recipient_profile=owner_profile)
+    assert owner.list_workspace_admission_grants(workspace["id"])[0]["state"] == "accepted"
+    pending_packets = _flush(owner, owner_network)
+    assert any(
+        parse_workspace_payload(
+            _native(item, source=b"\x00" * 16, destination=b"\x01" * 16)
+        ).kind == "workspace_admission_pending"
+        for item in pending_packets
+    )
+    for item in pending_packets:
+        _deliver(member, item, source_profile=owner_profile, recipient_profile=member_profile)
+    forwarded = next(
+        item
+        for item in member.store.list("workspace_join_request")
+        if item.get("workspace_id") == workspace["id"]
+        and item.get("member_id") == request["member_id"]
+        and item.get("state") == "pending"
+    )
+    admitted = member.approve_workspace_join(workspace["id"], forwarded["id"], str(uuid.uuid4()))
+    assert admitted["state"] == "approved"
+    admitted_packets = _flush(member, member_network)
+    for item in admitted_packets:
+        _deliver(owner, item, source_profile=member_profile, recipient_profile=owner_profile)
+        _deliver(third, item, source_profile=member_profile, recipient_profile=third_profile)
+    owner_workspace = owner._require_workspace(workspace["id"])
+    owner_manifest = owner._workspace_current_manifest(owner_workspace)
+    assert owner_manifest.delegation_grant_digest == grant["id"]
+    assert any(
+        item.member_id == request["member_id"]
+        for item in owner_manifest.members
+        if item.status == "active"
+    )
+    assert owner.store.get("workspace_join_request", request["id"])["state"] == "approved"
+    assert owner.store.get("workspace_invitation", request["invitation_id"])["state"] == "consumed"
+    third_workspace = third._require_workspace(workspace["id"])
+    assert third_workspace["state"] == "active"
+    assert third._workspace_current_manifest(third_workspace).digest == owner_manifest.digest
 
 
 def test_workspace_admission_grant_delivery_and_acceptance(tmp_path):
@@ -587,9 +642,8 @@ def test_workspace_admission_grant_delivery_and_acceptance(tmp_path):
     )
     controls = _flush(owner, owner_network)
     assert controls
-    member_workspace = member._require_workspace(workspace["id"])
-    member_workspace["local_role"] = "admin"
-    member.store.put("workspace", member._workspace_record_id(workspace["id"]), member_workspace)
+    for item in controls:
+        _deliver(member, item, source_profile=owner_profile, recipient_profile=member_profile)
     member_workspace = member._require_workspace(workspace["id"])
     assert member_workspace["local_role"] == "admin"
     grant = owner.create_workspace_admission_grant(
@@ -608,35 +662,21 @@ def test_workspace_admission_grant_delivery_and_acceptance(tmp_path):
         workspace["id"], bytes.fromhex(owner_profile["destination_hash"])
     )
     for item in packets:
-        _deliver(owner, item, source_profile=owner_profile, recipient_profile=member_profile)
-    if not member.list_workspace_admission_grants(workspace["id"]):
-        member._receive_workspace_admission_grant(
-            parse_workspace_payload(_native(packets[0], source=b"\x00" * 16, destination=b"\x01" * 16))
-        )
+        _deliver(member, item, source_profile=owner_profile, recipient_profile=member_profile)
     received = member.list_workspace_admission_grants(workspace["id"])
     assert len(received) == 1 and received[0]["id"] == grant["id"]
     accepted = member.accept_workspace_admission_grant(workspace["id"], grant["id"])
     assert accepted["state"] == "accepted"
     acceptance_packets = _flush(member, member_network)
     for item in acceptance_packets:
-        _deliver(member, item, source_profile=member_profile, recipient_profile=owner_profile)
-    owner_grants = owner.list_workspace_admission_grants(workspace["id"])
-    if (not owner_grants or owner_grants[0]["state"] != "accepted") and acceptance_packets:
-        owner._receive_workspace_admission_acceptance(
-            parse_workspace_payload(_native(acceptance_packets[0], source=b"\x00" * 16, destination=b"\x01" * 16))
-        )
+        _deliver(owner, item, source_profile=member_profile, recipient_profile=owner_profile)
     owner_grants = owner.list_workspace_admission_grants(workspace["id"])
     assert owner_grants and owner_grants[0]["state"] == "accepted"
 
     owner_workspace = owner._require_workspace(workspace["id"])
     owner_manifest = owner._workspace_current_manifest(owner_workspace)
     member_workspace = member._require_workspace(workspace["id"])
-    member._apply_manifest_to_workspace(member_workspace, owner_manifest)
-    member.store.put_many([
-        ("workspace", member._workspace_record_id(workspace["id"]), member_workspace),
-        ("workspace_manifest", member._workspace_manifest_record_id(owner_manifest.digest), member._manifest_record(owner_manifest)),
-        member._manifest_epoch_record(owner_manifest),
-    ])
+    assert member._workspace_current_manifest(member_workspace).digest == owner_manifest.digest
     third_identity = RNS.Identity()
     third_id = str(uuid.uuid4())
     third_card = create_workspace_device_card(
@@ -676,24 +716,7 @@ def test_workspace_admission_grant_delivery_and_acceptance(tmp_path):
     assert restored.delegation_grant_digest is None and restored.delegation_end is True
     revocations = _flush(owner, owner_network)
     for item in revocations:
-        _deliver(owner, item, source_profile=owner_profile, recipient_profile=member_profile)
-    member_grant = member.store.get("workspace_admission_grant", grant["id"])
-    if member_grant is not None and member_grant.get("state") != "revoked":
-        revocation = next(
-            (
-                item
-                for item in revocations
-                if parse_workspace_payload(
-                    _native(item, source=b"\x00" * 16, destination=b"\x01" * 16)
-                ).kind == "workspace_admission_revocation"
-            ),
-            None,
-        )
-        if revocation is not None:
-            member._receive_workspace_admission_revocation(
-                parse_workspace_payload(_native(revocation, source=b"\x00" * 16, destination=b"\x01" * 16)),
-                bytes.fromhex(owner_profile["destination_hash"]),
-            )
+        _deliver(member, item, source_profile=owner_profile, recipient_profile=member_profile)
     assert member.store.get("workspace_admission_grant", grant["id"])["state"] == "revoked"
 
 

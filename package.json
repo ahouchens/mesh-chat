@@ -1,6 +1,6 @@
 {
   "name": "mesh-chat",
-  "version": "0.9.15",
+  "version": "0.9.16",
   "private": true,
   "license": "MIT",
   "type": "module",

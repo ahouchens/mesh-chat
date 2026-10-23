@@ -5780,7 +5780,9 @@ class WorkspaceServiceMixin:
         current = self._workspace_current_manifest(workspace)
         records: list[tuple[str, str, dict[str, Any]]] = []
         deliveries: list[dict[str, Any]] = []
-        if current.delegation_grant_digest is not None:
+        # Always publish a fresh owner-signed head. This invalidates the grant's
+        # start hash even when no delegated manifest had been published yet.
+        if current.epoch >= 1:
             next_raw = create_workspace_manifest(
                 identity,
                 workspace_id=workspace["id"],
@@ -5964,11 +5966,12 @@ class WorkspaceServiceMixin:
             return
         if checked.workspace_id != wire.workspace_id:
             return
+        was_accepted = record.get("state") == "accepted"
         record["acceptance"] = wire.document
         record["state"] = "accepted"
         self.store.put("workspace_admission_grant", record["id"], record)
         self._workspace_changed(wire.workspace_id, resource_kind="admission_grant")
-        if record.get("state") == "accepted":
+        if not was_accepted:
             self._forward_workspace_admission_requests(record)
 
     def _forward_workspace_admission_requests(self, record: dict[str, Any]) -> None:
@@ -6074,17 +6077,20 @@ class WorkspaceServiceMixin:
         if join.workspace_id != wire.workspace_id or join.member_id != request.get("member_id"):
             return
         invitation_id = self._workspace_invitation_record_id(join.invite_nonce)
-        if invitation.get("id") != invitation_id:
-            return
         request_id = self.store.opaque_id("workspace-join", join.digest)
-        if request.get("id") != request_id:
-            return
         if self.store.get("workspace_join_request", request_id) is not None:
             return
+        forwarded_invitation = dict(invitation)
+        forwarded_invitation["id"] = invitation_id
+        forwarded_request = dict(request)
+        forwarded_request["id"] = request_id
+        forwarded_request["invitation_id"] = invitation_id
+        forwarded_request.pop("receipt_delivery_id", None)
+        forwarded_request.pop("join_attempt_id", None)
         self.store.put_many(
             [
-                ("workspace_join_request", request_id, request),
-                ("workspace_invitation", invitation_id, invitation),
+                ("workspace_join_request", request_id, forwarded_request),
+                ("workspace_invitation", invitation_id, forwarded_invitation),
             ]
         )
         self._workspace_changed(wire.workspace_id, resource_kind="join_request")
@@ -9676,6 +9682,37 @@ class WorkspaceServiceMixin:
                 grant["state"] = "accepted"
                 records.append(
                     ("workspace_admission_grant", grant["id"], grant)
+                )
+        for request in self.store.list("workspace_join_request"):
+            if (
+                request.get("workspace_id") != wire.workspace_id
+                or request.get("state") != "pending"
+            ):
+                continue
+            admitted = find_member(incoming, str(request.get("member_id", "")))
+            if (
+                admitted is None
+                or admitted.status != "active"
+                or not any(
+                    device.device_id == request.get("device_id")
+                    for device in admitted.devices
+                )
+            ):
+                continue
+            request["state"] = "approved"
+            request["updated_at"] = time.time()
+            records.append(
+                ("workspace_join_request", request["id"], request)
+            )
+            invitation = self.store.get(
+                "workspace_invitation", request.get("invitation_id", "")
+            )
+            if invitation is not None and invitation.get("state") == "active":
+                invitation["state"] = "consumed"
+                invitation["consumed_by_member_id"] = admitted.member_id
+                invitation["updated_at"] = time.time()
+                records.append(
+                    ("workspace_invitation", invitation["id"], invitation)
                 )
         self.store.put_many(records)
         self._workspace_changed(wire.workspace_id, resource_kind="manifest")
@@ -19460,18 +19497,36 @@ class WorkspaceServiceMixin:
             return
         if wire.kind == "workspace_call_signal":
             source_hash = getattr(native, "source_hash", None)
+            workspace = self.store.get(
+                "workspace", self._workspace_record_id(wire.workspace_id)
+            )
             if (
                 self._identity is not None
                 and isinstance(source_hash, bytes)
-                and (
-                    peer := self._workspace_reconnect_contact_by_destination(
-                        source_hash.hex()
-                    )
-                )
-                is not None
+                and workspace is not None
+                and workspace.get("state") == "active"
             ):
-                if self.calls.receive(self._identity, peer, wire.document) is not None:
-                    self._workspace_changed(wire.workspace_id, resource_kind="call")
+                manifest = self._workspace_current_manifest(workspace)
+                peer = None
+                for member in manifest.members:
+                    if member.status != "active":
+                        continue
+                    device = next(
+                        (
+                            item
+                            for item in member.devices
+                            if item.destination_hash == source_hash
+                        ),
+                        None,
+                    )
+                    if device is not None:
+                        peer = self._workspace_reconnect_contact(
+                            f"workspace:{wire.workspace_id}:{member.member_id}:{device.device_id}"
+                        )
+                        break
+                if peer is not None:
+                    if self.calls.receive(self._identity, peer, wire.document) is not None:
+                        self._workspace_changed(wire.workspace_id, resource_kind="call")
             return
         if wire.kind == "workspace_manifest_delegated":
             self._receive_workspace_delegated_manifest(wire)

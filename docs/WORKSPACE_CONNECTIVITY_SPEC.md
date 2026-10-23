@@ -6,7 +6,8 @@ implemented in 0.9.5; Phase 3 implemented in 0.9.6; Phase 4 implemented in
 implemented in 0.9.9; delegated admission backend implemented in 0.9.10; grant/admission UI
 implemented in 0.9.11; owner revocation implemented in 0.9.12; owner-return normalization implemented in
 0.9.13; workspace DM call signaling implemented in 0.9.14; WebRTC workspace
-invitation implemented in 0.9.15; physical qualification pending.
+invitation implemented in 0.9.15; audit hardening implemented in 0.9.16;
+physical qualification pending.
 
 ## 1. Problem
 
@@ -344,9 +345,9 @@ Implemented and tested, with no service/UI admission path enabled yet:
   member/device and stores the signed grant; the grant is delivered to that
   admin as workspace control kind workspace_admission_grant.
 - The selected admin lists received grants with
-  list_workspace_admission_grants and accepts one with
-  ccept_workspace_admission_grant; the signed acceptance is delivered to the
-  owner authority as workspace_admission_acceptance.
+  `list_workspace_admission_grants` and accepts one with
+  `accept_workspace_admission_grant`; the signed acceptance is delivered to the
+  owner authority as `workspace_admission_acceptance`.
 - The owner records the acceptance; both sides show offered/accepted state.
 - Grants are bound to the current manifest and expire after seven days.
 - No admission path is enabled yet: an admin cannot yet approve a join from a
@@ -356,16 +357,18 @@ Implemented and tested, with no service/UI admission path enabled yet:
 ### Phase 5.2b — delegated admission backend (implemented in 0.9.10)
 
 - The owner forwards pending join requests and their invitations to the accepted
-  admin device as workspace_admission_pending after acceptance.
-- pprove_workspace_join accepts an active admin with an accepted, unexpired
-  grant and creates a chained workspace_manifest_delegated v2 snapshot.
+  admin device as `workspace_admission_pending` after acceptance.
+- Forwarding is a snapshot taken when the owner processes acceptance. A join
+  request that reaches only an offline owner cannot reach the admin; it remains
+  queued until the owner is online and forwards it.
+- `approve_workspace_join` accepts an active admin with an accepted, unexpired
+  grant and creates a chained `workspace_manifest_delegated` v2 snapshot.
 - The v2 manifest is delivered as workspace_manifest_delegated, verified
   against the current manifest, and applied by recipients; grant use counts are
   updated.
 - Owner admission remains the unchanged v1 path.
-- There is still no grant/admission UI, no owner-return/revocation UX, and no
-  pre-v2 fail-closed delivery handling. Owner-offline admission is therefore not
-  exposed to users yet.
+- At 0.9.10 the grant/admission UI and owner-return/revocation UX were not yet
+  enabled; those were added by the Phase 5.2c releases below.
 
 ### Phase 5.2c — grant/admission UI (implemented in 0.9.11)
 
@@ -383,9 +386,12 @@ Implemented and tested, with no service/UI admission path enabled yet:
   the admin can no longer approve joins from it.
 
 0.9.13 adds owner-return normalization. A v1 manifest with the optional
-delegation_end marker may extend a v2 delegated head with no membership or
-policy change, signing the workspace back to a normal v1 head. The owner end
-action publishes this manifest and revokes the grant.
+`delegation_end` marker and no membership or policy change may extend a v2
+delegated head, returning the workspace to a normal owner-signed v1 head. The
+owner end action publishes this manifest and revokes the grant. A
+`delegation_end` head can also be published before any delegated admission; it
+invalidates the grant's start hash and prevents later admin admission even if a
+revocation control is lost.
 
 Fork handling exposes the conflict type and local signed head in Workspace
 settings, supports copying conflict details and removing local data, and still
@@ -393,6 +399,24 @@ does not choose between histories. Grant creation requires the owner to confirm
 that every active member device supports v2 delegated manifests; this is the
 new-client fail-closed gate. Already-installed pre-v2 clients remain an inherent
 upper bound and are documented as such.
+
+### Phase 5.2d — audit hardening (0.9.16)
+
+- Delegated manifests reject any grant not signed by the current workspace
+authority, even when the grant, acceptance, and admin device are otherwise
+valid.
+- Pending join forwarding rebinds owner-local opaque request and invitation IDs
+to the admin device instead of requiring cross-vault identifiers to match.
+- Applying a v2 admission closes the owner's matching pending request and
+consumes its invitation; a consumed invitation cannot be reused.
+- Ending a grant always publishes an owner-signed delegation_end head, even
+before any v2 admission, so a lost revocation control cannot leave the grant
+start hash usable.
+- Workspace call signaling resolves the peer only inside the signaling
+workspace, avoiding same-device cross-workspace attribution.
+- Remaining limitation: a join request that reaches only an offline owner cannot
+reach the admin; forwarding is a snapshot taken when the owner processes the
+grant acceptance.
 
 Physical multi-device qualification remains open.
 

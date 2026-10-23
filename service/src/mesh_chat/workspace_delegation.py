@@ -98,6 +98,8 @@ def create_delegated_manifest(
     verify_admission_acceptance(acceptance, grant, now=current)
     if checked_grant.workspace_id != previous.workspace_id:
         raise ValidationError("Admission grant workspace is invalid")
+    if checked_grant.authority_destination != previous.authority_destination.hex():
+        raise IdentityMismatch("Admission grant was not signed by the workspace authority")
     if _destination(identity) != checked_grant.admin_destination:
         raise IdentityMismatch("Delegated manifest signer is not the grant admin")
     use = _grant_use(previous, checked_grant)
@@ -193,6 +195,8 @@ def verify_delegated_manifest(
     verify_admission_acceptance(value["grant_acceptance"], value["grant"], now=current)
     if grant.workspace_id != previous.workspace_id:
         raise ValidationError("Delegated manifest grant workspace is invalid")
+    if grant.authority_destination != previous.authority_destination.hex():
+        raise IdentityMismatch("Delegated manifest grant was not signed by the workspace authority")
     if value["delegated_signer_destination"] != grant.admin_destination:
         raise ValidationError("Delegated manifest signer is invalid")
     use = value["grant_use"]
@@ -288,6 +292,8 @@ def _parse_members(
             if card.device_id in device_ids:
                 raise ValidationError("Delegated manifest has a duplicate device")
             device_ids.add(card.device_id)
+            if card.display_name != item["display_name"]:
+                raise ValidationError("Delegated manifest display name is invalid")
             if card.device_id == previous.authority_device_id:
                 authority += 1
                 if role != "owner":

@@ -160,6 +160,64 @@ def test_admission_grant_and_acceptance_round_trip_and_tamper():
         verify_admission_grant(grant, now=NOW + 2 + 7 * 24 * 60 * 60 + 1)
 
 
+def test_owner_revocation_head_can_be_published_before_any_delegated_use():
+    owner, _admin, base, _admin_member_id, _admin_device_id, _admin_card = _base()
+    raw = create_workspace_manifest(
+        owner,
+        workspace_id=base.workspace_id,
+        epoch=base.epoch + 1,
+        previous_manifest_hash=base.digest,
+        name=base.name,
+        description=base.description,
+        authority_device_id=base.authority_device_id,
+        members=_inputs(base),
+        delegation_end=True,
+        now=NOW + 3,
+    )
+    checked = verify_workspace_manifest_transition(raw, base, now=NOW + 3)
+    assert checked.delegation_end is True
+    assert checked.delegation_grant_digest is None
+    assert [member.member_id for member in checked.members] == [
+        member.member_id for member in base.members
+    ]
+
+
+def test_delegated_manifest_rejects_grant_not_signed_by_workspace_authority():
+    owner, admin, base, admin_member_id, admin_device_id, admin_card = _base()
+    attacker = RNS.Identity()
+    fake_grant = create_admission_grant(
+        attacker,
+        workspace_id=base.workspace_id,
+        start_manifest_hash=base.digest,
+        admin_member_id=admin_member_id,
+        admin_device_id=admin_device_id,
+        admin_device_card=admin_card,
+        now=NOW + 2,
+    )
+    fake_acceptance = create_admission_acceptance(admin, grant=fake_grant, now=NOW + 3)
+    new_identity = RNS.Identity()
+    new_id = _id()
+    new_card = create_workspace_device_card(
+        new_identity,
+        workspace_id=base.workspace_id,
+        member_id=new_id,
+        device_id=_id(),
+        display_name="Casey",
+        now=NOW + 4,
+    )
+    with pytest.raises(IdentityMismatch):
+        create_delegated_manifest(
+            admin,
+            previous=base,
+            grant=fake_grant,
+            acceptance=fake_acceptance,
+            new_member=WorkspaceManifestMemberInput(
+                new_id, "Casey", WorkspaceRole.MEMBER, [new_card]
+            ),
+            now=NOW + 5,
+        )
+
+
 def test_delegated_manifest_full_snapshot_and_use_chain():
     owner, admin, base, admin_member_id, admin_device_id, admin_card = _base()
     grant = create_admission_grant(

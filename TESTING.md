@@ -24,6 +24,67 @@ Physical execution follows the
 full physical scenario matrix for versions through 0.9.15 is in the
 [Physical QA scenarios](docs/PHYSICAL_QA_SCENARIOS.md).
 
+## Workspace admission and call audit hardening, 0.9.16
+
+An audit of the 0.9.15 workspace admission/call paths found and fixed:
+
+- a delegated v2 manifest accepted a grant signed by a non-authority identity;
+  the grant signer must now equal the current workspace authority;
+- forwarded pending-join records used owner-local opaque IDs, so the admin could
+  not accept them; the admin now rebinds the request and invitation IDs into its
+  own encrypted store;
+- the owner did not close its pending request or consume its invitation after an
+  admin's v2 admission; the v2 apply path now does both;
+- ending a grant before any v2 admission did not publish a new head, so a lost
+  revocation control could leave the grant start usable; owner end now always
+  publishes a `delegation_end` head;
+- workspace call signaling resolved the source through all workspaces; it is now
+  scoped to the signaling workspace;
+- delegated display names are checked against their signed device cards;
+- duplicate acceptance delivery no longer forwards duplicate pending bundles.
+
+Test defects were also corrected: the admission-grant and workspace-call tests
+were delivering packets to the sender instead of the recipient, and the grant
+test manually set the admin role instead of applying the signed role change.
+Those tests now exercise the real wire path.
+
+New coverage:
+
+- admin admission of a pending join while the owner is offline, including v2
+  apply by owner and joiner;
+- rejection of a grant not signed by the workspace authority;
+- owner revocation head before any delegated use;
+- real grant/acceptance/rejection wire delivery and workspace call signal
+  delivery.
+
+Remaining untested areas:
+
+- no frontend interaction test for grant create/accept/end, workspace call
+  buttons, or WebRTC invitation transfer;
+- no workspace-call answer/candidate/hangup service test;
+- no grant expiry/use-cap service test;
+- no helper relay wire-path test (the helper test currently calls the handler);
+- no test for a brand-new join reaching an offline owner with no prior
+  forwarding; this remains a product limitation, not just a test gap.
+
+Validation:
+
+```text
+pytest service/tests:        1113 passed, 46 skipped, 0 failed (282.95 s)
+node scripts/run-frontend-tests.mjs: 264 passed (18 files)
+node --test deploy/cloudflare-signal/worker.test.mjs: 11 passed
+packaged emoji artwork verification: 3 passed
+node node_modules/typescript/bin/tsc -b: passed
+node scripts/run-frontend-build.mjs: passed
+```
+
+The official report is
+`dist/reports/0.9.16/20261022T235414Z-a0e7604d/report.json` (git-ignored):
+`status: passed`, 332.661 s, SHA-256
+`be89f00a0838e8fe853721106eb611a811b761159f4071d3b5b770403289e325`.
+Gates: `automated: passed`; `physical_device: not-requested`;
+`production_signing: not-requested`.
+
 ## WebRTC workspace invitation and Phase 5 closure, 0.9.15
 
 Phase 7 and the remaining Phase 5 UI/gates are implemented.

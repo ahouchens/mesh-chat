@@ -280,10 +280,11 @@ workspace and both devices are active. No Personal contact is created.
 acceptance, v2 delivery, and admin admission UI are enabled in the Phase 5.2
 service/UI increment.
 
-An owner-return manifest is a v1 manifest with delegation_end: true and no
-membership, policy, name, description, or retention change. It is accepted only
-when the previous manifest is a delegated v2 head; it returns the workspace to a
-normal owner-signed v1 head and ends the grant chain.
+An owner-return/revocation manifest is a v1 manifest with `delegation_end: true`
+and no membership, policy, name, description, or retention change. It may extend
+a delegated v2 head or a normal v1 head; publishing it invalidates the grant's
+start hash and ends any grant chain at that head. It returns the workspace to a
+normal owner-signed v1 head.
 
 ## Invitation v1
 

@@ -1590,13 +1590,9 @@ def verify_workspace_manifest_transition(
             raise ValidationError(
                 "Workspace closure cannot change membership or metadata"
             )
-    elif (
-        manifest.delegation_end
-        and previous.delegation_grant_digest is not None
-        and change_count == 0
-    ):
-        # Owner-return normalization: a v1 manifest that ends a delegated
-        # admission chain without changing membership or policy.
+    elif manifest.delegation_end and change_count == 0:
+        # Owner-return/revocation normalization: a v1 manifest with no
+        # membership or policy change ends any grant chain at this head.
         pass
     elif change_count != 1:
         # Publish exactly one semantic change per epoch so concurrent owner
