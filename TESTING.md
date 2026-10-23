@@ -85,6 +85,22 @@ The official report is
 Gates: `automated: passed`; `physical_device: not-requested`;
 `production_signing: not-requested`.
 
+Publication: GitHub Actions
+[CI run 39875416777](https://github.com/ahouchens/mesh-chat/actions/runs/39875416777)
+and
+[Release run 39875421053](https://github.com/ahouchens/mesh-chat/actions/runs/39875421053)
+passed on the first attempt for `v0.9.16`. Release:
+<https://github.com/ahouchens/mesh-chat/releases/tag/v0.9.16>.
+
+| Artifact | Bytes | SHA-256 (verified by re-download) |
+|---|---:|---|
+| `Mesh-Chat_0.9.16_x64-setup.exe` | 27,894,167 | `914efe55cc2d0ca0242e4b62afc602a31d10d5c1fca1c114d0a0f2306c36b90d` |
+| `Mesh-Chat_0.9.16_x64_en-US.msi` | 29,884,416 | `ccb0b7586b05f89a9d8db177eb901437db281d39cb632cc6ca4258ba0b26988f` |
+| `mesh-chat-0.9.16-android-arm64-release.apk` | 34,387,898 | `8f21e5a405632319b67497e900ec44d85b369f0a13ad100dbf7506ee6301c001` |
+| `SHA256SUMS.txt` | 303 | `caaf2d3031011d23d5146168b2c9490cdf20b76c9addf6f802192be7b80dff63` |
+
+The Android APK is debug-signed; it is not a production or upgrade identity.
+
 ## WebRTC workspace invitation and Phase 5 closure, 0.9.15
 
 Phase 7 and the remaining Phase 5 UI/gates are implemented.
