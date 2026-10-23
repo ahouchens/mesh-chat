@@ -24,6 +24,26 @@ Physical execution follows the
 full physical scenario matrix for versions through 0.9.15 is in the
 [Physical QA scenarios](docs/PHYSICAL_QA_SCENARIOS.md).
 
+## Manual WebRTC answer exchange recovery, 0.9.30
+
+- Keep the answerer's peer connection alive for up to 120 seconds from applying
+  the offer, capped by signed offer expiry, even if its initial ICE checks fail
+  while the answer is copied between apps. Late offerer checks can recover it.
+- Preserve redacted ICE history, stop diagnostics timers after handoff, and
+  isolate asynchronous callbacks from cancelled or superseded attempts.
+- A real Edge 155 / Cloudflare TURN comparison reproduced failure with the old
+  cleanup behavior and successful DataChannel payload exchange with a 45-second
+  answer delay after the fix. A separate 90-second delay also recovered.
+- The earlier full frontend run passed 289 tests; final focused WebRTC checks
+  passed 23 tests, including the added retry regression. TypeScript and the
+  frontend bundle passed during the investigation.
+
+See the [root-cause report](docs/WEBRTC_MANUAL_ANSWER_ROOT_CAUSE.md) and
+[redacted browser evidence](docs/benchmarks/webrtc-manual-answer-20261023.json).
+Release verification, Windows packaging, Android packaging, and publication run
+in GitHub Actions for `v0.9.30`; their results are pending. The Windows–Android
+physical retest, including switching to Slack during copy/paste, remains pending.
+
 ## Complete ICE gathering marker, 0.9.29
 
 - Signed offers and answers now append `a=end-of-candidates` after gathering.

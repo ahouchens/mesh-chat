@@ -5,6 +5,7 @@ import { Check, Copy, Phone, RefreshCw, X } from "lucide-react";
 import { serviceCommand } from "./api";
 import { attachWebRTCBridge, isWindowsWebRTCPlatform, shouldAutoCloseWebRTCOnboarding, webRTCWindowsChecklist, type WebRTCBridge } from "./webrtc-onboarding";
 import { rememberWebRTCDiagnostics } from "./webrtc-diagnostics";
+import { startPeerTrace, type PeerTrace } from "./webrtc-trace";
 import { removeWebRTCSession, setWebRTCSession, updateWebRTCSessionApprovalPending, updateWebRTCSessionContact, type WebRTCSessionPath } from "./webrtc-session";
 import { clearPairingResume, savePairingResume } from "./pairing-resume";
 import { storeReconnectCapabilities } from "./reconnect-control";
@@ -60,6 +61,10 @@ interface OnboardingAnswerPreview {
 type Phase = "choose" | "creating" | "waiting-answer" | "review" | "waiting-owner" | "connecting" | "connected" | "error";
 
 type OnboardingState = "idle" | "sending" | "sent" | "preview" | "waiting-approval" | "approved" | "declined" | "error";
+
+// ICE checks can time out before a person returns the signed answer. Keep the
+// answerer's TURN allocations alive so checks from the offerer can revive ICE.
+const ANSWER_EXCHANGE_TIMEOUT_MS = 120_000;
 
 type ControlMessage =
   | { type: "contact_invitation"; document: string; workspace_document?: string }
@@ -163,17 +168,29 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
   const reviewOfferBusyRef = useRef(false);
   const connectAnswerBusyRef = useRef(false);
   const bridgeRef = useRef<WebRTCBridge | null>(null);
+  const attachmentRef = useRef<RTCDataChannel | null>(null);
   const handedOffRef = useRef(false);
   const onCloseRef = useRef(onClose);
   onCloseRef.current = onClose;
   const iceSummaryRef = useRef<Record<string, unknown> | null>(null);
   const failureCapturedRef = useRef(false);
+  const traceRef = useRef<PeerTrace | null>(null);
+  const answerWaitRef = useRef<{ pc: RTCPeerConnection; timer: number } | null>(null);
+  const attemptRef = useRef(0);
+
+  const stopAnswerWait = useCallback(() => {
+    if (answerWaitRef.current) window.clearTimeout(answerWaitRef.current.timer);
+    answerWaitRef.current = null;
+  }, []);
 
   const captureDiagnostics = useCallback(async (phase: string, message: string): Promise<string> => {
     const pc = pcRef.current;
     if (!pc) return "";
+    const trace = traceRef.current;
     try {
-      const text = await peerDiagnostics(pc, phase, message, iceSummaryRef.current);
+      const detail = await peerDiagnostics(pc, phase, message, iceSummaryRef.current);
+      const text = JSON.stringify({ ...JSON.parse(detail), timeline: trace?.snapshot() ?? [] }, null, 2);
+      if (pcRef.current !== pc) return text;
       setDiagnostics(text);
       rememberWebRTCDiagnostics(text);
       return text;
@@ -183,22 +200,38 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
   }, []);
 
   const cleanup = useCallback(() => {
-    void bridgeRef.current?.close().catch(() => undefined);
+    attemptRef.current += 1;
+    stopAnswerWait();
+    traceRef.current?.stop();
+    traceRef.current = null;
+    const bridge = bridgeRef.current;
+    const channel = channelRef.current;
+    const control = controlRef.current;
+    const pc = pcRef.current;
+    // Retire ownership before close events or pending async work can run.
     bridgeRef.current = null;
-    channelRef.current?.close();
+    attachmentRef.current = null;
     channelRef.current = null;
-    controlRef.current?.close();
     controlRef.current = null;
-    pcRef.current?.close();
     pcRef.current = null;
-  }, []);
+    if (pc) pc.onconnectionstatechange = pc.oniceconnectionstatechange = pc.ondatachannel = null;
+    if (channel) channel.onopen = channel.onclose = channel.onerror = null;
+    if (control) control.onopen = control.onclose = control.onmessage = null;
+    void bridge?.close().catch(() => undefined);
+    channel?.close();
+    control?.close();
+    pc?.close();
+  }, [stopAnswerWait]);
 
   const reportFailure = useCallback((phase: string, message: string) => {
     if (failureCapturedRef.current) return;
+    const pc = pcRef.current;
+    if (!pc) return;
     failureCapturedRef.current = true;
     // Capture while the peer connection still exists. Cleanup closes it and
     // would otherwise erase remote candidates and candidate-pair state.
     void captureDiagnostics(phase, message).finally(() => {
+      if (pcRef.current !== pc) return;
       setError(message);
       setPhase("error");
       cleanup();
@@ -207,6 +240,7 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
 
   useEffect(() => () => {
     if (!handedOffRef.current) cleanup();
+    else traceRef.current?.stop();
   }, [cleanup]);
 
   useEffect(() => {
@@ -358,13 +392,24 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
   }, [handleControlMessage, onboarding, sendInvitation]);
 
   const attach = useCallback(async (channel: RTCDataChannel) => {
+    if (channelRef.current !== channel) return;
+    const pc = pcRef.current;
+    if (!pc || attachmentRef.current === channel) return;
+    attachmentRef.current = channel;
+    stopAnswerWait();
+    traceRef.current?.record("datachannel-open");
     try {
       await waitForOpen(channel);
+      if (pcRef.current !== pc) return;
       const bridge = await attachWebRTCBridge(channel, { onError: (reason) => { setError(errorMessage(reason)); setPhase("error"); }, onClosed: (bridgeId) => removeWebRTCSession(`onboarding:${bridgeId}`) });
+      if (pcRef.current !== pc) {
+        await bridge.close();
+        return;
+      }
       bridgeRef.current = bridge;
-      const pc = pcRef.current;
       if (pc) {
         const path = await connectionPath(pc);
+        if (pcRef.current !== pc) return;
         setWebRTCSession({ key: `onboarding:${bridge.bridgeId}`, bridge, channel, pc, control: controlRef.current, path, createdAt: Date.now(), approvalPending: false });
         handedOffRef.current = true;
         onConnected?.(path);
@@ -373,16 +418,25 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
       void sendInvitation();
       await onChanged();
     } catch (reason) {
+      if (pcRef.current !== pc) return;
       const message = errorMessage(reason);
       void captureDiagnostics("attach-failed", message);
       setError(message);
       setPhase("error");
       cleanup();
     }
-  }, [captureDiagnostics, cleanup, onChanged, onConnected, sendInvitation]);
+  }, [captureDiagnostics, cleanup, onChanged, onConnected, sendInvitation, stopAnswerWait]);
 
   const watchPeer = useCallback((pc: RTCPeerConnection) => {
-    const failed = () => reportFailure("ice-failed", pathFailureMessage);
+    traceRef.current = startPeerTrace(pc);
+    const failed = () => {
+      if (pcRef.current !== pc) return;
+      if (answerWaitRef.current?.pc === pc) {
+        traceRef.current?.record("ice-failed-awaiting-answer-exchange");
+        return;
+      }
+      reportFailure("ice-failed", pathFailureMessage);
+    };
     pc.onconnectionstatechange = () => {
       if (pc.connectionState === "failed") failed();
     };
@@ -403,14 +457,20 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
 
   const createOffer = useCallback(async () => {
     if (createOfferBusyRef.current) return;
+    cleanup();
+    handedOffRef.current = false;
+    invitationStartedRef.current = false;
+    const attempt = attemptRef.current;
     createOfferBusyRef.current = true;
     failureCapturedRef.current = false;
     setMailboxCode("");
     setOfferDocument("");
     setError(""); setPhase("creating");
     setAnswerInput(""); setAnswerDocument(""); setAnswerPreview(null);
+    setDiagnostics("");
     try {
       const ice = await serviceCommand<CallIceConfiguration>("call_ice_servers");
+      if (attemptRef.current !== attempt) return;
       iceSummaryRef.current = summarizeIce(ice);
       const pc = new RTCPeerConnection({ iceServers: ice.iceServers, iceTransportPolicy: ice.iceTransportPolicy });
       roleRef.current = "offer";
@@ -418,6 +478,7 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
       channel.binaryType = "arraybuffer";
       channel.onopen = () => { void attach(channel); };
       channel.onclose = () => {
+        if (pcRef.current !== pc) return;
         if (!handedOffRef.current) reportFailure("channel-closed", "The WebRTC DataChannel closed before the connection completed.");
         else cleanup();
       };
@@ -428,8 +489,10 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
       channelRef.current = channel;
       watchPeer(pc);
       const offer = await pc.createOffer();
+      if (pcRef.current !== pc) return;
       await pc.setLocalDescription(offer);
       await waitForCandidates(pc);
+      if (pcRef.current !== pc) return;
       const gathered = pc.localDescription?.sdp;
       if (!gathered) throw new Error("Could not create the WebRTC offer.");
       const sdp = withEndOfCandidates(gathered);
@@ -437,20 +500,27 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
         sdp,
         dtls_fingerprint: fingerprint(sdp),
       });
+      if (pcRef.current !== pc) return;
+      traceRef.current?.record("signed-offer-ready");
       setOfferDocument(result.document);
       if (relaySettings?.signal_mailbox_url) {
         try {
           const published = await serviceCommand<{ session_id: string }>("signal_publish", { document: result.document, role: "offer" });
+          if (pcRef.current !== pc) return;
           setMailboxCode(published.session_id);
           savePairingResume(published.session_id, "offer");
         } catch {
           // The full signed offer remains usable; the mailbox is optional.
         }
       }
+      if (pcRef.current !== pc) return;
       setPhase("waiting-answer");
     } catch (reason) {
+      if (attemptRef.current !== attempt) return;
       const message = errorMessage(reason);
-      void captureDiagnostics("offer-failed", message).finally(cleanup);
+      void captureDiagnostics("offer-failed", message).finally(() => {
+        if (attemptRef.current === attempt) cleanup();
+      });
       setError(message);
       setPhase("error");
     } finally {
@@ -463,8 +533,9 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
     connectAnswerBusyRef.current = true;
     failureCapturedRef.current = false;
     setError(""); setPhase("connecting");
+    const pc = pcRef.current;
     try {
-      if (!pcRef.current || !offerDocument) throw new Error("Create an offer first.");
+      if (!pc || !offerDocument) throw new Error("Create an offer first.");
       let localOffer: { session_id?: unknown } = {};
       let answerValue: { type?: unknown; session_id?: unknown; offer_digest?: unknown } = {};
       try {
@@ -486,10 +557,15 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
         offer_document: offerDocument,
         answer_document: answerInput.trim(),
       });
+      if (pcRef.current !== pc) return;
       setAnswerPreview(preview);
-      await pcRef.current.setRemoteDescription({ type: "answer", sdp: preview.sdp });
+      traceRef.current?.record("applying-remote-answer");
+      await pc.setRemoteDescription({ type: "answer", sdp: preview.sdp });
+      if (pcRef.current !== pc) return;
+      traceRef.current?.record("remote-answer-applied");
       if (channelRef.current?.readyState === "open") await attach(channelRef.current);
     } catch (reason) {
+      if (pcRef.current !== pc) return;
       const message = answerErrorMessage(reason);
       void captureDiagnostics("answer-failed", message);
       setError(message);
@@ -501,15 +577,21 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
 
   const reviewOffer = useCallback(async () => {
     if (reviewOfferBusyRef.current) return;
+    cleanup();
+    handedOffRef.current = false;
+    invitationStartedRef.current = false;
+    const attempt = attemptRef.current;
     reviewOfferBusyRef.current = true;
     failureCapturedRef.current = false;
     setReviewBusy(true);
     setMailboxCode("");
     setError(""); setPhase("review");
+    setDiagnostics("");
     try {
       let rawOffer = offerInput.trim();
       if (!rawOffer.includes("\"type\"")) {
         const fetched = await serviceCommand<{ document: string }>("signal_fetch", { session_id: rawOffer, role: "offer" });
+        if (attemptRef.current !== attempt) return;
         rawOffer = fetched.document;
         setOfferInput(rawOffer);
       }
@@ -525,12 +607,15 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
       const preview = await serviceCommand<OnboardingOfferPreview>("verify_webrtc_onboarding_offer", {
         document: rawOffer,
       });
+      if (attemptRef.current !== attempt) return;
       setOfferPreview(preview);
       const ice = await serviceCommand<CallIceConfiguration>("call_ice_servers");
+      if (attemptRef.current !== attempt) return;
       iceSummaryRef.current = summarizeIce(ice);
       const pc = new RTCPeerConnection({ iceServers: ice.iceServers, iceTransportPolicy: ice.iceTransportPolicy });
       roleRef.current = "join";
       pc.ondatachannel = (event) => {
+        if (pcRef.current !== pc) return;
         const channel = event.channel;
         if (channel.label === "mesh-onboarding") {
           setupControl(channel);
@@ -541,6 +626,7 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
         channelRef.current = channel;
         channel.onopen = () => { void attach(channel); };
         channel.onclose = () => {
+          if (pcRef.current !== pc) return;
           if (!handedOffRef.current) reportFailure("channel-closed", "The WebRTC DataChannel closed before the connection completed.");
           else cleanup();
         };
@@ -548,10 +634,24 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
       };
       pcRef.current = pc;
       watchPeer(pc);
+      const waitMs = Math.max(0, Math.min(ANSWER_EXCHANGE_TIMEOUT_MS, preview.expires_at * 1000 - Date.now()));
+      answerWaitRef.current = {
+        pc,
+        timer: window.setTimeout(() => {
+          if (pcRef.current !== pc) return;
+          stopAnswerWait();
+          reportFailure("answer-exchange-timeout", "The answer exchange did not connect in time. Create a fresh offer, return the answer, and press Connect on the offerer's device while keeping both windows open.");
+        }, waitMs),
+      };
+      traceRef.current?.record("applying-remote-offer");
       await pc.setRemoteDescription({ type: "offer", sdp: preview.sdp });
+      if (pcRef.current !== pc) return;
+      traceRef.current?.record("remote-offer-applied");
       const answer = await pc.createAnswer();
+      if (pcRef.current !== pc) return;
       await pc.setLocalDescription(answer);
       await waitForCandidates(pc);
+      if (pcRef.current !== pc) return;
       const gathered = pc.localDescription?.sdp;
       if (!gathered) throw new Error("Could not create the WebRTC answer.");
       const sdp = withEndOfCandidates(gathered);
@@ -560,29 +660,36 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
         sdp,
         dtls_fingerprint: fingerprint(sdp),
       });
+      if (pcRef.current !== pc) return;
+      traceRef.current?.record("signed-answer-ready");
       setAnswerDocument(result.document);
       if (relaySettings?.signal_mailbox_url) {
         try {
           const published = await serviceCommand<{ session_id: string }>("signal_publish", { document: result.document, role: "answer" });
+          if (pcRef.current !== pc) return;
           setMailboxCode(published.session_id);
           savePairingResume(published.session_id, "answer");
         } catch {
           // The full signed answer remains usable; the mailbox is optional.
         }
       }
+      if (pcRef.current !== pc) return;
       setOfferDocument(rawOffer);
       setAnswerPreview({ ...preview, sdp, dtls_fingerprint: fingerprint(sdp), document: result.document });
       setPhase("waiting-owner");
     } catch (reason) {
+      if (attemptRef.current !== attempt) return;
       const message = offerErrorMessage(reason);
-      void captureDiagnostics("offer-review-failed", message).finally(cleanup);
+      void captureDiagnostics("offer-review-failed", message).finally(() => {
+        if (attemptRef.current === attempt) cleanup();
+      });
       setError(message);
       setPhase("error");
     } finally {
       reviewOfferBusyRef.current = false;
       setReviewBusy(false);
     }
-  }, [attach, captureDiagnostics, cleanup, offerInput, relaySettings, reportFailure, setupControl, watchPeer]);
+  }, [attach, captureDiagnostics, cleanup, offerInput, relaySettings, reportFailure, setupControl, stopAnswerWait, watchPeer]);
 
   const acceptContact = async () => {
     setOnboardingBusy(true);
@@ -635,6 +742,7 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
 
   const close = () => {
     if (!handedOffRef.current) cleanup();
+    else traceRef.current?.stop();
     onClose();
   };
 
@@ -709,7 +817,7 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
             <div className="webrtc-qr"><QRCodeSVG value={answerDocument} size={190} level="L" /></div>
             <textarea className="webrtc-document" readOnly value={answerDocument} rows={5} aria-label="Signed WebRTC answer" />
             <div className="dialog-actions"><button className="button button--secondary" onClick={() => void copy(answerDocument, "answer")}>{copied === "answer" ? <Check size={17} /> : <Copy size={17} />} {copied === "answer" ? "Copied" : "Copy answer"}</button></div>
-            <p className="muted">Keep this open while the offerer pastes the answer. The DataChannel opens after both sides apply it.</p>
+            <p className="muted">Keep both windows open. The offerer must paste this answer and press Connect. This device waits up to two minutes from starting the answer, or until the offer expires.</p>
           </>}
           {phase === "connecting" && <><p className="direct-host-status" role="status"><RefreshCw size={17} /> Applying the signed answer and opening the DataChannel…</p><p className="muted">If this takes more than 30 seconds, Mesh Chat will stop and report the likely network cause.</p><div className="dialog-actions"><button className="button button--secondary" onClick={close}>Cancel</button></div></>}
           {phase === "connected" && <>

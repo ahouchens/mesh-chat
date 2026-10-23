@@ -1,0 +1,523 @@
+{
+  "date": "2026-10-23",
+  "browser": "Edge 155 on Windows",
+  "transportPolicy": "relay",
+  "broker": "application default Cloudflare TURN broker",
+  "note": "Real browser transport experiments. Physical Windows-Android app qualification remains pending.",
+  "trials": [
+    {
+      "trial": {
+        "name": "immediate",
+        "delay": 0,
+        "keepAnswerer": false
+      },
+      "roundTrip": true,
+      "firstLiveAnswerPairs": [
+        {
+          "side": "answer",
+          "state": "connecting",
+          "ice": "checking",
+          "channel": null,
+          "pairs": 10,
+          "remoteCandidates": 10,
+          "requestsSent": 1,
+          "responsesReceived": 0
+        }
+      ],
+      "events": [
+        {
+          "ms": 900,
+          "phase": "connection-state",
+          "side": "answer",
+          "state": "connecting",
+          "ice": "checking",
+          "channel": null,
+          "pairs": 10,
+          "remoteCandidates": 10,
+          "requestsSent": 1,
+          "responsesReceived": 0
+        },
+        {
+          "ms": 1047,
+          "phase": "answer-ready",
+          "offerCandidates": 10,
+          "answerCandidates": 10
+        },
+        {
+          "ms": 1050,
+          "phase": "apply-answer"
+        },
+        {
+          "ms": 1063,
+          "phase": "connection-state",
+          "side": "offer",
+          "state": "connecting",
+          "ice": "checking",
+          "channel": "connecting",
+          "pairs": 100,
+          "remoteCandidates": 10,
+          "requestsSent": 1,
+          "responsesReceived": 0
+        },
+        {
+          "ms": 1217,
+          "phase": "connection-state",
+          "side": "answer",
+          "state": "connected",
+          "ice": "connected",
+          "channel": null,
+          "pairs": 100,
+          "remoteCandidates": 10,
+          "requestsSent": 6,
+          "responsesReceived": 2
+        },
+        {
+          "ms": 1247,
+          "phase": "connection-state",
+          "side": "offer",
+          "state": "connected",
+          "ice": "connected",
+          "channel": "connecting",
+          "pairs": 100,
+          "remoteCandidates": 10,
+          "requestsSent": 4,
+          "responsesReceived": 2
+        },
+        {
+          "ms": 1310,
+          "phase": "channel-open",
+          "side": "offer"
+        },
+        {
+          "ms": 1341,
+          "phase": "channel-open",
+          "side": "answer"
+        },
+        {
+          "ms": 1433,
+          "phase": "final",
+          "peers": [
+            {
+              "side": "offer",
+              "state": "connected",
+              "ice": "connected",
+              "channel": "open",
+              "pairs": 100,
+              "remoteCandidates": 10,
+              "requestsSent": 4,
+              "responsesReceived": 3
+            },
+            {
+              "side": "answer",
+              "state": "connected",
+              "ice": "connected",
+              "channel": "open",
+              "pairs": 100,
+              "remoteCandidates": 10,
+              "requestsSent": 9,
+              "responsesReceived": 4
+            }
+          ],
+          "roundTrip": true
+        }
+      ]
+    },
+    {
+      "trial": {
+        "name": "delayed_close_on_failure",
+        "delay": 45000,
+        "keepAnswerer": false
+      },
+      "roundTrip": false,
+      "firstLiveAnswerPairs": [
+        {
+          "side": "answer",
+          "state": "connecting",
+          "ice": "checking",
+          "channel": null,
+          "pairs": 10,
+          "remoteCandidates": 10,
+          "requestsSent": 1,
+          "responsesReceived": 0
+        }
+      ],
+      "events": [
+        {
+          "ms": 882,
+          "phase": "connection-state",
+          "side": "answer",
+          "state": "connecting",
+          "ice": "checking",
+          "channel": null,
+          "pairs": 10,
+          "remoteCandidates": 10,
+          "requestsSent": 1,
+          "responsesReceived": 0
+        },
+        {
+          "ms": 983,
+          "phase": "answer-ready",
+          "offerCandidates": 10,
+          "answerCandidates": 10
+        },
+        {
+          "ms": 22171,
+          "phase": "connection-state",
+          "side": "answer",
+          "state": "failed",
+          "ice": "disconnected",
+          "channel": null,
+          "pairs": 0,
+          "remoteCandidates": 0,
+          "requestsSent": 0,
+          "responsesReceived": 0
+        },
+        {
+          "ms": 22178,
+          "phase": "close-on-failure",
+          "side": "answer"
+        },
+        {
+          "ms": 46002,
+          "phase": "apply-answer"
+        },
+        {
+          "ms": 46019,
+          "phase": "connection-state",
+          "side": "offer",
+          "state": "connecting",
+          "ice": "checking",
+          "channel": "connecting",
+          "pairs": 100,
+          "remoteCandidates": 10,
+          "requestsSent": 1,
+          "responsesReceived": 0
+        },
+        {
+          "ms": 67990,
+          "phase": "connection-state",
+          "side": "offer",
+          "state": "failed",
+          "ice": "disconnected",
+          "channel": "connecting",
+          "pairs": 0,
+          "remoteCandidates": 0,
+          "requestsSent": 0,
+          "responsesReceived": 0
+        },
+        {
+          "ms": 67993,
+          "phase": "close-on-failure",
+          "side": "offer"
+        },
+        {
+          "ms": 68053,
+          "phase": "final",
+          "peers": [
+            {
+              "side": "offer",
+              "state": "closed",
+              "ice": "closed",
+              "channel": "closed",
+              "pairs": 0,
+              "remoteCandidates": 0,
+              "requestsSent": 0,
+              "responsesReceived": 0
+            },
+            {
+              "side": "answer",
+              "state": "closed",
+              "ice": "closed",
+              "channel": null,
+              "pairs": 0,
+              "remoteCandidates": 0,
+              "requestsSent": 0,
+              "responsesReceived": 0
+            }
+          ],
+          "roundTrip": false
+        }
+      ]
+    },
+    {
+      "trial": {
+        "name": "delayed_preserve_answerer",
+        "delay": 45000,
+        "keepAnswerer": true
+      },
+      "roundTrip": true,
+      "firstLiveAnswerPairs": [
+        {
+          "side": "answer",
+          "state": "connecting",
+          "ice": "checking",
+          "channel": null,
+          "pairs": 20,
+          "remoteCandidates": 10,
+          "requestsSent": 1,
+          "responsesReceived": 0
+        }
+      ],
+      "events": [
+        {
+          "ms": 897,
+          "phase": "connection-state",
+          "side": "answer",
+          "state": "connecting",
+          "ice": "checking",
+          "channel": null,
+          "pairs": 20,
+          "remoteCandidates": 10,
+          "requestsSent": 1,
+          "responsesReceived": 0
+        },
+        {
+          "ms": 1044,
+          "phase": "answer-ready",
+          "offerCandidates": 10,
+          "answerCandidates": 10
+        },
+        {
+          "ms": 22171,
+          "phase": "connection-state",
+          "side": "answer",
+          "state": "failed",
+          "ice": "disconnected",
+          "channel": null,
+          "pairs": 0,
+          "remoteCandidates": 0,
+          "requestsSent": 0,
+          "responsesReceived": 0
+        },
+        {
+          "ms": 46050,
+          "phase": "apply-answer"
+        },
+        {
+          "ms": 46065,
+          "phase": "connection-state",
+          "side": "offer",
+          "state": "connecting",
+          "ice": "checking",
+          "channel": "connecting",
+          "pairs": 100,
+          "remoteCandidates": 10,
+          "requestsSent": 1,
+          "responsesReceived": 0
+        },
+        {
+          "ms": 46094,
+          "phase": "connection-state",
+          "side": "answer",
+          "state": "connecting",
+          "ice": "checking",
+          "channel": null,
+          "pairs": 0,
+          "remoteCandidates": 0,
+          "requestsSent": 0,
+          "responsesReceived": 0
+        },
+        {
+          "ms": 46224,
+          "phase": "connection-state",
+          "side": "answer",
+          "state": "connected",
+          "ice": "connected",
+          "channel": null,
+          "pairs": 1,
+          "remoteCandidates": 1,
+          "requestsSent": 3,
+          "responsesReceived": 1
+        },
+        {
+          "ms": 46252,
+          "phase": "connection-state",
+          "side": "offer",
+          "state": "connected",
+          "ice": "connected",
+          "channel": "connecting",
+          "pairs": 100,
+          "remoteCandidates": 10,
+          "requestsSent": 3,
+          "responsesReceived": 3
+        },
+        {
+          "ms": 46314,
+          "phase": "channel-open",
+          "side": "offer"
+        },
+        {
+          "ms": 46345,
+          "phase": "channel-open",
+          "side": "answer"
+        },
+        {
+          "ms": 46390,
+          "phase": "final",
+          "peers": [
+            {
+              "side": "offer",
+              "state": "connected",
+              "ice": "connected",
+              "channel": "open",
+              "pairs": 100,
+              "remoteCandidates": 10,
+              "requestsSent": 3,
+              "responsesReceived": 3
+            },
+            {
+              "side": "answer",
+              "state": "connected",
+              "ice": "connected",
+              "channel": "open",
+              "pairs": 1,
+              "remoteCandidates": 1,
+              "requestsSent": 3,
+              "responsesReceived": 3
+            }
+          ],
+          "roundTrip": true
+        }
+      ]
+    },
+    {
+      "trial": {
+        "name": "90s_keep",
+        "delay": 90000,
+        "closeFailed": false
+      },
+      "firstLiveAnswerPairs": [
+        {
+          "side": "answer",
+          "state": "connecting",
+          "ice": "checking",
+          "channel": null,
+          "pairs": 10,
+          "remoteCandidates": 10,
+          "requestsSent": 1,
+          "responsesReceived": 0
+        }
+      ],
+      "events": [
+        {
+          "ms": 904,
+          "phase": "connection-state",
+          "side": "answer",
+          "state": "connecting",
+          "ice": "checking",
+          "channel": null,
+          "pairs": 10,
+          "remoteCandidates": 10,
+          "requestsSent": 1,
+          "responsesReceived": 0
+        },
+        {
+          "ms": 1010,
+          "phase": "answer-ready",
+          "offerCandidates": 10,
+          "answerCandidates": 10
+        },
+        {
+          "ms": 22302,
+          "phase": "connection-state",
+          "side": "answer",
+          "state": "failed",
+          "ice": "disconnected",
+          "channel": null,
+          "pairs": 0,
+          "remoteCandidates": 0,
+          "requestsSent": 0,
+          "responsesReceived": 0
+        },
+        {
+          "ms": 91026,
+          "phase": "apply-answer"
+        },
+        {
+          "ms": 91038,
+          "phase": "connection-state",
+          "side": "offer",
+          "state": "connecting",
+          "ice": "checking",
+          "channel": "connecting",
+          "pairs": 100,
+          "remoteCandidates": 10,
+          "requestsSent": 1,
+          "responsesReceived": 0
+        },
+        {
+          "ms": 91068,
+          "phase": "connection-state",
+          "side": "answer",
+          "state": "connecting",
+          "ice": "checking",
+          "channel": null,
+          "pairs": 0,
+          "remoteCandidates": 0,
+          "requestsSent": 0,
+          "responsesReceived": 0
+        },
+        {
+          "ms": 91246,
+          "phase": "connection-state",
+          "side": "answer",
+          "state": "connected",
+          "ice": "connected",
+          "channel": null,
+          "pairs": 1,
+          "remoteCandidates": 1,
+          "requestsSent": 3,
+          "responsesReceived": 2
+        },
+        {
+          "ms": 91276,
+          "phase": "connection-state",
+          "side": "offer",
+          "state": "connected",
+          "ice": "connected",
+          "channel": "connecting",
+          "pairs": 100,
+          "remoteCandidates": 10,
+          "requestsSent": 3,
+          "responsesReceived": 3
+        },
+        {
+          "ms": 91339,
+          "phase": "channel-open",
+          "side": "offer"
+        },
+        {
+          "ms": 91369,
+          "phase": "channel-open",
+          "side": "answer"
+        },
+        {
+          "ms": 91394,
+          "phase": "final",
+          "peers": [
+            {
+              "side": "offer",
+              "state": "connected",
+              "ice": "connected",
+              "channel": "open",
+              "pairs": 100,
+              "remoteCandidates": 10,
+              "requestsSent": 3,
+              "responsesReceived": 3
+            },
+            {
+              "side": "answer",
+              "state": "connected",
+              "ice": "connected",
+              "channel": "open",
+              "pairs": 1,
+              "remoteCandidates": 1,
+              "requestsSent": 3,
+              "responsesReceived": 3
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -73,7 +73,38 @@ received_energy=...
 PASS: microphone captured and decoded over WebRTC/Opus
 ```
 
-## Limits
+## Manual answer delay regression in a real browser
+
+`manual_answer_browser.mjs` reproduces the failure caused by closing an answerer
+when its first ICE checks time out while the user is still returning the answer.
+It runs three relay-only DataChannel trials: immediate exchange, a delayed answer
+with immediate cleanup on failure, and the same delay while preserving the
+answerer for a bounded grace period. Successful trials also echo a message.
+
+This requires Node 20+, Playwright, Microsoft Edge, and a TURN credential broker
+that returns `{ "iceServers": [...] }`. The broker is explicit because this test
+allocates real TURN relays. Run from the repository root:
+
+```sh
+node experiments/webrtc-call/manual_answer_browser.mjs \
+  --broker https://your-broker.example/credentials \
+  --output .test-tmp/manual-answer-browser.json
+```
+
+Create the output directory first, or omit `--output`. Set `PLAYWRIGHT_MODULE` to
+an installed Playwright package path if it is outside the usual module search
+path. Set `BROWSER_PATH` to another Chromium-family executable if needed.
+`--delay-ms 90000` tests a longer manual exchange; the default delay is 45 seconds
+and the answerer's grace period is 120 seconds (`--grace-ms`).
+
+The test asserts that immediate exchange succeeds, delayed exchange fails with
+the old cleanup, and preserving the answerer recovers after a recorded initial
+failure. Logs contain candidate types, pair states, and transport counters, with
+no SDP, addresses, fingerprints, or ICE/TURN credentials. This verifies Chromium
+behavior and the lifecycle mechanism; it does not replace a physical Android
+WebView test or exercise the React component itself.
+
+## Limits of the Python prototypes
 
 - Synthetic 440/660 Hz tones for the loopback test.
 - The live test uses a real microphone but still a local peer only.
