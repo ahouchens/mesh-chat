@@ -329,8 +329,8 @@ The threat model is explicit about what is *not* protected: traffic analysis, IP
 
 | Platform | What exists | Recorded verification |
 | --- | --- | --- |
-| Windows x64 | MSI and NSIS installers, standalone executable plus service sidecar, bundled/managed `i2pd`, I2P invitation and consent UI, 1:1 audio/video call surface, automatic reconnect UI | 0.9.20 release candidate; 0.9.19 published; installer launch and device testing not performed |
-| Android arm64 | Debug APK, plus release/AAB signing path; I2P settings and invitation preview, 1:1 audio/video call surface, automatic reconnect UI | 0.9.20 release candidate; Debug-signed 0.9.19 release APK published; no bundled I2P router; no physical call or reconnect test in the recorded run |
+| Windows x64 | MSI and NSIS installers, standalone executable plus service sidecar, bundled/managed `i2pd`, I2P invitation and consent UI, 1:1 audio/video call surface, automatic reconnect UI | 0.9.20 published; CI tests/build passed; installer launch and device testing not performed |
+| Android arm64 | Debug APK, plus release/AAB signing path; I2P settings and invitation preview, 1:1 audio/video call surface, automatic reconnect UI | Debug-signed 0.9.20 release APK published; no bundled I2P router; no physical call or reconnect test in the recorded run |
 | macOS | Build path, FileVault adapter | No package built or run in this repository |
 | Linux | Build path, fscrypt/dm-crypt adapters | No package built or run in this repository |
 | iOS | Plugin and build script | Requires macOS and Xcode; not built or run in this repository |

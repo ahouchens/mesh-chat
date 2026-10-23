@@ -66,6 +66,22 @@ The official report is
 Gates: `automated: passed`; `physical_device: not-requested`;
 `production_signing: not-requested`.
 
+Publication: GitHub Actions
+[CI run 39895074684](https://github.com/ahouchens/mesh-chat/actions/runs/39895074684)
+and
+[Release run 39895077602](https://github.com/ahouchens/mesh-chat/actions/runs/39895077602)
+passed for `v0.9.20`. Release:
+<https://github.com/ahouchens/mesh-chat/releases/tag/v0.9.20>.
+
+| Artifact | Bytes | SHA-256 (verified by re-download) |
+|---|---:|---|
+| `Mesh-Chat_0.9.20_x64-setup.exe` | 27,901,206 | `bc6a34b66cac403af148970f44ac256ee4b8cfd3953e1fcdb40e0336edf5d68d` |
+| `Mesh-Chat_0.9.20_x64_en-US.msi` | 29,892,608 | `084b88b198b45b1913e4a7ec1486b9c667435d06a4eb902cdeee479592299c38` |
+| `mesh-chat-0.9.20-android-arm64-release.apk` | 34,387,475 | `c30705ad21d1371bd5f6a7f199fb668ed9db823144ce6205598cc976e0a0a19b` |
+| `SHA256SUMS.txt` | 303 | `7096724ccc06fd14ec9d02b65e42ece6d7a4459c2246b66e493804b4035ee6c0` |
+
+The Android APK is debug-signed; it is not a production or upgrade identity.
+
 ## Workspace UX streamlining, 0.9.19
 
 Implements the three requested improvements in
