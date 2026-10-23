@@ -24,6 +24,42 @@ Physical execution follows the
 full physical scenario matrix for versions through 0.9.15 is in the
 [Physical QA scenarios](docs/PHYSICAL_QA_SCENARIOS.md).
 
+## Whole-project command and retry audit, 0.9.24
+
+Fixes the issues summarized in
+[AUDIT_FINDINGS_0.9.24.md](docs/AUDIT_FINDINGS_0.9.24.md):
+
+- `search_workspace` is now in both `MeshChatService.COMMANDS` and
+  `UNCACHED_COMMANDS`; it no longer fails at the service command gate or grows
+  the command cache.
+- The Tauri renderer allowlist now includes contact update, rename, delete,
+  unverify, and unblock.
+- A conformance test parses the Rust allowlist and every literal renderer
+  `serviceCommand` call, checking both the Rust boundary and
+  `MeshChatService.COMMANDS`.
+- Retry queues preserve insertion order, keep a grace cycle for a group record
+  whose commit is still in flight, and no longer rescan decrypted history.
+- Dispatch-lock backlog tests use deterministic handshakes and seed their queues
+  explicitly.
+
+Validation:
+
+```text
+pytest service/tests:        1121 passed, 46 skipped, 0 failed (246.85 s)
+node scripts/run-frontend-tests.mjs: 270 passed (20 files)
+node --test deploy/cloudflare-signal/worker.test.mjs: 11 passed
+packaged emoji artwork verification: 3 passed
+node node_modules/typescript/bin/tsc -b: passed
+node scripts/run-frontend-build.mjs: passed
+```
+
+The official report is
+`dist/reports/0.9.24/20261023T124816Z-4d482718/report.json` (git-ignored):
+`status: passed`, 287.253 s, SHA-256
+`ea1445e314d31c6ef792b19ce2d475601450d60a987da875b8164d7bbd2806db`.
+Gates: `automated: passed`; `physical_device: not-requested`;
+`production_signing: not-requested`.
+
 ## Bounded retry queues, 0.9.23
 
 The three-second retry worker no longer calls `store.list("message")` or
