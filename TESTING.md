@@ -51,6 +51,22 @@ The official report is
 Gates: `automated: passed`; `physical_device: not-requested`;
 `production_signing: not-requested`.
 
+Publication: GitHub Actions
+[CI run 40001963558](https://github.com/ahouchens/mesh-chat/actions/runs/40001963558)
+and
+[Release run 40001968484](https://github.com/ahouchens/mesh-chat/actions/runs/40001968484)
+passed for `v0.9.28`. Release:
+<https://github.com/ahouchens/mesh-chat/releases/tag/v0.9.28>.
+
+| Artifact | Bytes | SHA-256 (verified by re-download) |
+|---|---:|---|
+| `Mesh-Chat_0.9.28_x64-setup.exe` | 27,907,445 | `d59afcd16eadf2d1690e1232867cdd0a7517d6466cab9c052d7f3e0ae388d366` |
+| `Mesh-Chat_0.9.28_x64_en-US.msi` | 29,900,800 | `58dc22d368ede7fedcdb1545bfebb5c10c6ee61b927b597d5a9d74fe1fb058ec` |
+| `mesh-chat-0.9.28-android-arm64-release.apk` | 34,388,007 | `85f52f8b54c014ddbed0c250344c29e767975f4dd39c62b50711d47022d4d6a5` |
+| `SHA256SUMS.txt` | 303 | `d5bd13d048bbe5168b58117b05222786fc425174542f5e93af0d343d46db82e0` |
+
+The Android APK is debug-signed; it is not a production or upgrade identity.
+
 ## Expanded WebRTC diagnostics, 0.9.27
 
 - Diagnostics now include environment/WebView identity, signaling state,
