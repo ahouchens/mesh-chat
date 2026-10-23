@@ -17,8 +17,17 @@ interface PacketResult {
   accepted: number;
 }
 
-export function bytesToBase64(value: ArrayBuffer): string {
-  const bytes = new Uint8Array(value);
+export function shouldAutoCloseWebRTCOnboarding(
+  phase: string,
+  onboarding: string,
+  handedOff: boolean,
+): boolean {
+  if (phase !== "connected" || !handedOff) return false;
+  // Review, invitation preparation, and errors need the user's attention.
+  return !["preview", "sending", "error"].includes(onboarding);
+}
+
+export function bytesToBase64(value: ArrayBuffer): string {  const bytes = new Uint8Array(value);
   let binary = "";
   for (let offset = 0; offset < bytes.length; offset += 8192) {
     binary += String.fromCharCode(...bytes.subarray(offset, offset + 8192));

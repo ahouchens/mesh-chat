@@ -3,7 +3,7 @@ import { QRCodeSVG } from "qrcode.react";
 import { Check, Copy, Phone, RefreshCw, X } from "lucide-react";
 
 import { serviceCommand } from "./api";
-import { attachWebRTCBridge, type WebRTCBridge } from "./webrtc-onboarding";
+import { attachWebRTCBridge, shouldAutoCloseWebRTCOnboarding, type WebRTCBridge } from "./webrtc-onboarding";
 import { rememberWebRTCDiagnostics } from "./webrtc-diagnostics";
 import { removeWebRTCSession, setWebRTCSession, updateWebRTCSessionApprovalPending, updateWebRTCSessionContact, type WebRTCSessionPath } from "./webrtc-session";
 import { clearPairingResume, savePairingResume } from "./pairing-resume";
@@ -162,6 +162,8 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
   const connectAnswerBusyRef = useRef(false);
   const bridgeRef = useRef<WebRTCBridge | null>(null);
   const handedOffRef = useRef(false);
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
   const iceSummaryRef = useRef<Record<string, unknown> | null>(null);
 
   const captureDiagnostics = useCallback(async (phase: string, message: string): Promise<string> => {
@@ -219,17 +221,32 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
   }, [initialPairingCode]);
 
   useEffect(() => {
+    if (!shouldAutoCloseWebRTCOnboarding(phase, onboarding, handedOffRef.current)) return;
+    // The global WebRTC banner is the durable status surface once the session
+    // is connected and pending work is handed off.
+    const timer = window.setTimeout(() => onCloseRef.current(), 1500);
+    return () => window.clearTimeout(timer);
+  }, [onboarding, phase]);
+
+  const relayEnabled = Boolean(
+    relaySettings?.turn_configured ||
+      (relaySettings?.turn_broker_configured && relaySettings.turn_broker_consent),
+  );
+  const pathFailureMessage = relayEnabled
+    ? "The WebRTC network path failed even though TURN is configured. Copy diagnostics and verify that relay candidates were gathered and that the TURN host is reachable from this network."
+    : "The WebRTC network path failed. On Wi-Fi, check client isolation and Windows Firewall. If the access point isolates clients, configure TURN.";
+
+  useEffect(() => {
     if (phase !== "connecting") return;
     const timer = window.setTimeout(() => {
-      const message = "The WebRTC path did not open. On Wi-Fi, check that the access point allows client-to-client traffic and that Windows Firewall permits Mesh Chat on private networks. If the network isolates clients, configure TURN.";
-      void captureDiagnostics("timeout", message).finally(() => {
-        setError(message);
+      void captureDiagnostics("timeout", pathFailureMessage).finally(() => {
+        setError(pathFailureMessage);
         setPhase("error");
         cleanup();
       });
     }, 30000);
     return () => window.clearTimeout(timer);
-  }, [captureDiagnostics, cleanup, phase]);
+  }, [captureDiagnostics, cleanup, pathFailureMessage, phase]);
 
   const sendInvitation = useCallback(async () => {
     if (roleRef.current !== "offer" || invitationStartedRef.current || !bridgeRef.current) return;
@@ -355,9 +372,8 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
 
   const watchPeer = useCallback((pc: RTCPeerConnection) => {
     const failed = () => {
-      const message = "The WebRTC network path failed. On Wi-Fi, check client isolation and Windows Firewall. If the access point isolates clients, configure TURN.";
-      void captureDiagnostics("ice-failed", message).finally(() => {
-        setError(message);
+      void captureDiagnostics("ice-failed", pathFailureMessage).finally(() => {
+        setError(pathFailureMessage);
         setPhase("error");
         cleanup();
       });
@@ -368,7 +384,7 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
     pc.oniceconnectionstatechange = () => {
       if (pc.iceConnectionState === "failed") failed();
     };
-  }, [captureDiagnostics, cleanup]);
+  }, [captureDiagnostics, cleanup, pathFailureMessage]);
 
   const copy = useCallback(async (value: string, label: string) => {
     try {

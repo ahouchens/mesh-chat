@@ -13,7 +13,7 @@ vi.mock("./api", () => ({
 const serviceCommand = mocks.serviceCommand;
 const onServiceEvent = mocks.onServiceEvent;
 
-import { attachWebRTCBridge, base64ToBytes, bytesToBase64 } from "./webrtc-onboarding";
+import { attachWebRTCBridge, base64ToBytes, bytesToBase64, shouldAutoCloseWebRTCOnboarding } from "./webrtc-onboarding";
 
 function fakeChannel() {
   const channel = {
@@ -88,5 +88,21 @@ describe("WebRTC DataChannel pump", () => {
     channel.onmessage?.({ data: new Uint8Array([1, 2, 3, 4, 5]).buffer } as MessageEvent);
     await vi.waitFor(() => expect(onError).toHaveBeenCalledTimes(1));
     expect(serviceCommand).not.toHaveBeenCalledWith("webrtc_packet", expect.anything());
+  });
+});
+
+describe("WebRTC onboarding handoff", () => {
+  it("closes once connected and the session is handed off", () => {
+    expect(shouldAutoCloseWebRTCOnboarding("connected", "sent", true)).toBe(true);
+    expect(shouldAutoCloseWebRTCOnboarding("connected", "waiting-approval", true)).toBe(true);
+    expect(shouldAutoCloseWebRTCOnboarding("connected", "approved", true)).toBe(true);
+  });
+
+  it("keeps review, sending, errors, and unhanded sessions visible", () => {
+    expect(shouldAutoCloseWebRTCOnboarding("connected", "preview", true)).toBe(false);
+    expect(shouldAutoCloseWebRTCOnboarding("connected", "sending", true)).toBe(false);
+    expect(shouldAutoCloseWebRTCOnboarding("connected", "error", true)).toBe(false);
+    expect(shouldAutoCloseWebRTCOnboarding("connected", "sent", false)).toBe(false);
+    expect(shouldAutoCloseWebRTCOnboarding("waiting-answer", "sent", true)).toBe(false);
   });
 });

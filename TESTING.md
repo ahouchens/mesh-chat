@@ -24,6 +24,33 @@ Physical execution follows the
 full physical scenario matrix for versions through 0.9.15 is in the
 [Physical QA scenarios](docs/PHYSICAL_QA_SCENARIOS.md).
 
+## WebRTC onboarding closure, 0.9.25
+
+- The onboarding modal now closes 1.5 seconds after a successful WebRTC
+  connection once the session is handed off and no review/send/error state is
+  pending. Review, sending, and error states remain visible.
+- ICE failure text distinguishes a network failure when TURN is configured from
+  the no-TURN case.
+- Unit tests cover the auto-close decision matrix.
+
+Validation:
+
+```text
+pytest service/tests:        1121 passed, 46 skipped, 0 failed (264.60 s)
+node scripts/run-frontend-tests.mjs: 272 passed (20 files)
+node --test deploy/cloudflare-signal/worker.test.mjs: 11 passed
+packaged emoji artwork verification: 3 passed
+node node_modules/typescript/bin/tsc -b: passed
+node scripts/run-frontend-build.mjs: passed
+```
+
+The official report is
+`dist/reports/0.9.25/20261023T140338Z-e7822382/report.json` (git-ignored):
+`status: passed`, 315.005 s, SHA-256
+`b43136a52dc9fd93d5d5f767a491af2cb9a736fbc872d39edb376f985500c777`.
+Gates: `automated: passed`; `physical_device: not-requested`;
+`production_signing: not-requested`.
+
 ## Whole-project command and retry audit, 0.9.24
 
 Fixes the issues summarized in
