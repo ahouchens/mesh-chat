@@ -24,6 +24,32 @@ Physical execution follows the
 full physical scenario matrix for versions through 0.9.15 is in the
 [Physical QA scenarios](docs/PHYSICAL_QA_SCENARIOS.md).
 
+## Complete ICE gathering marker, 0.9.29
+
+- Signed offers and answers now append `a=end-of-candidates` after gathering.
+  This tells the remote ICE agent that the SDP contains the complete candidate
+  set and that no trickle candidates will follow.
+- Diagnostics continue to expose `endOfCandidates` on both local and remote SDP.
+- Adds a test proving the marker is appended once and is idempotent.
+
+Validation:
+
+```text
+pytest service/tests:        1121 passed, 46 skipped, 0 failed (251.52 s)
+node scripts/run-frontend-tests.mjs: 279 passed (21 files)
+node --test deploy/cloudflare-signal/worker.test.mjs: 11 passed
+packaged emoji artwork verification: 3 passed
+node node_modules/typescript/bin/tsc -b: passed
+node scripts/run-frontend-build.mjs: passed
+```
+
+The official report is
+`dist/reports/0.9.29/20261023T193130Z-cec98c8d/report.json` (git-ignored):
+`status: passed`, 292.078 s, SHA-256
+`adfac433e2beec5df39b35849b610e0aa329c1f916cf6d7ee9a190884996894b`.
+Gates: `automated: passed`; `physical_device: not-requested`;
+`production_signing: not-requested`.
+
 ## WebRTC SDP structure diagnostics, 0.9.28
 
 - Adds SDP structure to diagnostics: media lines, BUNDLE group, MID values, ICE

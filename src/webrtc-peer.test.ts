@@ -7,6 +7,7 @@ import {
   sdpCandidateSummary,
   sdpStructure,
   summarizeIce,
+  withEndOfCandidates,
 } from "./webrtc-peer";
 
 const ice = {
@@ -120,6 +121,13 @@ function fakePeer() {
 }
 
 describe("WebRTC diagnostics", () => {
+  it("marks gathered SDP as complete exactly once", () => {
+    const unmarked = localSdp.replace("\r\na=end-of-candidates", "");
+    const marked = withEndOfCandidates(unmarked);
+    expect(marked.trimEnd().endsWith("a=end-of-candidates")).toBe(true);
+    expect(withEndOfCandidates(marked)).toBe(marked);
+  });
+
   it("redacts ICE credentials but keeps the endpoint and transport", () => {
     expect(redactIceUrl("turn:user:pass@turn.example:3478?transport=udp")).toBe(
       "turn:turn.example:3478?transport=udp",

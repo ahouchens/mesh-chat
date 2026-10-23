@@ -1,6 +1,12 @@
 import type { CallIceConfiguration } from "./types";
 import type { WebRTCSessionPath } from "./webrtc-session";
 
+/** Mark a gathered SDP as complete so the remote ICE agent need not wait for trickle. */
+export function withEndOfCandidates(sdp: string): string {
+  if (/(^|\r?\n)a=end-of-candidates(\r?\n|$)/.test(sdp)) return sdp;
+  return `${sdp.replace(/\s*$/, "")}\r\na=end-of-candidates\r\n`;
+}
+
 /** Extract the single DTLS fingerprint a browser SDP carries. */
 export function fingerprint(sdp: string): string {
   for (const line of sdp.split(/\r?\n/)) {

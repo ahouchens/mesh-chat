@@ -15,6 +15,7 @@ import {
   summarizeIce,
   waitForCandidates,
   waitForOpen,
+  withEndOfCandidates,
 } from "./webrtc-peer";
 import type {
   CallIceConfiguration,
@@ -429,8 +430,9 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
       const offer = await pc.createOffer();
       await pc.setLocalDescription(offer);
       await waitForCandidates(pc);
-      const sdp = pc.localDescription?.sdp;
-      if (!sdp) throw new Error("Could not create the WebRTC offer.");
+      const gathered = pc.localDescription?.sdp;
+      if (!gathered) throw new Error("Could not create the WebRTC offer.");
+      const sdp = withEndOfCandidates(gathered);
       const result = await serviceCommand<OnboardingOfferResult>("webrtc_onboarding_offer", {
         sdp,
         dtls_fingerprint: fingerprint(sdp),
@@ -550,8 +552,9 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
       const answer = await pc.createAnswer();
       await pc.setLocalDescription(answer);
       await waitForCandidates(pc);
-      const sdp = pc.localDescription?.sdp;
-      if (!sdp) throw new Error("Could not create the WebRTC answer.");
+      const gathered = pc.localDescription?.sdp;
+      if (!gathered) throw new Error("Could not create the WebRTC answer.");
+      const sdp = withEndOfCandidates(gathered);
       const result = await serviceCommand<OnboardingAnswerResult>("webrtc_onboarding_answer", {
         offer_document: preview.document,
         sdp,
