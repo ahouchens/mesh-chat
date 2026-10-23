@@ -57,6 +57,22 @@ The official report is
 Gates: `automated: passed`; `physical_device: not-requested`;
 `production_signing: not-requested`.
 
+Publication: GitHub Actions
+[CI run 39880489200](https://github.com/ahouchens/mesh-chat/actions/runs/39880489200)
+and
+[Release run 39880493289](https://github.com/ahouchens/mesh-chat/actions/runs/39880493289)
+passed on the first attempt for `v0.9.17`. Release:
+<https://github.com/ahouchens/mesh-chat/releases/tag/v0.9.17>.
+
+| Artifact | Bytes | SHA-256 (verified by re-download) |
+|---|---:|---|
+| `Mesh-Chat_0.9.17_x64-setup.exe` | 27,896,310 | `a4762ccac68754dee8119727e65fec292c18872c481bfabdd1f95caca6f2c42f` |
+| `Mesh-Chat_0.9.17_x64_en-US.msi` | 29,884,416 | `3381395c146de2c281b96f4c3b4e16ef52bbc39b92c627a72c77995f52aa7768` |
+| `mesh-chat-0.9.17-android-arm64-release.apk` | 34,387,813 | `aca560e6cc4d1c145ca67ba7111c170760ec71cd1b958c81daa27a4fe866d866` |
+| `SHA256SUMS.txt` | 303 | `d306879b142970a32f91ebabec76aefd2c4b25ffc1b96089625fe099ec5fbf1d` |
+
+The Android APK is debug-signed; it is not a production or upgrade identity.
+
 ## Workspace admission and call audit hardening, 0.9.16
 
 An audit of the 0.9.15 workspace admission/call paths found and fixed:
