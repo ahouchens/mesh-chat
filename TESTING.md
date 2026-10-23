@@ -63,6 +63,22 @@ The official report is
 Gates: `automated: passed`; `physical_device: not-requested`;
 `production_signing: not-requested`.
 
+Publication: GitHub Actions
+[CI run 39950691613](https://github.com/ahouchens/mesh-chat/actions/runs/39950691613)
+and
+[Release run 39950695797](https://github.com/ahouchens/mesh-chat/actions/runs/39950695797)
+passed for `v0.9.23`. Release:
+<https://github.com/ahouchens/mesh-chat/releases/tag/v0.9.23>.
+
+| Artifact | Bytes | SHA-256 (verified by re-download) |
+|---|---:|---|
+| `Mesh-Chat_0.9.23_x64-setup.exe` | 27,903,502 | `5b57c9ea3e7229dd8db786023d9f2b8c1a46e6fc3fc6e5425fdfaf70ba732b85` |
+| `Mesh-Chat_0.9.23_x64_en-US.msi` | 29,896,704 | `2f2e2710426c81a5b518c997890d3e25de2311d1d81b48830d3ca49331b4a1a2` |
+| `mesh-chat-0.9.23-android-arm64-release.apk` | 34,387,776 | `a86ec97a9a6632a91b43d34e44a230c4514bbaa4bc07fd66c2783edf9ffc286c` |
+| `SHA256SUMS.txt` | 303 | `7ba5edd34d8fb8b13e0b04b7c4992a5e017569ef693b0b428df4ea4ef41f69e3` |
+
+The Android APK is debug-signed; it is not a production or upgrade identity.
+
 ## Multi-peer WebRTC sessions, 0.9.22
 
 Refines the 0.9.21 registry so reconnect identity is the **profile/device ID**,
