@@ -24,6 +24,39 @@ Physical execution follows the
 full physical scenario matrix for versions through 0.9.15 is in the
 [Physical QA scenarios](docs/PHYSICAL_QA_SCENARIOS.md).
 
+## Expanded WebRTC diagnostics, 0.9.27
+
+- Diagnostics now include environment/WebView identity, signaling state,
+  SDP candidate summaries, candidate protocols and address families, sanitized
+  ICE server URLs, every candidate pair with local/remote details, selected
+  pair, transports, DataChannel/SCTP state, and ICE roles.
+- Raw IP addresses, TURN usernames/credentials, ICE passwords, and SDP bodies
+  remain excluded.
+- Failure diagnostics are captured once, before the peer connection is closed,
+  so candidate-pair state is not erased by teardown.
+- A DataChannel close during onboarding now produces a diagnosable error instead
+  of silently leaving the dialog open.
+- New tests cover URL redaction, ICE summaries, SDP candidate summaries, and
+  remote candidate/pair diagnostics.
+
+Validation:
+
+```text
+pytest service/tests:        1121 passed, 46 skipped, 0 failed (278.80 s)
+node scripts/run-frontend-tests.mjs: 277 passed (21 files)
+node --test deploy/cloudflare-signal/worker.test.mjs: 11 passed
+packaged emoji artwork verification: 3 passed
+node node_modules/typescript/bin/tsc -b: passed
+node scripts/run-frontend-build.mjs: passed
+```
+
+The official report is
+`dist/reports/0.9.27/20261023T163932Z-5d990a82/report.json` (git-ignored):
+`status: passed`, 334.061 s, SHA-256
+`947e96c3dd701e063c6563ef346fbbf303de4a85ba2ae7f076a303a19f5b4554`.
+Gates: `automated: passed`; `physical_device: not-requested`;
+`production_signing: not-requested`.
+
 ## Windows WebRTC connection help, 0.9.26
 
 - Windows WebRTC onboarding now shows an inline network-access note before an

@@ -8,7 +8,7 @@ The design accepts real trade-offs. Delivery depends on peers being reachable, h
 
 An optional **I2P relay path** can bootstrap a workspace or 1:1 connection when neither device has a public endpoint. It is an explicit, consented fallback: the invitation carries one signed `*.b32.i2p` access point, both sides need an I2P router, and the access point relays encrypted Reticulum traffic rather than creating a direct link. I2P is not the default, is not available on Android yet, and does not replace the direct/LAN/access-point paths.
 
-> **Status — security-sensitive prototype.** The source tree is at 0.9.26. It has not been independently audited, and several physical-device and packaging gates are still open. Read [Status and verification](#status-and-verification) before relying on it.
+> **Status — security-sensitive prototype.** The source tree is at 0.9.27. It has not been independently audited, and several physical-device and packaging gates are still open. Read [Status and verification](#status-and-verification) before relying on it.
 
 ## What problem it solves
 
@@ -232,6 +232,7 @@ A group or workspace is a small signed state machine, not a hosted room:
 - **Workspace invitation fallbacks.** The invite dialog detects a configured TURN relay and explains that TURN only relays WebRTC, not direct participant hosting; when the direct checks fail, the underlying email-ready invitation remains visible and copyable. The dialog can open WebRTC onboarding to establish a TURN-backed DataChannel before sending the invitation.
 - **WebRTC workspace invitations.** With an active WebRTC DataChannel, the owner can create a signed workspace invitation and transfer it over the session control channel. The joiner opens the standard signed join flow; the DataChannel is a transfer path, not trust. Physical transfer qualification remains open.
 - **Workspace DM calls.** Workspace direct messages can start 1:1 audio or video calls using the existing call stack and encrypted workspace delivery, without creating a Personal contact. Both devices must be active members; group calls are not supported. Physical call qualification remains open.
+- **Expanded WebRTC diagnostics.** 0.9.27 records both SDP and statistics candidate types, protocols, address families, sanitized TURN endpoints, every candidate pair, selected-pair details, transports, DataChannel/SCTP state, and browser/WebView identity. Failure capture occurs before peer teardown. See [docs/WEBRTC_DIAGNOSTICS.md](docs/WEBRTC_DIAGNOSTICS.md).
 - **Windows WebRTC connection help.** 0.9.26 adds a Windows-specific firewall/network checklist in the WebRTC flow, including the msedgewebview2.exe rule and the Android-as-offerer fallback when a Windows offer is unreachable.
 - **WebRTC onboarding closure and diagnostics.** 0.9.25 closes the WebRTC onboarding modal automatically once the transport is connected and pending invitation work is handed off, while keeping review/error states open. ICE failure text now distinguishes “TURN is configured but no relay path succeeded” from “TURN is not configured.”
 - **Whole-project audit fixes.** 0.9.24 adds the missing search_workspace service command, restores the contact-management commands to the Tauri renderer allowlist, and adds an automated command-boundary conformance test. It also completes the 0.9.23 retry-queue fixes: ordered queue processing, group commit grace, and deterministic backlog tests.
@@ -334,8 +335,8 @@ The threat model is explicit about what is *not* protected: traffic analysis, IP
 
 | Platform | What exists | Recorded verification |
 | --- | --- | --- |
-| Windows x64 | MSI and NSIS installers, standalone executable plus service sidecar, bundled/managed `i2pd`, I2P invitation and consent UI, 1:1 audio/video call surface, automatic reconnect UI | 0.9.26 published; CI tests/build passed; installer launch and device testing not performed |
-| Android arm64 | Debug APK, plus release/AAB signing path; I2P settings and invitation preview, 1:1 audio/video call surface, automatic reconnect UI | Debug-signed 0.9.26 release APK published; no bundled I2P router; no physical call or reconnect test in the recorded run |
+| Windows x64 | MSI and NSIS installers, standalone executable plus service sidecar, bundled/managed `i2pd`, I2P invitation and consent UI, 1:1 audio/video call surface, automatic reconnect UI | 0.9.27 release candidate; 0.9.26 published; installer launch and device testing not performed |
+| Android arm64 | Debug APK, plus release/AAB signing path; I2P settings and invitation preview, 1:1 audio/video call surface, automatic reconnect UI | 0.9.27 release candidate; Debug-signed 0.9.26 release APK published; no bundled I2P router; no physical call or reconnect test in the recorded run |
 | macOS | Build path, FileVault adapter | No package built or run in this repository |
 | Linux | Build path, fscrypt/dm-crypt adapters | No package built or run in this repository |
 | iOS | Plugin and build script | Requires macOS and Xcode; not built or run in this repository |

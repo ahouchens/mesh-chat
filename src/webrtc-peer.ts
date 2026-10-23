@@ -101,20 +101,82 @@ export async function waitForOpen(
   });
 }
 
-/** A redacted summary: counts and booleans only, never credentials. */
+/** Remove any userinfo from an ICE URL without hiding its host or transport. */
+export function redactIceUrl(value: unknown): string {
+  if (typeof value !== "string") return "";
+  const match = value.match(/^([a-z][a-z0-9+.-]*:)(.*)$/i);
+  if (!match) return "";
+  return `${match[1].toLowerCase()}${(match[2].split("@").pop() ?? "")}`;
+}
+
+function addressFamily(value: unknown): string {
+  if (typeof value !== "string" || !value) return "unknown";
+  if (value.includes(":")) return "ipv6";
+  if (/^\d{1,3}(?:\.\d{1,3}){3}$/.test(value)) return "ipv4";
+  return "hostname";
+}
+
+/** Count candidate properties in an SDP without emitting addresses. */
+export function sdpCandidateSummary(sdp?: string): Record<string, unknown> {
+  const lines = (sdp ?? "").split(/\r?\n/).filter((line) => line.startsWith("a=candidate:"));
+  const types: Record<string, number> = {};
+  const protocols: Record<string, number> = {};
+  const families: Record<string, number> = {};
+  const tcpTypes: Record<string, number> = {};
+  for (const line of lines) {
+    const tokens = line.trim().split(/\s+/);
+    const protocol = (tokens[2] ?? "unknown").toLowerCase();
+    const typeIndex = tokens.indexOf("typ");
+    const type = typeIndex >= 0 ? (tokens[typeIndex + 1] ?? "unknown") : "unknown";
+    const tcpTypeIndex = tokens.indexOf("tcptype");
+    const tcpType = tcpTypeIndex >= 0 ? (tokens[tcpTypeIndex + 1] ?? "unknown") : undefined;
+    types[type] = (types[type] ?? 0) + 1;
+    protocols[protocol] = (protocols[protocol] ?? 0) + 1;
+    const family = addressFamily(tokens[4]);
+    families[family] = (families[family] ?? 0) + 1;
+    if (tcpType) tcpTypes[tcpType] = (tcpTypes[tcpType] ?? 0) + 1;
+  }
+  return {
+    count: lines.length,
+    types,
+    protocols,
+    families,
+    tcpTypes,
+    endOfCandidates: (sdp ?? "").includes("a=end-of-candidates"),
+  };
+}
+
+/** A redacted summary: counts, sanitized endpoint URLs, and booleans. */
 export function summarizeIce(ice: CallIceConfiguration): Record<string, unknown> {
   const urls = ice.iceServers.flatMap((server) =>
     Array.isArray(server.urls) ? server.urls : [server.urls],
   );
+  const lower = urls.map((url) => url.toLowerCase());
   return {
     transportPolicy: ice.iceTransportPolicy,
-    stun: urls.filter((url) => url.startsWith("stun:") || url.startsWith("stuns:")).length,
-    turn: urls.filter((url) => url.startsWith("turn:") || url.startsWith("turns:")).length,
+    stun: lower.filter((url) => url.startsWith("stun:") || url.startsWith("stuns:")).length,
+    turn: lower.filter((url) => url.startsWith("turn:") || url.startsWith("turns:")).length,
+    turns: lower.filter((url) => url.startsWith("turns:")).length,
     credentialPresent: ice.iceServers.some((server) => Boolean(server.credential)),
+    urls: urls.map(redactIceUrl),
   };
 }
 
-/** Connection diagnostics without SDP bodies, candidates, IPs, or credentials. */
+function candidateDetails(value: Record<string, unknown>): Record<string, unknown> {
+  return {
+    id: String(value.id ?? ""),
+    side: value.type === "local-candidate" ? "local" : "remote",
+    candidateType: value.candidateType,
+    protocol: value.protocol,
+    relayProtocol: value.relayProtocol,
+    addressFamily: addressFamily(value.address),
+    port: value.port,
+    networkType: value.networkType,
+    url: redactIceUrl(value.url),
+  };
+}
+
+/** Connection diagnostics without raw addresses, SDP bodies, or credentials. */
 export async function peerDiagnostics(
   pc: RTCPeerConnection,
   phase: string,
@@ -124,19 +186,15 @@ export async function peerDiagnostics(
   const stats = await pc.getStats();
   const candidates = new Map<string, Record<string, unknown>>();
   const pairs: Array<Record<string, unknown>> = [];
+  const transports: Array<Record<string, unknown>> = [];
   let selectedPairId = "";
   let dataChannel: Record<string, unknown> | null = null;
+  let sctp: Record<string, unknown> | null = null;
   stats.forEach((report) => {
     const value = report as unknown as Record<string, unknown>;
     const type = value.type;
     if (type === "local-candidate" || type === "remote-candidate") {
-      candidates.set(String(value.id), {
-        side: type === "local-candidate" ? "local" : "remote",
-        candidateType: value.candidateType,
-        protocol: value.protocol,
-        relayProtocol: value.relayProtocol,
-        networkType: value.networkType,
-      });
+      candidates.set(String(value.id), candidateDetails(value));
     } else if (type === "candidate-pair") {
       pairs.push({
         id: value.id,
@@ -144,11 +202,24 @@ export async function peerDiagnostics(
         nominated: value.nominated,
         bytesSent: value.bytesSent,
         bytesReceived: value.bytesReceived,
+        requestsSent: value.requestsSent,
+        responsesReceived: value.responsesReceived,
         localCandidateId: value.localCandidateId,
         remoteCandidateId: value.remoteCandidateId,
       });
-    } else if (type === "transport" && value.selectedCandidatePairId) {
-      selectedPairId = String(value.selectedCandidatePairId);
+    } else if (type === "transport") {
+      if (value.selectedCandidatePairId) {
+        selectedPairId = String(value.selectedCandidatePairId);
+      }
+      transports.push({
+        state: value.state,
+        dtlsState: value.dtlsState,
+        iceRole: value.iceRole,
+        dtlsRole: value.dtlsRole,
+        selectedCandidatePairId: value.selectedCandidatePairId,
+        bytesSent: value.bytesSent,
+        bytesReceived: value.bytesReceived,
+      });
     } else if (type === "data-channel") {
       dataChannel = {
         state: value.state,
@@ -157,8 +228,20 @@ export async function peerDiagnostics(
         bytesSent: value.bytesSent,
         bytesReceived: value.bytesReceived,
       };
+    } else if (type === "sctp-transport") {
+      sctp = {
+        state: value.state,
+        messagesSent: value.messagesSent,
+        messagesReceived: value.messagesReceived,
+        bytesSent: value.bytesSent,
+        bytesReceived: value.bytesReceived,
+      };
     }
   });
+  for (const pair of pairs) {
+    pair.local = candidates.get(String(pair.localCandidateId)) ?? null;
+    pair.remote = candidates.get(String(pair.remoteCandidateId)) ?? null;
+  }
   const selected =
     pairs.find((pair) => pair.id === selectedPairId) ??
     pairs.find((pair) => pair.nominated === true && pair.state === "succeeded") ??
@@ -170,22 +253,30 @@ export async function peerDiagnostics(
         nominated: selected.nominated,
         bytesSent: selected.bytesSent,
         bytesReceived: selected.bytesReceived,
-        local: candidates.get(String(selected.localCandidateId)) ?? null,
-        remote: candidates.get(String(selected.remoteCandidateId)) ?? null,
+        local: selected.local ?? null,
+        remote: selected.remote ?? null,
       }
     : null;
-  const countCandidates = (sdp?: string) => (sdp?.match(/^a=candidate:/gm) ?? []).length;
   return JSON.stringify(
     {
       timestamp: new Date().toISOString(),
       phase,
       error: error || undefined,
+      environment: {
+        userAgent: typeof navigator === "undefined" ? "unavailable" : navigator.userAgent,
+        platform: typeof navigator === "undefined" ? "unavailable" : navigator.platform,
+        language: typeof navigator === "undefined" ? "unavailable" : navigator.language,
+      },
+      signalingState: pc.signalingState,
       connectionState: pc.connectionState,
       iceConnectionState: pc.iceConnectionState,
       iceGatheringState: pc.iceGatheringState,
+      canTrickleIceCandidates: pc.canTrickleIceCandidates,
+      localDescriptionType: pc.localDescription?.type ?? null,
+      remoteDescriptionType: pc.remoteDescription?.type ?? null,
       iceConfiguration: iceSummary,
-      localSdpCandidates: countCandidates(pc.localDescription?.sdp),
-      remoteSdpCandidates: countCandidates(pc.remoteDescription?.sdp),
+      localSdp: sdpCandidateSummary(pc.localDescription?.sdp),
+      remoteSdp: sdpCandidateSummary(pc.remoteDescription?.sdp),
       selectedPair,
       candidateTypes: [
         ...new Set(
@@ -194,12 +285,16 @@ export async function peerDiagnostics(
           ),
         ),
       ],
+      candidates: [...candidates.values()],
+      pairs,
       pairStates: pairs.reduce<Record<string, number>>((counts, pair) => {
         const state = String(pair.state ?? "unknown");
         counts[state] = (counts[state] ?? 0) + 1;
         return counts;
       }, {}),
+      transports,
       dataChannel,
+      sctp,
     },
     null,
     2,

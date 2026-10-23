@@ -166,6 +166,7 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
   const onCloseRef = useRef(onClose);
   onCloseRef.current = onClose;
   const iceSummaryRef = useRef<Record<string, unknown> | null>(null);
+  const failureCapturedRef = useRef(false);
 
   const captureDiagnostics = useCallback(async (phase: string, message: string): Promise<string> => {
     const pc = pcRef.current;
@@ -190,6 +191,18 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
     pcRef.current?.close();
     pcRef.current = null;
   }, []);
+
+  const reportFailure = useCallback((phase: string, message: string) => {
+    if (failureCapturedRef.current) return;
+    failureCapturedRef.current = true;
+    // Capture while the peer connection still exists. Cleanup closes it and
+    // would otherwise erase remote candidates and candidate-pair state.
+    void captureDiagnostics(phase, message).finally(() => {
+      setError(message);
+      setPhase("error");
+      cleanup();
+    });
+  }, [captureDiagnostics, cleanup]);
 
   useEffect(() => () => {
     if (!handedOffRef.current) cleanup();
@@ -240,14 +253,10 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
   useEffect(() => {
     if (phase !== "connecting") return;
     const timer = window.setTimeout(() => {
-      void captureDiagnostics("timeout", pathFailureMessage).finally(() => {
-        setError(pathFailureMessage);
-        setPhase("error");
-        cleanup();
-      });
+      reportFailure("timeout", pathFailureMessage);
     }, 30000);
     return () => window.clearTimeout(timer);
-  }, [captureDiagnostics, cleanup, pathFailureMessage, phase]);
+  }, [pathFailureMessage, phase, reportFailure]);
 
   const sendInvitation = useCallback(async () => {
     if (roleRef.current !== "offer" || invitationStartedRef.current || !bridgeRef.current) return;
@@ -372,20 +381,14 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
   }, [captureDiagnostics, cleanup, onChanged, onConnected, sendInvitation]);
 
   const watchPeer = useCallback((pc: RTCPeerConnection) => {
-    const failed = () => {
-      void captureDiagnostics("ice-failed", pathFailureMessage).finally(() => {
-        setError(pathFailureMessage);
-        setPhase("error");
-        cleanup();
-      });
-    };
+    const failed = () => reportFailure("ice-failed", pathFailureMessage);
     pc.onconnectionstatechange = () => {
       if (pc.connectionState === "failed") failed();
     };
     pc.oniceconnectionstatechange = () => {
       if (pc.iceConnectionState === "failed") failed();
     };
-  }, [captureDiagnostics, cleanup, pathFailureMessage]);
+  }, [pathFailureMessage, reportFailure]);
 
   const copy = useCallback(async (value: string, label: string) => {
     try {
@@ -400,6 +403,7 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
   const createOffer = useCallback(async () => {
     if (createOfferBusyRef.current) return;
     createOfferBusyRef.current = true;
+    failureCapturedRef.current = false;
     setMailboxCode("");
     setOfferDocument("");
     setError(""); setPhase("creating");
@@ -412,7 +416,10 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
       const channel = pc.createDataChannel("mesh-reticulum", { ordered: true });
       channel.binaryType = "arraybuffer";
       channel.onopen = () => { void attach(channel); };
-      channel.onclose = () => cleanup();
+      channel.onclose = () => {
+        if (!handedOffRef.current) reportFailure("channel-closed", "The WebRTC DataChannel closed before the connection completed.");
+        else cleanup();
+      };
       channel.onerror = () => { setError("The DataChannel failed."); setPhase("error"); };
       const control = pc.createDataChannel("mesh-onboarding", { ordered: true });
       setupControl(control);
@@ -447,11 +454,12 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
     } finally {
       createOfferBusyRef.current = false;
     }
-  }, [attach, captureDiagnostics, cleanup, relaySettings, setupControl, watchPeer]);
+  }, [attach, captureDiagnostics, cleanup, relaySettings, reportFailure, setupControl, watchPeer]);
 
   const connectAnswer = useCallback(async () => {
     if (connectAnswerBusyRef.current) return;
     connectAnswerBusyRef.current = true;
+    failureCapturedRef.current = false;
     setError(""); setPhase("connecting");
     try {
       if (!pcRef.current || !offerDocument) throw new Error("Create an offer first.");
@@ -492,6 +500,7 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
   const reviewOffer = useCallback(async () => {
     if (reviewOfferBusyRef.current) return;
     reviewOfferBusyRef.current = true;
+    failureCapturedRef.current = false;
     setReviewBusy(true);
     setMailboxCode("");
     setError(""); setPhase("review");
@@ -529,7 +538,10 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
         channel.binaryType = "arraybuffer";
         channelRef.current = channel;
         channel.onopen = () => { void attach(channel); };
-        channel.onclose = () => cleanup();
+        channel.onclose = () => {
+          if (!handedOffRef.current) reportFailure("channel-closed", "The WebRTC DataChannel closed before the connection completed.");
+          else cleanup();
+        };
         channel.onerror = () => { setError("The DataChannel failed."); setPhase("error"); };
       };
       pcRef.current = pc;
@@ -567,7 +579,7 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
       reviewOfferBusyRef.current = false;
       setReviewBusy(false);
     }
-  }, [attach, captureDiagnostics, cleanup, offerInput, relaySettings, setupControl, watchPeer]);
+  }, [attach, captureDiagnostics, cleanup, offerInput, relaySettings, reportFailure, setupControl, watchPeer]);
 
   const acceptContact = async () => {
     setOnboardingBusy(true);
