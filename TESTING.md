@@ -56,6 +56,22 @@ The official report is
 Gates: `automated: passed`; `physical_device: not-requested`;
 `production_signing: not-requested`.
 
+Publication: GitHub Actions
+[CI run 39886160317](https://github.com/ahouchens/mesh-chat/actions/runs/39886160317)
+and
+[Release run 39886163003](https://github.com/ahouchens/mesh-chat/actions/runs/39886163003)
+passed on the first attempt for `v0.9.18`. Release:
+<https://github.com/ahouchens/mesh-chat/releases/tag/v0.9.18>.
+
+| Artifact | Bytes | SHA-256 (verified by re-download) |
+|---|---:|---|
+| `Mesh-Chat_0.9.18_x64-setup.exe` | 27,897,092 | `cb559ff54f99d7874440ce8d514433aacd179e1a1cf43e4d4d74d2078866c98e` |
+| `Mesh-Chat_0.9.18_x64_en-US.msi` | 29,892,608 | `e5e4052c580e9c8f5cbeaa090871f25bde20771f20c1aee3925126fbfc2f249e` |
+| `mesh-chat-0.9.18-android-arm64-release.apk` | 34,387,773 | `a46c696864d481bbd1c7a059ab71a1695da6b233240fe90488e9abaa6274f807` |
+| `SHA256SUMS.txt` | 303 | `da475f25bf1928638250047a07b9a32a5a33c0754f3dd2850cfcca7d93773a04` |
+
+The Android APK is debug-signed; it is not a production or upgrade identity.
+
 ## Workspace invitation TURN fallback, 0.9.17
 
 The workspace invite dialog now:
