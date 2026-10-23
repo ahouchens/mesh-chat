@@ -10,7 +10,7 @@ import {
 import type { WebRTCSessionPath } from "./webrtc-session";
 import { attachWebRTCBridge } from "./webrtc-onboarding";
 import { ReconnectPeer, fingerprint } from "./webrtc-peer";
-import { setWebRTCSession, getWebRTCSession } from "./webrtc-session";
+import { setWebRTCSession, getWebRTCSessionByKey, getWebRTCSessionForContact, closeWebRTCSession, removeWebRTCSession } from "./webrtc-session";
 
 export interface ReconnectRuntimeOptions {
   refresh: () => Promise<void>;
@@ -97,9 +97,12 @@ export function createReconnectDeps(
     attach: async (peer: CoordinatorPeer, profile: ReconnectProfile) => {
       const concrete = peer as ReconnectPeer;
       const channel = await concrete.open();
-      const bridge = await attachWebRTCBridge(channel);
+      const bridge = await attachWebRTCBridge(channel, {
+        onClosed: () => removeWebRTCSession(profile.id),
+      });
       const path = await concrete.path();
       setWebRTCSession({
+        key: profile.id,
         bridge,
         channel,
         pc: concrete.pc,
@@ -122,7 +125,10 @@ export function createReconnectDeps(
     },
     pathStatus: (contactId) =>
       serviceCommand("reconnect_path_status", { contact_id: contactId }),
-    hasSession: () => getWebRTCSession() !== null,
+    hasSession: (profileId, contactId) =>
+      getWebRTCSessionByKey(profileId) !== null ||
+      getWebRTCSessionForContact(contactId) !== null,
+    closeSession: (profileId) => closeWebRTCSession(profileId),
     fingerprint,
   };
 }

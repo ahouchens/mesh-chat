@@ -1,5 +1,5 @@
 import { serviceCommand } from "./api";
-import { getWebRTCSession } from "./webrtc-session";
+import { getWebRTCSession, getWebRTCSessionForContact } from "./webrtc-session";
 
 export const RECONNECT_CAPABILITIES_EVENT = "meshchat:reconnect-capabilities";
 
@@ -17,7 +17,7 @@ export function sendReconnectCapabilities(
   contactId?: string,
 ): boolean {
   if (!document) return false;
-  const session = getWebRTCSession();
+  const session = contactId !== undefined ? getWebRTCSessionForContact(contactId) ?? getWebRTCSession() : getWebRTCSession();
   const control = session?.control;
   if (!control || control.readyState !== "open") return false;
   // A capability is addressed to one contact. Refuse to send it over a channel

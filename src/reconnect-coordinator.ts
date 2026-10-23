@@ -122,8 +122,9 @@ export interface ReconnectCoordinatorDeps {
   pathStatus?(
     contactId: string,
   ): Promise<{ has_path: boolean; state: string; reason: string | null }>;
-  /** True when a WebRTC transport is already attached; reconnect must not replace it. */
-  hasSession?(): boolean;
+  /** True when this profile or its contact already has a live WebRTC transport. */
+  hasSession?(profileId: string, contactId: string): boolean;
+  closeSession?(profileId: string): Promise<void>;
   now?(): number;
   random?(): number;
   sleep?(ms: number): Promise<void>;
@@ -280,6 +281,11 @@ export class ReconnectCoordinator {
     this.closePeers(contactId);
     for (const entry of Object.values(this.entries)) {
       if (contactId && entry.contactId !== contactId) continue;
+      try {
+        await this.deps.closeSession?.(entry.profileId);
+      } catch {
+        // The transport may already have closed.
+      }
       this.stoppedProfiles.add(entry.profileId);
       entry.state = "stopped";
       entry.detail = "Stopped by you";
@@ -301,6 +307,11 @@ export class ReconnectCoordinator {
     this.running = true;
     for (const entry of Object.values(this.entries)) {
       if (contactId && entry.contactId !== contactId) continue;
+      try {
+        await this.deps.closeSession?.(entry.profileId);
+      } catch {
+        // A closed transport needs no further cleanup.
+      }
       this.stoppedProfiles.delete(entry.profileId);
       entry.state = "waiting_for_peer";
       entry.detail = "Retrying now";
@@ -404,16 +415,13 @@ export class ReconnectCoordinator {
   }
 
   private async run(generation: number): Promise<void> {
-    if (this.deps.hasSession?.()) {
-      // A live transport already exists. Automatic reconnect never replaces a
-      // working session or migrates it in place.
-      return;
-    }
     const payload = await this.deps.profiles().catch(() => null);
     if (!payload || generation !== this.generation) return;
     if (!Array.isArray(payload.profiles)) return;
     this.reconcile(payload.profiles);
-    const profiles = payload.profiles.filter((profile) => this.isReady(profile));
+    const profiles = payload.profiles
+      .filter((profile) => this.isReady(profile))
+      .filter((profile) => !this.deps.hasSession?.(profile.id, profile.contact_id));
     if (profiles.length === 0) return;
 
     for (const profile of profiles) {
@@ -433,7 +441,10 @@ export class ReconnectCoordinator {
     }
 
     const queue = profiles.filter(
-      (profile) => profile.effective.ready && profile.effective.configured,
+      (profile) =>
+        profile.effective.ready &&
+        profile.effective.configured &&
+        !this.deps.hasSession?.(profile.id, profile.contact_id),
     );
     const workers = Math.min(MAX_CONCURRENT, queue.length);
     let index = 0;
@@ -544,6 +555,7 @@ export class ReconnectCoordinator {
     profile: ReconnectProfile,
     generation: number,
   ): Promise<void> {
+    if (this.deps.hasSession?.(profile.id, profile.contact_id)) return;
     let attempt = 0;
     // One attempt id and one signed request are reused across retries. The
     // spec allows a request to be repeated; regenerating it on every retry
@@ -673,6 +685,7 @@ export class ReconnectCoordinator {
     profile: ReconnectProfile,
     generation: number,
   ): Promise<void> {
+    if (this.deps.hasSession?.(profile.id, profile.contact_id)) return;
     let attempt = 0;
     while (
       this.running &&

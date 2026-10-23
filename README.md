@@ -8,7 +8,7 @@ The design accepts real trade-offs. Delivery depends on peers being reachable, h
 
 An optional **I2P relay path** can bootstrap a workspace or 1:1 connection when neither device has a public endpoint. It is an explicit, consented fallback: the invitation carries one signed `*.b32.i2p` access point, both sides need an I2P router, and the access point relays encrypted Reticulum traffic rather than creating a direct link. I2P is not the default, is not available on Android yet, and does not replace the direct/LAN/access-point paths.
 
-> **Status — security-sensitive prototype.** The source tree is at 0.9.20. It has not been independently audited, and several physical-device and packaging gates are still open. Read [Status and verification](#status-and-verification) before relying on it.
+> **Status — security-sensitive prototype.** The source tree is at 0.9.21. It has not been independently audited, and several physical-device and packaging gates are still open. Read [Status and verification](#status-and-verification) before relying on it.
 
 ## What problem it solves
 
@@ -232,6 +232,7 @@ A group or workspace is a small signed state machine, not a hosted room:
 - **Workspace invitation fallbacks.** The invite dialog detects a configured TURN relay and explains that TURN only relays WebRTC, not direct participant hosting; when the direct checks fail, the underlying email-ready invitation remains visible and copyable. The dialog can open WebRTC onboarding to establish a TURN-backed DataChannel before sending the invitation.
 - **WebRTC workspace invitations.** With an active WebRTC DataChannel, the owner can create a signed workspace invitation and transfer it over the session control channel. The joiner opens the standard signed join flow; the DataChannel is a transfer path, not trust. Physical transfer qualification remains open.
 - **Workspace DM calls.** Workspace direct messages can start 1:1 audio or video calls using the existing call stack and encrypted workspace delivery, without creating a Personal contact. Both devices must be active members; group calls are not supported. Physical call qualification remains open.
+- **Multi-peer WebRTC sessions.** 0.9.21 replaces the single global WebRTC session with a per-peer/device registry. Registering one workspace member no longer closes another member’s bridge, DataChannel, or peer connection, and the reconnect coordinator skips only profiles that already have a live transport. Per-contact reconnect stop closes only that peer’s session.
 - **Workspace UX audit fixes.** 0.9.20 makes administrator-at-approval a protocol-compatible two-step admission (member manifest plus owner-signed role change), scopes pending-join snapshots to owners/admins, fixes invitation mode persistence, bounds contact-invitation prompts, and hardens private-mode/local-storage and invitation input handling.
 - **Workspace UX streamlining.** 0.9.19 adds a pending-joins inbox with role selection at approval, an explicit invitation-path chooser with per-invitation delivery state, and a dismissible workspace setup checklist. Delegated admission grants cannot create administrators.
 - **Verified-contact workspace invitations.** 0.9.18 adds a **Verified contacts** section to **Invite people**. It sends the normal single-use signed workspace invitation over an existing approved/verified contact route, while preserving recipient review, signed join, and owner/admin approval. The recipient sees a review banner, not an automatic membership change.
@@ -329,8 +330,8 @@ The threat model is explicit about what is *not* protected: traffic analysis, IP
 
 | Platform | What exists | Recorded verification |
 | --- | --- | --- |
-| Windows x64 | MSI and NSIS installers, standalone executable plus service sidecar, bundled/managed `i2pd`, I2P invitation and consent UI, 1:1 audio/video call surface, automatic reconnect UI | 0.9.20 published; CI tests/build passed; installer launch and device testing not performed |
-| Android arm64 | Debug APK, plus release/AAB signing path; I2P settings and invitation preview, 1:1 audio/video call surface, automatic reconnect UI | Debug-signed 0.9.20 release APK published; no bundled I2P router; no physical call or reconnect test in the recorded run |
+| Windows x64 | MSI and NSIS installers, standalone executable plus service sidecar, bundled/managed `i2pd`, I2P invitation and consent UI, 1:1 audio/video call surface, automatic reconnect UI | 0.9.21 release candidate; 0.9.20 published; installer launch and device testing not performed |
+| Android arm64 | Debug APK, plus release/AAB signing path; I2P settings and invitation preview, 1:1 audio/video call surface, automatic reconnect UI | 0.9.21 release candidate; Debug-signed 0.9.20 release APK published; no bundled I2P router; no physical call or reconnect test in the recorded run |
 | macOS | Build path, FileVault adapter | No package built or run in this repository |
 | Linux | Build path, fscrypt/dm-crypt adapters | No package built or run in this repository |
 | iOS | Plugin and build script | Requires macOS and Xcode; not built or run in this repository |
@@ -385,6 +386,7 @@ Desktop installers must be built on their target operating system. Android build
 | [PROTOCOL.md](PROTOCOL.md) | Exact signed documents, LXMF fields, limits, delivery evidence |
 | [WORKSPACE_SPEC.md](WORKSPACE_SPEC.md) | Product scope, roles, requirements, and release gates for workspaces |
 | [docs/WORKSPACE_UX_STREAMLINING.md](docs/WORKSPACE_UX_STREAMLINING.md) | Pending-joins inbox, role-at-approval, invitation chooser, delivery status, setup checklist |
+| [docs/WEBRTC_MULTI_SESSION.md](docs/WEBRTC_MULTI_SESSION.md) | Per-peer WebRTC session registry, cleanup, and reconnect concurrency |
 | [docs/CONTACT_WORKSPACE_INVITATIONS.md](docs/CONTACT_WORKSPACE_INVITATIONS.md) | Verified-contact workspace invitation delivery, prompt, and consent boundaries |
 | [docs/WORKSPACE_CONNECTIVITY_SPEC.md](docs/WORKSPACE_CONNECTIVITY_SPEC.md) | Workspace reachability, signed access recommendations, scoped reconnect, and the one-hop helper |
 | [docs/PHYSICAL_QA_SCENARIOS.md](docs/PHYSICAL_QA_SCENARIOS.md) | Physical-device scenarios and evidence gates for reconnect, helper, owner-offline admission, calls, WebRTC invitations, Android, and packaging |

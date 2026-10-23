@@ -53,7 +53,7 @@ async function channelBytes(data: unknown): Promise<ArrayBuffer | null> {
  */
 export async function attachWebRTCBridge(
   channel: RTCDataChannel,
-  options: { onError?: (error: unknown) => void } = {},
+  options: { onError?: (error: unknown) => void; onClosed?: (bridgeId: string) => void } = {},
 ): Promise<WebRTCBridge> {
   if (channel.readyState !== "open") {
     throw new Error("The WebRTC DataChannel is not open.");
@@ -82,6 +82,7 @@ export async function attachWebRTCBridge(
       } catch {
         // The service may already have retired the bridge.
       }
+      options.onClosed?.(attached.bridge_id);
     }
   };
 

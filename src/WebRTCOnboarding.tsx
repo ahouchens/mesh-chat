@@ -5,7 +5,7 @@ import { Check, Copy, Phone, RefreshCw, X } from "lucide-react";
 import { serviceCommand } from "./api";
 import { attachWebRTCBridge, type WebRTCBridge } from "./webrtc-onboarding";
 import { rememberWebRTCDiagnostics } from "./webrtc-diagnostics";
-import { setWebRTCSession, updateWebRTCSessionApprovalPending, updateWebRTCSessionContact, type WebRTCSessionPath } from "./webrtc-session";
+import { removeWebRTCSession, setWebRTCSession, updateWebRTCSessionApprovalPending, updateWebRTCSessionContact, type WebRTCSessionPath } from "./webrtc-session";
 import { clearPairingResume, savePairingResume } from "./pairing-resume";
 import { storeReconnectCapabilities } from "./reconnect-control";
 import {
@@ -332,12 +332,12 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
   const attach = useCallback(async (channel: RTCDataChannel) => {
     try {
       await waitForOpen(channel);
-      const bridge = await attachWebRTCBridge(channel, { onError: (reason) => { setError(errorMessage(reason)); setPhase("error"); } });
+      const bridge = await attachWebRTCBridge(channel, { onError: (reason) => { setError(errorMessage(reason)); setPhase("error"); }, onClosed: (bridgeId) => removeWebRTCSession(`onboarding:${bridgeId}`) });
       bridgeRef.current = bridge;
       const pc = pcRef.current;
       if (pc) {
         const path = await connectionPath(pc);
-        setWebRTCSession({ bridge, channel, pc, control: controlRef.current, path, createdAt: Date.now(), approvalPending: false });
+        setWebRTCSession({ key: `onboarding:${bridge.bridgeId}`, bridge, channel, pc, control: controlRef.current, path, createdAt: Date.now(), approvalPending: false });
         handedOffRef.current = true;
         onConnected?.(path);
       }
@@ -561,7 +561,7 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
         "accept_invitation",
         { invitation: controlDocumentRef.current },
       );
-      if (accepted.id) updateWebRTCSessionContact(accepted.id);
+      if (accepted.id) updateWebRTCSessionContact(accepted.id, bridgeRef.current ? `onboarding:${bridgeRef.current.bridgeId}` : undefined);
       if (workspaceDocumentRef.current) {
         await serviceCommand("submit_workspace_join", {
           operation_id: crypto.randomUUID(),

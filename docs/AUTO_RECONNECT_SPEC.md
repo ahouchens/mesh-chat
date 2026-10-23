@@ -190,8 +190,10 @@ hashes or exact online times to the mailbox operator.
 
 ## 8. Supervisor and process ownership
 
-The current `WebRTCSession` lives in renderer memory. A Python/Rust supervisor
-cannot keep a WebView peer connection alive after the renderer exits.
+The renderer owns a registry of `WebRTCSession` records keyed by peer/device
+profile, so several workspace members can hold independent WebRTC transports at
+once. A Python/Rust supervisor cannot keep a WebView peer connection alive after
+the renderer exits.
 
 Define lifecycle explicitly:
 

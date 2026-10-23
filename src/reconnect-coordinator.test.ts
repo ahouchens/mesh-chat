@@ -99,7 +99,7 @@ function harness(options: {
   verifyRequest?: (document: string) => Promise<{ contact_id: string; attempt_id: string }>;
   verifyAnswer?: (document: string) => Promise<{ sdp: string; attempt_id: string }>;
   pathStatus?: () => Promise<{ has_path: boolean; state: string; reason: string | null }>;
-  hasSession?: () => boolean;
+  hasSession?: (profileId?: string, contactId?: string) => boolean;
   failFirstOpen?: boolean;
 }): Harness {
   const mailbox = options.mailbox ?? new Map<string, string>();
@@ -423,6 +423,39 @@ describe("automatic reconnect coordinator", () => {
     });
     expect(waiting.published).toHaveLength(0);
     expect(waiting.peers).toHaveLength(0);
+  });
+
+  it("reconnects another profile when one peer already has a session", async () => {
+    const first = profile();
+    const second = profile({
+      id: "profile-2",
+      contact_id: "contact-2",
+      display_name: "Bailey",
+      effective: { ...profile().effective, preferred: false },
+    });
+    const mailbox = new Map<string, string>();
+    mailbox.set(
+      "profile-2/request",
+      JSON.stringify({ attempt_id: "attempt-2", contact_id: "contact-2" }),
+    );
+    mailbox.set(
+      "profile-2/answer",
+      JSON.stringify({ attempt_id: "attempt-2", sdp: SDP }),
+    );
+    const live = harness({
+      profiles: [first, second],
+      mailbox,
+      hasSession: (profileId) => profileId === "profile-1",
+      verifyRequest: async (document) => ({
+        contact_id: "contact-2",
+        attempt_id: (JSON.parse(document) as { attempt_id: string }).attempt_id,
+      }),
+    });
+    await live.coordinator.start();
+    await vi.waitFor(() => expect(live.attached).toBe(1));
+    expect(live.published.filter((item) => item.profileId === "profile-1")).toHaveLength(0);
+    expect(live.published.filter((item) => item.profileId === "profile-2").map((item) => item.role)).toEqual(["offer"]);
+    expect(live.coordinator.snapshot().entries["profile-2"]?.state).toBe("connected");
   });
 
   it("never replaces an already attached transport", async () => {

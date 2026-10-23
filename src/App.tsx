@@ -73,7 +73,7 @@ import { WebRTCOnboardingDialog } from "./WebRTCOnboarding";
 import { ReconnectSettings } from "./ReconnectSettings";
 import { createReconnectCoordinator } from "./reconnect-runtime";
 import type { ReconnectCoordinator } from "./reconnect-coordinator";
-import { closeWebRTCSession, getWebRTCSession, updateWebRTCSessionApprovalPending, updateWebRTCSessionContact, type WebRTCSessionPath } from "./webrtc-session";
+import { closeWebRTCSession, getWebRTCSession, getWebRTCSessionCount, getWebRTCSessionWithControl, subscribeWebRTCSessions, updateWebRTCSessionApprovalPending, updateWebRTCSessionContact, type WebRTCSessionPath } from "./webrtc-session";
 import { CONNECTION_TRANSPORT_CHOICES, type ConnectionTransportKind } from "./connection-transport";
 import { loadPairingResume } from "./pairing-resume";
 import { lastWebRTCDiagnostics } from "./webrtc-diagnostics";
@@ -3529,7 +3529,7 @@ function WorkspaceInviteDialog({ workspace, existingInvitations, remoteProfiles,
     try {
       const created = await serviceCommand<WorkspaceInvitationFormats>("create_workspace_invitation", { operation_id: newOperationId(), workspace_id: workspace.id, lifetime_days: 7, ...connection });
       if (connectionChoice === "webrtc") {
-        const control = getWebRTCSession()?.control;
+        const control = getWebRTCSessionWithControl()?.control;
         if (!control || control.readyState !== "open") throw new Error("The WebRTC DataChannel is not open.");
         control.send(JSON.stringify({ type: "workspace_invitation", document: created.value }));
         setShareFeedback("Invitation sent over the active WebRTC DataChannel.");
@@ -4553,6 +4553,13 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceChannelIn
   const [newGroup, setNewGroup] = useState(false);
   const [webrtcOnboardingOpen, setWebRtcOnboardingOpen] = useState(false);
   const [webrtcSessionActive, setWebRtcSessionActive] = useState(() => getWebRTCSession() !== null);
+  const [webrtcSessionCount, setWebRtcSessionCount] = useState(() => getWebRTCSessionCount());
+  useEffect(() => subscribeWebRTCSessions(() => {
+    const count = getWebRTCSessionCount();
+    setWebRtcSessionCount(count);
+    setWebRtcSessionActive(count > 0);
+    setWebrtcPath(getWebRTCSession()?.path ?? "unknown");
+  }), []);
   const [webrtcPath, setWebrtcPath] = useState<WebRTCSessionPath>(() => getWebRTCSession()?.path ?? "unknown");
   // Reconnect is renderer-owned because the WebView owns RTCPeerConnection.
   // This component only exists while the service is unlocked, so the
@@ -4561,7 +4568,11 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceChannelIn
   useEffect(() => { refreshRef.current = refresh; }, [refresh]);
   const [reconnectCoordinator] = useState(() => createReconnectCoordinator({
     refresh: async () => { await refreshRef.current(true); },
-    onSession: (path) => { setWebRtcSessionActive(true); setWebrtcPath(path); },
+    onSession: (path) => {
+      setWebRtcSessionActive(true);
+      setWebRtcSessionCount(getWebRTCSessionCount());
+      setWebrtcPath(path);
+    },
   }));
   useEffect(() => {
     void reconnectCoordinator.start();
@@ -4575,7 +4586,7 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceChannelIn
   const contactInvitePrompt = (snapshot.workspace_invitation_prompts ?? []).find((prompt) => prompt.state === "pending");
   useEffect(() => {
     if (!webrtcSessionActive) return;
-    const control = getWebRTCSession()?.control;
+    const control = getWebRTCSessionWithControl()?.control;
     if (!control) return;
     const onControl = (event: MessageEvent) => {
       if (typeof event.data !== "string") return;
@@ -5334,9 +5345,9 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceChannelIn
         { contact_id: contact.id },
       );
       try {
-        const session = getWebRTCSession();
+        const session = getWebRTCSessionWithControl();
         const control = session?.control;
-        if (accept) updateWebRTCSessionContact(contact.id);
+        if (accept) updateWebRTCSessionContact(contact.id, session?.key);
         // Send the approval whenever the channel is bound to this contact,
         // even if the onboarding dialog was closed and approvalPending was
         // cleared. Capability exchange must not depend on dialog lifetime.
@@ -6237,11 +6248,11 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceChannelIn
         {webrtcSessionActive && (
           <div className="incoming-call-banner" role="status">
             <QrCode size={18} />
-            <span><strong>WebRTC path connected · {webrtcPath === "relayed" ? "Relayed" : webrtcPath === "direct" ? "Direct" : "Path pending"}</strong><small>{pending.length > 0 ? `${pending.length} contact ${pending.length === 1 ? "request" : "requests"} awaiting approval.` : "Reticulum packets are using the DataChannel."}</small></span>
+            <span><strong>{webrtcSessionCount > 1 ? `${webrtcSessionCount} WebRTC paths connected` : "WebRTC path connected"} · {webrtcPath === "relayed" ? "Relayed" : webrtcPath === "direct" ? "Direct" : "Path pending"}</strong><small>{pending.length > 0 ? `${pending.length} contact ${pending.length === 1 ? "request" : "requests"} awaiting approval.` : "Reticulum packets are using the DataChannel."}</small></span>
             {pending.length > 0 && <Button variant="secondary" onClick={() => setDismissedRequests((current) => current.filter((id) => id !== pending[0].id))}>Review request</Button>}
             <Button variant="secondary" onClick={() => { const text = lastWebRTCDiagnostics(); if (text) void navigator.clipboard.writeText(text); }}>Diagnostics</Button>
-            <Button variant="secondary" onClick={() => { void closeWebRTCSession().finally(() => { setWebRtcSessionActive(false); setWebrtcPath("unknown"); setConnectEntryOpen(true); void refresh(true); }); }}>Reconnect</Button>
-            <Button variant="secondary" onClick={() => { void closeWebRTCSession().finally(() => { setWebRtcSessionActive(false); void refresh(true); }); }}>Disconnect</Button>
+            <Button variant="secondary" onClick={() => { void closeWebRTCSession().finally(() => { setWebRtcSessionActive(false); setWebRtcSessionCount(0); setWebrtcPath("unknown"); setConnectEntryOpen(true); void refresh(true); }); }}>Reconnect</Button>
+            <Button variant="secondary" onClick={() => { void closeWebRTCSession().finally(() => { setWebRtcSessionActive(false); setWebRtcSessionCount(0); void refresh(true); }); }}>Disconnect</Button>
           </div>
         )}
         {incomingCall && !callContactId && (
@@ -6491,7 +6502,7 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceChannelIn
       {selectedWorkspace && workspaceAccessOpen && <WorkspaceAccessDialog workspace={selectedWorkspace} onClose={() => setWorkspaceAccessOpen(false)} onSaved={async () => { await refresh(true); }} />}
       {selectedWorkspace && workspaceRetentionOpen && <WorkspaceRetentionDialog workspace={selectedWorkspace} conversationId={selectedWorkspaceConversation?.id} conversationName={selectedWorkspaceDirect?.peer_display_name ?? selectedWorkspaceChannel?.display_name ?? selectedWorkspaceChannel?.name} busy={workspaceActionBusy} error={workspaceActionError} onClose={() => setWorkspaceRetentionOpen(false)} onUpdate={(retentionDays) => void runWorkspaceAdministration("update_workspace_retention", { retention_days: retentionDays })} onPrune={pruneWorkspaceHistory} />}
       {connectEntryOpen && <ConnectEntryDialog onClose={() => setConnectEntryOpen(false)} onInvite={() => { setNewChatStartTab("invite"); setNewChatTransport("direct_tcp"); setConnectEntryOpen(false); setNewChat(true); }} onJoin={() => { setNewChatStartTab("join"); setConnectEntryOpen(false); setNewChat(true); }} onWebRTC={() => { setConnectEntryOpen(false); setWebRtcOnboardingOpen(true); }} onTransport={(kind) => { setNewChatStartTab("invite"); setNewChatTransport(kind); setConnectEntryOpen(false); setNewChat(true); }} onResume={() => { setConnectEntryOpen(false); setResumePairingOpen(true); }} resumeCode={resumePairingCode} />}
-      {webrtcOnboardingOpen && <WebRTCOnboardingDialog initialPairingCode={initialPairingCode || (resumePairingOpen ? resumePairingCode : "")} onClose={() => { setWebRtcOnboardingOpen(false); setResumePairingOpen(false); onPairingHandled?.(); }} onConnected={(path) => { setWebRtcSessionActive(true); setWebrtcPath(path); }} onFallback={() => { setNewChatStartTab("invite"); setNewChat(true); }} onChanged={async () => { await refresh(true); }} workspaces={(snapshot.workspaces ?? []).map((workspace) => ({ id: workspace.id, name: workspace.name }))} />}
+      {webrtcOnboardingOpen && <WebRTCOnboardingDialog initialPairingCode={initialPairingCode || (resumePairingOpen ? resumePairingCode : "")} onClose={() => { setWebRtcOnboardingOpen(false); setResumePairingOpen(false); onPairingHandled?.(); }} onConnected={(path) => { setWebRtcSessionActive(true); setWebRtcSessionCount(getWebRTCSessionCount()); setWebrtcPath(path); }} onFallback={() => { setNewChatStartTab("invite"); setNewChat(true); }} onChanged={async () => { await refresh(true); }} workspaces={(snapshot.workspaces ?? []).map((workspace) => ({ id: workspace.id, name: workspace.name }))} />}
       {newChat && <div className={hasForegroundRequest ? "dialog-suspended" : ""} aria-hidden={hasForegroundRequest ? true : undefined}><NewChatDialog initialInvitation={initialInvitation} initialTab={newChatStartTab} initialConnection={newChatTransport} remoteProfiles={snapshot.remote_profiles ?? []} onClose={() => { setNewChat(false); onInvitationHandled(); }} onChanged={async () => { await refresh(true); }} onWorkspaceInvitation={(value) => { setNewChat(false); setJoinWorkspaceValue(value); setJoinWorkspaceOpen(true); }} /></div>}
       {newGroup && <div className={hasForegroundRequest ? "dialog-suspended" : ""} aria-hidden={hasForegroundRequest ? true : undefined}><CreateGroupDialog contacts={snapshot.contacts} onClose={() => setNewGroup(false)} onCreated={async (group) => { await refresh(true); selectConversation({ kind: "group", id: group.id }); setNewGroup(false); }} /></div>}
       {contactsOpen && <div className={hasForegroundRequest ? "dialog-suspended" : ""} aria-hidden={hasForegroundRequest ? true : undefined}><ContactsDialog contacts={snapshot.contacts.filter((contact) => contact.trust !== "pending_request")} reconnect={reconnectCoordinator} onClose={() => setContactsOpen(false)} onChanged={async () => { await refresh(true); }} onOpenConversation={async (contact) => { const hidden = hiddenConversationKeys.has(`direct:${contact.id}`); setContactsOpen(false); await restoreAndSelect({ kind: "contact", id: contact.id }, hidden); }} onDeleted={async (contactId) => { if (selection?.kind === "contact" && selection.id === contactId) setSelection(null); setDrafts((current) => { const next = { ...current }; delete next[contactId]; return next; }); setLocallySavedMessages((current) => Object.fromEntries(Object.entries(current).filter(([, message]) => message.contact_id !== contactId))); await refresh(true); }} /></div>}

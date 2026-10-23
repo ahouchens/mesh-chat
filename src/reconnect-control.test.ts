@@ -3,10 +3,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   serviceCommand: vi.fn(),
   getWebRTCSession: vi.fn(),
+  getWebRTCSessionForContact: vi.fn(),
 }));
 
 vi.mock("./api", () => ({ serviceCommand: mocks.serviceCommand }));
-vi.mock("./webrtc-session", () => ({ getWebRTCSession: mocks.getWebRTCSession }));
+vi.mock("./webrtc-session", () => ({
+  getWebRTCSession: mocks.getWebRTCSession,
+  getWebRTCSessionForContact: mocks.getWebRTCSessionForContact,
+}));
 
 import {
   RECONNECT_CAPABILITIES_EVENT,
@@ -20,6 +24,7 @@ function controlChannel(readyState: RTCDataChannelState = "open") {
 
 beforeEach(() => {
   mocks.getWebRTCSession.mockReturnValue(null);
+  mocks.getWebRTCSessionForContact.mockImplementation(() => mocks.getWebRTCSession());
   mocks.serviceCommand.mockReset();
 });
 

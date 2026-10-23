@@ -24,6 +24,50 @@ Physical execution follows the
 full physical scenario matrix for versions through 0.9.15 is in the
 [Physical QA scenarios](docs/PHYSICAL_QA_SCENARIOS.md).
 
+## Multi-peer WebRTC sessions, 0.9.21
+
+Fixes the single-global-session limitation:
+
+- renderer sessions are kept in a per-peer/device registry keyed by reconnect
+  profile ID, with onboarding sessions keyed by bridge ID;
+- registering a second peer no longer closes the first bridge, DataChannel, or
+  peer connection;
+- `hasSession` is profile/contact-aware, so the coordinator skips only peers
+  that already have a live transport and continues with the rest;
+- per-contact stop/retry closes only that profile's session;
+- bridge close now removes its registry entry, preventing phantom sessions;
+- WebRTC banner reports the live path count;
+- onboarding and workspace control paths select a session that has an open
+  control channel instead of assuming the newest session.
+
+Tests:
+
+- registry unit tests cover multi-peer registration, targeted close, and global
+  close with one failing bridge;
+- production reconnect wiring test attaches **three peers** through
+  `createReconnectDeps` and verifies all three sessions remain until one is
+  explicitly closed;
+- coordinator test verifies a profile with an existing session is skipped while
+  another profile reconnects and attaches.
+
+Validation:
+
+```text
+pytest service/tests:        1115 passed, 46 skipped, 0 failed (252.90 s)
+node scripts/run-frontend-tests.mjs: 270 passed (20 files)
+node --test deploy/cloudflare-signal/worker.test.mjs: 11 passed
+packaged emoji artwork verification: 3 passed
+node node_modules/typescript/bin/tsc -b: passed
+node scripts/run-frontend-build.mjs: passed
+```
+
+The official report is
+`dist/reports/0.9.21/20261023T043627Z-455598e3/report.json` (git-ignored):
+`status: passed`, 284.145 s, SHA-256
+`567c1fabbe936f0ac1f8fded286ed83066b9b93fc7eab2f4145cb7747d202593`.
+Gates: `automated: passed`; `physical_device: not-requested`;
+`production_signing: not-requested`.
+
 ## Workspace UX defect fixes, 0.9.20
 
 Defects found in the 0.9.19 audit and fixed:
