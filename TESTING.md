@@ -24,6 +24,39 @@ Physical execution follows the
 full physical scenario matrix for versions through 0.9.15 is in the
 [Physical QA scenarios](docs/PHYSICAL_QA_SCENARIOS.md).
 
+## Workspace UX streamlining, 0.9.19
+
+Implements the three requested improvements in
+[WORKSPACE_UX_STREAMLINING.md](docs/WORKSPACE_UX_STREAMLINING.md):
+
+- **Pending-joins inbox:** cross-workspace list, fingerprint/destination
+  details, and role-at-approval. Delegated admission grants can only add
+  members; owners can approve as administrator.
+- **Explicit invitation chooser:** visible path cards for automatic fallback,
+  same network, direct Internet, email-assisted, WebRTC/TURN, I2P, and approved
+  access points. Active invitations show mode, verified-contact recipient,
+  live delivery state/failure, and expiry.
+- **Workspace setup checklist:** dismissible empty-state checklist for the first
+  channel, first member, and connectivity review.
+
+Validation:
+
+```text
+pytest service/tests:        1115 passed, 46 skipped, 0 failed (268.91 s)
+node scripts/run-frontend-tests.mjs: 265 passed (18 files)
+node --test deploy/cloudflare-signal/worker.test.mjs: 11 passed
+packaged emoji artwork verification: 3 passed
+node node_modules/typescript/bin/tsc -b: passed
+node scripts/run-frontend-build.mjs: passed
+```
+
+The official report is
+`dist/reports/0.9.19/20261023T022445Z-58a2a231/report.json` (git-ignored):
+`status: passed`, 316.468 s, SHA-256
+`6ce6707bd4385c7a9fe0b966d0919066a499da65b0fb2a0f493c46f68706afa8`.
+Gates: `automated: passed`; `physical_device: not-requested`;
+`production_signing: not-requested`.
+
 ## Verified-contact workspace invitations, 0.9.18
 
 Implements the flow in

@@ -608,6 +608,11 @@ export interface WorkspaceInvitation {
   state: "active";
   created_at: number;
   expires_at: number;
+  connection_mode?: "participant" | "email" | "i2p" | "webrtc" | "contact" | "nearby" | "remote";
+  contact_id?: string;
+  contact_display_name?: string;
+  delivery_state?: string;
+  delivery_failure?: string;
 }
 
 export interface WorkspaceInvitationPrompt {
@@ -626,7 +631,8 @@ export interface WorkspaceInvitationPrompt {
   state: "pending";
 }
 
-export interface WorkspaceInvitationPreview {  workspace_id: string;
+export interface WorkspaceInvitationPreview {
+  workspace_id: string;
   existing_workspace?: Workspace;
   can_resume_join?: boolean;
   join_resume_reason?: "invitation_mismatch" | "request_stopped" | "request_expired" | "identity_mismatch" | "saved_request_invalid";

@@ -1971,11 +1971,43 @@ function IncomingRequestDialog({
   );
 }
 
+function WorkspaceSetupChecklist({
+  workspace,
+  channelCount,
+  activeMemberCount,
+  onInvite,
+  onCreateChannel,
+  onConnectivity,
+}: {
+  workspace: Workspace;
+  channelCount: number;
+  activeMemberCount: number;
+  onInvite: () => void;
+  onCreateChannel: () => void;
+  onConnectivity: () => void;
+}) {
+  const storageKey = `mesh-chat-workspace-setup-${workspace.id}`;
+  const [dismissed, setDismissed] = useState(() => localStorage.getItem(storageKey) === "dismissed");
+  const [connectivityChecked, setConnectivityChecked] = useState(() => localStorage.getItem(`${storageKey}-connectivity`) === "checked");
+  if (dismissed) return null;
+  const steps = [
+    { key: "channel", title: "Create the first channel", detail: "Channels organize workspace messages and control who receives them.", done: channelCount > 0, action: onCreateChannel, label: "Create channel" },
+    { key: "invite", title: "Invite your first member", detail: "Each person receives a single-use signed invitation and must be approved.", done: activeMemberCount > 1, action: onInvite, label: "Invite people" },
+    { key: "connectivity", title: "Review connectivity", detail: "Check that member devices have a usable route before relying on delivery.", done: connectivityChecked, action: () => { localStorage.setItem(`${storageKey}-connectivity`, "checked"); setConnectivityChecked(true); onConnectivity(); }, label: "Open People" },
+  ];
+  const completed = steps.filter((step) => step.done).length;
+  return <section className="workspace-setup" aria-labelledby={`workspace-setup-${workspace.id}`}>
+    <div className="workspace-setup__head"><div><p className="eyebrow">Getting started</p><h2 id={`workspace-setup-${workspace.id}`}>Finish setting up {workspace.name}</h2><p>{completed} of {steps.length} steps complete. You can reopen these actions from the workspace sidebar.</p></div><button type="button" className="button button--ghost" onClick={() => { localStorage.setItem(storageKey, "dismissed"); setDismissed(true); }}>Dismiss</button></div>
+    <ol>{steps.map((step) => <li key={step.key} className={step.done ? "workspace-setup__step workspace-setup__step--done" : "workspace-setup__step"}><span className="workspace-setup__check" aria-hidden="true">{step.done ? <Check size={15} /> : null}</span><span><strong>{step.title}</strong><small>{step.detail}</small></span>{!step.done && <Button variant="secondary" onClick={step.action}>{step.label}</Button>}</li>)}</ol>
+  </section>;
+}
+
 function WorkspaceJoinRequestDialog({
   request,
   workspace,
   busy,
   error,
+  canGrantAdmin,
   onApprove,
   onDecline,
   onClose,
@@ -1984,10 +2016,12 @@ function WorkspaceJoinRequestDialog({
   workspace: Workspace;
   busy: boolean;
   error: string;
-  onApprove: () => void;
+  canGrantAdmin: boolean;
+  onApprove: (role: "member" | "admin") => void;
   onDecline: () => void;
   onClose: () => void;
 }) {
+  const [role, setRole] = useState<"member" | "admin">("member");
   return (
     <Dialog title="Workspace join request" onClose={onClose}>
       <div className="request-dialog">
@@ -2000,11 +2034,54 @@ function WorkspaceJoinRequestDialog({
         </div>
         <p className="muted">Approve only if you expected this device. Compare its fingerprint another way for stronger assurance.</p>
         <SecurityDetails fingerprint={request.fingerprint} destination={request.destination_hash} />
+        {canGrantAdmin && <label className="field"><span>Role after admission</span><select value={role} disabled={busy} onChange={(event) => setRole(event.target.value as "member" | "admin")}><option value="member">Member</option><option value="admin">Administrator</option></select></label>}
         {error && <p className="form-error" role="alert">{error}</p>}
         <div className="dialog__actions">
           <Button variant="secondary" onClick={onDecline} disabled={busy}>Decline</Button>
-          <Button onClick={onApprove} disabled={busy}>{busy ? "Responding…" : "Approve workspace access"}</Button>
+          <Button onClick={() => onApprove(role)} disabled={busy}>{busy ? "Responding…" : role === "admin" ? "Approve as administrator" : "Approve workspace access"}</Button>
         </div>
+      </div>
+    </Dialog>
+  );
+}
+
+function WorkspacePendingJoinsDialog({
+  requests,
+  workspaces,
+  busy,
+  error,
+  onApprove,
+  onDecline,
+  onClose,
+}: {
+  requests: WorkspaceJoinRequest[];
+  workspaces: Workspace[];
+  busy: boolean;
+  error: string;
+  onApprove: (request: WorkspaceJoinRequest, role: "member" | "admin") => void;
+  onDecline: (request: WorkspaceJoinRequest) => void;
+  onClose: () => void;
+}) {
+  const [roles, setRoles] = useState<Record<string, "member" | "admin">>({});
+  return (
+    <Dialog title="Pending workspace joins" onClose={onClose} wide>
+      <div className="form-stack">
+        <p className="muted">Each request is signed by the joining device. Approval publishes a signed membership change; the role applies immediately.</p>
+        {requests.length === 0 && <p className="muted">No workspace join requests are waiting.</p>}
+        {requests.map((request) => {
+          const workspace = workspaces.find((item) => item.id === request.workspace_id);
+          if (!workspace) return null;
+          const role = roles[request.id] ?? "member";
+          return <section className="request-card workspace-join-request" key={request.id}>
+            <div><Avatar name={request.display_name} small /><span><strong>{request.display_name}</strong><small>{workspace.name} · {request.member_id.replaceAll("-", "").slice(0, 6)}</small></span></div>
+            <p className="request-fingerprint">{request.fingerprint}</p>
+            <small className="muted">{request.destination_hash}</small>
+            {workspace.local_role === "owner" && <label className="field"><span>Role</span><select value={role} disabled={busy} onChange={(event) => setRoles((current) => ({ ...current, [request.id]: event.target.value as "member" | "admin" }))}><option value="member">Member</option><option value="admin">Administrator</option></select></label>}
+            <div className="dialog-actions"><Button variant="ghost" disabled={busy} onClick={() => onDecline(request)}>Decline</Button><Button disabled={busy} onClick={() => onApprove(request, role)}>{busy ? "Responding…" : "Approve"}</Button></div>
+          </section>;
+        })}
+        {error && <p className="form-error" role="alert">{error}</p>}
+        <div className="dialog-actions"><Button variant="secondary" onClick={onClose}>Close</Button></div>
       </div>
     </Dialog>
   );
@@ -3410,11 +3487,11 @@ function WorkspaceInviteDialog({ workspace, existingInvitations, remoteProfiles,
     if (!contactId || contactBusy) return;
     setContactBusy(true); setContactFeedback(""); setContactError("");
     try {
-      await serviceCommand<{ sent: boolean }>("invite_contact_to_workspace", {
+      const result = await serviceCommand<{ sent: boolean; message_state?: string }>("invite_contact_to_workspace", {
         workspace_id: workspace.id,
         contact_id: contactId,
       });
-      setContactFeedback("Workspace invitation sent over the existing verified contact route.");
+      setContactFeedback(`Workspace invitation queued over the existing verified contact route${result.message_state ? ` (${result.message_state})` : ""}.`);
       setContactId("");
     } catch (reason) {
       setContactError(errorMessage(reason));
@@ -3531,13 +3608,21 @@ function WorkspaceInviteDialog({ workspace, existingInvitations, remoteProfiles,
     finally { setBusy(false); }
   };
   return <Dialog title={`Invite to ${workspace.name}`} onClose={() => void closeDialog()} wide><div className="form-stack">
+    {!invitation && !savedSetupId && <div className="invite-mode-grid" role="group" aria-label="Invitation path">{[
+      ["guided", "Automatic fallback", "Email-ready; recipient may use an existing route"],
+      ["nearby", "Same network", "Both devices on the same LAN"],
+      ["participant", "Direct Internet", "This device accepts the inbound connection"],
+      ["email", "Email-assisted", "Outbound first; optional reverse reply"],
+      ["webrtc", "WebRTC / TURN", "Use an active DataChannel; TURN only relays WebRTC"],
+      ["i2p", "I2P access point", "Relayed through an I2P access point"],
+    ].map(([mode, label, hint]) => <button key={mode} type="button" className="invite-mode-card" aria-pressed={connectionChoice === mode} disabled={busy || (mode === "webrtc" && !webrtcActive && !turnConfigured)} onClick={() => { if (mode === "webrtc" && !webrtcActive) { onOpenWebRTC(); return; } setConnectionChoice(mode); setDoctor(null); setError(""); }}><strong>{label}</strong><small>{hint}</small></button>)}{usableProfiles.length > 0 && <button type="button" className="invite-mode-card" aria-pressed={connectionChoice.startsWith("remote:")} disabled={busy} onClick={() => { setConnectionChoice(`remote:${usableProfiles[0].id}`); setDoctor(null); setError(""); }}><strong>Approved access point</strong><small>Use an approved relay / access point</small></button>}</div>}
     {turnConfigured && <section className="direct-help__note" aria-label="TURN relay availability"><p><strong>TURN relay is configured.</strong> TURN can relay WebRTC calls and DataChannel traffic, but it does not make this device a direct participant host and does not fix carrier-grade NAT for the direct invitation path.</p>{webrtcActive ? <p className="muted">Choose <strong>WebRTC DataChannel (connected)</strong> below to send this invitation over the active relayed or direct session.</p> : <><p className="muted">To use TURN for this workspace, establish a WebRTC connection first, then reopen this dialog and choose the WebRTC option.</p><Button variant="secondary" onClick={onOpenWebRTC}>Connect over WebRTC/TURN first</Button></>}</section>}
     {availableContacts.length > 0 && !invitation && <section className="direct-help__note" aria-label="Invite verified contact"><p><strong>Invite a verified contact.</strong> Send a normal single-use workspace invitation over an already approved contact route. The recipient still reviews it, signs a join request, and requires owner/admin approval.</p><label className="field"><span>Verified contact</span><select value={contactId} disabled={contactBusy} onChange={(event) => { setContactId(event.target.value); setContactFeedback(""); setContactError(""); }}><option value="">Choose a contact</option>{availableContacts.map((candidate) => <option key={candidate.id} value={candidate.id}>{candidate.display_name} · {candidate.fingerprint}</option>)}</select></label><Button disabled={!contactId || contactBusy} onClick={() => void sendContactInvite()}>{contactBusy ? "Sending…" : "Send workspace invitation"}</Button>{contactFeedback && <p className="direct-host-status" role="status">{contactFeedback}</p>}{contactError && <p className="form-error" role="alert">{contactError}</p>}</section>}
     {savedSetupId && <DirectConnectionSetup key={savedSetupId} invitationId={savedSetupId} resumeExisting />}
     {invitation && connectionChoice === "guided" && <DirectConnectionSetup invitationId={invitation.id} autoStart onShared={() => setShared(true)} />}
     {invitation && <><p>This bearer invitation works once and expires {formatExpiry(invitation.expires_at)}. This is the effective direct-host expiry.</p>{invitation.connection_mode === "participant" && <p className="direct-host-status" role="status"><ShieldCheck size={17} /> Prepared — waiting for recipient verification. Keep this owner device online.</p>}{invitation.connection_mode === "email" && <p className="direct-host-status" role="status"><ShieldCheck size={17} /> Email-ready. {invitation.host_session_id ? "The joiner tries this owner device first, then may check their device for a return connection." : "This owner device could not host an inbound path. The joiner can first try an existing or same-network Mesh route, and may create a return reply only if their network accepts inbound traffic."}</p>}{invitation.methods?.includes("manual") && <p className="muted">Mesh Chat cannot remove your manual router rule. Remove it in the router when it is no longer needed.</p>}<InvitationQrCode document={invitation.value} destination="workspace" /><label className="field"><span>Complete workspace invitation</span><textarea readOnly value={invitation.text} aria-label="Workspace invitation text" rows={5} onFocus={(event) => event.currentTarget.select()} /></label><p className="muted invite-safety">Send the entire value in this box. The <strong>MESHWORKSPACE…</strong> prefix by itself is only the format label, not an invitation.</p><div className="dialog-actions"><Button variant="danger" disabled={busy} onClick={() => void revoke(invitation.id)}>Revoke invitation</Button><Button variant="secondary" onClick={() => void copyInvitation()}>{copied ? <Check size={17} /> : <Copy size={17} />}{copied ? "Complete invitation copied" : "Copy complete invitation"}</Button><Button variant="secondary" onClick={() => void share()}><Share2 size={17} /> Share complete invitation</Button><Button variant="ghost" onClick={save}><FileUp size={17} /> Save invitation file</Button>{invitation.connection_mode === "participant" && invitation.host_session_id && !invitation.methods?.includes("manual") && <Button variant="ghost" disabled={busy} onClick={() => void configureFirewall()}><ShieldCheck size={17} /> Allow in Windows Firewall</Button>}</div>{shareFeedback && <p className="invite-feedback" aria-live="polite">{shareFeedback}</p>}{firewallFeedback && <p className="muted" role="status">{firewallFeedback}</p>}</>}
     {!invitation && !savedSetupId && <>{connectionChoice === "guided" && <><p>Send an invitation, then follow the steps on both devices. No account or connection server is needed. Some networks cannot connect directly.</p><Button disabled={busy} onClick={() => void create()}>{busy ? "Preparing…" : "Prepare invitation"}</Button></>}<details><summary>Other connection options</summary><label className="field"><span>How should they connect?</span><select value={connectionChoice} disabled={busy} onChange={(event) => { setConnectionChoice(event.target.value); setDoctor(null); setError(""); }}><option value="guided">Guided connection (recommended)</option>{webrtcActive && <option value="webrtc">WebRTC DataChannel (connected)</option>}<option value="participant">Advanced: direct TCP hosting</option><option value="email">Email-assisted direct connection — reverse direction if possible</option><option value="nearby">Same network only — will not work over cellular</option><option value="i2p">I2P access point — relayed through I2P</option>{usableProfiles.map((profile) => <option key={profile.id} value={`remote:${profile.id}`}>Approved access point · {profile.label} · {profile.state === "connected" ? "connected" : "currently unavailable"}</option>)}</select></label>{connectionChoice === "webrtc" && <><p className="muted">This workspace invitation uses the connected WebRTC DataChannel. The joiner must have the matching bridge; owner approval is still required.</p><Button disabled={busy} onClick={() => void create()}>{busy ? "Creating…" : "Create WebRTC workspace invitation"}</Button></>}{connectionChoice === "participant" && <><p className="muted">Direct participant hosting stays on this owner device. Keep Mesh Chat open through approval.</p><div className="dialog-actions"><Button variant="secondary" disabled={busy} onClick={() => void checkDirect()}>{busy ? "Checking this network…" : "Check direct Internet connection"}</Button><Button disabled={busy} onClick={() => void create()}>{busy ? "Preparing a direct route…" : "Prepare direct Internet invitation"}</Button><Button variant="ghost" disabled={busy} onClick={() => void prepareManual()}>Set up manual port forwarding</Button></div>{doctor && <DirectDoctorPanel report={doctor} busy={busy} onRetry={() => void checkDirect()} onManualSetup={() => void prepareManual()} />}{manualSetup && <ManualForwardingPanel setup={manualSetup} host={manualHost} port={manualPort} busy={busy} onHostChange={setManualHost} onPortChange={setManualPort} onCreate={() => void create(true)} />}</>}{connectionChoice === "email" && <><p className="muted">Creates the signed one-use invitation even when this owner device cannot accept inbound traffic. The joiner first tries any existing or same-network Mesh route; a return reply works only if the joiner’s network can accept inbound traffic.</p><p className="muted">Mesh Chat never accesses an email account. If both networks block inbound connections and no shared route exists, invitation exchange alone cannot create one.</p><Button disabled={busy} onClick={() => void create()}>{busy ? "Creating…" : "Create email-ready invitation"}</Button></>}{connectionChoice === "nearby" && <><p className="direct-host-warning">Same network only — will not work over cellular.</p><Button disabled={busy} onClick={() => void create()}>{busy ? "Creating…" : "Create same-network invitation"}</Button></>}{connectionChoice === "i2p" && <><p className="muted">The signed workspace invitation carries one I2P access point. The joiner must consent before traffic is relayed. I2P is a relay, not a direct connection.</p><label className="field"><span>I2P access point address</span><input value={i2pAccessPoint} onChange={(event) => setI2PAccessPoint(event.target.value.trim())} placeholder="example.b32.i2p" spellCheck={false} /></label><Button disabled={busy || !/^[a-z2-7]{52}\.b32\.i2p$/i.test(i2pAccessPoint)} onClick={() => void create()}>{busy ? "Creating…" : "Create I2P workspace invitation"}</Button></>}{connectionChoice.startsWith("remote:") && <><p className="muted">This invitation explicitly uses the named approved access point selected above. Its operator can observe connection metadata.</p><Button disabled={busy} onClick={() => void create()}>{busy ? "Creating…" : "Create using selected access point"}</Button></>}<p>Create a separate signed invitation for each person. Each request is reviewed independently.</p></details></>}
-    {existing.length > 0 && <div className="workspace-invitation-list"><h3>Active invitations</h3>{existing.filter((item) => item.id !== invitation?.id).map((item) => <div className="workspace-invitation-row" key={item.id}><span>One-use invitation · expires {formatExpiry(item.expires_at)}</span>{!invitation && <Button variant="secondary" disabled={busy} onClick={() => setSavedSetupId(item.id)}>Continue setup</Button>}<Button variant="ghost" disabled={busy} onClick={() => void revoke(item.id)}>Revoke</Button></div>)}</div>}
+    {existing.length > 0 && <div className="workspace-invitation-list"><h3>Active invitations</h3>{existing.filter((item) => item.id !== invitation?.id).map((item) => <div className="workspace-invitation-row" key={item.id}><span>{item.contact_display_name ? `To ${item.contact_display_name} · ` : ""}{item.connection_mode ? `${item.connection_mode} · ` : ""}{item.delivery_state ? `${item.delivery_state}${item.delivery_failure ? ` (${item.delivery_failure})` : ""} · ` : ""}expires {formatExpiry(item.expires_at)}</span>{!invitation && item.connection_mode !== "contact" && <Button variant="secondary" disabled={busy} onClick={() => setSavedSetupId(item.id)}>Continue setup</Button>}<Button variant="ghost" disabled={busy} onClick={() => void revoke(item.id)}>Revoke</Button></div>)}</div>}
     {error && <p className="form-error" role="alert">{error}</p>}
   </div></Dialog>;
 }
@@ -4517,6 +4602,7 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceChannelIn
   const [joinWorkspaceOpen, setJoinWorkspaceOpen] = useState(false);
   const [joinWorkspaceValue, setJoinWorkspaceValue] = useState("");
   const [inviteWorkspaceOpen, setInviteWorkspaceOpen] = useState(false);
+  const [pendingJoinsOpen, setPendingJoinsOpen] = useState(false);
   const [workspacePeopleOpen, setWorkspacePeopleOpen] = useState(false);
   const [workspaceAuthorityOpen, setWorkspaceAuthorityOpen] = useState(false);
   const [workspaceDevicesOpen, setWorkspaceDevicesOpen] = useState(false);
@@ -5317,7 +5403,7 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceChannelIn
     }
   };
 
-  const respondToWorkspaceJoin = async (request: WorkspaceJoinRequest, accept: boolean) => {
+  const respondToWorkspaceJoin = async (request: WorkspaceJoinRequest, accept: boolean, role: "member" | "admin" = "member") => {
     if (workspaceActionBusy || !workspaces.some((workspace) => workspace.id === request.workspace_id)) return;
     setWorkspaceActionBusy(true); setWorkspaceActionError(""); setWorkspaceJoinRequestError("");
     setDismissedWorkspaceJoinRequests((current) => current.filter((id) => id !== request.id));
@@ -5329,7 +5415,7 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceChannelIn
       }
     };
     try {
-      await serviceCommand(accept ? "approve_workspace_join" : "decline_workspace_join", { operation_id: newOperationId(), workspace_id: request.workspace_id, request_id: request.id });
+      await serviceCommand(accept ? "approve_workspace_join" : "decline_workspace_join", { operation_id: newOperationId(), workspace_id: request.workspace_id, request_id: request.id, ...(accept ? { role } : {}) });
     } catch (reason) {
       try {
         const latest = await refresh(true);
@@ -5905,6 +5991,10 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceChannelIn
       setWorkspacePeopleOpen(false);
       return;
     }
+    if (pendingJoinsOpen) {
+      setPendingJoinsOpen(false);
+      return;
+    }
     if (inviteWorkspaceOpen) {
       setInviteWorkspaceOpen(false);
       return;
@@ -6012,6 +6102,7 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceChannelIn
       || workspaceAuthorityOpen
       || workspacePeopleOpen
       || inviteWorkspaceOpen
+      || pendingJoinsOpen
       || joinWorkspaceOpen
       || createWorkspaceOpen
       || workspaceHeaderMenuOpen
@@ -6083,8 +6174,8 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceChannelIn
         </> : selectedWorkspace ? <>
           <div className="workspace-sidebar-heading"><div className="workspace-sidebar-heading__avatar">{initials(selectedWorkspace.name)}</div><div><strong>{selectedWorkspace.name}</strong><small>{workspaceStateLabel(selectedWorkspace)}</small></div></div>
           {workspaceActionError && <p className="form-error sidebar-action-error" role="alert">{workspaceActionError}</p>}
+          {workspaceJoinRequests.length > 0 && <button className="workspace-nav-action workspace-pending-joins" type="button" onClick={() => setPendingJoinsOpen(true)}><UserRoundPlus size={17} />Pending joins <b className="unread-badge">{workspaceJoinRequests.length}</b></button>}
           <nav className="contact-list workspace-nav" aria-label={`${selectedWorkspace.name} conversations`}>
-            {workspaceJoinRequests.filter((request) => request.workspace_id === selectedWorkspace.id).map((request) => <section className="request-card workspace-join-request" key={request.id}><div><Avatar name={request.display_name} small /><span><strong>{request.display_name}</strong><small>Requests to join · {request.member_id.replaceAll("-", "").slice(0, 6)}</small></span></div><p className="request-fingerprint">{request.fingerprint}</p><div><Button disabled={workspaceActionBusy} onClick={() => void respondToWorkspaceJoin(request, true)}>Approve</Button><Button variant="ghost" disabled={workspaceActionBusy} onClick={() => void respondToWorkspaceJoin(request, false)}>Decline</Button></div></section>)}
             <button className={`workspace-nav-action ${workspaceSearchOpen ? "workspace-nav-action--active" : ""}`} aria-current={workspaceSearchOpen ? "page" : undefined} onClick={() => { setWorkspaceSearchOpen(true); setWorkspaceThreadsOpen(false); setWorkspaceMentionsOpen(false); setWorkspaceThreadRootId(null); setWorkspaceSearchError(""); setMobileSidebarOpen(false); }}><Search size={17} />Search {selectedWorkspace.search_index?.status === "rebuilding" && <span aria-label="Indexing">…</span>}</button>
             <button className={`workspace-nav-action ${workspaceThreadsOpen ? "workspace-nav-action--active" : ""}`} aria-current={workspaceThreadsOpen ? "page" : undefined} onClick={() => { setWorkspaceSearchOpen(false); setWorkspaceThreadsOpen(true); setWorkspaceMentionsOpen(false); setWorkspaceThreadRootId(null); setWorkspaceError(""); setMobileSidebarOpen(false); }}><MessageCircleMore size={17} />Threads {selectedWorkspace.thread_unread_count > 0 && <b className="unread-badge">{selectedWorkspace.thread_unread_count}</b>}</button>
             <button className={`workspace-nav-action ${workspaceMentionsOpen ? "workspace-nav-action--active" : ""}`} aria-current={workspaceMentionsOpen ? "page" : undefined} onClick={() => { setWorkspaceSearchOpen(false); setWorkspaceMentionsOpen(true); setWorkspaceThreadsOpen(false); setWorkspaceThreadRootId(null); setWorkspaceError(""); setMobileSidebarOpen(false); }}><AtSign size={17} />Mentions {selectedWorkspace.mention_unread_count > 0 && <b className="unread-badge">{selectedWorkspace.mention_unread_count}</b>}</button>
@@ -6279,6 +6370,7 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceChannelIn
                 {!selectedWorkspaceJoinStatus.terminal && <small>#general appears only after the owner receives, validates, and approves the request.</small>}
               </div>
             ) : <p>{workspaceStateLabel(selectedWorkspace)}. Keep Mesh Chat open so signed membership and channel controls can arrive.</p>}
+            {selectedWorkspace.state === "active" && selectedWorkspace.local_role === "owner" && <WorkspaceSetupChecklist workspace={selectedWorkspace} channelCount={selectedWorkspaceChannels.length} activeMemberCount={selectedWorkspace.members.filter((member) => member.status === "active").length} onInvite={() => setInviteWorkspaceOpen(true)} onCreateChannel={() => setWorkspaceCreateChannelOpen(true)} onConnectivity={() => setWorkspacePeopleOpen(true)} />}
             {selectedWorkspaceJoinStatus?.terminal
               ? <Button variant="secondary" onClick={() => setWorkspaceSettingsOpen(true)}><Settings size={18} /> Open Workspace settings</Button>
               : <Button variant="secondary" onClick={() => setWorkspacePeopleOpen(true)}><Users size={18} /> People</Button>}
@@ -6380,7 +6472,8 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceChannelIn
       {help && <div className={hasForegroundRequest ? "dialog-suspended" : ""} aria-hidden={hasForegroundRequest ? true : undefined}><Dialog title="Connection help" onClose={() => setHelp(null)}><div className="help-content">{help.code === "service_unavailable" ? <><WifiOff size={28} /><h3>Networking is unavailable</h3><p>Connect this device to the same local network as {selectedContact?.display_name}, make sure local-network access is allowed, then reopen Mesh Chat.</p></> : help.code === "waiting_for_keys" ? <><WifiOff size={28} /><h3>Trying to find {selectedContact?.display_name}</h3><p>Keep Mesh Chat open on both devices and connect them to the same local network. We’ll continue trying automatically.</p></> : help.code === "no_route" ? <><WifiOff size={28} /><h3>We can’t reach them yet</h3><p>Your message is saved. Try the same local network, check local-network permission, or request a fresh invitation with a usable connection hint.</p></> : <><Check size={28} /><h3>The secure path is ready</h3><p>Mesh Chat is continuing the connection automatically.</p></>}<Button onClick={() => setHelp(null)}>Done</Button></div></Dialog></div>}
       {incomingRequest && <IncomingRequestDialog contact={incomingRequest} busy={requestBusy === incomingRequest.id} error={requestError} onAccept={() => void respondToRequest(incomingRequest, true)} onDecline={() => void respondToRequest(incomingRequest, false)} onClose={() => { setRequestError(""); setDismissedRequests((current) => [...new Set([...current, incomingRequest.id])]); }} />}
       {foregroundGroupInvitation && <GroupInvitationDialog invitation={foregroundGroupInvitation} busy={groupInvitationBusy === foregroundGroupInvitation.id} error={groupInvitationError} onAccept={() => void respondToGroupInvitation(foregroundGroupInvitation, true)} onDecline={() => void respondToGroupInvitation(foregroundGroupInvitation, false)} onClose={() => { setGroupInvitationError(""); setDismissedGroupInvitations((current) => [...new Set([...current, foregroundGroupInvitation.id])]); }} />}
-      {foregroundWorkspaceJoinRequest && foregroundWorkspaceJoinWorkspace && <WorkspaceJoinRequestDialog request={foregroundWorkspaceJoinRequest} workspace={foregroundWorkspaceJoinWorkspace} busy={workspaceActionBusy} error={workspaceJoinRequestError} onApprove={() => void respondToWorkspaceJoin(foregroundWorkspaceJoinRequest, true)} onDecline={() => void respondToWorkspaceJoin(foregroundWorkspaceJoinRequest, false)} onClose={() => { setWorkspaceJoinRequestError(""); setDismissedWorkspaceJoinRequests((current) => [...new Set([...current, foregroundWorkspaceJoinRequest.id])]); }} />}
+      {pendingJoinsOpen && <WorkspacePendingJoinsDialog requests={workspaceJoinRequests} workspaces={workspaces} busy={workspaceActionBusy} error={workspaceJoinRequestError} onApprove={(request, role) => void respondToWorkspaceJoin(request, true, role)} onDecline={(request) => void respondToWorkspaceJoin(request, false)} onClose={() => setPendingJoinsOpen(false)} />}
+      {foregroundWorkspaceJoinRequest && foregroundWorkspaceJoinWorkspace && <WorkspaceJoinRequestDialog request={foregroundWorkspaceJoinRequest} workspace={foregroundWorkspaceJoinWorkspace} busy={workspaceActionBusy} error={workspaceJoinRequestError} canGrantAdmin={foregroundWorkspaceJoinWorkspace.local_role === "owner"} onApprove={(role) => void respondToWorkspaceJoin(foregroundWorkspaceJoinRequest, true, role)} onDecline={() => void respondToWorkspaceJoin(foregroundWorkspaceJoinRequest, false)} onClose={() => { setWorkspaceJoinRequestError(""); setDismissedWorkspaceJoinRequests((current) => [...new Set([...current, foregroundWorkspaceJoinRequest.id])]); }} />}
     </main>
   );
 }

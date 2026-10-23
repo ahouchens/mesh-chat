@@ -3596,10 +3596,11 @@ describe("desktop workspaces", () => {
     expect(within(dialog).getByText("This signed request reached this owner device.")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Workspace Lakewatcher, 1 owner review pending" })).toBeTruthy();
 
-    fireEvent.click(within(dialog).getByRole("button", { name: "Approve workspace access" }));
+    fireEvent.change(within(dialog).getByRole("combobox", { name: "Role after admission" }), { target: { value: "admin" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Approve as administrator" }));
     await waitFor(() => expect(api.serviceCommand).toHaveBeenCalledWith(
       "approve_workspace_join",
-      expect.objectContaining({ workspace_id: workspace.id, request_id: request.id, operation_id: expect.any(String) }),
+      expect.objectContaining({ workspace_id: workspace.id, request_id: request.id, role: "admin", operation_id: expect.any(String) }),
     ));
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "Workspace join request" })).toBeNull());
     expect(screen.getByRole("button", { name: "Workspace Lakewatcher" })).toBeTruthy();
@@ -4445,10 +4446,10 @@ describe("desktop workspaces", () => {
     fireEvent.change(within(dialog).getByRole("combobox", { name: "How should they connect?" }), { target: { value: "participant" } });
     expect(within(dialog).getByRole("option", { name: "Advanced: direct TCP hosting" })).toBeTruthy();
     expect(within(dialog).getByText(/Direct participant hosting stays on this owner device/i)).toBeTruthy();
-    expect(within(dialog).getAllByText(/One-use invitation · expires/i)).toHaveLength(2);
+    expect(within(dialog).getAllByText(/expires /i)).toHaveLength(2);
     fireEvent.click(within(dialog).getAllByRole("button", { name: "Revoke" })[0]);
     await waitFor(() => expect(api.serviceCommand).toHaveBeenCalledWith("revoke_workspace_invitation", expect.objectContaining({ workspace_id: workspace.id, invitation_id: "invite-one", operation_id: expect.any(String) })));
-    expect(within(dialog).getAllByText(/One-use invitation · expires/i)).toHaveLength(1);
+    expect(within(dialog).getAllByText(/expires /i)).toHaveLength(1);
     fireEvent.click(within(dialog).getByRole("button", { name: "Prepare direct Internet invitation" }));
     await waitFor(() => expect(api.serviceCommand).toHaveBeenCalledWith("create_workspace_invitation", expect.objectContaining({ workspace_id: workspace.id, operation_id: expect.any(String), connection_mode: "participant" })));
     const workspaceInvitationCall = api.serviceCommand.mock.calls.find(([command]) => command === "create_workspace_invitation");
@@ -4477,7 +4478,7 @@ describe("desktop workspaces", () => {
     fireEvent.change(within(dialog).getByRole("combobox", { name:"Verified contact" }), { target:{ value:approved.id } });
     fireEvent.click(within(dialog).getByRole("button", { name:"Send workspace invitation" }));
     await waitFor(() => expect(api.serviceCommand).toHaveBeenCalledWith("invite_contact_to_workspace", { workspace_id:workspace.id, contact_id:approved.id }));
-    expect(await within(dialog).findByText(/sent over the existing verified contact route/i)).toBeTruthy();
+    expect(await within(dialog).findByText(/queued over the existing verified contact route/i)).toBeTruthy();
   });
 
   it("starts the guided controller from Invite and exposes the email invitation fallback", async () => {

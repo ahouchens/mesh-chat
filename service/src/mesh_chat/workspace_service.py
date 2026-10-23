@@ -4788,6 +4788,16 @@ class WorkspaceServiceMixin:
             invitation=invitation["value"],
         )
         self._attempt(message["id"])
+        invitation_record = self.store.get(
+            "workspace_invitation", invitation["id"]
+        )
+        if invitation_record is not None:
+            invitation_record["contact_id"] = contact_id
+            invitation_record["contact_display_name"] = contact["display_name"]
+            invitation_record["delivery_message_id"] = message["id"]
+            self.store.put(
+                "workspace_invitation", invitation["id"], invitation_record
+            )
         return {
             "workspace_id": workspace_id,
             "contact_id": contact_id,
@@ -6152,8 +6162,11 @@ class WorkspaceServiceMixin:
         workspace_id: Any,
         request_id: Any,
         operation_id: Any,
+        role: Any = "member",
     ) -> dict[str, Any]:
-        payload = {"workspace_id": workspace_id, "request_id": request_id}
+        if role not in {"member", "admin"}:
+            raise ValidationError("Workspace join role is invalid")
+        payload = {"workspace_id": workspace_id, "request_id": request_id, "role": role}
         operation_id, digest, replay = self._workspace_operation(
             "approve_workspace_join", operation_id, payload
         )
@@ -6163,6 +6176,8 @@ class WorkspaceServiceMixin:
         if workspace.get("state") != "active":
             raise ContactNotApproved("Workspace is not active")
         is_owner = workspace.get("local_role") == "owner"
+        if not is_owner and role != "member":
+            raise ContactNotApproved("Admission grants can only add members")
         grant_record: dict[str, Any] | None = None
         if not is_owner:
             if workspace.get("local_role") != "admin" or self._identity is None:
@@ -6216,7 +6231,7 @@ class WorkspaceServiceMixin:
             WorkspaceManifestMemberInput(
                 join.member_id,
                 join.device.display_name,
-                WorkspaceRole.MEMBER,
+                WorkspaceRole.ADMIN if role == "admin" else WorkspaceRole.MEMBER,
                 [join.device.serialized],
             )
         )
@@ -6244,7 +6259,7 @@ class WorkspaceServiceMixin:
                 new_member=WorkspaceManifestMemberInput(
                     join.member_id,
                     join.device.display_name,
-                    WorkspaceRole.MEMBER,
+                    WorkspaceRole.ADMIN if role == "admin" else WorkspaceRole.MEMBER,
                     [join.device.serialized],
                 ),
             )
@@ -20602,6 +20617,13 @@ class WorkspaceServiceMixin:
                         if key not in {"document", "join_document", "nonce"}
                     }
                 )
+                delivery_id = item.get("delivery_message_id")
+                if isinstance(delivery_id, str):
+                    delivery = self.store.get("message", delivery_id)
+                    if delivery is not None:
+                        invitations[-1]["delivery_state"] = delivery.get("state")
+                        if delivery.get("failure_code"):
+                            invitations[-1]["delivery_failure"] = delivery["failure_code"]
         stored_workspaces = self.store.list("workspace")
         joining_without_delivery_pointer = [
             workspace

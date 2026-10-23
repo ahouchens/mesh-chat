@@ -6112,6 +6112,9 @@ def test_owner_can_send_workspace_invitation_to_verified_contact(tmp_path):
     assert message["kind"] == MessageKind.WORKSPACE_INVITE.value
     assert message["invitation"] == result["invitation"]["value"]
     assert message["text"] == ""
+    listed = owner.workspace_snapshot()["workspace_invitations"]
+    assert listed[0]["contact_display_name"] == "Taylor"
+    assert listed[0]["delivery_state"] == message["state"]
 
     member.store.put("contact", contact["id"], contact)
     member._receive_workspace_contact_invite(

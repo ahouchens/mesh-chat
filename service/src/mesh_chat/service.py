@@ -3794,12 +3794,15 @@ class MeshChatService(
         if command in {"approve_workspace_join", "decline_workspace_join"}:
             body = _payload(
                 value,
-                allowed={"operation_id", "workspace_id", "request_id"},
+                allowed={"operation_id", "workspace_id", "request_id", "role"},
                 required={"operation_id", "workspace_id", "request_id"},
             )
             return (
                 self.approve_workspace_join(
-                    body["workspace_id"], body["request_id"], body["operation_id"]
+                    body["workspace_id"],
+                    body["request_id"],
+                    body["operation_id"],
+                    body.get("role", "member"),
                 )
                 if command == "approve_workspace_join"
                 else self.decline_workspace_join(
