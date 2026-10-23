@@ -56,6 +56,23 @@ The official report is
 Gates: `automated: passed`; `physical_device: not-requested`;
 `production_signing: not-requested`.
 
+Publication: GitHub Actions
+**[CI run 39972509003](https://github.com/ahouchens/mesh-chat/actions/runs/39972509003)**
+and
+[Release run 39972514299](https://github.com/ahouchens/mesh-chat/actions/runs/39972514299)
+passed for `v0.9.26`. The first Windows attempt failed downloading the NSIS
+toolchain; the failed job rerun succeeded. Release:
+<https://github.com/ahouchens/mesh-chat/releases/tag/v0.9.26>.
+
+| Artifact | Bytes | SHA-256 (verified by re-download) |
+|---|---:|---|
+| `Mesh-Chat_0.9.26_x64-setup.exe` | 27,905,580 | `6782380d34f150ff0a6039c2fb68dddb99abd983bc99ffa73c6d5ec61c508abe` |
+| `Mesh-Chat_0.9.26_x64_en-US.msi` | 29,900,800 | `9beb0ad0881752a7d8166613c765ddf31feef7f063b0b9f32edf73217cc35760` |
+| `mesh-chat-0.9.26-android-arm64-release.apk` | 34,387,704 | `5cead027468fba7be1459dbd5abb810feff8e3c15d8248cfafd99247b696991f` |
+| `SHA256SUMS.txt` | 303 | `e308719f982828682d00b42d53174550ab50ac1eb880e648ece29b4691569c91` |
+
+The Android APK is debug-signed; it is not a production or upgrade identity.
+
 ## WebRTC onboarding closure, 0.9.25
 
 - The onboarding modal now closes 1.5 seconds after a successful WebRTC
