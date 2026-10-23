@@ -68,6 +68,22 @@ The official report is
 Gates: `automated: passed`; `physical_device: not-requested`;
 `production_signing: not-requested`.
 
+Publication: GitHub Actions
+[CI run 39901686730](https://github.com/ahouchens/mesh-chat/actions/runs/39901686730)
+and
+[Release run 39901689656](https://github.com/ahouchens/mesh-chat/actions/runs/39901689656)
+passed for `v0.9.21`. Release:
+<https://github.com/ahouchens/mesh-chat/releases/tag/v0.9.21>.
+
+| Artifact | Bytes | SHA-256 (verified by re-download) |
+|---|---:|---|
+| `Mesh-Chat_0.9.21_x64-setup.exe` | 27,903,329 | `f8cd42e688514baabac31516c4f077b385fb572239110e2b3689a2c0f1f9a995` |
+| `Mesh-Chat_0.9.21_x64_en-US.msi` | 29,896,704 | `b2fc7e9c80cf97cb0c49d6b146d810a0c3111096cfe0f542d291fb85d5a4a415` |
+| `mesh-chat-0.9.21-android-arm64-release.apk` | 34,387,967 | `6a1bf93b64ff14b89bbaba8db021bcb04e63f66942bf5233a28936e26813b4c1` |
+| `SHA256SUMS.txt` | 303 | `f43a2e1c8be4603bc501c92a86491736b7dfb353527a36f9b09e617a898e6ab8` |
+
+The Android APK is debug-signed; it is not a production or upgrade identity.
+
 ## Workspace UX defect fixes, 0.9.20
 
 Defects found in the 0.9.19 audit and fixed:
