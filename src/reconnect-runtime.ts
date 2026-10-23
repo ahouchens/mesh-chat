@@ -10,7 +10,7 @@ import {
 import type { WebRTCSessionPath } from "./webrtc-session";
 import { attachWebRTCBridge } from "./webrtc-onboarding";
 import { ReconnectPeer, fingerprint } from "./webrtc-peer";
-import { setWebRTCSession, getWebRTCSessionByKey, getWebRTCSessionForContact, closeWebRTCSession, removeWebRTCSession } from "./webrtc-session";
+import { setWebRTCSession, getWebRTCSessionByKey, closeWebRTCSession, removeWebRTCSession } from "./webrtc-session";
 
 export interface ReconnectRuntimeOptions {
   refresh: () => Promise<void>;
@@ -125,9 +125,7 @@ export function createReconnectDeps(
     },
     pathStatus: (contactId) =>
       serviceCommand("reconnect_path_status", { contact_id: contactId }),
-    hasSession: (profileId, contactId) =>
-      getWebRTCSessionByKey(profileId) !== null ||
-      getWebRTCSessionForContact(contactId) !== null,
+    hasSession: (profileId) => getWebRTCSessionByKey(profileId) !== null,
     closeSession: (profileId) => closeWebRTCSession(profileId),
     fingerprint,
   };

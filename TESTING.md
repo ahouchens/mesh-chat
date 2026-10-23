@@ -24,6 +24,32 @@ Physical execution follows the
 full physical scenario matrix for versions through 0.9.15 is in the
 [Physical QA scenarios](docs/PHYSICAL_QA_SCENARIOS.md).
 
+## Multi-peer WebRTC sessions, 0.9.22
+
+Refines the 0.9.21 registry so reconnect identity is the **profile/device ID**,
+not the contact ID. This permits independent sessions for multiple devices that
+share one contact while retaining contact-scoped control-channel lookup.
+Regression tests cover three production-wiring sessions and the coordinator's
+profile-selective reconnect.
+
+Validation:
+
+```text
+pytest service/tests:        1115 passed, 46 skipped, 0 failed (244.37 s)
+node scripts/run-frontend-tests.mjs: 270 passed (20 files)
+node --test deploy/cloudflare-signal/worker.test.mjs: 11 passed
+packaged emoji artwork verification: 3 passed
+node node_modules/typescript/bin/tsc -b: passed
+node scripts/run-frontend-build.mjs: passed
+```
+
+The official report is
+`dist/reports/0.9.22/20261023T050302Z-ac8d6316/report.json` (git-ignored):
+`status: passed`, 280.349 s, SHA-256
+`7816f8e048cbadb8811244c8abd46f6a42390b1b40e735c93055ce291d27624f`.
+Gates: `automated: passed`; `physical_device: not-requested`;
+`production_signing: not-requested`.
+
 ## Multi-peer WebRTC sessions, 0.9.21
 
 Fixes the single-global-session limitation:

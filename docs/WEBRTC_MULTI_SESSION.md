@@ -1,6 +1,6 @@
 # WebRTC multi-session model
 
-Status: implemented in 0.9.21.
+Status: implemented in 0.9.21; device-key identity clarified in 0.9.22.
 
 ## 1. Problem
 
@@ -76,8 +76,13 @@ updates when a channel closes independently.
 
 - The service still runs one Reticulum interface per bridge; this change does not
   create a multiplexed interface.
-- Several devices sharing one contact ID use the newest session for
-  contact-scoped capability lookup; profile/device-specific routing remains the
-  authoritative reconnect identity.
+- Reconnect identity is the profile/device ID, not the contact ID. Multiple
+  devices for one contact can therefore hold independent reconnect sessions.
+  Contact-scoped capability lookup still chooses the newest matching control
+  session.
+- An onboarding session is keyed by bridge ID until it is bound to a contact, so
+  an automatic reconnect profile may start a second session for the same device
+  while onboarding is still open. The onboarding session remains independent
+  rather than being silently replaced.
 - Media calls remain 1:1; this is transport concurrency, not group calling.
 - Physical multiple-peer qualification remains in the QA matrix.
