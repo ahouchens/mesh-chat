@@ -144,7 +144,7 @@ def build_fields(
         metadata[M_RECEIPT_FOR] = _uuid_bytes(receipt_for, "Receipt reference")
     if invitation is not None:
         if not isinstance(invitation, str) or len(invitation.encode("utf-8")) > 16 * 1024:
-            raise ValidationError("Contact request invitation is invalid")
+            raise ValidationError("Signed invitation is invalid")
         metadata[M_INVITATION] = invitation
     group_values = (
         group_id,
@@ -296,7 +296,7 @@ def parse_payload(message: LXMF.LXMessage, *, now: int | None = None) -> AppPayl
     if invitation is not None and (
         not isinstance(invitation, str) or len(invitation.encode("utf-8")) > 16 * 1024
     ):
-        raise ValidationError("Contact request invitation is invalid")
+        raise ValidationError("Signed invitation is invalid")
 
     group_id = None
     group_epoch = None
@@ -420,7 +420,15 @@ def parse_payload(message: LXMF.LXMessage, *, now: int | None = None) -> AppPayl
         raise ValidationError("Receipt payload is invalid")
     if kind == MessageKind.CONTACT_REQUEST and invitation is None:
         raise ValidationError("Contact request lacks a signed invitation")
-    if kind not in {MessageKind.CHAT, MessageKind.CONTACT_REQUEST} and invitation is not None:
+    if kind == MessageKind.WORKSPACE_INVITE and (
+        invitation is None or text or receipt_for is not None
+    ):
+        raise ValidationError("Workspace invitation payload is invalid")
+    if kind not in {
+        MessageKind.CHAT,
+        MessageKind.CONTACT_REQUEST,
+        MessageKind.WORKSPACE_INVITE,
+    } and invitation is not None:
         raise ValidationError("Invitation is not valid for this message kind")
     if kind == MessageKind.GROUP_CHAT and not text.strip():
         raise ValidationError("Group chat message is empty")

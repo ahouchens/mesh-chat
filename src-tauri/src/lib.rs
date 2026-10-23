@@ -556,6 +556,8 @@ fn allowed_renderer_command(command: &str) -> bool {
             | "close_group"
             | "create_workspace"
             | "create_workspace_invitation"
+            | "invite_contact_to_workspace"
+            | "dismiss_workspace_invitation_prompt"
             | "preview_workspace_invitation"
             | "preview_direct_connection"
             | "prepare_direct_offer"
@@ -1685,6 +1687,8 @@ mod tests {
             "workspace_snapshot",
             "create_workspace",
             "create_workspace_invitation",
+            "invite_contact_to_workspace",
+            "dismiss_workspace_invitation_prompt",
             "offer_workspace_authority_transition",
             "accept_workspace_authority_transition",
             "finalize_workspace_authority_transition",

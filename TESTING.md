@@ -24,6 +24,38 @@ Physical execution follows the
 full physical scenario matrix for versions through 0.9.15 is in the
 [Physical QA scenarios](docs/PHYSICAL_QA_SCENARIOS.md).
 
+## Verified-contact workspace invitations, 0.9.18
+
+Implements the flow in
+[CONTACT_WORKSPACE_INVITATIONS.md](docs/CONTACT_WORKSPACE_INVITATIONS.md):
+
+- the owner can select an approved/verified Personal contact in **Invite
+  people**;
+- the service creates the normal single-use signed workspace invitation and
+  sends it as a `workspace_invite` app message over the existing contact route;
+- the recipient stores a review prompt and is not added automatically;
+- Review opens the existing signed join/approval flow;
+- Dismiss hides the prompt without changing contact trust or the invitation;
+- active workspace devices and unapproved/blocked contacts are rejected.
+
+Validation:
+
+```text
+pytest service/tests:        1115 passed, 46 skipped, 0 failed (238.01 s)
+node scripts/run-frontend-tests.mjs: 265 passed (18 files)
+node --test deploy/cloudflare-signal/worker.test.mjs: 11 passed
+packaged emoji artwork verification: 3 passed
+node node_modules/typescript/bin/tsc -b: passed
+node scripts/run-frontend-build.mjs: passed
+```
+
+The official report is
+`dist/reports/0.9.18/20261023T014429Z-d5fe5530/report.json` (git-ignored):
+`status: passed`, 272.523 s, SHA-256
+`0af2f9145007f4760cbb6954392d28303bd6aac6f8d78289d67bf3566baeba28`.
+Gates: `automated: passed`; `physical_device: not-requested`;
+`production_signing: not-requested`.
+
 ## Workspace invitation TURN fallback, 0.9.17
 
 The workspace invite dialog now:

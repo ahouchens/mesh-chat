@@ -132,6 +132,7 @@ import type {
   WorkspaceDeviceTransition,
   WorkspaceDirect,
   WorkspaceInvitation,
+  WorkspaceInvitationPrompt,
   WorkspaceInvitationFormats,
   WorkspaceInvitationPreview,
   WorkspaceJoinRequest,
@@ -3371,7 +3372,7 @@ function JoinWorkspaceDialog({ initialValue = "", resumeWorkspaceId, workspaces,
   </Dialog>;
 }
 
-function WorkspaceInviteDialog({ workspace, existingInvitations, remoteProfiles, webrtcActive, onOpenWebRTC, onClose }: { workspace: Workspace; existingInvitations: WorkspaceInvitation[]; remoteProfiles: RemoteProfile[]; webrtcActive: boolean; onOpenWebRTC: () => void; onClose: () => void }) {
+function WorkspaceInviteDialog({ workspace, existingInvitations, remoteProfiles, contacts, webrtcActive, onOpenWebRTC, onClose }: { workspace: Workspace; existingInvitations: WorkspaceInvitation[]; remoteProfiles: RemoteProfile[]; contacts: Contact[]; webrtcActive: boolean; onOpenWebRTC: () => void; onClose: () => void }) {
   const [invitation, setInvitation] = useState<WorkspaceInvitationFormats | null>(null);
   const [savedSetupId, setSavedSetupId] = useState<string | null>(null);
   const [existing, setExisting] = useState(existingInvitations);
@@ -3380,6 +3381,10 @@ function WorkspaceInviteDialog({ workspace, existingInvitations, remoteProfiles,
   const [error, setError] = useState("");
   const [connectionChoice, setConnectionChoice] = useState("guided");
   const [turnConfigured, setTurnConfigured] = useState(false);
+  const [contactId, setContactId] = useState("");
+  const [contactBusy, setContactBusy] = useState(false);
+  const [contactFeedback, setContactFeedback] = useState("");
+  const [contactError, setContactError] = useState("");
   const [doctor, setDoctor] = useState<DirectDoctorReport | null>(null);
   const [manualSetup, setManualSetup] = useState<ManualParticipantSetup | null>(null);
   const [manualHost, setManualHost] = useState("");
@@ -3395,6 +3400,28 @@ function WorkspaceInviteDialog({ workspace, existingInvitations, remoteProfiles,
     }).catch(() => { if (active) setTurnConfigured(false); });
     return () => { active = false; };
   }, []);
+  const availableContacts = contacts.filter((candidate) => {
+    if (candidate.trust !== "approved" && candidate.trust !== "verified") return false;
+    return !workspace.members.some((member) => member.status === "active"
+      && (member.device.destination_hash === candidate.destination_hash
+        || member.devices?.some((device) => device.destination_hash === candidate.destination_hash)));
+  });
+  const sendContactInvite = async () => {
+    if (!contactId || contactBusy) return;
+    setContactBusy(true); setContactFeedback(""); setContactError("");
+    try {
+      await serviceCommand<{ sent: boolean }>("invite_contact_to_workspace", {
+        workspace_id: workspace.id,
+        contact_id: contactId,
+      });
+      setContactFeedback("Workspace invitation sent over the existing verified contact route.");
+      setContactId("");
+    } catch (reason) {
+      setContactError(errorMessage(reason));
+    } finally {
+      setContactBusy(false);
+    }
+  };
   const create = async (manual = false) => {
     if (busy) return;
     setBusy(true); setError("");
@@ -3505,6 +3532,7 @@ function WorkspaceInviteDialog({ workspace, existingInvitations, remoteProfiles,
   };
   return <Dialog title={`Invite to ${workspace.name}`} onClose={() => void closeDialog()} wide><div className="form-stack">
     {turnConfigured && <section className="direct-help__note" aria-label="TURN relay availability"><p><strong>TURN relay is configured.</strong> TURN can relay WebRTC calls and DataChannel traffic, but it does not make this device a direct participant host and does not fix carrier-grade NAT for the direct invitation path.</p>{webrtcActive ? <p className="muted">Choose <strong>WebRTC DataChannel (connected)</strong> below to send this invitation over the active relayed or direct session.</p> : <><p className="muted">To use TURN for this workspace, establish a WebRTC connection first, then reopen this dialog and choose the WebRTC option.</p><Button variant="secondary" onClick={onOpenWebRTC}>Connect over WebRTC/TURN first</Button></>}</section>}
+    {availableContacts.length > 0 && !invitation && <section className="direct-help__note" aria-label="Invite verified contact"><p><strong>Invite a verified contact.</strong> Send a normal single-use workspace invitation over an already approved contact route. The recipient still reviews it, signs a join request, and requires owner/admin approval.</p><label className="field"><span>Verified contact</span><select value={contactId} disabled={contactBusy} onChange={(event) => { setContactId(event.target.value); setContactFeedback(""); setContactError(""); }}><option value="">Choose a contact</option>{availableContacts.map((candidate) => <option key={candidate.id} value={candidate.id}>{candidate.display_name} · {candidate.fingerprint}</option>)}</select></label><Button disabled={!contactId || contactBusy} onClick={() => void sendContactInvite()}>{contactBusy ? "Sending…" : "Send workspace invitation"}</Button>{contactFeedback && <p className="direct-host-status" role="status">{contactFeedback}</p>}{contactError && <p className="form-error" role="alert">{contactError}</p>}</section>}
     {savedSetupId && <DirectConnectionSetup key={savedSetupId} invitationId={savedSetupId} resumeExisting />}
     {invitation && connectionChoice === "guided" && <DirectConnectionSetup invitationId={invitation.id} autoStart onShared={() => setShared(true)} />}
     {invitation && <><p>This bearer invitation works once and expires {formatExpiry(invitation.expires_at)}. This is the effective direct-host expiry.</p>{invitation.connection_mode === "participant" && <p className="direct-host-status" role="status"><ShieldCheck size={17} /> Prepared — waiting for recipient verification. Keep this owner device online.</p>}{invitation.connection_mode === "email" && <p className="direct-host-status" role="status"><ShieldCheck size={17} /> Email-ready. {invitation.host_session_id ? "The joiner tries this owner device first, then may check their device for a return connection." : "This owner device could not host an inbound path. The joiner can first try an existing or same-network Mesh route, and may create a return reply only if their network accepts inbound traffic."}</p>}{invitation.methods?.includes("manual") && <p className="muted">Mesh Chat cannot remove your manual router rule. Remove it in the router when it is no longer needed.</p>}<InvitationQrCode document={invitation.value} destination="workspace" /><label className="field"><span>Complete workspace invitation</span><textarea readOnly value={invitation.text} aria-label="Workspace invitation text" rows={5} onFocus={(event) => event.currentTarget.select()} /></label><p className="muted invite-safety">Send the entire value in this box. The <strong>MESHWORKSPACE…</strong> prefix by itself is only the format label, not an invitation.</p><div className="dialog-actions"><Button variant="danger" disabled={busy} onClick={() => void revoke(invitation.id)}>Revoke invitation</Button><Button variant="secondary" onClick={() => void copyInvitation()}>{copied ? <Check size={17} /> : <Copy size={17} />}{copied ? "Complete invitation copied" : "Copy complete invitation"}</Button><Button variant="secondary" onClick={() => void share()}><Share2 size={17} /> Share complete invitation</Button><Button variant="ghost" onClick={save}><FileUp size={17} /> Save invitation file</Button>{invitation.connection_mode === "participant" && invitation.host_session_id && !invitation.methods?.includes("manual") && <Button variant="ghost" disabled={busy} onClick={() => void configureFirewall()}><ShieldCheck size={17} /> Allow in Windows Firewall</Button>}</div>{shareFeedback && <p className="invite-feedback" aria-live="polite">{shareFeedback}</p>}{firewallFeedback && <p className="muted" role="status">{firewallFeedback}</p>}</>}
@@ -4446,7 +4474,9 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceChannelIn
   const [callContactId, setCallContactId] = useState<string | null>(null);
   const [callPeerOverride, setCallPeerOverride] = useState<CallPeer | null>(null);
   const [callSummary, setCallSummary] = useState<CallSummary | undefined>(undefined);
+  const [contactInvitePromptId, setContactInvitePromptId] = useState<string | null>(null);
   const incomingCall = (snapshot.calls ?? []).find((call) => call.direction === "inbound" && call.state === "ringing");
+  const contactInvitePrompt = (snapshot.workspace_invitation_prompts ?? []).find((prompt) => prompt.state === "pending");
   useEffect(() => {
     if (!webrtcSessionActive) return;
     const control = getWebRTCSession()?.control;
@@ -6012,6 +6042,15 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceChannelIn
     };
   }, [hasMobileBackTarget]);
 
+  const dismissContactInvite = async (promptId: string) => {
+    try {
+      await serviceCommand("dismiss_workspace_invitation_prompt", { prompt_id: promptId });
+      await refresh(true);
+    } catch {
+      // A stale prompt disappears on the next snapshot.
+    }
+  };
+
   return (
     <main className={`app-shell ${mobileSidebarOpen || !(selectedWorkspace || selectedContact || selectedGroup) ? "app-shell--list" : "app-shell--thread"}`}>
       <aside className="sidebar">
@@ -6091,6 +6130,14 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceChannelIn
             <Phone size={18} />
             <span><strong>Incoming {incomingCall.media === "video" ? "video" : "audio"} call</strong><small>{callPeerFor(incomingCall.contact_id)?.display_name ?? "An approved contact"} is calling.</small></span>
             <Button onClick={() => { setCallSummary(incomingCall); setCallContactId(incomingCall.contact_id); }}>Review</Button>
+          </div>
+        )}
+        {contactInvitePrompt && (
+          <div className="incoming-call-banner" role="status">
+            <Users size={18} />
+            <span><strong>Workspace invitation</strong><small>{contactInvitePrompt.contact_display_name} invited you to {contactInvitePrompt.workspace_name}. Review it before joining.</small></span>
+            <Button onClick={() => { setContactInvitePromptId(contactInvitePrompt.id); setJoinWorkspaceValue(contactInvitePrompt.invitation); setJoinWorkspaceOpen(true); setMobileSidebarOpen(true); }}>Review</Button>
+            <Button variant="secondary" onClick={() => void dismissContactInvite(contactInvitePrompt.id)}>Dismiss</Button>
           </div>
         )}
         {callContactId && callContact && (
@@ -6294,11 +6341,11 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceChannelIn
         )}
       </div>
       {createWorkspaceOpen && <CreateWorkspaceDialog onClose={() => setCreateWorkspaceOpen(false)} onCreated={async (workspace) => { await refresh(true); setActiveSpaceId(workspace.id); setCreateWorkspaceOpen(false); }} />}
-      {joinWorkspaceOpen && <JoinWorkspaceDialog resumeWorkspaceId={resumeWorkspaceId} workspaces={workspaces} initialValue={joinWorkspaceValue || (isWorkspaceInvitationValue(initialInvitation) ? initialInvitation : "")} onClose={() => { setJoinWorkspaceOpen(false); setResumeWorkspaceId(undefined); setJoinWorkspaceValue(""); onInvitationHandled(); }} onJoined={async (workspace) => { await refresh(true); setActiveSpaceId(workspace.id); setJoinWorkspaceOpen(false); setResumeWorkspaceId(undefined); setJoinWorkspaceValue(""); onInvitationHandled(); }} />}
+      {joinWorkspaceOpen && <JoinWorkspaceDialog resumeWorkspaceId={resumeWorkspaceId} workspaces={workspaces} initialValue={joinWorkspaceValue || (isWorkspaceInvitationValue(initialInvitation) ? initialInvitation : "")} onClose={() => { setJoinWorkspaceOpen(false); setResumeWorkspaceId(undefined); setJoinWorkspaceValue(""); onInvitationHandled(); }} onJoined={async (workspace) => { const promptId = contactInvitePromptId; await refresh(true); setActiveSpaceId(workspace.id); setJoinWorkspaceOpen(false); setResumeWorkspaceId(undefined); setJoinWorkspaceValue(""); onInvitationHandled(); if (promptId) { setContactInvitePromptId(null); await dismissContactInvite(promptId); } }} />}
       {selectedWorkspace && workspaceBrowseOpen && <BrowseWorkspaceChannelsDialog workspace={selectedWorkspace} channels={selectedWorkspaceChannels.filter((channel) => channel.visibility === "public")} busy={workspaceActionBusy} error={workspaceActionError} onClose={() => setWorkspaceBrowseOpen(false)} onOpen={(channelId) => { setWorkspaceMentionsOpen(false); setWorkspaceThreadsOpen(false); setWorkspaceThreadRootId(null); setWorkspaceSelectedChannelId(channelId); setWorkspaceSelectedDirectId(null); setWorkspaceBrowseOpen(false); setMobileSidebarOpen(false); }} onSubscribe={(channelId, subscribed) => void runWorkspaceChannelAction("set_workspace_channel_subscription", { channel_id: channelId, subscribed })} onSync={() => void runWorkspaceChannelAction("sync_workspace_channels")} onCreate={() => { setWorkspaceBrowseOpen(false); setWorkspaceCreateChannelOpen(true); }} />}
       {selectedWorkspace && workspaceCreateChannelOpen && <CreateWorkspaceChannelDialog workspace={selectedWorkspace} busy={workspaceActionBusy} error={workspaceActionError} onClose={() => setWorkspaceCreateChannelOpen(false)} onCreate={(name, topic, visibility, memberIds) => void runWorkspaceChannelAction("create_workspace_channel", { name, topic, visibility, member_ids: memberIds })} />}
       {selectedWorkspace && selectedWorkspaceChannel && workspaceManageChannelOpen && <ManageWorkspaceChannelDialog workspace={selectedWorkspace} channel={selectedWorkspaceChannel} transfers={workspaceChannelTransfers.filter((item) => item.workspace_id === selectedWorkspace.id)} busy={workspaceActionBusy} error={workspaceActionError} onClose={() => setWorkspaceManageChannelOpen(false)} onUpdate={(name, topic, archived) => void runWorkspaceChannelAction("update_workspace_channel", { channel_id: selectedWorkspaceChannel.id, name, topic, archived })} onMembers={(memberIds) => void runWorkspaceChannelAction("update_workspace_private_channel_members", { channel_id: selectedWorkspaceChannel.id, member_ids: memberIds })} onLeave={() => void runWorkspaceChannelAction("leave_workspace_private_channel", { channel_id: selectedWorkspaceChannel.id })} onOfferTransfer={(successorMemberId) => void runWorkspaceChannelAction("offer_workspace_channel_transfer", { channel_id: selectedWorkspaceChannel.id, successor_member_id: successorMemberId })} onAcceptTransfer={(transferId) => void runWorkspaceChannelAction("accept_workspace_channel_transfer", { transfer_id: transferId })} onRecover={() => void runWorkspaceChannelAction("recover_workspace_channel", { channel_id: selectedWorkspaceChannel.id })} />}
-      {selectedWorkspace && inviteWorkspaceOpen && <WorkspaceInviteDialog workspace={selectedWorkspace} existingInvitations={workspaceInvitations.filter((invitation) => invitation.workspace_id === selectedWorkspace.id)} remoteProfiles={snapshot.remote_profiles ?? []} webrtcActive={webrtcSessionActive} onOpenWebRTC={() => { setInviteWorkspaceOpen(false); setWebRtcOnboardingOpen(true); }} onClose={() => setInviteWorkspaceOpen(false)} />}
+      {selectedWorkspace && inviteWorkspaceOpen && <WorkspaceInviteDialog workspace={selectedWorkspace} existingInvitations={workspaceInvitations.filter((invitation) => invitation.workspace_id === selectedWorkspace.id)} remoteProfiles={snapshot.remote_profiles ?? []} contacts={snapshot.contacts ?? []} webrtcActive={webrtcSessionActive} onOpenWebRTC={() => { setInviteWorkspaceOpen(false); setWebRtcOnboardingOpen(true); }} onClose={() => setInviteWorkspaceOpen(false)} />}
       {selectedWorkspace && workspacePeopleOpen && <WorkspacePeopleDialog
         workspace={selectedWorkspace}
         requests={workspaceDisplayNameRequests.filter((request) => request.workspace_id === selectedWorkspace.id)}

@@ -39,6 +39,43 @@ def test_chat_payload_uses_standard_content_and_custom_fields() -> None:
     assert parsed.text == "Hello"
 
 
+def test_workspace_invite_carries_only_its_signed_document() -> None:
+    common = {
+        "logical_id": str(uuid.uuid4()),
+        "conversation": str(uuid.uuid4()),
+        "expires_at": int(time.time()) + 60,
+    }
+    message = LXMF.LXMessage(
+        None,
+        None,
+        content="",
+        fields=build_fields(
+            kind=MessageKind.WORKSPACE_INVITE,
+            invitation="MESHWORKSPACE1:signed-document",
+            **common,
+        ),
+        desired_method=LXMF.LXMessage.DIRECT,
+        destination_hash=os.urandom(16),
+        source_hash=os.urandom(16),
+    )
+    parsed = parse_payload(message)
+    assert parsed.kind == MessageKind.WORKSPACE_INVITE
+    assert parsed.invitation == "MESHWORKSPACE1:signed-document"
+    assert not parsed.text
+
+    missing = LXMF.LXMessage(
+        None,
+        None,
+        content="",
+        fields=build_fields(kind=MessageKind.WORKSPACE_INVITE, **common),
+        desired_method=LXMF.LXMessage.DIRECT,
+        destination_hash=os.urandom(16),
+        source_hash=os.urandom(16),
+    )
+    with pytest.raises(ValidationError):
+        parse_payload(missing)
+
+
 def test_call_signal_carries_the_signed_document() -> None:
     message = _message(MessageKind.CALL_SIGNAL, '{"type":"call_invite"}')
     parsed = parse_payload(message)

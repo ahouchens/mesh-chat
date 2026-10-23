@@ -35,6 +35,7 @@ class MessageKind(StrEnum):
     CONTACT_DECLINE = "contact_decline"
     ROUTE_UPDATE = "route_update"
     CALL_SIGNAL = "call_signal"
+    WORKSPACE_INVITE = "workspace_invite"
     GROUP_INVITE = "group_invite"
     GROUP_ACCEPT = "group_accept"
     GROUP_MANIFEST = "group_manifest"

@@ -610,8 +610,23 @@ export interface WorkspaceInvitation {
   expires_at: number;
 }
 
-export interface WorkspaceInvitationPreview {
+export interface WorkspaceInvitationPrompt {
+  id: string;
   workspace_id: string;
+  workspace_name: string;
+  description: string;
+  owner_fingerprint: string;
+  member_count: number;
+  retention_days: 30 | 90 | 365 | null;
+  expires_at: number;
+  invitation: string;
+  contact_id: string;
+  contact_display_name: string;
+  received_at: number;
+  state: "pending";
+}
+
+export interface WorkspaceInvitationPreview {  workspace_id: string;
   existing_workspace?: Workspace;
   can_resume_join?: boolean;
   join_resume_reason?: "invitation_mismatch" | "request_stopped" | "request_expired" | "identity_mismatch" | "saved_request_invalid";
@@ -639,8 +654,8 @@ export interface WorkspaceInvitationFormats {
   expires_at: number;
   remote_profile_id?: string;
   access_point_reachable?: boolean;
-  connection_mode?: "participant" | "email" | "i2p" | "webrtc";
-  transfer?: "webrtc_data_channel";
+  connection_mode?: "participant" | "email" | "i2p" | "webrtc" | "contact";
+  transfer?: "webrtc_data_channel" | "verified_contact";
   connection_reply_available?: boolean;
   host_session_id?: string;
   methods?: ParticipantHosting["methods"];
@@ -993,6 +1008,7 @@ export interface Snapshot {
   workspace_authority_transitions?: WorkspaceAuthorityTransition[];
   workspace_device_transitions?: WorkspaceDeviceTransition[];
   workspace_invitations?: WorkspaceInvitation[];
+  workspace_invitation_prompts?: WorkspaceInvitationPrompt[];
   workspace_drafts?: WorkspaceDraft[];
   workspace_notification_state?: WorkspaceNotificationState;
   settings: NetworkSettings;
@@ -1033,8 +1049,8 @@ export interface InvitationFormats {
   expires_at: number;
   remote_profile_id?: string;
   access_point_reachable?: boolean;
-  connection_mode?: "participant" | "email" | "i2p" | "webrtc";
-  transfer?: "webrtc_data_channel";
+  connection_mode?: "participant" | "email" | "i2p" | "webrtc" | "contact";
+  transfer?: "webrtc_data_channel" | "verified_contact";
   connection_reply_available?: boolean;
   host_session_id?: string;
   methods?: ParticipantHosting["methods"];

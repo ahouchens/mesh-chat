@@ -262,6 +262,8 @@ class MeshChatService(
         "close_group",
         "create_workspace",
         "create_workspace_invitation",
+        "invite_contact_to_workspace",
+        "dismiss_workspace_invitation_prompt",
         "preview_workspace_invitation",
         "revoke_workspace_invitation",
         "submit_workspace_join",
@@ -421,6 +423,8 @@ class MeshChatService(
         "preview_remote_profile",
         "list_remote_profiles",
         "preview_workspace_invitation",
+        "invite_contact_to_workspace",
+        "dismiss_workspace_invitation_prompt",
         "preview_workspace_device_link",
         "list_workspace_messages",
         "list_workspace_direct_messages",
@@ -2597,6 +2601,8 @@ class MeshChatService(
                 self._receive_direct_reaction(contact, native, app)
             elif app.kind == MessageKind.CALL_SIGNAL:
                 self._receive_call_signal(contact, app.text)
+            elif app.kind == MessageKind.WORKSPACE_INVITE:
+                self._receive_workspace_contact_invite(contact, app)
             elif app.kind == MessageKind.CHAT:
                 self._receive_chat(contact, native, app)
         except Exception:
@@ -2673,6 +2679,56 @@ class MeshChatService(
                 scope_id=received_contact["id"],
                 purpose="personal",
             )
+        self._changed()
+
+    def dismiss_workspace_invitation_prompt(self, prompt_id: Any) -> dict[str, Any]:
+        if not isinstance(prompt_id, str):
+            raise ValidationError("Workspace invitation prompt ID is invalid")
+        record = self.store.get("workspace_contact_invite", prompt_id)
+        if record is None:
+            raise ValidationError("Workspace invitation prompt is unavailable")
+        record["state"] = "dismissed"
+        record["dismissed_at"] = time.time()
+        self.store.put("workspace_contact_invite", prompt_id, record)
+        self._changed()
+        return {"dismissed": True}
+
+    def _receive_workspace_contact_invite(self, contact: dict[str, Any], app: Any) -> None:
+        invitation_raw = getattr(app, "invitation", None)
+        if not isinstance(invitation_raw, str) or not invitation_raw:
+            return
+        try:
+            invitation = verify_workspace_invitation(invitation_raw)
+        except MeshChatError:
+            return
+        prompt_id = self.store.opaque_id(
+            "workspace-contact-invite", invitation.nonce.hex()
+        )
+        existing = self.store.get("workspace_contact_invite", prompt_id)
+        if existing is not None and existing.get("state") != "dismissed":
+            self._ensure_receipt(contact, app.logical_id, app.conversation_id)
+            return
+        preview = invitation.preview()
+        self.store.put(
+            "workspace_contact_invite",
+            prompt_id,
+            {
+                "id": prompt_id,
+                "workspace_id": invitation.workspace_id,
+                "workspace_name": preview["name"],
+                "description": preview["description"],
+                "owner_fingerprint": preview["owner_fingerprint"],
+                "member_count": preview["member_count"],
+                "retention_days": preview["retention_days"],
+                "expires_at": invitation.expires_at,
+                "invitation": invitation_raw,
+                "contact_id": contact["id"],
+                "contact_display_name": contact["display_name"],
+                "received_at": time.time(),
+                "state": "pending",
+            },
+        )
+        self._ensure_receipt(contact, app.logical_id, app.conversation_id)
         self._changed()
 
     def _receive_chat(self, contact: dict[str, Any], native: LXMF.LXMessage, app: Any) -> None:
@@ -2954,6 +3010,24 @@ class MeshChatService(
             "profile": profile,
             "contacts": contacts,
             "messages": visible_messages,
+            "workspace_invitation_prompts": [
+                {
+                    key: record[key]
+                    for key in (
+                        "id", "workspace_id", "workspace_name", "description",
+                        "owner_fingerprint", "member_count", "retention_days",
+                        "expires_at", "invitation", "contact_id",
+                        "contact_display_name", "received_at", "state",
+                    )
+                }
+                for record in sorted(
+                    self.store.list("workspace_contact_invite"),
+                    key=lambda item: float(item.get("received_at", 0)),
+                    reverse=True,
+                )
+                if record.get("state") == "pending"
+                and float(record.get("expires_at", 0)) > time.time()
+            ],
             "drafts": self.store.list("draft"),
             "hidden_conversations": [
                 {
@@ -3679,6 +3753,20 @@ class MeshChatService(
             if capabilities:
                 outcome["reconnect_capabilities"] = capabilities
             return outcome
+        if command == "invite_contact_to_workspace":
+            body = _payload(
+                value,
+                allowed={"workspace_id", "contact_id", "operation_id"},
+                required={"workspace_id", "contact_id"},
+            )
+            return self.invite_contact_to_workspace(
+                body["workspace_id"], body["contact_id"], body.get("operation_id")
+            )
+        if command == "dismiss_workspace_invitation_prompt":
+            body = _payload(
+                value, allowed={"prompt_id"}, required={"prompt_id"}
+            )
+            return self.dismiss_workspace_invitation_prompt(body["prompt_id"])
         if command == "preview_workspace_invitation":
             body = _payload(
                 value, allowed={"invitation"}, required={"invitation"}

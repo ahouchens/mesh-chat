@@ -4457,6 +4457,29 @@ describe("desktop workspaces", () => {
     expect(within(dialog).getByText(/effective direct-host expiry/i)).toBeTruthy();
   });
 
+  it("sends a workspace invitation to a verified contact", async () => {
+    const current: Snapshot = { ...snapshot([approved]), workspaces:[workspace], workspace_channels:[workspaceChannel], workspace_join_requests:[], workspace_invitations:[], workspace_drafts:[] };
+    api.runtimePlatform.mockResolvedValue("desktop");
+    api.initializeService.mockResolvedValue(current);
+    api.onInvitation.mockResolvedValue(() => undefined);
+    api.onServiceEvent.mockResolvedValue(() => undefined);
+    api.serviceCommand.mockImplementation(async (command: string) => {
+      if (command === "snapshot") return current;
+      if (command === "list_workspace_messages") return { messages:[], next_cursor:null, high_water:0 };
+      if (command === "invite_contact_to_workspace") return { sent:true };
+      return {};
+    });
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name:"Workspace Lakewatcher" }));
+    fireEvent.click(await screen.findByRole("button", { name:"Invite people to Lakewatcher" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(await within(dialog).findByText(/Invite a verified contact/i)).toBeTruthy();
+    fireEvent.change(within(dialog).getByRole("combobox", { name:"Verified contact" }), { target:{ value:approved.id } });
+    fireEvent.click(within(dialog).getByRole("button", { name:"Send workspace invitation" }));
+    await waitFor(() => expect(api.serviceCommand).toHaveBeenCalledWith("invite_contact_to_workspace", { workspace_id:workspace.id, contact_id:approved.id }));
+    expect(await within(dialog).findByText(/sent over the existing verified contact route/i)).toBeTruthy();
+  });
+
   it("starts the guided controller from Invite and exposes the email invitation fallback", async () => {
     const current: Snapshot = { ...snapshot(), workspaces:[workspace], workspace_channels:[workspaceChannel], workspace_join_requests:[], workspace_invitations:[], workspace_drafts:[] };
     api.runtimePlatform.mockResolvedValue("desktop");

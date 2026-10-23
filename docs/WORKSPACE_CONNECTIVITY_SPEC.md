@@ -6,7 +6,7 @@ implemented in 0.9.5; Phase 3 implemented in 0.9.6; Phase 4 implemented in
 implemented in 0.9.9; delegated admission backend implemented in 0.9.10; grant/admission UI
 implemented in 0.9.11; owner revocation implemented in 0.9.12; owner-return normalization implemented in
 0.9.13; workspace DM call signaling implemented in 0.9.14; WebRTC workspace
-invitation implemented in 0.9.15; audit hardening implemented in 0.9.16;
+invitation implemented in 0.9.15; audit hardening implemented in 0.9.16; verified-contact invitations implemented in 0.9.18;
 physical qualification pending.
 
 ## 1. Problem

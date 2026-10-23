@@ -15,7 +15,7 @@ import RNS
 
 from mesh_chat.errors import ContactNotApproved, IdentityMismatch, StaleCursor, ValidationError
 from mesh_chat.invitations import readable_fingerprint
-from mesh_chat.models import DeliveryState, WorkspaceRole
+from mesh_chat.models import Contact, DeliveryState, MessageKind, TrustState, WorkspaceRole
 from mesh_chat.service import MeshChatService
 from mesh_chat.vault import VaultStore
 from mesh_chat.workspace_protocol import (
@@ -6089,3 +6089,51 @@ def test_administrative_request_lifecycle_permissions_and_conflict_fail_closed(
         )
     owner.close()
     admin.close()
+
+def test_owner_can_send_workspace_invitation_to_verified_contact(tmp_path):
+    owner, _owner_network, _owner_profile, member, _member_network, _member_profile, workspace, _key, _identity = _joined_pair(tmp_path, base=142_000)
+    contact = Contact(
+        id="taylor",
+        display_name="Taylor",
+        public_identity="public",
+        identity_hash="22" * 16,
+        destination_hash="11" * 16,
+        fingerprint="1111 2222 3333 4444",
+        trust=TrustState.VERIFIED,
+        created_at=1,
+        updated_at=1,
+    ).to_dict()
+    owner.store.put("contact", contact["id"], contact)
+    result = owner.invite_contact_to_workspace(workspace["id"], contact["id"])
+    assert result["sent"] is True
+    assert result["invitation"]["connection_mode"] == "contact"
+    assert result["invitation"]["value"].startswith("{")
+    message = owner.store.get("message", result["message_id"])
+    assert message["kind"] == MessageKind.WORKSPACE_INVITE.value
+    assert message["invitation"] == result["invitation"]["value"]
+    assert message["text"] == ""
+
+    member.store.put("contact", contact["id"], contact)
+    member._receive_workspace_contact_invite(
+        contact,
+        SimpleNamespace(
+            invitation=result["invitation"]["value"],
+            logical_id=str(uuid.uuid4()),
+            conversation_id=str(uuid.uuid4()),
+        ),
+    )
+    prompts = member.snapshot()["workspace_invitation_prompts"]
+    assert len(prompts) == 1
+    assert prompts[0]["workspace_name"] == workspace["name"]
+    assert prompts[0]["contact_display_name"] == "Taylor"
+    assert prompts[0]["state"] == "pending"
+
+    member.dismiss_workspace_invitation_prompt(prompts[0]["id"])
+    assert member.snapshot()["workspace_invitation_prompts"] == []
+
+    contact["trust"] = TrustState.AWAITING_CONSENT.value
+    owner.store.put("contact", contact["id"], contact)
+    with pytest.raises(ContactNotApproved):
+        owner.invite_contact_to_workspace(workspace["id"], contact["id"])
+    owner.close()
+    member.close()

@@ -56,6 +56,8 @@ from .participant import (
 )
 from .models import (
     DeliveryState,
+    MessageKind,
+    TrustState,
     WorkspaceChannelCreationPolicy,
     WorkspaceInvitationPolicy,
     WorkspacePostingPolicy,
@@ -4703,6 +4705,9 @@ class WorkspaceServiceMixin:
         elif connection_mode == "webrtc":
             outcome["connection_mode"] = "webrtc"
             outcome["transfer"] = "webrtc_data_channel"
+        elif connection_mode == "contact":
+            outcome["connection_mode"] = "contact"
+            outcome["transfer"] = "verified_contact"
         elif connection_mode not in {None, "nearby", "remote"}:
             raise ValidationError("Workspace invitation connection mode is invalid")
         elif remote_profile_id is not None:
@@ -4744,6 +4749,53 @@ class WorkspaceServiceMixin:
         )
         self._workspace_changed(workspace["id"], resource_kind="invitation")
         return committed
+
+    def invite_contact_to_workspace(
+        self,
+        workspace_id: Any,
+        contact_id: Any,
+        operation_id: Any = None,
+    ) -> dict[str, Any]:
+        workspace = self._require_workspace(workspace_id)
+        if workspace.get("state") != "active" or workspace.get("local_role") != "owner":
+            raise ContactNotApproved("Only the active workspace owner can invite contacts")
+        if not isinstance(contact_id, str):
+            raise ValidationError("Contact ID is invalid")
+        contact = self._require_contact(contact_id)
+        if contact.get("trust") not in {
+            TrustState.APPROVED.value,
+            TrustState.VERIFIED.value,
+        }:
+            raise ContactNotApproved("Workspace invitations require a verified contact")
+        manifest = self._workspace_current_manifest(workspace)
+        if any(
+            device.destination_hash.hex() == contact.get("destination_hash")
+            for member in manifest.members
+            if member.status == "active"
+            for device in member.devices
+        ):
+            raise ValidationError("Contact is already an active workspace device")
+        invitation = self.create_workspace_invitation_command(
+            workspace_id,
+            operation_id if isinstance(operation_id, str) and operation_id else str(uuid.uuid4()),
+            7,
+            connection_mode="contact",
+        )
+        message = self._create_outbound(
+            contact,
+            MessageKind.WORKSPACE_INVITE,
+            "",
+            invitation=invitation["value"],
+        )
+        self._attempt(message["id"])
+        return {
+            "workspace_id": workspace_id,
+            "contact_id": contact_id,
+            "invitation": invitation,
+            "message_id": message["id"],
+            "message_state": message["state"],
+            "sent": True,
+        }
 
     def preview_workspace_invitation(self, raw: Any) -> dict[str, Any]:
         if not isinstance(raw, str):
