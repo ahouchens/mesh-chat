@@ -13,7 +13,14 @@ vi.mock("./api", () => ({
 const serviceCommand = mocks.serviceCommand;
 const onServiceEvent = mocks.onServiceEvent;
 
-import { attachWebRTCBridge, base64ToBytes, bytesToBase64, shouldAutoCloseWebRTCOnboarding } from "./webrtc-onboarding";
+import {
+  attachWebRTCBridge,
+  base64ToBytes,
+  bytesToBase64,
+  isWindowsWebRTCPlatform,
+  shouldAutoCloseWebRTCOnboarding,
+  webRTCWindowsChecklist,
+} from "./webrtc-onboarding";
 
 function fakeChannel() {
   const channel = {
@@ -104,5 +111,13 @@ describe("WebRTC onboarding handoff", () => {
     expect(shouldAutoCloseWebRTCOnboarding("connected", "error", true)).toBe(false);
     expect(shouldAutoCloseWebRTCOnboarding("connected", "sent", false)).toBe(false);
     expect(shouldAutoCloseWebRTCOnboarding("waiting-answer", "sent", true)).toBe(false);
+  });
+
+  it("recognizes Windows and provides offer-specific firewall guidance", () => {
+    expect(isWindowsWebRTCPlatform("Mozilla/5.0 (Windows NT 10.0; Win64; x64)")).toBe(true);
+    expect(isWindowsWebRTCPlatform("Mozilla/5.0 (Linux; Android 15)")).toBe(false);
+    expect(webRTCWindowsChecklist("offer").join(" ")).toMatch(/msedgewebview2/);
+    expect(webRTCWindowsChecklist("offer").join(" ")).toMatch(/create the offer on Android/);
+    expect(webRTCWindowsChecklist("join").join(" ")).not.toMatch(/create the offer on Android/);
   });
 });

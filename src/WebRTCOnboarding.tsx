@@ -3,7 +3,7 @@ import { QRCodeSVG } from "qrcode.react";
 import { Check, Copy, Phone, RefreshCw, X } from "lucide-react";
 
 import { serviceCommand } from "./api";
-import { attachWebRTCBridge, shouldAutoCloseWebRTCOnboarding, type WebRTCBridge } from "./webrtc-onboarding";
+import { attachWebRTCBridge, isWindowsWebRTCPlatform, shouldAutoCloseWebRTCOnboarding, webRTCWindowsChecklist, type WebRTCBridge } from "./webrtc-onboarding";
 import { rememberWebRTCDiagnostics } from "./webrtc-diagnostics";
 import { removeWebRTCSession, setWebRTCSession, updateWebRTCSessionApprovalPending, updateWebRTCSessionContact, type WebRTCSessionPath } from "./webrtc-session";
 import { clearPairingResume, savePairingResume } from "./pairing-resume";
@@ -150,6 +150,7 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
   const [relayBusy, setRelayBusy] = useState(false);
   const [relayError, setRelayError] = useState("");
   const [mailboxCode, setMailboxCode] = useState("");
+  const windowsPlatform = isWindowsWebRTCPlatform(typeof navigator === "undefined" ? "" : navigator.userAgent);
   const pcRef = useRef<RTCPeerConnection | null>(null);
   const channelRef = useRef<RTCDataChannel | null>(null);
   const controlRef = useRef<RTCDataChannel | null>(null);
@@ -661,6 +662,7 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
         <div className="stack">
           <p className="muted">WebRTC carries Reticulum packets over a direct or relayed DataChannel. The other person must review the signed offer and return a signed answer. This is experimental and does not approve a contact by itself.</p>
           <p className="muted">Create invitation: this device makes the offer. Join with WebRTC: this device pastes an offer. Use only one role per attempt.</p>
+          {windowsPlatform && phase === "choose" && <div className="direct-help__note" role="note"><strong>Windows network access</strong><p>If this connection fails, set this Wi-Fi network to Private and allow Mesh Chat plus msedgewebview2.exe on Private networks for UDP and TCP. Then create a fresh offer.</p></div>}
           {phase === "choose" && <>
             {relaySettings?.turn_broker_configured && !relaySettings.turn_broker_consent && <div className="remote-consent">
               <h3>Internet relay is available</h3>
@@ -713,7 +715,7 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
             <div className="dialog-actions"><button className="button button--secondary" onClick={() => void copyDiagnostics()}>{copied === "diagnostics" ? "Copied" : "Copy diagnostics"}</button><button className="button button--primary" onClick={close}>Close</button></div>
           </>}
           {(offerPreview || answerPreview) && phase !== "choose" && <p className="muted">Offers are signed and expire automatically. Destination: <code>{(answerPreview?.signer_destination ?? offerPreview?.signer_destination ?? "").slice(0, 12)}</code>…</p>}
-          {phase === "error" && <><p className="form-error" role="alert">{error}</p><div className="dialog-actions"><button className="button button--secondary" onClick={() => void copyDiagnostics()}>{copied === "diagnostics" ? "Copied" : "Copy diagnostics"}</button>{relaySettings?.turn_broker_configured && !relaySettings.turn_broker_consent && <button className="button button--secondary" disabled={relayBusy} onClick={() => { void enableRelay().then(() => setPhase("choose")); }}>{relayBusy ? "Enabling…" : "Enable relay and retry"}</button>}{onFallback && <button className="button button--secondary" onClick={() => { close(); onFallback(); }}>Use invitation instead</button>}<button className="button button--secondary" onClick={() => setPhase("choose")}>Back</button><button className="button button--primary" onClick={close}>Close</button></div></>}
+          {phase === "error" && <><p className="form-error" role="alert">{error}</p>{windowsPlatform && <div className="direct-help__note" role="note"><strong>Windows firewall checklist</strong><ul>{webRTCWindowsChecklist(roleRef.current).map((item) => <li key={item}>{item}</li>)}</ul><p>Copy diagnostics to see whether any relay candidates or a selected candidate pair were present.</p></div>}<div className="dialog-actions"><button className="button button--secondary" onClick={() => void copyDiagnostics()}>{copied === "diagnostics" ? "Copied" : "Copy diagnostics"}</button>{relaySettings?.turn_broker_configured && !relaySettings.turn_broker_consent && <button className="button button--secondary" disabled={relayBusy} onClick={() => { void enableRelay().then(() => setPhase("choose")); }}>{relayBusy ? "Enabling…" : "Enable relay and retry"}</button>}{onFallback && <button className="button button--secondary" onClick={() => { close(); onFallback(); }}>Use invitation instead</button>}<button className="button button--secondary" onClick={() => setPhase("choose")}>Try again</button><button className="button button--primary" onClick={close}>Close</button></div></>}
         </div>
       </section>
     </div>

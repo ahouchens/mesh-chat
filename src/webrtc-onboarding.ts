@@ -27,6 +27,24 @@ export function shouldAutoCloseWebRTCOnboarding(
   return !["preview", "sending", "error"].includes(onboarding);
 }
 
+export function isWindowsWebRTCPlatform(userAgent: string): boolean {
+  return /\bWindows\b/i.test(userAgent);
+}
+
+export function webRTCWindowsChecklist(role: "offer" | "join" | null): string[] {
+  const items = [
+    "Set this Wi-Fi network to Private in Windows network settings.",
+    "Allow Mesh Chat and msedgewebview2.exe on Private networks for UDP and TCP.",
+    "Temporarily disable VPNs, third-party firewalls, and guest/client-isolation networks.",
+  ];
+  if (role === "offer") {
+    items.push("If Android still cannot reach this Windows offer, create the offer on Android and join from Windows instead.");
+  } else {
+    items.push("If the other device cannot reach this Windows answer, check the same firewall rule before retrying.");
+  }
+  return items;
+}
+
 export function bytesToBase64(value: ArrayBuffer): string {  const bytes = new Uint8Array(value);
   let binary = "";
   for (let offset = 0; offset < bytes.length; offset += 8192) {

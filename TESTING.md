@@ -24,6 +24,38 @@ Physical execution follows the
 full physical scenario matrix for versions through 0.9.15 is in the
 [Physical QA scenarios](docs/PHYSICAL_QA_SCENARIOS.md).
 
+## Windows WebRTC connection help, 0.9.26
+
+- Windows WebRTC onboarding now shows an inline network-access note before an
+  attempt.
+- ICE failure on Windows shows a firewall checklist:
+  - set the Wi-Fi network to Private;
+  - allow Mesh Chat and `msedgewebview2.exe` on Private networks for UDP/TCP;
+  - disable VPNs/third-party firewalls/client isolation;
+  - if a Windows offer is unreachable, create the offer on Android and join from
+    Windows instead.
+- The error action is now **Try again**, and diagnostics remain copyable.
+- Unit tests cover Windows detection, checklist wording, and the existing
+  auto-close decision matrix.
+
+Validation:
+
+```text
+pytest service/tests:        1121 passed, 46 skipped, 0 failed (259.32 s)
+node scripts/run-frontend-tests.mjs: 273 passed (20 files)
+node --test deploy/cloudflare-signal/worker.test.mjs: 11 passed
+packaged emoji artwork verification: 3 passed
+node node_modules/typescript/bin/tsc -b: passed
+node scripts/run-frontend-build.mjs: passed
+```
+
+The official report is
+`dist/reports/0.9.26/20261023T144056Z-fe8fb445/report.json` (git-ignored):
+`status: passed`, 302.58 s, SHA-256
+`5745be357f3b132f789929bcc16dff469a1890d8b4e930440e332d19de984db6`.
+Gates: `automated: passed`; `physical_device: not-requested`;
+`production_signing: not-requested`.
+
 ## WebRTC onboarding closure, 0.9.25
 
 - The onboarding modal now closes 1.5 seconds after a successful WebRTC
