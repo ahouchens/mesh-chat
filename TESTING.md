@@ -51,6 +51,22 @@ The official report is
 Gates: `automated: passed`; `physical_device: not-requested`;
 `production_signing: not-requested`.
 
+Publication: GitHub Actions
+[CI run 39967247150](https://github.com/ahouchens/mesh-chat/actions/runs/39967247150)
+and
+[Release run 39967251567](https://github.com/ahouchens/mesh-chat/actions/runs/39967251567)
+passed for `v0.9.25`. Release:
+<https://github.com/ahouchens/mesh-chat/releases/tag/v0.9.25>.
+
+| Artifact | Bytes | SHA-256 (verified by re-download) |
+|---|---:|---|
+| `Mesh-Chat_0.9.25_x64-setup.exe` | 27,906,042 | `893e4aee7eea856eb90ed6a54ce26e00b8881d83d866abdc5785bbb3248087ea` |
+| `Mesh-Chat_0.9.25_x64_en-US.msi` | 29,892,608 | `f3f759334a392a08b41820d123b582f31b247e556702590c2fdc9ccdac934ad9` |
+| `mesh-chat-0.9.25-android-arm64-release.apk` | 34,387,857 | `e99896f6e375340bfcf4eaf8f93bd5959c545142a32f971c371b33cf5caa2900` |
+| `SHA256SUMS.txt` | 303 | `7119b276c86468cf58ff6b48dec7ea235347c41fb01d145f5afcbad3728c2404` |
+
+The Android APK is debug-signed; it is not a production or upgrade identity.
+
 ## Whole-project command and retry audit, 0.9.24
 
 Fixes the issues summarized in
