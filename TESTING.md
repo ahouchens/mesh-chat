@@ -50,6 +50,22 @@ The official report is
 Gates: `automated: passed`; `physical_device: not-requested`;
 `production_signing: not-requested`.
 
+Publication: GitHub Actions
+[CI run 40012767683](https://github.com/ahouchens/mesh-chat/actions/runs/40012767683)
+and
+[Release run 40012772629](https://github.com/ahouchens/mesh-chat/actions/runs/40012772629)
+passed for `v0.9.29`. Release:
+<https://github.com/ahouchens/mesh-chat/releases/tag/v0.9.29>.
+
+| Artifact | Bytes | SHA-256 |
+|---|---:|---|
+| `Mesh-Chat_0.9.29_x64-setup.exe` | 27,904,607 | `7df326083f1e6473b047599d94de7150f284cede81f59287bf1ced32a078221a` |
+| `Mesh-Chat_0.9.29_x64_en-US.msi` | 29,900,800 | `77418269ee717f15d5e97d3d342a9ba894d957c905dbde64876993bc5fc3f22d` |
+| `mesh-chat-0.9.29-android-arm64-release.apk` | 34,387,926 | `3b96a3dbe45d5ba27a1a1e3458c3d6df785787ae65c2dbd06c475076e092b1b8` |
+| `SHA256SUMS.txt` | 303 | `b050ffedfe64a46f1ac8d91a90b96a8d3c21c044f4c2ad23e971425e70e8c679` |
+
+The Android APK is debug-signed; it is not a production or upgrade identity.
+
 ## WebRTC SDP structure diagnostics, 0.9.28
 
 - Adds SDP structure to diagnostics: media lines, BUNDLE group, MID values, ICE
