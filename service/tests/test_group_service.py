@@ -1137,6 +1137,7 @@ def test_endpoint_received_group_chat_retries_until_app_receipt(
         attempts = endpoint_received["attempt_count"]
         endpoint_received["next_attempt_at"] = 0
         pair.owner.store.put("group_delivery", delivery["id"], endpoint_received)
+        pair.owner._queue_group_retry(delivery["id"])
         before_retry = len(pair.owner_network.sent)
         pair.owner._retry_group_outbox()
 
@@ -1478,6 +1479,7 @@ def test_group_reaction_endpoint_evidence_is_final_but_chat_still_retries(
         assert retained is not None
         retained["next_attempt_at"] = 0
         pair.owner.store.put("group_delivery", retained["id"], retained)
+        pair.owner._queue_group_retry(retained["id"])
         before_chat_retry = len(_sent_values(pair.owner_network, "group_chat"))
         pair.owner._retry_group_outbox()
         assert len(_sent_values(pair.owner_network, "group_chat")) == before_chat_retry + 1

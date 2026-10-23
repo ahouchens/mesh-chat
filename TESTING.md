@@ -24,6 +24,45 @@ Physical execution follows the
 full physical scenario matrix for versions through 0.9.15 is in the
 [Physical QA scenarios](docs/PHYSICAL_QA_SCENARIOS.md).
 
+## Bounded retry queues, 0.9.23
+
+The three-second retry worker no longer calls `store.list("message")` or
+`store.list("group_delivery")` and decrypts retained history.
+
+- Direct and group retry IDs are kept in insertion-ordered in-memory queues.
+- Queues are primed once by startup recovery and maintained when messages or
+  group deliveries are created, queued, waited, or become terminal.
+- Each worker tick reads only outstanding records by ID.
+- Missing group IDs get one grace cycle so a creator can finish committing.
+- Retry records are still attempted under the per-record dispatch lock with a
+  yield between records.
+
+Tests:
+
+- `test_retry_queue.py` asserts the worker performs no message/group history
+  listing, keeps a failed queued record, and handles a not-yet-committed group
+  ID with the grace cycle.
+- Existing dispatch-lock, group recovery, restart, and terminal-row tests were
+  updated to seed their queues explicitly and remain green.
+
+Validation:
+
+```text
+pytest service/tests:        1118 passed, 46 skipped, 0 failed (242.59 s)
+node scripts/run-frontend-tests.mjs: 270 passed (20 files)
+node --test deploy/cloudflare-signal/worker.test.mjs: 11 passed
+packaged emoji artwork verification: 3 passed
+node node_modules/typescript/bin/tsc -b: passed
+node scripts/run-frontend-build.mjs: passed
+```
+
+The official report is
+`dist/reports/0.9.23/20261023T115923Z-70925cb4/report.json` (git-ignored):
+`status: passed`, 312.317 s, SHA-256
+`b6573c195d1dc3879f3ae2f306a60278f9cd3d06b31a261a845097f4337bf39d`.
+Gates: `automated: passed`; `physical_device: not-requested`;
+`production_signing: not-requested`.
+
 ## Multi-peer WebRTC sessions, 0.9.22
 
 Refines the 0.9.21 registry so reconnect identity is the **profile/device ID**,

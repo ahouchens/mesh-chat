@@ -50,7 +50,7 @@ from .webrtc_onboarding import (
 from .direct_runtime import SessionRegistry
 from .direct_packets import PacketRuntime
 from .direct_packet_adapter import ProfileBudget
-from .group_service import GroupServiceMixin
+from .group_service import FINAL_DELIVERY_STATES, GroupServiceMixin
 from .models import Contact, DeliveryState, Message, MessageKind, Profile, TrustState
 from .network import ReticulumNetwork, select_lan_listener_port
 from .i2p_router import I2PRouterManager
@@ -451,6 +451,10 @@ class MeshChatService(
         self._identity: RNS.Identity | None = None
         self._shutdown = threading.Event()
         self._dispatch_lock = threading.RLock()
+        self._retry_queue_lock = threading.Lock()
+        self._direct_retry_ids: dict[str, None] = {}
+        self._group_retry_ids: dict[str, None] = {}
+        self._group_retry_missing: set[str] = set()
         self._direct_sessions = SessionRegistry()
         self._direct_packets = PacketRuntime()
         self._direct_packet_budget = ProfileBudget()
@@ -1398,6 +1402,8 @@ class MeshChatService(
                 ("message", accepted["id"], accepted),
             ]
         )
+        if accepted["state"] in DIRECT_RETRY_STATES:
+            self._queue_direct_retry(accepted["id"])
         self.promote_pending_callback(
             contact["destination_hash"],
             scope_kind="contact",
@@ -2276,6 +2282,8 @@ class MeshChatService(
             )
         else:
             self.store.put("message", message["id"], message)
+        if message["state"] in DIRECT_RETRY_STATES:
+            self._queue_direct_retry(message["id"])
         return message
 
     def _outbound_record(
@@ -2314,25 +2322,56 @@ class MeshChatService(
             message["invitation"] = invitation
         return message
 
+    def _queue_direct_retry(self, message_id: str) -> None:
+        with self._retry_queue_lock:
+            self._direct_retry_ids[message_id] = None
+
+    def _drop_direct_retry(self, message_id: str) -> None:
+        with self._retry_queue_lock:
+            self._direct_retry_ids.pop(message_id, None)
+
+    def _direct_retry_snapshot(self) -> list[str]:
+        with self._retry_queue_lock:
+            return list(self._direct_retry_ids)
+
+    def _queue_group_retry(self, delivery_id: str) -> None:
+        with self._retry_queue_lock:
+            self._group_retry_ids[delivery_id] = None
+            self._group_retry_missing.discard(delivery_id)
+
+    def _drop_group_retry(self, delivery_id: str) -> None:
+        with self._retry_queue_lock:
+            self._group_retry_ids.pop(delivery_id, None)
+            self._group_retry_missing.discard(delivery_id)
+
+    def _group_retry_snapshot(self) -> list[str]:
+        with self._retry_queue_lock:
+            return list(self._group_retry_ids)
+
     def _attempt(self, message_id: str) -> None:
         message = self.store.get("message", message_id)
         if not message or message["direction"] != "outbound":
+            self._drop_direct_retry(message_id)
             return
         # Only durable retry states may create a new native LXMF handoff. An
         # in-flight packet (or one already accepted by an endpoint/propagation
         # node) remains pending until its callback, app receipt, expiry, or
         # explicit recovery after restart changes it back to a retry state.
         if message["state"] not in DIRECT_RETRY_STATES:
+            self._drop_direct_retry(message_id)
             return
+        self._queue_direct_retry(message_id)
         if message["expires_at"] <= time.time():
             if (
                 message.get("kind") == MessageKind.REACTION.value
                 or message.get("reaction_receipt") is True
             ):
                 self.store.delete("message", message_id)
+                self._drop_direct_retry(message_id)
                 return
             message["state"] = DeliveryState.EXPIRED.value
             self.store.put("message", message_id, message)
+            self._drop_direct_retry(message_id)
             return
         contact = self._require_contact(message["contact_id"])
         kind = MessageKind(message["kind"])
@@ -2341,7 +2380,10 @@ class MeshChatService(
             allowed = contact["trust"] == TrustState.AWAITING_CONSENT.value
         elif kind == MessageKind.CONTACT_DECLINE:
             allowed = contact["trust"] == TrustState.PENDING_REQUEST.value
-        if not allowed or self.network is None:
+        if not allowed:
+            self._drop_direct_retry(message_id)
+            return
+        if self.network is None:
             return
         # The persisted client list is bounded. A newly approved contact can
         # therefore displace an older contact's direct route. Bring the contact
@@ -2411,6 +2453,11 @@ class MeshChatService(
                     if current["state"] in DIRECT_RETRY_STATES:
                         current["state"] = DeliveryState.SENDING.value
                     self.store.put("message", message_id, current)
+            latest = self.store.get("message", message_id)
+            if latest is not None and latest.get("state") in DIRECT_RETRY_STATES:
+                self._queue_direct_retry(message_id)
+            else:
+                self._drop_direct_retry(message_id)
         except MeshChatError as exc:
             current = self.store.get("message", message_id)
             if current is None:
@@ -2457,6 +2504,7 @@ class MeshChatService(
                 or message.get("reaction_receipt") is True
             ):
                 self.store.delete("message", logical_id)
+            self._drop_direct_retry(logical_id)
             return
         cleanup_reaction_operation = bool(
             state
@@ -2514,8 +2562,13 @@ class MeshChatService(
             message["native_message_id"] = native_id
         if cleanup_reaction_operation:
             self.store.delete("message", logical_id)
+            self._drop_direct_retry(logical_id)
         else:
             self.store.put("message", logical_id, message)
+            if state.value in DIRECT_RETRY_STATES:
+                self._queue_direct_retry(logical_id)
+            else:
+                self._drop_direct_retry(logical_id)
         self.emit(
             {
                 "type": "event",
@@ -2853,6 +2906,7 @@ class MeshChatService(
 
     def _recover_outbox(self) -> None:
         now = time.time()
+        retry_ids: list[str] = []
         for message in self.store.list("message"):
             if message["direction"] != "outbound":
                 continue
@@ -2876,62 +2930,91 @@ class MeshChatService(
                 else DeliveryState.QUEUED.value
             )
             self.store.put("message", message["id"], message)
+            if message["state"] in DIRECT_RETRY_STATES:
+                retry_ids.append(message["id"])
+        with self._retry_queue_lock:
+            self._direct_retry_ids.update({message_id: None for message_id in retry_ids})
         self._recover_group_outbox()
 
     def _retry_loop(self) -> None:
         while not self._shutdown.wait(3):
-            if not self.network:
-                continue
-            # Do not own the command/callback lock for an entire durable
-            # backlog. A signed-route probe has a small bounded wait of its own,
-            # and multiplying that wait by many historical messages can exceed
-            # the desktop IPC deadline even without a transport fault. Lock one
-            # record at a time and yield between records so a waiting user
-            # command or deferred native callback can make progress.
-            for message in self.store.list("message"):
-                if message["direction"] == "outbound" and message["state"] in {
+            self._retry_once()
+
+    def _retry_once(self) -> None:
+        if not self.network:
+            return
+        # Do not own the command/callback lock for an entire durable backlog.
+        # A signed-route probe has a small bounded wait of its own, and
+        # multiplying that wait by many historical messages can exceed the
+        # desktop IPC deadline even without a transport fault. Lock one record
+        # at a time and yield between records so a waiting user command or
+        # deferred native callback can make progress.
+        for message_id in self._direct_retry_snapshot():
+            message = self.store.get("message", message_id)
+            if (
+                message is None
+                or message["direction"] != "outbound"
+                or message["state"] not in {
                     DeliveryState.QUEUED.value,
                     DeliveryState.WAITING_FOR_KEYS.value,
-                }:
-                    with self._dispatch_lock:
-                        try:
-                            self._attempt(message["id"])
-                        except Exception:
-                            # A single upstream transport failure must not kill
-                            # the only retry worker.
-                            pass
-                    if self._shutdown.wait(0.01):
-                        return
+                }
+            ):
+                self._drop_direct_retry(message_id)
+                continue
             with self._dispatch_lock:
                 try:
-                    self._expire_group_invitation_state(time.time())
+                    self._attempt(message_id)
                 except Exception:
+                    # A single upstream transport failure must not kill the
+                    # only retry worker.
                     pass
-            for delivery in self.store.list("group_delivery"):
-                with self._dispatch_lock:
-                    try:
-                        self._retry_group_delivery_if_due(delivery["id"])
-                    except Exception:
-                        pass
-                if self._shutdown.wait(0.01):
-                    return
+            if self._shutdown.wait(0.05):
+                return
+        with self._dispatch_lock:
+            try:
+                self._expire_group_invitation_state(time.time())
+            except Exception:
+                pass
+        for delivery_id in self._group_retry_snapshot():
+            delivery = self.store.get("group_delivery", delivery_id)
+            if delivery is None:
+                with self._retry_queue_lock:
+                    if delivery_id in self._group_retry_missing:
+                        self._group_retry_ids.pop(delivery_id, None)
+                        self._group_retry_missing.discard(delivery_id)
+                    else:
+                        # The creator may still be committing this record.
+                        self._group_retry_missing.add(delivery_id)
+                continue
+            with self._retry_queue_lock:
+                self._group_retry_missing.discard(delivery_id)
+            if delivery.get("state") in FINAL_DELIVERY_STATES:
+                self._drop_group_retry(delivery_id)
+                continue
             with self._dispatch_lock:
                 try:
-                    self._retry_workspace_outbox()
+                    self._retry_group_delivery_if_due(delivery_id)
                 except Exception:
                     pass
-                try:
-                    self.reconcile_remote_profiles()
-                except Exception:
-                    pass
-                try:
-                    self.reconcile_participant_access()
-                except Exception:
-                    pass
-                try:
-                    self._refresh_callback_routes()
-                except Exception:
-                    pass
+            if self._shutdown.wait(0.05):
+                return
+        with self._dispatch_lock:
+            try:
+                self._retry_workspace_outbox()
+            except Exception:
+                pass
+            try:
+                self.reconcile_remote_profiles()
+            except Exception:
+                pass
+            try:
+                self.reconcile_participant_access()
+            except Exception:
+                pass
+            try:
+                self._refresh_callback_routes()
+            except Exception:
+                pass
 
     def _flush_contact(self, contact_id: str) -> None:
         attempted = 0

@@ -327,6 +327,7 @@ class GroupServiceMixin:
                 delivery.pop("native_message_id", None)
                 delivery.pop("failure_code", None)
                 self.store.put("group_delivery", delivery["id"], delivery)
+                self._queue_group_retry(delivery["id"])
             return None
         if int(delivery.get("group_epoch", -1)) != int(group.get("epoch", -2)):
             return "membership_changed"
@@ -393,7 +394,7 @@ class GroupServiceMixin:
     ) -> dict[str, Any]:
         profile = self._require_profile()
         now = time.time()
-        return {
+        record = {
             "id": _new_id(),
             "group_id": group["id"],
             "recipient_destination": recipient["destination_hash"],
@@ -426,23 +427,29 @@ class GroupServiceMixin:
             "created_at": now,
             "expires_at": now + DELIVERY_WINDOW_SECONDS,
         }
+        self._queue_group_retry(record["id"])
+        return record
 
     def _attempt_group_delivery(self, delivery_id: str) -> None:
         delivery = self.store.get("group_delivery", delivery_id)
         if delivery is None or delivery["state"] in FINAL_DELIVERY_STATES:
+            self._drop_group_retry(delivery_id)
             return
         now = time.time()
         if float(delivery["expires_at"]) <= now:
             if self._is_reaction_only_delivery(delivery):
                 self.store.delete("group_delivery", delivery_id)
+                self._drop_group_retry(delivery_id)
                 return
             delivery["state"] = DeliveryState.EXPIRED.value
             delivery["expired_at"] = now
             self.store.put("group_delivery", delivery_id, delivery)
+            self._drop_group_retry(delivery_id)
             return
         invalid_reason = self._group_chat_invalid_reason(delivery)
         if invalid_reason is not None:
             self._fail_group_delivery(delivery, invalid_reason)
+            self._drop_group_retry(delivery_id)
             return
         if float(delivery.get("next_attempt_at", 0)) > now:
             return
@@ -523,25 +530,31 @@ class GroupServiceMixin:
             )
             current["failure_code"] = "transport_unavailable"
             self.store.put("group_delivery", delivery_id, current)
+            self._queue_group_retry(delivery_id)
         except Exception:
             current = self.store.get("group_delivery", delivery_id)
             if current is None:
+                self._drop_group_retry(delivery_id)
                 return
             if current["state"] in FINAL_DELIVERY_STATES:
+                self._drop_group_retry(delivery_id)
                 return
             current["state"] = DeliveryState.QUEUED.value
             current["failure_code"] = "transport_error"
             self.store.put("group_delivery", delivery_id, current)
+            self._queue_group_retry(delivery_id)
 
     def _on_group_native_status(
         self, logical_id: str, state: DeliveryState, native_id: str | None
     ) -> bool:
         delivery = self.store.get("group_delivery", logical_id)
         if delivery is None:
+            self._drop_group_retry(logical_id)
             return False
         if delivery["state"] in FINAL_DELIVERY_STATES:
             if self._is_reaction_only_delivery(delivery):
                 self.store.delete("group_delivery", logical_id)
+            self._drop_group_retry(logical_id)
             return True
         if delivery.get("kind") == MessageKind.GROUP_REACTION.value:
             group = self.store.get("group", delivery.get("group_id", ""))
@@ -559,6 +572,7 @@ class GroupServiceMixin:
             and self._is_reaction_only_delivery(delivery)
         ):
             self.store.delete("group_delivery", logical_id)
+            self._drop_group_retry(logical_id)
             self._changed()
             return True
         if (
@@ -585,6 +599,7 @@ class GroupServiceMixin:
             )
         ):
             self.store.delete("group_delivery", logical_id)
+            self._drop_group_retry(logical_id)
             self._changed()
             return True
         if (
@@ -606,6 +621,13 @@ class GroupServiceMixin:
         if native_id:
             delivery["native_message_id"] = native_id
         self.store.put("group_delivery", logical_id, delivery)
+        if delivery["state"] in {
+            DeliveryState.QUEUED.value,
+            DeliveryState.WAITING_FOR_KEYS.value,
+        }:
+            self._queue_group_retry(logical_id)
+        else:
+            self._drop_group_retry(logical_id)
         self._changed()
         return True
 
@@ -893,6 +915,7 @@ class GroupServiceMixin:
         delivery.pop("failure_code", None)
         delivery.pop("failed_at", None)
         self.store.put("group_delivery", delivery["id"], delivery)
+        self._queue_group_retry(delivery["id"])
         self._attempt_group_delivery(delivery["id"])
         self._changed()
         return self._public_group(group)
@@ -1888,6 +1911,7 @@ class GroupServiceMixin:
 
     def _recover_group_outbox(self) -> None:
         now = time.time()
+        retry_ids: list[str] = []
         self._expire_group_invitation_state(now)
         for delivery in self.store.list("group_delivery"):
             if delivery["state"] in FINAL_DELIVERY_STATES:
@@ -1914,6 +1938,13 @@ class GroupServiceMixin:
                 delivery["state"] = DeliveryState.QUEUED.value
                 delivery["next_attempt_at"] = now
             self.store.put("group_delivery", delivery["id"], delivery)
+            if delivery["state"] in {
+                DeliveryState.QUEUED.value,
+                DeliveryState.WAITING_FOR_KEYS.value,
+            }:
+                retry_ids.append(delivery["id"])
+        with self._retry_queue_lock:
+            self._group_retry_ids.update({delivery_id: None for delivery_id in retry_ids})
         for group in self.store.list("group"):
             if group.get("status") in {"closed", "forked"}:
                 continue
@@ -1929,8 +1960,22 @@ class GroupServiceMixin:
     def _retry_group_outbox(self) -> None:
         now = time.time()
         self._expire_group_invitation_state(now)
-        for delivery in self.store.list("group_delivery"):
-            self._retry_group_delivery_if_due(delivery["id"], now)
+        for delivery_id in self._group_retry_snapshot():
+            delivery = self.store.get("group_delivery", delivery_id)
+            if delivery is None:
+                with self._retry_queue_lock:
+                    if delivery_id in self._group_retry_missing:
+                        self._group_retry_ids.pop(delivery_id, None)
+                        self._group_retry_missing.discard(delivery_id)
+                    else:
+                        self._group_retry_missing.add(delivery_id)
+                continue
+            with self._retry_queue_lock:
+                self._group_retry_missing.discard(delivery_id)
+            if delivery.get("state") in FINAL_DELIVERY_STATES:
+                self._drop_group_retry(delivery_id)
+                continue
+            self._retry_group_delivery_if_due(delivery_id, now)
 
     def _retry_group_delivery_if_due(
         self, delivery_id: str, now: float | None = None
@@ -1940,22 +1985,27 @@ class GroupServiceMixin:
         current_time = time.time() if now is None else now
         delivery = self.store.get("group_delivery", delivery_id)
         if delivery is None or delivery["state"] in FINAL_DELIVERY_STATES:
+            self._drop_group_retry(delivery_id)
             return
         if self._group_control_business_complete(delivery):
             if self._is_reaction_only_delivery(delivery):
                 self.store.delete("group_delivery", delivery["id"])
+                self._drop_group_retry(delivery_id)
                 return
             delivery["state"] = DeliveryState.DELIVERED.value
             delivery["delivered_at"] = current_time
             self.store.put("group_delivery", delivery["id"], delivery)
+            self._drop_group_retry(delivery_id)
             return
         if float(delivery["expires_at"]) <= current_time:
             if self._is_reaction_only_delivery(delivery):
                 self.store.delete("group_delivery", delivery["id"])
+                self._drop_group_retry(delivery_id)
                 return
             delivery["state"] = DeliveryState.EXPIRED.value
             delivery["expired_at"] = current_time
             self.store.put("group_delivery", delivery["id"], delivery)
+            self._drop_group_retry(delivery_id)
             return
         if float(delivery.get("next_attempt_at", 0)) <= current_time:
             self._attempt_group_delivery(delivery["id"])

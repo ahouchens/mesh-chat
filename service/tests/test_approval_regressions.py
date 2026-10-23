@@ -743,42 +743,56 @@ def test_retry_backlog_releases_dispatch_lock_between_messages(tmp_path: Path) -
                 "state": DeliveryState.QUEUED.value,
             },
         )
+        service._queue_direct_retry(message_id)
 
     first_attempt = threading.Event()
     release_first = threading.Event()
     second_attempt = threading.Event()
     command_entered = threading.Event()
     release_command = threading.Event()
+    command_started = threading.Event()
 
     def attempt(message_id: str) -> None:
         if message_id == "old-one":
             first_attempt.set()
             assert release_first.wait(2)
         elif message_id == "old-two":
+            # The retry loop must release the dispatch lock between records.
+            assert command_entered.wait(2)
             second_attempt.set()
 
     service._attempt = attempt  # type: ignore[method-assign]
     service.network = object()  # type: ignore[assignment]
     cycle_shutdown = OneCycleShutdown()
     service._shutdown = cycle_shutdown  # type: ignore[assignment]
-    retry = threading.Thread(target=service._retry_loop)
+    retry_errors: list[BaseException] = []
+
+    def retry_cycle() -> None:
+        try:
+            service._retry_once()
+        except BaseException as exc:  # pragma: no cover - diagnostic path
+            retry_errors.append(exc)
+
+    retry = threading.Thread(target=retry_cycle)
 
     def renderer_command() -> None:
+        command_started.set()
         with service._dispatch_lock:
             command_entered.set()
-            assert release_command.wait(2)
 
     command = threading.Thread(target=renderer_command)
     try:
+        assert service._direct_retry_snapshot() == ["old-one", "old-two"]
         retry.start()
-        assert first_attempt.wait(1)
+        assert first_attempt.wait(1), (retry_errors, service._direct_retry_snapshot())
         command.start()
+        assert command_started.wait(1)
+        time.sleep(0.05)
         release_first.set()
 
         assert command_entered.wait(1)
-        assert not second_attempt.is_set()
-        release_command.set()
         assert second_attempt.wait(1)
+        release_command.set()
     finally:
         release_first.set()
         release_command.set()
@@ -825,18 +839,22 @@ def test_group_retry_backlog_releases_dispatch_lock_between_deliveries(
     service._retry_thread.join(timeout=2)
     for delivery_id in ("group-old-one", "group-old-two"):
         store.put("group_delivery", delivery_id, {"id": delivery_id})
+        service._queue_group_retry(delivery_id)
 
     first_attempt = threading.Event()
     release_first = threading.Event()
     second_attempt = threading.Event()
     command_entered = threading.Event()
     release_command = threading.Event()
+    command_started = threading.Event()
 
     def attempt(delivery_id: str) -> None:
         if delivery_id == "group-old-one":
             first_attempt.set()
             assert release_first.wait(2)
         elif delivery_id == "group-old-two":
+            # The retry loop must release the dispatch lock between records.
+            assert command_entered.wait(2)
             second_attempt.set()
 
     service._expire_group_invitation_state = lambda _now: None  # type: ignore[method-assign]
@@ -844,24 +862,33 @@ def test_group_retry_backlog_releases_dispatch_lock_between_deliveries(
     service.network = object()  # type: ignore[assignment]
     cycle_shutdown = OneCycleShutdown()
     service._shutdown = cycle_shutdown  # type: ignore[assignment]
-    retry = threading.Thread(target=service._retry_loop)
+    retry_errors: list[BaseException] = []
+
+    def retry_cycle() -> None:
+        try:
+            service._retry_once()
+        except BaseException as exc:  # pragma: no cover - diagnostic path
+            retry_errors.append(exc)
+
+    retry = threading.Thread(target=retry_cycle)
 
     def renderer_command() -> None:
+        command_started.set()
         with service._dispatch_lock:
             command_entered.set()
-            assert release_command.wait(2)
 
     command = threading.Thread(target=renderer_command)
     try:
         retry.start()
-        assert first_attempt.wait(1)
+        assert first_attempt.wait(1), retry_errors
         command.start()
+        assert command_started.wait(1)
+        time.sleep(0.05)
         release_first.set()
 
         assert command_entered.wait(1)
-        assert not second_attempt.is_set()
-        release_command.set()
         assert second_attempt.wait(1)
+        release_command.set()
     finally:
         release_first.set()
         release_command.set()
