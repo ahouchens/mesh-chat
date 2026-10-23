@@ -57,6 +57,22 @@ The official report is
 Gates: `automated: passed`; `physical_device: not-requested`;
 `production_signing: not-requested`.
 
+Publication: GitHub Actions
+[CI run 39989448623](https://github.com/ahouchens/mesh-chat/actions/runs/39989448623)
+and
+[Release run 39989452739](https://github.com/ahouchens/mesh-chat/actions/runs/39989452739)
+passed for `v0.9.27`. Release:
+<https://github.com/ahouchens/mesh-chat/releases/tag/v0.9.27>.
+
+| Artifact | Bytes | SHA-256 (verified by re-download) |
+|---|---:|---|
+| `Mesh-Chat_0.9.27_x64-setup.exe` | 27,904,016 | `bda359fed0769a1c9d16807b12ebdaedf70f02752370242dbd07ccda6e76e1f5` |
+| `Mesh-Chat_0.9.27_x64_en-US.msi` | 29,892,608 | `918c912c98035a831b8fe1104e30e9367f974f47ca2702e53d5509419062f9b6` |
+| `mesh-chat-0.9.27-android-arm64-release.apk` | 34,387,828 | `c29c4c9e1217a1c93e004e46048d97bb4108658c4b124685a0bc4b135508460d` |
+| `SHA256SUMS.txt` | 303 | `08f9b8fc3fd5ea9df8c5d91813a658ef0942f4429cee6a8c8dba4675f3e44669` |
+
+The Android APK is debug-signed; it is not a production or upgrade identity.
+
 ## Windows WebRTC connection help, 0.9.26
 
 - Windows WebRTC onboarding now shows an inline network-access note before an
