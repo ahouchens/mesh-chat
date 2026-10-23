@@ -60,6 +60,22 @@ The official report is
 Gates: `automated: passed`; `physical_device: not-requested`;
 `production_signing: not-requested`.
 
+Publication: GitHub Actions
+[CI run 39956794941](https://github.com/ahouchens/mesh-chat/actions/runs/39956794941)
+and
+[Release run 39956798422](https://github.com/ahouchens/mesh-chat/actions/runs/39956798422)
+passed for `v0.9.24`. Release:
+<https://github.com/ahouchens/mesh-chat/releases/tag/v0.9.24>.
+
+| Artifact | Bytes | SHA-256 (verified by re-download) |
+|---|---:|---|
+| `Mesh-Chat_0.9.24_x64-setup.exe` | 27,904,862 | `ad2d019f71066edab333fcb2b5eeacb428e97f0f976f747872ecffebb945e185` |
+| `Mesh-Chat_0.9.24_x64_en-US.msi` | 29,896,704 | `c021a7d4a27bab35e7988ce09fc6066e61789552309405f0f926fbb3f25c039a` |
+| `mesh-chat-0.9.24-android-arm64-release.apk` | 34,387,656 | `cc376e590d389512602fd634d762f487d3801f0584e680895855074f75f61cab` |
+| `SHA256SUMS.txt` | 303 | `6df829f85ca3f0c39aefaefcaa564cf1e010bbda54977e219cf090d179d67379` |
+
+The Android APK is debug-signed; it is not a production or upgrade identity.
+
 ## Bounded retry queues, 0.9.23
 
 The three-second retry worker no longer calls `store.list("message")` or
