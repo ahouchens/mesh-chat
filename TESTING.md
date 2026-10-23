@@ -34,15 +34,43 @@ full physical scenario matrix for versions through 0.9.15 is in the
 - A real Edge 155 / Cloudflare TURN comparison reproduced failure with the old
   cleanup behavior and successful DataChannel payload exchange with a 45-second
   answer delay after the fix. A separate 90-second delay also recovered.
-- The earlier full frontend run passed 289 tests; final focused WebRTC checks
-  passed 23 tests, including the added retry regression. TypeScript and the
-  frontend bundle passed during the investigation.
+
+GitHub release verification for commit `f3fd96c7f90aea34e5883f3328465fb6e355c0a9`
+passed on 2026-10-23:
+
+```text
+pytest service/tests: 1120 passed, 47 skipped (one deprecation warning)
+frontend tests: 290 passed (23 files)
+Cloudflare Worker tests: 11 passed
+packaged emoji artwork verification: 3 passed
+TypeScript and production frontend build: passed
+```
+
+Verification report SHA-256:
+`c4a3a6ecf1ca934097618b0b63fc38d47fa70120e249ba9efc0de831cf4338c7`.
+The downloaded verification artifact matched its GitHub API archive digest.
 
 See the [root-cause report](docs/WEBRTC_MANUAL_ANSWER_ROOT_CAUSE.md) and
 [redacted browser evidence](docs/benchmarks/webrtc-manual-answer-20261023.json).
-Release verification, Windows packaging, Android packaging, and publication run
-in GitHub Actions for `v0.9.30`; their results are pending. The Windows–Android
-physical retest, including switching to Slack during copy/paste, remains pending.
+[Main CI](https://github.com/ahouchens/mesh-chat/actions/runs/40034097447) passed.
+[Release run 40034097382](https://github.com/ahouchens/mesh-chat/actions/runs/40034097382)
+passed verification, Windows packaging/native tests, Android packaging, and
+publication on its first attempt. All release packaging ran in GitHub Actions.
+Release: [Mesh Chat 0.9.30](https://github.com/ahouchens/mesh-chat/releases/tag/v0.9.30),
+published 2026-10-23 at 22:47:03 UTC.
+
+Published assets and SHA-256 digests reported by the GitHub release API:
+
+| Artifact | Bytes | SHA-256 |
+|---|---:|---|
+| `Mesh-Chat_0.9.30_x64-setup.exe` | 27,907,211 | `80b7c43ce2d9bffe85a5e3d0e0a715c813c9daaa1a58724205ddd96c1a5bcabc` |
+| `Mesh-Chat_0.9.30_x64_en-US.msi` | 29,900,800 | `db00c474fd381bc2a19a977340ef697badca2954d6515e86a4971c8ae7a270ac` |
+| `mesh-chat-0.9.30-android-arm64-release.apk` | 34,387,880 | `f9ae6447ed3d34e148a7746cd11af5bf66f66ca9c589b12780d52447cf91167a` |
+| `SHA256SUMS.txt` | 303 | `aebf7212b138464b135ce79fb6fc223377a08e03328d37930c12740be11f9286` |
+
+The Windows–Android physical retest, including switching to Slack during
+copy/paste, remains pending. Publication does not establish physical-device or
+production-signing qualification.
 
 ## Complete ICE gathering marker, 0.9.29
 
