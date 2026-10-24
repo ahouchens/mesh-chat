@@ -1579,7 +1579,8 @@ describe("remote connection settings", () => {
     render(<App />);
     await screen.findByRole("heading", { name: "Your private conversations" });
     fireEvent.click(screen.getByRole("button", { name: "Settings" }));
-    const dialog = await screen.findByRole("dialog", { name: "Settings" });
+    const dialog = await screen.findByRole("region", { name: "Settings" });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Connections" }));
     expect(within(dialog).getByText(/no community or third-party transport node/i)).toBeTruthy();
     expect(within(dialog).getByText(/UPnP router mapping/i)).toBeTruthy();
     fireEvent.click(within(dialog).getByRole("button", { name: "Stop hosting" }));
@@ -1607,7 +1608,8 @@ describe("remote connection settings", () => {
     render(<App />);
     await screen.findByRole("heading", { name: "Your private conversations" });
     fireEvent.click(screen.getByRole("button", { name: "Settings" }));
-    const dialog = await screen.findByRole("dialog", { name: "Settings" });
+    const dialog = await screen.findByRole("region", { name: "Settings" });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Connections" }));
     expect(within(dialog).getByText("Connected · 1/1 endpoints")).toBeTruthy();
     expect(within(dialog).queryByText(/relay\.example/i)).toBeNull();
     fireEvent.click(within(dialog).getByRole("button", { name: "Approve offline delivery" }));
@@ -1763,18 +1765,19 @@ describe("network settings", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Settings" }));
     expect(screen.getByText(`Mesh Chat ${packageInfo.version}`)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Connections" }));
     const fallback = screen.getByRole("checkbox", { name: /Use a direct local connection/ });
     expect((fallback as HTMLInputElement).checked).toBe(true);
 
     fireEvent.click(fallback);
-    fireEvent.click(screen.getByRole("button", { name: "Save settings" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save connection settings" }));
 
     await waitFor(() => {
       expect(api.serviceCommand).toHaveBeenCalledWith("update_settings", {
         settings: { ...settings, lan_fallback: false },
       });
     });
-    expect(await screen.findByText("Saved. Restart Mesh Chat to apply networking-role changes.")).toBeTruthy();
+    await waitFor(() => expect(screen.getAllByRole("status").some((status) => status.textContent === "Saved. Restart Mesh Chat to apply networking-role changes.")).toBe(true));
   });
 
   it("saves an I2P access point without exposing router internals", async () => {
@@ -1791,11 +1794,12 @@ describe("network settings", () => {
     render(<App />);
     await screen.findByRole("heading", { name: "Your private conversations" });
     fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+    fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
     fireEvent.click(screen.getByRole("checkbox", { name: /Use I2P/ }));
     fireEvent.change(screen.getByLabelText("I2P access point addresses"), {
       target: { value: B32 },
     });
-    fireEvent.click(screen.getByRole("button", { name: "Save settings" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save connection settings" }));
 
     await waitFor(() => {
       expect(api.serviceCommand).toHaveBeenCalledWith("update_settings", {
@@ -1840,7 +1844,8 @@ describe("network settings", () => {
     render(<App />);
     await screen.findByRole("heading", { name: "Your private conversations" });
     fireEvent.click(screen.getByRole("button", { name: "Settings" }));
-    const dialog = await screen.findByRole("dialog", { name: "Settings" });
+    const dialog = await screen.findByRole("region", { name: "Settings" });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Notifications" }));
     expect(within(dialog).getByText(/There is no cloud push/i)).toBeTruthy();
     fireEvent.click(within(dialog).getByRole("button", { name: "Enable notifications" }));
     await waitFor(() => expect(api.requestNotificationPermission).toHaveBeenCalledTimes(1));
@@ -1850,6 +1855,135 @@ describe("network settings", () => {
       "set_hide_notification_previews",
       expect.objectContaining({ hidden: true }),
     ));
+  });
+});
+
+describe("Settings page navigation and saved state", () => {
+  const callSettings = { stun_urls: ["stun:original.example:3478"], turn_url: null, turn_username: null, turn_configured: false, turn_broker_url: null, signal_mailbox_url: null, turn_broker_consent: false, relay_only: false, store_call_signaling: true };
+  async function openSettings(onSave?: (payload: Record<string, unknown>) => Promise<unknown>) {
+    let current = { ...snapshot([approved]), messages: [firstMessage] };
+    let back: (() => void) | undefined;
+    let serviceEvent: ((event: ServiceEvent) => void) | undefined;
+    api.runtimePlatform.mockResolvedValue("android");
+    api.initializeService.mockResolvedValue(current);
+    api.onInvitation.mockResolvedValue(() => undefined);
+    api.onServiceEvent.mockImplementation(async (callback) => { serviceEvent = callback; return () => undefined; });
+    api.onMobileBackButton.mockImplementation(async (callback) => { back = callback; return () => undefined; });
+    api.notificationCapability.mockResolvedValue({ supported: false, platform: "android", permission_state: "unsupported" });
+    api.serviceCommand.mockImplementation(async (command: string, payload: Record<string, unknown>) => {
+      if (command === "snapshot") return current;
+      if (command === "call_settings") return callSettings;
+      if (command === "get_notification_state") return null;
+      if (command === "update_settings") {
+        if (onSave) return onSave(payload);
+        current = { ...current, settings: payload.settings as typeof settings };
+        return current.settings;
+      }
+      if (command === "update_call_settings") return { ...callSettings, ...payload };
+      return {};
+    });
+    render(<App />);
+    const composer = await screen.findByRole("textbox", { name: "Message Taylor" });
+    fireEvent.change(composer, { target: { value: "Draft stays in this conversation" } });
+    const settingsButton = screen.getByRole("button", { name: "Settings" });
+    settingsButton.focus();
+    fireEvent.click(settingsButton);
+    await screen.findByRole("region", { name: "Settings" });
+    return { composer, settingsButton, back: () => back?.(), request: async () => {
+      current = { ...current, contacts: [approved, { ...incoming, id: "second-request", display_name: "Morgan" }] };
+      await act(async () => serviceEvent?.({ type: "event", event: "state_changed" }));
+    } };
+  }
+  const section = (name: string) => fireEvent.click(screen.getByRole("button", { name }));
+
+  it("returns to the same mounted conversation and draft after an immediate theme change", async () => {
+    const { composer, settingsButton } = await openSettings();
+    expect(screen.queryByRole("textbox", { name: "Message Taylor" })).toBeNull();
+    expect(document.querySelector<HTMLElement>(".main-pane")?.inert).toBe(true);
+    fireEvent.click(screen.getByRole("radio", { name: /^Light\b/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Back from settings" }));
+    expect(screen.queryByRole("dialog", { name: "Discard unsaved settings?" })).toBeNull();
+    expect(screen.getByRole("textbox", { name: "Message Taylor" })).toBe(composer);
+    expect((composer as HTMLTextAreaElement).value).toBe("Draft stays in this conversation");
+    expect(document.querySelector<HTMLElement>(".main-pane")?.inert).toBe(false);
+    await waitFor(() => expect(document.activeElement).toBe(settingsButton));
+    expect(api.serviceCommand.mock.calls.some(([command]) => command === "update_settings" || command === "update_call_settings")).toBe(false);
+  });
+
+  it("retains network drafts across sections and routes Android Back through the discard guard", async () => {
+    const { back } = await openSettings();
+    section("Connections");
+    fireEvent.click(screen.getByRole("checkbox", { name: /Use a direct local connection/ }));
+    section("Notifications");
+    section("Connections");
+    expect((screen.getByRole("checkbox", { name: /Use a direct local connection/ }) as HTMLInputElement).checked).toBe(false);
+    act(back);
+    const confirmation = screen.getByRole("dialog", { name: "Discard unsaved settings?" });
+    fireEvent.click(within(confirmation).getByRole("button", { name: "Keep editing" }));
+    expect(screen.getByRole("region", { name: "Settings" })).toBeTruthy();
+    fireEvent.keyDown(document, { key: "Escape" });
+    fireEvent.click(screen.getByRole("button", { name: "Discard changes" }));
+    expect(screen.queryByRole("region", { name: "Settings" })).toBeNull();
+    expect(api.serviceCommand.mock.calls.some(([command]) => command === "update_settings")).toBe(false);
+    fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+    section("Connections");
+    expect((screen.getByRole("checkbox", { name: /Use a direct local connection/ }) as HTMLInputElement).checked).toBe(true);
+  });
+
+  it("saves connections and calls independently while retaining the other section's draft", async () => {
+    await openSettings();
+    section("Connections");
+    fireEvent.click(screen.getByRole("checkbox", { name: /Use a direct local connection/ }));
+    section("Advanced");
+    const stun = await screen.findByRole("textbox", { name: /STUN servers/ });
+    fireEvent.change(stun, { target: { value: "stun:new.example:3478" } });
+    section("Connections");
+    fireEvent.click(screen.getByRole("button", { name: "Save connection settings" }));
+    await waitFor(() => expect(screen.getAllByRole("status").some((status) => status.textContent === "Saved. Restart Mesh Chat to apply networking-role changes.")).toBe(true));
+    fireEvent.click(screen.getByRole("button", { name: "Back from settings" }));
+    fireEvent.click(screen.getByRole("button", { name: "Keep editing" }));
+    section("Advanced");
+    expect((screen.getByRole("textbox", { name: /STUN servers/ }) as HTMLInputElement).value).toBe("stun:new.example:3478");
+    fireEvent.click(screen.getByRole("button", { name: "Save call settings" }));
+    await screen.findByText("Call settings saved.");
+    await waitFor(() => expect(api.serviceCommand).toHaveBeenCalledWith("update_call_settings", {
+      stun_urls: ["stun:new.example:3478"], turn_url: null, turn_username: null, turn_credential: null,
+      turn_broker_url: null, signal_mailbox_url: null, turn_broker_consent: false, relay_only: false, store_call_signaling: true,
+    }));
+    await waitFor(() => expect((screen.getByRole("button", { name: "Back from settings" }) as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(screen.getByRole("button", { name: "Back from settings" }));
+    expect(screen.queryByRole("region", { name: "Settings" })).toBeNull();
+  });
+
+  it("blocks Back during a pending save and preserves unsaved edits after failure", async () => {
+    const saving = deferred<unknown>();
+    const { back } = await openSettings(() => saving.promise);
+    section("Connections");
+    fireEvent.click(screen.getByRole("checkbox", { name: /Use a direct local connection/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Save connection settings" }));
+    act(back);
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(screen.getByRole("region", { name: "Settings" })).toBeTruthy();
+    expect(screen.queryByRole("dialog", { name: "Discard unsaved settings?" })).toBeNull();
+    await act(async () => saving.reject(new Error("Settings could not be saved")));
+    expect(screen.getByRole("alert").textContent).toBeTruthy();
+    expect((screen.getByRole("checkbox", { name: /Use a direct local connection/ }) as HTMLInputElement).checked).toBe(false);
+    act(back);
+    expect(screen.getByRole("dialog", { name: "Discard unsaved settings?" })).toBeTruthy();
+  });
+
+  it("dismisses a foreground connection request before returning to dirty Settings", async () => {
+    const { back, request } = await openSettings();
+    section("Connections");
+    fireEvent.click(screen.getByRole("checkbox", { name: /Use a direct local connection/ }));
+    await request();
+    await screen.findByRole("dialog", { name: "Connection request" });
+    expect(screen.queryByRole("region", { name: "Settings" })).toBeNull();
+    act(back);
+    expect(screen.getByRole("region", { name: "Settings" })).toBeTruthy();
+    expect(screen.queryByRole("dialog", { name: "Discard unsaved settings?" })).toBeNull();
+    act(back);
+    expect(screen.getByRole("dialog", { name: "Discard unsaved settings?" })).toBeTruthy();
   });
 });
 
@@ -1964,8 +2098,8 @@ describe("contact management", () => {
   });
 });
 
-describe("dialog keyboard behavior", () => {
-  it("closes the top dialog with Escape and restores focus to its trigger", async () => {
+describe("settings keyboard behavior", () => {
+  it("backs out of Settings with Escape and restores focus to its trigger", async () => {
     const current = snapshot();
     api.runtimePlatform.mockResolvedValue("desktop");
     api.initializeService.mockResolvedValue(current);
@@ -1979,13 +2113,9 @@ describe("dialog keyboard behavior", () => {
     trigger.focus();
     fireEvent.click(trigger);
     await screen.findByRole("heading", { name: "Settings" });
-    const closeButton = screen.getByRole("button", { name: "Close" });
+    const closeButton = screen.getByRole("button", { name: "Back from settings" });
     expect(closeButton).toBe(document.activeElement);
     expect(screen.getByText("Emoji artwork: Twemoji (CC BY 4.0)")).toBeTruthy();
-
-    closeButton.blur();
-    fireEvent.keyDown(document, { key: "Tab" });
-    expect(closeButton).toBe(document.activeElement);
 
     fireEvent.keyDown(document, { key: "Escape" });
 
@@ -4502,7 +4632,8 @@ describe("desktop workspaces", () => {
     render(<App />);
     fireEvent.click(await screen.findByRole("button", { name: "Workspace Lakewatcher" }));
     const conversation = await screen.findByLabelText("Workspace channel general");
-    fireEvent.click(within(conversation).getByRole("button", { name: "Edit" }));
+    fireEvent.click(within(conversation).getByRole("button", { name: "More actions for message from Alex" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Edit" }));
     fireEvent.click(within(conversation).getAllByRole("button", { name: "Mention a workspace member" })[0]);
     fireEvent.click(within(await screen.findByRole("dialog", { name: "Choose a member to mention" })).getByRole("button", { name: /Bailey/ }));
     fireEvent.change(within(conversation).getByRole("textbox", { name: "Edit workspace message" }), { target: { value: "Corrected field note" } });
@@ -4516,7 +4647,8 @@ describe("desktop workspaces", () => {
     await waitFor(() => expect(api.serviceCommand).toHaveBeenCalledWith("set_workspace_reaction", expect.objectContaining({ workspace_id: workspace.id, event_id: message.id, emoji: "👍", active: true, operation_id: expect.any(String), mutation_event_id: expect.any(String) })));
     expect(await within(conversation).findByRole("button", { name: /Remove your thumbs up reaction; 1 reaction total/ })).toBeTruthy();
 
-    fireEvent.click(within(conversation).getByRole("button", { name: "Delete" }));
+    fireEvent.click(within(conversation).getByRole("button", { name: "More actions for message from Alex" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Delete" }));
     fireEvent.click(within(conversation).getAllByRole("button", { name: "Delete" }).at(-1)!);
     await waitFor(() => expect(api.serviceCommand).toHaveBeenCalledWith("delete_workspace_message", expect.objectContaining({ workspace_id: workspace.id, event_id: message.id, operation_id: expect.any(String), mutation_event_id: expect.any(String) })));
     expect(await within(conversation).findByText("Message deleted by its author.")).toBeTruthy();
@@ -5284,7 +5416,8 @@ describe("desktop workspaces", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Workspace Lakewatcher" }));
     const conversation = await screen.findByLabelText("Workspace channel general");
     expect(within(conversation).getByText(/permanently unavailable/i)).toBeTruthy();
-    fireEvent.click(within(conversation).getByRole("button", { name: "Inspect revisions for message from Alex" }));
+    fireEvent.click(within(conversation).getByRole("button", { name: "More actions for message from Alex" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "History" }));
     let dialog = await screen.findByRole("dialog", { name: "Message history" });
     expect(within(dialog).getByText("Earlier retained note")).toBeTruthy();
     expect(within(dialog).getByText(/Earlier revisions were pruned/i)).toBeTruthy();

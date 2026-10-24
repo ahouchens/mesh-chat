@@ -24,6 +24,31 @@ Physical execution follows the
 full physical scenario matrix for versions through 0.9.15 is in the
 [Physical QA scenarios](docs/PHYSICAL_QA_SCENARIOS.md).
 
+## Settings navigation and compact chat controls — 0.9.33
+
+Settings is a page with a persistent Back header and Appearance, Notifications,
+Connections, Advanced, and About & Help sections. Section panels stay mounted so
+switching sections preserves drafts. Back, Escape, and Android Back use the same
+unsaved-change guard; active saves prevent exit and disable the relevant fields.
+Theme and notification changes remain immediate, while network and call settings
+retain their separate service commands and explicit Save actions.
+
+Healthy WebRTC status is compact, with connection actions in Details and pending
+contact approvals always accessible. Workspace message History, Edit, Delete,
+and Hide on this device use a keyboard-accessible More menu. Existing permission
+checks, delete confirmation, threads, reactions, and delivery information remain.
+
+Local validation on 2026-10-24: all 343 frontend tests, TypeScript, and the
+production frontend build passed. Regression coverage includes retained chat and
+settings drafts, failed and pending saves, independent network/call saves,
+foreground requests, Android Back, message actions, and diagnostics feedback.
+The actual App and CSS were rendered with synthetic service state in headless
+Edge at 320, 393, 760, and 1280 pixels in both themes. All eight cases and forty
+Settings category views passed overflow, persistent-header, draft, Back, and menu
+checks, including a short phone viewport. The category strip intentionally scrolls
+horizontally on narrow screens. This is browser UI evidence; physical-device and
+live two-peer transport validation were not repeated for these UI changes.
+
 ## Mobile chat layout and recipient reaction refresh — 0.9.32
 
 The connection banner now places its actions below the status text on phones,
@@ -1735,7 +1760,7 @@ Call signaling records no longer have to be sealed in the vault. The new
 `store_call_signaling` call setting defaults to **on** and preserves the shipped
 behavior; disabling it keeps SDP and ICE candidates in service memory so calls
 still work while the process is alive, but call history and restart state are
-lost on a service restart. The toggle in **Settings → WebRTC calls** explains
+lost on a service restart. The toggle in **Settings → Advanced → WebRTC calls** explains
 that existing sealed records are not deleted when it is turned off.
 
 Service changes:
@@ -2807,7 +2832,7 @@ Release: <https://github.com/ahouchens/mesh-chat/releases/tag/v0.3.1>.
 **0.3.0 / Android 300** makes the last WebRTC diagnostics survive the dialog
 closing:
 
-- **Copy last WebRTC diagnostics** is available in Settings → WebRTC calls;
+- **Copy last WebRTC diagnostics** is available in Settings → Advanced → WebRTC calls;
 - diagnostics now include an ICE configuration summary: transport policy,
   count of STUN/TURN URLs, and whether credentials were present;
 - the bundle still excludes SDP, TURN credentials, IP addresses, and message
@@ -2943,7 +2968,7 @@ provider:
 - Cloudflare Worker in `deploy/cloudflare-turn` exchanges TURN Key ID + API
   token for short-lived `iceServers`;
 - Mesh Chat stores only the HTTPS broker URL, never the TURN API token;
-- Settings → WebRTC calls exposes the broker URL, a **Use global default**
+- Settings → Advanced → WebRTC calls exposes the broker URL, a **Use global default**
   action, and **Disable TURN broker**;
 - dynamic ICE servers are cached for 50 minutes and refreshed before the
   one-hour credential TTL;

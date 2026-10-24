@@ -1,0 +1,22 @@
+.connection-status { flex: 0 0 auto; min-width: 0; color: #1d5f50; background: #e5f6ef; border-bottom: 1px solid #b9dfd0; font-size: .8rem; }
+.connection-status__summary { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 44px; padding: 8px 16px; border: 0; background: transparent; color: inherit; text-align: left; cursor: pointer; }
+.connection-status__summary strong { flex: 1; min-width: 0; font-size: .8rem; overflow-wrap: anywhere; }
+.connection-status__summary > svg { flex: 0 0 auto; }
+.connection-status__summary > span { font-size: .75rem; }
+.connection-status__summary:focus-visible { outline: 2px solid var(--focus); outline-offset: -3px; }
+.connection-status__chevron--open { transform: rotate(90deg); }
+.connection-status__details { padding: 0 16px 10px; }
+.connection-status__details p { margin: 0 0 8px; line-height: 1.5; }
+.connection-status__actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.connection-status__pending { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding: 0 16px 10px; }
+.connection-status__pending p { flex: 1 1 140px; margin: 0; }
+.connection-status__pending .button { min-height: 44px; font-size: .75rem; }
+.connection-status__actions .button { min-height: 44px; padding: 6px 10px; font-size: .75rem; }
+.connection-status__details .connection-status__feedback { margin: 8px 0 0; }
+.connection-status__feedback:empty { display: none; }
+html[data-theme="dark"] .connection-status { color: #bfe7d0; background: #20382e; border-color: #3a624e; }
+@media (max-width: 760px) {
+  .connection-status__summary { padding-right: calc(12px + env(safe-area-inset-right)); padding-left: calc(12px + env(safe-area-inset-left)); }
+  .connection-status__details { padding-right: calc(12px + env(safe-area-inset-right)); padding-left: calc(12px + env(safe-area-inset-left)); }
+  .connection-status__actions .button { flex: 1 1 auto; }
+}

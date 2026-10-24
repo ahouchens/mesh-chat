@@ -41,7 +41,7 @@ function setupHints(profile: ReconnectProfile | null): string[] {
   return profile.effective.reasons.map((reason) => {
     switch (reason) {
       case "mailbox_not_configured":
-        return "Set a signaling mailbox in Settings → WebRTC calls on both devices.";
+        return "Set a signaling mailbox in Settings → Advanced → WebRTC calls on both devices.";
       case "local_capabilities_missing":
       case "peer_capabilities_missing":
         return "Connect manually once so both devices can exchange signed reconnect settings.";

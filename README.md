@@ -66,7 +66,7 @@ Underneath them, one **protected profile** holds everything at rest: the sealed 
 
 All durable application records live in SQLite, but the values are individually sealed: AES-256-GCM on desktop with a fresh nonce and table/record identity as associated data; on mobile, a per-record key derived with HMAC-SHA-256 and RNS's authenticated Token construction. The 32-byte master key is held only in the OS credential store and in service memory. SQLite itself runs in `DELETE` journal mode with `synchronous=FULL`, `temp_store=MEMORY`, and `secure_delete=ON`, so rollback journals contain ciphertext too.
 
-Reconnect profiles, per-contact and per-workspace consent, signed capabilities, attempt state, and replay keys live in the same sealed vault. Reconnect does not persist SDP, ICE credentials, or DTLS keys. Call signaling records store the negotiated SDP and ICE candidates by default so an active call survives a service restart; this can be disabled in **Settings → WebRTC calls → Store call signaling records**, in which case they remain in service memory only. A manually configured TURN credential is sealed in call settings. Broker-issued TURN credentials stay in service memory only.
+Reconnect profiles, per-contact and per-workspace consent, signed capabilities, attempt state, and replay keys live in the same sealed vault. Reconnect does not persist SDP, ICE credentials, or DTLS keys. Call signaling records store the negotiated SDP and ICE candidates by default so an active call survives a service restart; this can be disabled in **Settings → Advanced → WebRTC calls → Store call signaling records**, in which case they remain in service memory only. A manually configured TURN credential is sealed in call settings. Broker-issued TURN credentials stay in service memory only.
 
 A mutating command is not acknowledged until its vault transaction commits. That is why retrying a send after a crash reuses the same logical message and operation identifiers instead of creating a duplicate.
 
@@ -110,7 +110,7 @@ TURN API token stays on the broker, while Mesh Chat receives short-lived
 `iceServers` credentials. Self-hosted coturn remains available at
 [deploy/relay](deploy/relay/README.md).
 
-In **Settings → WebRTC calls**, users can enter a Cloudflare TURN broker URL,
+In **Settings → Advanced → WebRTC calls**, users can enter a Cloudflare TURN broker URL,
 override the built-in default, or disable the broker. The built-in default is
 `https://staether.webtechalex.workers.dev/credentials`; it is **not used until
 the user enables relay consent** and can be changed at any time. See
@@ -138,7 +138,7 @@ automatic reconnect:
 - Per-token and per-client-IP rate limits bound abuse. Role and document-type
   matching prevents placing an answer in the offer slot.
 - The mailbox cannot approve a contact, workspace member, or device, and never
-  sees plaintext. A mailbox URL is configured in **Settings → WebRTC calls**;
+  sees plaintext. A mailbox URL is configured in **Settings → Advanced → WebRTC calls**;
   without one the app says **Manual reconnect required** instead of looping.
 
 The same signed capability exchange is what enables automatic reconnect:
@@ -162,7 +162,7 @@ Call restart renegotiates a fresh media session rather than reusing dead ICE.
 
 - Only approved contacts can call; a call never creates or changes trust.
 - Call signaling records (SDP and ICE candidates) are stored in the encrypted
-  vault by default; **Settings → WebRTC calls → Store call signaling records**
+  vault by default; **Settings → Advanced → WebRTC calls → Store call signaling records**
   can keep them in service memory only. Turning it off still allows calls, but
   call history and restart state are lost when the service restarts. Existing
   sealed records are not deleted by the toggle.

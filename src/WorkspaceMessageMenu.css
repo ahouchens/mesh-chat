@@ -1,0 +1,65 @@
+.workspace-message-menu-trigger {
+  display: inline-grid;
+  flex: 0 0 auto;
+  place-items: center;
+  align-self: center;
+  width: 32px;
+  height: 32px;
+  margin-left: auto;
+  padding: 0;
+  color: var(--muted);
+  background: transparent;
+  border: 0;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.workspace-message-menu-trigger:hover,
+.workspace-message-menu-trigger[aria-expanded="true"] {
+  color: var(--ink);
+  background: var(--surface-hover);
+}
+
+.workspace-message-menu {
+  position: fixed;
+  z-index: 30;
+  display: grid;
+  width: 240px;
+  max-width: calc(100vw - 16px);
+  max-height: calc(100dvh - 16px);
+  box-sizing: border-box;
+  padding: 6px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  color: var(--ink);
+  background: var(--surface-raised);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  box-shadow: var(--shadow);
+}
+
+.workspace-message-menu > button {
+  display: flex;
+  min-height: 44px;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 11px;
+  color: inherit;
+  font: inherit;
+  font-size: .82rem;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  border-radius: 7px;
+  cursor: pointer;
+}
+
+.workspace-message-menu > button > svg { flex: 0 0 auto; }
+.workspace-message-menu > button:hover,
+.workspace-message-menu > button:focus-visible { background: var(--surface-hover); }
+.workspace-message-menu > .workspace-message-menu__danger { color: #a03838; }
+html[data-theme="dark"] .workspace-message-menu > .workspace-message-menu__danger { color: #edaaa4; }
+
+@media (pointer: coarse) {
+  .workspace-message-menu-trigger { width: 44px; height: 44px; }
+}

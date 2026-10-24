@@ -26,6 +26,7 @@ import {
   Moon,
   Phone,
   PhoneOff,
+  Pencil,
   Plus,
   QrCode,
   RefreshCw,
@@ -65,7 +66,9 @@ import {
 } from "./api";
 import { contactConnectionLabel, deliveryLabel, workspaceJoinStatus } from "./status";
 import { EmojiGlyph } from "./EmojiGlyph";
+import { WorkspaceMessageMenu } from "./WorkspaceMessageMenu";
 import { ConnectionDiagnostics } from "./ConnectionDiagnostics";
+import { ConnectionStatus } from "./ConnectionStatus";
 import { DirectConnectionSetup } from "./DirectConnectionSetup";
 import { DirectRecovery } from "./DirectRecovery";
 import { WebRTCOnboardingDialog } from "./WebRTCOnboarding";
@@ -153,6 +156,7 @@ import type {
   WorkspaceThreadPage,
 } from "./types";
 import "./styles.css";
+import "./settings-page.css";
 
 type OnboardingMode = "home" | "start" | "join";
 type OnboardingWorkspaceContext =
@@ -2267,11 +2271,14 @@ function participantMethodLabel(method: ParticipantHosting["methods"][number]): 
   return "participant-supplied address";
 }
 
-function ParticipantHostingSettings({ initial, workspaces, onChanged }: { initial: ParticipantHosting[]; workspaces: Workspace[]; onChanged: () => Promise<void> }) {
+type SettingsEditState = { dirty: boolean; busy: boolean };
+
+function ParticipantHostingSettings({ initial, workspaces, onChanged, onEditStateChange }: { initial: ParticipantHosting[]; workspaces: Workspace[]; onChanged: () => Promise<void>; onEditStateChange?: (state: SettingsEditState) => void }) {
   const [hosts, setHosts] = useState(initial);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState("");
   useEffect(() => setHosts(initial), [initial]);
+  useEffect(() => { onEditStateChange?.({ dirty: false, busy: busy !== null }); }, [busy, onEditStateChange]);
   const stop = async (host: ParticipantHosting) => {
     setBusy(host.id); setError("");
     try {
@@ -2299,7 +2306,7 @@ function ParticipantHostingSettings({ initial, workspaces, onChanged }: { initia
   return <section className="settings-section participant-hosting" aria-labelledby="participant-hosting-title"><div className="settings-section__heading"><h3 id="participant-hosting-title">Invitations hosted by this device</h3><p>Temporary direct Internet paths created for invitations. The invitee connects to this device; no community or third-party transport node is added.</p></div>{hosts.map((host) => <article className="remote-profile-row" key={host.id}><span><strong>{label(host)}</strong><small role="status">{stateLabel(host)}</small><small>{host.endpoint_count} public {host.endpoint_count === 1 ? "path" : "paths"}{host.methods.length > 0 ? ` · ${host.methods.map(participantMethodLabel).join(", ")}` : ""}</small></span><div>{host.state !== "expired" && host.state !== "unavailable" && !host.firewall_configured && <Button variant="ghost" disabled={busy === host.id} onClick={() => void configureFirewall(host)}>Allow in Windows Firewall</Button>}<Button variant="danger" disabled={busy === host.id} onClick={() => void stop(host)}>{busy === host.id ? "Working…" : "Stop hosting"}</Button></div></article>)}{hosts.length === 0 && <p className="muted">No Internet invitation is currently being hosted. Use the explicit prepare action when creating an invitation.</p>}<p className="muted">Stopping or closing Mesh Chat removes automatic router mappings and temporary firewall rules. A manual router rule must be removed in the router.</p>{error && <p className="form-error" role="alert">{error}</p>}</section>;
 }
 
-function RemoteConnectionsSettings({ initial, onChanged }: { initial: RemoteProfile[]; onChanged: () => Promise<void> }) {
+function RemoteConnectionsSettings({ initial, onChanged, onEditStateChange }: { initial: RemoteProfile[]; onChanged: () => Promise<void>; onEditStateChange?: (state: SettingsEditState) => void }) {
   const [profiles, setProfiles] = useState(initial);
   const [adding, setAdding] = useState(false);
   const [label, setLabel] = useState("");
@@ -2309,6 +2316,8 @@ function RemoteConnectionsSettings({ initial, onChanged }: { initial: RemoteProf
   const [allowPrivate, setAllowPrivate] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState("");
+  const dirty = adding && Boolean(label || host || port !== "4242" || propagation || allowPrivate);
+  useEffect(() => { onEditStateChange?.({ dirty, busy: busy !== null }); }, [dirty, busy, onEditStateChange]);
   const reload = async () => {
     const result = await serviceCommand<{ profiles: RemoteProfile[] }>("list_remote_profiles");
     setProfiles(result.profiles);
@@ -2353,7 +2362,7 @@ const I2P_ROUTER_REASON: Record<string, string> = {
   unsupported_platform: "managed I2P is not supported on this platform",
 };
 
-function WebRTCCallSettings({ onSaved }: { onSaved: () => Promise<void> }) {
+function WebRTCCallSettings({ onSaved, onEditStateChange }: { onSaved: () => Promise<void>; onEditStateChange?: (state: SettingsEditState) => void }) {
   const [settings, setSettings] = useState<CallSettings | null>(null);
   const [stun, setStun] = useState("");
   const [turnUrl, setTurnUrl] = useState("");
@@ -2369,20 +2378,33 @@ function WebRTCCallSettings({ onSaved }: { onSaved: () => Promise<void> }) {
   const [error, setError] = useState("");
   const [lastDiagnostics] = useState(() => lastWebRTCDiagnostics());
   const [diagnosticsCopied, setDiagnosticsCopied] = useState(false);
+  const dirty = settings !== null && (
+    JSON.stringify(stun.split(/[,\s]+/).map((value) => value.trim()).filter(Boolean)) !== JSON.stringify(settings.stun_urls ?? [])
+    || turnUrl.trim() !== (settings.turn_url ?? "")
+    || turnUser.trim() !== (settings.turn_username ?? "")
+    || turnCredential !== ""
+    || turnBrokerUrl.trim() !== (settings.turn_broker_url ?? "")
+    || signalMailboxUrl.trim() !== (settings.signal_mailbox_url ?? "")
+    || turnBrokerConsent !== (settings.turn_broker_consent ?? false)
+    || relayOnly !== (settings.relay_only ?? false)
+    || storeCallSignaling !== (settings.store_call_signaling ?? true)
+  );
+  useEffect(() => { onEditStateChange?.({ dirty, busy }); }, [dirty, busy, onEditStateChange]);
   useEffect(() => {
     void serviceCommand<CallSettings>("call_settings").then((value) => {
       setSettings(value);
-      setStun(value.stun_urls.join(", "));
+      setStun((value.stun_urls ?? []).join(", "));
       setTurnUrl(value.turn_url ?? "");
       setTurnUser(value.turn_username ?? "");
       setTurnBrokerUrl(value.turn_broker_url ?? "");
       setSignalMailboxUrl(value.signal_mailbox_url ?? "");
       setTurnBrokerConsent(value.turn_broker_consent ?? false);
-      setRelayOnly(value.relay_only);
+      setRelayOnly(value.relay_only ?? false);
       setStoreCallSignaling(value.store_call_signaling ?? true);
     }).catch((reason) => setError(errorMessage(reason)));
   }, []);
   const save = async () => {
+    if (busy || !settings || !dirty) return;
     setBusy(true); setSaved(false); setError("");
     try {
       const result = await serviceCommand<CallSettings>("update_call_settings", {
@@ -2397,6 +2419,14 @@ function WebRTCCallSettings({ onSaved }: { onSaved: () => Promise<void> }) {
         store_call_signaling: storeCallSignaling,
       });
       setSettings(result);
+      setStun((result.stun_urls ?? []).join(", "));
+      setTurnUrl(result.turn_url ?? "");
+      setTurnUser(result.turn_username ?? "");
+      setTurnBrokerUrl(result.turn_broker_url ?? "");
+      setSignalMailboxUrl(result.signal_mailbox_url ?? "");
+      setTurnBrokerConsent(result.turn_broker_consent ?? false);
+      setRelayOnly(result.relay_only ?? false);
+      setStoreCallSignaling(result.store_call_signaling ?? true);
       setTurnCredential("");
       setSaved(true);
       await onSaved();
@@ -2407,8 +2437,10 @@ function WebRTCCallSettings({ onSaved }: { onSaved: () => Promise<void> }) {
     }
   };
   return (
-    <section className="settings-section" aria-labelledby="webrtc-call-settings-title">
+    <section className="settings-section" aria-labelledby="webrtc-call-settings-title" aria-busy={busy}>
       <div className="settings-section__heading"><h3 id="webrtc-call-settings-title">WebRTC calls</h3><p>Google STUN is used by default to find a direct call path. Replace or clear it to use another STUN server. TURN is optional, relays media, and can see connection metadata, not content.</p></div>
+      <p className="settings-save-note">Changes apply when you save call settings.</p>
+      <fieldset className="settings-fields" disabled={busy || settings === null}>
       <label className="field"><span>STUN servers <small>Comma-separated, for example stun:stun.example.org:3478</small></span><input value={stun} autoCapitalize="off" autoCorrect="off" spellCheck={false} onChange={(event) => { setStun(event.target.value); setSaved(false); }} /></label>
       <label className="field"><span>TURN server <small>Optional, for example turn:turn.example.org:443?transport=tcp</small></span><input value={turnUrl} autoCapitalize="off" autoCorrect="off" spellCheck={false} onChange={(event) => { setTurnUrl(event.target.value); setSaved(false); }} /></label>
       <div className="field-grid">
@@ -2427,16 +2459,27 @@ function WebRTCCallSettings({ onSaved }: { onSaved: () => Promise<void> }) {
       <label className="checkbox-line"><input type="checkbox" checked={relayOnly} onChange={(event) => { setRelayOnly(event.target.checked); setSaved(false); }} /> Relay-only: never try a direct path. This requires a TURN server and shows every call as relayed.</label>
       <label className="checkbox-line"><input type="checkbox" checked={storeCallSignaling} onChange={(event) => { setStoreCallSignaling(event.target.checked); setSaved(false); }} /> Store call signaling records (SDP and ICE candidates) in the encrypted vault. On by default; turn off to keep them in service memory only. Calls still work, but call history and restart state are lost when the service restarts. Existing records are not deleted.</label>
       <p className="muted">{settings?.turn_broker_configured && settings.turn_broker_consent ? "Cloudflare TURN credentials are fetched from the configured broker and refreshed per session." : settings?.turn_broker_configured ? "A TURN broker is configured but not enabled. Enable it above to use the relay." : settings?.turn_configured ? "TURN is configured. Credentials stay in the encrypted service record and are released only to an active call." : "No TURN server configured. Calls work only on a shared LAN or when direct host candidates are reachable."}</p>
+      </fieldset>
       {saved && <p className="muted" role="status">Call settings saved.</p>}
       {error && <p className="form-error" role="alert">{error}</p>}
       {lastDiagnostics && <div className="stack"><p className="muted">The last WebRTC attempt left diagnostics available. They exclude SDP, TURN credentials, IP addresses, and message content.</p><Button variant="secondary" onClick={() => { void navigator.clipboard.writeText(lastDiagnostics).then(() => setDiagnosticsCopied(true)).catch(() => setError("Could not copy diagnostics.")); }}>{diagnosticsCopied ? "Copied" : "Copy last WebRTC diagnostics"}</Button></div>}
-      <Button disabled={busy} onClick={() => void save()}>{busy ? "Saving…" : "Save call settings"}</Button>
+      <Button disabled={busy || !dirty || settings === null} onClick={() => void save()}>{busy ? "Saving…" : "Save call settings"}</Button>
     </section>
   );
 }
 
-function SettingsDialog({ snapshot, theme, onThemeChange, onClose, onSaved }: { snapshot: Snapshot; theme: Theme; onThemeChange: (theme: Theme) => void; onClose: () => void; onSaved: () => Promise<void> }) {
+const SETTINGS_SECTIONS = [
+  { id: "appearance", label: "Appearance", icon: Sun },
+  { id: "notifications", label: "Notifications", icon: Bell },
+  { id: "connections", label: "Connections", icon: Users },
+  { id: "advanced", label: "Advanced", icon: Settings },
+  { id: "about", label: "About & Help", icon: CircleHelp },
+] as const;
+
+function SettingsPage({ snapshot, theme, onThemeChange, onClose, onSaved, onBackHandlerChange }: { snapshot: Snapshot; theme: Theme; onThemeChange: (theme: Theme) => void; onClose: () => void; onSaved: () => Promise<void>; onBackHandlerChange?: (handler: (() => void) | null) => void }) {
+  const [section, setSection] = useState<typeof SETTINGS_SECTIONS[number]["id"]>("appearance");
   const [settings, setSettings] = useState<NetworkSettings>(snapshot.settings);
+  const [savedNetworkSettings, setSavedNetworkSettings] = useState(snapshot.settings);
   const [saved, setSaved] = useState(false);
   const [notification, setNotification] = useState(snapshot.workspace_notification_state ?? null);
   const [capability, setCapability] = useState<NotificationCapability | null>(null);
@@ -2446,6 +2489,44 @@ function SettingsDialog({ snapshot, theme, onThemeChange, onClose, onSaved }: { 
   const [saveError, setSaveError] = useState("");
   const [i2pStatus, setI2PStatus] = useState<I2PStatus | null>(null);
   const [isAndroid, setIsAndroid] = useState(false);
+  const [callEditState, setCallEditState] = useState<SettingsEditState>({ dirty: false, busy: false });
+  const [remoteEditState, setRemoteEditState] = useState<SettingsEditState>({ dirty: false, busy: false });
+  const [hostingEditState, setHostingEditState] = useState<SettingsEditState>({ dirty: false, busy: false });
+  const [confirmDiscard, setConfirmDiscard] = useState(false);
+  const backRef = useRef<HTMLButtonElement>(null);
+  const contentRef = useRef<HTMLDivElement>(null);
+  const titleId = useId();
+  const networkDirty = JSON.stringify(settings) !== JSON.stringify(savedNetworkSettings);
+  const dirty = networkDirty || callEditState.dirty || remoteEditState.dirty;
+  const unsavedSections = [networkDirty && "connection settings", callEditState.dirty && "call settings", remoteEditState.dirty && "access point details"].filter(Boolean).join(", ");
+  const busy = saving || notificationBusy || callEditState.busy || remoteEditState.busy || hostingEditState.busy;
+  const requestBack = useCallback(() => {
+    if (busy) return;
+    if (dirty) setConfirmDiscard(true);
+    else onClose();
+  }, [busy, dirty, onClose]);
+  useEffect(() => {
+    onBackHandlerChange?.(requestBack);
+    return () => onBackHandlerChange?.(null);
+  }, [onBackHandlerChange, requestBack]);
+  useEffect(() => {
+    const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    backRef.current?.focus();
+    return () => { if (previousFocus?.isConnected) previousFocus.focus(); };
+  }, []);
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || event.defaultPrevented) return;
+      const dialogOpen = [...document.querySelectorAll<HTMLElement>('[role="dialog"], [role="alertdialog"]')]
+        .some((dialog) => !dialog.closest('[aria-hidden="true"]'));
+      if (dialogOpen) return;
+      event.preventDefault();
+      requestBack();
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [requestBack]);
+  useEffect(() => { contentRef.current?.scrollTo?.({ top: 0 }); }, [section]);
   useEffect(() => {
     void Promise.resolve(runtimePlatform()).then((value) => setIsAndroid(value === "android")).catch(() => undefined);
     if (settings.i2p_enabled) {
@@ -2494,7 +2575,7 @@ function SettingsDialog({ snapshot, theme, onThemeChange, onClose, onSaved }: { 
     finally { setNotificationBusy(false); }
   };
   const setPrivatePreviews = async () => {
-    if (!notification) return;
+    if (!notification || notificationBusy) return;
     setNotificationBusy(true); setNotificationError("");
     try {
       setNotification(await serviceCommand<WorkspaceNotificationState>("set_hide_notification_previews", {
@@ -2505,18 +2586,37 @@ function SettingsDialog({ snapshot, theme, onThemeChange, onClose, onSaved }: { 
     finally { setNotificationBusy(false); }
   };
   const save = async () => {
+    if (saving || !networkDirty) return;
     setSaving(true); setSaveError("");
     try {
       await serviceCommand("update_settings", { settings });
+      setSavedNetworkSettings(settings);
       setSaved(true);
       await onSaved();
     } catch (reason) { setSaveError(errorMessage(reason)); }
     finally { setSaving(false); }
   };
+  const networkSaveActions = <div className="settings-page__save">
+    <div>
+      {saved && <p className="restart-note" role="status">Saved. Restart Mesh Chat to apply networking-role changes.</p>}
+      {!saved && <p className="settings-save-note">Save changes to Connections and advanced network options here.</p>}
+      {saveError && <p className="form-error" role="alert">{saveError}</p>}
+    </div>
+    <Button disabled={saving || !networkDirty} onClick={() => void save()}>{saving ? "Saving…" : "Save connection settings"}</Button>
+  </div>;
   return (
-    <Dialog title="Settings" onClose={onClose}>
-      <p>Mesh Chat version {packageInfo.version}</p>
-      <details><summary>Help and diagnostics</summary><ConnectionDiagnostics full /></details>
+    <section className="settings-page" aria-labelledby={titleId}>
+      <header className="settings-page__header">
+        <button ref={backRef} type="button" className="settings-page__back" aria-label="Back from settings" disabled={busy} onClick={requestBack}><ArrowLeft size={21} /><span>Back</span></button>
+        <div><h1 id={titleId}>Settings</h1><p>Preferences for this device</p></div>
+        <span className="settings-page__state" role="status" aria-live="polite">{busy ? "Finishing changes…" : dirty ? "Unsaved changes" : ""}</span>
+      </header>
+      <div className="settings-page__body">
+        <nav className="settings-page__nav" aria-label="Settings sections">
+          {SETTINGS_SECTIONS.map(({ id, label, icon: Icon }) => <button key={id} id={`${titleId}-${id}`} type="button" aria-current={section === id ? "page" : undefined} aria-controls={`${titleId}-${id}-panel`} onClick={() => setSection(id)}><Icon size={19} /><span>{label}</span><ChevronRight size={16} /></button>)}
+        </nav>
+        <div ref={contentRef} className="settings-page__content">
+          <section className="settings-page__panel" id={`${titleId}-appearance-panel`} aria-labelledby={`${titleId}-appearance`} hidden={section !== "appearance"}>
       <section className="settings-section appearance-settings" aria-labelledby="appearance-settings-title">
         <div className="settings-section__heading"><h3 id="appearance-settings-title">Appearance</h3><p>Choose the look that is most comfortable. Changes apply immediately and are remembered on this device.</p></div>
         <div className="theme-picker" role="radiogroup" aria-label="Theme">
@@ -2524,16 +2624,27 @@ function SettingsDialog({ snapshot, theme, onThemeChange, onClose, onSaved }: { 
           <button ref={lightThemeRef} type="button" role="radio" aria-checked={theme === "light"} tabIndex={theme === "light" ? 0 : -1} onKeyDown={handleThemeKeyDown} onClick={() => selectTheme("light")}><Sun size={18} /><span><strong>Light</strong><small>Bright and crisp</small></span></button>
         </div>
       </section>
+          </section>
+          <section className="settings-page__panel" id={`${titleId}-connections-panel`} aria-labelledby={`${titleId}-connections`} hidden={section !== "connections"}>
       <section className="settings-section" aria-labelledby="connection-settings-title">
         <div className="settings-section__heading"><h3 id="connection-settings-title">Connections</h3><p>Control how this device discovers people and helps the mesh.</p></div>
-        <div className="settings-list">
+        <fieldset className="settings-fields" disabled={saving}><div className="settings-list">
           <Toggle title="Find nearby people" description="Use link-local Reticulum discovery on suitable network interfaces." checked={settings.nearby_discovery} onChange={() => toggle("nearby_discovery")} />
           <Toggle title="Use a direct local connection" description="Add a private local-network connection option to new invitations when nearby discovery is blocked." checked={settings.lan_fallback} onChange={() => toggle("lan_fallback")} />
-        </div>
-        <details className="advanced-settings"><summary>Advanced connection roles</summary><p>These options make this device part of the wider Reticulum mesh and may use additional power, storage, and bandwidth.</p><div className="settings-list settings-list--advanced"><Toggle title="Help route messages" description="Allow this device to forward encrypted Reticulum traffic for others." checked={settings.help_route} onChange={() => toggle("help_route")} /><Toggle title="Store encrypted messages" description="Act as an LXMF propagation node with a 100 MiB cache. This is separate from routing." checked={settings.store_for_offline} onChange={() => toggle("store_for_offline")} /></div></details>
+        </div></fieldset>
+        {networkSaveActions}
+      </section>
+      <fieldset className="settings-fields" disabled={hostingEditState.busy}><ParticipantHostingSettings initial={snapshot.participant_hosting ?? []} workspaces={snapshot.workspaces ?? []} onChanged={onSaved} onEditStateChange={setHostingEditState} /></fieldset>
+      <fieldset className="settings-fields" disabled={remoteEditState.busy}><RemoteConnectionsSettings initial={snapshot.remote_profiles ?? []} onChanged={onSaved} onEditStateChange={setRemoteEditState} /></fieldset>
+          </section>
+          <section className="settings-page__panel" id={`${titleId}-advanced-panel`} aria-labelledby={`${titleId}-advanced`} hidden={section !== "advanced"}>
+      <section className="settings-section" aria-labelledby="mesh-role-settings-title">
+        <div className="settings-section__heading"><h3 id="mesh-role-settings-title">Mesh participation</h3><p>These options make this device part of the wider Reticulum mesh and may use additional power, storage, and bandwidth.</p></div>
+        <fieldset className="settings-fields" disabled={saving}><div className="settings-list"><Toggle title="Help route messages" description="Allow this device to forward encrypted Reticulum traffic for others." checked={settings.help_route} onChange={() => toggle("help_route")} /><Toggle title="Store encrypted messages" description="Act as an LXMF propagation node with a 100 MiB cache. This is separate from routing." checked={settings.store_for_offline} onChange={() => toggle("store_for_offline")} /></div></fieldset>
       </section>
       <section className="settings-section i2p-settings" aria-labelledby="i2p-settings-title">
         <div className="settings-section__heading"><h3 id="i2p-settings-title">I2P relay</h3><p>Use an I2P access point when this network cannot accept a direct connection. I2P relays encrypted Reticulum traffic; it does not create a direct link.</p></div>
+        <fieldset className="settings-fields" disabled={saving}>
         <div className="settings-list">
           <Toggle title="Use I2P" description="Connect through an I2P access point. Requires an I2P router with SAM enabled." checked={settings.i2p_enabled} onChange={() => toggle("i2p_enabled")} />
         </div>
@@ -2541,32 +2652,41 @@ function SettingsDialog({ snapshot, theme, onThemeChange, onClose, onSaved }: { 
           {!isAndroid && <Toggle title="Manage i2pd for me" description="Start a local i2pd process with SAM on localhost. No administrator rights or Windows service." checked={settings.i2p_managed} onChange={() => toggle("i2p_managed")} />}
           {!isAndroid && <Toggle title="Run a connectable access point" description="Accept inbound I2P tunnels. Enable Help route messages if this device should relay for others." checked={settings.i2p_connectable} onChange={() => toggle("i2p_connectable")} />}
           {isAndroid && <p className="muted">Connectable access points are desktop-only. Android uses client-only I2P.</p>}
-          <label className="field"><span>I2P access point addresses</span><textarea rows={3} value={settings.i2p_peers.join("\n")} onChange={(event) => setSettings((current) => ({ ...current, i2p_peers: event.target.value.split(/\r?\n/).map((value) => value.trim()).filter(Boolean) }))} placeholder="example.b32.i2p" spellCheck={false} /></label>
+          <label className="field"><span>I2P access point addresses</span><textarea rows={3} value={settings.i2p_peers.join("\n")} onChange={(event) => { setSaved(false); setSaveError(""); setSettings((current) => ({ ...current, i2p_peers: event.target.value.split(/\r?\n/).map((value) => value.trim()).filter(Boolean) })); }} placeholder="example.b32.i2p" spellCheck={false} /></label>
           <p className="muted">One <code>*.b32.i2p</code> address per line. The access point can see connection metadata, not message contents. Save, then restart Mesh Chat to apply.</p>
           {i2pStatus && <p className="muted" role="status">I2P: {i2pStatus.state === "online" ? `online · ${i2pStatus.online_count} interface${i2pStatus.online_count === 1 ? "" : "s"}` : i2pStatus.state === "not_started" ? "saved; restart Mesh Chat to start I2P" : i2pStatus.state} · {i2pStatus.peer_count} access point{i2pStatus.peer_count === 1 ? "" : "s"}</p>}
           {i2pStatus?.router && <p className="muted" role="status">Router: {I2P_ROUTER_LABEL[i2pStatus.router.state] ?? i2pStatus.router.state}{i2pStatus.router.reason ? ` — ${I2P_ROUTER_REASON[i2pStatus.router.reason] ?? i2pStatus.router.reason}` : ""} · SAM {i2pStatus.router.sam_ready ? "ready" : "not ready"}</p>}
           {i2pStatus?.router?.reason === "router_missing" && <p className="muted">Place <code>i2pd.exe</code> next to Mesh Chat, or turn off “Manage i2pd for me” and run i2pd yourself with SAM enabled.</p>}
           {i2pStatus?.b32 && <p className="muted">This device’s I2P address: <code>{i2pStatus.b32}.b32.i2p</code></p>}
         </div>}
+        </fieldset>
+        {networkSaveActions}
       </section>
-      <ParticipantHostingSettings initial={snapshot.participant_hosting ?? []} workspaces={snapshot.workspaces ?? []} onChanged={onSaved} />
-      <RemoteConnectionsSettings initial={snapshot.remote_profiles ?? []} onChanged={onSaved} />
-      <WebRTCCallSettings onSaved={onSaved} />
+      <WebRTCCallSettings onSaved={onSaved} onEditStateChange={setCallEditState} />
+          </section>
+          <section className="settings-page__panel" id={`${titleId}-notifications-panel`} aria-labelledby={`${titleId}-notifications`} hidden={section !== "notifications"}>
       <section className="notification-settings" aria-labelledby="notification-settings-title">
         <h3 id="notification-settings-title"><Bell size={18} /> Local notifications</h3>
+        <p className="settings-save-note">Changes apply immediately.</p>
         <p role="status" aria-live="polite"><strong>{!capability?.supported ? "Not supported on this platform" : capability.permission_state === "allowed" ? "Allowed" : capability.permission_state === "not_requested" ? "Permission not requested" : "Permission denied or settings required"}</strong></p>
         {capability?.supported && capability.permission_state === "not_requested" && <Button disabled={notificationBusy} onClick={() => void requestPermission()}>Enable notifications</Button>}
         {capability?.supported && ["denied", "settings_required"].includes(capability.permission_state) && <Button variant="secondary" disabled={notificationBusy} onClick={() => void openSettings()}>Open system settings</Button>}
-        {notification && <Toggle title="Hide notification previews" description="Use generic text without workspace, channel, person, thread, participant, or message details." checked={notification.hide_previews} onChange={() => void setPrivatePreviews()} />}
+        <fieldset className="settings-fields" disabled={notificationBusy}>{notification && <Toggle title="Hide notification previews" description="Use generic text without workspace, channel, person, thread, participant, or message details." checked={notification.hide_previews} onChange={() => void setPrivatePreviews()} />}</fieldset>
         <p className="muted">Notifications are local and best effort only while Mesh Chat can execute. They may be delayed after operating-system suspension or process termination; open Mesh Chat to reconcile. There is no cloud push.</p>
         {notification && <p className="muted" role="status">Runtime: {notification.reconciling ? "reconciling" : notification.lifecycle_state === "caught_up" || notification.caught_up ? "caught up" : notification.lifecycle_state === "foreground" ? "active" : "suspended or limited"}{notification.pending_native_count ? ` · ${notification.pending_native_count} pending local ${notification.pending_native_count === 1 ? "notification" : "notifications"}` : ""}</p>}
         {notificationError && <p className="form-error" role="alert">{notificationError}</p>}
       </section>
+          </section>
+          <section className="settings-page__panel" id={`${titleId}-about-panel`} aria-labelledby={`${titleId}-about`} hidden={section !== "about"}>
+      <section className="settings-section"><div className="settings-section__heading"><h3>About Mesh Chat</h3><p>Private conversations across your devices.</p></div>
       <p className="app-version">Mesh Chat {packageInfo.version}<span>Emoji artwork: Twemoji (CC BY 4.0)</span></p>
-      {saved && <p className="restart-note" role="status">Saved. Restart Mesh Chat to apply networking-role changes.</p>}
-      {saveError && <p className="form-error" role="alert">{saveError}</p>}
-      <div className="dialog__actions"><Button variant="secondary" aria-label="Close settings" disabled={saving} onClick={onClose}>Close</Button><Button disabled={saving} onClick={() => void save()}>{saving ? "Saving…" : "Save settings"}</Button></div>
-    </Dialog>
+      </section>
+      <section className="settings-section"><div className="settings-section__heading"><h3>Help and diagnostics</h3><p>Check connection status and copy details when you need help.</p></div><ConnectionDiagnostics full /></section>
+          </section>
+        </div>
+      </div>
+      {confirmDiscard && <Dialog title="Discard unsaved settings?" onClose={() => setConfirmDiscard(false)}><p>Your unsaved {unsavedSections} will be discarded.</p><div className="dialog-actions"><Button variant="secondary" onClick={() => setConfirmDiscard(false)}>Keep editing</Button><Button variant="danger" onClick={onClose}>Discard changes</Button></div></Dialog>}
+    </section>
   );
 }
 
@@ -4172,21 +4292,26 @@ function WorkspaceMessageCard({
           <time dateTime={machineTime(message.created_at)}>{formatTime(message.created_at)}</time>
           {(message.revision ?? 0) > 0 && !message.deleted && <small>Edited</small>}
           {message.mention_member_ids?.includes(workspace.local_member_id) && <small className="workspace-message__mention"><AtSign size={12} /> Mentioned you</small>}
-          <button type="button" className="message-history" onClick={() => void loadRevisions(false)} aria-label={`Inspect revisions for message from ${message.author_display_name}`} title="Revision history">History</button>
-          <button className="message-hide" onClick={onHide} aria-label={`Hide message from ${message.author_display_name}`} title="Hide locally"><X size={13} /></button>
+          <WorkspaceMessageMenu authorName={message.author_display_name} actions={[
+            { id: "history", label: "History", icon: <Clock3 size={16} />, onSelect: () => void loadRevisions(false) },
+            ...(authorMutable && !confirmDelete ? [
+              { id: "edit", label: "Edit", icon: <Pencil size={16} />, onSelect: () => setEditing(true) },
+              { id: "delete", label: "Delete", icon: <Trash2 size={16} />, onSelect: () => setConfirmDelete(true), danger: true },
+            ] : []),
+            { id: "hide", label: "Hide on this device", icon: <EyeOff size={16} />, onSelect: onHide },
+          ]} />
         </header>
         {message.deleted ? <p className="workspace-message__tombstone">Message deleted by its author.</p> : editing ? (
           <div className="workspace-message__edit">
             <WorkspaceMentionChips workspace={workspace} memberIds={editMentionMemberIds} onRemove={(memberId) => setEditMentionMemberIds((current) => current.filter((id) => id !== memberId))} />
             <WorkspaceMentionPicker workspace={workspace} allowedMemberIds={allowedMentionMemberIds} selectedMemberIds={editMentionMemberIds} onSelect={(member) => { setEditText((current) => `${current}${current && !current.endsWith(" ") ? " " : ""}@${member.display_name} `); setEditMentionMemberIds((current) => [...current, member.id].sort()); }} />
-            <textarea value={editText} maxLength={16 * 1024} aria-label="Edit workspace message" onChange={(event) => setEditText(event.target.value)} />
+            <textarea autoFocus value={editText} maxLength={16 * 1024} aria-label="Edit workspace message" onChange={(event) => setEditText(event.target.value)} />
             <span><Button variant="ghost" onClick={() => { setEditing(false); setEditText(message.text); setEditMentionMemberIds(eligibleWorkspaceMentionMemberIds(workspace, allowedMentionMemberIds, message.mention_member_ids ?? [])); }}>Cancel</Button><Button disabled={!editText.trim()} onClick={() => { onEdit(editText, eligibleWorkspaceMentionMemberIds(workspace, allowedMentionMemberIds, editMentionMemberIds)); setEditing(false); }}>Save</Button></span>
           </div>
         ) : <p>{message.text}</p>}
         {(message.mutation_conflict || message.mutation_frozen) && <p className="workspace-message__security" role="status">{message.mutation_frozen ? "Security warning: this message is frozen after conflicting mutations from one device." : "Concurrent author changes were resolved deterministically. A later edit can resolve the conflict."}</p>}
         {!message.deleted && <footer className="workspace-message__actions">
           {message.thread_root == null && onOpenThread && <button type="button" onClick={onOpenThread}><MessageCircleMore size={13} /> Thread{(message.reply_count ?? 0) > 0 ? ` · ${message.reply_count}` : ""}{(message.thread_unread_count ?? 0) > 0 ? ` · ${message.thread_unread_count} new` : ""}</button>}
-          {authorMutable && !confirmDelete && <><button type="button" onClick={() => setEditing(true)}>Edit</button><button type="button" onClick={() => setConfirmDelete(true)}>Delete</button></>}
           {authorMutable && confirmDelete && <><span>Delete for workspace participants?</span><button type="button" onClick={() => setConfirmDelete(false)}>Cancel</button><button type="button" onClick={() => { setConfirmDelete(false); onDelete(); }}>Delete</button></>}
           {mutable && <MessageReactions
             messageText={message.text}
@@ -4701,6 +4826,19 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
   } | null>(null);
   const [contactsOpen, setContactsOpen] = useState(false);
   const [settings, setSettings] = useState(false);
+  const settingsBackHandlerRef = useRef<(() => void) | null>(null);
+  const registerSettingsBackHandler = useCallback((handler: (() => void) | null) => {
+    settingsBackHandlerRef.current = handler;
+  }, []);
+  const sidebarRef = useRef<HTMLElement>(null);
+  const mainPaneRef = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    // Leave the conversation mounted so opening Settings preserves its draft,
+    // pagination and scroll position, while excluding covered controls.
+    for (const element of [sidebarRef.current, mainPaneRef.current]) {
+      if (element) element.inert = settings;
+    }
+  }, [settings]);
   const [help, setHelp] = useState<{ code: string; action: string | null } | null>(null);
   const [dismissedRequests, setDismissedRequests] = useState<string[]>([]);
   const [dismissedGroupInvitations, setDismissedGroupInvitations] = useState<string[]>([]);
@@ -6000,6 +6138,10 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
       document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
       return;
     }
+    if (document.querySelector('.workspace-message-menu[role="menu"]')) {
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+      return;
+    }
     if (workspaceHeaderMenuOpen) {
       setWorkspaceHeaderMenuOpen(false);
       return;
@@ -6091,7 +6233,7 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
       return;
     }
     if (settings) {
-      setSettings(false);
+      settingsBackHandlerRef.current?.();
       return;
     }
     if (newGroup) {
@@ -6220,8 +6362,8 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
   };
 
   return (
-    <main className={`app-shell ${mobileSidebarOpen || !(selectedWorkspace || selectedContact || selectedGroup) ? "app-shell--list" : "app-shell--thread"}`}>
-      <aside className="sidebar">
+    <main className={`app-shell ${mobileSidebarOpen || !(selectedWorkspace || selectedContact || selectedGroup) ? "app-shell--list" : "app-shell--thread"} ${settings ? "app-shell--settings" : ""}`}>
+      <aside ref={sidebarRef} className="sidebar" aria-hidden={settings ? true : undefined}>
         <header className="sidebar__top"><Brand /><div><button className="icon-button" onClick={() => setContactsOpen(true)} aria-label="Contacts" title="Contacts"><BookUser size={19} /></button><button className="icon-button" onClick={() => void onLock()} aria-label="Lock Mesh Chat" title="Lock Mesh Chat"><LockKeyhole size={18} /></button><button className="icon-button" onClick={() => setSettings(true)} aria-label="Settings" title="Settings"><Settings size={19} /></button></div></header>
         {workspacesEnabled && <WorkspaceSwitcher workspaces={workspaces} activeId={activeSpaceId} onSelect={(id) => { setActiveSpaceId(id); setMobileSidebarOpen(true); setWorkspaceError(""); setWorkspaceActionError(""); }} onCreate={() => setCreateWorkspaceOpen(true)} onJoin={() => { setJoinWorkspaceValue(""); setJoinWorkspaceOpen(true); }} />}
         {activeSpaceId === "personal" ? <>
@@ -6276,7 +6418,7 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
         </> : null}
         <footer className="sidebar__footer" title={networkAvailable ? "The local network service is running. This does not confirm that another device is reachable." : undefined}><span className={`network-dot ${networkAvailable ? "network-dot--on" : ""}`} />{networkAvailable ? "Network service active" : "Networking unavailable"}</footer>
       </aside>
-      <div className="main-pane">
+      <div ref={mainPaneRef} className="main-pane" aria-hidden={settings ? true : undefined}>
         {snapshot.service_error && (
           <div className="service-warning" role="alert">
             <WifiOff size={18} />
@@ -6284,16 +6426,10 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
           </div>
         )}
         {webrtcSessionActive && (
-          <div className="incoming-call-banner" role="status">
-            <QrCode size={18} />
-            <span><strong>{webrtcSessionCount > 1 ? `${webrtcSessionCount} WebRTC paths connected` : "WebRTC path connected"} · {webrtcPath === "relayed" ? "Relayed" : webrtcPath === "direct" ? "Direct" : "Path pending"}</strong><small>{pending.length > 0 ? `${pending.length} contact ${pending.length === 1 ? "request" : "requests"} awaiting approval.` : "DataChannel open. Message delivery is confirmed by receipts."}</small></span>
-            <div className="incoming-call-banner__actions">
-              {pending.length > 0 && <Button variant="secondary" onClick={() => setDismissedRequests((current) => current.filter((id) => id !== pending[0].id))}>Review request</Button>}
-              <Button variant="secondary" onClick={() => { const text = lastWebRTCDiagnostics(); if (text) void navigator.clipboard.writeText(text); }}>Diagnostics</Button>
-              <Button variant="secondary" onClick={() => { void closeWebRTCSession().finally(() => { setWebRtcSessionActive(false); setWebRtcSessionCount(0); setWebrtcPath("unknown"); setConnectEntryOpen(true); void refresh(true); }); }}>Reconnect</Button>
-              <Button variant="secondary" onClick={() => { void closeWebRTCSession().finally(() => { setWebRtcSessionActive(false); setWebRtcSessionCount(0); void refresh(true); }); }}>Disconnect</Button>
-            </div>
-          </div>
+          <ConnectionStatus count={webrtcSessionCount} path={webrtcPath} pendingCount={pending.length}
+            onReview={() => { if (pending[0]) setDismissedRequests((current) => current.filter((id) => id !== pending[0].id)); }}
+            onReconnect={async () => { await closeWebRTCSession().finally(() => { setWebRtcSessionActive(false); setWebRtcSessionCount(0); setWebrtcPath("unknown"); setConnectEntryOpen(true); void refresh(true); }); }}
+            onDisconnect={async () => { await closeWebRTCSession().finally(() => { setWebRtcSessionActive(false); setWebRtcSessionCount(0); void refresh(true); }); }} />
         )}
         {incomingCall && !callContactId && (
           <div className="incoming-call-banner" role="status">
@@ -6550,7 +6686,7 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
       {newChat && <div className={hasForegroundRequest ? "dialog-suspended" : ""} aria-hidden={hasForegroundRequest ? true : undefined}><NewChatDialog initialInvitation={initialInvitation} initialTab={newChatStartTab} initialConnection={newChatTransport} remoteProfiles={snapshot.remote_profiles ?? []} onClose={() => { setNewChat(false); onInvitationHandled(); }} onChanged={async () => { await refresh(true); }} onWorkspaceInvitation={(value) => { setNewChat(false); setJoinWorkspaceValue(value); setJoinWorkspaceOpen(true); }} /></div>}
       {newGroup && <div className={hasForegroundRequest ? "dialog-suspended" : ""} aria-hidden={hasForegroundRequest ? true : undefined}><CreateGroupDialog contacts={snapshot.contacts} onClose={() => setNewGroup(false)} onCreated={async (group) => { await refresh(true); selectConversation({ kind: "group", id: group.id }); setNewGroup(false); }} /></div>}
       {contactsOpen && <div className={hasForegroundRequest ? "dialog-suspended" : ""} aria-hidden={hasForegroundRequest ? true : undefined}><ContactsDialog contacts={snapshot.contacts.filter((contact) => contact.trust !== "pending_request")} reconnect={reconnectCoordinator} onClose={() => setContactsOpen(false)} onChanged={async () => { await refresh(true); }} onOpenConversation={async (contact) => { const hidden = hiddenConversationKeys.has(`direct:${contact.id}`); setContactsOpen(false); await restoreAndSelect({ kind: "contact", id: contact.id }, hidden); }} onDeleted={async (contactId) => { if (selection?.kind === "contact" && selection.id === contactId) setSelection(null); setDrafts((current) => { const next = { ...current }; delete next[contactId]; return next; }); setLocallySavedMessages((current) => Object.fromEntries(Object.entries(current).filter(([, message]) => message.contact_id !== contactId))); await refresh(true); }} /></div>}
-      {settings && <div className={hasForegroundRequest ? "dialog-suspended" : ""} aria-hidden={hasForegroundRequest ? true : undefined}><SettingsDialog snapshot={snapshot} theme={theme} onThemeChange={onThemeChange} onClose={() => setSettings(false)} onSaved={async () => { await refresh(true); }} /></div>}
+      {settings && <div className={`settings-page-slot ${hasForegroundRequest ? "dialog-suspended" : ""}`} aria-hidden={hasForegroundRequest ? true : undefined}><SettingsPage snapshot={snapshot} theme={theme} onThemeChange={onThemeChange} onClose={() => setSettings(false)} onBackHandlerChange={registerSettingsBackHandler} onSaved={async () => { await refresh(true); }} /></div>}
       {notificationTarget && !notificationTarget.available && <Dialog title="Notification unavailable" onClose={onNotificationHandled}><div className="form-stack"><p>{notificationTarget.message ?? "This notification is no longer available or authorized on this device."}</p><p className="muted">Mesh Chat did not open stale content or change any read state.</p><Button onClick={onNotificationHandled}>Done</Button></div></Dialog>}
       {deleteTarget && <div className={hasForegroundRequest ? "dialog-suspended" : ""} aria-hidden={hasForegroundRequest ? true : undefined}><DeleteConversationDialog kind={deleteTarget.kind === "contact" ? "direct" : "group"} name={deleteTargetName} busy={deleteBusy} error={deleteError} onCancel={() => { if (!deleteBusy) { setDeleteError(""); setDeleteTarget(null); } }} onConfirm={() => void deleteConversation()} /></div>}
       {help && <div className={hasForegroundRequest ? "dialog-suspended" : ""} aria-hidden={hasForegroundRequest ? true : undefined}><Dialog title="Connection help" onClose={() => setHelp(null)}><div className="help-content">{help.code === "service_unavailable" ? <><WifiOff size={28} /><h3>Networking is unavailable</h3><p>Connect this device to the same local network as {selectedContact?.display_name}, make sure local-network access is allowed, then reopen Mesh Chat.</p></> : help.code === "waiting_for_keys" ? <><WifiOff size={28} /><h3>Trying to find {selectedContact?.display_name}</h3><p>Keep Mesh Chat open on both devices and connect them to the same local network. We’ll continue trying automatically.</p></> : help.code === "no_route" ? <><WifiOff size={28} /><h3>We can’t reach them yet</h3><p>Your message is saved. Try the same local network, check local-network permission, or request a fresh invitation with a usable connection hint.</p></> : <><Check size={28} /><h3>The secure path is ready</h3><p>Mesh Chat is continuing the connection automatically.</p></>}<Button onClick={() => setHelp(null)}>Done</Button></div></Dialog></div>}

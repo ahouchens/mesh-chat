@@ -14,6 +14,24 @@ Android capability status, hardware gaps, and the exact physical test matrix are
 tracked separately in [docs/ANDROID_PARITY.md](ANDROID_PARITY.md). Shared
 React/Python code is not treated as physical Android verification.
 
+## 0.9.33 — Settings page and simpler chat controls
+
+- Replace the long Settings modal with a page, a persistent Back button, and
+  categories for appearance, notifications, connections, advanced options, and help.
+- Preserve settings drafts between sections and chat drafts and scroll position
+  when returning. Warn before discarding unsaved edits and protect pending saves.
+- Keep healthy connection status compact, with diagnostics, reconnect, and
+  disconnect under Details. Pending contact approvals remain visible.
+- Move workspace message History, Edit, Delete, and Hide on this device into
+  an accessible More menu, preserving permissions, confirmations, and reactions.
+- Remove the empty gap left by the dismissed workspace setup checklist and
+  update help text to match the new Settings navigation.
+
+Local validation passed all 343 frontend tests, TypeScript, the production build,
+and eight responsive browser checks across phone, tablet, and desktop widths in
+both themes. See [TESTING.md](../TESTING.md) for validation scope. These checks
+used synthetic service state; live two-device testing was not repeated.
+
 ## 0.9.32 — Mobile chat layout and live reactions
 
 - Keep connection status readable on phones, wrap its buttons onto a separate

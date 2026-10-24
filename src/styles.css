@@ -479,6 +479,7 @@ section.direct-host-warning > .button { justify-self: start; max-width: 100%; wh
 .workspace-pending-joins { margin: 6px 10px 2px; justify-content: flex-start; }
 .workspace-setup { width: min(620px, 92vw); text-align: left; padding: 18px; border: 1px solid var(--line); border-radius: 14px; background: var(--surface); }
 .workspace-setup-wrap { display: flex; justify-content: center; padding: 14px 16px; border-bottom: 1px solid var(--line); }
+.workspace-setup-wrap:empty { display: none; }
 .workspace-setup__head { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; }
 .workspace-setup__head h2 { margin: 2px 0 4px; font-size: 1.05rem; }
 .workspace-setup__head p { margin: 0; color: var(--muted); font-size: .76rem; line-height: 1.45; }
