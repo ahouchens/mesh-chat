@@ -14,6 +14,21 @@ Android capability status, hardware gaps, and the exact physical test matrix are
 tracked separately in [docs/ANDROID_PARITY.md](ANDROID_PARITY.md). Shared
 React/Python code is not treated as physical Android verification.
 
+## 0.9.32 — Mobile chat layout and live reactions
+
+- Keep connection status readable on phones, wrap its buttons onto a separate
+  row, and use matching dark-theme colors.
+- Fit compact workspace DM controls on-screen; video calling and People are
+  available in More. Correct message avatar spacing and allow reactions to wrap.
+- Refresh recipient reactions in workspace DMs, channels, and threads when
+  mutation events arrive, including batched mobile polls and pending reads.
+- Prevent an old message request from replacing a newly selected conversation.
+
+Local validation passed all 332 frontend tests, focused service/layout checks,
+TypeScript, the production frontend build, and ten browser layout checks across
+phone and desktop widths in both themes. See [TESTING.md](../TESTING.md) for
+validation scope; physical Android retesting remains required.
+
 ## 0.9.31 — WebRTC delivery and reconnect recovery
 
 - Correct Reticulum bridge initialization and registration so incoming and

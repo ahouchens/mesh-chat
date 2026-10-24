@@ -5,6 +5,7 @@ import packageInfo from "../package.json";
 import type { ChatMessage, Contact, Group, GroupInvitation, GroupMessage, Snapshot, Workspace, WorkspaceAdminRequest, WorkspaceChannel, WorkspaceDirect, WorkspaceJoinRequest, WorkspaceMentionPage, WorkspaceMessage, WorkspaceMessagePage, WorkspaceSearchPage, WorkspaceThreadActivityPage, WorkspaceThreadPage } from "./types";
 
 const api = vi.hoisted(() => ({
+  endCallAudio: vi.fn(async () => ({ active: false })),
   initializeService: vi.fn(),
   lockService: vi.fn(),
   notificationCapability: vi.fn(async () => ({ supported: false, platform: "desktop", permission_state: "unsupported" })),
@@ -3913,6 +3914,18 @@ describe("desktop workspaces", () => {
     await waitFor(() => expect(api.serviceCommand).toHaveBeenCalledWith("open_workspace_direct", expect.objectContaining({ workspace_id: workspace.id, member_id: member.id, operation_id: expect.any(String) })));
     let conversation = await screen.findByLabelText("Workspace direct message with Bailey");
     expect(within(conversation).getByText(/does not create a global Contact/i)).toBeTruthy();
+    fireEvent.click(within(conversation).getByRole("button", { name: "More actions for Bailey" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Video call Bailey" }));
+    const callDialog = await screen.findByRole("dialog", { name: "Call Bailey" });
+    expect(within(callDialog).getByRole("button", { name: "Video call" })).toBeTruthy();
+    expect(screen.queryByRole("menu")).toBeNull();
+    fireEvent.click(within(callDialog).getByRole("button", { name: "Cancel" }));
+    fireEvent.click(within(conversation).getByRole("button", { name: "More actions for Bailey" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "People in Lakewatcher" }));
+    const peopleDialog = await screen.findByRole("dialog", { name: "People and administration · Lakewatcher" });
+    expect(within(peopleDialog).getByText("Bailey")).toBeTruthy();
+    expect(screen.queryByRole("menu")).toBeNull();
+    fireEvent.click(within(peopleDialog).getByRole("button", { name: "Close" }));
     const composer = within(conversation).getByRole("textbox", { name: "Message Bailey" });
     fireEvent.paste(composer, {
       clipboardData: {
@@ -4053,6 +4066,172 @@ describe("desktop workspaces", () => {
       await backgroundReload.promise;
     });
     expect(await within(conversation).findByText("Dock inspection complete")).toBeTruthy();
+  });
+
+  it.each([
+    { scope: "channel", pending: false },
+    { scope: "direct", pending: false },
+    { scope: "thread", pending: false },
+    { scope: "channel", pending: true },
+    { scope: "direct", pending: true },
+    { scope: "thread", pending: true },
+  ] as const)("updates recipient reactions in an open workspace $scope (earlier fetch pending: $pending)", async ({ scope, pending }) => {
+    const member = {
+      id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      display_name: "Bailey",
+      role: "member" as const,
+      status: "active" as const,
+      short_id: "aaaaaa",
+      device: { id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", destination_hash: "99".repeat(16), fingerprint: "BBBB CCCC DDDD EEEE" },
+    };
+    const direct: WorkspaceDirect = {
+      id: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+      workspace_id: workspace.id,
+      participant_member_ids: [workspace.local_member_id, member.id],
+      peer_member_id: member.id,
+      peer_display_name: member.display_name,
+      peer_short_id: member.short_id,
+      peer_device_id: member.device.id,
+      state: "open",
+      unread_count: 0,
+      created_at: 10,
+      updated_at: 10,
+    };
+    const conversationId = scope === "direct" ? direct.id : workspaceChannel.id;
+    let message: WorkspaceMessage = {
+      id: "56565656-5656-4656-8656-565656565656",
+      workspace_id: workspace.id,
+      conversation_id: conversationId,
+      direction: "outbound",
+      author_member_id: workspace.local_member_id,
+      author_display_name: "Alex",
+      text: "A note for Bailey",
+      reactions: [],
+      sequence: 1,
+      event_digest: "77".repeat(32),
+      created_at: 1_791_072_021,
+    };
+    const current: Snapshot = {
+      ...snapshot(),
+      workspaces: [{ ...workspace, members: [...workspace.members, member] }],
+      workspace_channels: [workspaceChannel],
+      workspace_directs: [direct],
+      workspace_join_requests: [],
+      workspace_invitations: [],
+      workspace_drafts: [],
+    };
+    const pageCommand = scope === "thread" ? "list_workspace_thread_messages" : scope === "direct" ? "list_workspace_direct_messages" : "list_workspace_messages";
+    const page = (): WorkspaceMessagePage | WorkspaceThreadPage => scope === "thread" ? {
+      root: message,
+      replies: [],
+      next_cursor: null,
+      high_water: 0,
+      unread_count: 0,
+      conversation: { id: workspaceChannel.id, kind: "channel", name: "general", visibility: "public", state: "active" },
+    } : { messages: [message], next_cursor: null, high_water: 1 };
+    const delayedPage = deferred<WorkspaceMessagePage | WorkspaceThreadPage>();
+    let holdNextPage = false;
+    let serviceEvent: ((event: ServiceEvent) => void) | undefined;
+    api.runtimePlatform.mockResolvedValue("android");
+    api.initializeService.mockResolvedValue(current);
+    api.onInvitation.mockResolvedValue(() => undefined);
+    api.onServiceEvent.mockImplementation(async (callback) => {
+      serviceEvent = callback;
+      return () => undefined;
+    });
+    api.serviceCommand.mockImplementation(async (command: string) => {
+      if (command === "snapshot" || command === "workspace_snapshot") return current;
+      if (command === pageCommand) {
+        if (holdNextPage) { holdNextPage = false; return delayedPage.promise; }
+        return page();
+      }
+      if (command === "list_workspace_messages") return { messages: scope === "thread" ? [message] : [], next_cursor: null, high_water: 1 } satisfies WorkspaceMessagePage;
+      return {};
+    });
+    const emit = async (resourceKind: string, generation: number) => act(async () => {
+      serviceEvent?.({ type: "event", event: "workspace_changed", workspace_id: workspace.id, conversation_id: conversationId, resource_kind: resourceKind, generation });
+    });
+    const pageRequestCount = () => api.serviceCommand.mock.calls.filter(([command]) => command === pageCommand).length;
+
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Workspace Lakewatcher" }));
+    if (scope === "direct") fireEvent.click(await screen.findByRole("button", { name: /Bailey.*workspace DM/i }));
+    if (scope === "thread") fireEvent.click(await screen.findByRole("button", { name: "Thread" }));
+    const conversation = await screen.findByLabelText(scope === "direct" ? "Workspace direct message with Bailey" : scope === "thread" ? "Thread in Lakewatcher" : "Workspace channel general");
+    expect(await within(conversation).findByText(message.text)).toBeTruthy();
+
+    const stalePage = page();
+    if (pending) {
+      holdNextPage = true;
+      const previousCount = pageRequestCount();
+      await emit("delivery", 1);
+      await waitFor(() => expect(pageRequestCount()).toBe(previousCount + 1));
+    }
+    message = { ...message, reactions: [{ emoji: "👍", count: 1, reacted_by_self: false }] };
+    // The native poll dispatches its whole batch synchronously. Later events
+    // for other conversations/workspaces must not replace this mutation.
+    await act(async () => {
+      serviceEvent?.({ type: "event", event: "workspace_changed", workspace_id: workspace.id, conversation_id: conversationId, resource_kind: "message_mutation", generation: 2 });
+      serviceEvent?.({ type: "event", event: "workspace_changed", workspace_id: workspace.id, conversation_id: "ffffffff-ffff-4fff-8fff-ffffffffffff", resource_kind: "message", generation: 3 });
+      serviceEvent?.({ type: "event", event: "workspace_changed", workspace_id: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee", resource_kind: "message", generation: 1 });
+    });
+    if (pending) {
+      await act(async () => { delayedPage.resolve(stalePage); await delayedPage.promise; });
+    }
+    expect(await within(conversation).findByRole("button", { name: "React with thumbs up; 1 reaction total" })).toBeTruthy();
+
+    message = { ...message, reactions: [] };
+    await emit("message_mutation", 4);
+    await waitFor(() => expect(within(conversation).queryByRole("button", { name: "React with thumbs up; 1 reaction total" })).toBeNull());
+    expect(within(conversation).getByText(message.text)).toBeTruthy();
+    expect(api.serviceCommand.mock.calls.some(([command]) => command === "set_workspace_reaction")).toBe(false);
+  });
+
+  it.each(["channel", "thread"] as const)("loads the newly selected workspace %s after an earlier selection's fetch finishes", async (scope) => {
+    const secondChannel: WorkspaceChannel = { ...workspaceChannel, id: "cccccccc-cccc-4ccc-8ccc-cccccccccccc", name: "field", display_name: "field", is_general: false };
+    const first: WorkspaceMessage = {
+      id: "55555555-5555-4555-8555-555555555555", workspace_id: workspace.id,
+      conversation_id: workspaceChannel.id, direction: "inbound", author_member_id: workspace.local_member_id,
+      author_display_name: "Alex", text: "Earlier conversation", sequence: 1,
+      event_digest: "77".repeat(32), created_at: 1_791_072_021,
+    };
+    const second: WorkspaceMessage = { ...first, id: "66666666-6666-4666-8666-666666666666", conversation_id: scope === "channel" ? secondChannel.id : workspaceChannel.id, text: "Current conversation" };
+    const current: Snapshot = { ...snapshot(), workspaces: [workspace], workspace_channels: [workspaceChannel, secondChannel], workspace_join_requests: [], workspace_invitations: [], workspace_drafts: [] };
+    const delayedPage = deferred<WorkspaceMessagePage | WorkspaceThreadPage>();
+    const toPage = (message: WorkspaceMessage): WorkspaceMessagePage | WorkspaceThreadPage => scope === "thread" ? {
+      root: message, replies: [], next_cursor: null, high_water: 0, unread_count: 0,
+      conversation: { id: workspaceChannel.id, kind: "channel", name: "general", visibility: "public", state: "active" },
+    } : { messages: [message], next_cursor: null, high_water: 1 };
+    const pageCommand = scope === "thread" ? "list_workspace_thread_messages" : "list_workspace_messages";
+    api.runtimePlatform.mockResolvedValue("android");
+    api.initializeService.mockResolvedValue(current);
+    api.onInvitation.mockResolvedValue(() => undefined);
+    api.onServiceEvent.mockResolvedValue(() => undefined);
+    api.serviceCommand.mockImplementation(async (command: string, payload: Record<string, unknown>) => {
+      if (command === "snapshot" || command === "workspace_snapshot") return current;
+      if (command === pageCommand) {
+        const firstSelected = scope === "thread" ? payload.thread_root_id === first.id : payload.channel_id === workspaceChannel.id;
+        return firstSelected ? delayedPage.promise : toPage(second);
+      }
+      if (command === "list_workspace_messages") return { messages: [first, second], next_cursor: null, high_water: 2 } satisfies WorkspaceMessagePage;
+      return {};
+    });
+
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Workspace Lakewatcher" }));
+    if (scope === "thread") fireEvent.click((await screen.findAllByRole("button", { name: "Thread" }))[0]);
+    await waitFor(() => expect(api.serviceCommand.mock.calls.some(([command]) => command === pageCommand)).toBe(true));
+    if (scope === "channel") {
+      fireEvent.click(within(screen.getByRole("navigation", { name: "Lakewatcher conversations" })).getByRole("button", { name: /^field\b/ }));
+    } else {
+      fireEvent.click(screen.getByRole("button", { name: "Back to workspace conversation" }));
+      fireEvent.click((await screen.findAllByRole("button", { name: "Thread" }))[1]);
+    }
+    await act(async () => { delayedPage.resolve(toPage(first)); await delayedPage.promise; });
+    const conversation = await screen.findByLabelText(scope === "thread" ? "Thread in Lakewatcher" : "Workspace channel field");
+    expect(await within(conversation).findByText(second.text)).toBeTruthy();
+    expect(within(conversation).queryByText(first.text)).toBeNull();
+    expect(api.serviceCommand).toHaveBeenCalledWith(pageCommand, expect.objectContaining(scope === "thread" ? { thread_root_id: second.id } : { channel_id: secondChannel.id }));
   });
 
   it("creates a workspace only after showing the owner and peer-delivery facts", async () => {

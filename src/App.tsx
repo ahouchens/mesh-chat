@@ -63,7 +63,6 @@ import {
   serviceCommand,
   endCallAudio,
 } from "./api";
-import type { ServiceEvent } from "./api";
 import { contactConnectionLabel, deliveryLabel, workspaceJoinStatus } from "./status";
 import { EmojiGlyph } from "./EmojiGlyph";
 import { ConnectionDiagnostics } from "./ConnectionDiagnostics";
@@ -4345,11 +4344,13 @@ function WorkspaceDirectConversation({ workspace, direct, page, draft, mentionMe
       <div className="conversation__identity"><Avatar name={direct.peer_display_name} small /><span><h1>{direct.peer_display_name}</h1><small>{workspace.name} · workspace DM · {direct.peer_short_id}</small></span></div>
       <div className="workspace-header-actions">
         <button className="icon-button" onClick={() => onCall("audio")} aria-label={`Audio call ${direct.peer_display_name}`} title="Audio call"><Phone size={18} /></button>
-        <button className="icon-button" onClick={() => onCall("video")} aria-label={`Video call ${direct.peer_display_name}`} title="Video call"><Video size={18} /></button>
-        <button className="icon-button" onClick={onPeople} aria-label={`People in ${workspace.name}`} title="People"><Users size={18} /></button>
+        <button className="icon-button compact-hidden" onClick={() => onCall("video")} aria-label={`Video call ${direct.peer_display_name}`} title="Video call"><Video size={18} /></button>
+        <button className="icon-button compact-hidden" onClick={onPeople} aria-label={`People in ${workspace.name}`} title="People"><Users size={18} /></button>
         <button className="icon-button compact-hidden" onClick={() => setTombstonesOpen(true)} aria-label={`Deleted messages with ${direct.peer_display_name}`} title="Deleted-message history"><Trash2 size={18} /></button>
         <button className="icon-button compact-hidden" onClick={onHideConversation} aria-label={`Hide workspace conversation with ${direct.peer_display_name}`} title="Hide locally"><EyeOff size={18} /></button>
         <WorkspaceHeaderMoreMenu label={`More actions for ${direct.peer_display_name}`} open={headerMenuOpen} onOpenChange={onHeaderMenuOpenChange}>
+          <button type="button" role="menuitem" onClick={() => { onHeaderMenuOpenChange(false); onCall("video"); }}><Video size={17} />Video call {direct.peer_display_name}</button>
+          <button type="button" role="menuitem" onClick={() => { onHeaderMenuOpenChange(false); onPeople(); }}><Users size={17} />People in {workspace.name}</button>
           <button type="button" role="menuitem" aria-label="Deleted messages from More actions" onClick={() => { onHeaderMenuOpenChange(false); setTombstonesOpen(true); }}><Trash2 size={17} />Deleted messages</button>
           <button type="button" role="menuitem" aria-label="Hide conversation from More actions" onClick={() => { onHeaderMenuOpenChange(false); onHideConversation(); }}><EyeOff size={17} />Hide conversation</button>
         </WorkspaceHeaderMoreMenu>
@@ -4514,7 +4515,13 @@ function ConnectEntryDialog({
   );
 }
 
-function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceChannelInvalidation, notificationTarget, onNotificationHandled, onLock, initialInvitation, onInvitationHandled, initialPairingCode = "", onPairingHandled }: { snapshot: Snapshot; theme: Theme; onThemeChange: (theme: Theme) => void; refresh: (afterCurrent?: boolean) => Promise<Snapshot>; workspaceChannelInvalidation: ServiceEvent | null; notificationTarget: NotificationOpenTarget | null; onNotificationHandled: () => void; onLock: () => Promise<void>; initialInvitation: string; onInvitationHandled: () => void; initialPairingCode?: string; onPairingHandled?: () => void }) {
+type WorkspaceMessageInvalidations = Record<string, {
+  revision: number;
+  allConversations: number;
+  conversations: Record<string, number>;
+}>;
+
+function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageInvalidations, notificationTarget, onNotificationHandled, onLock, initialInvitation, onInvitationHandled, initialPairingCode = "", onPairingHandled }: { snapshot: Snapshot; theme: Theme; onThemeChange: (theme: Theme) => void; refresh: (afterCurrent?: boolean) => Promise<Snapshot>; workspaceMessageInvalidations: WorkspaceMessageInvalidations; notificationTarget: NotificationOpenTarget | null; onNotificationHandled: () => void; onLock: () => Promise<void>; initialInvitation: string; onInvitationHandled: () => void; initialPairingCode?: string; onPairingHandled?: () => void }) {
   const groups = snapshot.groups ?? [];
   const groupMessages = snapshot.group_messages ?? [];
   const groupInvitations = snapshot.group_invitations ?? [];
@@ -4668,6 +4675,11 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceChannelIn
   const workspaceThreadsInFlight = useRef(false);
   const workspaceThreadInFlight = useRef(false);
   const loadedWorkspaceChannel = useRef<string | null>(null);
+  const workspacePageSelection = useRef<string | null>(null);
+  const loadedWorkspaceChannelInvalidation = useRef(0);
+  const loadedWorkspaceThread = useRef<string | null>(null);
+  const workspaceThreadSelection = useRef<string | null>(null);
+  const loadedWorkspaceThreadInvalidation = useRef(0);
   const workspaceSendInFlight = useRef(false);
   const pendingWorkspaceSend = useRef<{
     workspaceId: string;
@@ -4801,6 +4813,12 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceChannelIn
       : null
     : null;
   const selectedWorkspaceConversation = selectedWorkspaceDirect ?? selectedWorkspaceChannel;
+  const selectedWorkspaceInvalidations = selectedWorkspace ? workspaceMessageInvalidations[selectedWorkspace.id] : undefined;
+  const workspaceInvalidation = selectedWorkspaceInvalidations?.revision ?? 0;
+  const workspaceChannelInvalidation = Math.max(
+    selectedWorkspaceInvalidations?.allConversations ?? 0,
+    selectedWorkspaceConversation ? selectedWorkspaceInvalidations?.conversations[selectedWorkspaceConversation.id] ?? 0 : 0,
+  );
   const selectedWorkspaceThreadAllowedMemberIds = selectedWorkspace && workspaceThreadPage
     ? selectedWorkspaceDirects.find((direct) => direct.id === workspaceThreadPage.conversation.id)?.participant_member_ids
       ?? (selectedWorkspaceChannels.find((channel) => channel.id === workspaceThreadPage.conversation.id)?.visibility === "private"
@@ -4887,6 +4905,7 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceChannelIn
 
   const loadWorkspaceMessages = useCallback(async (append = false) => {
     if (!selectedWorkspace || !selectedWorkspaceConversation || workspacePageInFlight.current) return;
+    const selectionKey = `${selectedWorkspace.id}:${selectedWorkspaceDirect ? "direct" : "channel"}:${selectedWorkspaceConversation.id}`;
     workspacePageInFlight.current = true;
     setWorkspacePageLoading(true);
     try {
@@ -4896,6 +4915,7 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceChannelIn
         cursor: append ? workspacePage?.next_cursor ?? null : null,
         limit: 50,
       });
+      if (workspacePageSelection.current !== selectionKey) return;
       setWorkspacePage((current) => append && current ? { ...page, messages: [...page.messages, ...current.messages] } : page);
       if (!append && selectedWorkspaceConversation.unread_count > 0) {
         await serviceCommand(selectedWorkspaceDirect ? "mark_workspace_direct_read" : "mark_workspace_read", { operation_id: newOperationId(), workspace_id: selectedWorkspace.id, ...(selectedWorkspaceDirect ? { conversation_id: selectedWorkspaceDirect.id } : { channel_id: selectedWorkspaceChannel!.id }), high_water: page.high_water });
@@ -4907,18 +4927,23 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceChannelIn
   useEffect(() => {
     if (!selectedWorkspace || !selectedWorkspaceConversation) {
       loadedWorkspaceChannel.current = null;
+      workspacePageSelection.current = null;
+      loadedWorkspaceChannelInvalidation.current = 0;
       setWorkspacePage(null);
       return;
     }
     const channelKey = `${selectedWorkspace.id}:${selectedWorkspaceDirect ? "direct" : "channel"}:${selectedWorkspaceConversation.id}`;
+    workspacePageSelection.current = channelKey;
     const selectionChanged = loadedWorkspaceChannel.current !== channelKey;
-    const channelChanged = workspaceChannelInvalidation?.workspace_id === selectedWorkspace.id
-      && (workspaceChannelInvalidation.conversation_id == null || workspaceChannelInvalidation.conversation_id === selectedWorkspaceConversation.id);
-    if (!selectionChanged && !channelChanged) return;
-    loadedWorkspaceChannel.current = channelKey;
+    const channelChanged = workspaceChannelInvalidation !== loadedWorkspaceChannelInvalidation.current;
     if (selectionChanged) setWorkspacePage(null);
+    // Leave an invalidation unconsumed while a fetch is running. Its loading
+    // transition schedules a fresh read, including after a conversation switch.
+    if ((!selectionChanged && !channelChanged) || workspacePageInFlight.current) return;
+    loadedWorkspaceChannel.current = channelKey;
+    loadedWorkspaceChannelInvalidation.current = workspaceChannelInvalidation;
     void loadWorkspaceMessages(false);
-  }, [selectedWorkspace?.id, selectedWorkspaceConversation?.id, selectedWorkspaceDirect?.id, workspaceChannelInvalidation]);
+  }, [selectedWorkspace?.id, selectedWorkspaceConversation?.id, selectedWorkspaceDirect?.id, workspaceChannelInvalidation, workspacePageLoading]);
 
   const loadWorkspaceMentions = useCallback(async (append = false) => {
     if (!selectedWorkspace || workspaceMentionsInFlight.current) return;
@@ -4941,7 +4966,7 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceChannelIn
       return;
     }
     void loadWorkspaceMentions(false);
-  }, [workspaceMentionsOpen, selectedWorkspace?.id, workspaceChannelInvalidation]);
+  }, [workspaceMentionsOpen, selectedWorkspace?.id, workspaceInvalidation]);
 
   const loadWorkspaceSearch = useCallback(async (append = false) => {
     if (!selectedWorkspace || workspaceSearchQuery.trim().length < 2) return;
@@ -4977,7 +5002,7 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceChannelIn
     }
     const timer = window.setTimeout(() => void loadWorkspaceSearch(false), 250);
     return () => window.clearTimeout(timer);
-  }, [workspaceSearchOpen, selectedWorkspace?.id, workspaceSearchQuery, workspaceSearchScope, workspaceChannelInvalidation]);
+  }, [workspaceSearchOpen, selectedWorkspace?.id, workspaceSearchQuery, workspaceSearchScope, workspaceInvalidation]);
 
   const loadWorkspaceThreads = useCallback(async (append = false) => {
     if (!selectedWorkspace || workspaceThreadsInFlight.current) return;
@@ -5000,10 +5025,11 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceChannelIn
       return;
     }
     void loadWorkspaceThreads(false);
-  }, [workspaceThreadsOpen, selectedWorkspace?.id, workspaceChannelInvalidation]);
+  }, [workspaceThreadsOpen, selectedWorkspace?.id, workspaceInvalidation]);
 
   const loadWorkspaceThread = useCallback(async (append = false) => {
     if (!selectedWorkspace || !workspaceThreadRootId || workspaceThreadInFlight.current) return;
+    const selectionKey = `${selectedWorkspace.id}:${workspaceThreadRootId}`;
     workspaceThreadInFlight.current = true;
     setWorkspaceThreadLoading(true);
     try {
@@ -5013,6 +5039,7 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceChannelIn
         cursor: append ? workspaceThreadPage?.next_cursor ?? null : null,
         limit: 50,
       });
+      if (workspaceThreadSelection.current !== selectionKey) return;
       setWorkspaceThreadPage((current) => append && current ? { ...page, unread_count: current.unread_count, replies: [...page.replies, ...current.replies] } : page);
       if (!append && page.unread_count > 0) {
         await serviceCommand("mark_workspace_thread_read", {
@@ -5030,11 +5057,22 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceChannelIn
 
   useEffect(() => {
     if (!workspaceThreadRootId || !selectedWorkspace) {
+      loadedWorkspaceThread.current = null;
+      workspaceThreadSelection.current = null;
+      loadedWorkspaceThreadInvalidation.current = 0;
       setWorkspaceThreadPage(null);
       return;
     }
+    const threadKey = `${selectedWorkspace.id}:${workspaceThreadRootId}`;
+    workspaceThreadSelection.current = threadKey;
+    const selectionChanged = loadedWorkspaceThread.current !== threadKey;
+    const threadChanged = workspaceInvalidation !== loadedWorkspaceThreadInvalidation.current;
+    if (selectionChanged) setWorkspaceThreadPage(null);
+    if ((!selectionChanged && !threadChanged) || workspaceThreadInFlight.current) return;
+    loadedWorkspaceThread.current = threadKey;
+    loadedWorkspaceThreadInvalidation.current = workspaceInvalidation;
     void loadWorkspaceThread(false);
-  }, [workspaceThreadRootId, selectedWorkspace?.id, workspaceChannelInvalidation]);
+  }, [workspaceThreadRootId, selectedWorkspace?.id, workspaceInvalidation, workspaceThreadLoading]);
 
   const conversationItems = [
     ...contacts.map((contact) => {
@@ -6249,25 +6287,31 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceChannelIn
           <div className="incoming-call-banner" role="status">
             <QrCode size={18} />
             <span><strong>{webrtcSessionCount > 1 ? `${webrtcSessionCount} WebRTC paths connected` : "WebRTC path connected"} · {webrtcPath === "relayed" ? "Relayed" : webrtcPath === "direct" ? "Direct" : "Path pending"}</strong><small>{pending.length > 0 ? `${pending.length} contact ${pending.length === 1 ? "request" : "requests"} awaiting approval.` : "DataChannel open. Message delivery is confirmed by receipts."}</small></span>
-            {pending.length > 0 && <Button variant="secondary" onClick={() => setDismissedRequests((current) => current.filter((id) => id !== pending[0].id))}>Review request</Button>}
-            <Button variant="secondary" onClick={() => { const text = lastWebRTCDiagnostics(); if (text) void navigator.clipboard.writeText(text); }}>Diagnostics</Button>
-            <Button variant="secondary" onClick={() => { void closeWebRTCSession().finally(() => { setWebRtcSessionActive(false); setWebRtcSessionCount(0); setWebrtcPath("unknown"); setConnectEntryOpen(true); void refresh(true); }); }}>Reconnect</Button>
-            <Button variant="secondary" onClick={() => { void closeWebRTCSession().finally(() => { setWebRtcSessionActive(false); setWebRtcSessionCount(0); void refresh(true); }); }}>Disconnect</Button>
+            <div className="incoming-call-banner__actions">
+              {pending.length > 0 && <Button variant="secondary" onClick={() => setDismissedRequests((current) => current.filter((id) => id !== pending[0].id))}>Review request</Button>}
+              <Button variant="secondary" onClick={() => { const text = lastWebRTCDiagnostics(); if (text) void navigator.clipboard.writeText(text); }}>Diagnostics</Button>
+              <Button variant="secondary" onClick={() => { void closeWebRTCSession().finally(() => { setWebRtcSessionActive(false); setWebRtcSessionCount(0); setWebrtcPath("unknown"); setConnectEntryOpen(true); void refresh(true); }); }}>Reconnect</Button>
+              <Button variant="secondary" onClick={() => { void closeWebRTCSession().finally(() => { setWebRtcSessionActive(false); setWebRtcSessionCount(0); void refresh(true); }); }}>Disconnect</Button>
+            </div>
           </div>
         )}
         {incomingCall && !callContactId && (
           <div className="incoming-call-banner" role="status">
             <Phone size={18} />
             <span><strong>Incoming {incomingCall.media === "video" ? "video" : "audio"} call</strong><small>{callPeerFor(incomingCall.contact_id)?.display_name ?? "An approved contact"} is calling.</small></span>
-            <Button onClick={() => { setCallSummary(incomingCall); setCallContactId(incomingCall.contact_id); }}>Review</Button>
+            <div className="incoming-call-banner__actions">
+              <Button onClick={() => { setCallSummary(incomingCall); setCallContactId(incomingCall.contact_id); }}>Review</Button>
+            </div>
           </div>
         )}
         {contactInvitePrompt && (
           <div className="incoming-call-banner" role="status">
             <Users size={18} />
             <span><strong>Workspace invitation</strong><small>{contactInvitePrompt.contact_display_name} invited you to {contactInvitePrompt.workspace_name}. Review it before joining.</small></span>
-            <Button onClick={() => { setContactInvitePromptId(contactInvitePrompt.id); setJoinWorkspaceValue(contactInvitePrompt.invitation); setJoinWorkspaceOpen(true); setMobileSidebarOpen(true); }}>Review</Button>
-            <Button variant="secondary" onClick={() => void dismissContactInvite(contactInvitePrompt.id)}>Dismiss</Button>
+            <div className="incoming-call-banner__actions">
+              <Button onClick={() => { setContactInvitePromptId(contactInvitePrompt.id); setJoinWorkspaceValue(contactInvitePrompt.invitation); setJoinWorkspaceOpen(true); setMobileSidebarOpen(true); }}>Review</Button>
+              <Button variant="secondary" onClick={() => void dismissContactInvite(contactInvitePrompt.id)}>Dismiss</Button>
+            </div>
           </div>
         )}
         {callContactId && callContact && (
@@ -6523,7 +6567,7 @@ export default function App() {
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
   const [initialInvitation, setInitialInvitation] = useState("");
   const [initialPairingCode, setInitialPairingCode] = useState("");
-  const [workspaceChannelInvalidation, setWorkspaceChannelInvalidation] = useState<ServiceEvent | null>(null);
+  const [workspaceMessageInvalidations, setWorkspaceMessageInvalidations] = useState<WorkspaceMessageInvalidations>({});
   const [notificationTarget, setNotificationTarget] = useState<NotificationOpenTarget | null>(null);
   const [fatal, setFatal] = useState("");
   const [locked, setLocked] = useState(false);
@@ -6596,8 +6640,23 @@ export default function App() {
     void (async () => {
       try {
         keepCleanup(await onServiceEvent((event) => {
-          if (event.event === "workspace_changed" && ["message", "message_visibility", "delivery"].includes(event.resource_kind ?? "")) {
-            setWorkspaceChannelInvalidation(event);
+          if (event.event === "workspace_changed" && event.workspace_id && ["message", "message_mutation", "message_visibility", "delivery"].includes(event.resource_kind ?? "")) {
+            const workspaceId = event.workspace_id;
+            // Native mobile polls deliver several events in one React batch.
+            // Keep one revision per resource so a later unrelated event cannot
+            // replace a conversation's pending update.
+            setWorkspaceMessageInvalidations((current) => {
+              const previous = current[workspaceId] ?? { revision: 0, allConversations: 0, conversations: {} };
+              const revision = previous.revision + 1;
+              return {
+                ...current,
+                [workspaceId]: {
+                  revision,
+                  allConversations: event.conversation_id == null ? revision : previous.allConversations,
+                  conversations: event.conversation_id == null ? previous.conversations : { ...previous.conversations, [event.conversation_id]: revision },
+                },
+              };
+            });
           }
           const update = event.event === "workspace_changed"
             ? refreshWorkspace(true)
@@ -6691,5 +6750,5 @@ export default function App() {
       />
     );
   }
-  return <Messenger snapshot={snapshot} theme={theme} onThemeChange={setTheme} refresh={refresh} workspaceChannelInvalidation={workspaceChannelInvalidation} notificationTarget={notificationTarget} onNotificationHandled={() => setNotificationTarget(null)} initialInvitation={initialInvitation} initialPairingCode={initialPairingCode} onPairingHandled={() => setInitialPairingCode("")} onInvitationHandled={() => setInitialInvitation("")} onLock={async () => { await lockService(); setSnapshot(null); setLocked(true); }} />;
+  return <Messenger snapshot={snapshot} theme={theme} onThemeChange={setTheme} refresh={refresh} workspaceMessageInvalidations={workspaceMessageInvalidations} notificationTarget={notificationTarget} onNotificationHandled={() => setNotificationTarget(null)} initialInvitation={initialInvitation} initialPairingCode={initialPairingCode} onPairingHandled={() => setInitialPairingCode("")} onInvitationHandled={() => setInitialInvitation("")} onLock={async () => { await lockService(); setSnapshot(null); setLocked(true); }} />;
 }

@@ -2527,6 +2527,7 @@ def test_out_of_order_workspace_mutations_wait_for_predecessor_and_converge(
 
 def test_workspace_direct_chat_hide_reopen_restart_and_removal(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     (
         owner,
@@ -2629,20 +2630,45 @@ def test_workspace_direct_chat_hide_reopen_restart_and_removal(
         item["message"]["id"]
         for item in member.list_workspace_mentions(workspace_id)["mentions"]
     ] == [first["id"]]
-    member.set_workspace_reaction(
-        workspace_id, first["id"], "✅", True, _op(473), _op(474)
-    )
-    _deliver_all(
-        owner,
-        _flush(member, member_network),
-        source_profile=member_profile,
-        recipient_profile=owner_profile,
-    )
-    assert owner.list_workspace_messages(workspace_id, direct["id"])[
-        "messages"
-    ][0]["reactions"] == [
+    reaction_notifications: list[dict[str, Any]] = []
+    notified_reactions: list[list[dict[str, Any]]] = []
+
+    def capture_recipient_mutation(event: dict[str, Any]) -> None:
+        if event.get("resource_kind") == "message_mutation":
+            reaction_notifications.append(event)
+            # The recipient must be able to reload committed reaction state
+            # immediately when the renderer receives its invalidation event.
+            notified_reactions.append(
+                owner.list_workspace_messages(workspace_id, direct["id"])[
+                    "messages"
+                ][0]["reactions"]
+            )
+
+    with monkeypatch.context() as patch:
+        patch.setattr(owner, "emit", capture_recipient_mutation)
+        for active, event_index in ((True, 473), (False, 475)):
+            member.set_workspace_reaction(
+                workspace_id, first["id"], "✅", active,
+                _op(event_index), _op(event_index + 1),
+            )
+            _deliver_all(
+                owner,
+                _flush(member, member_network),
+                source_profile=member_profile,
+                recipient_profile=owner_profile,
+            )
+
+    assert notified_reactions == [[
         {"emoji": "✅", "count": 1, "reacted_by_self": False}
-    ]
+    ], []]
+    assert len(reaction_notifications) == 2
+    assert all(
+        event["event"] == "workspace_changed"
+        and event["workspace_id"] == workspace_id
+        and event["conversation_id"] == direct["id"]
+        for event in reaction_notifications
+    )
+    assert reaction_notifications[1]["generation"] > reaction_notifications[0]["generation"]
 
     reply = member.send_workspace_direct_message(
         workspace_id,

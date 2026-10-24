@@ -24,6 +24,32 @@ Physical execution follows the
 full physical scenario matrix for versions through 0.9.15 is in the
 [Physical QA scenarios](docs/PHYSICAL_QA_SCENARIOS.md).
 
+## Mobile chat layout and recipient reaction refresh — 0.9.32
+
+The connection banner now places its actions below the status text on phones,
+wraps within narrower desktop panes, and uses dark-theme colors. Compact workspace
+DM headers keep audio calling and More visible; video calling and People remain
+available from More. Workspace message avatars have a matching grid column, and
+message metadata and reactions can wrap without overlapping controls.
+
+Recipient reaction mutations are delivered as `workspace_changed` events with
+`resource_kind: message_mutation`. The chat renderer must invalidate its message
+and thread pages for that kind, including when another page request is pending.
+The workspace DM service regression checks reaction additions and removals,
+correct conversation routing, increasing generations, and committed reaction
+state at the moment the recipient notification is emitted.
+
+Local validation on 2026-10-24: all 332 frontend tests passed, including recipient
+reaction add/remove coverage for channels, DMs, and threads, pending reads,
+batched mobile events, and conversation switches. The four focused workspace
+service tests and seven existing layout tests passed. TypeScript and the
+production frontend build passed. A temporary browser fixture rendered the
+actual App and CSS with synthetic service state in headless Edge at 320, 360,
+393, 760, and 1280 pixels in both themes; all ten checks passed without overflow
+or page errors. Phone and tablet checks used touch input and exercised the More
+menu. These checks do not establish physical Android WebView or peer delivery
+behavior; an installed-device retest remains required.
+
 ## WebRTC packet delivery and mobile event distribution — 0.9.31
 
 The WebRTC interface now restores its packet-size limit after Reticulum's base
