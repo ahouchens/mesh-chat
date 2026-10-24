@@ -24,6 +24,81 @@ Physical execution follows the
 full physical scenario matrix for versions through 0.9.15 is in the
 [Physical QA scenarios](docs/PHYSICAL_QA_SCENARIOS.md).
 
+## WebRTC packet delivery and mobile event distribution — 0.9.31
+
+The WebRTC interface now restores its packet-size limit after Reticulum's base
+constructor and uses Reticulum's full registration path, including receive and
+announce defaults. Mobile subscribers share one queue poller that distributes
+each event to every active subscriber. The connection banner describes the open
+DataChannel without asserting that message delivery has occurred.
+
+Regression coverage:
+
+- `service/tests/test_webrtc_interface.py` exercises the real interface
+  constructor and registration, packet bounds in both directions, and cleanup.
+- `service/tests/test_webrtc_delivery.py` starts two isolated Reticulum/LXMF
+  services with all other interfaces disabled. An in-memory relay forwards the
+  actual base64 bridge events through the public packet command. The test
+  requires learned routes and ratchets, contact approval, messages in both
+  directions, receiver plaintext, application receipts, and delivered events.
+- `src/api.test.ts` exercises the real mobile subscription layer with native
+  polling mocked, including unsubscribe, pending polls, visibility changes,
+  subscriber errors, and restarting the poller.
+- `src/webrtc-mobile-events.test.ts` combines the real subscription API and
+  DataChannel bridge. A destructive native event queue must deliver packets and
+  receipt status updates regardless of which consumer subscribes first.
+
+Negative controls against disposable copies of the original code fail as
+expected: the original constructor forwards zero packets, the original
+registration prevents route learning, and the original mobile subscription API
+starts two competing polls. The fixed versions pass.
+
+Local validation on 2026-10-23:
+
+- Frontend: 302 tests passed across 24 files.
+- Service: 1,125 tests passed across the full run and targeted reruns; 46 skipped.
+  The initial run passed 1,110 tests but hit six direct-bootstrap failures with
+  paths exceeding Windows limits and nine database failures after the disk filled.
+  All 15 affected tests passed with shorter temporary paths and space recovered
+  by removing only this run's temporary files.
+- TypeScript project build and production frontend bundle passed.
+
+These checks do not validate ICE/DTLS, TURN, or an Android WebView. CI and the
+Windows–Android device retest remain required. On devices, establish the
+DataChannel, approve the contact, send a distinct message in each direction,
+and verify receiver text and sender delivery receipts. Repeat after backgrounding
+and resuming Android and after disconnecting and reconnecting the bridge. A
+connected banner alone is insufficient evidence.
+
+## WebRTC reconnect follow-up — 0.9.31
+
+The reconnect coordinator now continuously checks for lost sessions and newly
+eligible peers, shares one supervisor across retries, and gives waiting peers
+fair access to its two attempt slots. Cancellation guards every asynchronous
+stage. A closed channel or cancelled attachment cannot become a registered
+session, and delayed cleanup cannot remove a replacement session.
+
+Native handoff failures restore queued message retry work. Detaching a bridge
+retires only its Reticulum links, routes, and LXMF link caches. Signaling
+verification uses the expected personal or workspace profile, and signed
+capability ordering prevents delayed documents from reverting tokens or consent,
+including a newer capability pending contact approval.
+
+Regression coverage adds scheduler loss/recovery, fairness, cancellation and
+overlapping retries; attachment and cleanup races; real signed scope/ordering
+cases; and bidirectional plaintext plus receipts after actual bridge replacement.
+The latter extends `service/tests/test_webrtc_delivery.py` with isolated RNS/LXMF
+processes and fresh route learning after detach/reattach.
+
+Local validation on 2026-10-23: the full frontend run passed 323 tests across
+24 files. The final session-cleanup regression and affected runtime tests then
+passed (10 tests), bringing distinct passing frontend cases to 324. Focused
+Python reconnect, capability, retry, interface, workspace exchange, and real
+delivery checks passed, including the pending-capability follow-up regression.
+The TypeScript app check passed. These follow-up changes still require CI and
+physical Windows/Android reconnect validation; the earlier full service run
+above predates this follow-up.
+
 ## Manual WebRTC answer exchange recovery, 0.9.30
 
 - Keep the answerer's peer connection alive for up to 120 seconds from applying

@@ -20,6 +20,56 @@ export interface ServiceEvent {
 
 let platformPromise: Promise<"desktop" | "android" | "ios"> | null = null;
 
+const mobileEventSubscribers = new Set<(event: ServiceEvent) => void>();
+let mobileEventTimer: number | null = null;
+let mobileEventPollInFlight = false;
+
+async function pollMobileServiceEvents(): Promise<void> {
+  if (mobileEventSubscribers.size === 0 || mobileEventPollInFlight || document.visibilityState === "hidden") return;
+  mobileEventPollInFlight = true;
+  try {
+    const events = await invoke<ServiceEvent[]>("poll_mobile_events");
+    for (const event of events) {
+      for (const subscriber of [...mobileEventSubscribers]) {
+        if (!mobileEventSubscribers.has(subscriber)) continue;
+        try {
+          subscriber(event);
+        } catch (reason) {
+          // One consumer must not discard packets or receipts for the others.
+          console.error("Service event subscriber failed", reason);
+        }
+      }
+    }
+  } catch {
+    // Initialization and lock transitions can briefly leave no service.
+  } finally {
+    mobileEventPollInFlight = false;
+  }
+}
+
+function mobileEventsVisibilityChanged(): void {
+  if (document.visibilityState === "visible") void pollMobileServiceEvents();
+}
+
+function subscribeMobileServiceEvents(callback: (event: ServiceEvent) => void): UnlistenFn {
+  // Each subscription has its own identity, even if callbacks are reused.
+  const subscriber = (event: ServiceEvent) => callback(event);
+  mobileEventSubscribers.add(subscriber);
+  if (mobileEventTimer === null) {
+    mobileEventTimer = window.setInterval(() => void pollMobileServiceEvents(), 750);
+    document.addEventListener("visibilitychange", mobileEventsVisibilityChanged);
+  }
+  return () => {
+    mobileEventSubscribers.delete(subscriber);
+    if (mobileEventSubscribers.size !== 0) return;
+    if (mobileEventTimer !== null) window.clearInterval(mobileEventTimer);
+    mobileEventTimer = null;
+    document.removeEventListener("visibilitychange", mobileEventsVisibilityChanged);
+    // Leave the in-flight guard set until its native request finishes, so a
+    // replacement subscriber cannot start a competing drain of the same queue.
+  };
+}
+
 export class ServiceCommandError extends Error {
   code: string;
   details?: Record<string, string>;
@@ -138,27 +188,12 @@ export function onServiceEvent(callback: (event: ServiceEvent) => void): Promise
     runtimePlatform(),
   ]).then(([unlisten, platform]) => {
     if (platform === "desktop") return unlisten;
+    const stopMobileEvents = subscribeMobileServiceEvents(callback);
     let active = true;
-    let polling = false;
-    const poll = async () => {
-      if (!active || polling || document.visibilityState === "hidden") return;
-      polling = true;
-      try {
-        const events = await invoke<ServiceEvent[]>("poll_mobile_events");
-        events.forEach(callback);
-      } catch {
-        // Initialization and lock transitions can briefly leave no service.
-      } finally {
-        polling = false;
-      }
-    };
-    const timer = window.setInterval(() => void poll(), 750);
-    const visibility = () => { if (document.visibilityState === "visible") void poll(); };
-    document.addEventListener("visibilitychange", visibility);
     return () => {
+      if (!active) return;
       active = false;
-      window.clearInterval(timer);
-      document.removeEventListener("visibilitychange", visibility);
+      stopMobileEvents();
       unlisten();
     };
   });

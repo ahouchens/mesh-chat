@@ -6248,7 +6248,7 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceChannelIn
         {webrtcSessionActive && (
           <div className="incoming-call-banner" role="status">
             <QrCode size={18} />
-            <span><strong>{webrtcSessionCount > 1 ? `${webrtcSessionCount} WebRTC paths connected` : "WebRTC path connected"} · {webrtcPath === "relayed" ? "Relayed" : webrtcPath === "direct" ? "Direct" : "Path pending"}</strong><small>{pending.length > 0 ? `${pending.length} contact ${pending.length === 1 ? "request" : "requests"} awaiting approval.` : "Reticulum packets are using the DataChannel."}</small></span>
+            <span><strong>{webrtcSessionCount > 1 ? `${webrtcSessionCount} WebRTC paths connected` : "WebRTC path connected"} · {webrtcPath === "relayed" ? "Relayed" : webrtcPath === "direct" ? "Direct" : "Path pending"}</strong><small>{pending.length > 0 ? `${pending.length} contact ${pending.length === 1 ? "request" : "requests"} awaiting approval.` : "DataChannel open. Message delivery is confirmed by receipts."}</small></span>
             {pending.length > 0 && <Button variant="secondary" onClick={() => setDismissedRequests((current) => current.filter((id) => id !== pending[0].id))}>Review request</Button>}
             <Button variant="secondary" onClick={() => { const text = lastWebRTCDiagnostics(); if (text) void navigator.clipboard.writeText(text); }}>Diagnostics</Button>
             <Button variant="secondary" onClick={() => { void closeWebRTCSession().finally(() => { setWebRtcSessionActive(false); setWebRtcSessionCount(0); setWebrtcPath("unknown"); setConnectEntryOpen(true); void refresh(true); }); }}>Reconnect</Button>

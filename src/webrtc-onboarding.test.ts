@@ -38,11 +38,90 @@ function fakeChannel() {
   };
 }
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((complete) => { resolve = complete; });
+  return { promise, resolve };
+}
+
+function closeChannel(channel: RTCDataChannel) {
+  Object.defineProperty(channel, "readyState", { value: "closed", configurable: true });
+  channel.onclose?.call(channel, new Event("close"));
+}
+
 afterEach(() => {
   vi.clearAllMocks();
 });
 
 describe("WebRTC DataChannel pump", () => {
+  it("rejects and detaches when the channel closes during native attachment", async () => {
+    const native = deferred<{ bridge_id: string; max_packet: number; state: string }>();
+    serviceCommand.mockImplementation(async (command: string) =>
+      command === "webrtc_attach" ? native.promise : { state: "closed" });
+    const channel = fakeChannel();
+    const onClosed = vi.fn();
+    const attaching = attachWebRTCBridge(channel, { onClosed });
+    const rejected = expect(attaching).rejects.toThrow(/closed/);
+    await vi.waitFor(() => expect(serviceCommand).toHaveBeenCalledWith("webrtc_attach"));
+    closeChannel(channel);
+    native.resolve({ bridge_id: "closed-native", max_packet: 1064, state: "online" });
+    await rejected;
+
+    expect(serviceCommand.mock.calls.filter(([command]) => command === "webrtc_detach")).toEqual([
+      ["webrtc_detach", { bridge_id: "closed-native" }],
+    ]);
+    expect(onClosed.mock.calls).toEqual([["closed-native"]]);
+    expect(onServiceEvent).not.toHaveBeenCalled();
+  });
+
+  it("releases a subscription that finishes after the channel has closed", async () => {
+    const subscription = deferred<() => void>();
+    const unlisten = vi.fn();
+    onServiceEvent.mockReturnValueOnce(subscription.promise);
+    serviceCommand.mockImplementation(async (command: string) =>
+      command === "webrtc_attach" ? { bridge_id: "closed-listener", max_packet: 1064, state: "online" } : {});
+    const channel = fakeChannel();
+    const onClosed = vi.fn();
+    const attaching = attachWebRTCBridge(channel, { onClosed });
+    const rejected = expect(attaching).rejects.toThrow(/closed/);
+    await vi.waitFor(() => expect(onServiceEvent).toHaveBeenCalled());
+    closeChannel(channel);
+    subscription.resolve(unlisten);
+    await rejected;
+
+    expect(unlisten).toHaveBeenCalledTimes(1);
+    expect(onClosed).toHaveBeenCalledTimes(1);
+    expect(serviceCommand.mock.calls.filter(([command]) => command === "webrtc_detach")).toHaveLength(1);
+    expect(channel.onmessage).toBeNull();
+  });
+
+  it("detaches the native interface if subscribing fails", async () => {
+    onServiceEvent.mockRejectedValueOnce(new Error("listener unavailable"));
+    serviceCommand.mockImplementation(async (command: string) =>
+      command === "webrtc_attach" ? { bridge_id: "failed-listener", max_packet: 1064, state: "online" } : {});
+    const channel = fakeChannel();
+    await expect(attachWebRTCBridge(channel)).rejects.toThrow("listener unavailable");
+    expect(channel.close).toHaveBeenCalledTimes(1);
+    expect(serviceCommand).toHaveBeenCalledWith("webrtc_detach", { bridge_id: "failed-listener" });
+  });
+
+  it("releases a subscription if the reconnect attempt is cancelled before it completes", async () => {
+    const subscription = deferred<() => void>();
+    const unlisten = vi.fn();
+    let current = true;
+    onServiceEvent.mockReturnValueOnce(subscription.promise);
+    serviceCommand.mockImplementation(async (command: string) =>
+      command === "webrtc_attach" ? { bridge_id: "cancelled", max_packet: 1064, state: "online" } : {});
+    const attaching = attachWebRTCBridge(fakeChannel(), { isCurrent: () => current });
+    const rejected = expect(attaching).rejects.toThrow(/closed/);
+    await vi.waitFor(() => expect(onServiceEvent).toHaveBeenCalled());
+    current = false;
+    subscription.resolve(unlisten);
+    await rejected;
+    expect(unlisten).toHaveBeenCalledTimes(1);
+    expect(serviceCommand).toHaveBeenCalledWith("webrtc_detach", { bridge_id: "cancelled" });
+  });
+
   it("round-trips base64 without corrupting bytes", () => {
     const bytes = new Uint8Array([0, 1, 2, 127, 128, 255]).buffer;
     expect(new Uint8Array(base64ToBytes(bytesToBase64(bytes)))).toEqual(

@@ -450,6 +450,7 @@ class ReconnectServiceMixin:
     def _workspace_reconnect_contact_by_destination(
         self, destination: str
     ) -> dict[str, Any] | None:
+        match = None
         for workspace in self.store.list("workspace"):
             if workspace.get("state") != "active":
                 continue
@@ -463,20 +464,24 @@ class ReconnectServiceMixin:
                 for device in member.devices:
                     if device.destination_hash.hex() == destination:
                         try:
-                            return self._workspace_reconnect_contact(
+                            contact = self._workspace_reconnect_contact(
                                 f"workspace:{workspace['id']}:{member.member_id}:{device.device_id}"
                             )
                         except Exception:
-                            return None
-        return None
+                            continue
+                        if match is not None:
+                            raise IdentityMismatch("Reconnect profile is required for this peer")
+                        match = contact
+        return match
 
     def _reconnect_contact_by_destination(
         self, destination: str
     ) -> dict[str, Any] | None:
         contact = self._contact_by_destination(destination)
-        if contact is not None:
-            return contact
-        return self._workspace_reconnect_contact_by_destination(destination)
+        workspace_contact = self._workspace_reconnect_contact_by_destination(destination)
+        if contact is not None and workspace_contact is not None:
+            raise IdentityMismatch("Reconnect profile is required for this peer")
+        return contact or workspace_contact
 
     def reconnect_consent_set(
         self,
@@ -559,7 +564,10 @@ class ReconnectServiceMixin:
             or profile.get("mailbox_url") != mailbox_url
         ):
             token = secrets.token_urlsafe(32) if mailbox_url else None
-        now = _now()
+        # Capabilities can be rotated more than once within one second. Keep
+        # their signed issue times ordered so a delayed document cannot undo
+        # a newer token or consent change, including after a restart.
+        now = max(_now(), int(profile.get("local_capabilities_issued_at") or 0) + 1)
         expires_at = now + MAX_CAPABILITY_SECONDS
         mailbox_expires_at = (
             min(expires_at - 60, now + 30 * 24 * 60 * 60) if mailbox_url else None
@@ -620,6 +628,10 @@ class ReconnectServiceMixin:
         verified = verify_connection_capabilities(
             document, expected_signer=contact["destination_hash"]
         )
+        # A capability can arrive before the LXMF contact request. Once that
+        # request creates a contact, preserve the pending document's ordering
+        # before a delayed older capability can replace and delete it.
+        self._reconnect_promote_pending(verified.signer_destination)
         profile = self._store_remote_capabilities(contact, verified)
         self.store.delete(PENDING_KIND, verified.signer_destination)
         self._changed()
@@ -635,6 +647,16 @@ class ReconnectServiceMixin:
             if int(record.get("expires_at") or 0) <= now:
                 self.store.delete(PENDING_KIND, record_id)
         existing = self.store.get(PENDING_KIND, verified.signer_destination)
+        if existing is not None:
+            issued_at = existing.get("issued_at")
+            if issued_at is None:
+                # Pending records written by older clients lack this index.
+                try:
+                    issued_at = verify_connection_capabilities(existing["document"]).issued_at
+                except Exception:
+                    issued_at = 0
+            if verified.issued_at <= int(issued_at):
+                return True
         if existing is None and len(self.store.items(PENDING_KIND)) >= MAX_PENDING_CAPABILITIES:
             raise ValidationError("Too many pending reconnect capabilities")
         self.store.put(
@@ -645,6 +667,7 @@ class ReconnectServiceMixin:
                 "signer_destination": verified.signer_destination,
                 "device_id": verified.device_id,
                 "document": document,
+                "issued_at": verified.issued_at,
                 "expires_at": verified.expires_at,
                 "received_at": now,
             },
@@ -652,10 +675,21 @@ class ReconnectServiceMixin:
         return True
 
     def _store_remote_capabilities(self, contact, verified) -> dict[str, Any]:
-        now = _now()
         profile = self._reconnect_profile_for_contact(
             contact["id"], verified.device_id
         )
+        if self._reconnect_apply_remote_capabilities(profile, verified):
+            self.store.put(PROFILE_KIND, profile["id"], profile)
+        return profile
+
+    def _reconnect_apply_remote_capabilities(self, profile, verified) -> bool:
+        if profile.get("remote_capabilities") and verified.issued_at <= int(
+            profile.get("remote_capabilities_issued_at") or 0
+        ):
+            # Identical documents are idempotent. Conflicting documents with
+            # an equal timestamp cannot establish which consent is newer.
+            return False
+        now = _now()
         # A peer never changes local consent. Only its own declared consent and
         # rendezvous details are recorded, and only after signature checks.
         profile["remote_device_id"] = verified.device_id
@@ -675,8 +709,7 @@ class ReconnectServiceMixin:
         ):
             profile["reciprocal_since"] = now
         profile["updated_at"] = now
-        self.store.put(PROFILE_KIND, profile["id"], profile)
-        return profile
+        return True
 
     def _reconnect_promote_pending(self, destination: str) -> bool:
         pending = self.store.get(PENDING_KIND, destination)
@@ -876,12 +909,18 @@ class ReconnectServiceMixin:
         return profile
 
     def _reconnect_authorize(
-        self, signer_destination: str, to_destination: str
+        self, signer_destination: str, to_destination: str, *, profile_id: Any = None
     ) -> dict[str, Any]:
         local = self._require_profile()
         if to_destination != local["destination_hash"]:
             raise IdentityMismatch("Reconnect document is for another device")
-        contact = self._reconnect_contact_by_destination(signer_destination)
+        if profile_id is not None:
+            profile = self._reconnect_profile(profile_id)
+            contact = self._reconnect_contact(profile["contact_id"])
+            if contact["destination_hash"] != signer_destination:
+                raise IdentityMismatch("Reconnect document is from another peer")
+        else:
+            contact = self._reconnect_contact_by_destination(signer_destination)
         if contact is None:
             raise ContactNotApproved(
                 "Reconnect document is not from a known contact"
@@ -931,7 +970,9 @@ class ReconnectServiceMixin:
         contact = self._reconnect_contact(contact_id)
         profile = self._reconnect_require_consent(contact)
         request = self._verify_reconnect_request_document(request_document)
-        self._reconnect_authorize(request.signer_destination, request.to_destination)
+        self._reconnect_authorize(
+            request.signer_destination, request.to_destination, profile_id=profile["id"]
+        )
         if request.signer_destination != contact["destination_hash"]:
             raise IdentityMismatch("Reconnect request is from another contact")
         document = create_reconnect_offer(
@@ -966,7 +1007,9 @@ class ReconnectServiceMixin:
         contact = self._reconnect_contact(contact_id)
         profile = self._reconnect_require_consent(contact)
         offer = self._verify_reconnect_offer_document(offer_document)
-        self._reconnect_authorize(offer.signer_destination, offer.to_destination)
+        self._reconnect_authorize(
+            offer.signer_destination, offer.to_destination, profile_id=profile["id"]
+        )
         if offer.signer_destination != contact["destination_hash"]:
             raise IdentityMismatch("Reconnect offer is from another contact")
         document = create_reconnect_answer(
@@ -988,12 +1031,16 @@ class ReconnectServiceMixin:
             "profile": self._reconnect_profile_public(profile),
         }
 
-    def verify_reconnect_request(self, document: Any) -> dict[str, Any]:
+    def verify_reconnect_request(self, document: Any, profile_id: Any = None) -> dict[str, Any]:
         request = self._verify_reconnect_request_document(document)
         contact = self._reconnect_authorize(
-            request.signer_destination, request.to_destination
+            request.signer_destination, request.to_destination, profile_id=profile_id
         )
-        profile = self._reconnect_profile_for_contact(contact["id"])
+        profile = (
+            self._reconnect_profile(profile_id)
+            if profile_id is not None
+            else self._reconnect_profile_for_contact(contact["id"])
+        )
         return {
             "attempt_id": request.attempt_id,
             "from_destination": request.from_destination,
@@ -1004,12 +1051,16 @@ class ReconnectServiceMixin:
             "profile_id": profile["id"],
         }
 
-    def verify_reconnect_offer(self, document: Any) -> dict[str, Any]:
+    def verify_reconnect_offer(self, document: Any, profile_id: Any = None) -> dict[str, Any]:
         offer = self._verify_reconnect_offer_document(document)
         contact = self._reconnect_authorize(
-            offer.signer_destination, offer.to_destination
+            offer.signer_destination, offer.to_destination, profile_id=profile_id
         )
-        profile = self._reconnect_profile_for_contact(contact["id"])
+        profile = (
+            self._reconnect_profile(profile_id)
+            if profile_id is not None
+            else self._reconnect_profile_for_contact(contact["id"])
+        )
         return {
             "attempt_id": offer.attempt_id,
             "session_id": offer.session_id,
@@ -1023,7 +1074,7 @@ class ReconnectServiceMixin:
         }
 
     def verify_reconnect_answer(
-        self, document: Any, offer_document: Any
+        self, document: Any, offer_document: Any, profile_id: Any = None
     ) -> dict[str, Any]:
         offer = self._verify_reconnect_offer_document(offer_document)
         local = self._require_profile()
@@ -1031,19 +1082,14 @@ class ReconnectServiceMixin:
         # offer must target the peer whose answer is being verified.
         if offer.from_destination != local["destination_hash"]:
             raise IdentityMismatch("Reconnect offer was not created by this device")
-        contact = self._reconnect_contact_by_destination(offer.to_destination)
-        if contact is None or (
-            contact.get("trust") not in CONNECTED_TRUST
-            and contact.get("trust") != "workspace"
-        ):
-            raise ContactNotApproved(
-                "Reconnect offer is not addressed to an approved contact"
-            )
+        contact = self._reconnect_authorize(
+            offer.to_destination, local["destination_hash"], profile_id=profile_id
+        )
         if not isinstance(document, str):
             raise ValidationError("Reconnect answer must be text")
         answer = verify_reconnect_answer(document, offer)
         self._reconnect_authorize(
-            answer.signer_destination, answer.to_destination
+            answer.signer_destination, answer.to_destination, profile_id=profile_id
         )
         if answer.signer_destination != contact["destination_hash"]:
             raise IdentityMismatch("Reconnect answer is from another contact")
@@ -1052,7 +1098,11 @@ class ReconnectServiceMixin:
             key, max(60, min(MAX_REPLAY_TTL, offer.expires_at - _now()))
         ):
             raise ReconnectReplayed("Reconnect answer was already accepted")
-        profile = self._reconnect_profile_for_contact(contact["id"])
+        profile = (
+            self._reconnect_profile(profile_id)
+            if profile_id is not None
+            else self._reconnect_profile_for_contact(contact["id"])
+        )
         profile["state"] = "connecting"
         profile["updated_at"] = _now()
         self.store.put(PROFILE_KIND, profile["id"], profile)

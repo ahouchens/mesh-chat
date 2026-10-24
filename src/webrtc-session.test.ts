@@ -66,6 +66,28 @@ describe("WebRTC session registry", () => {
     expect(getWebRTCSession()?.key).toBe("peer-b");
   });
 
+  it("preserves a replacement registered while another session is detaching", async () => {
+    const a = session("peer-a", 1);
+    const previous = session("peer-b", 2);
+    const replacement = session("peer-b", 3);
+    replacement.bridge = { ...replacement.bridge, bridgeId: "replacement-b" };
+    let finishDetach!: () => void;
+    a.bridge.close = vi.fn(() => new Promise<void>((resolve) => { finishDetach = resolve; }));
+    setWebRTCSession(a);
+    setWebRTCSession(previous);
+    const closing = closeWebRTCSession();
+    setWebRTCSession(replacement);
+    finishDetach();
+    await closing;
+
+    expect(getWebRTCSessionByKey("peer-b")).toBe(replacement);
+    expect(getWebRTCSession()).toBe(replacement);
+    expect(previous.bridge.close).toHaveBeenCalledTimes(1);
+    expect(previous.pc.close).toHaveBeenCalledTimes(1);
+    expect(replacement.bridge.close).not.toHaveBeenCalled();
+    expect(replacement.pc.close).not.toHaveBeenCalled();
+  });
+
   it("closes all transports on a global disconnect even if one bridge close fails", async () => {
     const a = session("peer-a", 1);
     const b = session("peer-b", 2);

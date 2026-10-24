@@ -3,6 +3,9 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+import pytest
+
+from mesh_chat.errors import NetworkUnavailable, RecipientKeysUnavailable
 from mesh_chat.models import DeliveryState, Message, MessageKind
 from mesh_chat.service import MeshChatService
 from mesh_chat.vault import VaultStore
@@ -92,3 +95,57 @@ def test_group_queue_does_not_scan_history_and_waits_for_a_missing_commit(tmp_pa
     finally:
         service.network = None
         service.close()
+
+
+@pytest.mark.parametrize("error, expected", [
+    (OSError("native handoff failed"), "queued"),
+    (NetworkUnavailable("native handoff failed"), "queued"),
+    (RecipientKeysUnavailable("ratchet unavailable"), "waiting_for_keys"),
+])
+def test_failed_handoff_after_sending_rejoins_retry_queue(tmp_path, error, expected) -> None:
+    from test_two_peer_service_flow import _approved_pair
+
+    hub, receiver, _, _, sender, network, contact = _approved_pair(tmp_path)
+    original_send = network.send
+
+    def failed_handoff(**values):
+        sender._on_native_status(values["logical_id"], DeliveryState.SENDING, "failed-native")
+        raise error
+
+    try:
+        network.send = failed_handoff
+        sent = sender.send_message(contact["id"], "Retry after a failed native handoff")
+        assert sent["state"] == expected
+        assert sent["id"] in sender._direct_retry_snapshot()
+        network.send = original_send
+        sender._retry_once()
+        hub.drain()
+        assert sender.store.get("message", sent["id"])["state"] == "delivered"
+        assert sent["id"] not in sender._direct_retry_snapshot()
+        assert receiver.snapshot()["messages"][0]["text"] == sent["text"]
+    finally:
+        receiver.close()
+        sender.close()
+
+
+@pytest.mark.parametrize("state", [
+    DeliveryState.RECEIVED_BY_ENDPOINT, DeliveryState.STORED_FOR_DELIVERY,
+    DeliveryState.DELIVERED,
+])
+def test_failed_handoff_preserves_stronger_delivery_evidence(tmp_path, state) -> None:
+    from test_two_peer_service_flow import _approved_pair
+
+    _, receiver, _, _, sender, network, contact = _approved_pair(tmp_path)
+
+    def callback_then_raise(**values):
+        sender._on_native_status(values["logical_id"], state, "accepted-native")
+        raise OSError("handoff unwound after delivery evidence")
+
+    try:
+        network.send = callback_then_raise
+        sent = sender.send_message(contact["id"], "Already accepted")
+        assert sent["state"] == state.value
+        assert sent["id"] not in sender._direct_retry_snapshot()
+    finally:
+        receiver.close()
+        sender.close()

@@ -10,7 +10,15 @@ import {
 import type { WebRTCSessionPath } from "./webrtc-session";
 import { attachWebRTCBridge } from "./webrtc-onboarding";
 import { ReconnectPeer, fingerprint } from "./webrtc-peer";
-import { setWebRTCSession, getWebRTCSessionByKey, closeWebRTCSession, removeWebRTCSession } from "./webrtc-session";
+import { setWebRTCSession, getWebRTCSessions, closeWebRTCSession, removeWebRTCSession } from "./webrtc-session";
+
+function hasLiveSession(profileId: string, contactId: string): boolean {
+  return getWebRTCSessions().some((session) =>
+    (session.key === profileId || session.contactId === contactId) &&
+    session.channel.readyState === "open" &&
+    session.pc.connectionState !== "closed" && session.pc.connectionState !== "failed",
+  );
+}
 
 export interface ReconnectRuntimeOptions {
   refresh: () => Promise<void>;
@@ -56,14 +64,15 @@ export function createReconnectDeps(
         sdp,
         dtls_fingerprint: dtlsFingerprint,
       }),
-    verifyRequest: (document) =>
-      serviceCommand("verify_reconnect_request", { document }),
-    verifyOffer: (document) =>
-      serviceCommand("verify_reconnect_offer", { document }),
-    verifyAnswer: (document, offerDocument) =>
+    verifyRequest: (document, profileId) =>
+      serviceCommand("verify_reconnect_request", { document, profile_id: profileId }),
+    verifyOffer: (document, profileId) =>
+      serviceCommand("verify_reconnect_offer", { document, profile_id: profileId }),
+    verifyAnswer: (document, offerDocument, profileId) =>
       serviceCommand("verify_reconnect_answer", {
         document,
         offer_document: offerDocument,
+        profile_id: profileId,
       }),
     publish: (profileId, document, role) =>
       serviceCommand("reconnect_publish", {
@@ -94,38 +103,60 @@ export function createReconnectDeps(
       return configuration;
     },
     createPeer: (ice, role) => ReconnectPeer.create(ice, role),
-    attach: async (peer: CoordinatorPeer, profile: ReconnectProfile) => {
+    attach: async (peer: CoordinatorPeer, profile: ReconnectProfile, isCurrent = () => true) => {
       const concrete = peer as ReconnectPeer;
-      const channel = await concrete.open();
-      const bridge = await attachWebRTCBridge(channel, {
-        onClosed: () => removeWebRTCSession(profile.id),
-      });
-      const path = await concrete.path();
-      setWebRTCSession({
-        key: profile.id,
-        bridge,
-        channel,
-        pc: concrete.pc,
-        // Reconnect never carries an onboarding control channel and never
-        // sets a pending contact approval.
-        control: null,
-        path,
-        createdAt: Date.now(),
-        approvalPending: false,
-        contactId: profile.contact_id,
-      });
-      options.onSession?.(path);
-      void profile;
+      let bridge: Awaited<ReturnType<typeof attachWebRTCBridge>> | null = null;
+      const check = (channel?: RTCDataChannel) => {
+        if (!isCurrent() || (channel && channel.readyState !== "open") ||
+            hasLiveSession(profile.id, profile.contact_id)) {
+          throw new Error("Reconnect attachment was cancelled or superseded.");
+        }
+      };
       try {
-        await options.refresh();
-      } catch {
-        // The connection is already usable; a failed snapshot refresh is not
-        // a transport failure and must not mutate trust state.
+        check();
+        const channel = await concrete.open();
+        check(channel);
+        bridge = await attachWebRTCBridge(channel, {
+          isCurrent,
+          onClosed: (bridgeId) => removeWebRTCSession(profile.id, bridgeId),
+        });
+        check(channel);
+        const path = await concrete.path();
+        check(channel);
+        setWebRTCSession({
+          key: profile.id,
+          bridge,
+          channel,
+          pc: concrete.pc,
+          // Reconnect never carries an onboarding control channel and never
+          // sets a pending contact approval.
+          control: null,
+          path,
+          createdAt: Date.now(),
+          approvalPending: false,
+          contactId: profile.contact_id,
+        });
+        options.onSession?.(path);
+        try {
+          await options.refresh();
+        } catch {
+          // A failed snapshot refresh is not a transport failure.
+        }
+        if (!isCurrent() || channel.readyState !== "open") {
+          throw new Error("Reconnect attachment was cancelled or closed.");
+        }
+      } catch (reason) {
+        try { await bridge?.close(); }
+        finally {
+          if (bridge) removeWebRTCSession(profile.id, bridge.bridgeId);
+          concrete.pc.close();
+        }
+        throw reason;
       }
     },
     pathStatus: (contactId) =>
       serviceCommand("reconnect_path_status", { contact_id: contactId }),
-    hasSession: (profileId) => getWebRTCSessionByKey(profileId) !== null,
+    hasSession: hasLiveSession,
     closeSession: (profileId) => closeWebRTCSession(profileId),
     fingerprint,
   };

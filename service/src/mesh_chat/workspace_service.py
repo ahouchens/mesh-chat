@@ -20069,30 +20069,14 @@ class WorkspaceServiceMixin:
         profile = self._reconnect_profile_for_contact(
             peer_id, capability.device_id
         )
+        if not self._reconnect_apply_remote_capabilities(profile, capability):
+            return
         profile["scope_kind"] = "workspace"
         profile["workspace_id"] = workspace["id"]
         profile["workspace_name"] = workspace["name"]
         profile["peer_member_id"] = member.member_id
         profile["peer_display_name"] = member.display_name
         profile["peer_destination"] = device.destination_hash.hex()
-        profile["remote_device_id"] = capability.device_id
-        profile["remote_auto_reconnect"] = capability.auto_reconnect
-        profile["remote_allow_direct_ip_disclosure"] = (
-            capability.allow_direct_ip_disclosure
-        )
-        profile["remote_capabilities"] = capability.serialized
-        profile["remote_capabilities_expires_at"] = capability.expires_at
-        profile["remote_capabilities_issued_at"] = capability.issued_at
-        profile["remote_transports"] = list(capability.transports)
-        profile["remote_mailbox_url"] = capability.mailbox_url
-        profile["remote_mailbox_pair_token"] = capability.mailbox_pair_token
-        profile["remote_mailbox_expires_at"] = capability.mailbox_expires_at or 0
-        if (
-            int(profile.get("reciprocal_since") or 0) == 0
-            and profile.get("auto_reconnect")
-            and capability.auto_reconnect
-        ):
-            profile["reciprocal_since"] = time.time()
         profile["updated_at"] = time.time()
         self.store.put("reconnect_profile", profile["id"], profile)
         self._workspace_changed(

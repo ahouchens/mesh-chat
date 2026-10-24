@@ -89,6 +89,8 @@ interface Harness {
   peers: Array<ReturnType<typeof fakePeer>>;
   attached: number;
   clock: { value: number };
+  sessions: Set<string>;
+  deps: ReconnectCoordinatorDeps;
 }
 
 function harness(options: {
@@ -101,6 +103,7 @@ function harness(options: {
   pathStatus?: () => Promise<{ has_path: boolean; state: string; reason: string | null }>;
   hasSession?: (profileId?: string, contactId?: string) => boolean;
   failFirstOpen?: boolean;
+  overrides?: Partial<ReconnectCoordinatorDeps>;
 }): Harness {
   const mailbox = options.mailbox ?? new Map<string, string>();
   const published: Harness["published"] = [];
@@ -108,7 +111,7 @@ function harness(options: {
   const peers: Array<ReturnType<typeof fakePeer>> = [];
   const clock = { value: 1_800_000_000_000 };
   let attached = 0;
-  let sleepCount = 0;
+  const sessions = new Set<string>();
 
   const deps: ReconnectCoordinatorDeps = {
     profiles: async () => ({
@@ -173,25 +176,23 @@ function harness(options: {
       peers.push(peer);
       return peer as CoordinatorPeer;
     },
-    attach: async () => {
+    attach: async (_peer, profile) => {
       attached += 1;
+      sessions.add(profile.id);
     },
     pathStatus: options.pathStatus,
-    hasSession: options.hasSession,
+    hasSession: (profileId, contactId) => sessions.has(profileId) || Boolean(options.hasSession?.(profileId, contactId)),
+    closeSession: async (profileId) => { sessions.delete(profileId); },
     now: () => clock.value,
     random: () => 0.5,
     sleep: async (ms: number) => {
+      // The supervisor persists after success. Always yield to real timers,
+      // even when another attempt wakes it before its scheduled refresh.
+      await new Promise((resolve) => setTimeout(resolve, 0));
       clock.value += ms;
-      sleepCount += 1;
-      // Yield to the macrotask queue occasionally so two coordinators sharing
-      // a fake clock cannot starve each other's polling loops.
-      if (sleepCount % 32 === 0) {
-        await new Promise((resolve) => setTimeout(resolve, 0));
-      } else {
-        await Promise.resolve();
-      }
     },
     fingerprint: () => "sha-256 " + "AB:".repeat(31) + "AB",
+    ...options.overrides,
   };
   const coordinator = new ReconnectCoordinator(deps);
   coordinators.push(coordinator);
@@ -205,6 +206,8 @@ function harness(options: {
       return attached;
     },
     clock,
+    sessions,
+    deps,
   };
 }
 
@@ -469,7 +472,196 @@ describe("automatic reconnect coordinator", () => {
     expect(live.peers).toHaveLength(0);
   });
 
-  it("does not exceed the concurrent attempt cap", () => {
-    expect(MAX_CONCURRENT).toBe(2);
+});
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((complete) => { resolve = complete; });
+  return { promise, resolve };
+}
+
+function supervised(profiles: ReconnectProfile[], overrides: Partial<ReconnectCoordinatorDeps> = {}) {
+  vi.useFakeTimers();
+  vi.setSystemTime(1_800_000_000_000);
+  const mailbox = new Map<string, string>();
+  return harness({
+    profiles,
+    mailbox,
+    onPublish: (id, role, document) => {
+      if (role === "request") mailbox.set(id + "/offer", document);
+    },
+    overrides: {
+      now: () => Date.now(),
+      sleep: (ms) => new Promise((resolve) => window.setTimeout(resolve, ms)),
+      ...overrides,
+    },
+  });
+}
+
+describe("persistent reconnect supervision", () => {
+  it("keeps a healthy session and reconnects after it closes without another user action", async () => {
+    const probe = supervised([profile()]);
+    await probe.coordinator.start();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(probe.attached).toBe(1);
+    await vi.advanceTimersByTimeAsync(3_000);
+    expect(probe.attached).toBe(1);
+
+    probe.sessions.delete("profile-1");
+    await vi.advanceTimersByTimeAsync(1_000);
+
+    expect(probe.attached).toBe(2);
+    expect(probe.coordinator.snapshot().entries["profile-1"].state).toBe("connected");
+    const requests = probe.published.filter((event) => event.role === "request");
+    expect(requests).toHaveLength(2);
+    expect(requests[0].document).not.toBe(requests[1].document);
+  });
+
+  it("discovers new profiles and later peer consent while the app stays open", async () => {
+    const profiles: ReconnectProfile[] = [];
+    const probe = supervised(profiles);
+    await probe.coordinator.start();
+    await vi.advanceTimersByTimeAsync(0);
+    profiles.push(profile({ peer_auto_reconnect: false }));
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(probe.attached).toBe(0);
+
+    profiles[0] = profile();
+    profiles.push(profile({ id: "profile-2", contact_id: "contact-2" }));
+    await vi.advanceTimersByTimeAsync(1_000);
+
+    expect(probe.sessions).toEqual(new Set(["profile-1", "profile-2"]));
+    expect(probe.attached).toBe(2);
+  });
+
+  it("serves a third reachable peer when the first two preferred peers are offline", async () => {
+    const passive = { ...profile().effective, preferred: false };
+    const profiles = [1, 2, 3].map((id) => profile({ id: "profile-" + id, contact_id: "contact-" + id, effective: passive }));
+    const probe = supervised(profiles, {
+      verifyRequest: async () => ({ contact_id: "contact-3", attempt_id: "third" }),
+    });
+    probe.mailbox.set("profile-3/request", JSON.stringify({ attempt_id: "third" }));
+    probe.mailbox.set("profile-3/answer", JSON.stringify({ attempt_id: "third" }));
+    const fetch = vi.spyOn(probe.deps, "fetch");
+    await probe.coordinator.start();
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(probe.sessions).toEqual(new Set(["profile-3"]));
+    expect(new Set(fetch.mock.calls.map(([id]) => id))).toEqual(new Set(profiles.map((item) => item.id)));
+    expect(probe.coordinator.snapshot().entries["profile-1"].state).toBe("waiting_for_peer");
+    expect(probe.coordinator.snapshot().entries["profile-2"].state).toBe("waiting_for_peer");
+  });
+
+  it.each(["ice", "createAnswer", "answerCreate", "open", "attach"] as const)("honors per-contact stop during %s", async (phase) => {
+    const probe = supervised([profile()]);
+    const gate = deferred<void>();
+    const reached = vi.fn();
+    if (phase === "ice") {
+      const original = probe.deps.ice;
+      probe.deps.ice = async (item) => { reached(); await gate.promise; return original(item); };
+    } else if (phase === "answerCreate") {
+      const original = probe.deps.answerCreate;
+      probe.deps.answerCreate = async (...args) => { reached(); await gate.promise; return original(...args); };
+    } else if (phase === "attach") {
+      const original = probe.deps.attach;
+      probe.deps.attach = async (peer, item, isCurrent) => {
+        reached();
+        await gate.promise;
+        if (!isCurrent?.()) throw new Error("cancelled_attach");
+        return original(peer, item, isCurrent);
+      };
+    } else {
+      const original = probe.deps.createPeer;
+      probe.deps.createPeer = (ice, role) => {
+        const peer = original(ice, role);
+        if (phase === "createAnswer") {
+          const createAnswer = peer.createAnswer;
+          peer.createAnswer = async (offer) => { reached(); await gate.promise; return createAnswer(offer); };
+        } else {
+          const open = peer.open;
+          peer.open = async () => { reached(); await gate.promise; return open(); };
+        }
+        return peer;
+      };
+    }
+    await probe.coordinator.start();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(reached).toHaveBeenCalledTimes(1);
+    await probe.coordinator.stop("contact-1");
+    const publicationsAtStop = probe.published.length;
+    gate.resolve();
+    await vi.advanceTimersByTimeAsync(5_000);
+
+    expect(probe.published).toHaveLength(publicationsAtStop);
+    expect(probe.attached).toBe(0);
+    expect(probe.sessions.size).toBe(0);
+    expect(probe.coordinator.snapshot().entries["profile-1"].state).toBe("stopped");
+  });
+
+  it("remembers a contact stop made before the initial profile read finishes", async () => {
+    const pending = deferred<Awaited<ReturnType<ReconnectCoordinatorDeps["profiles"]>>>();
+    const probe = supervised([profile()], { profiles: () => pending.promise });
+    await probe.coordinator.start();
+    await probe.coordinator.stop("contact-1");
+    pending.resolve({ local_device_id: "local", mailbox_configured: true, profiles: [profile()] });
+    await vi.advanceTimersByTimeAsync(2_000);
+
+    expect(probe.published).toHaveLength(0);
+    expect(probe.attached).toBe(0);
+    expect(probe.coordinator.snapshot().entries["profile-1"].state).toBe("stopped");
+  });
+
+  it("bounds simultaneous retries and preserves other attempts and healthy sessions", async () => {
+    const profiles = [1, 2, 3].map((id) => profile({ id: "profile-" + id, contact_id: "contact-" + id }));
+    const pending: Array<{ id: string; complete: (result: { document: null; pending: boolean }) => void }> = [];
+    let active = 0;
+    let maximumActive = 0;
+    const probe = supervised(profiles, {
+      fetch: (id) => {
+        active += 1;
+        maximumActive = Math.max(maximumActive, active);
+        return new Promise((resolve) => pending.push({ id, complete: (result) => { active -= 1; resolve(result); } }));
+      },
+    });
+    probe.sessions.add("profile-3");
+    const close = vi.spyOn(probe.deps, "closeSession");
+    await probe.coordinator.start();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(pending.map(({ id }) => id)).toEqual(["profile-1", "profile-2"]);
+
+    await Promise.all([probe.coordinator.retryNow("contact-1"), probe.coordinator.retryNow("contact-1")]);
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(pending).toHaveLength(2);
+    pending[0].complete({ document: null, pending: true });
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(pending.map(({ id }) => id)).toEqual(["profile-1", "profile-2", "profile-1"]);
+    expect(maximumActive).toBe(MAX_CONCURRENT);
+    expect(active).toBe(2);
+    expect(close).not.toHaveBeenCalled();
+    expect(probe.sessions.has("profile-3")).toBe(true);
+    await probe.coordinator.stop();
+    pending.slice(1).forEach(({ complete }) => complete({ document: null, pending: true }));
+    await vi.advanceTimersByTimeAsync(0);
+  });
+
+  it("keeps an attached connection when the path-status query fails", async () => {
+    const probe = supervised([profile()], { pathStatus: async () => { throw new Error("service temporarily busy"); } });
+    await probe.coordinator.start();
+    await vi.advanceTimersByTimeAsync(3_000);
+
+    expect(probe.attached).toBe(1);
+    expect(probe.peers[0].closed).toBe(0);
+    expect(probe.coordinator.snapshot().entries["profile-1"].state).toBe("connected");
+  });
+
+  it("backs off mailbox rate limits for a full minute without occupying a worker", async () => {
+    const fetch = vi.fn(async () => { throw Object.assign(new Error("limited"), { code: "mailbox_rate_limited" }); });
+    const probe = supervised([profile({ effective: { ...profile().effective, preferred: false } })], { fetch });
+    await probe.coordinator.start();
+    await vi.advanceTimersByTimeAsync(59_000);
+    expect(fetch).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(fetch).toHaveBeenCalledTimes(2);
   });
 });

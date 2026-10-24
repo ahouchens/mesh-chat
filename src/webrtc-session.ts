@@ -136,9 +136,9 @@ export function updateWebRTCSessionContact(
 }
 
 /** Remove one closed session without treating it as an active transport. */
-export function removeWebRTCSession(key: string): void {
+export function removeWebRTCSession(key: string, bridgeId?: string): void {
   const session = sessions.get(key);
-  if (!session) return;
+  if (!session || (bridgeId !== undefined && session.bridge.bridgeId !== bridgeId)) return;
   sessions.delete(key);
   if (activeKey === key) activeKey = [...sessions.keys()].pop() ?? null;
   try { session.control?.close(); } catch { /* already closed */ }
@@ -158,9 +158,13 @@ export async function closeWebRTCSession(key?: string): Promise<void> {
     ? [sessions.get(key)].filter((session): session is WebRTCSession => Boolean(session))
     : [...sessions.values()];
   for (const session of targets) {
-    sessions.delete(session.key);
-    if (activeKey === session.key) {
-      activeKey = [...sessions.keys()].pop() ?? null;
+    // Native detach can yield while another peer installs its replacement.
+    // Retire only the session captured by this close operation.
+    if (sessions.get(session.key) === session) {
+      sessions.delete(session.key);
+      if (activeKey === session.key) {
+        activeKey = [...sessions.keys()].pop() ?? null;
+      }
     }
     try {
       await session.bridge.close();

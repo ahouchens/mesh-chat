@@ -401,7 +401,7 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
     try {
       await waitForOpen(channel);
       if (pcRef.current !== pc) return;
-      const bridge = await attachWebRTCBridge(channel, { onError: (reason) => { setError(errorMessage(reason)); setPhase("error"); }, onClosed: (bridgeId) => removeWebRTCSession(`onboarding:${bridgeId}`) });
+      const bridge = await attachWebRTCBridge(channel, { isCurrent: () => pcRef.current === pc, onError: (reason) => { setError(errorMessage(reason)); setPhase("error"); }, onClosed: (bridgeId) => removeWebRTCSession(`onboarding:${bridgeId}`) });
       if (pcRef.current !== pc) {
         await bridge.close();
         return;
@@ -410,6 +410,7 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
       if (pc) {
         const path = await connectionPath(pc);
         if (pcRef.current !== pc) return;
+        if (channel.readyState !== "open") throw new Error("The DataChannel closed before the connection completed.");
         setWebRTCSession({ key: `onboarding:${bridge.bridgeId}`, bridge, channel, pc, control: controlRef.current, path, createdAt: Date.now(), approvalPending: false });
         handedOffRef.current = true;
         onConnected?.(path);

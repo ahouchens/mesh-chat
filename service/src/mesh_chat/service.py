@@ -1918,8 +1918,15 @@ class MeshChatService(
             name=f"Mesh Chat WebRTC {bridge_id[:8]}",
         )
         try:
-            RNS.Transport.add_interface(interface)
+            # Reticulum applies receive/announce defaults before publishing
+            # the interface; Transport.add_interface only adds it to a list.
+            self.network.reticulum._add_interface(
+                interface, mode=interface.MODE_POINT_TO_POINT
+            )
+            if interface not in RNS.Transport.interfaces:
+                raise RuntimeError("Reticulum did not register the WebRTC interface")
         except Exception as exc:
+            interface.detach()
             raise NetworkUnavailable("Could not attach the WebRTC interface") from exc
         self._webrtc_bridges[bridge_id] = interface
         # The WebRTC interface is point-to-point and is added after Reticulum
@@ -1963,6 +1970,17 @@ class MeshChatService(
         interface = self._webrtc_bridges.pop(bridge_id, None)
         if interface is not None:
             interface.detach()
+            router = getattr(self.network, "router", None)
+            if router is not None:
+                # LXMF retains even CLOSED cached links until a send notices
+                # them, which adds a retry delay to both chat and its receipt.
+                # Serialize with outbound selection and leave other paths alone.
+                with router.outbound_processing_lock:
+                    for links in (router.direct_links, router.backchannel_links):
+                        for destination, link in list(links.items()):
+                            if getattr(link, "attached_interface", None) is interface:
+                                if links.get(destination) is link:
+                                    links.pop(destination)
         self._changed()
         return {"state": "closed"}
 
@@ -2475,6 +2493,9 @@ class MeshChatService(
                     else DeliveryState.QUEUED.value
                 )
                 self.store.put("message", message_id, current)
+                # SENDING can have removed this ID before the native handoff
+                # raised. Persisting a retry state must restore its work item.
+                self._queue_direct_retry(message_id)
         except Exception:
             # RNS/LXMF can surface raw transport exceptions. The message is
             # already durable, so keep it queued for the bounded retry worker
@@ -2485,6 +2506,7 @@ class MeshChatService(
             if current["state"] not in DIRECT_ENDPOINT_EVIDENCE:
                 current["state"] = DeliveryState.QUEUED.value
                 self.store.put("message", message_id, current)
+                self._queue_direct_retry(message_id)
 
     def _on_native_status(
         self, logical_id: str, state: DeliveryState, native_id: str | None
@@ -3689,19 +3711,19 @@ class MeshChatService(
             body = _payload(value, allowed={"contact_id"}, required={"contact_id"})
             return self.reconnect_path_status(body["contact_id"])
         if command == "verify_reconnect_request":
-            body = _payload(value, allowed={"document"}, required={"document"})
-            return self.verify_reconnect_request(body["document"])
+            body = _payload(value, allowed={"document", "profile_id"}, required={"document"})
+            return self.verify_reconnect_request(body["document"], body.get("profile_id"))
         if command == "verify_reconnect_offer":
-            body = _payload(value, allowed={"document"}, required={"document"})
-            return self.verify_reconnect_offer(body["document"])
+            body = _payload(value, allowed={"document", "profile_id"}, required={"document"})
+            return self.verify_reconnect_offer(body["document"], body.get("profile_id"))
         if command == "verify_reconnect_answer":
             body = _payload(
                 value,
-                allowed={"document", "offer_document"},
+                allowed={"document", "offer_document", "profile_id"},
                 required={"document", "offer_document"},
             )
             return self.verify_reconnect_answer(
-                body["document"], body["offer_document"]
+                body["document"], body["offer_document"], body.get("profile_id")
             )
         if command == "webrtc_attach":
             _payload(value, allowed=set())

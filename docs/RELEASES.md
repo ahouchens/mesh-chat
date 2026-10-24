@@ -14,6 +14,30 @@ Android capability status, hardware gaps, and the exact physical test matrix are
 tracked separately in [docs/ANDROID_PARITY.md](ANDROID_PARITY.md). Shared
 React/Python code is not treated as physical Android verification.
 
+## 0.9.31 — WebRTC delivery and reconnect recovery
+
+- Correct Reticulum bridge initialization and registration so incoming and
+  outgoing packets can flow and routes can be learned.
+- Distribute Android service events through one shared poller so the UI and
+  WebRTC bridge both receive their packets and delivery updates.
+- Keep automatic reconnect monitoring after a successful connection, discover
+  newly eligible peers, schedule peers fairly, and bound overlapping retries.
+- Cancel pending reconnect work safely and prevent closed or superseded bridges
+  from becoming registered sessions. Delayed cleanup preserves replacement
+  sessions.
+- Restore message retries after native handoff failures and retire stale
+  Reticulum routes, links, and LXMF caches when a bridge closes.
+- Verify reconnect documents against the intended personal or workspace
+  relationship and prevent delayed capabilities from reverting tokens or consent.
+- Add real Reticulum/LXMF message and receipt coverage in both directions,
+  including detach/reattach and fresh route learning. The connection banner
+  reports the WebRTC path separately from message delivery evidence.
+
+Local validation passed 324 distinct frontend test cases, focused Python
+regressions, and TypeScript checks. See [TESTING.md](../TESTING.md) for exact
+coverage and CI evidence. Physical Windows/Android messaging, app backgrounding,
+and network-switch recovery still require device validation.
+
 ## Direct-first Internet invitations
 
 The default invitation is **Over the Internet — directly to this device**. The inviter stays online and explicitly chooses **Prepare direct Internet invitation**. Mesh Chat first starts the authenticated listener, then uses an existing public IPv4/global IPv6 path or a temporary mapping on the active default router, preferring PCP, then UPnP IGD, then NAT-PMP. It does not contact a rendezvous, STUN, TURN, public-IP lookup, account, signaling, or Mesh Chat server. Email, Slack, Teams, and similar tools carry only the signed invitation; they do not join the workspace or message path.

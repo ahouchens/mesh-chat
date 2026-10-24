@@ -168,6 +168,24 @@ async function advance(ms: number): Promise<void> {
 }
 
 describe("manual WebRTC answer exchange", () => {
+  it("does not register a channel that closes while its path is being inspected", async () => {
+    const { pc, onConnected } = await join();
+    let resolveStats!: (value: Map<string, unknown>) => void;
+    pc.getStats.mockImplementation(() => new Promise((resolve) => { resolveStats = resolve; }));
+    let channel!: FakeChannel;
+    await act(async () => { channel = pc.openIncomingChannel(); });
+    expect(mocks.attachWebRTCBridge).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      channel.close();
+      resolveStats(new Map());
+    });
+    expect(mocks.setWebRTCSession).not.toHaveBeenCalled();
+    expect(onConnected).not.toHaveBeenCalled();
+    const bridge = await mocks.attachWebRTCBridge.mock.results[0].value;
+    expect(bridge.close).toHaveBeenCalled();
+    expect(pc.close).toHaveBeenCalled();
+  });
+
   it("keeps the answerer alive after initial ICE failure and attaches a late incoming channel", async () => {
     const { pc, onConnected, unmount } = await join();
     expect(screen.getByLabelText("Signed WebRTC answer")).toBeTruthy();
