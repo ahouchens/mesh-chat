@@ -115,6 +115,10 @@ class WebRTCPeers:
         self.retired_bridges: set[str] = set()
         self.status_events: list[list[dict[str, Any]]] = [[], []]
         self.forwarded = [0, 0]
+        self.relay_intervals = [0.0, 0.0]
+        self.next_relay = [0.0, 0.0]
+        self.drop_packets_until = 0.0
+        self.dropped = [0, 0]
 
     def start(self) -> list[dict[str, Any]]:
         for process in self.processes:
@@ -125,6 +129,10 @@ class WebRTCPeers:
         if len(self.bridges) != 2:
             return
         for sender in range(2):
+            now = time.monotonic()
+            if now < self.next_relay[sender]:
+                continue
+            self.next_relay[sender] = now + self.relay_intervals[sender]
             # Bound each drain so unexpected event churn cannot defeat timeouts.
             for _ in range(256):
                 try:
@@ -132,6 +140,9 @@ class WebRTCPeers:
                 except queue.Empty:
                     break
                 if event["event"] == "webrtc_packet":
+                    if now < self.drop_packets_until:
+                        self.dropped[sender] += 1
+                        continue
                     # A closed DataChannel cannot deliver its queued packets
                     # into a replacement bridge, even if events arrive late.
                     if event["bridge_id"] in self.retired_bridges:
@@ -299,6 +310,53 @@ def test_real_webrtc_bridge_learns_routes_and_delivers_messages_with_receipts(tm
         for index in range(2):
             assert peers.call(index, "transport_state", destination=profiles[1 - index]["destination_hash"])["retired_cached_link_count"] == 0
         assert all(count > 0 for count in peers.forwarded)
+    finally:
+        peers.close()
+    assert all(process.exitcode == 0 for process in peers.processes)
+
+
+@pytest.mark.integration
+def test_manual_pairing_recovers_lost_initial_announces_with_mobile_polling(tmp_path: Path) -> None:
+    peers = WebRTCPeers(tmp_path)
+    # Android's native packet events are polled in batches every 750 ms;
+    # desktop receives an event as soon as the service emits it.
+    peers.relay_intervals = [0.0, 0.75]
+    try:
+        profiles = peers.start()
+        invitation = peers.command(0, "create_invitation", connection_mode="webrtc")
+        peers.command(1, "accept_invitation", invitation=invitation["text"])
+        # Lose all announcements from attach and its 2s/6s retries, as when
+        # the renderer/event bridge is not ready yet. Endpoints attach at
+        # different times; the service must recover through ordinary path
+        # discovery once packets begin flowing, without synthetic identities.
+        peers.drop_packets_until = time.monotonic() + 8.0
+        peers.bridges.append(peers.command(0, "webrtc_attach"))
+        time.sleep(0.8)
+        peers.bridges.append(peers.command(1, "webrtc_attach"))
+
+        def contact(index: int, trust: str) -> dict[str, Any] | None:
+            return next((row for row in peers.command(index, "snapshot")["contacts"]
+                         if row["trust"] == trust), None)
+
+        pending = peers.wait("contact request after dropped initial announces",
+                             lambda: contact(0, "pending_request"), timeout=40)
+        left = peers.command(0, "approve_request", contact_id=pending["id"])
+        right = peers.wait("contact acceptance with mobile polling",
+                           lambda: contact(1, "approved"))
+        assert all(count > 0 for count in peers.dropped)
+        for sender, target in enumerate((left, right)):
+            row = peers.call(sender, "diagnostic", destination=profiles[1 - sender]["destination_hash"],
+                             bridge_id=peers.bridges[sender]["bridge_id"])
+            assert row["path_known"] and row["recipient_ready"] and row["uses_bridge"]
+            sent = peers.command(sender, "send_message", contact_id=target["id"],
+                                 text=f"Mobile-batched delivery from {sender}")
+
+            def delivered() -> bool:
+                return all(any(row["id"] == sent["id"] and row["state"] == "delivered"
+                               for row in peers.command(index, "snapshot")["messages"])
+                           for index in range(2))
+
+            peers.wait("message plaintext and application receipt with mobile polling", delivered)
     finally:
         peers.close()
     assert all(process.exitcode == 0 for process in peers.processes)

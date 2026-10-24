@@ -1,5 +1,6 @@
 import { onServiceEvent, serviceCommand } from "./api";
 import type { ServiceEvent } from "./api";
+import { getWebRTCSessions } from "./webrtc-session";
 
 export interface WebRTCBridge {
   readonly bridgeId: string;
@@ -16,6 +17,9 @@ interface AttachResult {
 interface PacketResult {
   accepted: number;
 }
+
+const MAX_STARTUP_PACKETS = 128;
+const MAX_STARTUP_BYTES = MAX_STARTUP_PACKETS * 1064;
 
 export function shouldAutoCloseWebRTCOnboarding(
   phase: string,
@@ -85,12 +89,15 @@ export async function attachWebRTCBridge(
   if (channel.readyState !== "open") {
     throw new Error("The WebRTC DataChannel is not open.");
   }
-  // Install close handlers before the native attach can finish. Its interface
-  // must still be detached if the channel closes while that call is pending.
-  const attachment = Promise.resolve().then(() => serviceCommand<AttachResult>("webrtc_attach"));
   let closed = false;
   let unlisten: (() => void) | null = null;
   let closing: Promise<void> | null = null;
+  let attached: AttachResult | null = null;
+  let attachment: Promise<AttachResult>;
+  const pendingInbound: unknown[] = [];
+  const pendingOutbound: ServiceEvent[] = [];
+  let pendingInboundBytes = 0;
+  let pendingOutboundBytes = 0;
 
   const fail = (reason: unknown) => {
     if (!closed) options.onError?.(reason);
@@ -99,6 +106,8 @@ export async function attachWebRTCBridge(
   const close = (): Promise<void> => {
     if (closing) return closing;
     closed = true;
+    pendingInbound.length = pendingOutbound.length = 0;
+    pendingInboundBytes = pendingOutboundBytes = 0;
     closing = (async () => {
       try { unlisten?.(); } catch { /* Continue retiring the native interface. */ }
       unlisten = null;
@@ -106,14 +115,14 @@ export async function attachWebRTCBridge(
       channel.onclose = null;
       channel.onerror = null;
       try { if (channel.readyState === "open") channel.close(); } catch { /* Already closed. */ }
-      const attached = await attachment.catch(() => null);
-      if (!attached) return;
+      const native = await attachment.catch(() => null);
+      if (!native) return;
       try {
-        await serviceCommand("webrtc_detach", { bridge_id: attached.bridge_id });
+        await serviceCommand("webrtc_detach", { bridge_id: native.bridge_id });
       } catch {
         // The service may already have retired the bridge.
       }
-      options.onClosed?.(attached.bridge_id);
+      options.onClosed?.(native.bridge_id);
     })();
     return closing;
   };
@@ -123,41 +132,80 @@ export async function attachWebRTCBridge(
       throw new Error("The WebRTC bridge closed before attachment completed.");
     }
   };
+  const overflow = () => {
+    fail(new Error("The WebRTC bridge startup packet queue is full."));
+    void close();
+  };
+  const inbound = (data: unknown) => {
+    void channelBytes(data).then((packet) => {
+      if (!packet || closed || !attached) return;
+      if (packet.byteLength > attached.max_packet) {
+        fail(new Error("The WebRTC packet exceeded the Reticulum MTU."));
+        return;
+      }
+      return serviceCommand<PacketResult>("webrtc_packet", {
+        bridge_id: attached.bridge_id,
+        data: bytesToBase64(packet),
+      });
+    }).catch(fail);
+  };
+  const outbound = (event: ServiceEvent) => {
+    if (!attached || event.bridge_id !== attached.bridge_id || typeof event.data !== "string") return;
+    if (closed || channel.readyState !== "open") return;
+    try {
+      const packet = base64ToBytes(event.data);
+      if (packet.byteLength <= attached.max_packet) channel.send(packet);
+    } catch (reason) {
+      fail(reason);
+    }
+  };
+  // The peer may announce as soon as the DataChannel opens, while native
+  // attachment or event registration is still pending. Preserve those bytes.
+  channel.binaryType = "arraybuffer";
+  channel.onmessage = (event) => {
+    if (closed) return;
+    if (attached) { inbound(event.data); return; }
+    const data: unknown = event.data;
+    const size = data instanceof ArrayBuffer || ArrayBuffer.isView(data)
+      ? data.byteLength
+      : typeof Blob !== "undefined" && data instanceof Blob ? data.size : 0;
+    if (!size) return;
+    if (pendingInbound.length >= MAX_STARTUP_PACKETS || pendingInboundBytes + size > MAX_STARTUP_BYTES) {
+      overflow();
+      return;
+    }
+    pendingInbound.push(data);
+    pendingInboundBytes += size;
+  };
   channel.onclose = () => { void close(); };
   channel.onerror = () => { void close(); };
-  try {
-    const attached = await attachment;
-    ensureOpen();
-    channel.binaryType = "arraybuffer";
-    channel.onmessage = (event) => {
-      void channelBytes(event.data)
-        .then((packet) => {
-          if (!packet || closed) return;
-          if (packet.byteLength > attached.max_packet) {
-            fail(new Error("The WebRTC packet exceeded the Reticulum MTU."));
-            return;
-          }
-          return serviceCommand<PacketResult>("webrtc_packet", {
-            bridge_id: attached.bridge_id,
-            data: bytesToBase64(packet),
-          });
-        })
-        .catch(fail);
-    };
+  attachment = Promise.resolve().then(async () => {
+    // Native attach announces immediately. Its listener must already exist;
+    // Android's shared UI poll irreversibly drains each native event batch.
     const stopListening = await onServiceEvent((event: ServiceEvent) => {
-      if (event.event !== "webrtc_packet" || event.bridge_id !== attached.bridge_id) return;
-      if (closed || channel.readyState !== "open" || typeof event.data !== "string") return;
-      try {
-        const packet = base64ToBytes(event.data);
-        if (packet.byteLength <= attached.max_packet) channel.send(packet);
-      } catch (reason) {
-        fail(reason);
+      if (closed || event.event !== "webrtc_packet" || typeof event.data !== "string") return;
+      if (attached) { outbound(event); return; }
+      // Established peers already have their own packet listeners. Their
+      // traffic must not consume this attachment's bounded startup queue.
+      if (getWebRTCSessions().some((session) => session.bridge.bridgeId === event.bridge_id)) return;
+      if (pendingOutbound.length >= MAX_STARTUP_PACKETS || pendingOutboundBytes + event.data.length > MAX_STARTUP_BYTES * 2) {
+        overflow();
+        return;
       }
+      pendingOutbound.push(event);
+      pendingOutboundBytes += event.data.length;
     });
-    // close() may already have run while native event registration was pending.
     if (closed) stopListening();
     else unlisten = stopListening;
     ensureOpen();
+    return serviceCommand<AttachResult>("webrtc_attach");
+  });
+  try {
+    attached = await attachment;
+    ensureOpen();
+    for (const packet of pendingInbound.splice(0)) inbound(packet);
+    for (const event of pendingOutbound.splice(0)) outbound(event);
+    pendingInboundBytes = pendingOutboundBytes = 0;
 
     return {
       bridgeId: attached.bridge_id,

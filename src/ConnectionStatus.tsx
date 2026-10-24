@@ -4,10 +4,11 @@ import { lastWebRTCDiagnostics } from "./webrtc-diagnostics";
 import type { WebRTCSessionPath } from "./webrtc-session";
 import "./connection-status.css";
 
-export function ConnectionStatus({ count, path, pendingCount, onReview, onReconnect, onDisconnect }: {
+export function ConnectionStatus({ count, path, pendingCount, contactRoute, onReview, onReconnect, onDisconnect }: {
   count: number;
   path: WebRTCSessionPath;
   pendingCount: number;
+  contactRoute?: { name: string; known: boolean };
   onReview: () => void;
   onReconnect: () => Promise<void>;
   onDisconnect: () => Promise<void>;
@@ -39,12 +40,15 @@ export function ConnectionStatus({ count, path, pendingCount, onReview, onReconn
     <button type="button" className="connection-status__summary" aria-expanded={expanded} aria-controls={detailsId}
       onClick={() => setExpanded(!expanded)}>
       <QrCode size={17} aria-hidden="true" />
-      <strong>{count > 1 ? `${count} paths connected` : "Connected"} · {path === "relayed" ? "Relayed" : path === "direct" ? "Direct" : "Path pending"}</strong>
+      <strong>{count > 1 ? `${count} transports connected` : `Transport connected · ${path === "relayed" ? "Relayed" : path === "direct" ? "Direct" : "Path pending"}`}</strong>
       <span>Details</span><ChevronRight size={17} className={expanded ? "connection-status__chevron--open" : ""} aria-hidden="true" />
     </button>
+    {contactRoute && <p className="connection-status__route" role="status">{contactRoute.known
+      ? `Secure route to ${contactRoute.name} is known. Delivery is confirmed by receipts.`
+      : `Waiting for messaging route to ${contactRoute.name}. Messages are saved on this device.`}</p>}
     {pendingCount > 0 && <div className="connection-status__pending"><p role="status">{pendingCount} contact {pendingCount === 1 ? "request" : "requests"} awaiting approval.</p><button type="button" className="button button--secondary" onClick={onReview}>Review request</button></div>}
     <div id={detailsId} className="connection-status__details" hidden={!expanded}>
-      <p>WebRTC DataChannel open. Message delivery is confirmed by receipts.</p>
+      <p>WebRTC DataChannel open. Each contact needs a secure messaging route. Message delivery is confirmed by receipts.</p>
       <div className="connection-status__actions">
         <button type="button" className="button button--secondary" onClick={() => void copyDiagnostics()}>Copy diagnostics</button>
         <button type="button" className="button button--secondary" disabled={busy} onClick={() => void run(onReconnect)}>Reconnect</button>

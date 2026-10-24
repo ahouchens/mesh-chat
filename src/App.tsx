@@ -4689,11 +4689,13 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
   const [webrtcOnboardingOpen, setWebRtcOnboardingOpen] = useState(false);
   const [webrtcSessionActive, setWebRtcSessionActive] = useState(() => getWebRTCSession() !== null);
   const [webrtcSessionCount, setWebRtcSessionCount] = useState(() => getWebRTCSessionCount());
+  const [webrtcSessionRevision, setWebRtcSessionRevision] = useState(0);
   useEffect(() => subscribeWebRTCSessions(() => {
     const count = getWebRTCSessionCount();
     setWebRtcSessionCount(count);
     setWebRtcSessionActive(count > 0);
     setWebrtcPath(getWebRTCSession()?.path ?? "unknown");
+    setWebRtcSessionRevision((revision) => revision + 1);
   }), []);
   const [webrtcPath, setWebrtcPath] = useState<WebRTCSessionPath>(() => getWebRTCSession()?.path ?? "unknown");
   // Reconnect is renderer-owned because the WebView owns RTCPeerConnection.
@@ -4960,6 +4962,27 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
   const selectedContact = selection?.kind === "contact" ? snapshot.contacts.find((contact) => contact.id === selection.id) ?? null : null;
   const selectedGroup = selection?.kind === "group" ? groups.find((group) => group.id === selection.id) ?? null : null;
   const selectedWorkspace = activeSpaceId === "personal" ? null : workspaces.find((workspace) => workspace.id === activeSpaceId) ?? null;
+  const selectedApprovedContact = !selectedWorkspace && selectedContact &&
+    (selectedContact.trust === "approved" || selectedContact.trust === "verified") ? selectedContact : null;
+  const selectedManualBridgeId = useMemo(() => {
+    if (!selectedApprovedContact) return undefined;
+    return getWebRTCSessions().sort((left, right) => right.createdAt - left.createdAt).find((session) => session.controlPurpose === "onboarding" &&
+      session.peerDestination === selectedApprovedContact.destination_hash &&
+      (!session.contactId || session.contactId === selectedApprovedContact.id) &&
+      session.channel.readyState === "open")?.bridge.bridgeId;
+  }, [webrtcSessionRevision, selectedApprovedContact?.id, selectedApprovedContact?.destination_hash]);
+  const selectedApprovedContactId = selectedApprovedContact?.id;
+  useEffect(() => {
+    if (!selectedApprovedContactId || !selectedManualBridgeId) return;
+    let active = true;
+    // Manual pairing can precede creation of a reconnect profile. Start native
+    // path discovery once for this verified peer without requiring a chat send
+    // or mailbox setup; the transport owns ongoing discovery/recovery.
+    void serviceCommand("reconnect_path_status", { contact_id: selectedApprovedContactId })
+      .then(() => { if (active) return refresh(true); })
+      .catch(() => undefined);
+    return () => { active = false; };
+  }, [selectedApprovedContactId, selectedManualBridgeId, refresh]);
   const selectedWorkspaceJoinStatus = selectedWorkspace ? workspaceJoinStatus(selectedWorkspace) : null;
   const selectedWorkspaceChannels = selectedWorkspace ? workspaceChannels.filter((channel) => channel.workspace_id === selectedWorkspace.id) : [];
   const selectedWorkspaceDirects = selectedWorkspace ? workspaceDirects.filter((direct) => direct.workspace_id === selectedWorkspace.id) : [];
@@ -6457,6 +6480,10 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
         )}
         {webrtcSessionActive && (
           <ConnectionStatus count={webrtcSessionCount} path={webrtcPath} pendingCount={pending.length}
+            contactRoute={selectedApprovedContact ? {
+              name: selectedApprovedContact.display_name,
+              known: networkAvailable && Boolean(selectedApprovedContact.route_kind && selectedApprovedContact.route_kind !== "unavailable"),
+            } : undefined}
             onReview={() => { if (pending[0]) setDismissedRequests((current) => current.filter((id) => id !== pending[0].id)); }}
             onReconnect={async () => { await closeWebRTCSession().finally(() => { setWebRtcSessionActive(false); setWebRtcSessionCount(0); setWebrtcPath("unknown"); setConnectEntryOpen(true); void refresh(true); }); }}
             onDisconnect={async () => { await closeWebRTCSession().finally(() => { setWebRtcSessionActive(false); setWebRtcSessionCount(0); void refresh(true); }); }} />

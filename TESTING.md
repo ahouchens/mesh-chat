@@ -1,5 +1,41 @@
 # Verification and release gates
 
+## WebRTC startup packets and messaging-route status — 0.9.36
+
+A field test on 0.9.35 paired Windows on Wi-Fi with Android on cellular using a
+fresh manual offer/answer. Android showed a relayed WebRTC transport while the
+selected contact had no known messaging route and two messages stayed queued.
+The later diagnostic export showed no renderer session or native bridge; the
+app had been backgrounded and the connection banner had disappeared by then.
+That later state cannot establish why delivery failed while the transport was
+still present. The absent automatic-reconnect mailbox does not explain failure
+of the manually established connection.
+
+The renderer bridge now installs inbound handling immediately and subscribes
+to native packet events before attaching the native interface. Bounded startup
+queues preserve peer packets and native announcements until the bridge ID is
+known, with bridge-ID filtering and cancellation cleanup. The Android integration
+regression uses the real shared event subscription API and a destructive native
+poll during a delayed attach; it failed before the change and passes afterward.
+
+The banner distinguishes an open transport from the selected contact's native
+route status. Selecting an approved contact with a matching verified manual
+session requests path discovery once, even without a reconnect profile/mailbox.
+Tests cover unrelated contacts, mismatched peer identity, and snapshot refresh
+without closing healthy sessions.
+
+Local validation on 2026-10-24: all 395 frontend tests, TypeScript, the production
+frontend build, and 10 WebRTC service tests passed. A real two-process
+Reticulum/LXMF test recovered after eight seconds of dropped startup packets,
+asymmetric attachment, and Android-like 750 ms packet batches, then delivered
+messages and application receipts in both directions. This also limits the
+diagnosis: startup loss is proven, but it does not reproduce the entire lasting
+field failure. Browser ICE/TURN and physical Windows/Android retesting remain
+unverified; reports from both devices while the failure is still visible are
+needed to determine the remaining cause. Installer/APK builds and publication
+are delegated to GitHub Actions by the version tag; their results are not yet
+verified in this source record.
+
 ## Automatic personal-contact reconnect — 0.9.35
 
 New personal contacts enable reconnect by default and exchange signed settings

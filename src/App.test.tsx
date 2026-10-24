@@ -3017,6 +3017,58 @@ describe("connected conversation", () => {
     expect((screen.getByRole("textbox", { name: "Message Taylor" }) as HTMLTextAreaElement).value).toBe("Keep this draft");
   });
 
+  it("keeps another contact's open transport separate from the selected unavailable route", async () => {
+    const other = { ...approved, id: "another-contact", display_name: "Aaron", destination_hash: "55".repeat(16), route_kind: "nearby" as const };
+    let current = snapshot([{ ...approved, route_kind: "unavailable" }, other]);
+    api.initializeService.mockResolvedValue(current);
+    api.onInvitation.mockResolvedValue(() => undefined);
+    api.onServiceEvent.mockResolvedValue(() => undefined);
+    api.serviceCommand.mockImplementation(async (command: string) => {
+      if (command === "snapshot") return current;
+      if (command === "reconnect_profiles") return { profiles: [] };
+      if (command === "reconnect_path_status") {
+        current = snapshot([{ ...approved, route_kind: "nearby" }, other]);
+        return { has_path: true, ready: true };
+      }
+      return {};
+    });
+    const otherSession = { ...pairingSession(other.destination_hash), key: "onboarding:other", contactId: other.id, path: "relayed" as const };
+    setWebRTCSession(otherSession);
+    render(<App />);
+    await screen.findByLabelText("Conversation with Taylor");
+    const status = screen.getByRole("region", { name: "Connection status" });
+    expect(within(status).getByRole("button", { name: /Transport connected · Relayed/ })).toBeTruthy();
+    expect(within(status).getByText("Waiting for messaging route to Taylor. Messages are saved on this device.")).toBeTruthy();
+    expect(api.serviceCommand.mock.calls.some(([command]) => command === "reconnect_path_status")).toBe(false);
+
+    const manual = { ...pairingSession(approved.destination_hash), contactId: approved.id };
+    act(() => setWebRTCSession(manual));
+    await within(status).findByText("Secure route to Taylor is known. Delivery is confirmed by receipts.");
+    expect(api.serviceCommand.mock.calls.filter(([command]) => command === "reconnect_path_status")).toEqual([
+      ["reconnect_path_status", { contact_id: approved.id }],
+    ]);
+    expect(within(status).getByRole("button", { name: /2 transports connected/ })).toBeTruthy();
+    expect(manual.pc.close).not.toHaveBeenCalled();
+    expect(otherSession.pc.close).not.toHaveBeenCalled();
+  });
+
+  it("does not probe a manual session bound to the wrong verified peer", async () => {
+    const current = snapshot([{ ...approved, route_kind: "unavailable" }]);
+    api.initializeService.mockResolvedValue(current);
+    api.onInvitation.mockResolvedValue(() => undefined);
+    api.onServiceEvent.mockResolvedValue(() => undefined);
+    api.serviceCommand.mockImplementation(async (command: string) => {
+      if (command === "snapshot") return current;
+      if (command === "reconnect_profiles") return { profiles: [] };
+      return {};
+    });
+    setWebRTCSession({ ...pairingSession("ff".repeat(16)), contactId: approved.id });
+    render(<App />);
+    await screen.findByLabelText("Conversation with Taylor");
+    expect(api.serviceCommand.mock.calls.some(([command]) => command === "reconnect_path_status")).toBe(false);
+    expect(screen.getByText("Waiting for messaging route to Taylor. Messages are saved on this device.")).toBeTruthy();
+  });
+
   it("displays participant_direct as a valid direct Internet route", async () => {
     const current = snapshot([{ ...approved, route_kind: "participant_direct" }]);
     api.runtimePlatform.mockResolvedValue("desktop");

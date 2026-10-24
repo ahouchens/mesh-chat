@@ -14,6 +14,31 @@ Android capability status, hardware gaps, and the exact physical test matrix are
 tracked separately in [docs/ANDROID_PARITY.md](ANDROID_PARITY.md). Shared
 React/Python code is not treated as physical Android verification.
 
+## 0.9.36 — WebRTC startup packets and clearer route status
+
+- Preserve early routing packets while the native WebRTC bridge is attaching.
+  Install packet listeners before native announcements, buffer startup traffic
+  within fixed bounds, and discard buffered work safely if attachment closes.
+- Keep traffic for existing contacts out of a new connection's startup buffer.
+- Distinguish an open WebRTC transport from the selected contact's messaging
+  route, and avoid assigning one contact's direct/relayed status to every connection.
+- Request route discovery after manual pairing with an approved, verified
+  contact, including when automatic reconnect has no mailbox configured.
+
+Local validation passed all 395 frontend tests, 10 WebRTC service tests,
+TypeScript, and the production frontend build. The Android event-queue
+regression failed before the packet-listener fix and passes afterward. Real
+Reticulum/LXMF peers also recovered from eight seconds of packet loss with
+Android-like polling, delivering messages and receipts in both directions.
+
+Physical Windows/Wi-Fi to Android/cellular retesting remains pending. Startup
+packet loss is confirmed, but the complete cause of the reported prolonged
+delivery failure remains unconfirmed. Automatic reconnect after a connection
+closes still requires a deployed, configured signaling mailbox. See
+[TESTING.md](../TESTING.md) for evidence and limits. GitHub Actions builds and
+publishes installers from the version tag; its results are not yet verified in
+this source record.
+
 ## 0.9.35 — Automatic personal-contact reconnect
 
 - Enable automatic reconnect for new approved personal contacts and supervise

@@ -6,6 +6,7 @@
 .connection-status__summary:focus-visible { outline: 2px solid var(--focus); outline-offset: -3px; }
 .connection-status__chevron--open { transform: rotate(90deg); }
 .connection-status__details { padding: 0 16px 10px; }
+.connection-status__route { margin: 0; padding: 0 16px 10px; line-height: 1.5; }
 .connection-status__details p { margin: 0 0 8px; line-height: 1.5; }
 .connection-status__actions { display: flex; flex-wrap: wrap; gap: 6px; }
 .connection-status__pending { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding: 0 16px 10px; }

@@ -44,6 +44,54 @@ afterEach(async () => {
 });
 
 describe("Android service events with the real DataChannel bridge", () => {
+  it("preserves routing packets while native attachment is slower than the shared UI poll", async () => {
+    const queue: ServiceEvent[] = [];
+    let finishAttach!: (result: { bridge_id: string; max_packet: number; state: string }) => void;
+    const attachment = new Promise((resolve) => { finishAttach = resolve; });
+    native.invoke.mockImplementation(async (command: string, args?: { command: string }) => {
+      if (command === "runtime_platform") return "android";
+      if (command === "poll_mobile_events") return queue.splice(0);
+      if (command === "service_command") {
+        if (args?.command === "webrtc_attach") {
+          // The real native service announces before returning its bridge ID.
+          queue.push(
+            { type: "event", event: "webrtc_packet", bridge_id: "bridge", data: "AQI=" },
+            { type: "event", event: "webrtc_packet", bridge_id: "other", data: "CQk=" },
+          );
+          return attachment;
+        }
+        if (args?.command === "webrtc_packet") return { accepted: 2 };
+        if (args?.command === "webrtc_detach") return { state: "closed" };
+      }
+      throw new Error(`Unexpected native command: ${command}`);
+    });
+    const { onServiceEvent } = await import("./api");
+    const { attachWebRTCBridge } = await import("./webrtc-onboarding");
+    cleanup.push(await onServiceEvent(() => undefined));
+    const channel = openChannel();
+    const connecting = attachWebRTCBridge(channel);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(native.invoke).toHaveBeenCalledWith("service_command", {
+      command: "webrtc_attach", payload: {},
+    });
+
+    // The peer can also announce while this device is waiting for native attach.
+    channel.onmessage?.call(channel, { data: new Uint8Array([3, 4]).buffer } as MessageEvent);
+    await vi.advanceTimersByTimeAsync(750);
+    expect(queue).toEqual([]);
+    expect(channel.send).not.toHaveBeenCalled();
+
+    finishAttach({ bridge_id: "bridge", max_packet: 1064, state: "online" });
+    const bridge = await connecting;
+    cleanup.push(bridge.close);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(channel.send).toHaveBeenCalledTimes(1);
+    expect(new Uint8Array(channel.send.mock.calls[0][0] as ArrayBuffer)).toEqual(new Uint8Array([1, 2]));
+    expect(native.invoke).toHaveBeenCalledWith("service_command", {
+      command: "webrtc_packet", payload: { bridge_id: "bridge", data: "AwQ=" },
+    });
+  });
+
   it.each(["ui-first", "bridge-first"])(
     "delivers packets and delivery-status updates through one native queue (%s)",
     async (order) => {
