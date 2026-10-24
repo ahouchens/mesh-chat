@@ -46,6 +46,8 @@ function peer(key: string) {
     path: async () => "direct" as const,
     pc,
     channel,
+    control: null as RTCDataChannel | null,
+    onControl: null as ((control: RTCDataChannel) => void) | null,
     key,
   };
 }
@@ -97,6 +99,24 @@ afterEach(async () => {
 });
 
 describe("production reconnect wiring", () => {
+  it("registers a late capability-only control channel without changing contact approval", async () => {
+    const deps = createReconnectDeps({ refresh: async () => undefined });
+    const fake = peer("late-control");
+    await deps.attach(fake as never, profile("late-control"));
+    const control = Object.assign(new EventTarget(), {
+      readyState: "open", label: "meshchat-reconnect", onmessage: null,
+      send: vi.fn(), close: vi.fn(),
+    }) as unknown as RTCDataChannel;
+    fake.onControl?.(control);
+    await Promise.resolve();
+    const registered = getWebRTCSessions()[0];
+    expect(registered.control).toBe(control);
+    expect(registered.controlPurpose).toBe("reconnect");
+    expect(registered.approvalPending).toBe(false);
+    expect(commandMock).toHaveBeenCalledWith("reconnect_capabilities_get", { contact_id: "contact-late-control" });
+    expect(control.send).toHaveBeenCalledWith(JSON.stringify({ type: "connection_capabilities_request" }));
+  });
+
   it.each(["closed", "cancelled"])("does not register a %s bridge after path lookup finishes", async (reason) => {
     const onSession = vi.fn();
     const deps = createReconnectDeps({ refresh: async () => undefined, onSession });

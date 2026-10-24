@@ -75,7 +75,7 @@ import { WebRTCOnboardingDialog } from "./WebRTCOnboarding";
 import { ReconnectSettings } from "./ReconnectSettings";
 import { createReconnectCoordinator } from "./reconnect-runtime";
 import type { ReconnectCoordinator } from "./reconnect-coordinator";
-import { closeWebRTCSession, getWebRTCSession, getWebRTCSessionCount, getWebRTCSessionWithControl, subscribeWebRTCSessions, updateWebRTCSessionApprovalPending, updateWebRTCSessionContact, type WebRTCSessionPath } from "./webrtc-session";
+import { closeWebRTCSession, getWebRTCSession, getWebRTCSessionCount, getWebRTCSessionForContact, getWebRTCSessions, getWebRTCSessionWithControl, subscribeWebRTCSessions, updateWebRTCSessionApprovalPending, updateWebRTCSessionContact, type WebRTCSessionPath } from "./webrtc-session";
 import { CONNECTION_TRANSPORT_CHOICES, type ConnectionTransportKind } from "./connection-transport";
 import { loadPairingResume } from "./pairing-resume";
 import { lastWebRTCDiagnostics } from "./webrtc-diagnostics";
@@ -3081,7 +3081,7 @@ function Conversation({ contact, messages, draft, sendError, sending, detailsOpe
     <section className="conversation" aria-label={`Conversation with ${contact.display_name}`}>
       <header className="conversation__header"><button className="icon-button mobile-only mobile-back" type="button" onClick={onBack} aria-label="Back to conversations"><ArrowLeft size={21} /></button><div className="conversation__person"><Avatar name={contact.display_name} small /><div><h2>{contact.display_name}</h2><span>{routeLabel}</span></div></div><div className="conversation__actions">{approved && <button className="icon-button" type="button" onClick={onCall} disabled={sending} aria-label={`Call ${contact.display_name}`} title="Audio call"><Phone size={18} /></button>}<button className="icon-button conversation-delete" type="button" onClick={onDelete} disabled={sending} aria-label={`Delete conversation with ${contact.display_name}`} title="Delete conversation"><Trash2 size={18} /></button><SecurityDetails fingerprint={contact.fingerprint} destination={contact.destination_hash} open={detailsOpen} onOpenChange={onDetailsOpenChange} /></div></header>
       {!approved && <div className={`connection-banner connection-banner--${contact.trust}`} role="status"><span>{contactConnectionLabel(contact)}</span>{contact.trust === "awaiting_consent" && <Button variant="ghost" onClick={onHelp}><CircleHelp size={17} /> Connection help</Button>}</div>}
-      {approved && contact.route_kind === "unavailable" && <div className="connection-banner" role="status"><span>No route is currently known. Keep both apps open and check this contact’s reconnect settings.</span><Button variant="ghost" onClick={onConnectionSettings}><RefreshCw size={17} /> Connection settings</Button></div>}
+      {approved && contact.route_kind === "unavailable" && <div className="connection-banner" role="status"><span>Waiting for a connection. Your messages are saved and will send when a route is available.</span><Button variant="ghost" onClick={onConnectionSettings}><RefreshCw size={17} /> Connection settings</Button></div>}
       <div className="message-list" aria-live="polite" ref={messageListRef}>
         <div className="day-divider"><span>Messages are end-to-end encrypted</span></div>
         {messages.length === 0 && <div className="empty-thread"><LockKeyhole size={30} /><p>No messages yet.</p><span>You can write now. If there is no route, your message stays saved.</span></div>}
@@ -4710,8 +4710,27 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
     },
   }));
   useEffect(() => {
+    reconnectCoordinator.setOnline(navigator.onLine !== false);
     void reconnectCoordinator.start();
-    return () => { void reconnectCoordinator.stop(); };
+    const online = () => reconnectCoordinator.setOnline(true);
+    const offline = () => reconnectCoordinator.setOnline(false);
+    const wake = () => {
+      if (document.visibilityState !== "hidden") reconnectCoordinator.wake();
+    };
+    window.addEventListener("online", online);
+    window.addEventListener("offline", offline);
+    window.addEventListener("focus", wake);
+    window.addEventListener("pageshow", wake);
+    document.addEventListener("visibilitychange", wake);
+    return () => {
+      window.removeEventListener("online", online);
+      window.removeEventListener("offline", offline);
+      window.removeEventListener("focus", wake);
+      window.removeEventListener("pageshow", wake);
+      document.removeEventListener("visibilitychange", wake);
+      void reconnectCoordinator.stop();
+      void closeWebRTCSession();
+    };
   }, [reconnectCoordinator]);
   const [callContactId, setCallContactId] = useState<string | null>(null);
   const [callPeerOverride, setCallPeerOverride] = useState<CallPeer | null>(null);
@@ -5525,9 +5544,16 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
         { contact_id: contact.id },
       );
       try {
-        const session = getWebRTCSessionWithControl();
+        const matching = getWebRTCSessionForContact(contact.id);
+        const pending = getWebRTCSessions().filter((candidate) =>
+          candidate.controlPurpose !== "reconnect" && !candidate.contactId &&
+          candidate.peerDestination === contact.destination_hash &&
+          candidate.approvalPending && candidate.control?.readyState === "open",
+        );
+        const session = matching?.controlPurpose !== "reconnect" && matching?.control?.readyState === "open" && matching.peerDestination === contact.destination_hash
+          ? matching : pending.length === 1 ? pending[0] : null;
         const control = session?.control;
-        if (accept) updateWebRTCSessionContact(contact.id, session?.key);
+        if (accept && session) updateWebRTCSessionContact(contact.id, session.key);
         // Send the approval whenever the channel is bound to this contact,
         // even if the onboarding dialog was closed and approvalPending was
         // cleared. Capability exchange must not depend on dialog lifetime.
@@ -5541,7 +5567,7 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
               ? { capabilities: approval.reconnect_capabilities }
               : {}),
           }));
-          updateWebRTCSessionApprovalPending(false);
+          updateWebRTCSessionApprovalPending(false, session?.key);
         }
       } catch {
         // The approval is already durable; control-channel status is best effort.
@@ -5551,7 +5577,7 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
         setNewChat(false);
         onInvitationHandled();
       }
-      window.dispatchEvent(new CustomEvent("meshchat:approval", { detail: { approved: accept } }));
+      window.dispatchEvent(new CustomEvent("meshchat:approval", { detail: { approved: accept, destination: contact.destination_hash } }));
       await refresh(true);
     } catch (reason) {
       if (accept) {

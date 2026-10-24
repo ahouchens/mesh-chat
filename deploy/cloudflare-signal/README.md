@@ -38,9 +38,18 @@ with the ten-minute alarm.
 
 ## Deploy
 
-```bash
-npx wrangler deploy
+Run from the repository root, using the Cloudflare account that will host the
+community mailbox:
+
+```sh
+npx wrangler login
+npx wrangler deploy --config deploy/cloudflare-signal/wrangler.toml
 ```
+
+Wrangler's [login command](https://developers.cloudflare.com/workers/wrangler/commands/general/#login)
+opens account authorization; its [deploy command](https://developers.cloudflare.com/workers/wrangler/commands/workers/#deploy)
+uses the committed Worker and Durable Object migration. This deploys the signaling
+service separately from the TURN credential broker. No TURN secrets belong here.
 
 No KV namespace is required. The Worker creates one Durable Object per
 signaling session. Wrangler creates the SQLite-backed class on first deploy.
@@ -52,8 +61,28 @@ https://mesh-chat-signal.<subdomain>.workers.dev
 ```
 
 Add it as the **Signaling mailbox** URL in Mesh Chat settings
-(**Settings → WebRTC calls**). The manual QR/copy path remains available when
+(**Settings → Advanced → WebRTC calls**). Use the actual URL printed by Wrangler;
+the example above is not a deployed endpoint. The manual QR/copy path remains available when
 the mailbox is unset.
+
+For a development or self-hosted service, `MESH_CHAT_DEFAULT_SIGNAL_MAILBOX` supplies
+the default when no mailbox preference has been saved. Explicitly cleared and
+custom URLs are preserved. That is a service runtime setting: setting it only in
+a packaging shell does not embed a URL in an APK or installer. A common published
+app default must use the verified deployed URL in the packaged service configuration.
+
+Before releasing that default, configure the mailbox on two updated clients and
+keep their approved connection open to exchange signed reconnect settings. New
+personal contacts enable reconnect automatically; older saved disabled choices
+must be enabled once. Confirm that both contacts report ready, quit both apps,
+reopen them, and check a new message and its receipt in each direction. Also reopen
+one client first and confirm it connects when the second comes online later.
+No deployed mailbox or physical-device result is implied by the local test suite.
+
+Personal v2 pair tokens are durable until revoked, so days away do not require
+another pairing. Worker documents still expire after ten minutes. Disabling
+reconnect, blocking/removing the contact, or rotating the token stops further
+authorized attempts; the Worker cannot override these client-side checks.
 
 ## Security
 

@@ -24,6 +24,8 @@ const api = vi.hoisted(() => ({
 vi.mock("./api", () => api);
 
 import App from "./App";
+import { ReconnectCoordinator } from "./reconnect-coordinator";
+import { getWebRTCSessionCount, setWebRTCSession, type WebRTCSession } from "./webrtc-session";
 import type { ServiceEvent } from "./api";
 
 const B32 = "a".repeat(52) + ".b32.i2p";
@@ -2888,6 +2890,106 @@ describe("Android system Back navigation", () => {
 });
 
 describe("connected conversation", () => {
+  function pairingSession(peerDestination: string): WebRTCSession {
+    return {
+      key: "onboarding:pending",
+      bridge: { bridgeId: "pending", maxPacket: 500, close: vi.fn(async () => undefined) },
+      channel: { readyState: "open", close: vi.fn() } as unknown as RTCDataChannel,
+      pc: { connectionState: "connected", iceConnectionState: "connected", close: vi.fn() } as unknown as RTCPeerConnection,
+      control: Object.assign(new EventTarget(), { readyState: "open", send: vi.fn(), close: vi.fn() }) as unknown as RTCDataChannel,
+      controlPurpose: "onboarding",
+      peerDestination,
+      approvalPending: true,
+      path: "direct",
+      createdAt: 1,
+    };
+  }
+
+  it.each([true, false])("sends pending approval only to its verified transport identity (matching: %s)", async (matches) => {
+    let current = snapshot([incoming]);
+    api.initializeService.mockResolvedValue(current);
+    api.onInvitation.mockResolvedValue(() => undefined);
+    api.onServiceEvent.mockResolvedValue(() => undefined);
+    api.serviceCommand.mockImplementation(async (command: string) => {
+      if (command === "snapshot") return current;
+      if (command === "reconnect_profiles") return { profiles: [] };
+      if (command === "approve_request") {
+        current = snapshot([{ ...incoming, trust: "approved" }]);
+        return { reconnect_capabilities: "signed-private-pair-settings" };
+      }
+      return {};
+    });
+    const pending = pairingSession(matches ? incoming.destination_hash : "ff".repeat(16));
+    setWebRTCSession(pending);
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Accept and open chat" }));
+    await screen.findByLabelText("Conversation with Taylor");
+    if (matches) {
+      expect(pending.contactId).toBe(incoming.id);
+      expect(pending.control?.send).toHaveBeenCalledWith(JSON.stringify({
+        type: "invitation_approved", capabilities: "signed-private-pair-settings",
+      }));
+    } else {
+      expect(pending.contactId).toBeUndefined();
+      expect(pending.control?.send).not.toHaveBeenCalled();
+    }
+  });
+
+  it("resumes background reconnection on network and app lifecycle events and removes listeners on close", async () => {
+    const current = snapshot([approved]);
+    api.initializeService.mockResolvedValue(current);
+    api.onInvitation.mockResolvedValue(() => undefined);
+    api.onServiceEvent.mockResolvedValue(() => undefined);
+    api.serviceCommand.mockImplementation(async (command: string) => {
+      if (command === "snapshot") return current;
+      if (command === "reconnect_profiles") return { profiles: [] };
+      return {};
+    });
+    const start = vi.spyOn(ReconnectCoordinator.prototype, "start");
+    const stop = vi.spyOn(ReconnectCoordinator.prototype, "stop");
+    const online = vi.spyOn(ReconnectCoordinator.prototype, "setOnline");
+    const wake = vi.spyOn(ReconnectCoordinator.prototype, "wake");
+    const visibility = vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
+    try {
+      const view = render(<App />);
+      await screen.findByLabelText("Conversation with Taylor");
+      const manual = pairingSession(approved.destination_hash);
+      act(() => setWebRTCSession(manual));
+      expect(start).toHaveBeenCalledTimes(1);
+      expect(online).toHaveBeenCalledWith(true);
+      act(() => window.dispatchEvent(new Event("offline")));
+      expect(online).toHaveBeenLastCalledWith(false);
+      act(() => window.dispatchEvent(new Event("online")));
+      expect(online).toHaveBeenLastCalledWith(true);
+      wake.mockClear();
+      visibility.mockReturnValue("hidden");
+      act(() => document.dispatchEvent(new Event("visibilitychange")));
+      expect(wake).not.toHaveBeenCalled();
+      visibility.mockReturnValue("visible");
+      act(() => document.dispatchEvent(new Event("visibilitychange")));
+      expect(wake).toHaveBeenCalledTimes(1);
+      act(() => window.dispatchEvent(new Event("focus")));
+      act(() => window.dispatchEvent(new Event("pageshow")));
+      expect(wake).toHaveBeenCalledTimes(3);
+      view.unmount();
+      expect(stop).toHaveBeenCalledTimes(1);
+      expect(getWebRTCSessionCount()).toBe(0);
+      expect(manual.pc.close).toHaveBeenCalledTimes(1);
+      wake.mockClear();
+      online.mockClear();
+      act(() => window.dispatchEvent(new Event("focus")));
+      act(() => window.dispatchEvent(new Event("online")));
+      expect(wake).not.toHaveBeenCalled();
+      expect(online).not.toHaveBeenCalled();
+    } finally {
+      start.mockRestore();
+      stop.mockRestore();
+      online.mockRestore();
+      wake.mockRestore();
+      visibility.mockRestore();
+    }
+  });
+
   it("opens the disconnected chat's reconnect settings without changing consent or losing the draft", async () => {
     const current = snapshot([
       { ...approved, route_kind: "unavailable" },

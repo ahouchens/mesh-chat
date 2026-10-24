@@ -2,6 +2,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   MAX_CONCURRENT,
+  MAILBOX_POLL_MS,
+  PATH_TIMEOUT_MS,
+  PATH_POLL_MS,
   ReconnectCoordinator,
   type CoordinatorPeer,
   type ReconnectCoordinatorDeps,
@@ -594,6 +597,105 @@ describe("persistent reconnect supervision", () => {
     expect(probe.coordinator.snapshot().entries["profile-2"].state).toBe("waiting_for_peer");
   });
 
+  it("does not make a reachable preferred profile wait behind offline contacts", async () => {
+    const profiles = [1, 2, 3].map((id) => profile({ id: "profile-" + id, contact_id: "contact-" + id }));
+    const probe = supervised(profiles);
+    const publish = probe.deps.publish;
+    probe.deps.publish = async (id, document, role) => {
+      await publish(id, document, role);
+      if (id !== "profile-3") probe.mailbox.delete(id + "/offer");
+    };
+    await probe.coordinator.start();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(probe.sessions).toEqual(new Set(["profile-3"]));
+    expect(probe.peers).toHaveLength(1);
+    expect(new Set(probe.published.filter((event) => event.role === "request").map((event) => event.profileId))).toEqual(
+      new Set(profiles.map((item) => item.id)),
+    );
+  });
+
+  it("paces idle responder mailbox reads without allocating transports", async () => {
+    const probe = supervised([profile({ effective: { ...profile().effective, preferred: false } })]);
+    const fetch = vi.spyOn(probe.deps, "fetch");
+    await probe.coordinator.start();
+    await vi.advanceTimersByTimeAsync(MAILBOX_POLL_MS - 1);
+    expect(fetch).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(probe.peers).toEqual([]);
+  });
+
+  it("keeps retrying past twenty failures and connects when the peer returns", async () => {
+    const probe = supervised([profile()]);
+    const requestCreate = probe.deps.requestCreate;
+    let available = false;
+    probe.deps.requestCreate = async (...args) => {
+      if (!available) throw new Error("network unavailable");
+      return requestCreate(...args);
+    };
+    await probe.coordinator.start();
+    await vi.advanceTimersByTimeAsync(22 * 60_000);
+    expect(probe.coordinator.snapshot().entries["profile-1"].attempts).toBeGreaterThan(20);
+    expect(probe.coordinator.snapshot().entries["profile-1"].state).toBe("peer_offline");
+    available = true;
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(probe.attached).toBe(1);
+    expect(probe.coordinator.snapshot().entries["profile-1"].state).toBe("connected");
+  });
+
+  it("pauses network work offline and wakes without undoing a stopped contact", async () => {
+    const profiles = [1, 2].map((id) => profile({ id: "profile-" + id, contact_id: "contact-" + id }));
+    const probe = supervised(profiles);
+    const read = vi.spyOn(probe.deps, "profiles");
+    probe.coordinator.setOnline(false);
+    await probe.coordinator.start();
+    await probe.coordinator.stop("contact-2");
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(read).not.toHaveBeenCalled();
+    expect(probe.published).toEqual([]);
+    probe.coordinator.setOnline(true);
+    probe.coordinator.wake();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(probe.sessions).toEqual(new Set(["profile-1"]));
+    expect(probe.coordinator.snapshot().entries["profile-2"].state).toBe("stopped");
+  });
+
+  it("keeps messaging pending after path timeout and marks ready when the route arrives", async () => {
+    let ready = false;
+    const probe = supervised([profile()], {
+      pathStatus: async () => ({ has_path: true, ready, state: "path_available", reason: null }),
+    });
+    await probe.coordinator.start();
+    await vi.advanceTimersByTimeAsync(PATH_TIMEOUT_MS + 1_000);
+    expect(probe.attached).toBe(1);
+    expect(probe.coordinator.snapshot().entries["profile-1"].state).toBe("connecting");
+    expect(probe.peers[0].closed).toBe(0);
+    ready = true;
+    await vi.advanceTimersByTimeAsync(PATH_POLL_MS);
+    expect(probe.coordinator.snapshot().entries["profile-1"].state).toBe("connected");
+    expect(probe.attached).toBe(1);
+  });
+
+  it.each(["identity_mismatch", "reconnect_replayed"])("ignores a previous mailbox answer rejected as %s until a fresh answer arrives", async (code) => {
+    const probe = supervised([profile({ effective: { ...profile().effective, preferred: false } })], {
+      verifyRequest: async () => ({ contact_id: "contact-1", attempt_id: "fresh-attempt" }),
+      verifyAnswer: async (document) => {
+        if (document === "old-answer") throw Object.assign(new Error(code), { code });
+        return { sdp: SDP, attempt_id: "fresh-attempt" };
+      },
+    });
+    probe.mailbox.set("profile-1/request", JSON.stringify({ attempt_id: "fresh-attempt" }));
+    probe.mailbox.set("profile-1/answer", "old-answer");
+    await probe.coordinator.start();
+    await vi.advanceTimersByTimeAsync(3_000);
+    expect(probe.attached).toBe(0);
+    expect(probe.coordinator.snapshot().entries["profile-1"].state).toBe("answer_pending");
+    probe.mailbox.set("profile-1/answer", "fresh-answer");
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(probe.attached).toBe(1);
+    expect(probe.coordinator.snapshot().entries["profile-1"].state).toBe("connected");
+  });
+
   it.each(["ice", "createAnswer", "answerCreate", "open", "attach"] as const)("honors per-contact stop during %s", async (phase) => {
     const probe = supervised([profile()]);
     const gate = deferred<void>();
@@ -694,7 +796,7 @@ describe("persistent reconnect supervision", () => {
 
     expect(probe.attached).toBe(1);
     expect(probe.peers[0].closed).toBe(0);
-    expect(probe.coordinator.snapshot().entries["profile-1"].state).toBe("connected");
+    expect(probe.coordinator.snapshot().entries["profile-1"].state).toBe("connecting");
   });
 
   it("backs off mailbox rate limits for a full minute without occupying a worker", async () => {
@@ -702,6 +804,9 @@ describe("persistent reconnect supervision", () => {
     const probe = supervised([profile({ effective: { ...profile().effective, preferred: false } })], { fetch });
     await probe.coordinator.start();
     await vi.advanceTimersByTimeAsync(59_000);
+    expect(fetch).toHaveBeenCalledTimes(1);
+    probe.coordinator.wake();
+    await vi.advanceTimersByTimeAsync(0);
     expect(fetch).toHaveBeenCalledTimes(1);
     await vi.advanceTimersByTimeAsync(1_000);
     expect(fetch).toHaveBeenCalledTimes(2);

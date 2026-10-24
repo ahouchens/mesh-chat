@@ -1,5 +1,48 @@
 # Verification and release gates
 
+## Automatic personal-contact reconnect — 0.9.35
+
+New personal contacts enable reconnect by default and exchange signed settings
+at pairing. Existing explicit opt-outs and ambiguous disabled settings from old
+versions stay off. Workspace consent and direct-IP/relay permissions retain their
+independent controls. Personal v2 `until_revoked` authorization supports long
+offline periods; v1 and workspace authorization keep their original expiry.
+Requests, offers, answers, mailbox documents and unknown-peer staging remain
+bounded. Both endpoints must update and exchange the new settings.
+
+The coordinator supervises all eligible profiles while the app is unlocked,
+yields offline mailbox waits so they cannot occupy both attempt slots, retries
+with capped backoff, and wakes on network recovery and foreground events. Stale
+answers are ignored until a current signed answer arrives. An open DataChannel
+does not become a ready chat status before native routing is ready. Lock/unmount
+retires every renderer session synchronously before awaiting native detaches.
+
+Capability-only reconnect control channels share settings after reconnection;
+they cannot participate in onboarding approvals. Tests bind approval and settings
+to the verified transport identity, cover late control-channel arrival, and
+reject delayed sends after a session is closed or rebound.
+
+`service/tests/test_reconnect_reopen.py` closes both real encrypted services and
+reopens their unchanged identities and profiles. Without toggling reconnect, a
+fresh signed request/offer/answer exchange succeeds both immediately and after
+45 simulated offline days. The old handshake is rejected and a deliberate off
+choice survives another restart. The mailbox and SDP are test fixtures; this is
+service persistence/protocol evidence, not physical ICE or TURN evidence.
+
+Local validation on 2026-10-24: the full service suite passed 1,190 tests with
+46 platform/integration skips; the final reconnect, scope, reopen and settings
+suite passed all 92 tests after the transport-identity storage guard. The final full frontend suite passed all
+387 tests. TypeScript and the final production frontend bundle passed.
+
+Deployment remains open: the signaling mailbox has not been deployed and no
+community endpoint is invented or embedded. Follow
+`deploy/cloudflare-signal/README.md`, verify its actual URL, configure both clients,
+and test Windows/Android quitting, reopening in either order, network changes,
+queued messages, and application delivery receipts. Installer/APK builds and
+publication are delegated to GitHub Actions by the version tag; their results
+are not yet verified in this source record. Physical device qualification remains
+pending.
+
 Phase 2 direct-connectivity work has a separate
 [evidence record](docs/DIRECT_CONNECTIVITY_PHASE2_EVIDENCE.md), distinguishing
 local service checks, native CI and unfulfilled production/physical gates.

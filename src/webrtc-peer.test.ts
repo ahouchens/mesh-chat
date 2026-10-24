@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { CallIceConfiguration } from "./types";
 import {
@@ -8,7 +8,10 @@ import {
   sdpStructure,
   summarizeIce,
   withEndOfCandidates,
+  ReconnectPeer,
 } from "./webrtc-peer";
+
+afterEach(() => vi.unstubAllGlobals());
 
 const ice = {
   iceServers: [
@@ -204,5 +207,51 @@ describe("WebRTC diagnostics", () => {
     expect(JSON.stringify(detail)).not.toContain("secret");
     expect(JSON.stringify(detail)).not.toContain("192.0.2.10");
     expect(JSON.stringify(detail)).not.toContain("user:pass");
+  });
+});
+
+describe("reconnect transport channels", () => {
+  function installPeer() {
+    const channel = (label: string) => ({ label, readyState: "open", close: vi.fn(), binaryType: "blob" });
+    const native = {
+      createDataChannel: vi.fn((label: string) => channel(label)),
+      ondatachannel: null as ((event: RTCDataChannelEvent) => void) | null,
+      close: vi.fn(),
+    };
+    vi.stubGlobal("RTCPeerConnection", vi.fn(function () { return native; }));
+    return { native, channel };
+  }
+
+  it("creates only the Reticulum and capability channels and closes both", () => {
+    const { native } = installPeer();
+    const peer = ReconnectPeer.create(ice, "offer");
+    expect(native.createDataChannel.mock.calls.map(([label]) => label)).toEqual(["mesh-reticulum", "meshchat-reconnect"]);
+    expect(peer.control?.label).toBe("meshchat-reconnect");
+    peer.close();
+    for (const created of native.createDataChannel.mock.results) expect(created.value.close).toHaveBeenCalledTimes(1);
+    expect(native.close).toHaveBeenCalledTimes(1);
+  });
+
+  it("accepts a late capability channel once and rejects onboarding or duplicate channels", async () => {
+    const { native, channel } = installPeer();
+    const peer = ReconnectPeer.create(ice, "answer");
+    const onControl = vi.fn();
+    peer.onControl = onControl;
+    const transport = channel("mesh-reticulum");
+    const control = channel("meshchat-reconnect");
+    const duplicate = channel("meshchat-reconnect");
+    const onboarding = channel("meshchat-onboarding");
+    const deliver = (value: ReturnType<typeof channel>) => native.ondatachannel?.({ channel: value } as unknown as RTCDataChannelEvent);
+    deliver(transport);
+    expect(await peer.open()).toBe(transport);
+    deliver(control);
+    deliver(duplicate);
+    deliver(onboarding);
+    expect(peer.control).toBe(control);
+    expect(onControl).toHaveBeenCalledTimes(1);
+    expect(onControl).toHaveBeenCalledWith(control);
+    expect(duplicate.close).toHaveBeenCalledTimes(1);
+    expect(onboarding.close).toHaveBeenCalledTimes(1);
+    expect(control.close).not.toHaveBeenCalled();
   });
 });

@@ -14,6 +14,35 @@ Android capability status, hardware gaps, and the exact physical test matrix are
 tracked separately in [docs/ANDROID_PARITY.md](ANDROID_PARITY.md). Shared
 React/Python code is not treated as physical Android verification.
 
+## 0.9.35 — Automatic personal-contact reconnect
+
+- Enable automatic reconnect for new approved personal contacts and supervise
+  eligible contacts whenever the app is open and unlocked. Existing saved off
+  choices, including ambiguous disabled settings from older versions, stay off.
+  Workspace reconnect remains opt-in, with separate direct-IP and relay consent.
+- Keep signed personal reconnect authorization valid until revoked, so closing
+  both apps or spending weeks offline does not require pairing again. Both peers
+  must update and exchange the new signed settings once over a live connection.
+- Retry offline contacts with capped backoff, share connection slots fairly, and
+  resume attempts after reopening, returning to the foreground, or network recovery.
+  Ignore stale mailbox answers while waiting for the current handshake.
+- Share refreshed settings over a dedicated reconnect control channel, bind them
+  to the verified contact identity, and retire sessions safely on lock or unmount.
+- Clarify reconnect setup and queued-message status, and document mailbox deployment.
+
+Automatic WebRTC reconnect requires a deployed signaling mailbox configured on
+both devices. This release does not deploy or embed a public mailbox; see the
+[deployment guide](../deploy/cloudflare-signal/README.md). Existing disabled
+contacts must be enabled explicitly before they can reconnect automatically.
+
+Local validation passed the full 1,190-test service suite (46 skipped), the final
+92-test affected service suite, all 387 frontend tests, TypeScript, and the
+production frontend build. Persistence tests cover both services reopening
+immediately and after 45 simulated offline days. Physical Windows/Android
+reopening and live ICE/TURN validation remain pending. GitHub Actions builds and
+publishes installers from the version tag; build results are not yet verified in
+this source record. See [TESTING.md](../TESTING.md) for evidence and limits.
+
 ## 0.9.34 — Reconnect recovery and clearer diagnostics
 
 - Open the selected contact's reconnect settings directly from a chat with no

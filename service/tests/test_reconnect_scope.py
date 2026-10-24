@@ -240,7 +240,7 @@ def test_delayed_capabilities_cannot_revert_same_second_rotation_or_consent(pair
         alex.identity, peer_destination=blair.destination, device_id=alex.device,
         transports=["webrtc"], auto_reconnect=True, allow_direct_ip_disclosure=True,
         mailbox_url=old.mailbox_url, mailbox_pair_token=old.mailbox_pair_token,
-        mailbox_expires_at=new.mailbox_expires_at, expires_at=new.expires_at, now=new.issued_at,
+        mailbox_expires_at=new.issued_at + 600, expires_at=new.issued_at + 1200, now=new.issued_at,
     )
     deliver_capability(alex, blair, conflict, workspace_id)
     assert blair.store.get("reconnect_profile", right["profile"]["id"]) == stored

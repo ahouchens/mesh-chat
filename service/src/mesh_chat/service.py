@@ -405,6 +405,7 @@ class MeshChatService(
     # allowed snapshot polling to grow the encrypted command table without a
     # useful bound.
     UNCACHED_COMMANDS = {
+        "reconnect_profiles", "reconnect_capabilities_get", "reconnect_path_status",
         "resume_direct_setup",
         "connection_diagnostics", "clear_connection_diagnostics",
         "preview_direct_connection", "prepare_direct_offer", "prepare_direct_answer",
@@ -1422,7 +1423,8 @@ class MeshChatService(
         self._reconnect_promote_pending(contact["destination_hash"])
         # The joiner knows this destination from the signed invitation, so an
         # approved contact is exactly when both sides can exchange signed
-        # reconnect capabilities. Approval itself never enables reconnect.
+        # reconnect capabilities using the personal contact's saved/default
+        # preference. Direct-IP disclosure and relay consent stay separate.
         capabilities = self._contact_capabilities(contact)
         return {
             **contact,
@@ -3638,9 +3640,11 @@ class MeshChatService(
             )
         if command == "reconnect_capabilities_store":
             body = _payload(
-                value, allowed={"document"}, required={"document"}
+                value, allowed={"document", "expected_contact_id", "expected_peer_destination"}, required={"document"}
             )
-            return self.reconnect_capabilities_store(body["document"])
+            return self.reconnect_capabilities_store(
+                body["document"], body.get("expected_contact_id"), body.get("expected_peer_destination")
+            )
         if command == "reconnect_capabilities_get":
             body = _payload(value, allowed={"contact_id"}, required={"contact_id"})
             return self.reconnect_capabilities_get(body["contact_id"])

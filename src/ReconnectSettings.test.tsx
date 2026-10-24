@@ -97,7 +97,7 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe("automatic reconnect contact settings", () => {
-  it("renders both consents off by default and explains what is missing", async () => {
+  it("preserves reconnect and direct IP settings that were turned off", async () => {
     mocks.serviceCommand.mockResolvedValue(payload());
     render(
       <ReconnectSettings
@@ -111,7 +111,46 @@ describe("automatic reconnect contact settings", () => {
     expect((toggles[0] as HTMLInputElement).checked).toBe(false);
     expect((toggles[1] as HTMLInputElement).checked).toBe(false);
     expect(screen.getByText("Auto-reconnect is off")).toBeTruthy();
-    expect(screen.getByText(/Turn on/)).toBeTruthy();
+    expect(screen.getByText("Automatic reconnect is turned off for this contact.")).toBeTruthy();
+    expect(mocks.serviceCommand).not.toHaveBeenCalledWith("reconnect_consent_set", expect.anything());
+    expect((screen.getByRole("button", { name: "Retry now" }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("shows approved reconnect settings as ready before the coordinator starts", async () => {
+    mocks.serviceCommand.mockResolvedValue(payload(profile({
+      auto_reconnect: true,
+      peer_auto_reconnect: true,
+      effective: { ...profile().effective, ready: true, reasons: [] },
+    })));
+    render(<ReconnectSettings contact={CONTACT} coordinator={coordinator()} onChanged={async () => undefined} />);
+
+    expect(await screen.findByText("Waiting for contact")).toBeTruthy();
+    expect(screen.getByText("Automatic reconnect is ready. Waiting for the contact to be online.")).toBeTruthy();
+    const toggles = screen.getAllByRole("checkbox") as HTMLInputElement[];
+    expect(toggles[0].checked).toBe(true);
+    expect(toggles[1].checked).toBe(false);
+    expect(screen.queryByText("Auto-reconnect is off")).toBeNull();
+    expect(screen.queryByText("Connected")).toBeNull();
+    expect(mocks.serviceCommand).not.toHaveBeenCalledWith("reconnect_consent_set", expect.anything());
+  });
+
+  it("distinguishes incomplete setup from a contact being offline", async () => {
+    mocks.serviceCommand.mockResolvedValue(payload(profile({
+      auto_reconnect: true,
+      effective: {
+        ...profile().effective,
+        configured: false,
+        reasons: ["mailbox_not_configured", "peer_capabilities_missing"],
+      },
+    })));
+    render(<ReconnectSettings contact={CONTACT} coordinator={coordinator()} onChanged={async () => undefined} />);
+
+    expect(await screen.findByText("Reconnect setup incomplete")).toBeTruthy();
+    expect(screen.getByText(/Automatic reconnect needs a signaling mailbox/)).toBeTruthy();
+    expect(screen.getByText(/Reconnect settings have not been exchanged yet/)).toBeTruthy();
+    expect(screen.queryByText("Peer offline")).toBeNull();
+    expect(screen.queryByText("Connected")).toBeNull();
+    expect(screen.queryByText("Auto-reconnect is off")).toBeNull();
     expect((screen.getByRole("button", { name: "Retry now" }) as HTMLButtonElement).disabled).toBe(true);
   });
 

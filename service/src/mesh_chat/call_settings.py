@@ -14,6 +14,7 @@ DEFAULT_TURN_BROKER_URL = os.environ.get(
     "MESH_CHAT_DEFAULT_TURN_BROKER",
     "https://staether.webtechalex.workers.dev/credentials",
 ).strip() or None
+DEFAULT_SIGNAL_MAILBOX_URL = os.environ.get("MESH_CHAT_DEFAULT_SIGNAL_MAILBOX", "").strip() or None
 URL = re.compile(
     r"^(stun|stuns|turn|turns):([A-Za-z0-9.-]{1,253})(?::([0-9]{1,5}))?(?:\?transport=(tcp|udp))?$",
     re.IGNORECASE,
@@ -30,7 +31,7 @@ class CallSettings:
     turn_credential: str | None = None
     turn_broker_url: str | None = field(default_factory=lambda: DEFAULT_TURN_BROKER_URL)
     turn_broker_consent: bool = False
-    signal_mailbox_url: str | None = None
+    signal_mailbox_url: str | None = field(default_factory=lambda: DEFAULT_SIGNAL_MAILBOX_URL)
     relay_only: bool = False
     # Sealed call records (negotiated SDP and ICE candidates) are stored in the
     # vault by default so an active call survives a service restart. Turning
@@ -82,7 +83,7 @@ class CallSettings:
             raise ValidationError("TURN broker consent must be boolean")
         if broker_consent and broker is None:
             raise ValidationError("TURN broker consent requires a broker")
-        signal_url = value.get("signal_mailbox_url")
+        signal_url = value.get("signal_mailbox_url", DEFAULT_SIGNAL_MAILBOX_URL)
         if signal_url is not None:
             signal_url = validate_broker_url(signal_url)
         relay_only = value.get("relay_only", False)
@@ -129,6 +130,7 @@ class CallSettings:
             "turn_broker_consent": self.turn_broker_consent,
             "turn_broker_default_url": DEFAULT_TURN_BROKER_URL,
             "signal_mailbox_url": self.signal_mailbox_url,
+            "signal_mailbox_default_url": DEFAULT_SIGNAL_MAILBOX_URL,
             "relay_only": self.relay_only,
             "store_call_signaling": self.store_call_signaling,
         }

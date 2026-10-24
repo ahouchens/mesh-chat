@@ -35,6 +35,7 @@ export interface ReconnectProfile {
   local_device_id: string;
   remote_device_id: string | null;
   auto_reconnect: boolean;
+  auto_reconnect_preference?: "default" | "explicit" | "legacy_disabled";
   allow_direct_ip_disclosure: boolean;
   relay_consent_scope: string;
   peer_auto_reconnect: boolean;
@@ -43,6 +44,8 @@ export interface ReconnectProfile {
   has_peer_capabilities: boolean;
   capabilities_expires_at: number;
   peer_capabilities_expires_at: number;
+  capabilities_persistent?: boolean;
+  peer_capabilities_persistent?: boolean;
   state: ReconnectState;
   active: boolean;
   last_attempt_at: number;
@@ -122,7 +125,7 @@ export interface ReconnectCoordinatorDeps {
   attach(peer: CoordinatorPeer, profile: ReconnectProfile, isCurrent?: () => boolean): Promise<void>;
   pathStatus?(
     contactId: string,
-  ): Promise<{ has_path: boolean; state: string; reason: string | null }>;
+  ): Promise<{ has_path: boolean; ready?: boolean; state: string; reason: string | null }>;
   /** True when this profile or its contact already has a live WebRTC transport. */
   hasSession?(profileId: string, contactId: string): boolean;
   closeSession?(profileId: string): Promise<void>;
@@ -139,6 +142,8 @@ export const REQUEST_POLL_MS = 25000;
 export const ANSWER_POLL_MS = 25000;
 export const OPEN_TIMEOUT_MS = 30000;
 export const PATH_TIMEOUT_MS = 10000;
+export const MAILBOX_POLL_MS = 5000;
+export const PATH_POLL_MS = 5000;
 
 export const RECONNECT_STATUS_LABELS: Record<ReconnectState, string> = {
   idle: "Not connected",
@@ -171,7 +176,7 @@ export function reconnectStatusDetail(entry: ReconnectEntry | undefined): string
     }
     return entry.detail || "A manual reconnect is required.";
   }
-  if (entry.state === "peer_offline") return "The peer has not answered. They may be offline.";
+  if (entry.state === "peer_offline") return "The peer has not answered. Mesh Chat will keep trying while this app is open.";
   if (entry.state === "connected") {
     if (entry.detail) return entry.detail;
     return entry.path === "relayed"
@@ -229,6 +234,8 @@ interface RetryProgress {
   attemptId: string;
   requestDocument: string;
   requestExpiresAt: number;
+  waitingForOfferUntil: number;
+  rateLimitedUntil?: number;
   blockedSignature?: string;
 }
 
@@ -241,7 +248,8 @@ interface RunningAttempt {
 class ReconnectCancelled extends Error {}
 
 const SUPERVISOR_INTERVAL_MS = 1000;
-const TERMINAL_ERRORS = ["mailbox_unauthorized", "contact_not_approved", "identity_mismatch", "reconnect_replayed"];
+const TERMINAL_ERRORS = ["mailbox_unauthorized", "contact_not_approved", "identity_mismatch"];
+const POLL_TERMINAL_ERRORS = ["mailbox_unauthorized", "contact_not_approved", "mailbox_rate_limited"];
 
 export class ReconnectCoordinator {
   private readonly deps: ReconnectCoordinatorDeps;
@@ -249,6 +257,7 @@ export class ReconnectCoordinator {
   private entries: Record<string, ReconnectEntry> = {};
   private profiles = new Map<string, ReconnectProfile>();
   private running = false;
+  private online = true;
   private supervisor: Promise<void> | null = null;
   private wakeSupervisor: (() => void) | null = null;
   private readonly attempts = new Map<string, RunningAttempt>();
@@ -257,6 +266,8 @@ export class ReconnectCoordinator {
   private readonly stoppedProfiles = new Set<string>();
   private readonly startedProfiles = new Set<string>();
   private readonly lastScheduled = new Map<string, number>();
+  private readonly pathChecks = new Set<string>();
+  private readonly nextPathCheckAt = new Map<string, number>();
   private scheduleOrder = 0;
 
   constructor(deps: ReconnectCoordinatorDeps) {
@@ -274,6 +285,28 @@ export class ReconnectCoordinator {
 
   isActive(): boolean {
     return this.running;
+  }
+
+  /** Resume ordinary retries without undoing a contact's Stop or a trust block. */
+  wake(): void {
+    if (!this.running || !this.online) return;
+    const now = this.clock();
+    for (const retry of this.retries.values()) {
+      if (!retry.blockedSignature) retry.nextAt = Math.max(now, retry.rateLimitedUntil ?? 0);
+    }
+    this.nextPathCheckAt.clear();
+    this.ensureSupervisor();
+    this.wakeSupervisor?.();
+  }
+
+  setOnline(online: boolean): void {
+    if (this.online === online) return;
+    this.online = online;
+    if (online) this.wake();
+    else {
+      this.cancelAttempts();
+      this.wakeSupervisor?.();
+    }
   }
 
   async start(): Promise<void> {
@@ -368,12 +401,18 @@ export class ReconnectCoordinator {
 
   private async supervise(): Promise<void> {
     while (this.running) {
+      if (!this.online) {
+        await this.pauseSupervisor();
+        continue;
+      }
       await this.refresh();
       if (!this.running) break;
+      if (!this.online) continue;
       const eligible = [...this.profiles.values()].filter((profile) => {
         if (this.stoppedContacts.has(profile.contact_id) || this.stoppedProfiles.has(profile.id)) return false;
         if (this.hasSession(profile.id, profile.contact_id)) {
           this.retries.delete(profile.id);
+          this.monitorPath(profile);
           return false;
         }
         if (!profile.auto_reconnect) {
@@ -437,7 +476,7 @@ export class ReconnectCoordinator {
 
   private current(attempt: RunningAttempt): boolean {
     const profile = this.profiles.get(attempt.profile.id);
-    return this.running && !attempt.controller.signal.aborted &&
+    return this.running && this.online && !attempt.controller.signal.aborted &&
       this.attempts.get(attempt.profile.id) === attempt &&
       !this.stoppedContacts.has(attempt.profile.contact_id) && !this.stoppedProfiles.has(attempt.profile.id) &&
       Boolean(profile && this.isReady(profile));
@@ -482,6 +521,25 @@ export class ReconnectCoordinator {
     void this.deps.status(state, detail).catch(() => undefined);
   }
 
+  private monitorPath(profile: ReconnectProfile): void {
+    if (!this.deps.pathStatus || this.attempts.has(profile.id) || this.pathChecks.has(profile.id) ||
+        this.pathChecks.size >= MAX_CONCURRENT || (this.nextPathCheckAt.get(profile.id) ?? 0) > this.clock()) return;
+    const entry = this.entries[profile.id];
+    this.pathChecks.add(profile.id);
+    this.nextPathCheckAt.set(profile.id, this.clock() + PATH_POLL_MS);
+    void this.deps.pathStatus(profile.contact_id).then((status) => {
+      if (!this.running || !this.online || this.entries[profile.id] !== entry ||
+          !this.hasSession(profile.id, profile.contact_id)) return;
+      if (status.has_path && status.ready !== false) {
+        this.setState(profile, "connected", "Secure messaging route ready.");
+      } else {
+        this.setState(profile, "connecting", "Connection open; waiting for the secure messaging route.");
+      }
+    }).catch(() => {
+      // A temporary native query failure does not close a healthy DataChannel.
+    }).finally(() => this.pathChecks.delete(profile.id));
+  }
+
   private async attemptSleep(ms: number, signal: AbortSignal): Promise<void> {
     if (signal.aborted) throw new ReconnectCancelled();
     let cancel: (() => void) | undefined;
@@ -514,7 +572,7 @@ export class ReconnectCoordinator {
     };
     let retry = this.retries.get(profile.id);
     if (!retry || retry.blockedSignature) {
-      retry = { attempts: 0, nextAt: 0, attemptId: makeAttemptId(), requestDocument: "", requestExpiresAt: 0 };
+      retry = { attempts: 0, nextAt: 0, attemptId: makeAttemptId(), requestDocument: "", requestExpiresAt: 0, waitingForOfferUntil: 0 };
       this.retries.set(profile.id, retry);
     }
     const poll = async (role: ReconnectRole, timeout: number, accept: (document: string) => Promise<boolean>): Promise<string | null> => {
@@ -524,7 +582,10 @@ export class ReconnectCoordinator {
           const fetched = await step(() => this.deps.fetch(profile.id, role));
           if (!fetched.pending && fetched.document && await step(() => accept(fetched.document!))) return fetched.document;
         } catch (reason) {
-          if (reason instanceof ReconnectCancelled || TERMINAL_ERRORS.includes(errorCode(reason)) || errorCode(reason) === "mailbox_rate_limited") throw reason;
+          // A stable pair mailbox may still contain the previous handshake's
+          // answer. Reject that document, but keep waiting for the current
+          // signed response instead of permanently blocking the contact.
+          if (reason instanceof ReconnectCancelled || POLL_TERMINAL_ERRORS.includes(errorCode(reason))) throw reason;
         }
         if (this.clock() >= deadline) return null;
         await this.attemptSleep(1000, attempt.controller.signal);
@@ -545,16 +606,31 @@ export class ReconnectCoordinator {
           const request = await step(() => this.deps.requestCreate(profile.contact_id, retry!.attemptId));
           retry.requestDocument = request.document;
           retry.requestExpiresAt = request.expires_at;
+          retry.waitingForOfferUntil = 0;
         }
-        await step(() => this.deps.publish(profile.id, retry!.requestDocument, "request"));
+        if (!retry.waitingForOfferUntil) {
+          await step(() => this.deps.publish(profile.id, retry!.requestDocument, "request"));
+          retry.waitingForOfferUntil = this.clock() + REQUEST_POLL_MS;
+        }
         let offer: { sdp: string; attempt_id: string } | undefined;
-        const offerDocument = await poll("offer", REQUEST_POLL_MS, async (document) => {
+        const offerDocument = await poll("offer", 0, async (document) => {
           const verified = await this.deps.verifyOffer(document, profile.id);
           if (verified.attempt_id !== retry!.attemptId) return false;
           offer = verified;
           return true;
         });
-        if (!offerDocument || !offer) throw new Error("offer_timeout");
+        if (!offerDocument || !offer) {
+          if (this.clock() >= retry.waitingForOfferUntil) {
+            retry.waitingForOfferUntil = 0;
+            throw new Error("offer_timeout");
+          }
+          // Waiting for an offline contact must not occupy one of the two
+          // peer-connection workers and delay every contact behind it.
+          retry.nextAt = this.clock() + MAILBOX_POLL_MS;
+          this.setState(profile, "waiting_for_peer", "Waiting for the other device; reconnect continues automatically.");
+          return;
+        }
+        retry.waitingForOfferUntil = 0;
         const ice = await step(() => this.deps.ice(profile));
         attempt.peer = this.deps.createPeer(ice, "answer");
         const sdp = await step(() => attempt.peer!.createAnswer(offer!.sdp));
@@ -563,13 +639,14 @@ export class ReconnectCoordinator {
       } else {
         this.setState(profile, "waiting_for_peer", "Waiting for a signed reconnect request");
         // A missing request must not occupy a worker for the lifetime of an offline peer.
-        const requestDocument = await poll("request", 0, async () => true);
+        const requestDocument = await poll("request", 0, async (document) => {
+          const request = await this.deps.verifyRequest(document, profile.id);
+          return request.contact_id === profile.contact_id;
+        });
         if (!requestDocument) {
-          retry.nextAt = this.clock() + SUPERVISOR_INTERVAL_MS;
+          retry.nextAt = this.clock() + MAILBOX_POLL_MS;
           return;
         }
-        const request = await step(() => this.deps.verifyRequest(requestDocument, profile.id));
-        if (request.contact_id !== profile.contact_id) throw Object.assign(new Error("request_for_another_contact"), { code: "identity_mismatch" });
         const ice = await step(() => this.deps.ice(profile));
         attempt.peer = this.deps.createPeer(ice, "offer");
         const sdp = await step(() => attempt.peer!.createOffer());
@@ -594,20 +671,21 @@ export class ReconnectCoordinator {
       const entry = this.entries[profile.id];
       if (entry) entry.path = path;
       let detail = "Fresh WebRTC transport attached.";
+      let messagingReady = !this.deps.pathStatus;
       if (this.deps.pathStatus) {
         detail = "Fresh WebRTC transport attached; waiting for a Reticulum path.";
         const deadline = this.clock() + PATH_TIMEOUT_MS;
         while (this.clock() < deadline) {
           const status = await step(() => this.deps.pathStatus!(profile.contact_id).catch(() => null));
-          if (!status) { detail = "Fresh WebRTC transport attached."; break; }
-          if (status.has_path) { detail = "Fresh WebRTC transport attached; Reticulum path ready."; break; }
+          if (!status) { detail = "Connection open; waiting to confirm the secure messaging route."; break; }
+          if (status.has_path && status.ready !== false) { messagingReady = true; detail = "Fresh WebRTC transport attached; Reticulum path ready."; break; }
           if (status.state === "network_unavailable") { detail = "Fresh WebRTC transport attached; Reticulum networking is unavailable."; break; }
           await this.attemptSleep(1000, attempt.controller.signal);
           check();
         }
       }
       check();
-      this.setState(profile, "connected", detail);
+      this.setState(profile, messagingReady ? "connected" : "connecting", detail);
       this.retries.delete(profile.id);
       attempt.peer = null; // The session registry now owns this healthy transport.
     } catch (reason) {
@@ -619,14 +697,16 @@ export class ReconnectCoordinator {
         this.setState(profile, "manual_required", code);
         return;
       }
-      if (code === "invalid_request") {
+      if (code === "invalid_request" || code === "reconnect_replayed") {
         retry.requestDocument = "";
         retry.attemptId = makeAttemptId();
+        retry.waitingForOfferUntil = 0;
       }
       retry.attempts += 1;
       const base = BACKOFF_MS[Math.min(retry.attempts - 1, BACKOFF_MS.length - 1)];
       const delay = code === "mailbox_rate_limited" ? 60000 : Math.round(base * (0.8 + (this.deps.random?.() ?? Math.random()) * 0.4));
       retry.nextAt = this.clock() + delay;
+      retry.rateLimitedUntil = code === "mailbox_rate_limited" ? retry.nextAt : undefined;
       const entry = this.entries[profile.id];
       if (entry) entry.attempts = retry.attempts;
       this.setState(profile, retry.attempts > MAX_ATTEMPTS ? "peer_offline" : "retry_wait", safeMessage(reason));

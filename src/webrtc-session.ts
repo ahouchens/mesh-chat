@@ -9,11 +9,15 @@ export interface WebRTCSession {
   channel: RTCDataChannel;
   pc: RTCPeerConnection;
   control: RTCDataChannel | null;
+  /** Reconnect control carries capabilities only, never onboarding actions. */
+  controlPurpose?: "onboarding" | "reconnect";
   path: WebRTCSessionPath;
   createdAt: number;
   approvalPending: boolean;
   /** Contact approved on this channel, once known. Capability messages are contact-scoped. */
   contactId?: string;
+  /** Peer identity verified against this transport's signed signaling. */
+  peerDestination?: string;
 }
 
 const sessions = new Map<string, WebRTCSession>();
@@ -85,6 +89,7 @@ export function getWebRTCSessionForContact(contactId: string): WebRTCSession | n
 export function getWebRTCSessionWithControl(): WebRTCSession | null {
   let found: WebRTCSession | null = null;
   for (const session of sessions.values()) {
+    if (session.controlPurpose === "reconnect") continue;
     if (!session.control || session.control.readyState !== "open") continue;
     if (!found || session.createdAt >= found.createdAt) found = session;
   }
@@ -166,15 +171,15 @@ export async function closeWebRTCSession(key?: string): Promise<void> {
         activeKey = [...sessions.keys()].pop() ?? null;
       }
     }
-    try {
-      await session.bridge.close();
-    } catch {
-      // Continue closing the remaining transports.
-    } finally {
-      try { session.control?.close(); } catch { /* already closed */ }
-      try { session.channel.close(); } catch { /* already closed */ }
-      try { session.pc.close(); } catch { /* already closed */ }
-    }
+    try { session.control?.close(); } catch { /* already closed */ }
+    try { session.channel.close(); } catch { /* already closed */ }
+    try { session.pc.close(); } catch { /* already closed */ }
   }
+  // Lock must retire every transport before any slow native detach can yield.
+  // Delayed capability tasks then see no registered session and cannot send.
   emit();
+  await Promise.all(targets.map(async (session) => {
+    try { await session.bridge.close(); }
+    catch { /* Every renderer transport is already closed. */ }
+  }));
 }

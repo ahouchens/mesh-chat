@@ -1154,22 +1154,25 @@ not become reachable merely because both peers can initiate checks.
 # WebRTC signaling and reconnect documents (0.9.1)
 
 These documents are separate from LXMF chat payloads. They are canonical signed
-JSON, expire, and bind both identities. They are used only for WebRTC rendezvous
+JSON and bind both identities. Session signaling expires; personal pair
+authorization can remain valid until revoked. They are used only for WebRTC rendezvous
 and capability discovery; a valid signature is never authorization to create a
 contact, approve one, or change workspace authority.
 
 ## Connection capabilities
 
-Type: `connection_capabilities`, version `1`. Exactly these fields:
+Type: `connection_capabilities`. Personal contacts issue version `2`, with an
+explicit durable lifetime. Exactly these fields:
 
 ```json
 {
-  "v": 1,
+  "v": 2,
   "type": "connection_capabilities",
+  "lifetime": "until_revoked",
   "peer_destination": "<32-hex recipient>",
   "device_id": "<8-80 chars, [A-Za-z0-9._:-]>",
   "transports": ["webrtc"],
-  "auto_reconnect": false,
+  "auto_reconnect": true,
   "allow_direct_ip_disclosure": false,
   "relay_consent_scope": "contact",
   "issued_at": 0,
@@ -1190,12 +1193,48 @@ Type: `connection_capabilities`, version `1`. Exactly these fields:
   `access_point`, and `i2p`. Current reconnect uses `webrtc`.
 - `auto_reconnect` and `allow_direct_ip_disclosure` are independent booleans.
   They are the sender's own consent, never a grant to the receiver.
-- `relay_consent_scope` is `contact`, `session`, or `workspace`.
-- `expires_at` is at most seven days after `issued_at`; `mailbox.expires_at` is
-  at most 30 days after issuance. A mailbox object needs all three fields.
-- Existing contacts without a capability, or with `auto_reconnect: false`, cannot
-  reconnect automatically. A consent or mailbox change requires a new signed
-  document and rotates the pair token.
+- Version `2` requires `lifetime: "until_revoked"`, integer `expires_at: 0`,
+  and (when configured) integer `mailbox.expires_at: 0`. Its relay scope is
+  `contact` or `session`; workspace issuance and wrappers remain bounded v1.
+  The marker is signed. Zero alone never means durable authorization.
+- Version `1` remains accepted: it has the same fields except `lifetime`,
+  which is absent, and `v: 1`. Its expiry must be strictly after issuance and
+  at most seven days later; mailbox expiry is at most 30 days after issuance.
+  An expired v1 document is rejected, never extended locally or reinterpreted
+  as v2. Version 1 also permits `relay_consent_scope: "workspace"`.
+- Both versions require an integer, nonnegative `issued_at`, no more than
+  five minutes ahead of verification time. Unknown versions, extra/missing
+  fields, noncanonical JSON, invalid signatures, and documents over 16 KiB
+  are rejected. A mailbox is either null or exactly its three shown fields,
+  including a validated HTTPS endpoint and a bounded pair token.
+- Authorization binds the signing identity and its `device_id` to the
+  recipient destination. Reconnect requests must match the saved peer device.
+  New approved personal relationships default to automatic reconnect; direct
+  address disclosure and relay permission remain separate. Saved explicit
+  opt-outs remain off. Historical false preferences without enough provenance
+  to distinguish an old default from an opt-out also remain off.
+- Authenticated control-channel storage binds the capability signer to its
+  channel peer: `reconnect_capabilities_store` accepts `expected_contact_id`
+  for existing contacts and `expected_peer_destination` from verified signed
+  onboarding SDP before the contact exists. Both supplied constraints must
+  match; destination normalization permits uppercase hexadecimal. A mismatch
+  is rejected before contact/profile or pending-capability writes. This
+  binding does not approve a contact or grant any additional consent.
+- Both local and peer consent, current approval, and usable signed capabilities
+  are required for signaling creation, verification, mailbox reads, and mailbox
+  writes. Blocking/removal or local opt-out takes effect immediately on that
+  device. A consent, mailbox, or explicit rotation change issues a newer signed
+  document and rotates its local pair token; delayed/equal-time documents cannot
+  replace a newer saved decision. Issue times remain ordered across restarts.
+- A local v1 personal capability upgrades to v2 without rotating its unchanged
+  pair token. It is exchanged over an authenticated channel; upgrading never
+  changes the peer's saved capability or consent. Durable reconnect requires
+  both apps to support v2 and exchange it. Older clients do not accept v2.
+- Public profiles expose `capabilities_persistent` and
+  `peer_capabilities_persistent` alongside their expiry timestamps. These flags
+  are true only for verified v2 personal capabilities. Unknown-contact pending
+  documents are bounded to 32 entries and retained for at most seven days,
+  even when their signed authorization is durable.
 
 ## Reconnect request
 
@@ -1219,7 +1258,9 @@ ID) side publishes it.
 ```
 
 `from` must equal the signer destination. Retries may repeat the same request;
-the prober reuses one attempt ID and one signed request across retries.
+the prober reuses one attempt ID and one signed request across retries. Requests
+remain version 1 and expire within one hour; durable capability authorization
+does not extend a request, offer, answer, replay window, or mailbox message TTL.
 
 ## Reconnect offer
 

@@ -41,17 +41,17 @@ function setupHints(profile: ReconnectProfile | null): string[] {
   return profile.effective.reasons.map((reason) => {
     switch (reason) {
       case "mailbox_not_configured":
-        return "Set a signaling mailbox in Settings → Advanced → WebRTC calls on both devices.";
+        return "Automatic reconnect needs a signaling mailbox. Configure one in Settings → Advanced → WebRTC calls.";
       case "local_capabilities_missing":
       case "peer_capabilities_missing":
-        return "Connect manually once so both devices can exchange signed reconnect settings.";
+        return "Reconnect settings have not been exchanged yet. Keep the contact connected to finish setup.";
       case "peer_capabilities_expired":
       case "local_capabilities_expired":
-        return "The signed reconnect settings expired. Connect manually once to refresh them.";
+        return "The reconnect settings expired. They need to be refreshed while the contact is connected.";
       case "consent_missing":
-        return "Turn on “Reconnect automatically” on this device.";
+        return "Automatic reconnect is turned off for this contact.";
       case "peer_consent_missing":
-        return "The contact has not enabled automatic reconnect on their device.";
+        return "Automatic reconnect is turned off on the contact’s device.";
       case "relay_required":
         return "Direct IP disclosure is off. Enable the community relay or allow direct IP disclosure.";
       default:
@@ -74,6 +74,7 @@ export function ReconnectSettings({
     coordinator ? coordinator.snapshot() : EMPTY,
   );
   const [busy, setBusy] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
 
@@ -82,13 +83,17 @@ export function ReconnectSettings({
   const load = useCallback(async () => {
     if (!eligible) {
       setPayload(null);
+      setLoading(false);
       return;
     }
+    setLoading(true);
     try {
       const value = await serviceCommand<ReconnectProfilesPayload>("reconnect_profiles");
       setPayload(value && Array.isArray(value.profiles) ? value : null);
     } catch {
       // The service may be locked between renders.
+    } finally {
+      setLoading(false);
     }
   }, [eligible]);
 
@@ -186,6 +191,22 @@ export function ReconnectSettings({
   }
 
   const hints = setupHints(profile);
+  const statusLabel = entry
+    ? reconnectStatusLabel(entry)
+    : loading
+      ? "Loading reconnect settings…"
+      : !profile
+        ? "Reconnect settings unavailable"
+        : !profile.auto_reconnect
+          ? "Auto-reconnect is off"
+          : profile.effective.ready
+            ? "Waiting for contact"
+            : "Reconnect setup incomplete";
+  const statusDetail = entry
+    ? reconnectStatusDetail(entry)
+    : profile?.auto_reconnect && profile.effective.ready
+      ? "Automatic reconnect is ready. Waiting for the contact to be online."
+      : "";
   return (
     <section className="reconnect-settings stack" aria-label="Automatic reconnect">
       <div className="reconnect-settings__heading">
@@ -193,23 +214,23 @@ export function ReconnectSettings({
         <span>
           <strong>Automatic reconnect</strong>
           <small className={entry?.state === "manual_required" ? "reconnect-status reconnect-status--warning" : "reconnect-status"} role="status">
-            {reconnectStatusLabel(entry)}
+            {statusLabel}
           </small>
         </span>
       </div>
       <p className="muted">
-        When both devices allow it, Mesh Chat creates a fresh WebRTC connection the next
-        time both apps are open. It never approves a contact or changes workspace access.
+        Automatic reconnect is on by default for new approved contacts. Once setup is ready,
+        they reconnect when both apps are open and unlocked. Your direct IP and relay choices still apply.
       </p>
       <label className="toggle-row">
         <span>
           <strong>Reconnect automatically</strong>
-          <small>Only while this app is open and unlocked. Both sides must opt in.</small>
+          <small>Messages wait safely while the contact is offline. You can turn reconnect off for this contact.</small>
         </span>
         <input
           type="checkbox"
           checked={Boolean(profile?.auto_reconnect)}
-          disabled={busy}
+          disabled={busy || loading}
           onChange={() =>
             void save(!profile?.auto_reconnect, Boolean(profile?.allow_direct_ip_disclosure))
           }
@@ -224,15 +245,15 @@ export function ReconnectSettings({
         <input
           type="checkbox"
           checked={Boolean(profile?.allow_direct_ip_disclosure)}
-          disabled={busy}
+          disabled={busy || loading}
           onChange={() =>
             void save(Boolean(profile?.auto_reconnect), !profile?.allow_direct_ip_disclosure)
           }
         />
         <i aria-hidden="true" />
       </label>
-      {reconnectStatusDetail(entry) && (
-        <p className="muted" role="status">{reconnectStatusDetail(entry)}</p>
+      {statusDetail && (
+        <p className="muted" role="status">{statusDetail}</p>
       )}
       {hints.length > 0 && (
         <ul className="reconnect-hints">

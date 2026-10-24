@@ -220,7 +220,7 @@ def _consent(alex: MeshChatService, blair: MeshChatService) -> None:
     )
 
 
-def test_capabilities_default_off_and_persist_without_exposing_token(
+def test_capabilities_default_on_and_persist_without_exposing_token(
     tmp_path: Path, mailbox: FakeMailbox
 ) -> None:
     alex, blair_id, blair, _ = _pair(tmp_path)
@@ -228,11 +228,13 @@ def test_capabilities_default_off_and_persist_without_exposing_token(
         _exchange(alex, blair)
         profiles = alex.reconnect_profiles()
         profile = profiles["profiles"][0]
-        assert profile["auto_reconnect"] is False
-        assert profile["peer_auto_reconnect"] is False
+        assert profile["auto_reconnect"] is True
+        assert profile["peer_auto_reconnect"] is True
+        assert profile["auto_reconnect_preference"] == "default"
         assert profile["effective"]["ready"] is False
-        assert "consent_missing" in profile["effective"]["reasons"]
-        assert "peer_consent_missing" in profile["effective"]["reasons"]
+        assert "consent_missing" not in profile["effective"]["reasons"]
+        assert "peer_consent_missing" not in profile["effective"]["reasons"]
+        assert "relay_required" in profile["effective"]["reasons"]
         assert profile["effective"]["session"]
         assert "mailbox_pair_token" not in json.dumps(profiles)
 
@@ -255,6 +257,8 @@ def test_reciprocal_consent_is_required_in_both_directions(
 ) -> None:
     alex, blair_id, blair, alex_id = _pair(tmp_path)
     try:
+        # A deliberate peer opt-out still requires a newly signed opt-in.
+        blair.reconnect_consent_set(alex_id, False, False)
         _exchange(alex, blair)
         alex.reconnect_consent_set(blair_id, True, False)
         with pytest.raises(ContactNotApproved):
@@ -567,7 +571,7 @@ def test_invitation_and_approval_carry_signed_capabilities(
         )
         assert verified.peer_destination == blair_destination
         assert verified.device_id == "dev-aaaa-0001"
-        assert verified.auto_reconnect is False
+        assert verified.auto_reconnect is True
 
         accepted = blair._execute(
             "accept_invitation", {"invitation": invitation["text"]}
@@ -577,7 +581,7 @@ def test_invitation_and_approval_carry_signed_capabilities(
             joiner_capabilities, expected_signer=blair_destination
         )
         assert verified_joiner.peer_destination == alex_destination
-        assert verified_joiner.auto_reconnect is False
+        assert verified_joiner.auto_reconnect is True
 
         # The owner can approve the resulting pending contact and receives its
         # own capability for the now-known peer.
@@ -610,6 +614,253 @@ def test_capabilities_can_be_fetched_for_delivery_after_a_restart(
         assert verified.auto_reconnect is True
         assert verified.allow_direct_ip_disclosure is True
     finally:
+        blair.close()
+
+
+def test_profile_poll_bootstraps_only_approved_contacts_and_is_idempotent(tmp_path):
+    alex, contact_id, blair, _ = _pair(tmp_path)
+    try:
+        for trust in (TrustState.PENDING_REQUEST, TrustState.AWAITING_CONSENT,
+                      TrustState.BLOCKED, TrustState.IDENTITY_CHANGED):
+            identity = RNS.Identity()
+            _add_contact(alex, trust.value, identity, _destination(identity), trust)
+        profiles = alex.reconnect_profiles()["profiles"]
+        assert [item["contact_id"] for item in profiles] == [contact_id]
+        assert profiles[0]["auto_reconnect"] is True
+        assert profiles[0]["allow_direct_ip_disclosure"] is False
+        first = alex.store.get("reconnect_profile", profiles[0]["id"])
+        assert verify_connection_capabilities(first["local_capabilities"]).auto_reconnect is True
+        alex.reconnect_profiles()
+        alex.reconnect_capabilities_get(contact_id)
+        assert alex.store.get("reconnect_profile", profiles[0]["id"]) == first
+    finally:
+        alex.close()
+        blair.close()
+
+
+@pytest.mark.parametrize("legacy", [False, True])
+def test_explicit_or_ambiguous_legacy_off_is_preserved_by_bootstrap_and_refresh(tmp_path, legacy):
+    alex, contact_id, blair, _ = _pair(tmp_path)
+    try:
+        result = alex.reconnect_consent_set(contact_id, False, False)
+        profile_id = result["profile"]["id"]
+        stored = alex.store.get("reconnect_profile", profile_id)
+        if legacy:
+            stored.pop("auto_reconnect_preference")
+            alex.store.put("reconnect_profile", profile_id, stored)
+        public = alex.reconnect_profiles()["profiles"][0]
+        assert public["auto_reconnect"] is False
+        assert public["auto_reconnect_preference"] == ("legacy_disabled" if legacy else "explicit")
+        fetched = alex.reconnect_capabilities_get(contact_id)
+        assert verify_connection_capabilities(fetched["local_capabilities"]).auto_reconnect is False
+        assert fetched["profile"]["allow_direct_ip_disclosure"] is False
+        enabled = alex.reconnect_consent_set(contact_id, True, False)
+        assert enabled["profile"]["auto_reconnect_preference"] == "explicit"
+        assert verify_connection_capabilities(enabled["capabilities"]).auto_reconnect is True
+    finally:
+        alex.close()
+        blair.close()
+
+
+def test_untouched_legacy_default_is_enabled_without_changing_workspace_consent(tmp_path):
+    alex, contact_id, blair, _ = _pair(tmp_path)
+    try:
+        untouched = alex._new_profile(contact_id, None)
+        untouched["auto_reconnect"] = False
+        untouched.pop("auto_reconnect_preference")
+        alex.store.put("reconnect_profile", untouched["id"], untouched)
+        workspace = alex._new_profile("workspace:one:two:three", None)
+        workspace.pop("auto_reconnect_preference")
+        alex.store.put("reconnect_profile", workspace["id"], workspace)
+        public = next(row for row in alex.reconnect_profiles()["profiles"] if row["contact_id"] == contact_id)
+        assert public["auto_reconnect"] is True
+        assert public["auto_reconnect_preference"] == "default"
+        assert alex.store.get("reconnect_profile", workspace["id"]) == workspace
+        assert workspace["auto_reconnect"] is False
+    finally:
+        alex.close()
+        blair.close()
+
+
+def test_capability_get_upgrades_v1_without_rotating_token_or_extending_peer_authority(tmp_path, monkeypatch):
+    from mesh_chat import reconnect, reconnect_service
+    alex, contact_id, blair, _ = _pair(tmp_path)
+    try:
+        _exchange(alex, blair)
+        before = alex.reconnect_capabilities_get(contact_id)
+        issued = verify_connection_capabilities(before["local_capabilities"])
+        old_document = create_connection_capabilities(
+            alex._call_identity(), peer_destination=issued.peer_destination,
+            device_id=issued.device_id, transports=list(issued.transports),
+            auto_reconnect=issued.auto_reconnect,
+            mailbox_url=issued.mailbox_url, mailbox_pair_token=issued.mailbox_pair_token,
+            mailbox_expires_at=issued.issued_at + 600,
+            now=issued.issued_at,
+        )
+        old = verify_connection_capabilities(old_document)
+        profile = alex.store.get("reconnect_profile", before["profile"]["id"])
+        profile.update(local_capabilities=old_document, local_capabilities_expires_at=old.expires_at,
+                       local_capabilities_persistent=False, local_capabilities_version=1,
+                       mailbox_expires_at=old.mailbox_expires_at)
+        alex.store.put("reconnect_profile", profile["id"], profile)
+        now = old.issued_at + 120
+        monkeypatch.setattr(reconnect_service, "_now", lambda: now)
+        monkeypatch.setattr(reconnect, "_now", lambda value=None: now if value is None else value)
+        after = alex.reconnect_capabilities_get(contact_id)
+        new = verify_connection_capabilities(after["local_capabilities"], now=now)
+        assert new.mailbox_pair_token == old.mailbox_pair_token
+        assert new.issued_at > old.issued_at
+        assert new.persistent is True and new.expires_at == 0
+        assert after["peer_capabilities"] == before["peer_capabilities"]
+        assert after["profile"]["peer_capabilities_expires_at"] == before["profile"]["peer_capabilities_expires_at"]
+        assert alex.reconnect_capabilities_get(contact_id)["local_capabilities"] == after["local_capabilities"]
+    finally:
+        alex.close()
+        blair.close()
+
+
+def test_control_channel_capability_is_bound_to_expected_personal_contact_before_writes(tmp_path):
+    alex, contact_id, blair, _ = _pair(tmp_path)
+    try:
+        _exchange(alex, blair)
+        document = blair.reconnect_capabilities_create("contact-alex")["capabilities"]
+        stranger = RNS.Identity()
+        _add_contact(alex, "stranger", stranger, _destination(stranger))
+        before = alex.store.list("reconnect_profile")
+        for expected in ("stranger", "missing", "workspace:one:two:three"):
+            with pytest.raises((IdentityMismatch, ValidationError)):
+                alex._execute("reconnect_capabilities_store", {"document": document, "expected_contact_id": expected})
+            assert alex.store.list("reconnect_profile") == before
+        accepted = alex._execute("reconnect_capabilities_store", {"document": document, "expected_contact_id": contact_id})
+        assert accepted["profile"]["contact_id"] == contact_id
+        contact = alex.store.get("contact", contact_id)
+        alex.store.put("contact", contact_id, {**contact, "trust": "blocked"})
+        with pytest.raises(ContactNotApproved):
+            alex.reconnect_capabilities_store(document, contact_id)
+    finally:
+        alex.close()
+        blair.close()
+
+
+@pytest.mark.parametrize("known_contact", [False, True])
+def test_onboarding_capability_matches_verified_channel_peer_before_any_store(tmp_path, known_contact):
+    alex, contact_id, blair, _ = _pair(tmp_path)
+    try:
+        document = blair.reconnect_capabilities_create("contact-alex")["capabilities"]
+        signer = verify_connection_capabilities(document).signer_destination
+        other = RNS.Identity()
+        other_destination = _destination(other)
+        _add_contact(alex, "other-contact", other, other_destination)
+        if not known_contact:
+            alex.store.delete("contact", contact_id)
+        profiles_before = alex.store.list("reconnect_profile")
+        pending_before = alex.store.list("reconnect_pending_capability")
+        for expected in (other_destination, "not-a-destination", 123):
+            with pytest.raises((IdentityMismatch, ValidationError)):
+                alex._execute("reconnect_capabilities_store", {
+                    "document": document, "expected_peer_destination": expected,
+                    **({"expected_contact_id": contact_id} if known_contact else {}),
+                })
+            assert alex.store.list("reconnect_profile") == profiles_before
+            assert alex.store.list("reconnect_pending_capability") == pending_before
+        result = alex._execute("reconnect_capabilities_store", {
+            "document": document, "expected_peer_destination": signer.upper(),
+            **({"expected_contact_id": contact_id} if known_contact else {}),
+        })
+        assert result["pending"] is (not known_contact)
+        if known_contact:
+            assert result["profile"]["contact_id"] == contact_id
+        else:
+            assert result["profile"] is None
+            assert alex.store.get("reconnect_pending_capability", signer)["document"] == document
+    finally:
+        alex.close()
+        blair.close()
+
+
+@pytest.mark.parametrize("revocation", ["local_off", "peer_off", "blocked", "removed"])
+def test_mailbox_and_cached_documents_recheck_revocation_before_network(tmp_path, mailbox, monkeypatch, revocation):
+    alex, contact_id, blair, _ = _pair(tmp_path)
+    try:
+        _consent(alex, blair)
+        profile = alex.reconnect_profiles()["profiles"][0]
+        request = alex.reconnect_request_create(contact_id, uuid.uuid4().hex)["document"]
+        peer_request = blair.reconnect_request_create("contact-alex", uuid.uuid4().hex)["document"]
+        if revocation == "local_off":
+            alex.reconnect_consent_set(contact_id, False, True)
+        elif revocation == "peer_off":
+            alex.reconnect_capabilities_store(blair.reconnect_consent_set("contact-alex", False, True)["capabilities"])
+        elif revocation == "blocked":
+            contact = alex.store.get("contact", contact_id)
+            alex.store.put("contact", contact_id, {**contact, "trust": "blocked"})
+        else:
+            alex.store.delete("contact", contact_id)
+        def forbidden(*args, **kwargs):
+            pytest.fail("Revoked relationship must not contact the mailbox")
+        monkeypatch.setattr("mesh_chat.reconnect_service.publish_signal", forbidden)
+        monkeypatch.setattr("mesh_chat.reconnect_service.fetch_signal", forbidden)
+        for operation in (
+            lambda: alex.reconnect_publish(profile["id"], request, "request"),
+            lambda: alex.reconnect_fetch(profile["id"], "offer"),
+            lambda: alex.verify_reconnect_request(peer_request, profile["id"]),
+        ):
+            with pytest.raises((ContactNotApproved, ValidationError)):
+                operation()
+    finally:
+        alex.close()
+        blair.close()
+
+
+def test_durable_pending_authorization_has_bounded_unapproved_retention(tmp_path, monkeypatch):
+    from mesh_chat import reconnect, reconnect_service
+    alex, contact_id, blair, _ = _pair(tmp_path)
+    try:
+        document = blair.reconnect_capabilities_create("contact-alex")["capabilities"]
+        verified = verify_connection_capabilities(document)
+        assert verified.persistent
+        alex.store.delete("contact", contact_id)
+        assert alex.reconnect_capabilities_store(document)["pending"]
+        pending = alex.store.get("reconnect_pending_capability", verified.signer_destination)
+        assert 0 < pending["expires_at"] - pending["received_at"] <= 7 * 86400
+        later = pending["expires_at"] + 1
+        monkeypatch.setattr(reconnect_service, "_now", lambda: later)
+        monkeypatch.setattr(reconnect, "_now", lambda value=None: later if value is None else value)
+        assert verify_connection_capabilities(document).persistent
+        alex.reconnect_profiles()
+        assert alex.store.get("reconnect_pending_capability", verified.signer_destination) is None
+    finally:
+        alex.close()
+        blair.close()
+
+
+def test_v1_peer_authorization_expires_even_when_local_authorization_is_durable(tmp_path, monkeypatch):
+    from mesh_chat import reconnect, reconnect_service
+    alex, contact_id, blair, _ = _pair(tmp_path)
+    try:
+        _consent(alex, blair)
+        profile = alex.reconnect_profiles()["profiles"][0]
+        now = profile["peer_capabilities_issued_at"] + 1
+        legacy = create_connection_capabilities(
+            blair._call_identity(), peer_destination=alex._require_profile()["destination_hash"],
+            device_id=blair._reconnect_device_id(), transports=["webrtc"],
+            auto_reconnect=True, mailbox_url=MAILBOX, mailbox_pair_token="a" * 32,
+            mailbox_expires_at=now + 60, expires_at=now + 60, now=now,
+        )
+        alex.reconnect_capabilities_store(legacy)
+        later = now + 61
+        monkeypatch.setattr(reconnect_service, "_now", lambda: later)
+        monkeypatch.setattr(reconnect, "_now", lambda value=None: later if value is None else value)
+        current = alex.reconnect_profiles()["profiles"][0]
+        assert current["capabilities_persistent"] is True
+        assert current["peer_capabilities_persistent"] is False
+        assert current["effective"]["ready"] is False
+        assert "peer_capabilities_expired" in current["effective"]["reasons"]
+        with pytest.raises(ContactNotApproved, match="expired"):
+            alex.reconnect_request_create(contact_id, uuid.uuid4().hex)
+        with pytest.raises(ContactNotApproved, match="expired"):
+            alex.reconnect_fetch(profile["id"], "request")
+    finally:
+        alex.close()
         blair.close()
 
 
@@ -656,7 +907,8 @@ def test_reconnect_commands_are_dispatched(tmp_path: Path, mailbox: FakeMailbox)
     try:
         profiles = alex._execute("reconnect_profiles", {})
         assert profiles["local_device_id"] == "dev-aaaa-0001"
-        assert profiles["profiles"] == []
+        assert len(profiles["profiles"]) == 1
+        assert profiles["profiles"][0]["auto_reconnect"] is True
 
         status = alex._execute(
             "reconnect_status",
@@ -733,7 +985,9 @@ def test_local_capability_metadata_is_explicit(
         profile = result["profile"]
         assert profile["transports"] == ["webrtc"]
         assert profile["capabilities_issued_at"] > 0
-        assert profile["capabilities_expires_at"] > profile["capabilities_issued_at"]
+        assert profile["capabilities_expires_at"] == 0
+        assert profile["capabilities_persistent"] is True
+        assert profile["peer_capabilities_persistent"] is False
     finally:
         blair.close()
 

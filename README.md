@@ -143,9 +143,14 @@ automatic reconnect:
 
 The same signed capability exchange is what enables automatic reconnect:
 capabilities are shared when an invitation is accepted and approved, or over
-the authenticated control channel while connected. A capability arriving before
-its contact record is held as a signed, expiring document and promoted only
-after approval. Tokens rotate with a new signed capability. See
+the authenticated control channel while connected. New personal contacts default
+to reconnecting when both apps are open and unlocked, with quiet retries when a
+peer is offline. Existing opt-outs, direct-IP permission, and relay consent are
+preserved. Personal v2 authorization survives long offline periods; reconnect
+offers and mailbox documents remain short-lived. Older clients need a live
+exchange with the updated app to adopt durable authorization.
+A capability arriving before its contact record is held for a bounded time and
+promoted only after approval. Explicit permission changes rotate tokens. See
 [the automatic reconnect spec](docs/AUTO_RECONNECT_SPEC.md) and
 [the mailbox deployment guide](deploy/cloudflare-signal/README.md).
 

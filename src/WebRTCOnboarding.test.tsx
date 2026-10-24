@@ -1,10 +1,14 @@
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { createHash, webcrypto } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   serviceCommand: vi.fn(),
   attachWebRTCBridge: vi.fn(),
   setWebRTCSession: vi.fn(),
+  getWebRTCSessionByKey: vi.fn(),
+  updateWebRTCSessionContact: vi.fn(),
+  updateWebRTCSessionApprovalPending: vi.fn(),
 }));
 
 vi.mock("./api", () => ({ serviceCommand: mocks.serviceCommand }));
@@ -16,6 +20,9 @@ vi.mock("./webrtc-onboarding", async (importOriginal) => ({
 vi.mock("./webrtc-session", async (importOriginal) => ({
   ...await importOriginal<typeof import("./webrtc-session")>(),
   setWebRTCSession: mocks.setWebRTCSession,
+  getWebRTCSessionByKey: mocks.getWebRTCSessionByKey,
+  updateWebRTCSessionContact: mocks.updateWebRTCSessionContact,
+  updateWebRTCSessionApprovalPending: mocks.updateWebRTCSessionApprovalPending,
 }));
 
 import { WebRTCOnboardingDialog } from "./WebRTCOnboarding";
@@ -40,6 +47,7 @@ class FakeChannel extends EventTarget {
   onopen: (() => void) | null = null;
   onclose: (() => void) | null = null;
   onerror: (() => void) | null = null;
+  onmessage: ((event: { data: string }) => void) | null = null;
   send = vi.fn();
   close = vi.fn(() => { this.readyState = "closed"; });
 
@@ -54,6 +62,7 @@ let offerExpiresAt = 0;
 
 class FakePeer extends EventTarget {
   static instances: FakePeer[] = [];
+  channels: FakeChannel[] = [];
   connectionState: RTCPeerConnectionState = "new";
   iceConnectionState: RTCIceConnectionState = "new";
   iceGatheringState: RTCIceGatheringState = "new";
@@ -84,7 +93,9 @@ class FakePeer extends EventTarget {
   }
 
   createDataChannel(label: string): RTCDataChannel {
-    return new FakeChannel(label) as unknown as RTCDataChannel;
+    const channel = new FakeChannel(label);
+    this.channels.push(channel);
+    return channel as unknown as RTCDataChannel;
   }
 
   fail(): void {
@@ -108,12 +119,20 @@ class FakePeer extends EventTarget {
     channel.dispatchEvent(new Event("open"));
     return channel;
   }
+
+  openControlChannel(): FakeChannel {
+    const channel = new FakeChannel("mesh-onboarding");
+    channel.readyState = "open";
+    this.ondatachannel?.({ channel: channel as unknown as RTCDataChannel });
+    return channel;
+  }
 }
 
 beforeEach(() => {
   vi.useFakeTimers();
   vi.setSystemTime(new Date("2026-10-23T22:00:00Z"));
   vi.clearAllMocks();
+  mocks.getWebRTCSessionByKey.mockReset();
   FakePeer.instances = [];
   finishGatheringImmediately = true;
   offerExpiresAt = Math.floor(Date.now() / 1000) + 600;
@@ -168,6 +187,150 @@ async function advance(ms: number): Promise<void> {
 }
 
 describe("manual WebRTC answer exchange", () => {
+  it("adds a late control channel to the same registered onboarding session", async () => {
+    const { pc } = await join();
+    await act(async () => { pc.openIncomingChannel(); });
+    const session = mocks.setWebRTCSession.mock.calls[0][0];
+    expect(session.control).toBeNull();
+    expect(session.peerDestination).toBe("peer");
+    mocks.getWebRTCSessionByKey.mockReturnValue(session);
+
+    let control!: FakeChannel;
+    await act(async () => { control = pc.openControlChannel(); });
+
+    expect(session.control).toBe(control);
+    expect(mocks.getWebRTCSessionByKey).toHaveBeenCalledWith("onboarding:bridge");
+    expect(mocks.setWebRTCSession).toHaveBeenLastCalledWith(session);
+    expect(mocks.attachWebRTCBridge).toHaveBeenCalledTimes(1);
+  });
+
+  it("binds an accepted invitation to its own session using the verified capability", async () => {
+    vi.stubGlobal("crypto", webcrypto);
+    const implementation = mocks.serviceCommand.getMockImplementation();
+    mocks.serviceCommand.mockImplementation(async (command: string, payload?: unknown) => {
+      if (command === "create_invitation") return { file: "signed-invitation" };
+      if (command === "reconnect_capabilities_store") return { profile: { contact_id: "contact-alex" } };
+      if (command === "verify_webrtc_onboarding_answer") return {
+        document: answerDocument, session_id: "session", sdp,
+        dtls_fingerprint: "sha-256 AA:BB", expires_at: offerExpiresAt,
+        signer_destination: "verified-answer-peer",
+      };
+      return implementation?.(command, payload);
+    });
+    render(<WebRTCOnboardingDialog onClose={() => undefined} onChanged={async () => undefined} />);
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Create WebRTC invitation" })); });
+    fireEvent.change(screen.getByLabelText("Paste their signed answer"), {
+      target: { value: JSON.stringify({
+        type: "webrtc_onboarding_answer", session_id: "session",
+        offer_digest: createHash("sha256").update(offerDocument).digest("hex"),
+      }) },
+    });
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Connect" })); });
+    const pc = FakePeer.instances[0];
+    await act(async () => {
+      for (const channel of pc.channels) {
+        channel.readyState = "open";
+        channel.onopen?.();
+        channel.dispatchEvent(new Event("open"));
+      }
+    });
+    const control = pc.channels.find((channel) => channel.label === "mesh-onboarding")!;
+    expect(mocks.setWebRTCSession.mock.calls[0][0].peerDestination).toBe("verified-answer-peer");
+    await act(async () => {
+      control.onmessage?.({ data: JSON.stringify({ type: "invitation_accepted", capabilities: "signed-reconnect-settings" }) });
+    });
+
+    expect(mocks.updateWebRTCSessionContact).toHaveBeenCalledWith("contact-alex", "onboarding:bridge");
+    expect(mocks.updateWebRTCSessionApprovalPending).toHaveBeenCalledWith(true, "onboarding:bridge");
+    const pendingUpdates = mocks.updateWebRTCSessionApprovalPending.mock.calls.length;
+    await act(async () => {
+      window.dispatchEvent(new CustomEvent("meshchat:approval", {
+        detail: { approved: true, destination: "unrelated-peer" },
+      }));
+    });
+    expect(mocks.updateWebRTCSessionApprovalPending).toHaveBeenCalledTimes(pendingUpdates);
+    await act(async () => {
+      window.dispatchEvent(new CustomEvent("meshchat:approval", {
+        detail: { approved: true, destination: "verified-answer-peer" },
+      }));
+    });
+    expect(mocks.updateWebRTCSessionApprovalPending).toHaveBeenLastCalledWith(false, "onboarding:bridge");
+    await act(async () => {
+      control.onmessage?.({ data: JSON.stringify({ type: "invitation_declined" }) });
+    });
+    expect(mocks.updateWebRTCSessionApprovalPending).toHaveBeenLastCalledWith(false, "onboarding:bridge");
+  });
+
+  it("checks refreshed capabilities against the contact bound to this channel", async () => {
+    const implementation = mocks.serviceCommand.getMockImplementation();
+    mocks.serviceCommand.mockImplementation(async (command: string, payload?: unknown) => {
+      if (command === "reconnect_capabilities_store") return { profile: { contact_id: "contact-alex" } };
+      return implementation?.(command, payload);
+    });
+    const { pc } = await join();
+    mocks.getWebRTCSessionByKey.mockReturnValue({ contactId: "contact-alex" });
+    let control!: FakeChannel;
+    await act(async () => {
+      pc.openIncomingChannel();
+      control = pc.openControlChannel();
+    });
+    await act(async () => {
+      control.onmessage?.({ data: JSON.stringify({ type: "connection_capabilities", document: "fresh-settings" }) });
+    });
+    expect(mocks.serviceCommand).toHaveBeenCalledWith("reconnect_capabilities_store", {
+      document: "fresh-settings", expected_contact_id: "contact-alex", expected_peer_destination: "peer",
+    });
+  });
+
+  it("ignores an invitation preview that finishes after its control channel closes", async () => {
+    const implementation = mocks.serviceCommand.getMockImplementation();
+    let finishPreview!: (value: unknown) => void;
+    mocks.serviceCommand.mockImplementation(async (command: string, payload?: unknown) => {
+      if (command === "preview_invitation") return new Promise((resolve) => { finishPreview = resolve; });
+      return implementation?.(command, payload);
+    });
+    const { pc } = await join();
+    let control!: FakeChannel;
+    await act(async () => {
+      pc.openIncomingChannel();
+      control = pc.openControlChannel();
+      control.onmessage?.({ data: JSON.stringify({ type: "contact_invitation", document: "signed-invitation" }) });
+    });
+    await act(async () => {
+      control.close();
+      finishPreview({ display_name: "Alex", fingerprint: "fingerprint" });
+    });
+    expect(screen.queryByRole("button", { name: "Accept contact" })).toBeNull();
+    expect(mocks.serviceCommand.mock.calls.some(([command]) => command === "accept_invitation")).toBe(false);
+  });
+
+  it("shares the service's reconnect capability during contact acceptance without changing preferences", async () => {
+    const implementation = mocks.serviceCommand.getMockImplementation();
+    mocks.serviceCommand.mockImplementation(async (command: string, payload?: unknown) => {
+      if (command === "preview_invitation") return { display_name: "Alex", fingerprint: "fingerprint" };
+      if (command === "accept_invitation") return { id: "contact-alex", reconnect_capabilities: "signed-reconnect-settings" };
+      return implementation?.(command, payload);
+    });
+    const { pc } = await join();
+    let control!: FakeChannel;
+    await act(async () => {
+      pc.openIncomingChannel();
+      control = pc.openControlChannel();
+      control.onmessage?.({ data: JSON.stringify({ type: "contact_invitation", document: "signed-invitation" }) });
+    });
+    expect(screen.getByText(/Automatic reconnect is enabled for new approved contacts/)).toBeTruthy();
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Accept contact" }));
+    });
+
+    expect(mocks.serviceCommand).toHaveBeenCalledWith("accept_invitation", { invitation: "signed-invitation" });
+    expect(control.send).toHaveBeenCalledWith(JSON.stringify({
+      type: "invitation_accepted", capabilities: "signed-reconnect-settings",
+    }));
+    expect(mocks.serviceCommand.mock.calls.some(([command]) => command === "reconnect_consent_set")).toBe(false);
+    expect(screen.getByText(/Contact request sent. Waiting for the other person to approve it/)).toBeTruthy();
+  });
+
   it("does not register a channel that closes while its path is being inspected", async () => {
     const { pc, onConnected } = await join();
     let resolveStats!: (value: Map<string, unknown>) => void;
@@ -206,7 +369,8 @@ describe("manual WebRTC answer exchange", () => {
     expect(mocks.setWebRTCSession).toHaveBeenCalledTimes(1);
     expect(onConnected).toHaveBeenCalledTimes(1);
     expect(screen.getByText("WebRTC path connected")).toBeTruthy();
-    expect(screen.getByText(/Closing either app ends this connection/)).toBeTruthy();
+    expect(screen.getByText(/reconnects quietly when both apps are open and unlocked/)).toBeTruthy();
+    expect(screen.queryByText(/enable “Reconnect automatically”/)).toBeNull();
     await advance(120000);
     expect(pc.close).not.toHaveBeenCalled();
     unmount();

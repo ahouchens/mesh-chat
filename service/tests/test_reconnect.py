@@ -7,6 +7,7 @@ import pytest
 
 from mesh_chat.errors import IdentityMismatch, ValidationError
 from mesh_chat.invitations import canonical_bytes
+from mesh_chat.webrtc_signaling import _sign
 from mesh_chat.reconnect import (
     ReconnectReplayCache,
     create_connection_capabilities,
@@ -113,6 +114,85 @@ def test_capabilities_reject_invalid_mailbox_and_expiry() -> None:
     )
     with pytest.raises(ValidationError):
         verify_connection_capabilities(raw, now=NOW + 8 * 24 * 60 * 60)
+
+
+def _durable_capability(owner=None):
+    owner = owner or RNS.Identity()
+    return create_connection_capabilities(
+        owner, peer_destination=destination(RNS.Identity()),
+        device_id="device:persistent", transports=["webrtc"],
+        auto_reconnect=True, persistent=True,
+        mailbox_url="https://signal.example.workers.dev",
+        mailbox_pair_token="a" * 32, mailbox_expires_at=0, now=NOW,
+    )
+
+
+def test_durable_pair_authorization_outlives_months_but_not_signaling_ttl():
+    owner = RNS.Identity()
+    raw = _durable_capability(owner)
+    value = verify_connection_capabilities(raw, now=NOW + 180 * 86400)
+    assert value.version == 2 and value.persistent is True
+    assert value.expires_at == value.mailbox_expires_at == 0
+    assert json.loads(raw)["lifetime"] == "until_revoked"
+    request = create_reconnect_request(
+        owner, to_destination=value.peer_destination, device_id=value.device_id,
+        attempt_id="attempt-0123456789", nonce="nonce-0123456789", now=NOW,
+    )
+    assert json.loads(request)["v"] == 1
+    with pytest.raises(ValidationError, match="expired"):
+        verify_reconnect_request(request, now=NOW + 3600)
+    changed = json.loads(request)
+    changed["v"] = 2
+    with pytest.raises(ValidationError):
+        verify_reconnect_request(_sign(owner, {k: v for k, v in changed.items() if k != "signature"}), now=NOW)
+
+
+@pytest.mark.parametrize("changes", [
+    {"v": 3}, {"v": True}, {"lifetime": "forever"}, {"lifetime": None},
+    {"expires_at": NOW + 3600}, {"expires_at": False},
+    {"issued_at": NOW + 301}, {"issued_at": -1}, {"issued_at": True},
+    {"relay_consent_scope": "workspace"},
+    {"relay_consent_scope": []}, {"transports": [{}]},
+    {"mailbox": {"url": "https://signal.example.workers.dev", "pair_token": "a" * 32, "expires_at": NOW + 3600}},
+    {"mailbox": {"url": None, "pair_token": "a" * 32, "expires_at": 0}},
+])
+def test_durable_capability_rejects_ambiguous_lifetimes_and_future_issuance(changes):
+    owner = RNS.Identity()
+    value = json.loads(_durable_capability(owner))
+    value.pop("signature")
+    value.update(changes)
+    with pytest.raises(ValidationError):
+        verify_connection_capabilities(_sign(owner, value), now=NOW)
+
+
+def test_v1_zero_expiry_and_v2_missing_marker_are_never_durable():
+    owner = RNS.Identity()
+    value = json.loads(_durable_capability(owner))
+    value.pop("signature")
+    value.pop("lifetime")
+    with pytest.raises(ValidationError):
+        verify_connection_capabilities(_sign(owner, value), now=NOW)
+    value["v"] = 1
+    with pytest.raises(ValidationError):
+        verify_connection_capabilities(_sign(owner, value), now=NOW)
+
+
+@pytest.mark.parametrize("field", ["peer_destination", "device_id", "auto_reconnect"])
+def test_durable_capability_signature_binds_pair_device_and_consent(field):
+    value = json.loads(_durable_capability())
+    value[field] = {"peer_destination": "1" * 32, "device_id": "device:imposter", "auto_reconnect": False}[field]
+    with pytest.raises(IdentityMismatch):
+        verify_connection_capabilities(canonical_bytes(value).decode("utf-8"), now=NOW)
+
+
+def test_workspace_wrapper_rejects_durable_personal_authorization():
+    from mesh_chat.workspace_reconnect import create_workspace_reconnect_capability
+    owner = RNS.Identity()
+    with pytest.raises(ValidationError, match="bounded v1"):
+        create_workspace_reconnect_capability(
+            owner, workspace_id="00000000-0000-0000-0000-000000000001",
+            manifest_digest="a" * 64, capability=_durable_capability(owner), now=NOW,
+        )
 
 
 def test_reconnect_request_offer_answer_binding() -> None:

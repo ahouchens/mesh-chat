@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 from dataclasses import dataclass
 from typing import Any
@@ -23,6 +24,10 @@ from .webrtc_signaling import (
 )
 
 CAPABILITIES_VERSION = 1
+DURABLE_CAPABILITIES_VERSION = 2
+CAPABILITY_LIFETIME = "until_revoked"
+MAX_CAPABILITY_BYTES = 16 * 1024
+MAX_CLOCK_SKEW_SECONDS = 300
 MAX_CAPABILITY_SECONDS = 7 * 24 * 60 * 60
 MAX_RECONNECT_SECONDS = 60 * 60
 TOKEN = re.compile(r"^[A-Za-z0-9_-]{16,80}$")
@@ -35,6 +40,8 @@ RELAY_SCOPES = {"contact", "session", "workspace"}
 
 @dataclass(frozen=True, slots=True)
 class VerifiedConnectionCapabilities:
+    version: int
+    persistent: bool
     peer_destination: str
     device_id: str
     transports: tuple[str, ...]
@@ -63,20 +70,27 @@ def create_connection_capabilities(
     mailbox_pair_token: str | None = None,
     mailbox_expires_at: int | None = None,
     expires_at: int | None = None,
+    persistent: bool = False,
     now: int | None = None,
 ) -> str:
     created = _now(now)
-    expiry = _capability_expiry(expires_at, created)
+    if not isinstance(persistent, bool):
+        raise ValidationError("Capability lifetime is invalid")
+    if persistent and expires_at is not None and (type(expires_at) is not int or expires_at != 0):
+        raise ValidationError("Durable capability expiry must be zero")
+    expiry = 0 if persistent else _capability_expiry(expires_at, created)
     _destination(peer_destination)
     _device_id(device_id)
     normalized = _transports(transports)
-    if relay_consent_scope not in RELAY_SCOPES:
+    if not isinstance(relay_consent_scope, str) or relay_consent_scope not in RELAY_SCOPES:
         raise ValidationError("Relay consent scope is invalid")
+    if persistent and relay_consent_scope == "workspace":
+        raise ValidationError("Durable capabilities are only for personal contacts")
     if not isinstance(auto_reconnect, bool) or not isinstance(allow_direct_ip_disclosure, bool):
         raise ValidationError("Connection consent must be boolean")
-    mailbox = _mailbox(mailbox_url, mailbox_pair_token, mailbox_expires_at, created)
+    mailbox = _mailbox(mailbox_url, mailbox_pair_token, mailbox_expires_at, created, persistent=persistent)
     document: dict[str, Any] = {
-        "v": CAPABILITIES_VERSION,
+        "v": DURABLE_CAPABILITIES_VERSION if persistent else CAPABILITIES_VERSION,
         "type": "connection_capabilities",
         "peer_destination": peer_destination,
         "device_id": device_id,
@@ -89,6 +103,8 @@ def create_connection_capabilities(
         "signer_public_key": _b64encode(identity.get_public_key()),
         "mailbox": mailbox,
     }
+    if persistent:
+        document["lifetime"] = CAPABILITY_LIFETIME
     return _sign(identity, document)
 
 
@@ -98,7 +114,8 @@ def verify_connection_capabilities(
     expected_signer: str | None = None,
     now: int | None = None,
 ) -> VerifiedConnectionCapabilities:
-    value = _document(raw, "connection_capabilities")
+    value = _capability_document(raw)
+    persistent = value["v"] == DURABLE_CAPABILITIES_VERSION
     peer = _destination(value["peer_destination"])
     device = _device_id(value["device_id"])
     transports = _transports(value["transports"])
@@ -108,17 +125,21 @@ def verify_connection_capabilities(
     if not isinstance(auto, bool) or not isinstance(disclose, bool):
         raise ValidationError("Connection consent must be boolean")
     scope = value["relay_consent_scope"]
-    if scope not in RELAY_SCOPES:
+    if not isinstance(scope, str) or scope not in RELAY_SCOPES:
         raise ValidationError("Relay consent scope is invalid")
+    if persistent and scope == "workspace":
+        raise ValidationError("Durable capabilities are only for personal contacts")
     mailbox = value.get("mailbox")
     mailbox_url = mailbox_token = None
     mailbox_expiry = None
     if mailbox is not None:
-        if not isinstance(mailbox, dict):
+        if not isinstance(mailbox, dict) or set(mailbox) != {"url", "pair_token", "expires_at"}:
             raise ValidationError("Mailbox capability is invalid")
-        mailbox_url = str(validate_broker_url(mailbox.get("url")))
+        mailbox_url = validate_broker_url(mailbox.get("url"))
+        if mailbox_url is None:
+            raise ValidationError("Mailbox capability is invalid")
         mailbox_token = _pair_token(mailbox.get("pair_token"))
-        mailbox_expiry = _mailbox_expiry(mailbox.get("expires_at"), value["issued_at"])
+        mailbox_expiry = _mailbox_expiry(mailbox.get("expires_at"), value["issued_at"], persistent=persistent)
     public_key = _b64decode(value["signer_public_key"])
     if len(public_key) != RNS.Identity.KEYSIZE // 8:
         raise ValidationError("Capabilities signer key is invalid")
@@ -132,6 +153,8 @@ def verify_connection_capabilities(
     if expected_signer is not None and signer != expected_signer:
         raise IdentityMismatch("Capabilities signer is not the expected contact")
     return VerifiedConnectionCapabilities(
+        version=value["v"],
+        persistent=persistent,
         peer_destination=peer,
         device_id=device,
         transports=transports,
@@ -146,6 +169,32 @@ def verify_connection_capabilities(
         signer_destination=signer,
         serialized=raw,
     )
+
+
+def _capability_document(raw: str) -> dict[str, Any]:
+    """Version only pair authorization; other signaling remains strictly v1."""
+    if not isinstance(raw, str) or not raw or len(raw.encode("utf-8")) > MAX_CAPABILITY_BYTES:
+        raise ValidationError("Connection capability is invalid")
+    try:
+        value = json.loads(raw)
+    except Exception as exc:
+        raise ValidationError("Connection capability is invalid") from exc
+    if (not isinstance(value, dict) or type(value.get("v")) is not int
+        or value["v"] not in {CAPABILITIES_VERSION, DURABLE_CAPABILITIES_VERSION}
+        or value.get("type") != "connection_capabilities"):
+        raise ValidationError("Connection capability version is unsupported")
+    expected = {
+        "v", "type", "peer_destination", "device_id", "transports",
+        "auto_reconnect", "allow_direct_ip_disclosure", "relay_consent_scope",
+        "mailbox", "issued_at", "expires_at", "signer_public_key", "signature",
+    }
+    if value["v"] == DURABLE_CAPABILITIES_VERSION:
+        expected.add("lifetime")
+        if value.get("lifetime") != CAPABILITY_LIFETIME:
+            raise ValidationError("Capability lifetime is invalid")
+    if set(value) != expected or canonical_bytes(value).decode("utf-8") != raw:
+        raise ValidationError("Connection capability fields are invalid")
+    return value
 
 
 class ReconnectReplayCache:
@@ -481,8 +530,14 @@ def _capability_expiry_value(value: dict[str, Any], now: int | None) -> None:
     expiry = value.get("expires_at")
     if not isinstance(created, int) or isinstance(created, bool):
         raise ValidationError("Capability issue time is invalid")
+    if created < 0 or created > current + MAX_CLOCK_SKEW_SECONDS:
+        raise ValidationError("Capability issue time is invalid")
     if not isinstance(expiry, int) or isinstance(expiry, bool):
         raise ValidationError("Capability expiry is invalid")
+    if value["v"] == DURABLE_CAPABILITIES_VERSION:
+        if expiry != 0:
+            raise ValidationError("Durable capability expiry must be zero")
+        return
     if expiry <= created or expiry - created > MAX_CAPABILITY_SECONDS:
         raise ValidationError("Capability expiry is invalid")
     if current >= expiry:
@@ -506,7 +561,7 @@ def _transports(value: Any) -> tuple[str, ...]:
         raise ValidationError("Transport list is invalid")
     seen: list[str] = []
     for item in value:
-        if item not in TRANSPORTS or item in seen:
+        if not isinstance(item, str) or item not in TRANSPORTS or item in seen:
             raise ValidationError("Transport list is invalid")
         seen.append(item)
     return tuple(seen)
@@ -523,6 +578,8 @@ def _mailbox(
     token: str | None,
     expires_at: int | None,
     now: int,
+    *,
+    persistent: bool = False,
 ) -> dict[str, Any] | None:
     if url is None and token is None and expires_at is None:
         return None
@@ -531,13 +588,17 @@ def _mailbox(
     return {
         "url": validate_broker_url(url),
         "pair_token": _pair_token(token),
-        "expires_at": _mailbox_expiry(expires_at, now),
+        "expires_at": _mailbox_expiry(expires_at, now, persistent=persistent),
     }
 
 
-def _mailbox_expiry(value: Any, now: int) -> int:
+def _mailbox_expiry(value: Any, now: int, *, persistent: bool = False) -> int:
     if not isinstance(value, int) or isinstance(value, bool):
         raise ValidationError("Mailbox expiry is invalid")
+    if persistent:
+        if value != 0:
+            raise ValidationError("Durable mailbox authorization expiry must be zero")
+        return value
     if value <= now or value - now > 30 * 24 * 60 * 60:
         raise ValidationError("Mailbox expiry is invalid")
     return value

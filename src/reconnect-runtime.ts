@@ -10,7 +10,8 @@ import {
 import type { WebRTCSession, WebRTCSessionPath } from "./webrtc-session";
 import { attachWebRTCBridge } from "./webrtc-onboarding";
 import { ReconnectPeer, fingerprint } from "./webrtc-peer";
-import { setWebRTCSession, getWebRTCSessions, closeWebRTCSession, removeWebRTCSession } from "./webrtc-session";
+import { maintainReconnectCapabilities } from "./reconnect-control";
+import { setWebRTCSession, getWebRTCSessions, getWebRTCSessionByKey, closeWebRTCSession, removeWebRTCSession } from "./webrtc-session";
 
 export const DISCONNECTED_SESSION_GRACE_MS = 10_000;
 const disconnectedSince = new WeakMap<WebRTCSession, number>();
@@ -58,8 +59,11 @@ export function createReconnectDeps(
   options: ReconnectRuntimeOptions,
 ): ReconnectCoordinatorDeps {
   return {
-    profiles: () =>
-      serviceCommand<ReconnectProfilesPayload>("reconnect_profiles"),
+    profiles: async () => {
+      const payload = await serviceCommand<ReconnectProfilesPayload>("reconnect_profiles");
+      maintainReconnectCapabilities();
+      return payload;
+    },
     start: (contactId) =>
       serviceCommand("reconnect_start", { contact_id: contactId }),
     stop: (contactId) =>
@@ -127,6 +131,16 @@ export function createReconnectDeps(
     createPeer: (ice, role) => ReconnectPeer.create(ice, role),
     attach: async (peer: CoordinatorPeer, profile: ReconnectProfile, isCurrent = () => true) => {
       const concrete = peer as ReconnectPeer;
+      concrete.onControl = (control) => {
+        const update = () => {
+          const session = getWebRTCSessionByKey(profile.id);
+          if (session?.pc !== concrete.pc) return;
+          session.control = control;
+          maintainReconnectCapabilities();
+        };
+        control.addEventListener("open", update, { once: true });
+        update();
+      };
       let bridge: Awaited<ReturnType<typeof attachWebRTCBridge>> | null = null;
       const check = (channel?: RTCDataChannel) => {
         if (!isCurrent() || (channel && channel.readyState !== "open") ||
@@ -150,14 +164,17 @@ export function createReconnectDeps(
           bridge,
           channel,
           pc: concrete.pc,
-          // Reconnect never carries an onboarding control channel and never
-          // sets a pending contact approval.
-          control: null,
+          // This control channel only renews signed reconnect capabilities;
+          // it cannot accept invitations or approve contacts.
+          control: concrete.control,
+          controlPurpose: "reconnect",
           path,
           createdAt: Date.now(),
           approvalPending: false,
           contactId: profile.contact_id,
+          peerDestination: profile.destination_hash,
         });
+        maintainReconnectCapabilities();
         options.onSession?.(path);
         try {
           await options.refresh();

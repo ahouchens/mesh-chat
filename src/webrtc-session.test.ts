@@ -6,6 +6,7 @@ import {
   getWebRTCSessionByKey,
   getWebRTCSessionCount,
   getWebRTCSessionForContact,
+  getWebRTCSessionWithControl,
   getWebRTCSessions,
   setWebRTCSession,
   updateWebRTCSessionContact,
@@ -66,6 +67,20 @@ describe("WebRTC session registry", () => {
     expect(getWebRTCSession()?.key).toBe("peer-b");
   });
 
+  it("keeps reconnect control channels out of onboarding actions", () => {
+    const onboarding = session("pairing", 1);
+    onboarding.control = { readyState: "open", close: vi.fn() } as unknown as RTCDataChannel;
+    const reconnect = session("restored", 2);
+    reconnect.control = { readyState: "open", close: vi.fn() } as unknown as RTCDataChannel;
+    reconnect.controlPurpose = "reconnect";
+    setWebRTCSession(onboarding);
+    setWebRTCSession(reconnect);
+    expect(getWebRTCSessionWithControl()).toBe(onboarding);
+    onboarding.control.close();
+    Object.assign(onboarding.control, { readyState: "closed" });
+    expect(getWebRTCSessionWithControl()).toBeNull();
+  });
+
   it("preserves a replacement registered while another session is detaching", async () => {
     const a = session("peer-a", 1);
     const previous = session("peer-b", 2);
@@ -99,5 +114,21 @@ describe("WebRTC session registry", () => {
     expect(b.pc.close).toHaveBeenCalledTimes(1);
     expect(getWebRTCSessionCount()).toBe(0);
     expect(getWebRTCSession()).toBeNull();
+  });
+
+  it("retires all transports synchronously even when a native detach is still pending", async () => {
+    const a = session("onboarding:a", 1);
+    const b = session("restored:b", 2);
+    let finish!: () => void;
+    a.bridge.close = vi.fn(() => new Promise<void>((resolve) => { finish = resolve; }));
+    setWebRTCSession(a);
+    setWebRTCSession(b);
+    const closing = closeWebRTCSession();
+    expect(getWebRTCSessionCount()).toBe(0);
+    expect(a.pc.close).toHaveBeenCalledTimes(1);
+    expect(b.pc.close).toHaveBeenCalledTimes(1);
+    expect(b.bridge.close).toHaveBeenCalledTimes(1);
+    finish();
+    await closing;
   });
 });

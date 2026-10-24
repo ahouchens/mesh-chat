@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from mesh_chat.call_settings import CallSettings, DEFAULT_TURN_BROKER_URL
+from mesh_chat.call_settings import CallSettings, DEFAULT_SIGNAL_MAILBOX_URL, DEFAULT_TURN_BROKER_URL
 from mesh_chat.errors import ValidationError
 
 
@@ -17,7 +17,8 @@ def test_defaults_use_google_stun_but_no_turn() -> None:
         "turn_broker_configured": DEFAULT_TURN_BROKER_URL is not None,
         "turn_broker_consent": False,
         "turn_broker_default_url": DEFAULT_TURN_BROKER_URL,
-        "signal_mailbox_url": None,
+        "signal_mailbox_url": DEFAULT_SIGNAL_MAILBOX_URL,
+        "signal_mailbox_default_url": DEFAULT_SIGNAL_MAILBOX_URL,
         "relay_only": False,
         "store_call_signaling": True,
     }
@@ -31,6 +32,20 @@ def test_user_can_replace_or_clear_the_default_stun_server() -> None:
         {"stun_urls": ["stun:stun.example.org:3478"], "relay_only": False}
     )
     assert custom.ice_servers() == [{"urls": ["stun:stun.example.org:3478"]}]
+
+
+def test_operator_mailbox_default_preserves_explicit_none_and_custom_endpoints(monkeypatch):
+    from mesh_chat import call_settings
+    default = "https://signal.example.test"
+    monkeypatch.setattr(call_settings, "DEFAULT_SIGNAL_MAILBOX_URL", default)
+    assert CallSettings.from_dict(None).signal_mailbox_url == default
+    assert CallSettings.from_dict({}).signal_mailbox_url == default
+    disabled = CallSettings.from_dict({"signal_mailbox_url": None})
+    assert disabled.signal_mailbox_url is None
+    assert disabled.public()["signal_mailbox_default_url"] == default
+    assert CallSettings.from_dict(disabled.to_dict()).signal_mailbox_url is None
+    assert CallSettings.from_dict({"signal_mailbox_url": "https://custom.example.test"}).signal_mailbox_url == "https://custom.example.test"
+    assert disabled.turn_broker_consent is False
 
 
 def test_stun_and_turn_are_normalized_and_secretly_scoped() -> None:
@@ -52,7 +67,8 @@ def test_stun_and_turn_are_normalized_and_secretly_scoped() -> None:
         "turn_broker_configured": DEFAULT_TURN_BROKER_URL is not None,
         "turn_broker_consent": False,
         "turn_broker_default_url": DEFAULT_TURN_BROKER_URL,
-        "signal_mailbox_url": None,
+        "signal_mailbox_url": DEFAULT_SIGNAL_MAILBOX_URL,
+        "signal_mailbox_default_url": DEFAULT_SIGNAL_MAILBOX_URL,
         "relay_only": True,
         "store_call_signaling": True,
     }

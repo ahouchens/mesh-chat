@@ -32,6 +32,9 @@ from .errors import (
 from .models import TrustState
 from .reconnect import (
     MAX_CAPABILITY_SECONDS,
+    DURABLE_CAPABILITIES_VERSION,
+    MAX_CLOCK_SKEW_SECONDS,
+    _destination,
     create_connection_capabilities,
     create_reconnect_answer,
     create_reconnect_offer,
@@ -101,6 +104,24 @@ def _text(value: Any, label: str, *, limit: int = 200) -> str:
     return value
 
 
+def _capability_persistent(profile: dict[str, Any], side: str) -> bool:
+    return bool(
+        profile.get("scope_kind") != "workspace"
+        and not str(profile.get("contact_id", "")).startswith("workspace:")
+        and profile.get(f"{side}_capabilities")
+        and profile.get(f"{side}_capabilities_persistent") is True
+        and profile.get(f"{side}_capabilities_version") == DURABLE_CAPABILITIES_VERSION
+        and profile.get(f"{side}_capabilities_expires_at") == 0
+    )
+
+
+def _capability_active(profile: dict[str, Any], side: str) -> bool:
+    return bool(profile.get(f"{side}_capabilities") and (
+        _capability_persistent(profile, side)
+        or int(profile.get(f"{side}_capabilities_expires_at") or 0) > _now()
+    ))
+
+
 class ReconnectServiceMixin:
     # ------------------------------------------------------------------ device
 
@@ -130,7 +151,7 @@ class ReconnectServiceMixin:
         profile = self.store.get(PROFILE_KIND, profile_id)
         if profile is None:
             raise ValidationError("Reconnect profile does not exist")
-        return profile
+        return self._reconnect_migrate_preference(profile)
 
     def _reconnect_profile_for_contact(
         self,
@@ -145,11 +166,11 @@ class ReconnectServiceMixin:
         if remote_device_id:
             for profile in matches:
                 if profile.get("remote_device_id") == remote_device_id:
-                    return profile
+                    return self._reconnect_migrate_preference(profile)
         else:
             for profile in matches:
                 if not profile.get("remote_device_id"):
-                    return profile
+                    return self._reconnect_migrate_preference(profile)
         if not matches:
             profile = self._new_profile(contact_id, remote_device_id)
             self.store.put(PROFILE_KIND, profile["id"], profile)
@@ -157,6 +178,26 @@ class ReconnectServiceMixin:
         profile = dict(matches[0])
         if remote_device_id and not profile.get("remote_device_id"):
             profile["remote_device_id"] = remote_device_id
+        return self._reconnect_migrate_preference(profile)
+
+    def _reconnect_migrate_preference(self, profile: dict[str, Any]) -> dict[str, Any]:
+        if profile.get("scope_kind") == "workspace" or str(profile.get("contact_id", "")).startswith("workspace:"):
+            return profile
+        if profile.get("auto_reconnect_preference") in {"default", "explicit", "legacy_disabled"}:
+            return profile
+        profile = dict(profile)
+        if profile.get("auto_reconnect"):
+            profile["auto_reconnect_preference"] = "explicit"
+        elif not profile.get("local_capabilities") and not profile.get("last_attempt_at") and not profile.get("reciprocal_since"):
+            # Every prior explicit consent/forget operation issued a local
+            # capability. A profile without one is an untouched default.
+            profile["auto_reconnect"] = True
+            profile["auto_reconnect_preference"] = "default"
+        else:
+            # Old signed false values do not say whether they came from the
+            # former default or a deliberate opt-out. Preserve that choice.
+            profile["auto_reconnect_preference"] = "legacy_disabled"
+        self.store.put(PROFILE_KIND, profile["id"], profile)
         return profile
 
     def _new_profile(
@@ -176,7 +217,8 @@ class ReconnectServiceMixin:
             "peer_display_name": None,
             "local_device_id": self._reconnect_device_id(),
             "remote_device_id": remote_device_id or "",
-            "auto_reconnect": False,
+            "auto_reconnect": not contact_id.startswith("workspace:"),
+            "auto_reconnect_preference": "default",
             "allow_direct_ip_disclosure": False,
             "relay_consent_scope": "contact",
             "remote_auto_reconnect": False,
@@ -189,8 +231,12 @@ class ReconnectServiceMixin:
             "remote_mailbox_expires_at": 0,
             "local_capabilities": None,
             "local_capabilities_expires_at": 0,
+            "local_capabilities_persistent": False,
+            "local_capabilities_version": None,
             "remote_capabilities": None,
             "remote_capabilities_expires_at": 0,
+            "remote_capabilities_persistent": False,
+            "remote_capabilities_version": None,
             "state": "idle",
             "active": False,
             "attempt_id": "",
@@ -208,12 +254,14 @@ class ReconnectServiceMixin:
         local_ok = bool(
             profile.get("mailbox_url")
             and profile.get("mailbox_pair_token")
-            and int(profile.get("mailbox_expires_at") or 0) > now
+            and (_capability_persistent(profile, "local") and profile.get("mailbox_expires_at") == 0
+                 or int(profile.get("mailbox_expires_at") or 0) > now)
         )
         remote_ok = bool(
             profile.get("remote_mailbox_url")
             and profile.get("remote_mailbox_pair_token")
-            and int(profile.get("remote_mailbox_expires_at") or 0) > now
+            and (_capability_persistent(profile, "remote") and profile.get("remote_mailbox_expires_at") == 0
+                 or int(profile.get("remote_mailbox_expires_at") or 0) > now)
         )
         local = {
             "url": profile.get("mailbox_url"),
@@ -285,19 +333,14 @@ class ReconnectServiceMixin:
                     "trust": "workspace",
                 }
         mailbox = self._profile_mailbox(profile)
-        now = _now()
         reasons: list[str] = []
         if not profile.get("local_capabilities"):
             reasons.append("local_capabilities_missing")
         if not profile.get("remote_capabilities"):
             reasons.append("peer_capabilities_missing")
-        if profile.get("remote_capabilities") and int(
-            profile.get("remote_capabilities_expires_at") or 0
-        ) <= now:
+        if profile.get("remote_capabilities") and not _capability_active(profile, "remote"):
             reasons.append("peer_capabilities_expired")
-        if profile.get("local_capabilities") and int(
-            profile.get("local_capabilities_expires_at") or 0
-        ) <= now:
+        if profile.get("local_capabilities") and not _capability_active(profile, "local"):
             reasons.append("local_capabilities_expired")
         if not profile.get("auto_reconnect"):
             reasons.append("consent_missing")
@@ -325,6 +368,7 @@ class ReconnectServiceMixin:
             "local_device_id": profile.get("local_device_id"),
             "remote_device_id": profile.get("remote_device_id") or None,
             "auto_reconnect": bool(profile.get("auto_reconnect")),
+            "auto_reconnect_preference": profile.get("auto_reconnect_preference", "legacy_disabled" if not profile.get("auto_reconnect") else "explicit"),
             "allow_direct_ip_disclosure": bool(
                 profile.get("allow_direct_ip_disclosure")
             ),
@@ -335,6 +379,8 @@ class ReconnectServiceMixin:
             ),
             "has_local_capabilities": bool(profile.get("local_capabilities")),
             "has_peer_capabilities": bool(profile.get("remote_capabilities")),
+            "capabilities_persistent": _capability_persistent(profile, "local"),
+            "peer_capabilities_persistent": _capability_persistent(profile, "remote"),
             "transports": list(profile.get("transports") or []),
             "peer_transports": list(profile.get("remote_transports") or []),
             "capabilities_issued_at": int(
@@ -367,6 +413,18 @@ class ReconnectServiceMixin:
 
     def reconnect_profiles(self) -> dict[str, Any]:
         self._reconnect_promote_all()
+        # Bootstrap personal relationships after approval without changing
+        # saved opt-outs, direct-IP permission, or workspace consent.
+        for contact in self.store.list("contact"):
+            if contact.get("trust") not in CONNECTED_TRUST:
+                continue
+            try:
+                profile = self._reconnect_profile_for_contact(contact["id"])
+                self._reconnect_ensure_local_capabilities(profile, contact)
+            except Exception:
+                # Identity/capacity failure for one contact must not hide the
+                # reconnect state of every other approved contact.
+                continue
         profile = self.store.get("profile", "local") or {}
         return {
             "local_device_id": self._reconnect_device_id(),
@@ -508,14 +566,15 @@ class ReconnectServiceMixin:
             or profile.get("relay_consent_scope", "contact") != relay_consent_scope
         )
         profile["auto_reconnect"] = auto_reconnect
+        profile["auto_reconnect_preference"] = "explicit"
         profile["allow_direct_ip_disclosure"] = allow_direct_ip_disclosure
         profile["relay_consent_scope"] = relay_consent_scope
-        now = _now()
         stale = (
             not profile.get("local_capabilities")
             or profile.get("mailbox_url")
             != getattr(self._call_settings, "signal_mailbox_url", None)
-            or int(profile.get("local_capabilities_expires_at") or 0) <= now
+            or not _capability_active(profile, "local")
+            or (not contact["id"].startswith("workspace:") and not _capability_persistent(profile, "local"))
         )
         if changed or rotate_token or stale:
             self._reconnect_issue_local_capabilities(
@@ -567,10 +626,14 @@ class ReconnectServiceMixin:
         # Capabilities can be rotated more than once within one second. Keep
         # their signed issue times ordered so a delayed document cannot undo
         # a newer token or consent change, including after a restart.
-        now = max(_now(), int(profile.get("local_capabilities_issued_at") or 0) + 1)
-        expires_at = now + MAX_CAPABILITY_SECONDS
+        current = _now()
+        now = max(current, int(profile.get("local_capabilities_issued_at") or 0) + 1)
+        if now > current + MAX_CLOCK_SKEW_SECONDS:
+            raise ValidationError("Connection capability changes are too frequent")
+        persistent = profile.get("scope_kind") != "workspace" and not contact["id"].startswith("workspace:")
+        expires_at = 0 if persistent else now + MAX_CAPABILITY_SECONDS
         mailbox_expires_at = (
-            min(expires_at - 60, now + 30 * 24 * 60 * 60) if mailbox_url else None
+            (0 if persistent else min(expires_at - 60, now + 30 * 24 * 60 * 60)) if mailbox_url else None
         )
         serialized = create_connection_capabilities(
             identity,
@@ -586,11 +649,14 @@ class ReconnectServiceMixin:
             mailbox_pair_token=token,
             mailbox_expires_at=mailbox_expires_at,
             expires_at=expires_at,
+            persistent=persistent,
             now=now,
         )
         verified = verify_connection_capabilities(serialized, now=now)
         profile["local_capabilities"] = serialized
         profile["local_capabilities_expires_at"] = verified.expires_at
+        profile["local_capabilities_persistent"] = verified.persistent
+        profile["local_capabilities_version"] = verified.version
         profile["local_capabilities_issued_at"] = verified.issued_at
         profile["transports"] = list(verified.transports)
         profile["mailbox_url"] = verified.mailbox_url
@@ -598,14 +664,32 @@ class ReconnectServiceMixin:
         profile["mailbox_expires_at"] = verified.mailbox_expires_at or 0
         profile["local_device_id"] = verified.device_id
 
-    def reconnect_capabilities_store(self, document: Any) -> dict[str, Any]:
+    def reconnect_capabilities_store(
+        self, document: Any, expected_contact_id: Any = None,
+        expected_peer_destination: Any = None,
+    ) -> dict[str, Any]:
         if not isinstance(document, str):
             raise ValidationError("Connection capabilities must be text")
         unverified = verify_connection_capabilities(document)
         local = self._require_profile()
         if unverified.peer_destination != local["destination_hash"]:
             raise IdentityMismatch("Connection capabilities are for another device")
-        contact = self._contact_by_destination(unverified.signer_destination)
+        if expected_peer_destination is not None:
+            # Initial onboarding knows the identity from verified signed SDP
+            # before its contact request arrives. Bind control messages to
+            # that peer before storing even an inert pending capability.
+            expected_peer_destination = _destination(expected_peer_destination)
+            if expected_peer_destination != unverified.signer_destination:
+                raise IdentityMismatch("Connection capabilities are not from this channel's peer")
+        if expected_contact_id is not None:
+            expected_contact_id = _text(expected_contact_id, "Expected contact ID")
+            if expected_contact_id.startswith("workspace:"):
+                raise ValidationError("Workspace capabilities require their workspace authorization")
+            contact = self.store.get("contact", expected_contact_id)
+            if contact is None or contact.get("destination_hash") != unverified.signer_destination:
+                raise IdentityMismatch("Connection capabilities are not from this channel's contact")
+        else:
+            contact = self._contact_by_destination(unverified.signer_destination)
         if contact is None:
             # A joiner's capability can arrive over the control channel before
             # its LXMF contact request reaches this device. Hold the signed,
@@ -668,7 +752,9 @@ class ReconnectServiceMixin:
                 "device_id": verified.device_id,
                 "document": document,
                 "issued_at": verified.issued_at,
-                "expires_at": verified.expires_at,
+                # Unknown peers never get unbounded retained storage, even
+                # when their signed pair authorization has no expiry.
+                "expires_at": now + MAX_CAPABILITY_SECONDS if verified.persistent else verified.expires_at,
                 "received_at": now,
             },
         )
@@ -699,6 +785,8 @@ class ReconnectServiceMixin:
         )
         profile["remote_capabilities"] = verified.serialized
         profile["remote_capabilities_expires_at"] = verified.expires_at
+        profile["remote_capabilities_persistent"] = verified.persistent
+        profile["remote_capabilities_version"] = verified.version
         profile["remote_capabilities_issued_at"] = verified.issued_at
         profile["remote_transports"] = list(verified.transports)
         profile["remote_mailbox_url"] = verified.mailbox_url
@@ -743,11 +831,30 @@ class ReconnectServiceMixin:
     def reconnect_capabilities_get(self, contact_id: Any) -> dict[str, Any]:
         contact = self._reconnect_contact(contact_id)
         profile = self._reconnect_profile_for_contact(contact["id"])
+        if not contact["id"].startswith("workspace:"):
+            self._reconnect_ensure_local_capabilities(profile, contact)
         return {
             "profile": self._reconnect_profile_public(profile),
             "local_capabilities": profile.get("local_capabilities"),
             "peer_capabilities": profile.get("remote_capabilities"),
         }
+
+    def _reconnect_ensure_local_capabilities(self, profile, contact) -> bool:
+        """Bootstrap/upgrade our signed preferences without rotating pairing.
+
+        The renderer shares the returned document over the authenticated live
+        channel. Issuing our document never extends the peer's authority.
+        """
+        now = _now()
+        configured_mailbox = getattr(self._call_settings, "signal_mailbox_url", None)
+        if (profile.get("local_capabilities")
+            and _capability_persistent(profile, "local")
+            and profile.get("mailbox_url") == configured_mailbox):
+            return False
+        self._reconnect_issue_local_capabilities(profile, contact, rotate=False)
+        profile["updated_at"] = now
+        self.store.put(PROFILE_KIND, profile["id"], profile)
+        return True
 
     # ------------------------------------------------------------------ replay
 
@@ -895,15 +1002,18 @@ class ReconnectServiceMixin:
     # --------------------------------------------------------------- documents
 
     def _reconnect_require_consent(
-        self, contact: dict[str, Any]
+        self, contact: dict[str, Any], *, profile: dict[str, Any] | None = None
     ) -> dict[str, Any]:
-        profile = self._reconnect_profile_for_contact(contact["id"])
+        if profile is None:
+            profile = self._reconnect_profile_for_contact(contact["id"])
         if not profile.get("auto_reconnect"):
             raise ContactNotApproved("Auto-reconnect consent is not enabled here")
         if not profile.get("remote_auto_reconnect"):
             raise ContactNotApproved(
                 "The contact has not consented to automatic reconnect"
             )
+        if not _capability_active(profile, "local") or not _capability_active(profile, "remote"):
+            raise ContactNotApproved("Reconnect capabilities are missing or expired")
         if self._profile_mailbox(profile)["session"] is None:
             raise ValidationError("Signaling mailbox is not configured")
         return profile
@@ -929,6 +1039,7 @@ class ReconnectServiceMixin:
             raise ContactNotApproved(
                 "Reconnect document is not from an approved contact"
             )
+        self._reconnect_require_consent(contact, profile=profile if profile_id is not None else None)
         return contact
 
     def reconnect_request_create(
@@ -975,6 +1086,8 @@ class ReconnectServiceMixin:
         )
         if request.signer_destination != contact["destination_hash"]:
             raise IdentityMismatch("Reconnect request is from another contact")
+        if request.device_id != profile.get("remote_device_id"):
+            raise IdentityMismatch("Reconnect request is from another device")
         document = create_reconnect_offer(
             self._call_identity(),
             request,
@@ -1041,6 +1154,8 @@ class ReconnectServiceMixin:
             if profile_id is not None
             else self._reconnect_profile_for_contact(contact["id"])
         )
+        if request.device_id != profile.get("remote_device_id"):
+            raise IdentityMismatch("Reconnect request is from another device")
         return {
             "attempt_id": request.attempt_id,
             "from_destination": request.from_destination,
@@ -1135,6 +1250,8 @@ class ReconnectServiceMixin:
 
     def _reconnect_publish_target(self, profile_id: Any) -> tuple[dict[str, Any], dict[str, Any]]:
         profile = self._reconnect_profile(profile_id)
+        contact = self._reconnect_contact(profile["contact_id"])
+        self._reconnect_require_consent(contact, profile=profile)
         mailbox = self._profile_mailbox(profile)
         if mailbox["session"] is None:
             raise ValidationError("Signaling mailbox is not configured")

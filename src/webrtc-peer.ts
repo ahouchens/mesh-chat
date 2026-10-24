@@ -339,6 +339,8 @@ export async function peerDiagnostics(
  */
 export class ReconnectPeer {
   readonly pc: RTCPeerConnection;
+  control: RTCDataChannel | null = null;
+  onControl: ((control: RTCDataChannel) => void) | null = null;
   private channel: RTCDataChannel | null = null;
 
   private constructor(
@@ -360,9 +362,21 @@ export class ReconnectPeer {
     if (role === "offer") {
       peer.channel = pc.createDataChannel("mesh-reticulum", { ordered: true });
       peer.channel.binaryType = "arraybuffer";
+      peer.control = pc.createDataChannel("meshchat-reconnect", { ordered: true });
     } else {
       pc.ondatachannel = (event) => {
-        if (event.channel.label !== "mesh-reticulum") return;
+        if (event.channel.label === "meshchat-reconnect") {
+          if (peer.control) event.channel.close();
+          else {
+            peer.control = event.channel;
+            peer.onControl?.(event.channel);
+          }
+          return;
+        }
+        if (event.channel.label !== "mesh-reticulum" || peer.channel) {
+          event.channel.close();
+          return;
+        }
         event.channel.binaryType = "arraybuffer";
         peer.channel = event.channel;
       };
@@ -410,7 +424,9 @@ export class ReconnectPeer {
   }
 
   close(): void {
+    this.onControl = null;
     try {
+      this.control?.close();
       this.channel?.close();
     } finally {
       this.pc.close();

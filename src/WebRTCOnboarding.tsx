@@ -6,7 +6,7 @@ import { serviceCommand } from "./api";
 import { attachWebRTCBridge, isWindowsWebRTCPlatform, shouldAutoCloseWebRTCOnboarding, webRTCWindowsChecklist, type WebRTCBridge } from "./webrtc-onboarding";
 import { rememberWebRTCDiagnostics } from "./webrtc-diagnostics";
 import { startPeerTrace, type PeerTrace } from "./webrtc-trace";
-import { removeWebRTCSession, setWebRTCSession, updateWebRTCSessionApprovalPending, updateWebRTCSessionContact, type WebRTCSessionPath } from "./webrtc-session";
+import { getWebRTCSessionByKey, removeWebRTCSession, setWebRTCSession, updateWebRTCSessionApprovalPending, updateWebRTCSessionContact, type WebRTCSessionPath } from "./webrtc-session";
 import { clearPairingResume, savePairingResume } from "./pairing-resume";
 import { storeReconnectCapabilities } from "./reconnect-control";
 import {
@@ -158,6 +158,7 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
   const [mailboxCode, setMailboxCode] = useState("");
   const windowsPlatform = isWindowsWebRTCPlatform(typeof navigator === "undefined" ? "" : navigator.userAgent);
   const pcRef = useRef<RTCPeerConnection | null>(null);
+  const peerDestinationRef = useRef<string | undefined>(undefined);
   const channelRef = useRef<RTCDataChannel | null>(null);
   const controlRef = useRef<RTCDataChannel | null>(null);
   const controlDocumentRef = useRef("");
@@ -214,6 +215,7 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
     channelRef.current = null;
     controlRef.current = null;
     pcRef.current = null;
+    peerDestinationRef.current = undefined;
     if (pc) pc.onconnectionstatechange = pc.oniceconnectionstatechange = pc.ondatachannel = null;
     if (channel) channel.onopen = channel.onclose = channel.onerror = null;
     if (control) control.onopen = control.onclose = control.onmessage = null;
@@ -252,9 +254,12 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
   useEffect(() => {
     const onApproval = (event: Event) => {
       if (roleRef.current !== "offer") return;
-      const approved = Boolean((event as CustomEvent<{ approved?: boolean }>).detail?.approved);
+      const detail = (event as CustomEvent<{ approved?: boolean; destination?: string }>).detail;
+      if (!peerDestinationRef.current || detail?.destination !== peerDestinationRef.current) return;
+      const approved = Boolean(detail?.approved);
       if (approved) clearPairingResume();
-      updateWebRTCSessionApprovalPending(false);
+      const bridge = bridgeRef.current;
+      if (bridge) updateWebRTCSessionApprovalPending(false, `onboarding:${bridge.bridgeId}`);
       setOnboarding(approved ? "approved" : "declined");
     };
     window.addEventListener("meshchat:approval", onApproval);
@@ -322,6 +327,11 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
   }, [selectedWorkspaceId]);
 
   const handleControlMessage = useCallback(async (raw: string) => {
+    const control = controlRef.current;
+    const attempt = attemptRef.current;
+    const current = () => control !== null && controlRef.current === control &&
+      control.readyState === "open" && attemptRef.current === attempt;
+    if (!current()) return;
     let message: ControlMessage;
     try {
       message = JSON.parse(raw) as ControlMessage;
@@ -332,12 +342,14 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
       if (typeof message.document !== "string" || !message.document) return;
       try {
         const preview = await serviceCommand<InvitationPreview>("preview_invitation", { invitation: message.document });
+        if (!current()) return;
         controlDocumentRef.current = message.document;
         setContactInvitation(preview);
         if (typeof message.workspace_document === "string" && message.workspace_document) {
           const workspace = await serviceCommand<WorkspaceInvitationPreview>("preview_workspace_invitation", {
             invitation: message.workspace_document,
           });
+          if (!current()) return;
           workspaceDocumentRef.current = message.workspace_document;
           setWorkspaceInvitation(workspace);
         } else {
@@ -347,22 +359,33 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
         setOnboardingError("");
         setOnboarding("preview");
       } catch (reason) {
+        if (!current()) return;
         setOnboardingError(errorMessage(reason));
         setOnboarding("error");
       }
     } else if (message.type === "invitation_accepted" && roleRef.current === "offer") {
+      const bridge = bridgeRef.current;
+      if (!bridge) return;
+      const sessionKey = `onboarding:${bridge.bridgeId}`;
       if (typeof message.capabilities === "string" && message.capabilities) {
         // The joiner's signed capability arrives with its acceptance. The
         // service holds it until approval if the contact request has not
         // arrived yet; storing it never approves the contact.
-        await storeReconnectCapabilities(message.capabilities).catch(() => undefined);
+        const stored = await storeReconnectCapabilities(message.capabilities, getWebRTCSessionByKey(sessionKey)?.contactId, peerDestinationRef.current).catch(() => undefined);
+        if (!current() || bridgeRef.current !== bridge) return;
+        if (stored?.profile?.contact_id) {
+          updateWebRTCSessionContact(stored.profile.contact_id, sessionKey);
+        }
       }
-      updateWebRTCSessionApprovalPending(true);
+      updateWebRTCSessionApprovalPending(true, sessionKey);
       setOnboarding("waiting-approval");
       await onChanged();
     } else if (message.type === "invitation_approved" && roleRef.current === "join") {
       if (typeof message.capabilities === "string" && message.capabilities) {
-        await storeReconnectCapabilities(message.capabilities).catch(() => undefined);
+        const bridge = bridgeRef.current;
+        const contactId = bridge ? getWebRTCSessionByKey(`onboarding:${bridge.bridgeId}`)?.contactId : undefined;
+        await storeReconnectCapabilities(message.capabilities, contactId, peerDestinationRef.current).catch(() => undefined);
+        if (!current()) return;
       }
       clearPairingResume();
       setOnboarding("approved");
@@ -371,16 +394,27 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
       setOnboarding("declined");
     } else if (message.type === "connection_capabilities") {
       if (typeof message.document === "string" && message.document) {
-        await storeReconnectCapabilities(message.document).catch(() => undefined);
+        const bridge = bridgeRef.current;
+        const contactId = bridge ? getWebRTCSessionByKey(`onboarding:${bridge.bridgeId}`)?.contactId : undefined;
+        await storeReconnectCapabilities(message.document, contactId, peerDestinationRef.current).catch(() => undefined);
       }
     } else if (message.type === "invitation_declined" && roleRef.current === "offer") {
-      updateWebRTCSessionApprovalPending(false);
+      const bridge = bridgeRef.current;
+      if (bridge) updateWebRTCSessionApprovalPending(false, `onboarding:${bridge.bridgeId}`);
       setOnboarding("declined");
     }
   }, [onChanged]);
 
   const setupControl = useCallback((control: RTCDataChannel) => {
     controlRef.current = control;
+    const bridge = bridgeRef.current;
+    const session = bridge ? getWebRTCSessionByKey(`onboarding:${bridge.bridgeId}`) : null;
+    // The two incoming DataChannels can open in either order. A transport
+    // already handed to the registry must gain its late control channel too.
+    if (session && session.pc === pcRef.current) {
+      session.control = control;
+      setWebRTCSession(session);
+    }
     control.onopen = () => { void sendInvitation(); };
     control.onmessage = (event) => {
       if (typeof event.data === "string") void handleControlMessage(event.data);
@@ -411,7 +445,7 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
         const path = await connectionPath(pc);
         if (pcRef.current !== pc) return;
         if (channel.readyState !== "open") throw new Error("The DataChannel closed before the connection completed.");
-        setWebRTCSession({ key: `onboarding:${bridge.bridgeId}`, bridge, channel, pc, control: controlRef.current, path, createdAt: Date.now(), approvalPending: false });
+        setWebRTCSession({ key: `onboarding:${bridge.bridgeId}`, bridge, channel, pc, control: controlRef.current, controlPurpose: "onboarding", peerDestination: peerDestinationRef.current, path, createdAt: Date.now(), approvalPending: false });
         handedOffRef.current = true;
         onConnected?.(path);
       }
@@ -559,6 +593,13 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
         answer_document: answerInput.trim(),
       });
       if (pcRef.current !== pc) return;
+      peerDestinationRef.current = preview.signer_destination;
+      const bridge = bridgeRef.current;
+      const session = bridge ? getWebRTCSessionByKey(`onboarding:${bridge.bridgeId}`) : null;
+      if (session?.pc === pc) {
+        session.peerDestination = preview.signer_destination;
+        setWebRTCSession(session);
+      }
       setAnswerPreview(preview);
       traceRef.current?.record("applying-remote-answer");
       await pc.setRemoteDescription({ type: "answer", sdp: preview.sdp });
@@ -609,6 +650,7 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
         document: rawOffer,
       });
       if (attemptRef.current !== attempt) return;
+      peerDestinationRef.current = preview.signer_destination;
       setOfferPreview(preview);
       const ice = await serviceCommand<CallIceConfiguration>("call_ice_servers");
       if (attemptRef.current !== attempt) return;
@@ -823,13 +865,13 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
           {phase === "connecting" && <><p className="direct-host-status" role="status"><RefreshCw size={17} /> Applying the signed answer and opening the DataChannel…</p><p className="muted">If this takes more than 30 seconds, Mesh Chat will stop and report the likely network cause.</p><div className="dialog-actions"><button className="button button--secondary" onClick={close}>Cancel</button></div></>}
           {phase === "connected" && <>
             <p className="direct-host-status" role="status"><Check size={17} /> WebRTC path connected</p>
-            <p className="muted">Closing either app ends this connection. After contact approval, open Contacts → Automatic reconnect on both devices and enable “Reconnect automatically” while this connection is open to share the settings for future connections.</p>
+            <p className="muted">Automatic reconnect is on by default for new approved contacts. When setup is ready, Mesh Chat reconnects quietly when both apps are open and unlocked. Check readiness or turn it off in the contact’s Automatic reconnect settings. Your direct IP and relay choices still apply.</p>
             {onboarding === "preview" && contactInvitation ? <div className="remote-consent">
               <h3>Contact invitation</h3>
               <p><strong>{contactInvitation.display_name}</strong> wants to connect over this WebRTC path.</p>
               {workspaceInvitation && <p>Workspace invitation: <strong>{workspaceInvitation.name}</strong> · {workspaceInvitation.member_count} {workspaceInvitation.member_count === 1 ? "member" : "members"}</p>}
               <p>Fingerprint: <code>{contactInvitation.fingerprint}</code></p>
-              <p>This accepts the signed invitation and sends a request. The other person must still approve it.</p>
+              <p>This accepts the signed invitation and sends a request. The other person must still approve it. Automatic reconnect is enabled for new approved contacts; existing contact settings are preserved.</p>
               <div className="dialog-actions"><button className="button button--primary" disabled={onboardingBusy} onClick={() => void acceptContact()}>{onboardingBusy ? "Accepting…" : "Accept contact"}</button><button className="button button--secondary" disabled={onboardingBusy} onClick={declineContact}>Decline</button></div>
             </div> : onboarding === "waiting-approval" ? <p className="muted">Contact request sent. Waiting for the other person to approve it. Keep this WebRTC path connected.</p>
               : onboarding === "approved" ? <p className="direct-host-status" role="status"><Check size={17} /> Contact approved. You can start messaging.</p>

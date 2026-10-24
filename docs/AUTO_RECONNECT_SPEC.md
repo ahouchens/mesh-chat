@@ -1,12 +1,14 @@
 # Automatic reconnect and signaling capabilities
 
-Status: implemented in 0.9.1 and refined in 0.9.2 for the open-app, foreground case. The renderer
-coordinator, signed capabilities, per-contact consent, mailbox capability
-tokens, durable replay state, and the per-contact UI are in place. There is no
+Status: the current personal-contact behavior restores eligible connections quietly
+when the app opens or resumes. New personal profiles default to automatic reconnect;
+explicit opt-outs and ambiguous disabled settings from older versions are preserved.
+Both peers still need approved identities, exchanged signed settings, a deployed
+signaling mailbox, and a permitted direct or relay transport. There is no
 background daemon, push notification, live session migration, or iOS
 background execution; reconnect only runs while the app is open and unlocked.
-See [implementation status](#18-implementation-status-090) for what is and is
-not covered.
+The implementation record in section 18 describes the older 0.9.2 behavior.
+Current verification and remaining device/deployment gates are in `../TESTING.md`.
 
 ## 1. Purpose
 
@@ -53,11 +55,11 @@ Every signed contact invitation carries a `ConnectionCapabilities` document.
 
 ```json
 {
-  "v": 1,
+  "v": 2,
   "type": "connection_capabilities",
+  "lifetime": "until_revoked",
   "peer_destination": "...",
   "device_id": "...",
-  "protocol": 1,
   "transports": ["webrtc", "direct_tcp", "access_point", "i2p"],
   "mailbox": {
     "url": "https://...",
@@ -68,6 +70,7 @@ Every signed contact invitation carries a `ConnectionCapabilities` document.
   "allow_direct_ip_disclosure": true,
   "relay_consent_scope": "contact",
   "issued_at": 0,
+  "expires_at": 0,
   "signature": "..."
 }
 ```
@@ -78,16 +81,22 @@ Rules:
   destination hash.
 - Capabilities are signed by the contact identity and verified before storage.
 - A changed mailbox URL or token requires a new signed capability document.
-- Existing contacts without capabilities default to **auto-reconnect off**.
+- Approved personal contacts without profiles are bootstrapped with automatic
+  reconnect enabled. Existing disabled signed settings remain disabled because
+  older versions did not distinguish their default from a deliberate opt-out.
+- Personal v2 authorization lasts until revoked. Legacy v1 and workspace
+  capabilities retain their bounded expiry; zero is never durable for v1.
 - Device-level and member-level identities are distinct; reconnect targets a
   device, not only a contact.
 
 ## 5. Consent model
 
-Contact approval is not consent to reconnect. Add independent, explicit consent:
+Personal contact approval uses a visible automatic-reconnect default. A separate
+per-contact choice can disable it; workspace consent remains opt-in. Reconnecting
+never changes identity approval, direct-IP disclosure, or relay permissions:
 
 ```text
-allow_auto_reconnect       per contact, default off
+allow_auto_reconnect       personal contact default on; workspace default off
 allow_direct_ip_disclosure per contact
 relay_consent_scope        contact | session | workspace
 max_attempts               bounded
@@ -100,8 +109,8 @@ Rules:
 - Reconnect never changes workspace authority.
 - A blocked, revoked, or removed peer is rejected before creating a peer
   connection.
-- The responder must also opt in; otherwise it may receive a request but must
-  not auto-answer.
+- The responder must also advertise an enabled signed setting; a disabled peer
+  cannot auto-answer. New personal contacts exchange these settings at pairing.
 - Relay consent must be re-used only within its declared scope and lifetime.
 - Broker-issued TURN credentials are fetched fresh and never persisted; a
   manually configured TURN credential is sealed in call settings.
@@ -270,7 +279,12 @@ Do not reconnect every approved contact.
   `Peer offline`, `Manual reconnect required`.
 - Actions: **Retry now**, **Stop**, **Forget auto-reconnect**.
 - Do not open a modal dialog or steal focus on reconnect.
-- Do not re-ask for contact approval; ask once for auto-connect consent.
+- Do not re-ask for approval or interrupt the user during automatic reconnect.
+- Offline peers yield their connection-attempt slots; all eligible contacts get
+  fair turns. Retries continue with capped backoff while open. Network recovery,
+  focus and resume wake the supervisor without undoing Stop or rate limits.
+- An open WebRTC transport is not a ready chat route. Keep the connecting state
+  until native path and recipient readiness are confirmed.
 - Distinguish transport failure from trust failure.
 - If no rendezvous exists, say so plainly.
 
@@ -318,7 +332,7 @@ Manual/device:
 
 All Phase A items are implemented: capabilities attach to invitations when the
 peer is known and are exchanged at acceptance/approval otherwise; per-contact
-consent defaults to off; a consent or mailbox change issues a new signed
+personal profiles default to on; a consent or mailbox change issues a new signed
 document and rotates the token. A capability that arrives before its contact
 record is held, then promoted only after approval.
 
@@ -367,7 +381,7 @@ Reconnect runs only while the app is open and unlocked.
 - release evidence in `TESTING.md`.
 
 The legacy connection-card **Reconnect** action still opens the manual Connect
-flow; automatic reconnect is a separate per-contact action.
+flow. The unlocked app independently supervises eligible contacts in the background.
 
 ## 16. Acceptance criteria
 
@@ -390,9 +404,13 @@ flow; automatic reconnect is a separate per-contact action.
 
 Resolved:
 
-- Auto-reconnect defaults to **off** for new and existing contacts.
-- Mailbox sessions last ten minutes; reconnect capabilities last at most seven
-  days; reconnect documents last at most one hour.
+- Auto-reconnect defaults to **on** for new personal contacts. Explicit opt-outs
+  and ambiguous old disabled settings remain disabled; workspace consent stays off.
+- Mailbox documents last ten minutes and reconnect requests/offers/answers last
+  at most one hour. Personal v2 pair authorization is durable until revoked;
+  legacy v1 and workspace authorization still lasts at most seven days.
+- Reconnect control channels exchange capabilities only. They cannot accept an
+  invitation, approve a contact, or carry workspace admission actions.
 - Presence is not offered.
 - Capabilities are per contact/device. A workspace invitation carries one only
   when a peer destination is supplied; otherwise the contact capability remains
