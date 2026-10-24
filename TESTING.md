@@ -95,9 +95,19 @@ Local validation on 2026-10-23: the full frontend run passed 323 tests across
 passed (10 tests), bringing distinct passing frontend cases to 324. Focused
 Python reconnect, capability, retry, interface, workspace exchange, and real
 delivery checks passed, including the pending-capability follow-up regression.
-The TypeScript app check passed. These follow-up changes still require CI and
-physical Windows/Android reconnect validation; the earlier full service run
-above predates this follow-up.
+The TypeScript app check passed; the earlier local full service run above
+predates this follow-up.
+
+Release-tag validation at `48e8154b3213b607c7b0832c5c8a73d07b2c955f`
+passed in [GitHub Actions](https://github.com/ahouchens/mesh-chat/actions/runs/40057902055):
+1,142 Python tests passed (47 skipped), all 324 frontend cases passed, and
+TypeScript and the production frontend bundle passed. Windows packaging and
+all eight native host/renderer-boundary tests passed; signed Android arm64
+packaging also passed. The [0.9.31 release](https://github.com/ahouchens/mesh-chat/releases/tag/v0.9.31)
+contains the EXE, MSI, APK, and checksum manifest. The tag was checked against
+that exact source commit, and each uploaded binary's GitHub digest matched
+`SHA256SUMS.txt`. Physical Windows/Android delivery, background/resume, and
+network-switch recovery remain unverified.
 
 ## Manual WebRTC answer exchange recovery, 0.9.30
 

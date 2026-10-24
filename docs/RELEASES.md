@@ -33,10 +33,14 @@ React/Python code is not treated as physical Android verification.
   including detach/reattach and fresh route learning. The connection banner
   reports the WebRTC path separately from message delivery evidence.
 
-Local validation passed 324 distinct frontend test cases, focused Python
-regressions, and TypeScript checks. See [TESTING.md](../TESTING.md) for exact
-coverage and CI evidence. Physical Windows/Android messaging, app backgrounding,
-and network-switch recovery still require device validation.
+[Published release and installers](https://github.com/ahouchens/mesh-chat/releases/tag/v0.9.31).
+The tagged source passed 1,142 Python tests (47 skipped), all 324 frontend
+tests, TypeScript, and the production frontend build. Windows packaging and
+eight native tests passed; the signed Android arm64 APK also built and verified.
+Published binary digests match the release checksum manifest. See
+[TESTING.md](../TESTING.md) for exact source and workflow evidence. Physical
+Windows/Android messaging, app backgrounding, and network-switch recovery still
+require device validation.
 
 ## Direct-first Internet invitations
 
