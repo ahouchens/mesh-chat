@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { appBuildInfo, serviceCommand } from "./api";
 import packageInfo from "../package.json";
+import { getWebRTCSessions } from "./webrtc-session";
 
 const unavailable = "unavailable";
 const phases = new Set(["waiting_for_reply", "waiting_for_ready", "ready_to_share", "ready_received", "connecting",
@@ -37,6 +38,55 @@ const token = (value: unknown, pattern: RegExp) => typeof value === "string" && 
 const version = (value: unknown) => token(value, /^\d+\.\d+\.\d+(?:[-+.][a-zA-Z0-9.]+)?$/);
 const number = (value: unknown, max: number) => typeof value === "number" && Number.isSafeInteger(value) && value >= 0 && value <= max ? value : null;
 const choice = (value: unknown, allowed: Set<string>) => typeof value === "string" && allowed.has(value) ? value : unavailable;
+const boolean = (value: unknown) => typeof value === "boolean" ? value : null;
+const pendingMessageStates = ["waiting_for_keys", "queued", "sending", "stored_for_delivery", "received_by_endpoint"];
+const reconnectReasons = ["local_capabilities_missing", "peer_capabilities_missing", "peer_capabilities_expired",
+  "local_capabilities_expired", "consent_missing", "peer_consent_missing", "relay_required", "mailbox_not_configured", "workspace_peer_inactive"];
+const reconnectStates = ["idle", "waiting_for_peer", "probing", "offer_pending", "answer_pending", "connecting",
+  "connected", "retry_wait", "peer_offline", "manual_required", "stopped", unavailable];
+
+function currentReconnectState(raw: unknown) {
+  const value = object(raw);
+  return {
+    status: choice(value.status, new Set(["available", unavailable])),
+    mailbox_configured: boolean(value.mailbox_configured),
+    ...Object.fromEntries(["profiles", "profiles_ready", "profiles_with_mailbox", "local_consent", "peer_consent"]
+      .map(key => [key, number(value[key], Number.MAX_SAFE_INTEGER)])),
+    states: Object.fromEntries(reconnectStates.map(key => [key, number(object(value.states)[key], Number.MAX_SAFE_INTEGER)])),
+    reasons: Object.fromEntries(reconnectReasons.map(key => [key, number(object(value.reasons)[key], Number.MAX_SAFE_INTEGER)])),
+  };
+}
+
+function currentServiceState(raw: unknown) {
+  const value = object(raw);
+  return {
+    captured_at: number(value.captured_at, Number.MAX_SAFE_INTEGER),
+    network_running: boolean(value.network_running), interface_available: boolean(value.interface_available),
+    ...Object.fromEntries(["webrtc_bridges", "webrtc_online_bridges", "webrtc_received_bytes", "webrtc_sent_bytes",
+      "pending_direct_contacts", "pending_contacts_with_route", "pending_contacts_with_keys", "pending_contacts_unchecked",
+      "oldest_pending_direct_message_age_seconds"].map(key => [key, number(value[key], Number.MAX_SAFE_INTEGER)])),
+    direct_outbox_status: choice(value.direct_outbox_status, new Set(["available", unavailable])),
+    pending_direct_messages: Object.fromEntries(pendingMessageStates.map(key => [key,
+      number(object(value.pending_direct_messages)[key], Number.MAX_SAFE_INTEGER)])),
+  };
+}
+
+export function currentWebRTCState(raw: unknown = getWebRTCSessions()) {
+  const sessions = (Array.isArray(raw) ? raw : []).map(object);
+  const counts = (values: unknown[], allowed: string[]) => {
+    const choices = new Set(allowed);
+    return Object.fromEntries([...allowed, unavailable].map(key => [key,
+      values.filter(value => choice(value, choices) === key).length]));
+  };
+  return {
+    sessions: sessions.length,
+    channels: counts(sessions.map(session => object(session.channel).readyState), ["connecting", "open", "closing", "closed"]),
+    connections: counts(sessions.map(session => object(session.pc).connectionState), ["new", "connecting", "connected", "disconnected", "failed", "closed"]),
+    ice: counts(sessions.map(session => object(session.pc).iceConnectionState), ["new", "checking", "connected", "completed", "disconnected", "failed", "closed"]),
+    paths: counts(sessions.map(session => session.path), ["direct", "relayed", "unknown"]),
+    pending_approvals: sessions.filter(session => session.approvalPending === true).length,
+  };
+}
 
 export function versionDetails(raw: unknown) {
   const value = object(raw);
@@ -75,6 +125,8 @@ export function diagnosticReport(build: unknown, raw: unknown, log = false) {
     ...versionDetails(build), service_version: serviceVersion,
     service_version_mismatch: serviceVersion !== unavailable && serviceVersion !== packageInfo.version,
     service_status: value.format_version === 1 ? "available" : unavailable,
+    current_service: currentServiceState(value.current_state), current_webrtc: currentWebRTCState(),
+    current_reconnect: currentReconnectState(value.current_reconnect),
     native_check_counts: rows.at(-1)?.checks_started !== null && rows.length ? "see_event_counts" : unavailable, receipt_status: "see_event_timestamp", approval_status: "see_event_timestamp",
     retention_days: 7, event_limit: 200, events_included: rows.length, history_event_count: history.length,
     truncated: value.truncated === true || rows.length < history.length,

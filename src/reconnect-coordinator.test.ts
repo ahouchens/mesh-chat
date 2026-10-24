@@ -499,6 +499,48 @@ function supervised(profiles: ReconnectProfile[], overrides: Partial<ReconnectCo
 }
 
 describe("persistent reconnect supervision", () => {
+  it.each(["connected", "stopped"] as const)("starts a fresh negotiation after restart with persisted %s state", async (state) => {
+    const probe = supervised([profile({ state, active: state === "connected" })]);
+    // A cold renderer has no RTCPeerConnections, even when the service's last
+    // recorded state was connected (or an orderly shutdown recorded stopped).
+    expect(probe.sessions.size).toBe(0);
+    await probe.coordinator.start();
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(probe.attached).toBe(1);
+    expect(probe.published.map((event) => event.role)).toEqual(["request", "answer"]);
+    expect(probe.coordinator.snapshot().entries["profile-1"].state).toBe("connected");
+  });
+
+  it.each([
+    { auto_reconnect: false, peer_auto_reconnect: true },
+    { auto_reconnect: true, peer_auto_reconnect: false },
+  ])("does not infer reciprocal consent from a persisted connected state (%j)", async (consent) => {
+    const probe = supervised([profile({ state: "connected", active: true, ...consent })]);
+    await probe.coordinator.start();
+    await vi.advanceTimersByTimeAsync(3_000);
+
+    expect(probe.attached).toBe(0);
+    expect(probe.published).toEqual([]);
+    expect(probe.peers).toEqual([]);
+    const entry = probe.coordinator.snapshot().entries["profile-1"];
+    expect(entry.state).toBe(consent.auto_reconnect ? "manual_required" : "stopped");
+    expect(entry.detail).toBe(consent.auto_reconnect
+      ? "The contact has not enabled automatic reconnect on their device."
+      : "Automatic reconnect is off on this device.");
+  });
+
+  it("preserves a live manual connection while automatic reconnect is off", async () => {
+    const probe = supervised([profile({ state: "connected", auto_reconnect: false, peer_auto_reconnect: false })]);
+    probe.sessions.add("profile-1");
+    await probe.coordinator.start();
+    await vi.advanceTimersByTimeAsync(3_000);
+
+    expect(probe.coordinator.snapshot().entries["profile-1"].state).toBe("connected");
+    expect(probe.sessions.has("profile-1")).toBe(true);
+    expect(probe.published).toEqual([]);
+  });
+
   it("keeps a healthy session and reconnects after it closes without another user action", async () => {
     const probe = supervised([profile()]);
     await probe.coordinator.start();

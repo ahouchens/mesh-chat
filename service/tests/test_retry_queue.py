@@ -128,6 +128,47 @@ def test_failed_handoff_after_sending_rejoins_retry_queue(tmp_path, error, expec
         sender.close()
 
 
+def test_missing_route_preflight_keeps_chat_queued_until_delivery_recovers(tmp_path, monkeypatch) -> None:
+    import threading
+    from types import SimpleNamespace
+
+    import RNS
+
+    from mesh_chat.network import ReticulumNetwork
+    from test_two_peer_service_flow import _approved_pair
+
+    hub, receiver, _, _, sender, network, contact = _approved_pair(tmp_path)
+    original_send = network.send
+    adapter = ReticulumNetwork.__new__(ReticulumNetwork)
+    adapter._send_lock = threading.RLock()
+    adapter.router = SimpleNamespace(direct_links={}, backchannel_links={})
+    requests = []
+    monkeypatch.setattr(RNS.Identity, "recall", lambda _destination: receiver._identity)
+    monkeypatch.setattr(RNS.Identity, "get_ratchet", lambda _destination: b"r" * 32)
+    monkeypatch.setattr(RNS.Transport, "has_path", lambda _destination: False)
+    monkeypatch.setattr(RNS.Transport, "request_path", requests.append)
+    try:
+        network.send = adapter.send
+        sent = sender.send_message(contact["id"], "Waiting for the contact's route")
+        assert sent["state"] == "queued"
+        assert not sent.get("native_message_id")
+        assert sent["id"] in sender._direct_retry_snapshot()
+        assert requests == [bytes.fromhex(contact["destination_hash"])]
+        assert hub.pending == []
+
+        network.send = original_send
+        sender._retry_once()
+        hub.drain()
+        assert sender.store.get("message", sent["id"])["state"] == "delivered"
+        assert sent["id"] not in sender._direct_retry_snapshot()
+        received = receiver.snapshot()["messages"]
+        assert len(received) == 1
+        assert received[0]["text"] == sent["text"]
+    finally:
+        receiver.close()
+        sender.close()
+
+
 @pytest.mark.parametrize("state", [
     DeliveryState.RECEIVED_BY_ENDPOINT, DeliveryState.STORED_FOR_DELIVERY,
     DeliveryState.DELIVERED,

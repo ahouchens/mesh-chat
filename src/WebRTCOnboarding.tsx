@@ -823,6 +823,7 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
           {phase === "connecting" && <><p className="direct-host-status" role="status"><RefreshCw size={17} /> Applying the signed answer and opening the DataChannel…</p><p className="muted">If this takes more than 30 seconds, Mesh Chat will stop and report the likely network cause.</p><div className="dialog-actions"><button className="button button--secondary" onClick={close}>Cancel</button></div></>}
           {phase === "connected" && <>
             <p className="direct-host-status" role="status"><Check size={17} /> WebRTC path connected</p>
+            <p className="muted">Closing either app ends this connection. After contact approval, open Contacts → Automatic reconnect on both devices and enable “Reconnect automatically” while this connection is open to share the settings for future connections.</p>
             {onboarding === "preview" && contactInvitation ? <div className="remote-consent">
               <h3>Contact invitation</h3>
               <p><strong>{contactInvitation.display_name}</strong> wants to connect over this WebRTC path.</p>

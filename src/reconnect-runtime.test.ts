@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { createReconnectDeps } from "./reconnect-runtime";
+import { createReconnectDeps, DISCONNECTED_SESSION_GRACE_MS } from "./reconnect-runtime";
 import {
   closeWebRTCSession,
   getWebRTCSessionCount,
@@ -36,7 +36,11 @@ function peer(key: string) {
     readyState: "open",
     close: vi.fn(),
   };
-  const pc = { close: vi.fn() };
+  const pc = {
+    connectionState: "connected" as RTCPeerConnectionState,
+    iceConnectionState: "connected" as RTCIceConnectionState,
+    close: vi.fn(),
+  };
   return {
     open: async () => channel,
     path: async () => "direct" as const,
@@ -89,6 +93,7 @@ afterEach(async () => {
   await closeWebRTCSession();
   attachMock.mockClear();
   commandMock.mockClear();
+  vi.useRealTimers();
 });
 
 describe("production reconnect wiring", () => {
@@ -142,6 +147,77 @@ describe("production reconnect wiring", () => {
     expect(deps.hasSession?.("profile-b", "contact-b")).toBe(false);
     fake.channel.readyState = "closed";
     expect(deps.hasSession?.("profile-a", "contact-a")).toBe(false);
+  });
+
+  it.each(["connectionState", "iceConnectionState"] as const)(
+    "retires a persistently disconnected %s even while its DataChannel stays open",
+    async (state) => {
+      vi.useFakeTimers();
+      const deps = createReconnectDeps({ refresh: async () => undefined });
+      const stale = peer("stale");
+      const healthy = peer("healthy");
+      await deps.attach(stale as never, profile("stale"));
+      await deps.attach(healthy as never, profile("healthy"));
+      const bridge = getWebRTCSessions().find((session) => session.key === "stale")!.bridge;
+
+      stale.pc[state] = "disconnected";
+      expect(deps.hasSession?.("stale", "contact-stale")).toBe(true);
+      await vi.advanceTimersByTimeAsync(DISCONNECTED_SESSION_GRACE_MS - 1);
+      expect(deps.hasSession?.("stale", "contact-stale")).toBe(true);
+      expect(bridge.close).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(1);
+      expect(deps.hasSession?.("stale", "contact-stale")).toBe(false);
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(bridge.close).toHaveBeenCalledTimes(1);
+      expect(stale.channel.close).toHaveBeenCalledTimes(1);
+      expect(stale.pc.close).toHaveBeenCalledTimes(1);
+      expect(getWebRTCSessions().map((session) => session.key)).toEqual(["healthy"]);
+      expect(deps.hasSession?.("healthy", "contact-healthy")).toBe(true);
+      expect(healthy.pc.close).not.toHaveBeenCalled();
+
+      const replacement = peer("stale");
+      await deps.attach(replacement as never, profile("stale"));
+      expect(deps.hasSession?.("stale", "contact-stale")).toBe(true);
+      expect(replacement.pc.close).not.toHaveBeenCalled();
+    },
+  );
+
+  it("preserves a recovered session and restarts its grace for a later disconnect", async () => {
+    vi.useFakeTimers();
+    const deps = createReconnectDeps({ refresh: async () => undefined });
+    const fake = peer("recovering");
+    await deps.attach(fake as never, profile("recovering"));
+    const bridge = getWebRTCSessions()[0].bridge;
+    fake.pc.connectionState = "disconnected";
+    expect(deps.hasSession?.("recovering", "contact-recovering")).toBe(true);
+    await vi.advanceTimersByTimeAsync(DISCONNECTED_SESSION_GRACE_MS / 2);
+    fake.pc.connectionState = "connected";
+    expect(deps.hasSession?.("recovering", "contact-recovering")).toBe(true);
+    await vi.advanceTimersByTimeAsync(DISCONNECTED_SESSION_GRACE_MS);
+    fake.pc.iceConnectionState = "disconnected";
+    expect(deps.hasSession?.("recovering", "contact-recovering")).toBe(true);
+    await vi.advanceTimersByTimeAsync(DISCONNECTED_SESSION_GRACE_MS - 1);
+    expect(deps.hasSession?.("recovering", "contact-recovering")).toBe(true);
+    expect(bridge.close).not.toHaveBeenCalled();
+    expect(fake.pc.close).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["connectionState", "failed"], ["connectionState", "closed"],
+    ["iceConnectionState", "failed"], ["iceConnectionState", "closed"],
+  ] as const)("retires %s=%s without waiting for the DataChannel to close", async (field, state) => {
+    const deps = createReconnectDeps({ refresh: async () => undefined });
+    const fake = peer("terminated");
+    await deps.attach(fake as never, profile("terminated"));
+    const bridge = getWebRTCSessions()[0].bridge;
+    fake.pc[field] = state;
+
+    expect(deps.hasSession?.("terminated", "contact-terminated")).toBe(false);
+    expect(getWebRTCSessionCount()).toBe(0);
+    await Promise.resolve();
+    expect(bridge.close).toHaveBeenCalledTimes(1);
+    expect(fake.pc.close).toHaveBeenCalledTimes(1);
   });
 
   it("binds all signaling verification commands to the expected profile", async () => {

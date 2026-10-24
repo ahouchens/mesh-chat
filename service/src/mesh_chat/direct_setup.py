@@ -181,7 +181,7 @@ class DirectSetup:
                     if self._prepared.get(key) is carrier.prepared:
                         self._prepared.pop(key,None)
 
-    def status(self, setup_id):
+    def status(self, setup_id, *, record_diagnostics=True):
         if not isinstance(setup_id, str):
             raise ValidationError("Direct setup identifier is invalid")
         value = self.service.store.get("direct_setup", setup_id)
@@ -194,8 +194,9 @@ class DirectSetup:
         if value["state"] != "cancelled" and (value["expires_at"] <= time.time() or not retained):
             status = {**value, "state":"refresh_required",
                       "reason":"details_expired" if value["expires_at"] <= time.time() else "socket_not_retained"}
-            from .connection_diagnostics import record
-            record(self.service, "state", status)
+            if record_diagnostics:
+                from .connection_diagnostics import record
+                record(self.service, "state", status)
             return status
         return value
 
@@ -208,7 +209,10 @@ class DirectSetup:
         from . import connectivity as c
         from .direct_candidates import route_signature
         from .direct_binding import _parse
-        value = self.status(setup_id)
+        # The command dispatcher records the completed readiness evidence. An
+        # intermediate status event here alternates missing/present firewall
+        # fields on every poll and fills the history with identical failures.
+        value = self.status(setup_id, record_diagnostics=False)
         result = {**value, "readiness":"checking", "can_share":False,
                   "route":"unavailable", "socket":"unavailable", "mapping":"unavailable",
                   "firewall":"udp_permission_unverified", "peer_verified":False}

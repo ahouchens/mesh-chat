@@ -24,6 +24,39 @@ Physical execution follows the
 full physical scenario matrix for versions through 0.9.15 is in the
 [Physical QA scenarios](docs/PHYSICAL_QA_SCENARIOS.md).
 
+## Reconnect after reopening and current diagnostics — 0.9.34
+
+A manual WebRTC pairing preserves contact approval, but automatic reconnect is
+off by default. Both devices must enable it and exchange valid signed settings
+over their live connection. Cold-start tests cover persisted `connected` and
+`stopped` profiles with no renderer session: eligible profiles negotiate again,
+and missing local/peer consent produces an accurate status. The disconnected
+chat opens that contact's reconnect settings; pairing now explains this setup.
+
+An open DataChannel no longer suppresses recovery when its PC or ICE state has
+remained disconnected for ten seconds. Brief recovery resets the grace period;
+failed/closed transports retire immediately. The original runtime fails six of
+the new regressions in an isolated negative control.
+
+New messages with cached keys but no route remain queued and request discovery.
+Active LXMF links, approved propagation, and bootstrap controls retain their
+existing paths. The real two-process Reticulum/LXMF test now sends messages while
+both WebRTC bridges are absent, then requires one receiver copy and an application
+receipt in each direction after bridge replacement, without resubmission.
+
+Diagnostics include current transport, outbox, WebRTC and reconnect readiness
+counts, with strict allowlists excluding content, identities, endpoints and
+tokens. Readiness polling records one completed result instead of alternating
+partial and complete expired-setup events. Historical missing fields cannot be
+reconstructed. The supplied report's last failure was October 18 at 20:10 EDT;
+the later October 24 export does not make that a current failure.
+
+Local validation on 2026-10-24: 240 focused service tests, 151 App/onboarding tests,
+44 reconnect/session tests and 11 diagnostics tests passed. The service set covers
+direct, group and workspace sends, retry recovery, diagnostics, and real bridge
+replacement. TypeScript and the production frontend build also passed. Physical
+Windows/Android close-and-reopen validation remains pending.
+
 ## Settings navigation and compact chat controls — 0.9.33
 
 Settings is a page with a persistent Back header and Appearance, Notifications,

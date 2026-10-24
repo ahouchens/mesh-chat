@@ -17,6 +17,8 @@ class Store:
         self.rows[kind, key] = value
     def delete(self, kind, key):
         self.rows.pop((kind, key), None)
+    def list(self, kind):
+        return [value for (row_kind, _), value in self.rows.items() if row_kind == kind]
 
 
 def test_allowlist_excludes_seeded_secrets_and_unexpected_structures():
@@ -79,6 +81,106 @@ def test_capture_failure_does_not_change_operation_outcome():
         def put(self, *args):
             raise OSError("private-path-and-secret")
     diagnostics.record(SimpleNamespace(store=BrokenStore()), "action_failed", {"state":"failed"})
+
+
+def test_report_captures_current_outbox_and_transport_without_private_content(monkeypatch):
+    monkeypatch.setattr(diagnostics.time, "time", lambda: 2000)
+    secret = "private-contact-name-invitation-message"
+    store = Store()
+    store.put("contact", secret, {"destination_hash": "ab" * 16, "display_name": secret})
+    for index, (direction, kind, state) in enumerate([
+        ("outbound", "chat", "sending"), ("outbound", "chat", "queued"),
+        ("outbound", "chat", "received_by_endpoint"), ("outbound", "chat", "delivered"),
+        ("outbound", "reaction", "queued"), ("inbound", "chat", "queued"),
+    ]):
+        store.put("message", str(index), {"direction": direction, "kind": kind, "state": state,
+            "contact_id": secret, "created_at": 1800 + index, "text": secret})
+    service = SimpleNamespace(store=store, network=SimpleNamespace(interface_available=True,
+        path_known=lambda destination: False, recipient_ready=lambda destination: True),
+        _webrtc_bridges={secret: SimpleNamespace(online=True, rxb=123, txb=456)})
+    diagnostics.record(service, "action_failed", {"state": "failed"})
+    report = diagnostics.report(service)
+    current = report["current_state"]
+    assert current["captured_at"] == 2000
+    assert current["pending_direct_messages"] == {"waiting_for_keys": 0, "queued": 1,
+        "sending": 1, "stored_for_delivery": 0, "received_by_endpoint": 1}
+    assert current["oldest_pending_direct_message_age_seconds"] == 200
+    assert current["pending_direct_contacts"] == 1
+    assert current["pending_contacts_with_route"] == 0
+    assert current["pending_contacts_with_keys"] == 1
+    assert current["webrtc_online_bridges"] == 1
+    assert current["webrtc_received_bytes"] == 123
+    assert current["webrtc_sent_bytes"] == 456
+    assert secret not in json.dumps(report)
+    assert "ab" * 16 not in json.dumps(report)
+    service.network = None
+    service._webrtc_bridges.clear()
+    current = diagnostics.report(service)["current_state"]
+    assert current["network_running"] is False
+    assert current["webrtc_bridges"] == 0
+    assert current["pending_direct_messages"]["sending"] == 1
+
+
+def test_unreadable_current_outbox_does_not_hide_historical_failure():
+    class BrokenListStore(Store):
+        def list(self, kind):
+            raise OSError("private-path-and-secret")
+    service = SimpleNamespace(store=BrokenListStore())
+    diagnostics.record(service, "action_failed", {"state": "failed"})
+    report = diagnostics.report(service)
+    assert report["last_failure"]["phase"] == "failed"
+    assert report["current_state"]["direct_outbox_status"] == "unavailable"
+    assert "private-path" not in json.dumps(report)
+
+
+def test_unreadable_interface_status_is_unknown_and_keeps_outbox_evidence():
+    class BrokenNetwork:
+        @property
+        def interface_available(self):
+            raise RuntimeError("private-network-details")
+    report = diagnostics.report(SimpleNamespace(store=Store(), network=BrokenNetwork()))
+    assert report["current_state"]["interface_available"] is None
+    assert report["current_state"]["network_running"] is True
+    assert report["current_state"]["direct_outbox_status"] == "available"
+    assert "private-network-details" not in json.dumps(report)
+
+
+def test_reconnect_summary_reports_readiness_and_consent_without_tokens_or_mutations(monkeypatch):
+    from mesh_chat.reconnect_service import ReconnectServiceMixin
+    from mesh_chat import reconnect_service
+    monkeypatch.setattr(reconnect_service, "_now", lambda: 2000)
+    secret = "private-mailbox-token-url-document-name"
+    class Service(ReconnectServiceMixin):
+        pass
+    service = Service()
+    service.store = Store()
+    service._call_settings = SimpleNamespace(signal_mailbox_url=secret, turn_url=None,
+        turn_broker_url=None, turn_broker_consent=False)
+    expired = {"id": secret, "contact_id": secret, "state": secret,
+        "local_capabilities": secret, "remote_capabilities": secret,
+        "local_capabilities_expires_at": 1999, "remote_capabilities_expires_at": 1999,
+        "auto_reconnect": False, "remote_auto_reconnect": False,
+        "allow_direct_ip_disclosure": False, "mailbox_url": secret,
+        "mailbox_pair_token": secret, "mailbox_expires_at": 1999}
+    service.store.put("reconnect_profile", "expired", expired)
+    service.store.put("reconnect_profile", "ready", {**expired, "state": "idle",
+        "local_capabilities_expires_at": 3000, "remote_capabilities_expires_at": 3000,
+        "auto_reconnect": True, "remote_auto_reconnect": True,
+        "allow_direct_ip_disclosure": True, "mailbox_expires_at": 3000})
+    before = dict(service.store.rows)
+    current = diagnostics.reconnect_state(service)
+    assert current["profiles"] == 2
+    assert current["profiles_ready"] == 1
+    assert current["profiles_with_mailbox"] == 1
+    assert current["mailbox_configured"] is True
+    assert current["local_consent"] == current["peer_consent"] == 1
+    for reason in ("local_capabilities_expired", "peer_capabilities_expired", "consent_missing",
+                   "peer_consent_missing", "relay_required", "mailbox_not_configured"):
+        assert current["reasons"][reason] == 1
+    assert current["states"]["unavailable"] == 1
+    assert current["states"]["idle"] == 1
+    assert service.store.rows == before
+    assert secret not in json.dumps(current)
 
 
 def test_failure_context_is_allowlisted_and_missing_attempt_is_not_a_fake_identifier():

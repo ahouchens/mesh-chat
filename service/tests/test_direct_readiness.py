@@ -92,3 +92,22 @@ def test_expired_preparation_is_not_exportable(peers, routes):
     owner._direct_setup._prepared[value["setup_id"]].expires_at = 0
     result = owner._direct_setup.readiness(value["setup_id"])
     assert not result["can_share"] and "text" not in result
+
+
+def test_repeated_expired_readiness_polls_record_one_complete_failure(peers, routes):
+    owner, _, _, invite = peers
+    offer = owner._direct_setup.offer(invite["id"])
+    saved = owner.store.get("direct_setup", offer["setup_id"])
+    owner.store.put("direct_setup", offer["setup_id"], {**saved, "expires_at": 1})
+    owner._execute("clear_connection_diagnostics", {})
+    for _ in range(4):
+        result = owner._execute("check_direct_setup", {"setup_id": offer["setup_id"]})
+        assert result["readiness"] == "refresh_required"
+    events = owner._execute("connection_diagnostics", {})["events"]
+    assert len(events) == 1
+    assert events[0]["phase"] == "refresh_required"
+    assert events[0]["firewall"] == "udp_permission_unverified"
+    # A separate status request still records the state when used on its own.
+    owner._execute("clear_connection_diagnostics", {})
+    owner._execute("direct_setup_status", {"setup_id": offer["setup_id"]})
+    assert owner._execute("connection_diagnostics", {})["last_failure"]["phase"] == "refresh_required"

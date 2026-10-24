@@ -7,17 +7,39 @@ import {
   type ReconnectProfile,
   type ReconnectProfilesPayload,
 } from "./reconnect-coordinator";
-import type { WebRTCSessionPath } from "./webrtc-session";
+import type { WebRTCSession, WebRTCSessionPath } from "./webrtc-session";
 import { attachWebRTCBridge } from "./webrtc-onboarding";
 import { ReconnectPeer, fingerprint } from "./webrtc-peer";
 import { setWebRTCSession, getWebRTCSessions, closeWebRTCSession, removeWebRTCSession } from "./webrtc-session";
 
+export const DISCONNECTED_SESSION_GRACE_MS = 10_000;
+const disconnectedSince = new WeakMap<WebRTCSession, number>();
+
 function hasLiveSession(profileId: string, contactId: string): boolean {
-  return getWebRTCSessions().some((session) =>
-    (session.key === profileId || session.contactId === contactId) &&
-    session.channel.readyState === "open" &&
-    session.pc.connectionState !== "closed" && session.pc.connectionState !== "failed",
-  );
+  return getWebRTCSessions().some((session) => {
+    if (session.key !== profileId && session.contactId !== contactId) return false;
+    const states = [session.pc.connectionState, session.pc.iceConnectionState];
+    const terminated = session.channel.readyState !== "open" ||
+      states.some((state) => state === "closed" || state === "failed");
+    if (!terminated) {
+      if (!states.includes("disconnected")) {
+        disconnectedSince.delete(session);
+        return true;
+      }
+      // SCTP can keep the DataChannel "open" after an Android network change
+      // has lost its ICE route. Give temporary disconnects time to recover,
+      // then let the supervisor negotiate a fresh transport.
+      const now = Date.now();
+      const since = disconnectedSince.get(session) ?? now;
+      disconnectedSince.set(session, since);
+      if (now - since < DISCONNECTED_SESSION_GRACE_MS) return true;
+    }
+    disconnectedSince.delete(session);
+    // Retire the native Reticulum interface as well as the renderer session,
+    // so cached paths cannot keep sending into the disconnected channel.
+    void closeWebRTCSession(session.key);
+    return false;
+  });
 }
 
 export interface ReconnectRuntimeOptions {

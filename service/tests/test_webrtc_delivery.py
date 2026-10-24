@@ -274,9 +274,27 @@ def test_real_webrtc_bridge_learns_routes_and_delivers_messages_with_receipts(tm
                 "path_known": False, "interface_count": 0, "live_link_count": 0,
                 "retired_cached_link_count": 0,
             }
+        # Reproduce an existing conversation sending after its only carrier
+        # disappeared. These durable messages must resume without the user
+        # pressing Send again or restarting either service.
+        offline_messages = [
+            peers.command(index, "send_message", contact_id=contacts[index]["id"],
+                          text=f"Saved during bridge outage from peer {index}")
+            for index in range(2)
+        ]
+        assert all(row["state"] == "queued" for row in offline_messages)
         for index in range(2):
             peers.bridges.append(peers.command(index, "webrtc_attach"))
         peers.wait("replacement bridge routes", routes_ready, timeout=12)
+        for sender, saved in enumerate(offline_messages):
+            received = peers.wait("outage message plaintext after reconnect",
+                                  lambda: message(1 - sender, saved["id"], "inbound"))
+            delivered = peers.wait("outage message application receipt",
+                                   lambda: message(sender, saved["id"], "outbound"))
+            assert received["text"] == delivered["text"] == saved["text"]
+            copies = [row for row in peers.command(1 - sender, "snapshot")["messages"]
+                      if row["id"] == saved["id"] and row["direction"] == "inbound"]
+            assert len(copies) == 1
         exchange("After reconnect")
         for index in range(2):
             assert peers.call(index, "transport_state", destination=profiles[1 - index]["destination_hash"])["retired_cached_link_count"] == 0

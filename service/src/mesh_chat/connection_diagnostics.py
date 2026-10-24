@@ -8,6 +8,7 @@ from __future__ import annotations
 import hashlib
 import json
 from importlib.metadata import PackageNotFoundError, version
+import math
 import re
 import time
 
@@ -44,6 +45,12 @@ FAILURE_REASONS = WORKSPACE_ALREADY_KNOWN_REASONS | NETWORK_FAILURE_REASONS | fr
 })
 WORKSPACE_STATES = frozenset({"unavailable", "none", "joining", "active", "linking", "leaving", "left", "removed",
     "closed", "forked", "incomplete_sync"})
+PENDING_MESSAGE_STATES = ("waiting_for_keys", "queued", "sending", "stored_for_delivery", "received_by_endpoint")
+RECONNECT_REASONS = ("local_capabilities_missing", "peer_capabilities_missing", "peer_capabilities_expired",
+    "local_capabilities_expired", "consent_missing", "peer_consent_missing", "relay_required",
+    "mailbox_not_configured", "workspace_peer_inactive")
+RECONNECT_STATES = ("idle", "waiting_for_peer", "probing", "offer_pending", "answer_pending",
+    "connecting", "connected", "retry_wait", "peer_offline", "manual_required", "stopped")
 
 
 def sanitize(value):
@@ -122,6 +129,89 @@ def _record(service, event, state=None):
     service.store.put("connection_diagnostics", "history", value)
 
 
+def current_state(service):
+    """Read present transport/outbox evidence without exporting peer identifiers.
+
+    Historical setup events describe earlier attempts and cannot establish the
+    state of today's DataChannel or message. Do not call snapshot(), which also
+    gathers plaintext, user labels, and unrelated workspace data.
+    """
+    network = getattr(service, "network", None)
+    bridges = list(getattr(service, "_webrtc_bridges", {}).values())
+    interface_available = False if network is None else None
+    if network is not None:
+        try:
+            available = network.interface_available
+            interface_available = available if type(available) is bool else None
+        except Exception:
+            pass
+    def counter(value):
+        return value if type(value) is int and 0 <= value <= 2**53 - 1 else 0
+    result = {
+        "captured_at": int(time.time()),
+        "network_running": network is not None,
+        "interface_available": interface_available,
+        "webrtc_bridges": len(bridges),
+        "webrtc_online_bridges": sum(getattr(bridge, "online", False) is True for bridge in bridges),
+        "webrtc_received_bytes": sum(counter(getattr(bridge, "rxb", None)) for bridge in bridges),
+        "webrtc_sent_bytes": sum(counter(getattr(bridge, "txb", None)) for bridge in bridges),
+        "direct_outbox_status": "unavailable",
+    }
+    try:
+        pending = [row for row in service.store.list("message")
+            if row.get("direction") == "outbound" and row.get("kind") == "chat"
+            and row.get("state") in PENDING_MESSAGE_STATES]
+        contact_ids = {row.get("contact_id") for row in pending if isinstance(row.get("contact_id"), str)}
+        route_count = key_count = unknown_count = 0
+        for contact_id in contact_ids:
+            contact = service.store.get("contact", contact_id)
+            try:
+                destination = bytes.fromhex(contact["destination_hash"])
+                route_count += bool(network is not None and network.path_known(destination))
+                key_count += bool(network is not None and network.recipient_ready(destination))
+            except Exception:
+                unknown_count += 1
+        now = time.time()
+        ages = [int(now - row["created_at"]) for row in pending
+            if type(row.get("created_at")) in {int, float} and math.isfinite(row["created_at"])
+            and 0 <= row["created_at"] <= now]
+        result.update({
+            "direct_outbox_status": "available",
+            "pending_direct_messages": {state: sum(row["state"] == state for row in pending) for state in PENDING_MESSAGE_STATES},
+            "oldest_pending_direct_message_age_seconds": max(ages) if ages else None,
+            "pending_direct_contacts": len(contact_ids),
+            "pending_contacts_with_route": route_count,
+            "pending_contacts_with_keys": key_count,
+            "pending_contacts_unchecked": unknown_count,
+        })
+    except Exception:
+        # Copying earlier diagnostics must remain possible if the outbox or a
+        # transport cannot be inspected. Never include exception text.
+        pass
+    return result
+
+
+def reconnect_state(service):
+    # reconnect_profiles() promotes pending capabilities and creates device
+    # state. Diagnostic inspection must only read the persisted profiles.
+    try:
+        profiles = [service._reconnect_profile_public(row) for row in service.store.list("reconnect_profile")]
+        return {
+            "status": "available",
+            "mailbox_configured": bool(getattr(getattr(service, "_call_settings", None), "signal_mailbox_url", None)),
+            "profiles": len(profiles),
+            "profiles_ready": sum(row["effective"]["ready"] is True for row in profiles),
+            "profiles_with_mailbox": sum(row["effective"]["configured"] is True for row in profiles),
+            "local_consent": sum(row["auto_reconnect"] is True for row in profiles),
+            "peer_consent": sum(row["peer_auto_reconnect"] is True for row in profiles),
+            "states": {state: sum((row.get("state") if row.get("state") in RECONNECT_STATES else "unavailable") == state
+                for row in profiles) for state in (*RECONNECT_STATES, "unavailable")},
+            "reasons": {reason: sum(reason in row["effective"]["reasons"] for row in profiles) for reason in RECONNECT_REASONS},
+        }
+    except Exception:
+        return {"status": "unavailable"}
+
+
 def report(service):
     value = history(service)
     try:
@@ -132,7 +222,8 @@ def report(service):
         installed = "unavailable"
     result = {"format_version":1, "service_version":installed, "captured_at":int(time.time()),
         "retention_days":7, "event_limit":LIMIT, "native_check_counts":"unavailable",
-        "receipt_status":"see_event_timestamp", "approval_status":"see_event_timestamp", **value}
+        "receipt_status":"see_event_timestamp", "approval_status":"see_event_timestamp",
+        "current_state":current_state(service), "current_reconnect":reconnect_state(service), **value}
     while len(json.dumps(result).encode()) >= 65536 and result["events"]:
         result["events"] = result["events"][1:]
         result["truncated"] = True

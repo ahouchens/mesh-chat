@@ -964,6 +964,23 @@ class ReticulumNetwork:
             method = LXMF.LXMessage.PROPAGATED if propagated else LXMF.LXMessage.DIRECT
             if propagated and not self.settings.approved_propagation_nodes:
                 raise NetworkUnavailable("No approved propagation node is configured")
+            if not propagated and not self.path_known(recipient_destination):
+                # Cached ratchet keys do not mean there is still a route. Keep
+                # a new message in the durable retry queue while discovery is
+                # pending, instead of reporting SENDING for LXMF's path wait.
+                # An established LXMF link can outlive its transport path, so
+                # preserve direct and backchannel delivery over active links.
+                active_link = any(
+                    getattr(
+                        getattr(self.router, links, {}).get(recipient_destination),
+                        "status",
+                        None,
+                    ) == RNS.Link.ACTIVE
+                    for links in ("direct_links", "backchannel_links")
+                )
+                if not active_link:
+                    self.request_path(recipient_destination)
+                    raise NetworkUnavailable("No route to the recipient is available")
             message = LXMF.LXMessage(
                 target,
                 self.delivery_destination,

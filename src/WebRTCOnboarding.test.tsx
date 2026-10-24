@@ -206,6 +206,7 @@ describe("manual WebRTC answer exchange", () => {
     expect(mocks.setWebRTCSession).toHaveBeenCalledTimes(1);
     expect(onConnected).toHaveBeenCalledTimes(1);
     expect(screen.getByText("WebRTC path connected")).toBeTruthy();
+    expect(screen.getByText(/Closing either app ends this connection/)).toBeTruthy();
     await advance(120000);
     expect(pc.close).not.toHaveBeenCalled();
     unmount();

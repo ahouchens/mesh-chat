@@ -14,6 +14,28 @@ Android capability status, hardware gaps, and the exact physical test matrix are
 tracked separately in [docs/ANDROID_PARITY.md](ANDROID_PARITY.md). Shared
 React/Python code is not treated as physical Android verification.
 
+## 0.9.34 — Reconnect recovery and clearer diagnostics
+
+- Open the selected contact's reconnect settings directly from a chat with no
+  known route, and explain during WebRTC pairing how to enable future reconnects.
+- Replace a stale “Connected” status after reopening with the missing reconnect
+  setting. Automatic reconnect still requires both devices to opt in and exchange
+  valid signed settings while connected.
+- Retire failed or persistently disconnected WebRTC sessions so an open
+  DataChannel cannot prevent a fresh connection attempt. Brief interruptions
+  retain a ten-second recovery window.
+- Keep new messages queued while no route is available, then deliver them when
+  connectivity returns. Existing active links and approved propagation remain usable.
+- Include current connection, pending-message and reconnect-readiness counts in
+  diagnostics, without exporting messages, identities, addresses or tokens. Stop
+  repeated partial setup events from filling the connection log.
+
+Local validation passed 240 service tests and 206 frontend tests, TypeScript and
+the production build. Real Reticulum/LXMF peers delivered outage-queued messages
+with one receiver copy and application receipts after bridge replacement.
+Physical Windows/Android close-and-reopen validation remains pending; see
+[TESTING.md](../TESTING.md) for the precise evidence and limits.
+
 ## 0.9.33 — Settings page and simpler chat controls
 
 - Replace the long Settings modal with a page, a persistent Back button, and

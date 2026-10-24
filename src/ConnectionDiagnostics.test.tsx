@@ -2,10 +2,11 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 const api = vi.hoisted(() => ({ serviceCommand: vi.fn(), appBuildInfo: vi.fn() }));
 vi.mock("./api", () => api);
-import { ConnectionDiagnostics, diagnosticReport, versionDetails } from "./ConnectionDiagnostics";
+import { ConnectionDiagnostics, currentWebRTCState, diagnosticReport, versionDetails } from "./ConnectionDiagnostics";
+import { closeWebRTCSession, setWebRTCSession, type WebRTCSession } from "./webrtc-session";
 import packageInfo from "../package.json";
 beforeEach(() => { api.serviceCommand.mockReset(); api.appBuildInfo.mockResolvedValue({ installed_version: packageInfo.version, native_version: packageInfo.version, platform: "android", android_version_code: 2050 }); });
-afterEach(cleanup);
+afterEach(async () => { cleanup(); await closeWebRTCSession(); });
 
 it("copies a bounded allowlisted log without seeded credentials or addresses", () => {
   const secret = "private-key-MESHWORKSPACE-192.0.2.1";
@@ -90,4 +91,69 @@ it("exports an allowlisted network reachability failure without addresses", () =
   const report = JSON.parse(diagnosticReport({}, {format_version:1, events:[failure], last_failure:failure}, false));
   expect(report.last_failure.failure_reason).toBe("upnp_no_discovery");
   expect(report.last_failure.command).toBe("prepare_direct_offer");
+});
+
+it("includes fresh service and renderer transport evidence separately from old setup failures", () => {
+  const secret = "private-name-address-session-key";
+  const session = { key: secret, contactId: secret, path: "relayed", approvalPending: false,
+    channel: { readyState: "open", label: secret },
+    pc: { connectionState: "connected", iceConnectionState: "completed", remoteDescription: secret },
+    bridge: { bridgeId: secret, close: vi.fn() }, createdAt: 10, control: null };
+  setWebRTCSession(session as unknown as WebRTCSession);
+  const text = diagnosticReport({}, {format_version:1, events:[{time:1, event:"state", phase:"cancelled"}],
+    current_state: {captured_at:2000, network_running:true, interface_available:true,
+      webrtc_bridges:1, webrtc_online_bridges:1, webrtc_received_bytes:123, webrtc_sent_bytes:456,
+      direct_outbox_status:"available", pending_direct_messages:{queued:0, sending:1, delivered:secret},
+      pending_direct_contacts:1, pending_contacts_with_route:0, pending_contacts_with_keys:1,
+      oldest_pending_direct_message_age_seconds:120, destination:secret}});
+  const report = JSON.parse(text);
+  expect(report.events[0].time).toBe(1);
+  expect(report.current_service.captured_at).toBe(2000);
+  expect(report.current_service.pending_direct_messages.sending).toBe(1);
+  expect(report.current_service.pending_contacts_with_route).toBe(0);
+  expect(report.current_service.webrtc_received_bytes).toBe(123);
+  expect(report.current_webrtc.channels.open).toBe(1);
+  expect(report.current_webrtc.connections.connected).toBe(1);
+  expect(report.current_webrtc.ice.completed).toBe(1);
+  expect(report.current_webrtc.paths.relayed).toBe(1);
+  expect(text).not.toContain(secret);
+  session.channel.readyState = "closed";
+  session.pc.connectionState = "disconnected";
+  const fresh = JSON.parse(diagnosticReport({}, null));
+  expect(fresh.current_webrtc.channels.open).toBe(0);
+  expect(fresh.current_webrtc.channels.closed).toBe(1);
+  expect(fresh.current_webrtc.connections.disconnected).toBe(1);
+});
+
+it("does not turn missing or invalid current evidence into a healthy transport", () => {
+  const text = diagnosticReport({}, {current_state:{network_running:"secret", interface_available:"secret",
+    direct_outbox_status:"secret", webrtc_bridges:-1, pending_contacts_with_route:Infinity,
+    pending_direct_messages:{sending:NaN}}});
+  const current = JSON.parse(text).current_service;
+  expect(current.network_running).toBeNull();
+  expect(current.interface_available).toBeNull();
+  expect(current.webrtc_bridges).toBeNull();
+  expect(current.pending_contacts_with_route).toBeNull();
+  expect(current.pending_direct_messages.sending).toBeNull();
+  expect(current.direct_outbox_status).toBe("unavailable");
+  expect(text).not.toContain("secret");
+  const renderer = currentWebRTCState([{key:"secret", path:"secret", approvalPending:"secret",
+    channel:{readyState:"secret"}, pc:{connectionState:"secret", iceConnectionState:"secret"}}]);
+  expect(renderer.channels.unavailable).toBe(1);
+  expect(renderer.connections.connected).toBe(0);
+  expect(renderer.pending_approvals).toBe(0);
+  expect(JSON.stringify(renderer)).not.toContain("secret");
+});
+
+it("includes reconnect readiness reasons after restart without private pairing details", () => {
+  const text = diagnosticReport({}, {current_reconnect:{status:"available", mailbox_configured:true,
+    profiles:1, profiles_ready:0, profiles_with_mailbox:1, local_consent:0, peer_consent:0,
+    states:{idle:1, "private-state":3}, reasons:{consent_missing:1, peer_consent_missing:1,
+      local_capabilities_expired:1, "private-reason":3}, token:"private-token", session:"private-session"}});
+  const report = JSON.parse(text);
+  expect(report.current_webrtc.sessions).toBe(0);
+  expect(report.current_reconnect.profiles_ready).toBe(0);
+  expect(report.current_reconnect.reasons.consent_missing).toBe(1);
+  expect(report.current_reconnect.reasons.local_capabilities_expired).toBe(1);
+  expect(text).not.toContain("private-");
 });

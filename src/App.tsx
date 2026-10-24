@@ -2099,6 +2099,7 @@ function WorkspacePendingJoinsDialog({
 
 function ContactsDialog({
   contacts,
+  initialContactId,
   onClose,
   onChanged,
   onOpenConversation,
@@ -2106,6 +2107,7 @@ function ContactsDialog({
   reconnect,
 }: {
   contacts: Contact[];
+  initialContactId?: string | null;
   onClose: () => void;
   onChanged: () => Promise<void>;
   onOpenConversation: (contact: Contact) => Promise<void>;
@@ -2117,7 +2119,7 @@ function ContactsDialog({
     [contacts],
   );
   const [query, setQuery] = useState("");
-  const [selectedId, setSelectedId] = useState<string | null>(sorted[0]?.id ?? null);
+  const [selectedId, setSelectedId] = useState<string | null>(initialContactId ?? sorted[0]?.id ?? null);
   const [name, setName] = useState(sorted[0]?.display_name ?? "");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -3062,7 +3064,7 @@ function MessageReactions({
   );
 }
 
-function Conversation({ contact, messages, draft, sendError, sending, detailsOpen, reactionTargetId, reactionCatalogOpen, reactionBusyEmoji, reactionError, onDetailsOpenChange, onToggleReactionPicker, onReactionCatalogOpenChange, onCloseReactionPicker, onSetReaction, onDraft, onSend, onHelp, onBack, onDelete, onCall }: { contact: Contact; messages: ChatMessage[]; draft: string; sendError: string; sending: boolean; detailsOpen: boolean; reactionTargetId: string | null; reactionCatalogOpen: boolean; reactionBusyEmoji: string | null; reactionError: string; onDetailsOpenChange: (open: boolean) => void; onToggleReactionPicker: (messageId: string) => void; onReactionCatalogOpenChange: (messageId: string, open: boolean) => void; onCloseReactionPicker: () => void; onSetReaction: (messageId: string, emoji: string, active: boolean) => void; onDraft: (value: string) => void; onSend: () => void; onHelp: () => void; onBack: () => void; onDelete: () => void; onCall: () => void }) {
+function Conversation({ contact, messages, draft, sendError, sending, detailsOpen, reactionTargetId, reactionCatalogOpen, reactionBusyEmoji, reactionError, onDetailsOpenChange, onToggleReactionPicker, onReactionCatalogOpenChange, onCloseReactionPicker, onSetReaction, onDraft, onSend, onHelp, onConnectionSettings, onBack, onDelete, onCall }: { contact: Contact; messages: ChatMessage[]; draft: string; sendError: string; sending: boolean; detailsOpen: boolean; reactionTargetId: string | null; reactionCatalogOpen: boolean; reactionBusyEmoji: string | null; reactionError: string; onDetailsOpenChange: (open: boolean) => void; onToggleReactionPicker: (messageId: string) => void; onReactionCatalogOpenChange: (messageId: string, open: boolean) => void; onCloseReactionPicker: () => void; onSetReaction: (messageId: string, emoji: string, active: boolean) => void; onDraft: (value: string) => void; onSend: () => void; onHelp: () => void; onConnectionSettings: () => void; onBack: () => void; onDelete: () => void; onCall: () => void }) {
   const messageListRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const messageList = messageListRef.current;
@@ -3079,6 +3081,7 @@ function Conversation({ contact, messages, draft, sendError, sending, detailsOpe
     <section className="conversation" aria-label={`Conversation with ${contact.display_name}`}>
       <header className="conversation__header"><button className="icon-button mobile-only mobile-back" type="button" onClick={onBack} aria-label="Back to conversations"><ArrowLeft size={21} /></button><div className="conversation__person"><Avatar name={contact.display_name} small /><div><h2>{contact.display_name}</h2><span>{routeLabel}</span></div></div><div className="conversation__actions">{approved && <button className="icon-button" type="button" onClick={onCall} disabled={sending} aria-label={`Call ${contact.display_name}`} title="Audio call"><Phone size={18} /></button>}<button className="icon-button conversation-delete" type="button" onClick={onDelete} disabled={sending} aria-label={`Delete conversation with ${contact.display_name}`} title="Delete conversation"><Trash2 size={18} /></button><SecurityDetails fingerprint={contact.fingerprint} destination={contact.destination_hash} open={detailsOpen} onOpenChange={onDetailsOpenChange} /></div></header>
       {!approved && <div className={`connection-banner connection-banner--${contact.trust}`} role="status"><span>{contactConnectionLabel(contact)}</span>{contact.trust === "awaiting_consent" && <Button variant="ghost" onClick={onHelp}><CircleHelp size={17} /> Connection help</Button>}</div>}
+      {approved && contact.route_kind === "unavailable" && <div className="connection-banner" role="status"><span>No route is currently known. Keep both apps open and check this contact’s reconnect settings.</span><Button variant="ghost" onClick={onConnectionSettings}><RefreshCw size={17} /> Connection settings</Button></div>}
       <div className="message-list" aria-live="polite" ref={messageListRef}>
         <div className="day-divider"><span>Messages are end-to-end encrypted</span></div>
         {messages.length === 0 && <div className="empty-thread"><LockKeyhole size={30} /><p>No messages yet.</p><span>You can write now. If there is no route, your message stays saved.</span></div>}
@@ -4825,6 +4828,7 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
     mentionMemberIds: string[];
   } | null>(null);
   const [contactsOpen, setContactsOpen] = useState(false);
+  const [contactsInitialId, setContactsInitialId] = useState<string | null>(null);
   const [settings, setSettings] = useState(false);
   const settingsBackHandlerRef = useRef<(() => void) | null>(null);
   const registerSettingsBackHandler = useCallback((handler: (() => void) | null) => {
@@ -6364,7 +6368,7 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
   return (
     <main className={`app-shell ${mobileSidebarOpen || !(selectedWorkspace || selectedContact || selectedGroup) ? "app-shell--list" : "app-shell--thread"} ${settings ? "app-shell--settings" : ""}`}>
       <aside ref={sidebarRef} className="sidebar" aria-hidden={settings ? true : undefined}>
-        <header className="sidebar__top"><Brand /><div><button className="icon-button" onClick={() => setContactsOpen(true)} aria-label="Contacts" title="Contacts"><BookUser size={19} /></button><button className="icon-button" onClick={() => void onLock()} aria-label="Lock Mesh Chat" title="Lock Mesh Chat"><LockKeyhole size={18} /></button><button className="icon-button" onClick={() => setSettings(true)} aria-label="Settings" title="Settings"><Settings size={19} /></button></div></header>
+        <header className="sidebar__top"><Brand /><div><button className="icon-button" onClick={() => { setContactsInitialId(null); setContactsOpen(true); }} aria-label="Contacts" title="Contacts"><BookUser size={19} /></button><button className="icon-button" onClick={() => void onLock()} aria-label="Lock Mesh Chat" title="Lock Mesh Chat"><LockKeyhole size={18} /></button><button className="icon-button" onClick={() => setSettings(true)} aria-label="Settings" title="Settings"><Settings size={19} /></button></div></header>
         {workspacesEnabled && <WorkspaceSwitcher workspaces={workspaces} activeId={activeSpaceId} onSelect={(id) => { setActiveSpaceId(id); setMobileSidebarOpen(true); setWorkspaceError(""); setWorkspaceActionError(""); }} onCreate={() => setCreateWorkspaceOpen(true)} onJoin={() => { setJoinWorkspaceValue(""); setJoinWorkspaceOpen(true); }} />}
         {activeSpaceId === "personal" ? <>
         <div className="search-box"><Search size={17} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Filter conversations" aria-label="Filter conversations" />{query && <button type="button" className="search-box__clear" onClick={() => setQuery("")} aria-label="Clear conversation filter"><X size={16} /></button>}</div>
@@ -6615,6 +6619,7 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
             onDraft={(value) => { setSendError(""); saveDraft(selectedContact.id, value); }}
             onSend={() => void send()}
             onHelp={() => void connectionHelp()}
+            onConnectionSettings={() => { setContactsInitialId(selectedContact.id); setContactsOpen(true); }}
             onBack={() => selectConversation(null)}
             onDelete={() => { setDeleteError(""); setDeleteTarget({ kind: "contact", id: selectedContact.id }); }}
             onCall={() => { setCallSummary(undefined); setCallContactId(selectedContact.id); }}
@@ -6685,7 +6690,7 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
       {webrtcOnboardingOpen && <WebRTCOnboardingDialog initialPairingCode={initialPairingCode || (resumePairingOpen ? resumePairingCode : "")} onClose={() => { setWebRtcOnboardingOpen(false); setResumePairingOpen(false); onPairingHandled?.(); }} onConnected={(path) => { setWebRtcSessionActive(true); setWebRtcSessionCount(getWebRTCSessionCount()); setWebrtcPath(path); }} onFallback={() => { setNewChatStartTab("invite"); setNewChat(true); }} onChanged={async () => { await refresh(true); }} workspaces={(snapshot.workspaces ?? []).map((workspace) => ({ id: workspace.id, name: workspace.name }))} />}
       {newChat && <div className={hasForegroundRequest ? "dialog-suspended" : ""} aria-hidden={hasForegroundRequest ? true : undefined}><NewChatDialog initialInvitation={initialInvitation} initialTab={newChatStartTab} initialConnection={newChatTransport} remoteProfiles={snapshot.remote_profiles ?? []} onClose={() => { setNewChat(false); onInvitationHandled(); }} onChanged={async () => { await refresh(true); }} onWorkspaceInvitation={(value) => { setNewChat(false); setJoinWorkspaceValue(value); setJoinWorkspaceOpen(true); }} /></div>}
       {newGroup && <div className={hasForegroundRequest ? "dialog-suspended" : ""} aria-hidden={hasForegroundRequest ? true : undefined}><CreateGroupDialog contacts={snapshot.contacts} onClose={() => setNewGroup(false)} onCreated={async (group) => { await refresh(true); selectConversation({ kind: "group", id: group.id }); setNewGroup(false); }} /></div>}
-      {contactsOpen && <div className={hasForegroundRequest ? "dialog-suspended" : ""} aria-hidden={hasForegroundRequest ? true : undefined}><ContactsDialog contacts={snapshot.contacts.filter((contact) => contact.trust !== "pending_request")} reconnect={reconnectCoordinator} onClose={() => setContactsOpen(false)} onChanged={async () => { await refresh(true); }} onOpenConversation={async (contact) => { const hidden = hiddenConversationKeys.has(`direct:${contact.id}`); setContactsOpen(false); await restoreAndSelect({ kind: "contact", id: contact.id }, hidden); }} onDeleted={async (contactId) => { if (selection?.kind === "contact" && selection.id === contactId) setSelection(null); setDrafts((current) => { const next = { ...current }; delete next[contactId]; return next; }); setLocallySavedMessages((current) => Object.fromEntries(Object.entries(current).filter(([, message]) => message.contact_id !== contactId))); await refresh(true); }} /></div>}
+      {contactsOpen && <div className={hasForegroundRequest ? "dialog-suspended" : ""} aria-hidden={hasForegroundRequest ? true : undefined}><ContactsDialog initialContactId={contactsInitialId} contacts={snapshot.contacts.filter((contact) => contact.trust !== "pending_request")} reconnect={reconnectCoordinator} onClose={() => setContactsOpen(false)} onChanged={async () => { await refresh(true); }} onOpenConversation={async (contact) => { const hidden = hiddenConversationKeys.has(`direct:${contact.id}`); setContactsOpen(false); await restoreAndSelect({ kind: "contact", id: contact.id }, hidden); }} onDeleted={async (contactId) => { if (selection?.kind === "contact" && selection.id === contactId) setSelection(null); setDrafts((current) => { const next = { ...current }; delete next[contactId]; return next; }); setLocallySavedMessages((current) => Object.fromEntries(Object.entries(current).filter(([, message]) => message.contact_id !== contactId))); await refresh(true); }} /></div>}
       {settings && <div className={`settings-page-slot ${hasForegroundRequest ? "dialog-suspended" : ""}`} aria-hidden={hasForegroundRequest ? true : undefined}><SettingsPage snapshot={snapshot} theme={theme} onThemeChange={onThemeChange} onClose={() => setSettings(false)} onBackHandlerChange={registerSettingsBackHandler} onSaved={async () => { await refresh(true); }} /></div>}
       {notificationTarget && !notificationTarget.available && <Dialog title="Notification unavailable" onClose={onNotificationHandled}><div className="form-stack"><p>{notificationTarget.message ?? "This notification is no longer available or authorized on this device."}</p><p className="muted">Mesh Chat did not open stale content or change any read state.</p><Button onClick={onNotificationHandled}>Done</Button></div></Dialog>}
       {deleteTarget && <div className={hasForegroundRequest ? "dialog-suspended" : ""} aria-hidden={hasForegroundRequest ? true : undefined}><DeleteConversationDialog kind={deleteTarget.kind === "contact" ? "direct" : "group"} name={deleteTargetName} busy={deleteBusy} error={deleteError} onCancel={() => { if (!deleteBusy) { setDeleteError(""); setDeleteTarget(null); } }} onConfirm={() => void deleteConversation()} /></div>}

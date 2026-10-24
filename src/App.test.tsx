@@ -2888,6 +2888,33 @@ describe("Android system Back navigation", () => {
 });
 
 describe("connected conversation", () => {
+  it("opens the disconnected chat's reconnect settings without changing consent or losing the draft", async () => {
+    const current = snapshot([
+      { ...approved, route_kind: "unavailable" },
+      { ...approved, id: "another-contact", display_name: "Aaron", route_kind: "nearby" },
+    ]);
+    api.runtimePlatform.mockResolvedValue("android");
+    api.initializeService.mockResolvedValue(current);
+    api.onInvitation.mockResolvedValue(() => undefined);
+    api.onServiceEvent.mockResolvedValue(() => undefined);
+    api.serviceCommand.mockImplementation(async (command: string) => {
+      if (command === "snapshot") return current;
+      if (command === "reconnect_profiles") return { profiles: [] };
+      return {};
+    });
+
+    render(<App />);
+    const conversation = await screen.findByLabelText("Conversation with Taylor");
+    fireEvent.change(screen.getByRole("textbox", { name: "Message Taylor" }), { target: { value: "Keep this draft" } });
+    fireEvent.click(within(conversation).getByRole("button", { name: "Connection settings" }));
+    const dialog = await screen.findByRole("dialog", { name: "Contacts" });
+    expect(within(dialog).getByRole("option", { name: /Taylor/ }).getAttribute("aria-selected")).toBe("true");
+    expect(within(dialog).getByRole("region", { name: "Automatic reconnect" })).toBeTruthy();
+    expect(api.serviceCommand.mock.calls.some(([command]) => command === "reconnect_consent_set")).toBe(false);
+    fireEvent.click(within(dialog).getByRole("button", { name: "Close" }));
+    expect((screen.getByRole("textbox", { name: "Message Taylor" }) as HTMLTextAreaElement).value).toBe("Keep this draft");
+  });
+
   it("displays participant_direct as a valid direct Internet route", async () => {
     const current = snapshot([{ ...approved, route_kind: "participant_direct" }]);
     api.runtimePlatform.mockResolvedValue("desktop");
@@ -2901,6 +2928,7 @@ describe("connected conversation", () => {
 
     render(<App />);
     expect(await screen.findByText("Connected directly over the Internet")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Connection settings" })).toBeNull();
   });
 
   it("keeps the first message in the flexible message region when the optional banner is absent", async () => {

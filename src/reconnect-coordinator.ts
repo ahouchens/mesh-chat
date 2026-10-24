@@ -376,7 +376,14 @@ export class ReconnectCoordinator {
           this.retries.delete(profile.id);
           return false;
         }
-        if (!profile.auto_reconnect || !profile.peer_auto_reconnect) return false;
+        if (!profile.auto_reconnect) {
+          this.setState(profile, "stopped", "Automatic reconnect is off on this device.");
+          return false;
+        }
+        if (!profile.peer_auto_reconnect) {
+          this.setState(profile, "manual_required", "The contact has not enabled automatic reconnect on their device.");
+          return false;
+        }
         if (!profile.effective.configured || !profile.effective.ready) {
           this.setState(profile, "manual_required", !profile.effective.configured ? "mailbox_not_configured" : profile.effective.reasons.join(", "));
           return false;
