@@ -61,6 +61,7 @@ import {
   requestMediaPermission,
   runtimePlatform,
   setNativeTheme,
+  setNativeBackgroundAvailability,
   serviceCommand,
   endCallAudio,
 } from "./api";
@@ -74,6 +75,7 @@ import { DirectRecovery } from "./DirectRecovery";
 import { WebRTCOnboardingDialog } from "./WebRTCOnboarding";
 import { ReconnectSettings } from "./ReconnectSettings";
 import { createReconnectCoordinator } from "./reconnect-runtime";
+import { closeNativeReconnectSessions } from "./reconnect-runtime";
 import type { ReconnectCoordinator } from "./reconnect-coordinator";
 import { closeWebRTCSession, getWebRTCSession, getWebRTCSessionCount, getWebRTCSessionForContact, getWebRTCSessions, getWebRTCSessionWithControl, subscribeWebRTCSessions, updateWebRTCSessionApprovalPending, updateWebRTCSessionContact, type WebRTCSessionPath } from "./webrtc-session";
 import { CONNECTION_TRANSPORT_CHOICES, type ConnectionTransportKind } from "./connection-transport";
@@ -94,6 +96,7 @@ import type {
   CallMedia,
   CallSettings,
   CallSummary,
+  BackgroundAvailability,
   ChatMessage,
   ConnectionDocumentFormats,
   ConnectionReplyPreview,
@@ -2308,6 +2311,63 @@ function ParticipantHostingSettings({ initial, workspaces, onChanged, onEditStat
   return <section className="settings-section participant-hosting" aria-labelledby="participant-hosting-title"><div className="settings-section__heading"><h3 id="participant-hosting-title">Invitations hosted by this device</h3><p>Temporary direct Internet paths created for invitations. The invitee connects to this device; no community or third-party transport node is added.</p></div>{hosts.map((host) => <article className="remote-profile-row" key={host.id}><span><strong>{label(host)}</strong><small role="status">{stateLabel(host)}</small><small>{host.endpoint_count} public {host.endpoint_count === 1 ? "path" : "paths"}{host.methods.length > 0 ? ` · ${host.methods.map(participantMethodLabel).join(", ")}` : ""}</small></span><div>{host.state !== "expired" && host.state !== "unavailable" && !host.firewall_configured && <Button variant="ghost" disabled={busy === host.id} onClick={() => void configureFirewall(host)}>Allow in Windows Firewall</Button>}<Button variant="danger" disabled={busy === host.id} onClick={() => void stop(host)}>{busy === host.id ? "Working…" : "Stop hosting"}</Button></div></article>)}{hosts.length === 0 && <p className="muted">No Internet invitation is currently being hosted. Use the explicit prepare action when creating an invitation.</p>}<p className="muted">Stopping or closing Mesh Chat removes automatic router mappings and temporary firewall rules. A manual router rule must be removed in the router.</p>{error && <p className="form-error" role="alert">{error}</p>}</section>;
 }
 
+function BackgroundAvailabilitySettings({
+  initial,
+  onChanged,
+}: {
+  initial?: BackgroundAvailability;
+  onChanged: () => Promise<void>;
+}) {
+  const [value, setValue] = useState<BackgroundAvailability | undefined>(initial);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  useEffect(() => { setValue(initial); }, [initial]);
+  const enabled = value?.enabled === true;
+  const status = value?.state === "enabled"
+    ? (value.lifecycle_state === "background_available" ? "Available" : "Starting")
+    : value?.state === "locked" ? "Locked" : "Off";
+  const toggle = async () => {
+    if (busy) return;
+    const next = !enabled;
+    setBusy(true);
+    setError("");
+    try {
+      if (next) {
+        setValue(await serviceCommand<BackgroundAvailability>("set_background_availability", { enabled: true }));
+        try {
+          await setNativeBackgroundAvailability(true);
+        } catch (reason) {
+          setValue(await serviceCommand<BackgroundAvailability>("set_background_availability", { enabled: false }).catch(() => undefined));
+          throw reason;
+        }
+      } else {
+        setValue(await serviceCommand<BackgroundAvailability>("set_background_availability", { enabled: false }));
+        await setNativeBackgroundAvailability(false);
+      }
+      await onChanged();
+    } catch (reason) {
+      const text = String(reason);
+      setError(text.includes("notification_permission_required")
+        ? "Allow Mesh Chat notifications first so Android can show the required background notice."
+        : errorMessage(reason));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return <section className="settings-section" aria-labelledby="background-availability-title" aria-busy={busy}>
+    <div className="settings-section__heading"><h3 id="background-availability-title">Background availability</h3><p>Keep the messaging runtime and established native messaging paths alive while the screen is off. Android may still pause networking in Doze, and some device makers stop background apps.</p></div>
+    <fieldset className="settings-fields" disabled={busy}>
+      <div className="settings-list">
+        <Toggle title="Stay available in the background" description="Shows an ongoing notification. Locking Mesh Chat stops this mode and releases the vault." checked={enabled} onChange={() => void toggle()} />
+      </div>
+    </fieldset>
+    <p className="muted" role="status">Status: {status}</p>
+    <p className="muted">This first slice keeps the shared runtime and native messaging paths alive. Native WebRTC data channels are not yet covered by this mode; WebRTC still resumes when the app is open. Audio and video calls continue to use the call service.</p>
+    <p className="muted">Notifications must be allowed so Android can show the required ongoing notice. Stopping the mode removes the notice and releases the wake and Wi-Fi locks.</p>
+    {error && <p className="form-error" role="alert">{error}</p>}
+  </section>;
+}
+
 function RemoteConnectionsSettings({ initial, onChanged, onEditStateChange }: { initial: RemoteProfile[]; onChanged: () => Promise<void>; onEditStateChange?: (state: SettingsEditState) => void }) {
   const [profiles, setProfiles] = useState(initial);
   const [adding, setAdding] = useState(false);
@@ -2638,6 +2698,7 @@ function SettingsPage({ snapshot, theme, onThemeChange, onClose, onSaved, onBack
       </section>
       <fieldset className="settings-fields" disabled={hostingEditState.busy}><ParticipantHostingSettings initial={snapshot.participant_hosting ?? []} workspaces={snapshot.workspaces ?? []} onChanged={onSaved} onEditStateChange={setHostingEditState} /></fieldset>
       <fieldset className="settings-fields" disabled={remoteEditState.busy}><RemoteConnectionsSettings initial={snapshot.remote_profiles ?? []} onChanged={onSaved} onEditStateChange={setRemoteEditState} /></fieldset>
+      {isAndroid && <BackgroundAvailabilitySettings initial={snapshot.background_availability} onChanged={onSaved} />}
           </section>
           <section className="settings-page__panel" id={`${titleId}-advanced-panel`} aria-labelledby={`${titleId}-advanced`} hidden={section !== "advanced"}>
       <section className="settings-section" aria-labelledby="mesh-role-settings-title">
@@ -2675,7 +2736,7 @@ function SettingsPage({ snapshot, theme, onThemeChange, onClose, onSaved, onBack
         {capability?.supported && ["denied", "settings_required"].includes(capability.permission_state) && <Button variant="secondary" disabled={notificationBusy} onClick={() => void openSettings()}>Open system settings</Button>}
         <fieldset className="settings-fields" disabled={notificationBusy}>{notification && <Toggle title="Hide notification previews" description="Use generic text without workspace, channel, person, thread, participant, or message details." checked={notification.hide_previews} onChange={() => void setPrivatePreviews()} />}</fieldset>
         <p className="muted">Notifications are local and best effort only while Mesh Chat can execute. They may be delayed after operating-system suspension or process termination; open Mesh Chat to reconcile. There is no cloud push.</p>
-        {notification && <p className="muted" role="status">Runtime: {notification.reconciling ? "reconciling" : notification.lifecycle_state === "caught_up" || notification.caught_up ? "caught up" : notification.lifecycle_state === "foreground" ? "active" : "suspended or limited"}{notification.pending_native_count ? ` · ${notification.pending_native_count} pending local ${notification.pending_native_count === 1 ? "notification" : "notifications"}` : ""}</p>}
+        {notification && <p className="muted" role="status">Runtime: {notification.reconciling ? "reconciling" : notification.lifecycle_state === "caught_up" || notification.caught_up ? "caught up" : notification.lifecycle_state === "background_available" ? "available in background" : notification.lifecycle_state === "foreground" ? "active" : "suspended or limited"}{notification.pending_native_count ? ` · ${notification.pending_native_count} pending local ${notification.pending_native_count === 1 ? "notification" : "notifications"}` : ""}</p>}
         {notificationError && <p className="form-error" role="alert">{notificationError}</p>}
       </section>
           </section>
@@ -4707,7 +4768,7 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
     refresh: async () => { await refreshRef.current(true); },
     onSession: (path) => {
       setWebRtcSessionActive(true);
-      setWebRtcSessionCount(getWebRTCSessionCount());
+      setWebRtcSessionCount((count) => Math.max(1, count));
       setWebrtcPath(path);
     },
   }));
@@ -6485,8 +6546,8 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
               known: networkAvailable && Boolean(selectedApprovedContact.route_kind && selectedApprovedContact.route_kind !== "unavailable"),
             } : undefined}
             onReview={() => { if (pending[0]) setDismissedRequests((current) => current.filter((id) => id !== pending[0].id)); }}
-            onReconnect={async () => { await closeWebRTCSession().finally(() => { setWebRtcSessionActive(false); setWebRtcSessionCount(0); setWebrtcPath("unknown"); setConnectEntryOpen(true); void refresh(true); }); }}
-            onDisconnect={async () => { await closeWebRTCSession().finally(() => { setWebRtcSessionActive(false); setWebRtcSessionCount(0); void refresh(true); }); }} />
+            onReconnect={async () => { closeNativeReconnectSessions(); await closeWebRTCSession().finally(() => { setWebRtcSessionActive(false); setWebRtcSessionCount(0); setWebrtcPath("unknown"); setConnectEntryOpen(true); void refresh(true); }); }}
+            onDisconnect={async () => { closeNativeReconnectSessions(); await closeWebRTCSession().finally(() => { setWebRtcSessionActive(false); setWebRtcSessionCount(0); void refresh(true); }); }} />
         )}
         {incomingCall && !callContactId && (
           <div className="incoming-call-banner" role="status">

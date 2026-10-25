@@ -485,6 +485,14 @@ def main() -> int:
     env.setdefault("CARGO_INCREMENTAL", "0")
     env.setdefault("CARGO_PROFILE_DEV_DEBUG", "0")
     tool_paths = [str(build_python.parent)]
+    # Tauri runs `pnpm build` through the shell, so the shim's directory (not
+    # just the executable path passed to this script) must be discoverable.
+    pnpm_path = Path(pnpm)
+    if not pnpm_path.is_file():
+        located_pnpm = shutil.which(pnpm)
+        if located_pnpm:
+            pnpm_path = Path(located_pnpm)
+    tool_paths.append(str(pnpm_path.resolve().parent))
     configured_node = env.get("MESH_CHAT_NODE")
     if configured_node:
         tool_paths.append(str(Path(configured_node).resolve().parent))

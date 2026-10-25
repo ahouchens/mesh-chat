@@ -1115,7 +1115,7 @@ class WorkspaceServiceMixin:
             should_notify, reason = False, "unsupported"
         elif settings.get("permission_state") != "allowed":
             should_notify, reason = False, "permission_not_allowed"
-        elif lifecycle.get("state") not in {"background", "suspended"}:
+        elif lifecycle.get("state") not in {"background", "background_available", "suspended"}:
             should_notify, reason = False, "foreground"
         elif preference["mode"] == "muted":
             should_notify, reason = False, "muted"
@@ -1316,7 +1316,7 @@ class WorkspaceServiceMixin:
             should_notify, reason = False, "unsupported"
         elif settings.get("permission_state") != "allowed":
             should_notify, reason = False, "permission_not_allowed"
-        elif lifecycle.get("state") not in {"background", "suspended"}:
+        elif lifecycle.get("state") not in {"background", "background_available", "suspended"}:
             should_notify, reason = False, "foreground"
         elif self.store.get(
             "conversation_hidden", self._conversation_marker_id(conversation_kind, target_id)
@@ -1688,10 +1688,18 @@ class WorkspaceServiceMixin:
         self.store.put_and_delete(records, deletions)
 
     def mobile_lifecycle_transition(self, state: Any, reason: Any = None) -> dict[str, Any]:
-        if state not in {"foreground", "background", "suspended"} or not (
+        if state not in {"foreground", "background", "background_available", "suspended"} or not (
             reason is None or isinstance(reason, str) and len(reason) <= 64
         ):
             raise ValidationError("Mobile lifecycle transition is invalid")
+        # An opted-in background service has already kept the process and
+        # native transports alive. A platform suspension callback must not
+        # retire them; record the availability boundary instead.
+        if state == "suspended" and getattr(
+            self, "_background_availability_enabled", lambda: False
+        )():
+            state = "background_available"
+            reason = "background_availability"
         lifecycle = dict(self._workspace_lifecycle_state())
         lifecycle["generation"] = int(lifecycle.get("generation", 0)) + 1
         lifecycle["state"] = state
@@ -1754,7 +1762,7 @@ class WorkspaceServiceMixin:
         if (
             not settings.get("native_supported")
             or settings.get("permission_state") != "allowed"
-            or lifecycle.get("state") not in {"background", "suspended"}
+            or lifecycle.get("state") not in {"background", "background_available", "suspended"}
         ):
             return {"items": []}
         queue_id = self._workspace_notification_queue_id()

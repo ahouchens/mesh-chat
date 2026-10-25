@@ -171,7 +171,7 @@ export interface WorkspaceNotificationState {
   platform: "desktop" | "android" | "ios";
   permission_state: NotificationPermissionState;
   hide_previews: boolean;
-  lifecycle_state: "foreground" | "background" | "suspended" | "reconciling" | "caught_up";
+  lifecycle_state: "foreground" | "background" | "background_available" | "suspended" | "reconciling" | "caught_up";
   reconciling: boolean;
   caught_up: boolean;
   invalidation_overflow: boolean;
@@ -991,6 +991,15 @@ export interface CallIceConfiguration {
   iceTransportPolicy: "all" | "relay";
 }
 
+export interface BackgroundAvailability {
+  enabled: boolean;
+  mode: "native_webrtc";
+  state: "disabled" | "enabled" | "locked";
+  reason: string;
+  lifecycle_state: string;
+  updated_at: number;
+}
+
 export interface Snapshot {
   profile: Profile | null;
   contacts: Contact[];
@@ -1022,6 +1031,7 @@ export interface Snapshot {
   participant_hosting?: ParticipantHosting[];
   participant_connections?: ParticipantConnectionSummary[];
   calls?: CallSummary[];
+  background_availability?: BackgroundAvailability;
   network: {
     transport_enabled: boolean;
     propagation_enabled: boolean;

@@ -17,6 +17,7 @@ const api = vi.hoisted(() => ({
   pickInvitationFile: vi.fn(),
   requestNotificationPermission: vi.fn(async () => ({ supported: false, platform: "desktop", permission_state: "unsupported" })),
   runtimePlatform: vi.fn(),
+  setNativeBackgroundAvailability: vi.fn(async () => ({ enabled: true })),
   setNativeTheme: vi.fn(async () => undefined),
   serviceCommand: vi.fn(),
 }));

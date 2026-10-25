@@ -4,9 +4,12 @@ Status: the current personal-contact behavior restores eligible connections quie
 when the app opens or resumes. New personal profiles default to automatic reconnect;
 explicit opt-outs and ambiguous disabled settings from older versions are preserved.
 Both peers still need approved identities, exchanged signed settings, a deployed
-signaling mailbox, and a permitted direct or relay transport. There is no
-background daemon, push notification, live session migration, or iOS
-background execution; reconnect only runs while the app is open and unlocked.
+signaling mailbox, and a permitted direct or relay transport. Reconnect still runs
+only while the app is open and unlocked. An optional Android background
+availability service keeps the native runtime and established native paths alive
+while the screen is off, but WebRTC data transport remains WebView-owned and
+foreground-only until the native WebRTC phase. There is no background daemon,
+push notification, live session migration, or iOS background execution.
 The implementation record in section 18 describes the older 0.9.2 behavior.
 Current verification and remaining device/deployment gates are in `../TESTING.md`.
 
@@ -437,8 +440,9 @@ Implemented in this release:
   separate direct-IP-disclosure flag. A consent change issues a new signed
   capability; a mailbox change rotates the pair token.
 - The service owns profiles, consent, signatures, replay state, mailbox
-  publish/fetch, and verification bridges. The renderer owns the
-  RTCPeerConnection.
+  publish/fetch, and verification bridges. On Android, the opt-in availability
+  service also owns a bounded background supervisor that creates native
+  WebRTC data channels; desktop and foreground WebRTC use a renderer peer.
 - No RTCPeerConnection is allocated until the signed request/offer has been
   verified and the contact, consent, and capability checks pass. A blocked or
   deleted peer is rejected first.

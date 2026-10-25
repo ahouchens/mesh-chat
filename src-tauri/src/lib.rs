@@ -531,6 +531,12 @@ fn allowed_renderer_command(command: &str) -> bool {
             | "webrtc_attach"
             | "webrtc_packet"
             | "webrtc_detach"
+            | "native_webrtc_offer"
+            | "native_webrtc_accept"
+            | "native_webrtc_apply_answer"
+            | "native_webrtc_control"
+            | "native_webrtc_close"
+            | "native_webrtc_stats"
             | "webrtc_onboarding_offer"
             | "webrtc_onboarding_answer"
             | "verify_webrtc_onboarding_offer"
@@ -685,6 +691,8 @@ fn allowed_renderer_command(command: &str) -> bool {
             | "set_workspace_notification_preference"
             | "open_notification_target"
             | "reconcile_mobile_lifecycle"
+            | "set_background_availability"
+            | "background_status"
     )
 }
 
@@ -1270,6 +1278,22 @@ async fn lock_service(app: AppHandle) -> Result<(), String> {
 
 #[cfg(mobile)]
 #[tauri::command]
+fn set_background_availability(app: AppHandle, enabled: bool) -> PendingResult {
+    let response = app
+        .mesh_runtime()
+        .set_background_availability(enabled)
+        .map_err(|_| "background_availability_unavailable".to_string())?;
+    mobile_result(response)
+}
+
+#[cfg(desktop)]
+#[tauri::command]
+fn set_background_availability(_enabled: bool) -> PendingResult {
+    Err("background_availability_unsupported".into())
+}
+
+#[cfg(mobile)]
+#[tauri::command]
 fn take_pending_invitation(app: AppHandle) -> Result<Option<String>, String> {
     let response = app
         .mesh_runtime()
@@ -1563,6 +1587,7 @@ pub fn run() {
             initialize_service,
             service_command,
             lock_service,
+            set_background_availability,
             take_pending_invitation,
             pick_invitation_file,
             poll_mobile_events,
@@ -1797,6 +1822,8 @@ mod tests {
             "set_workspace_notification_preference",
             "open_notification_target",
             "reconcile_mobile_lifecycle",
+            "set_background_availability",
+            "background_status",
         ];
         for command in commands {
             assert!(allowed_renderer_command(command));

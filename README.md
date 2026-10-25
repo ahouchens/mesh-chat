@@ -42,7 +42,7 @@ In short, it solves **“how do a few people message and coordinate privately wi
 - **Identity or authority-key recovery.** Lost keys are not recoverable, and lost workspace authority freezes administration.
 - **Anonymity.** IP endpoints, timing, and traffic analysis remain exposed; I2P hides participant IP addresses from each other but the access point and the I2P network still see relay metadata. There is no anonymity claim.
 - **Broad messenger scope.** Attachments, group calls, discoverable public channels, cloud backup, remote push, and multi-owner membership are out of scope. 1:1 audio/video calls are supported and described below.
-- **Background reconnection.** Automatic reconnect runs only while the app is open and unlocked. There is no background daemon, push notification, live session migration, tray keep-alive, or iOS background execution.
+- **Background reconnection.** Automatic reconnect runs only while the app is open and unlocked. An opt-in Android availability foreground service keeps the shared runtime and established native messaging paths alive while the screen is off, but WebRTC data transport remains WebView-owned; there is no push notification, live session migration, tray keep-alive, or iOS background execution.
 - **Production assurance.** The project describes itself as a security-sensitive prototype: it has not been independently audited, and physical-device, packaging, and platform gates remain open. See [Status and verification](#status-and-verification) and [THREAT_MODEL.md](THREAT_MODEL.md).
 
 ## Architecture
@@ -188,9 +188,11 @@ delivery or read state.
 
 There is no cloud push service, device-token registry, or remote notification
 scheduler. Android may suspend the embedded runtime, so notification timing is
-best effort and no background-delivery guarantee is implied. Physical
-permission, lock-screen, tap, and suspension behavior remains unverified; see
-[Android parity](docs/ANDROID_PARITY.md).
+best effort and no background-delivery guarantee is implied. The opt-in
+availability service keeps the native runtime alive while the process survives,
+but it does not defeat Doze or process death and does not yet keep WebRTC data
+transport alive. Physical permission, lock-screen, tap, and suspension behavior
+remains unverified; see [Android parity](docs/ANDROID_PARITY.md).
 
 ### Automatic reconnect (open apps only)
 
@@ -217,9 +219,14 @@ background daemon.
   signed settings will be shared on the next live connection.
 - With no signaling mailbox, the app reports **Manual reconnect required**
   instead of looping.
-- Reconnect only runs while the app is open and unlocked. Locking, quitting, or
-  removing consent stops it. Live session migration, push notifications, iOS
-  background execution, and an Android foreground service are not implemented.
+- The foreground reconnect coordinator only runs while the app is open and
+  unlocked. An opt-in Android availability service can keep the shared runtime
+  and established native WebRTC data channels alive while the screen is off;
+  its bounded Python supervisor can recreate a native session from the mailbox
+  after service restart. Native WebRTC now backs Android onboarding and
+  automatic reconnect. Physical Doze/network-switch validation, push
+  notifications, live migration of an already-open WebView session, and iOS
+  background execution are not implemented.
 
 ## Workspaces: authority without a server
 

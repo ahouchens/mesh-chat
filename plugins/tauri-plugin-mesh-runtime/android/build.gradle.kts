@@ -59,4 +59,8 @@ dependencies {
     implementation(project(":tauri-android"))
     implementation("androidx.activity:activity-ktx:1.10.1")
     implementation("androidx.core:core-ktx:1.15.0")
+    // Native data-channel transport for the opt-in background availability
+    // service. Pin exactly; adoption is gated on 16 KB page-size verification
+    // and the release APK size budget.
+    implementation("io.github.webrtc-sdk:android:150.7871.01")
 }
