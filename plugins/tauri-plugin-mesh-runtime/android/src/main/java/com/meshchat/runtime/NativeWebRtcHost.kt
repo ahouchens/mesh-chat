@@ -38,6 +38,7 @@ object NativeWebRtcHost {
     private const val MAX_SESSIONS = 16
     private const val GATHER_TIMEOUT_SECONDS = 20L
     private const val MESSAGE_LIMIT = 1064
+    private const val CONTROL_LIMIT = 65_536
 
     private data class ChannelSpec(
         val label: String,
@@ -133,7 +134,11 @@ object NativeWebRtcHost {
         return try {
             val factory = requireFactory()
             if (sessions.size >= MAX_SESSIONS) return error("native_webrtc_session_limit")
-            val expected = parseChannels(expectedChannelsJson).map { it.label }.toSet()
+            val specs = parseChannels(expectedChannelsJson)
+            if (specs.none { it.label == "mesh-reticulum" && it.binary }) {
+                return error("native_webrtc_missing_data_channel")
+            }
+            val expected = specs.map { it.label }.toSet()
             val pc = createPeerConnection(factory, iceJson, sessionId, "answer")
             val session = Session(pc, "answer")
             sessions[sessionId] = session
@@ -197,7 +202,7 @@ object NativeWebRtcHost {
 
     @JvmStatic
     fun sendControl(sessionId: String, label: String, text: String): Boolean {
-        if (text.isEmpty() || text.length > 16_384) return false
+        if (text.isEmpty() || text.length > CONTROL_LIMIT) return false
         if (label !in setOf("mesh-onboarding", "meshchat-reconnect")) return false
         val session = sessions[sessionId] ?: return false
         val channel = session.channels[label] ?: return false
@@ -312,8 +317,7 @@ object NativeWebRtcHost {
                     return
                 }
                 val label = channel.label()
-                val expected = session.expectedChannels
-                if (expected.isNotEmpty() && label !in expected) {
+                if (label !in session.expectedChannels) {
                     try { channel.close() } catch (_: Throwable) { }
                     return
                 }
@@ -352,7 +356,8 @@ object NativeWebRtcHost {
 
             override fun onMessage(buffer: DataChannel.Buffer) {
                 val data = buffer.data
-                if (!data.hasRemaining() || data.remaining() > MESSAGE_LIMIT) return
+                val limit = if (label == "mesh-reticulum") MESSAGE_LIMIT else CONTROL_LIMIT
+                if (!data.hasRemaining() || data.remaining() > limit) return
                 val bytes = ByteArray(data.remaining())
                 data.get(bytes)
                 val encoded = Base64.encodeToString(bytes, Base64.NO_WRAP)
