@@ -1,5 +1,8 @@
 # AndroidX Test's optional compile-time annotations are not runtime code.
 # These rules affect only the instrumentation APK, not the optimized app.
+-dontshrink
+-dontoptimize
+-dontobfuscate
 -dontwarn com.google.errorprone.annotations.CanIgnoreReturnValue
 -dontwarn com.google.errorprone.annotations.MustBeClosed
 

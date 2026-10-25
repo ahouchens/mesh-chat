@@ -354,8 +354,19 @@ describe("manual WebRTC answer exchange", () => {
         offer_digest: createHash("sha256").update(offerDocument).digest("hex"),
       }) },
     });
-    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Connect" })); });
     const pc = FakePeer.instances[0];
+    // Real WebCrypto runs outside React's act queue and Vitest's fake timers.
+    // A real DataChannel cannot open before the verified answer is applied.
+    const remoteApplied = new Promise<void>((resolve) => {
+      pc.setRemoteDescription.mockImplementationOnce(async (description) => {
+        pc.remoteDescription = description;
+        resolve();
+      });
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Connect" }));
+      await remoteApplied;
+    });
     await act(async () => {
       for (const channel of pc.channels) {
         channel.readyState = "open";
