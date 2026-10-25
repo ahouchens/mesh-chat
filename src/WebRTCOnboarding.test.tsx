@@ -9,11 +9,12 @@ const mocks = vi.hoisted(() => ({
   getWebRTCSessionByKey: vi.fn(),
   updateWebRTCSessionContact: vi.fn(),
   updateWebRTCSessionApprovalPending: vi.fn(),
+  onServiceEvent: vi.fn(),
 }));
 
 vi.mock("./api", () => ({
   serviceCommand: mocks.serviceCommand,
-  onServiceEvent: vi.fn(async () => () => undefined),
+  onServiceEvent: mocks.onServiceEvent,
 }));
 vi.mock("./webrtc-onboarding", async (importOriginal) => ({
   ...await importOriginal<typeof import("./webrtc-onboarding")>(),
@@ -143,6 +144,8 @@ beforeEach(() => {
   vi.useFakeTimers();
   vi.setSystemTime(new Date("2026-10-23T22:00:00Z"));
   vi.clearAllMocks();
+  mocks.onServiceEvent.mockReset();
+  mocks.onServiceEvent.mockResolvedValue(() => undefined);
   mocks.getWebRTCSessionByKey.mockReset();
   FakePeer.instances = [];
   finishGatheringImmediately = true;
@@ -312,6 +315,53 @@ describe("manual WebRTC answer exchange", () => {
     fireEvent.change(screen.getByLabelText("Paste the signed WebRTC offer or mailbox code"), { target: { value: offerDocument } });
     await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Review and create answer" })); });
     expect(onConnected).toHaveBeenCalledWith("unknown");
+    view.unmount();
+    expect(mocks.serviceCommand).not.toHaveBeenCalledWith("native_webrtc_close", expect.anything());
+  });
+
+  it("keeps Android listening until a delayed contact invitation can be reviewed and accepted", async () => {
+    vi.stubGlobal("navigator", { userAgent: "Android" });
+    const unlisten = vi.fn();
+    mocks.onServiceEvent.mockResolvedValue(unlisten);
+    const runCommand = mocks.serviceCommand.getMockImplementation()!;
+    mocks.serviceCommand.mockImplementation(async (command: string, payload: unknown) => {
+      if (command === "native_webrtc_stats") return { attached: true };
+      if (command === "preview_invitation") return { display_name: "Alex", fingerprint: "verified-peer" };
+      if (command === "accept_invitation") return { id: "contact-alex" };
+      if (command === "native_webrtc_control") return { accepted: true };
+      return runCommand(command, payload);
+    });
+    const onClose = vi.fn();
+    const onChanged = vi.fn(async () => undefined);
+    const view = render(<WebRTCOnboardingDialog onClose={onClose} onChanged={onChanged} />);
+    await act(async () => undefined);
+    fireEvent.click(screen.getByRole("button", { name: "Join with WebRTC" }));
+    fireEvent.change(screen.getByLabelText("Paste the signed WebRTC offer or mailbox code"), { target: { value: offerDocument } });
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Review and create answer" })); });
+    expect(screen.getByText("WebRTC path connected")).toBeTruthy();
+    // The native path is open, but the inviter may still be creating its
+    // signed contact document. It must survive the old 1.5-second timer.
+    await advance(5_000);
+    expect(onClose).not.toHaveBeenCalled();
+    expect(unlisten).not.toHaveBeenCalled();
+    expect(mocks.serviceCommand).not.toHaveBeenCalledWith("accept_invitation", expect.anything());
+    const sessionId = mocks.serviceCommand.mock.calls.find(([command]) => command === "native_webrtc_accept")![1].session_id;
+    const receive = mocks.onServiceEvent.mock.calls[0][0];
+    await act(async () => {
+      receive({ type: "event", event: "webrtc_control", session_id: sessionId,
+        label: "mesh-onboarding", data: JSON.stringify({ type: "contact_invitation", document: "signed-invitation" }) });
+    });
+    expect(screen.getByRole("button", { name: "Accept contact" })).toBeTruthy();
+    await advance(5_000);
+    expect(onClose).not.toHaveBeenCalled();
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Accept contact" })); });
+    expect(mocks.serviceCommand).toHaveBeenCalledWith("accept_invitation", { invitation: "signed-invitation" });
+    expect(mocks.serviceCommand).toHaveBeenCalledWith("native_webrtc_control", {
+      session_id: sessionId, label: "mesh-onboarding", text: JSON.stringify({ type: "invitation_accepted" }),
+    });
+    expect(screen.getByText(/Contact request sent/)).toBeTruthy();
+    await advance(1_500);
+    expect(onClose).toHaveBeenCalledTimes(1);
     view.unmount();
     expect(mocks.serviceCommand).not.toHaveBeenCalledWith("native_webrtc_close", expect.anything());
   });

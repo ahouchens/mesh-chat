@@ -27,8 +27,10 @@ export function shouldAutoCloseWebRTCOnboarding(
   handedOff: boolean,
 ): boolean {
   if (phase !== "connected" || !handedOff) return false;
-  // Review, invitation preparation, and errors need the user's attention.
-  return !["preview", "sending", "error"].includes(onboarding);
+  // A connected transport can still be waiting for its first invitation.
+  // In particular, unmounting Android's dialog removes its control listener.
+  // Only dismiss after a concrete onboarding outcome has been handed off.
+  return ["sent", "waiting-approval", "approved", "declined"].includes(onboarding);
 }
 
 export function isWindowsWebRTCPlatform(userAgent: string): boolean {
