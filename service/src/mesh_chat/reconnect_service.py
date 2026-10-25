@@ -582,6 +582,10 @@ class ReconnectServiceMixin:
             )
         profile["updated_at"] = _now()
         self.store.put(PROFILE_KIND, profile["id"], profile)
+        if changed and (not auto_reconnect or not allow_direct_ip_disclosure):
+            close_native = getattr(self, "close_native_reconnect_session", None)
+            if close_native is not None:
+                close_native(profile["id"])
         self._changed()
         return {
             "profile": self._reconnect_profile_public(profile),
@@ -977,12 +981,13 @@ class ReconnectServiceMixin:
         else:
             profiles = self._reconnect_profiles_raw()
         for profile in profiles:
-            if not profile.get("active") and profile.get("state") == "stopped":
-                continue
             profile["active"] = False
             profile["state"] = "stopped"
             profile["updated_at"] = _now()
             self.store.put(PROFILE_KIND, profile["id"], profile)
+            close_native = getattr(self, "close_native_reconnect_session", None)
+            if close_native is not None:
+                close_native(profile["id"])
         if contact_id is None:
             # A per-contact stop must not claim the whole supervisor is stopped.
             self.store.put(

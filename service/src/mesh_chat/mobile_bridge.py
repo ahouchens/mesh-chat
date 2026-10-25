@@ -231,8 +231,10 @@ def native_webrtc_event(event: str, session_id: str, data: str = "") -> str:
         event = str(event)
         session_id = str(session_id)
         data = str(data)
-        with _service_lock:
-            service = _service
+        # A command can hold _service_lock while waiting for this very JNI
+        # callback. Keep a strong snapshot without taking the command lock;
+        # the service's queue rejects work once shutdown begins.
+        service = _service
         if service is not None:
             service.native_webrtc_event(event, session_id, data)
         return _dumps({"ok": True, "result": None})

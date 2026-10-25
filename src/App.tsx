@@ -77,7 +77,7 @@ import { WebRTCOnboardingDialog } from "./WebRTCOnboarding";
 import { ReconnectSettings } from "./ReconnectSettings";
 import { createReconnectCoordinator } from "./reconnect-runtime";
 import { closeNativeReconnectSessions } from "./reconnect-runtime";
-import { closeNativeWebRTCSessions } from "./native-webrtc";
+import { closeNativeWebRTCSessions, isNativeWebRTCPlatform } from "./native-webrtc";
 import type { ReconnectCoordinator } from "./reconnect-coordinator";
 import { closeWebRTCSession, getWebRTCSession, getWebRTCSessionCount, getWebRTCSessionForContact, getWebRTCSessions, getWebRTCSessionWithControl, subscribeWebRTCSessions, updateWebRTCSessionApprovalPending, updateWebRTCSessionContact, type WebRTCSessionPath } from "./webrtc-session";
 import { CONNECTION_TRANSPORT_CHOICES, type ConnectionTransportKind } from "./connection-transport";
@@ -4788,12 +4788,14 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
     },
   }));
   useEffect(() => {
-    reconnectCoordinator.setOnline(navigator.onLine !== false);
+    const available = () => navigator.onLine !== false && (!isNativeWebRTCPlatform() || document.visibilityState !== "hidden");
+    reconnectCoordinator.setOnline(available());
     void reconnectCoordinator.start();
-    const online = () => reconnectCoordinator.setOnline(true);
+    const online = () => reconnectCoordinator.setOnline(available());
     const offline = () => reconnectCoordinator.setOnline(false);
     const wake = () => {
-      if (document.visibilityState !== "hidden") reconnectCoordinator.wake();
+      const changed = reconnectCoordinator.setOnline(available());
+      if (!changed && document.visibilityState !== "hidden") reconnectCoordinator.wake();
     };
     window.addEventListener("online", online);
     window.addEventListener("offline", offline);

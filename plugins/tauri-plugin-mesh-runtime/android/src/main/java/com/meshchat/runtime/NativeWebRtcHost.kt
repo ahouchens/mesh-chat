@@ -241,6 +241,7 @@ object NativeWebRtcHost {
         val result = JSONObject()
             .put("ice_connection_state", session.pc.iceConnectionState().name.lowercase())
             .put("ice_gathering_state", session.pc.iceGatheringState().name.lowercase())
+            .put("data_channel_state", session.channels["mesh-reticulum"]?.state()?.name?.lowercase() ?: "missing")
             .put("channels", JSONArray(session.channels.keys.toList()))
         return JSONObject().put("ok", true).put("result", result).toString()
     }
@@ -501,7 +502,7 @@ object NativeWebRtcHost {
 
     private fun fingerprint(sdp: String): String {
         val match = Regex("(?im)^a=fingerprint:sha-256\\s+([0-9a-f:]{95})\\s*$").find(sdp)
-        return match?.groupValues?.get(1)?.uppercase() ?: ""
+        return match?.groupValues?.get(1)?.let { "sha-256 ${it.uppercase()}" } ?: ""
     }
 
     private fun notifyPython(event: String, sessionId: String, data: String) {

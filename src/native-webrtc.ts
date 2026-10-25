@@ -27,6 +27,7 @@ export interface NativeSdpResult {
 export interface NativeWebRTCStats {
   ice_connection_state?: string;
   ice_gathering_state?: string;
+  data_channel_state?: string;
   channels?: string[];
   attached?: boolean;
   session_id?: string;
@@ -72,11 +73,13 @@ export function nativeWebRTCOffer(
   sessionId: string,
   ice: CallIceConfiguration,
   channels: NativeChannelSpec[] = NATIVE_RECONNECT_CHANNELS,
+  profileId?: string,
 ): Promise<NativeSdpResult> {
   return serviceCommand<NativeSdpResult>("native_webrtc_offer", {
     session_id: sessionId,
     ice: nativeIce(ice),
     channels,
+    ...(profileId ? { profile_id: profileId } : {}),
   }).then((result) => {
     rememberNativeWebRTCSession(sessionId);
     return result;
@@ -89,12 +92,14 @@ export function nativeWebRTCAccept(
   offerSdp: string,
   ice: CallIceConfiguration,
   channels: NativeChannelSpec[] = NATIVE_RECONNECT_CHANNELS,
+  profileId?: string,
 ): Promise<NativeSdpResult> {
   return serviceCommand<NativeSdpResult>("native_webrtc_accept", {
     session_id: sessionId,
     offer_sdp: offerSdp,
     ice: nativeIce(ice),
     channels,
+    ...(profileId ? { profile_id: profileId } : {}),
   }).then((result) => {
     rememberNativeWebRTCSession(sessionId);
     return result;

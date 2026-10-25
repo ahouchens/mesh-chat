@@ -49,6 +49,7 @@ object BackgroundRuntime {
 
     @Volatile private var configured = false
     @Volatile private var runtimeInitialized = false
+    @Volatile private var uiForeground = false
     private lateinit var appContext: Context
     private val preferences by lazy {
         appContext.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
@@ -108,7 +109,7 @@ object BackgroundRuntime {
             try {
                 internalCommand(
                     "mobile_lifecycle_transition",
-                    JSONObject().put("state", "background_available").put("reason", "availability_service"),
+                    JSONObject().put("state", availabilityLifecycle()).put("reason", "availability_service"),
                 )
             } catch (error: Throwable) {
                 Log.e(TAG, "lifecycle update failed (${error.javaClass.simpleName})")
@@ -138,11 +139,17 @@ object BackgroundRuntime {
         syncNativeState()
         internalCommand(
             "mobile_lifecycle_transition",
-            JSONObject().put("state", "background_available").put("reason", "availability_service"),
+            JSONObject().put("state", availabilityLifecycle()).put("reason", "availability_service"),
         )
         startNotificationPump()
         return initialized
     }
+
+    fun onUiLifecycle(state: String) {
+        uiForeground = state == "foreground"
+    }
+
+    private fun availabilityLifecycle(): String = if (uiForeground) "foreground" else "background_available"
 
     fun command(raw: String): String = bridge("command", raw)
 

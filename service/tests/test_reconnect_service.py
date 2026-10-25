@@ -534,6 +534,36 @@ def test_start_stop_lifecycle_and_status_transitions(
         blair.close()
 
 
+@pytest.mark.parametrize("action", ["stop", "consent", "privacy"])
+def test_contact_stop_and_consent_changes_close_the_service_owned_native_peer(
+    tmp_path: Path, mailbox: FakeMailbox, monkeypatch, action: str,
+) -> None:
+    alex, blair_id, blair, _ = _pair(tmp_path)
+    try:
+        _consent(alex, blair)
+        alex.reconnect_start(blair_id)
+        profile_id = alex.reconnect_profiles()["profiles"][0]["id"]
+        alex._native_webrtc_profile_sessions[profile_id] = "native-session"
+        alex._native_webrtc_live.add("native-session")
+        closed = []
+        def close(session):
+            profile = alex._reconnect_profile(profile_id)
+            if action == "stop":
+                assert profile["state"] == "stopped" and not profile["active"]
+            closed.append(session)
+        monkeypatch.setattr(alex, "_native_webrtc_host", lambda: type("Host", (), {"close": staticmethod(close)})())
+        if action == "stop":
+            alex.reconnect_stop(blair_id)
+        elif action == "consent":
+            alex.reconnect_consent_set(blair_id, False, True)
+        else:
+            alex.reconnect_consent_set(blair_id, True, False)
+        assert closed == ["native-session"]
+        assert alex.native_reconnect_session(profile_id) is None
+    finally:
+        blair.close()
+
+
 def test_direct_ip_disclosure_or_a_consented_relay_is_required(
     tmp_path: Path, mailbox: FakeMailbox
 ) -> None:
