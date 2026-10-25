@@ -70,6 +70,14 @@ def test_native_webrtc_host_is_pinned_and_isolated() -> None:
     assert "native_webrtc_event" in host
     assert "media" not in host.lower() or "data-only" in host.lower()
 
+    context = (ANDROID / "NativeWebRtcContext.kt").read_text(encoding="utf-8")
+    assert "PeerConnection" not in context
+    assert "PeerConnectionFactory" not in context
+    plugin = (ANDROID / "MeshRuntimePlugin.kt").read_text(encoding="utf-8")
+    # Normal app startup must not load libwebrtc or construct a peer factory.
+    assert "NativeWebRtcHost.initialize" not in plugin
+    assert "NativeWebRtcContext.attach" in plugin
+
 
 def test_plugin_does_not_suspend_when_availability_is_enabled() -> None:
     plugin = (ANDROID / "MeshRuntimePlugin.kt").read_text(encoding="utf-8")

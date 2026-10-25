@@ -117,7 +117,13 @@ object BackgroundRuntime {
         }
         val profileDir = appContext.filesDir.resolve("mesh-chat/profile-v1")
         check(profileDir.mkdirs() || profileDir.isDirectory)
-        NativeWebRtcHost.initialize(appContext)
+        try {
+            NativeWebRtcHost.initialize(appContext)
+        } catch (error: Throwable) {
+            // A native-library failure must not take down the Python runtime or
+            // the foreground service; native sessions will report unavailable.
+            Log.e(TAG, "native WebRTC initialize failed (${error.javaClass.simpleName})")
+        }
         val request = JSONObject()
             .put("profile_dir", profileDir.canonicalPath)
             .put("vault_key", Base64.encodeToString(vaultKey(), Base64.NO_WRAP))
