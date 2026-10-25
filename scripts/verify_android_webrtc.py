@@ -81,7 +81,7 @@ def verify_android_webrtc(artifact: Path) -> dict[str, int]:
                 native_count += 1
                 references = {
                     value.decode("ascii") for value in re.findall(
-                        rb"\borg\.webrtc\.[A-Za-z0-9_.$]+", archive.read(name)
+                        rb"\borg\.(?:webrtc|jni_zero)\.[A-Za-z0-9_.$]+", archive.read(name)
                     )
                 }
                 if not {"org.webrtc.NetworkMonitor", "org.webrtc.PeerConnectionFactory"} <= references:
