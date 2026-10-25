@@ -28,7 +28,7 @@ vi.mock("./webrtc-session", async (importOriginal) => ({
   updateWebRTCSessionApprovalPending: mocks.updateWebRTCSessionApprovalPending,
 }));
 
-import { WebRTCOnboardingDialog } from "./WebRTCOnboarding";
+import { WebRTCOnboardingDialog, normalizeWebRTCOfferInput } from "./WebRTCOnboarding";
 
 const sdp = [
   "v=0",
@@ -42,6 +42,14 @@ const sdp = [
 ].join("\r\n");
 const offerDocument = JSON.stringify({ type: "webrtc_onboarding_offer", session_id: "session" });
 const answerDocument = JSON.stringify({ type: "webrtc_onboarding_answer", session_id: "session" });
+
+describe("WebRTC offer input", () => {
+  it("accepts the pairing link copied from the Windows QR code", () => {
+    expect(normalizeWebRTCOfferInput("  meshchat://pair/abc123  ")).toBe("abc123");
+    expect(normalizeWebRTCOfferInput("abc123")).toBe("abc123");
+    expect(normalizeWebRTCOfferInput(offerDocument)).toBe(offerDocument);
+  });
+});
 
 class FakeChannel extends EventTarget {
   readonly label: string;

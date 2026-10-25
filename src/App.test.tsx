@@ -578,6 +578,59 @@ describe("first-run remote invitation consent", () => {
       { invitation: "MESHCHAT2:first-run" },
     ));
   });
+
+  it("offers WebRTC join from the first-run welcome and opens it after profile creation", async () => {
+    const onboarding: Snapshot = { ...snapshot(), profile: null };
+    const ready = snapshot();
+    api.runtimePlatform.mockResolvedValue("desktop");
+    api.initializeService.mockResolvedValue(onboarding);
+    api.onInvitation.mockResolvedValue(() => undefined);
+    api.onServiceEvent.mockResolvedValue(() => undefined);
+    api.serviceCommand.mockImplementation(async (command: string) => {
+      if (command === "create_profile") return profile;
+      if (command === "snapshot") return ready;
+      return {};
+    });
+
+    render(<App />);
+    await screen.findByRole("heading", { name: "Chat without a central server." });
+    fireEvent.click(screen.getByRole("button", { name: "Join with WebRTC" }));
+    expect(await screen.findByRole("heading", { name: "Set up a local name first" })).toBeTruthy();
+    fireEvent.change(screen.getByRole("textbox", { name: "Display name" }), { target: { value: "Alex" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create profile and continue" }));
+
+    await waitFor(() => expect(api.serviceCommand).toHaveBeenCalledWith("create_profile", { display_name: "Alex" }));
+    expect(await screen.findByRole("heading", { name: "Connect with WebRTC" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Join with WebRTC" })).toBeTruthy();
+  });
+
+  it("routes a first-run pairing link into WebRTC profile setup", async () => {
+    const onboarding: Snapshot = { ...snapshot(), profile: null };
+    const ready = snapshot();
+    let deliver: ((value: string) => void) | undefined;
+    api.runtimePlatform.mockResolvedValue("desktop");
+    api.initializeService.mockResolvedValue(onboarding);
+    api.onInvitation.mockImplementation(async (callback: (value: string) => void) => {
+      deliver = callback;
+      return () => undefined;
+    });
+    api.onServiceEvent.mockResolvedValue(() => undefined);
+    api.serviceCommand.mockImplementation(async (command: string) => {
+      if (command === "create_profile") return profile;
+      if (command === "snapshot") return ready;
+      return {};
+    });
+
+    render(<App />);
+    await screen.findByRole("heading", { name: "Chat without a central server." });
+    await act(async () => { deliver?.("meshchat://pair/pair-code-123"); });
+    expect(await screen.findByRole("heading", { name: "Set up a local name first" })).toBeTruthy();
+    fireEvent.change(screen.getByRole("textbox", { name: "Display name" }), { target: { value: "Alex" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create profile and continue" }));
+
+    expect(await screen.findByRole("heading", { name: "Connect with WebRTC" })).toBeTruthy();
+    expect(await screen.findByDisplayValue("pair-code-123")).toBeTruthy();
+  });
 });
 
 describe("new chat invitations", () => {

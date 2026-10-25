@@ -19,6 +19,7 @@ import {
   LogIn,
   LogOut,
   LockKeyhole,
+  Link2,
   Megaphone,
   MessageCircleMore,
   Mic,
@@ -1343,13 +1344,16 @@ function CallDialog({
 
 function Onboarding({
   initialInvitation,
+  initialPairingCode = "",
   onReady,
 }: {
   initialInvitation: string;
-  onReady: (snapshot: Snapshot, pendingInvitation?: string) => void;
+  initialPairingCode?: string;
+  onReady: (snapshot: Snapshot, pendingInvitation?: string, startWebRTC?: boolean) => void;
 }) {
   const initialWorkspacePrefixOnly = isWorkspaceInvitationValue(initialInvitation) && isWorkspacePrefixOnly(initialInvitation);
-  const [mode, setMode] = useState<OnboardingMode>(initialInvitation ? "join" : "home");
+  const [mode, setMode] = useState<OnboardingMode>(initialInvitation ? "join" : initialPairingCode ? "start" : "home");
+  const [webRTCJoin, setWebRTCJoin] = useState(Boolean(initialPairingCode));
   const [name, setName] = useState("");
   const [invitation, setInvitation] = useState(initialInvitation);
   const [pendingWorkspaceInvitation, setPendingWorkspaceInvitation] = useState("");
@@ -1438,16 +1442,23 @@ function Onboarding({
     return () => { previewGeneration.current += 1; };
   }, [initialInvitation, inspectInvitation]);
 
+  useEffect(() => {
+    if (!initialPairingCode) return;
+    setWebRTCJoin(true);
+    setMode("start");
+  }, [initialPairingCode]);
+
   const createProfile = async () => {
     setBusy(true);
     setError("");
     try {
       await serviceCommand("create_profile", { display_name: name });
+      const ready = await serviceCommand<Snapshot>("snapshot");
       if (mode === "join") {
         await serviceCommand("accept_invitation", { invitation, ...(preview?.i2p_access_point ? { i2p_consent: i2pConsent } : {}) });
-        onReady(await serviceCommand<Snapshot>("snapshot"));
+        onReady(ready);
       } else {
-        onReady(await serviceCommand<Snapshot>("snapshot"), pendingWorkspaceInvitation || undefined);
+        onReady(ready, pendingWorkspaceInvitation || undefined, webRTCJoin);
       }
     } catch (reason) {
       setError(errorMessage(reason));
@@ -1484,7 +1495,7 @@ function Onboarding({
       <div className="onboarding__brand"><Brand /></div>
       <section className="welcome-card">
         {mode !== "home" && (
-          <button className="back-link" onClick={() => { previewGeneration.current += 1; setBusy(false); setMode("home"); setPreview(null); setRemoteConsent(false); setI2PConsent(false); setPendingWorkspaceInvitation(""); setWorkspaceContext(null); setInvitation(""); setError(""); }}>
+          <button className="back-link" onClick={() => { previewGeneration.current += 1; setBusy(false); setMode("home"); setPreview(null); setRemoteConsent(false); setI2PConsent(false); setPendingWorkspaceInvitation(""); setWorkspaceContext(null); setInvitation(""); setError(""); setWebRTCJoin(false); }}>
             <ArrowLeft size={18} /> Back
           </button>
         )}
@@ -1503,6 +1514,7 @@ function Onboarding({
             <div className="welcome-actions">
               <Button onClick={() => setMode("start")}><MessageCircleMore size={19} /> Start a chat</Button>
               <Button variant="secondary" onClick={() => setMode("join")}><UserRoundPlus size={19} /> Join a chat</Button>
+              <Button variant="secondary" onClick={() => { setWebRTCJoin(true); setMode("start"); }}><Link2 size={19} /> Join with WebRTC</Button>
             </div>
             <p className="privacy-note"><ShieldCheck size={17} /> No account, phone number, telemetry, or cloud backup.</p>
           </>
@@ -1510,19 +1522,21 @@ function Onboarding({
 
         {mode === "start" && (
           <form onSubmit={(event) => { event.preventDefault(); void createProfile(); }}>
-            <p className="eyebrow">{workspaceContext?.kind === "device" ? "Link a device" : pendingWorkspaceInvitation ? "Join a workspace" : "Start a chat"}</p>
-            <h1>{workspaceContext ? `Set up this device for ${workspaceContext.name}` : "What should people call you?"}</h1>
-            <p className="muted">{workspaceContext?.kind === "device"
-              ? `This signed link is for ${workspaceContext.memberDisplayName}. Choose the name the workspace owner will review for this device.`
-              : workspaceContext
-                ? `${workspaceContext.description || `You’re joining ${workspaceContext.name}.`} Choose the name the workspace owner will review with your signed join request.`
-                : "This name is shared only in invitations and connection requests."}</p>
+            <p className="eyebrow">{webRTCJoin ? "Join with WebRTC" : workspaceContext?.kind === "device" ? "Link a device" : pendingWorkspaceInvitation ? "Join a workspace" : "Start a chat"}</p>
+            <h1>{webRTCJoin ? "Set up a local name first" : workspaceContext ? `Set up this device for ${workspaceContext.name}` : "What should people call you?"}</h1>
+            <p className="muted">{webRTCJoin
+              ? "A local profile is required to sign the WebRTC answer. After this step you will paste the Windows offer or pairing code."
+              : workspaceContext?.kind === "device"
+                ? `This signed link is for ${workspaceContext.memberDisplayName}. Choose the name the workspace owner will review for this device.`
+                : workspaceContext
+                  ? `${workspaceContext.description || `You’re joining ${workspaceContext.name}.`} Choose the name the workspace owner will review with your signed join request.`
+                  : "This name is shared only in invitations and connection requests."}</p>
             <label className="field">
               <span>Display name</span>
               <input autoFocus value={name} onChange={(event) => setName(event.target.value)} maxLength={64} autoComplete="name" />
             </label>
             {error && <p className="form-error" role="alert">{error}</p>}
-            <Button type="submit" disabled={!name.trim() || busy}>{busy ? "Creating…" : pendingWorkspaceInvitation ? "Create profile and continue" : "Create my invite"}</Button>
+            <Button type="submit" disabled={!name.trim() || busy}>{busy ? "Creating…" : webRTCJoin ? "Create profile and continue" : pendingWorkspaceInvitation ? "Create profile and continue" : "Create my invite"}</Button>
           </form>
         )}
 
@@ -4711,7 +4725,7 @@ type WorkspaceMessageInvalidations = Record<string, {
   conversations: Record<string, number>;
 }>;
 
-function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageInvalidations, notificationTarget, onNotificationHandled, onLock, initialInvitation, onInvitationHandled, initialPairingCode = "", onPairingHandled }: { snapshot: Snapshot; theme: Theme; onThemeChange: (theme: Theme) => void; refresh: (afterCurrent?: boolean) => Promise<Snapshot>; workspaceMessageInvalidations: WorkspaceMessageInvalidations; notificationTarget: NotificationOpenTarget | null; onNotificationHandled: () => void; onLock: () => Promise<void>; initialInvitation: string; onInvitationHandled: () => void; initialPairingCode?: string; onPairingHandled?: () => void }) {
+function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageInvalidations, notificationTarget, onNotificationHandled, onLock, initialInvitation, onInvitationHandled, initialPairingCode = "", initialWebRTCJoin = false, onWebRTCJoinHandled, onPairingHandled }: { snapshot: Snapshot; theme: Theme; onThemeChange: (theme: Theme) => void; refresh: (afterCurrent?: boolean) => Promise<Snapshot>; workspaceMessageInvalidations: WorkspaceMessageInvalidations; notificationTarget: NotificationOpenTarget | null; onNotificationHandled: () => void; onLock: () => Promise<void>; initialInvitation: string; onInvitationHandled: () => void; initialPairingCode?: string; initialWebRTCJoin?: boolean; onWebRTCJoinHandled?: () => void; onPairingHandled?: () => void }) {
   const groups = snapshot.groups ?? [];
   const groupMessages = snapshot.group_messages ?? [];
   const groupInvitations = snapshot.group_invitations ?? [];
@@ -4966,6 +4980,12 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
     setConnectEntryOpen(false);
     setWebRtcOnboardingOpen(true);
   }, [initialPairingCode]);
+  useEffect(() => {
+    if (!initialWebRTCJoin) return;
+    setConnectEntryOpen(false);
+    setWebRtcOnboardingOpen(true);
+    onWebRTCJoinHandled?.();
+  }, [initialWebRTCJoin, onWebRTCJoinHandled]);
   useEffect(() => {
     if (!initialInvitation) return;
     const workspaceInvitation = isWorkspaceInvitationValue(initialInvitation);
@@ -6825,6 +6845,7 @@ export default function App() {
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
   const [initialInvitation, setInitialInvitation] = useState("");
   const [initialPairingCode, setInitialPairingCode] = useState("");
+  const [initialWebRTCJoin, setInitialWebRTCJoin] = useState(false);
   const [workspaceMessageInvalidations, setWorkspaceMessageInvalidations] = useState<WorkspaceMessageInvalidations>({});
   const [notificationTarget, setNotificationTarget] = useState<NotificationOpenTarget | null>(null);
   const [fatal, setFatal] = useState("");
@@ -7001,12 +7022,14 @@ export default function App() {
     return (
       <Onboarding
         initialInvitation={initialInvitation}
-        onReady={(ready, pendingInvitation) => {
+        initialPairingCode={initialPairingCode}
+        onReady={(ready, pendingInvitation, startWebRTC) => {
+          setInitialWebRTCJoin(Boolean(startWebRTC));
           setInitialInvitation(pendingInvitation ?? "");
           setSnapshot(ready);
         }}
       />
     );
   }
-  return <Messenger snapshot={snapshot} theme={theme} onThemeChange={setTheme} refresh={refresh} workspaceMessageInvalidations={workspaceMessageInvalidations} notificationTarget={notificationTarget} onNotificationHandled={() => setNotificationTarget(null)} initialInvitation={initialInvitation} initialPairingCode={initialPairingCode} onPairingHandled={() => setInitialPairingCode("")} onInvitationHandled={() => setInitialInvitation("")} onLock={async () => { await lockService(); setSnapshot(null); setLocked(true); }} />;
+  return <Messenger snapshot={snapshot} theme={theme} onThemeChange={setTheme} refresh={refresh} workspaceMessageInvalidations={workspaceMessageInvalidations} notificationTarget={notificationTarget} onNotificationHandled={() => setNotificationTarget(null)} initialInvitation={initialInvitation} initialPairingCode={initialPairingCode} initialWebRTCJoin={initialWebRTCJoin} onWebRTCJoinHandled={() => setInitialWebRTCJoin(false)} onPairingHandled={() => setInitialPairingCode("")} onInvitationHandled={() => setInitialInvitation("")} onLock={async () => { await lockService(); setSnapshot(null); setLocked(true); }} />;
 }
