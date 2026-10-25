@@ -39,6 +39,8 @@ export function normalizeWebRTCOfferInput(raw: string): string {
   return value.startsWith(prefix) ? value.slice(prefix.length).trim() : value;
 }
 
+const NATIVE_ONBOARDING_ENABLED: boolean = false;
+
 interface OnboardingOfferResult {
   document: string;
   session_id: string;
@@ -169,7 +171,10 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
   const [relayError, setRelayError] = useState("");
   const [mailboxCode, setMailboxCode] = useState("");
   const windowsPlatform = isWindowsWebRTCPlatform(typeof navigator === "undefined" ? "" : navigator.userAgent);
-  const nativeMode = isNativeWebRTCPlatform(typeof navigator === "undefined" ? "" : navigator.userAgent);
+  // Native SDP parsing is still behind this flag: a release Android build
+  // crashed while accepting a Windows offer. Keep manual onboarding on the
+  // proven WebView transport until a device log identifies the native fault.
+  const nativeMode = NATIVE_ONBOARDING_ENABLED && isNativeWebRTCPlatform(typeof navigator === "undefined" ? "" : navigator.userAgent);
   const nativeSessionRef = useRef<string | null>(null);
   const handleControlMessageRef = useRef<((raw: string) => Promise<void>) | null>(null);
   const sendInvitationRef = useRef<(() => Promise<void>) | null>(null);
