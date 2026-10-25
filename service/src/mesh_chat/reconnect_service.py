@@ -426,16 +426,20 @@ class ReconnectServiceMixin:
                 # reconnect state of every other approved contact.
                 continue
         profile = self.store.get("profile", "local") or {}
+        profiles = []
+        for item in self._reconnect_profiles_raw():
+            public = self._reconnect_profile_public(item)
+            native_session = getattr(self, "native_reconnect_session", lambda _: None)(item["id"])
+            if native_session:
+                public["native_session_id"] = native_session
+            profiles.append(public)
         return {
             "local_device_id": self._reconnect_device_id(),
             "local_destination": profile.get("destination_hash"),
             "mailbox_configured": bool(
                 getattr(self._call_settings, "signal_mailbox_url", None)
             ),
-            "profiles": [
-                self._reconnect_profile_public(item)
-                for item in self._reconnect_profiles_raw()
-            ],
+            "profiles": profiles,
         }
 
     # ----------------------------------------------------------------- consent
@@ -582,6 +586,10 @@ class ReconnectServiceMixin:
             )
         profile["updated_at"] = _now()
         self.store.put(PROFILE_KIND, profile["id"], profile)
+        # Send revoked consent before retiring a native channel. The service
+        # owns this exchange even when the WebView is suspended.
+        native_shared = getattr(self, "_share_native_capabilities", lambda *_: False)(
+            contact["id"], profile.get("local_capabilities"))
         if changed and (not auto_reconnect or not allow_direct_ip_disclosure):
             close_native = getattr(self, "close_native_reconnect_session", None)
             if close_native is not None:
@@ -591,6 +599,7 @@ class ReconnectServiceMixin:
             "profile": self._reconnect_profile_public(profile),
             "capabilities": profile.get("local_capabilities"),
             "changed": changed,
+            "native_shared": native_shared,
         }
 
     def reconnect_capabilities_create(

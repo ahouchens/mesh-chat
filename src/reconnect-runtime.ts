@@ -11,15 +11,21 @@ import type { WebRTCSession, WebRTCSessionPath } from "./webrtc-session";
 import { attachWebRTCBridge } from "./webrtc-onboarding";
 import { ReconnectPeer, fingerprint } from "./webrtc-peer";
 import { NativeReconnectPeer } from "./native-reconnect-peer";
-import { isNativeWebRTCPlatform } from "./native-webrtc";
+import { isNativeWebRTCPlatform, nativeWebRTCStats, nativeWebRTCClose } from "./native-webrtc";
 import { maintainReconnectCapabilities } from "./reconnect-control";
 import { setWebRTCSession, getWebRTCSessions, getWebRTCSessionByKey, closeWebRTCSession, removeWebRTCSession } from "./webrtc-session";
 
 export const DISCONNECTED_SESSION_GRACE_MS = 10_000;
 const disconnectedSince = new WeakMap<WebRTCSession, number>();
 const nativeSessions = new Map<string, { peer: NativeReconnectPeer; contactId: string }>();
+const serviceSessions = new Map<string, { sessionId: string; contactId: string; disconnectedAt?: number }>();
 
 export function closeNativeReconnectSessions(contactId?: string): void {
+  for (const [profileId, item] of serviceSessions) {
+    if (contactId && item.contactId !== contactId) continue;
+    serviceSessions.delete(profileId);
+    void nativeWebRTCClose(item.sessionId).catch(() => undefined);
+  }
   for (const [profileId, item] of nativeSessions) {
     if (contactId && item.contactId !== contactId) continue;
     nativeSessions.delete(profileId);
@@ -28,6 +34,7 @@ export function closeNativeReconnectSessions(contactId?: string): void {
 }
 
 function hasLiveSession(profileId: string, contactId: string): boolean {
+  if (serviceSessions.get(profileId)?.contactId === contactId) return true;
   const native = nativeSessions.get(profileId);
   if (native && native.contactId === contactId) {
     if (native.peer.isAttached()) return true;
@@ -78,6 +85,24 @@ export function createReconnectDeps(
   return {
     profiles: async () => {
       const payload = await serviceCommand<ReconnectProfilesPayload>("reconnect_profiles");
+      const previous = new Map(serviceSessions);
+      serviceSessions.clear();
+      await Promise.all(payload.profiles.map(async (profile) => {
+        const sessionId = profile.native_session_id;
+        if (!sessionId || nativeSessions.has(profile.id)) return;
+        try {
+          const stats = await nativeWebRTCStats(sessionId);
+          if (!stats.attached || !["connected", "completed", "disconnected"].includes(stats.ice_connection_state ?? "")) return;
+          const old = previous.get(profile.id);
+          const disconnectedAt = stats.ice_connection_state === "disconnected"
+            ? (old?.sessionId === sessionId ? old.disconnectedAt : undefined) ?? Date.now() : undefined;
+          if (disconnectedAt !== undefined && Date.now() - disconnectedAt >= DISCONNECTED_SESSION_GRACE_MS) {
+            await nativeWebRTCClose(sessionId);
+            return;
+          }
+          serviceSessions.set(profile.id, { sessionId, contactId: profile.contact_id, disconnectedAt });
+        } catch { /* Closed by the service while the renderer resumed. */ }
+      }));
       await Promise.all([...nativeSessions.values()].map(({ peer }) => peer.refreshHealth()));
       maintainReconnectCapabilities();
       return payload;
@@ -233,6 +258,11 @@ export function createReconnectDeps(
       serviceCommand("reconnect_path_status", { contact_id: contactId }),
     hasSession: hasLiveSession,
     closeSession: async (profileId) => {
+      const serviceSession = serviceSessions.get(profileId);
+      if (serviceSession) {
+        serviceSessions.delete(profileId);
+        await nativeWebRTCClose(serviceSession.sessionId).catch(() => undefined);
+      }
       const native = nativeSessions.get(profileId);
       if (native) {
         nativeSessions.delete(profileId);

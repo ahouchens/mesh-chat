@@ -42,7 +42,7 @@ def test_default_is_off_and_status_is_sanitized() -> None:
     assert status["mode"] == "native_webrtc"
     assert status["lifecycle_state"] == "foreground"
     assert set(status) == {
-        "enabled", "mode", "state", "reason", "lifecycle_state", "updated_at",
+        "enabled", "mode", "state", "reason", "lifecycle_state", "updated_at", "health",
     }
 
 
@@ -73,6 +73,20 @@ def test_lock_overrides_a_persisted_opt_in() -> None:
     assert locked["state"] == "locked"
     assert locked["reason"] == "explicit_lock"
     assert host._background_availability_enabled() is False
+
+
+def test_available_requires_the_actual_native_service_and_initialized_runtime(monkeypatch):
+    host = Host()
+    host.set_background_availability(True)
+    native = {"enabled": True, "service_running": False, "runtime_initialized": False}
+    monkeypatch.setattr(host, "_native_background_status", lambda: dict(native))
+    assert host.background_availability_status()["health"] == "starting"
+    native.update(service_running=True, runtime_initialized=True)
+    assert host.background_availability_status()["health"] == "available"
+    native["service_running"] = False
+    assert host.background_availability_status()["health"] != "available"
+    native.update(enabled=False, failure="foreground_start_denied")
+    assert host.background_availability_status()["health"] == "failed"
 
 
 def test_enabled_lifecycle_does_not_retire_native_transports() -> None:

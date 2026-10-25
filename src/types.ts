@@ -992,6 +992,8 @@ export interface CallIceConfiguration {
 }
 
 export interface BackgroundAvailability {
+  health?: "off" | "starting" | "available" | "failed" | "unknown";
+  native?: { enabled: boolean; service_running: boolean; runtime_initialized: boolean; failure?: string | null };
   enabled: boolean;
   mode: "native_webrtc";
   state: "disabled" | "enabled" | "locked";

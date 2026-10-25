@@ -22,6 +22,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicReference
+import java.util.concurrent.atomic.AtomicLong
 
 /**
  * Native WebRTC data-channel ownership for the background availability mode.
@@ -54,6 +55,8 @@ object NativeWebRtcHost {
         @Volatile var expectedChannels: Set<String> = emptySet()
         @Volatile var gathering: CountDownLatch? = null
         @Volatile var closed = false
+        val receivedPackets = AtomicLong()
+        val receivedControls = AtomicLong()
     }
 
     private val sessions = ConcurrentHashMap<String, Session>()
@@ -243,6 +246,8 @@ object NativeWebRtcHost {
             .put("ice_gathering_state", session.pc.iceGatheringState().name.lowercase())
             .put("data_channel_state", session.channels["mesh-reticulum"]?.state()?.name?.lowercase() ?: "missing")
             .put("channels", JSONArray(session.channels.keys.toList()))
+            .put("received_packets", session.receivedPackets.get())
+            .put("received_controls", session.receivedControls.get())
         return JSONObject().put("ok", true).put("result", result).toString()
     }
 
@@ -363,8 +368,10 @@ object NativeWebRtcHost {
                 data.get(bytes)
                 val encoded = Base64.encodeToString(bytes, Base64.NO_WRAP)
                 if (label == "mesh-reticulum") {
+                    session.receivedPackets.incrementAndGet()
                     notifyPython("message", sessionId, encoded)
                 } else {
+                    session.receivedControls.incrementAndGet()
                     notifyPython("control", sessionId, "$label:$encoded")
                 }
             }

@@ -37,6 +37,7 @@ class Service:
 
     def reconnect_request_create(self, contact_id: str, attempt_id: str) -> dict[str, Any]:
         self.calls.append("request")
+        self.attempt_id = attempt_id
         return {"document": "request-document"}
 
     def reconnect_fetch(self, profile_id: str, role: str) -> dict[str, Any] | None:
@@ -52,7 +53,7 @@ class Service:
         self.published.append((profile_id, document, role))
 
     def verify_reconnect_offer(self, document: str, profile_id: str) -> dict[str, Any]:
-        return {"sdp": "offer-sdp"}
+        return {"sdp": "offer-sdp", "attempt_id": self.attempt_id}
 
     def verify_reconnect_request(self, document: str, profile_id: str) -> dict[str, Any]:
         return {"document": document}
@@ -137,7 +138,7 @@ def test_stop_closes_native_sessions_instead_of_leaking_them() -> None:
     service = Service(preferred=False)
     supervisor = BackgroundReconnectSupervisor(service)
     supervisor._sessions["profile-1"] = "background-session-1"
-    supervisor._attempt_session_id = "background-session-2"
+    supervisor._attempt_sessions["profile-2"] = "background-session-2"
     supervisor.stop()
     assert "close:background-session-1" in service.calls
     assert "close:background-session-2" in service.calls
@@ -193,6 +194,8 @@ def test_failed_session_is_closed_before_its_replacement(monkeypatch, stats):
         return "new-session"
     monkeypatch.setattr(supervisor, "_attempt", attempt)
     supervisor._tick({})
+    for worker in list(supervisor._workers.values()):
+        worker.join(2)
     assert supervisor._sessions == {"profile-1": "new-session"}
 
 
@@ -230,7 +233,7 @@ def test_cancel_during_native_creation_closes_late_result_without_publishing(mon
         supervisor._attempt(service.profile)
     assert not service.published
     assert any(call.startswith("close:background-") for call in service.calls)
-    assert supervisor._attempt_session_id is None
+    assert not supervisor._attempt_sessions
 
 
 def test_background_reuses_a_healthy_foreground_created_native_peer(monkeypatch):
@@ -240,3 +243,77 @@ def test_background_reuses_a_healthy_foreground_created_native_peer(monkeypatch)
     supervisor._tick({})
     assert not service.calls
     assert not supervisor._sessions
+
+
+@pytest.mark.parametrize("preferred", [True, False])
+def test_stale_mailbox_reply_is_skipped_without_recreating_the_peer(monkeypatch, preferred):
+    from mesh_chat.errors import IdentityMismatch
+    monkeypatch.setattr("mesh_chat.background_reconnect.POLL_SECONDS", 0)
+    service = Service(preferred)
+    supervisor = BackgroundReconnectSupervisor(service)
+    role = "offer" if preferred else "answer"
+    fetch = service.reconnect_fetch
+    received = []
+    def documents(profile_id, requested_role):
+        if requested_role == role:
+            received.append(requested_role)
+            return {"document": "stale" if len(received) == 1 else "current"}
+        return fetch(profile_id, requested_role)
+    service.reconnect_fetch = documents
+    if preferred:
+        service.verify_reconnect_offer = lambda doc, _: {
+            "sdp": "offer-sdp", "attempt_id": "previous" if doc == "stale" else service.attempt_id}
+    else:
+        def verify(document, *args):
+            if document == "stale":
+                raise IdentityMismatch("Answer belongs to the previous offer")
+            return {"sdp": "answer-sdp"}
+        service.verify_reconnect_answer = verify
+    supervisor._attempt(service.profile)
+    assert len(received) == 2
+    assert sum(call in {"native_offer", "native_accept"} for call in service.calls) == 1
+    assert not any(call.startswith("close:") for call in service.calls)
+
+
+def test_offline_contacts_do_not_block_health_checks_or_other_contacts(monkeypatch):
+    service = Service(False)
+    profiles = [{**service.profile, "id": f"profile-{i}", "contact_id": f"contact-{i}"} for i in range(4)]
+    service.reconnect_profiles = lambda: {"profiles": profiles}
+    checked = []
+    service.native_webrtc_stats = lambda sid: checked.append(sid) or service.stats
+    supervisor = BackgroundReconnectSupervisor(service)
+    supervisor._sessions["profile-3"] = "healthy"
+    entered, release = threading.Event(), threading.Event()
+    attempts = []
+    def attempt(profile):
+        attempts.append(profile["id"])
+        entered.set()
+        assert release.wait(2)
+        raise TimeoutError("offline")
+    monkeypatch.setattr(supervisor, "_attempt", attempt)
+    try:
+        failures = {}
+        supervisor._tick(failures)
+        assert entered.wait(1)
+        supervisor._tick(failures)
+        assert checked == ["healthy", "healthy"]
+        assert len(supervisor._workers) == 2
+        assert "profile-2" not in attempts
+    finally:
+        release.set()
+        for worker in list(supervisor._workers.values()):
+            worker.join(2)
+    supervisor._tick(failures)
+    for worker in list(supervisor._workers.values()):
+        worker.join(2)
+    assert "profile-2" in attempts
+    assert attempts.count("profile-0") == 1
+
+
+def test_health_tick_does_not_close_a_peer_still_being_negotiated():
+    service = Service(False)
+    supervisor = BackgroundReconnectSupervisor(service)
+    service.native_reconnect_session = lambda _: "pending-peer"
+    supervisor._workers["profile-1"] = object()
+    supervisor._tick({})
+    assert not service.calls

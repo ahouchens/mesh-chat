@@ -2338,9 +2338,19 @@ function BackgroundAvailabilitySettings({
   const [error, setError] = useState("");
   useEffect(() => { setValue(initial); }, [initial]);
   const enabled = value?.enabled === true;
-  const status = value?.state === "enabled"
-    ? (value.lifecycle_state === "background_available" ? "Available" : "Starting")
-    : value?.state === "locked" ? "Locked" : "Off";
+  useEffect(() => {
+    let active = true;
+    const update = () => { void serviceCommand<BackgroundAvailability>("background_status")
+      .then((next) => { if (active) setValue(next); }).catch(() => undefined); };
+    update();
+    const timer = window.setInterval(update, 3000);
+    return () => { active = false; window.clearInterval(timer); };
+  }, []);
+  const status = value?.state === "locked" ? "Locked"
+    : value?.native?.failure || value?.health === "failed" ? "Unavailable"
+    : !enabled ? "Off"
+    : value?.health === "available" ? "Available"
+    : value?.health === "starting" ? "Starting" : "Status unknown";
   const toggle = async () => {
     if (busy) return;
     const next = !enabled;
@@ -2377,7 +2387,7 @@ function BackgroundAvailabilitySettings({
       </div>
     </fieldset>
     <p className="muted" role="status">Status: {status}</p>
-    <p className="muted">This first slice keeps the shared runtime and native messaging paths alive. Native WebRTC data channels are not yet covered by this mode; WebRTC still resumes when the app is open. Audio and video calls continue to use the call service.</p>
+    <p className="muted">Native WebRTC messaging stays connected while this mode is available. Automatic reconnection also needs an agreed signaling mailbox. Complete invitation review and contact approval while the app is open. Audio and video calls use the call service.</p>
     <p className="muted">Notifications must be allowed so Android can show the required ongoing notice. Stopping the mode removes the notice and releases the wake and Wi-Fi locks.</p>
     {error && <p className="form-error" role="alert">{error}</p>}
   </section>;

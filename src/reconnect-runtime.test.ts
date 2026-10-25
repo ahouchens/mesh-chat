@@ -99,6 +99,21 @@ afterEach(async () => {
 });
 
 describe("production reconnect wiring", () => {
+  it("adopts a live service-owned manual session instead of negotiating a duplicate", async () => {
+    commandMock.mockImplementation(async (...args: unknown[]) => {
+      if (args[0] === "reconnect_profiles") return { profiles: [{ ...profile("manual"), native_session_id: "native-manual" }] };
+      if (args[0] === "native_webrtc_stats") return { attached: true, ice_connection_state: "connected" };
+      return {};
+    });
+    const deps = createReconnectDeps({ refresh: async () => undefined });
+    await deps.profiles();
+    expect(deps.hasSession?.("manual", "contact-manual")).toBe(true);
+    expect(deps.hasSession?.("manual", "another-contact")).toBe(false);
+    await deps.closeSession?.("manual");
+    expect(commandMock).toHaveBeenCalledWith("native_webrtc_close", { session_id: "native-manual" });
+    expect(deps.hasSession?.("manual", "contact-manual")).toBe(false);
+    commandMock.mockImplementation(async () => ({}));
+  });
   it("registers a late capability-only control channel without changing contact approval", async () => {
     const deps = createReconnectDeps({ refresh: async () => undefined });
     const fake = peer("late-control");

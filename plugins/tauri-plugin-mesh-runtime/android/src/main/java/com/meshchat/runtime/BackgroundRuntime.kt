@@ -49,6 +49,7 @@ object BackgroundRuntime {
 
     @Volatile private var configured = false
     @Volatile private var runtimeInitialized = false
+    @Volatile private var availabilityFailure: String? = null
     @Volatile private var uiForeground = false
     private lateinit var appContext: Context
     private val preferences by lazy {
@@ -83,6 +84,7 @@ object BackgroundRuntime {
 
     fun start(context: Context) {
         configure(context)
+        availabilityFailure = null
         setEnabled(context, true)
         try {
             ContextCompat.startForegroundService(
@@ -91,6 +93,7 @@ object BackgroundRuntime {
             )
         } catch (error: Throwable) {
             setEnabled(context, false)
+            availabilityFailed("foreground_start_denied")
             throw error
         }
     }
@@ -175,9 +178,22 @@ object BackgroundRuntime {
     }
 
     fun statusJson(): JSONObject = JSONObject()
-        .put("enabled", preferences.getBoolean(AVAILABILITY_KEY, false))
+        .put("enabled", configured && preferences.getBoolean(AVAILABILITY_KEY, false))
         .put("runtime_initialized", runtimeInitialized)
-        .put("notification_state", permissionState())
+        .put("service_running", MeshAvailabilityService.isRunning())
+        .put("failure", availabilityFailure ?: JSONObject.NULL)
+        .put("notification_state", if (configured) permissionState() else "unknown")
+
+    @JvmStatic
+    fun status(): String = statusJson().toString()
+
+    fun availabilityFailed(reason: String) {
+        availabilityFailure = reason
+        setEnabled(appContext, false)
+        execute {
+            try { setBackgroundPreference(false) } catch (_: Throwable) { }
+        }
+    }
 
     private fun acquireMulticast() {
         if (multicastLock != null) return

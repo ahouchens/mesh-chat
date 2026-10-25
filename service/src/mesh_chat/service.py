@@ -14,6 +14,7 @@ import LXMF
 import RNS
 
 from .background_availability import BackgroundAvailabilityMixin
+from .native_webrtc_control import NativeWebRTCControlMixin
 from .app_protocol import (
     DELIVERY_WINDOW_SECONDS,
     GROUP_KINDS,
@@ -159,6 +160,7 @@ def _payload(
 
 
 class MeshChatService(
+    NativeWebRTCControlMixin,
     BackgroundAvailabilityMixin,
     ReconnectServiceMixin,
     ReactionServiceMixin,
@@ -247,6 +249,7 @@ class MeshChatService(
         "native_webrtc_control",
         "native_webrtc_close",
         "native_webrtc_stats",
+        "native_webrtc_bind_onboarding",
         "webrtc_onboarding_offer",
         "webrtc_onboarding_answer",
         "verify_webrtc_onboarding_offer",
@@ -504,6 +507,9 @@ class MeshChatService(
         self._native_webrtc_live: set[str] = set()
         self._native_webrtc_creating: set[str] = set()
         self._native_webrtc_profile_sessions: dict[str, str] = {}
+        self._native_webrtc_descriptions: dict[str, dict] = {}
+        self._native_webrtc_peers: dict[str, str] = {}
+        self._native_webrtc_controls: dict[str, dict] = {}
         self._background_reconnect_supervisor = None
         identity_record = store.get("identity", "local")
         profile_record = store.get("profile", "local")
@@ -1456,6 +1462,7 @@ class MeshChatService(
         # reconnect capabilities using the personal contact's saved/default
         # preference. Direct-IP disclosure and relay consent stay separate.
         capabilities = self._contact_capabilities(contact)
+        self._native_onboarding_approval(contact, True, capabilities)
         return {
             **contact,
             **({"reconnect_capabilities": capabilities} if capabilities else {}),
@@ -1477,6 +1484,7 @@ class MeshChatService(
             legacy_scope_id=contact_id,
         )
         self._changed()
+        self._native_onboarding_approval(contact, False)
         return contact
 
     def update_contact(self, contact_id: str, display_name: Any) -> dict[str, Any]:
@@ -2138,6 +2146,11 @@ class MeshChatService(
     def _native_webrtc_event_loop(self) -> None:
         while not self._shutdown.is_set():
             try:
+                with self._dispatch_lock:
+                    self._maintain_native_controls()
+            except Exception:
+                pass
+            try:
                 item = self._native_webrtc_events.get(timeout=0.5)
             except queue.Empty:
                 continue
@@ -2175,12 +2188,19 @@ class MeshChatService(
                     except Exception:
                         pass
             elif event == "control":
+                if session_id not in self._native_webrtc_live or len(data) > 90_000:
+                    return
                 label, _, encoded = data.partition(":")
+                if label not in {"mesh-onboarding", "meshchat-reconnect"}:
+                    return
                 try:
                     text = base64.b64decode(encoded, validate=True).decode("utf-8")
                 except Exception:
                     return
                 if len(text) <= 65_536:
+                    self._native_control_receive(session_id, label, text)
+                    if label == "meshchat-reconnect":
+                        return
                     self.emit(
                         {
                             "type": "event",
@@ -2206,6 +2226,9 @@ class MeshChatService(
                     self.webrtc_detach_native(session_id)
                 if event == "channel":
                     label, _, state = data.partition(":")
+                    if session_id in self._native_webrtc_live and label in {"mesh-onboarding", "meshchat-reconnect"} and state == "open":
+                        self._native_webrtc_controls.setdefault(session_id, {})["label"] = label
+                        self._native_control_next = 0
                     if label == "mesh-reticulum" and state in {"closing", "closed"}:
                         self.webrtc_detach_native(session_id)
                     if label == "mesh-onboarding" and state == "open":
@@ -2229,7 +2252,16 @@ class MeshChatService(
 
     def native_reconnect_session(self, profile_id: str) -> str | None:
         with self._native_webrtc_lock:
-            return self._native_webrtc_profile_sessions.get(profile_id)
+            current = self._native_webrtc_profile_sessions.get(profile_id)
+            if current:
+                return current
+            # A manually paired native transport remains usable without a
+            # mailbox. Reconnect must reuse it after the contact is approved.
+            for session_id in self._native_webrtc_peers:
+                if (session_id in self._native_webrtc_sessions
+                        and self._native_webrtc_controls.get(session_id, {}).get("profile_id") == profile_id):
+                    return session_id
+            return None
 
     def close_native_reconnect_session(self, profile_id: str) -> None:
         session_id = self.native_reconnect_session(profile_id)
@@ -2256,7 +2288,7 @@ class MeshChatService(
                 if session_id in self._native_webrtc_live:
                     raise NativeUnavailable("Native WebRTC session already exists")
                 if profile_id is not None:
-                    if profile_id in self._native_webrtc_profile_sessions:
+                    if self.native_reconnect_session(profile_id):
                         raise NativeUnavailable("Native reconnect profile already has a peer")
                     self._native_webrtc_profile_sessions[profile_id] = session_id
                 self._native_webrtc_live.add(session_id)
@@ -2268,6 +2300,9 @@ class MeshChatService(
             self._native_webrtc_live.discard(session_id)
             if session_id in self._native_webrtc_creating:
                 return
+            self._native_webrtc_descriptions.pop(session_id, None)
+            self._native_webrtc_peers.pop(session_id, None)
+            self._native_webrtc_controls.pop(session_id, None)
             for profile_id, current in list(self._native_webrtc_profile_sessions.items()):
                 if current == session_id:
                     del self._native_webrtc_profile_sessions[profile_id]
@@ -2285,6 +2320,7 @@ class MeshChatService(
         if len(fingerprints) != 1:
             raise ValidationError("Native WebRTC SDP fingerprint is invalid")
         result["fingerprint"] = _fingerprint(fingerprints[0])
+        self._native_webrtc_descriptions.setdefault(session_id, {})["local"] = result["sdp"]
         return result
 
     def native_webrtc_offer(
@@ -2320,6 +2356,7 @@ class MeshChatService(
             raise ValidationError("Native WebRTC configuration is invalid")
         if self._claim_native_session(session_id, profile_id, background=background):
             ice = {**ice, "iceTransportPolicy": "relay"}
+        self._native_webrtc_descriptions[session_id] = {"remote_offer": offer_sdp}
         try:
             return self._native_sdp_result(session_id, self._native_webrtc_host().acceptOffer(
                 session_id,
@@ -4158,6 +4195,10 @@ class MeshChatService(
         if command == "native_webrtc_stats":
             body = _payload(value, allowed={"session_id"}, required={"session_id"})
             return self.native_webrtc_stats(body["session_id"])
+        if command == "native_webrtc_bind_onboarding":
+            body = _payload(value, allowed={"session_id", "offer_document", "answer_document"},
+                            required={"session_id", "offer_document"})
+            return self.native_webrtc_bind_onboarding(body["session_id"], body["offer_document"], body.get("answer_document"))
         if command == "webrtc_onboarding_offer":
             body = _payload(
                 value,

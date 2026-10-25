@@ -27,6 +27,7 @@ export interface ReconnectEffective {
 }
 
 export interface ReconnectProfile {
+  native_session_id?: string;
   id: string;
   contact_id: string;
   display_name?: string;

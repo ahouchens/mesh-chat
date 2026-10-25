@@ -12,6 +12,8 @@ import time
 import uuid
 from typing import Any
 
+from .errors import IdentityMismatch, ValidationError
+
 NATIVE_CHANNELS = [
     {"label": "mesh-reticulum", "binary": True, "ordered": True},
     {"label": "meshchat-reconnect", "binary": False, "ordered": True},
@@ -21,6 +23,7 @@ POLL_SECONDS = 1.0
 BACKOFF_SECONDS = (1, 2, 5, 15, 30, 60)
 BACKGROUND_STATES = {"background", "background_available", "suspended"}
 DISCONNECTED_GRACE_SECONDS = 10.0
+MAX_CONCURRENT_ATTEMPTS = 2
 
 
 class BackgroundReconnectSupervisor:
@@ -29,7 +32,10 @@ class BackgroundReconnectSupervisor:
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self._sessions: dict[str, str] = {}
-        self._attempt_session_id: str | None = None
+        self._attempt_sessions: dict[str, str] = {}
+        self._workers: dict[str, threading.Thread] = {}
+        self._retry_at: dict[str, float] = {}
+        self._last_scheduled: dict[str, float] = {}
         self._sessions_lock = threading.RLock()
         self._disconnected_since: dict[str, float] = {}
 
@@ -51,10 +57,9 @@ class BackgroundReconnectSupervisor:
             thread.join(timeout=2.0)
         with self._sessions_lock:
             pending = [*self._sessions.values()]
-            if self._attempt_session_id:
-                pending.append(self._attempt_session_id)
+            pending.extend(self._attempt_sessions.values())
             self._sessions.clear()
-            self._attempt_session_id = None
+            self._attempt_sessions.clear()
             self._disconnected_since.clear()
         for session_id in pending:
             try:
@@ -113,6 +118,7 @@ class BackgroundReconnectSupervisor:
                 failures.pop(profile_id, None)
         if not background:
             return
+        eligible = []
         for profile_id, profile in profiles.items():
             if self._stop.is_set() or self.service._shutdown.is_set():
                 return
@@ -134,25 +140,54 @@ class BackgroundReconnectSupervisor:
             # A foreground-created native connection survives backgrounding.
             # Reuse it until it fails; the service reservation also fences races.
             other = self.service.native_reconnect_session(profile_id)
+            with self._sessions_lock:
+                if profile_id in self._workers:
+                    continue
             if other:
                 if self._session_live(other):
                     continue
                 self._close_session(other)
-            attempts = failures.get(profile_id, 0)
-            if attempts:
-                self._stop.wait(BACKOFF_SECONDS[min(attempts, len(BACKOFF_SECONDS) - 1)])
+            eligible.append(profile)
+        # Health checks above always run, even while every negotiation slot is
+        # occupied. Retry deadlines belong to each contact, never to the loop.
+        with self._sessions_lock:
+            for profile in sorted(eligible, key=lambda p: self._last_scheduled.get(p["id"], 0)):
+                profile_id = profile["id"]
+                if len(self._workers) >= MAX_CONCURRENT_ATTEMPTS:
+                    break
+                if profile_id in self._workers or self._retry_at.get(profile_id, 0) > time.monotonic():
+                    continue
+                worker = threading.Thread(target=self._attempt_worker, args=(profile, failures),
+                                          name="mesh-chat-reconnect-peer", daemon=True)
+                self._workers[profile_id] = worker
+                self._last_scheduled[profile_id] = time.monotonic()
+                worker.start()
+
+    def _attempt_worker(self, profile, failures) -> None:
+        profile_id = profile["id"]
+        try:
+            session_id = self._attempt(profile)
             try:
-                session_id = self._attempt(profile)
-                with self._sessions_lock:
-                    cancelled = self._stop.is_set() or self.service._shutdown.is_set()
-                    if not cancelled:
-                        self._sessions[profile_id] = session_id
-                if cancelled:
-                    self._close_session(session_id)
-                    return
-                failures[profile_id] = 0
+                self._current_profile(profile_id)
             except Exception:
-                failures[profile_id] = attempts + 1
+                self._close_session(session_id)
+                return
+            with self._sessions_lock:
+                cancelled = self._stop.is_set() or self.service._shutdown.is_set()
+                if not cancelled:
+                    self._sessions[profile_id] = session_id
+                    failures[profile_id] = 0
+                    self._retry_at.pop(profile_id, None)
+            if cancelled:
+                self._close_session(session_id)
+        except Exception:
+            with self._sessions_lock:
+                count = failures.get(profile_id, 0)
+                failures[profile_id] = count + 1
+                self._retry_at[profile_id] = time.monotonic() + BACKOFF_SECONDS[min(count, len(BACKOFF_SECONDS) - 1)]
+        finally:
+            with self._sessions_lock:
+                self._workers.pop(profile_id, None)
 
     def _current_profile(self, profile_id: str) -> dict[str, Any]:
         if self._stop.is_set() or self.service._shutdown.is_set():
@@ -177,8 +212,7 @@ class BackgroundReconnectSupervisor:
             return self._negotiate(profile)
         except Exception:
             with self._sessions_lock:
-                pending = self._attempt_session_id
-                self._attempt_session_id = None
+                pending = self._attempt_sessions.pop(profile["id"], None)
             if pending:
                 self._close_session(pending)
             raise
@@ -195,13 +229,17 @@ class BackgroundReconnectSupervisor:
         attempt_id = uuid.uuid4().hex
         session_id = f"background-{attempt_id[:20]}"
         with self._sessions_lock:
-            self._attempt_session_id = session_id
+            self._attempt_sessions[profile_id] = session_id
         deadline = time.monotonic() + MAX_ATTEMPT_SECONDS
         if preferred:
             request = self._step(profile_id, service.reconnect_request_create, contact_id, attempt_id)
             self._step(profile_id, service.reconnect_publish, profile_id, request["document"], "request")
-            offer_document = self._fetch(profile_id, "offer", deadline)
-            offer = self._step(profile_id, service.verify_reconnect_offer, offer_document, profile_id)
+            def verify_offer(document):
+                offer = service.verify_reconnect_offer(document, profile_id)
+                if offer.get("attempt_id") != attempt_id:
+                    raise IdentityMismatch("Offer belongs to an earlier request")
+                return offer
+            offer_document, offer = self._fetch(profile_id, "offer", deadline, verify_offer)
             native = self._step(profile_id, service.native_webrtc_accept,
                 session_id,
                 offer["sdp"],
@@ -217,8 +255,8 @@ class BackgroundReconnectSupervisor:
             )
             self._step(profile_id, service.reconnect_publish, profile_id, answer["document"], "answer")
         else:
-            request_document = self._fetch(profile_id, "request", deadline)
-            self._step(profile_id, service.verify_reconnect_request, request_document, profile_id)
+            request_document, _ = self._fetch(profile_id, "request", deadline,
+                lambda document: service.verify_reconnect_request(document, profile_id))
             native = self._step(profile_id, service.native_webrtc_offer,
                 session_id,
                 ice,
@@ -232,18 +270,16 @@ class BackgroundReconnectSupervisor:
                 native["fingerprint"],
             )
             self._step(profile_id, service.reconnect_publish, profile_id, offer["document"], "offer")
-            answer_document = self._fetch(profile_id, "answer", deadline)
-            answer = self._step(profile_id, service.verify_reconnect_answer,
-                answer_document, offer["document"], profile_id
-            )
+            _, answer = self._fetch(profile_id, "answer", deadline,
+                lambda document: service.verify_reconnect_answer(document, offer["document"], profile_id))
             self._step(profile_id, service.native_webrtc_apply_answer, session_id, answer["sdp"])
         self._wait_attached(profile_id, session_id, deadline)
         self._current_profile(profile_id)
         with self._sessions_lock:
-            self._attempt_session_id = None
+            self._attempt_sessions.pop(profile_id, None)
         return session_id
 
-    def _fetch(self, profile_id: str, role: str, deadline: float) -> str:
+    def _fetch(self, profile_id: str, role: str, deadline: float, verify) -> tuple[str, dict]:
         while not self._stop.is_set() and time.monotonic() < deadline:
             self._current_profile(profile_id)
             try:
@@ -251,7 +287,13 @@ class BackgroundReconnectSupervisor:
             except Exception:
                 result = None
             if isinstance(result, dict) and isinstance(result.get("document"), str) and result["document"]:
-                return result["document"]
+                try:
+                    verified = self._step(profile_id, verify, result["document"])
+                    return result["document"], verified
+                except (IdentityMismatch, ValidationError):
+                    # Mailboxes retain previous replies until TTL expiry. A
+                    # stale or invalid reply must not destroy the current peer.
+                    pass
             self._stop.wait(POLL_SECONDS)
         raise TimeoutError(f"background reconnect {role} timed out")
 
