@@ -33,6 +33,12 @@ const NATIVE_ONBOARDING_CHANNELS: NativeChannelSpec[] = [
   { label: "mesh-onboarding", binary: false, ordered: true },
 ];
 
+export function normalizeWebRTCOfferInput(raw: string): string {
+  const value = raw.trim();
+  const prefix = "meshchat://pair/";
+  return value.startsWith(prefix) ? value.slice(prefix.length).trim() : value;
+}
+
 interface OnboardingOfferResult {
   document: string;
   session_id: string;
@@ -788,7 +794,7 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
     setError(""); setPhase("review");
     setDiagnostics("");
     try {
-      let rawOffer = offerInput.trim();
+      let rawOffer = normalizeWebRTCOfferInput(offerInput);
       if (!rawOffer.includes("\"type\"")) {
         const fetched = await serviceCommand<{ document: string }>("signal_fetch", { session_id: rawOffer, role: "offer" });
         if (attemptRef.current !== attempt) return;
