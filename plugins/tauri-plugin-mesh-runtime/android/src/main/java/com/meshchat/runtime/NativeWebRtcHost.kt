@@ -60,14 +60,31 @@ object NativeWebRtcHost {
     @Volatile private var factory: PeerConnectionFactory? = null
     @Volatile private var initialized = false
 
+    /**
+     * Store the application context without loading libwebrtc. This runs during
+     * normal app startup; the native library and PeerConnectionFactory are
+     * created only when a native session is actually requested.
+     */
+    @JvmStatic
+    fun attachContext(context: Context) {
+        NativeWebRtcContext.attach(context)
+    }
+
     @JvmStatic
     fun initialize(context: Context) {
+        attachContext(context)
+        ensureInitialized()
+    }
+
+    private fun ensureInitialized() {
         if (initialized) return
         synchronized(this) {
             if (initialized) return
+            val context = NativeWebRtcContext.get()
+                ?: throw IllegalStateException("native_webrtc_context_missing")
             onMain {
                 PeerConnectionFactory.initialize(
-                    PeerConnectionFactory.InitializationOptions.builder(context.applicationContext)
+                    PeerConnectionFactory.InitializationOptions.builder(context)
                         .setEnableInternalTracer(false)
                         .createInitializationOptions(),
                 )
@@ -463,8 +480,10 @@ object NativeWebRtcHost {
             maxRetransmits = -1
         }
 
-    private fun requireFactory(): PeerConnectionFactory =
-        factory ?: throw IllegalStateException("native_webrtc_not_initialized")
+    private fun requireFactory(): PeerConnectionFactory {
+        ensureInitialized()
+        return factory ?: throw IllegalStateException("native_webrtc_not_initialized")
+    }
 
     private fun success(sdp: String): String = JSONObject()
         .put("ok", true)
