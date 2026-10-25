@@ -110,13 +110,16 @@ class BackgroundReconnectSupervisor:
             existing = list(self._sessions.items())
         for profile_id, session_id in existing:
             profile = profiles.get(profile_id)
-            if (not background or not profile or profile.get("state") == "stopped"
+            if (not profile or profile.get("state") == "stopped"
                     or not (profile.get("effective") or {}).get("ready")):
                 with self._sessions_lock:
                     self._sessions.pop(profile_id, None)
                 self._close_session(session_id)
                 failures.pop(profile_id, None)
         if not background:
+            # The renderer discovers these service-owned sessions by profile
+            # ID. Yield new negotiations, but preserve established native
+            # transports when the person returns to the app.
             return
         eligible = []
         for profile_id, profile in profiles.items():

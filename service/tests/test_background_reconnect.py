@@ -160,8 +160,8 @@ def test_foreground_states_yield_without_creating_a_second_peer(state):
     supervisor = BackgroundReconnectSupervisor(service)
     supervisor._sessions["profile-1"] = "old-session"
     supervisor._tick({})
-    assert service.calls == ["close:old-session"]
-    assert not supervisor._sessions
+    assert not service.calls
+    assert supervisor._sessions == {"profile-1": "old-session"}
 
 
 @pytest.mark.parametrize("change", ["stopped", "consent_removed", "deleted"])
