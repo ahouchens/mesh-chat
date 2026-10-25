@@ -473,7 +473,10 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
         });
         await onChanged();
         if (!current()) return;
-        if (saved.state !== "pending") return;
+        if (saved.state !== "pending") {
+          setOnboarding(saved.state === "accepted" ? "waiting-approval" : "declined");
+          return;
+        }
         contactInvitationIdRef.current = saved.id;
         setContactInvitation(saved.preview);
         setWorkspaceInvitation(saved.workspace);

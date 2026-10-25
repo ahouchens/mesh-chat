@@ -200,6 +200,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .contact-request-item details { font-size: .82rem; }
 .contact-request-fingerprint { font-family: monospace; }
 .contact-requests .dialog-actions { flex-wrap: wrap; }
+.contact-requests .button { max-width: 100%; padding-top: 10px; padding-bottom: 10px; white-space: normal; }
 .request-card { margin: 3px 14px 10px; padding: 12px; background: #fff9e8; border: 1px solid #e7d9ad; border-radius: 13px; }
 .request-card > div { display: flex; align-items: center; gap: 10px; }.request-card > div:last-child { margin-top: 10px; }.request-card .button { min-height: 34px; padding: 0 12px; font-size: .78rem; }
 .request-card span { display: grid; }.request-card small { color: #766c50; }

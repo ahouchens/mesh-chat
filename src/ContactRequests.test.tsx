@@ -30,7 +30,7 @@ it("explains expiry and offers dismissal without acceptance", () => {
 });
 
 it("includes the workspace in the explicit consent action", () => {
-  render(<ContactRequests invitations={[{ ...invitation, native_connected: true, workspace: { workspace_id: "workspace", name: "Family", description: "", owner_fingerprint: "ABCD", member_count: 1, retention_days: 7, expires_at: 4_000_000_000 } }]} approvals={[]} waiting={[]} busy={false} error="" connectedPeers={[]} onInvitation={vi.fn()} onApproval={vi.fn()} />);
+  render(<ContactRequests invitations={[{ ...invitation, native_connected: true, workspace: { workspace_id: "workspace", name: "Family", description: "", owner_fingerprint: "ABCD", member_count: 1, retention_days: 30, expires_at: 4_000_000_000 } }]} approvals={[]} waiting={[]} busy={false} error="" connectedPeers={[]} onInvitation={vi.fn()} onApproval={vi.fn()} />);
   expect(screen.getByText("Family")).toBeTruthy();
   expect(screen.getByRole("button", { name: "Accept contact and request to join" })).toBeTruthy();
   expect(screen.getByText(/WebRTC is connected/)).toBeTruthy();
