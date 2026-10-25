@@ -148,8 +148,13 @@ beforeEach(() => {
   finishGatheringImmediately = true;
   offerExpiresAt = Math.floor(Date.now() / 1000) + 600;
   vi.stubGlobal("RTCPeerConnection", FakePeer);
+  vi.stubGlobal("navigator", { userAgent: "Windows NT 10.0" });
   mocks.attachWebRTCBridge.mockResolvedValue({ bridgeId: "bridge", close: vi.fn().mockResolvedValue(undefined) });
   mocks.serviceCommand.mockImplementation(async (command: string) => {
+    if (command === "native_webrtc_offer" || command === "native_webrtc_accept") return { ok: true, sdp, fingerprint: "sha-256 AA:BB" };
+    if (command === "native_webrtc_bind_onboarding") return { peer_destination: "peer" };
+    if (command === "native_webrtc_stats") return { attached: false };
+    if (command === "native_webrtc_close") return { state: "closed" };
     if (command === "call_settings") return { turn_configured: true };
     if (command === "call_ice_servers") return {
       iceServers: [{ urls: "turn:relay.example:3478", username: "test", credential: "test" }],
@@ -236,7 +241,8 @@ describe("manual WebRTC answer exchange", () => {
         fireEvent.click(screen.getByRole("button", { name: `Copy ${kind}` }));
       });
       expect(clipboard.writeText).toHaveBeenCalledWith(document);
-      expect(FakePeer.instances[0].close).not.toHaveBeenCalled();
+      expect(FakePeer.instances).toHaveLength(0);
+      expect(mocks.serviceCommand).not.toHaveBeenCalledWith("native_webrtc_close", expect.anything());
     } finally {
       errors.mockRestore();
     }
@@ -279,11 +285,35 @@ describe("manual WebRTC answer exchange", () => {
     expect(container.querySelectorAll(".webrtc-qr svg")).toHaveLength(2);
   });
 
-  it("keeps manual onboarding on the WebView transport on Android", async () => {
+  it("uses a native transport and binds the signed offer on Android", async () => {
     vi.stubGlobal("navigator", { userAgent: "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36" });
-    await join();
-    expect(FakePeer.instances).toHaveLength(1);
-    expect(mocks.serviceCommand).not.toHaveBeenCalledWith("native_webrtc_accept", expect.anything());
+    const view = render(<WebRTCOnboardingDialog onClose={vi.fn()} onChanged={async () => undefined} />);
+    await act(async () => undefined);
+    fireEvent.click(screen.getByRole("button", { name: "Join with WebRTC" }));
+    fireEvent.change(screen.getByLabelText("Paste the signed WebRTC offer or mailbox code"), { target: { value: offerDocument } });
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Review and create answer" })); });
+    expect(FakePeer.instances).toHaveLength(0);
+    expect(mocks.serviceCommand).toHaveBeenCalledWith("native_webrtc_accept", expect.objectContaining({ offer_sdp: sdp }));
+    expect(mocks.serviceCommand).toHaveBeenCalledWith("native_webrtc_bind_onboarding", expect.objectContaining({ offer_document: offerDocument }));
+    expect((screen.getByLabelText("Signed WebRTC answer") as HTMLTextAreaElement).value).toBe(answerDocument);
+    view.unmount();
+    expect(mocks.serviceCommand).toHaveBeenCalledWith("native_webrtc_close", expect.anything());
+  });
+
+  it("hands a connected native transport to the service when the dialog closes", async () => {
+    vi.stubGlobal("navigator", { userAgent: "Android" });
+    const runCommand = mocks.serviceCommand.getMockImplementation()!;
+    mocks.serviceCommand.mockImplementation(async (command: string) => command === "native_webrtc_stats"
+      ? { attached: true } : runCommand(command));
+    const onConnected = vi.fn();
+    const view = render(<WebRTCOnboardingDialog onClose={vi.fn()} onChanged={async () => undefined} onConnected={onConnected} />);
+    await act(async () => undefined);
+    fireEvent.click(screen.getByRole("button", { name: "Join with WebRTC" }));
+    fireEvent.change(screen.getByLabelText("Paste the signed WebRTC offer or mailbox code"), { target: { value: offerDocument } });
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Review and create answer" })); });
+    expect(onConnected).toHaveBeenCalledWith("unknown");
+    view.unmount();
+    expect(mocks.serviceCommand).not.toHaveBeenCalledWith("native_webrtc_close", expect.anything());
   });
 
   it("adds a late control channel to the same registered onboarding session", async () => {

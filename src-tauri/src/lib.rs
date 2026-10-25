@@ -537,6 +537,7 @@ fn allowed_renderer_command(command: &str) -> bool {
             | "native_webrtc_control"
             | "native_webrtc_close"
             | "native_webrtc_stats"
+            | "native_webrtc_bind_onboarding"
             | "webrtc_onboarding_offer"
             | "webrtc_onboarding_answer"
             | "verify_webrtc_onboarding_offer"

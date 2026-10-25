@@ -21,6 +21,11 @@ class Host:
         self.closed = []
         self.state = {"ice_connection_state": "connected", "data_channel_state": "open"}
         self.during_create = lambda: None
+        self.controls = []
+
+    def sendControl(self, session, label, text):
+        self.controls.append((session, label, json.loads(text)))
+        return True
 
     def createOffer(self, session, ice, channels):
         self.created.append((session, json.loads(ice)))
@@ -47,11 +52,14 @@ def runtime():
     service._native_webrtc_live = set()
     service._native_webrtc_creating = set()
     service._native_webrtc_profile_sessions = {}
+    service._native_webrtc_descriptions = {}
+    service._native_webrtc_peers = {}
+    service._native_webrtc_controls = {}
     service._native_webrtc_sessions = {}
     service._webrtc_bridges = {}
     host = Host()
     service._native_webrtc_host = lambda: host
-    service.profile = {"id": "profile-1", "active": True, "allow_direct_ip_disclosure": False}
+    service.profile = {"id": "profile-1", "contact_id": "contact-1", "active": True, "allow_direct_ip_disclosure": False}
     service._reconnect_profile = lambda profile: service.profile
     service._reconnect_profile_public = lambda profile: {"effective": {"ready": True}}
     service.lifecycle = "caught_up"
@@ -59,7 +67,67 @@ def runtime():
     service._background_availability_enabled = lambda: True
     service.emit = lambda event: None
     service.webrtc_detach = lambda bridge: service._webrtc_bridges.pop(bridge, None)
+    service._contact_by_destination = lambda peer: {"id": "contact-1", "destination_hash": peer}
     return service, host
+
+
+def test_native_capabilities_exchange_and_consent_updates_without_a_renderer():
+    import base64
+    service, host = runtime()
+    service.native_webrtc_offer("native-session", ICE, [], "profile-1")
+    document = ["signed-v1"]
+    stored = []
+    service.reconnect_capabilities_get = lambda contact: {"local_capabilities": document[0]}
+    service.reconnect_capabilities_store = lambda doc, **binding: stored.append((doc, binding))
+    service._handle_native_webrtc_event("channel", "native-session", "meshchat-reconnect:open")
+    service._maintain_native_controls()
+    assert host.controls[-1][2] == {"type": "connection_capabilities", "document": "signed-v1"}
+    text = json.dumps({"type": "connection_capabilities", "document": "peer-signed"})
+    service._handle_native_webrtc_event("control", "native-session", "meshchat-reconnect:" + base64.b64encode(text.encode()).decode())
+    assert stored == [("peer-signed", {"expected_contact_id": "contact-1", "expected_peer_destination": None})]
+    document[0] = "signed-consent-change"
+    service._native_control_next = 0
+    service._maintain_native_controls()
+    assert host.controls[-1][2]["document"] == "signed-consent-change"
+    service.native_webrtc_close("native-session")
+    count = len(host.controls)
+    service._maintain_native_controls()
+    assert len(host.controls) == count
+    assert not service._native_webrtc_controls
+
+
+def test_manual_session_binding_uses_verified_signaling_and_survives_dialog_closure():
+    from mesh_chat.errors import IdentityMismatch
+    service, host = runtime()
+    peer = RNS.Identity()
+    offer = create_onboarding_offer(peer, session_id="a" * 32, sdp=SDP, dtls_fingerprint=FINGERPRINT)
+    service.native_webrtc_accept("manual-session", SDP, ICE, [])
+    result = service.native_webrtc_bind_onboarding("manual-session", offer)
+    destination = verify_onboarding_offer(offer).signer_destination
+    assert result == {"peer_destination": destination}
+    service._native_webrtc_sessions["manual-session"] = "bridge"
+    service._native_webrtc_controls["manual-session"] = {"profile_id": "profile-1"}
+    assert service.native_reconnect_session("profile-1") == "manual-session"
+    assert service.native_reconnect_session("another-device") is None
+    service._native_onboarding_approval({"id": "contact-1", "destination_hash": destination}, True, "signed-caps")
+    assert host.controls[-1] == ("manual-session", "mesh-onboarding", {
+        "type": "invitation_approved", "capabilities": "signed-caps"})
+    wrong = create_onboarding_offer(peer, session_id="b" * 32, sdp=SDP + "a=ice-ufrag:other\r\n", dtls_fingerprint=FINGERPRINT)
+    with pytest.raises(IdentityMismatch):
+        service.native_webrtc_bind_onboarding("manual-session", wrong)
+
+
+def test_reconnect_control_cannot_run_invitation_actions_or_accept_closed_controls():
+    import base64
+    service, host = runtime()
+    service.native_webrtc_offer("native-session", ICE, [], "profile-1")
+    stored = []
+    service.reconnect_capabilities_store = lambda *args, **kwargs: stored.append(args)
+    for session in ["native-session", "closed-session"]:
+        text = json.dumps({"type": "invitation_approved", "capabilities": "untrusted"})
+        service._handle_native_webrtc_event("control", session, "meshchat-reconnect:" + base64.b64encode(text.encode()).decode())
+    assert not stored
+    assert not host.controls
 
 
 @pytest.mark.parametrize("answer", [False, True])

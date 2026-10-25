@@ -19,6 +19,7 @@ android {
 
     defaultConfig {
         minSdk = 24
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         consumerProguardFiles("consumer-rules.pro")
         ndk {
             abiFilters += meshRuntimeAbis
@@ -63,4 +64,6 @@ dependencies {
     // service. Pin exactly; adoption is gated on 16 KB page-size verification
     // and the release APK size budget.
     implementation("io.github.webrtc-sdk:android:150.7871.01")
+    androidTestImplementation("androidx.test.ext:junit:1.2.1")
+    androidTestImplementation("androidx.test:runner:1.6.2")
 }

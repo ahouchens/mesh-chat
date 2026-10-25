@@ -1,4 +1,4 @@
-name: Android WebRTC build
+name: Android WebRTC
 
 on:
   workflow_dispatch:
@@ -9,6 +9,7 @@ on:
       - 'src/**'
       - 'src-tauri/**'
       - 'scripts/build_android.py'
+      - 'scripts/test_android_webrtc.sh'
       - 'package.json'
       - 'pnpm-lock.yaml'
       - '.github/workflows/android-webrtc.yml'
@@ -22,7 +23,7 @@ concurrency:
 
 jobs:
   android:
-    name: Build Android arm64 debug
+    name: Android build and native Chromium interop
     runs-on: ubuntu-latest
     timeout-minutes: 120
     steps:
@@ -61,6 +62,22 @@ jobs:
       - run: python -m pip install --disable-pip-version-check -r service/requirements-dev.lock
       - name: Build Android debug APK
         run: python scripts/build_android.py
+      - name: Enable KVM for Android interoperability tests
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Build native WebRTC instrumentation APK
+        working-directory: src-tauri/gen/android
+        run: ./gradlew :tauri-plugin-mesh-runtime:assembleDebugAndroidTest -PmeshRuntimeAbis=x86_64 --no-configuration-cache
+      - name: Test real Chromium and native WebRTC data channels
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          arch: x86_64
+          target: google_apis
+          disable-animations: true
+          script: bash scripts/test_android_webrtc.sh
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -68,5 +85,7 @@ jobs:
           path: |
             dist/mobile/**
             dist/reports/**
+            plugins/tauri-plugin-mesh-runtime/android/build/reports/androidTests/**
+            plugins/tauri-plugin-mesh-runtime/android/build/outputs/androidTest-results/**
           if-no-files-found: warn
           retention-days: 14

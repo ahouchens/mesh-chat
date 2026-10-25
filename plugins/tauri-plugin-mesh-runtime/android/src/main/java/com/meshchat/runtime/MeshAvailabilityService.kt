@@ -61,6 +61,7 @@ class MeshAvailabilityService : Service() {
             Log.e(TAG, "foreground start denied (${error.javaClass.simpleName})")
             running = false
             BackgroundRuntime.setEnabled(applicationContext, false)
+            BackgroundRuntime.availabilityFailed("foreground_start_denied")
             stopSelf()
             return
         }
@@ -74,6 +75,7 @@ class MeshAvailabilityService : Service() {
             } catch (error: Throwable) {
                 Log.e(TAG, "background runtime initialization failed (${error.javaClass.simpleName})")
                 BackgroundRuntime.setEnabled(applicationContext, false)
+                BackgroundRuntime.availabilityFailed("runtime_initialization_failed")
                 try {
                     BackgroundRuntime.setBackgroundPreference(false)
                 } catch (_: Throwable) {
@@ -106,6 +108,7 @@ class MeshAvailabilityService : Service() {
                 } catch (error: Throwable) {
                     Log.e(TAG, "foreground restart denied (${error.javaClass.simpleName})")
                     BackgroundRuntime.setEnabled(applicationContext, false)
+                    BackgroundRuntime.availabilityFailed("foreground_restart_denied")
                     stopSelf()
                     START_NOT_STICKY
                 }

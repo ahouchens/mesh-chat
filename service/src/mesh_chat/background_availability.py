@@ -10,6 +10,7 @@ native status rather than trusting this record alone.
 from __future__ import annotations
 
 import time
+import json
 from typing import Any
 
 from .errors import ValidationError
@@ -88,7 +89,7 @@ class BackgroundAvailabilityMixin:
     def background_availability_status(self) -> dict[str, Any]:
         record = self._background_availability_record()
         lifecycle = self._workspace_lifecycle_state()
-        return {
+        status = {
             "enabled": record.get("enabled") is True,
             "mode": "native_webrtc",
             "state": record.get("last_state", "disabled"),
@@ -96,6 +97,29 @@ class BackgroundAvailabilityMixin:
             "lifecycle_state": lifecycle.get("state", "foreground"),
             "updated_at": int(record.get("updated_at", 0)),
         }
+        native = self._native_background_status()
+        if native is not None:
+            status["native"] = native
+            status["health"] = (
+                "off" if not status["enabled"] else
+                "failed" if not native.get("enabled") or native.get("failure") else
+                ("degraded" if native.get("native_webrtc_ready") is False else "available")
+                if native.get("service_running") and native.get("runtime_initialized") else
+                "starting"
+            )
+        else:
+            status["health"] = "unknown" if status["enabled"] else "off"
+        return status
+
+    @staticmethod
+    def _native_background_status() -> dict[str, Any] | None:
+        try:
+            from java import jclass
+
+            value = json.loads(str(jclass("com.meshchat.runtime.BackgroundRuntime").status()))
+            return value if isinstance(value, dict) else None
+        except Exception:
+            return None
 
     def _sync_background_reconnect(self) -> None:
         supervisor = getattr(self, "_background_reconnect_supervisor", None)

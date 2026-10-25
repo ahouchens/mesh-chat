@@ -141,14 +141,15 @@ export function ReconnectSettings({
         profile: ReconnectProfile;
         capabilities: string | null;
         changed: boolean;
+        native_shared?: boolean;
       }>("reconnect_consent_set", {
         contact_id: contact.id,
         auto_reconnect: autoReconnect,
         allow_direct_ip_disclosure: allowDirectIpDisclosure,
       });
-      const shared = result.capabilities
+      const shared = result.native_shared || (result.capabilities
         ? sendReconnectCapabilities(result.capabilities, contact.id)
-        : false;
+        : false);
       if (autoReconnect) {
         setNotice(
           shared
