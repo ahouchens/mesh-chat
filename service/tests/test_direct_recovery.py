@@ -10,12 +10,36 @@ import RNS
 
 from mesh_chat.direct_binding import BindingAuthority, create_binding, verify_binding
 from mesh_chat import direct_recovery_protocol as p
-from mesh_chat.direct_recovery import DirectRecovery, retry_delay
+from mesh_chat.direct_recovery import DirectRecovery, _PendingNativeOwnership, retry_delay
+from mesh_chat.direct_native import NativeChannel
 from mesh_chat.direct_relationship import accept_relationship, relationship_id
 from mesh_chat.errors import ValidationError, IdentityMismatch
 from mesh_chat.vault import VaultStore
 from mesh_chat.workspace_protocol import _destination_for
 from test_workspace_service import _joined_pair
+
+
+def test_pending_allocation_cleanup_is_idempotent_after_native_channel_shutdown():
+    native = NativeChannel()
+    recovery = SimpleNamespace(service=SimpleNamespace(_direct_native=native), _lock=threading.RLock())
+    allocation = _PendingNativeOwnership(recovery, "relationship", object())
+    allocation.handles.update({1, 2})
+    native.close()
+    allocation.close()
+    allocation.close()
+    assert allocation.closed
+    assert not allocation.handles
+
+
+def test_pending_allocation_cleanup_preserves_unexpected_native_failures():
+    def fail(*args, **kwargs):
+        raise RuntimeError("unexpected native failure")
+    recovery = SimpleNamespace(service=SimpleNamespace(_direct_native=SimpleNamespace(request=fail)), _lock=threading.RLock())
+    allocation = _PendingNativeOwnership(recovery, "relationship", object())
+    allocation.handles.add(1)
+    with pytest.raises(RuntimeError, match="unexpected native failure"):
+        allocation.close()
+    assert allocation.handles == {1}
 
 
 @pytest.fixture

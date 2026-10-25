@@ -19,6 +19,8 @@ NATIVE_CHANNELS = [
 MAX_ATTEMPT_SECONDS = 45.0
 POLL_SECONDS = 1.0
 BACKOFF_SECONDS = (1, 2, 5, 15, 30, 60)
+BACKGROUND_STATES = {"background", "background_available", "suspended"}
+DISCONNECTED_GRACE_SECONDS = 10.0
 
 
 class BackgroundReconnectSupervisor:
@@ -28,6 +30,8 @@ class BackgroundReconnectSupervisor:
         self._thread: threading.Thread | None = None
         self._sessions: dict[str, str] = {}
         self._attempt_session_id: str | None = None
+        self._sessions_lock = threading.RLock()
+        self._disconnected_since: dict[str, float] = {}
 
     def start(self) -> None:
         if self._thread is not None and self._thread.is_alive():
@@ -43,14 +47,15 @@ class BackgroundReconnectSupervisor:
     def stop(self) -> None:
         self._stop.set()
         thread = self._thread
-        self._thread = None
         if thread is not None and thread is not threading.current_thread():
             thread.join(timeout=2.0)
-        pending = [*self._sessions.values()]
-        if self._attempt_session_id:
-            pending.append(self._attempt_session_id)
-        self._sessions.clear()
-        self._attempt_session_id = None
+        with self._sessions_lock:
+            pending = [*self._sessions.values()]
+            if self._attempt_session_id:
+                pending.append(self._attempt_session_id)
+            self._sessions.clear()
+            self._attempt_session_id = None
+            self._disconnected_since.clear()
         for session_id in pending:
             try:
                 self.service.native_webrtc_close(session_id)
@@ -62,150 +67,198 @@ class BackgroundReconnectSupervisor:
         self._stop.wait(2.0)
         while not self._stop.is_set() and not self.service._shutdown.is_set():
             try:
-                payload = self.service.reconnect_profiles()
+                self._tick(failures)
             except Exception:
-                self._stop.wait(5.0)
-                continue
-            try:
-                lifecycle = self.service._workspace_lifecycle_state().get("state")
-            except Exception:
-                lifecycle = "foreground"
-            if lifecycle in {"foreground", "active"}:
-                # The renderer coordinator owns attempts while the app is
-                # visible. Keeping a second native PC here would create a
-                # duplicate path after resume.
-                for session_id in self._sessions.values():
-                    try:
-                        self.service.native_webrtc_close(session_id)
-                    except Exception:
-                        pass
-                self._sessions.clear()
-                self._stop.wait(5.0)
-                continue
-            profiles = payload.get("profiles", [])
-            if not isinstance(profiles, list):
-                profiles = []
-            for profile in profiles:
-                if self._stop.is_set() or self.service._shutdown.is_set():
-                    return
-                if not isinstance(profile, dict):
-                    continue
-                effective = profile.get("effective") or {}
-                if not effective.get("ready"):
-                    continue
-                profile_id = profile.get("id")
-                contact_id = profile.get("contact_id")
-                if not isinstance(profile_id, str) or not isinstance(contact_id, str):
-                    continue
-                if not profile.get("active"):
-                    # An explicit per-contact stop must survive a background
-                    # supervisor restart. Otherwise reactivate a consented
-                    # profile the same way the renderer coordinator does.
-                    if profile.get("state") == "stopped":
-                        continue
-                    try:
-                        self.service.reconnect_start(contact_id)
-                    except Exception:
-                        continue
-                session_id = self._sessions.get(profile_id)
-                if session_id:
-                    try:
-                        stats = self.service.native_webrtc_stats(session_id)
-                    except Exception:
-                        stats = None
-                    if isinstance(stats, dict) and stats.get("attached"):
-                        continue
-                    self._sessions.pop(profile_id, None)
-                attempts = failures.get(profile_id, 0)
-                delay = BACKOFF_SECONDS[min(attempts, len(BACKOFF_SECONDS) - 1)]
-                if attempts:
-                    self._stop.wait(delay)
-                    if self._stop.is_set():
-                        return
-                try:
-                    self._sessions[profile_id] = self._attempt(profile)
-                    failures[profile_id] = 0
-                except Exception:
-                    failures[profile_id] = attempts + 1
-                    pending = self._attempt_session_id
-                    self._attempt_session_id = None
-                    if pending:
-                        try:
-                            self.service.native_webrtc_close(pending)
-                        except Exception:
-                            pass
+                # Initialization, locking and mailbox failures are retried.
+                pass
             self._stop.wait(5.0)
 
+    def _close_session(self, session_id: str) -> None:
+        self._disconnected_since.pop(session_id, None)
+        try:
+            self.service.native_webrtc_close(session_id)
+        except Exception:
+            pass
+
+    def _session_live(self, session_id: str) -> bool:
+        try:
+            stats = self.service.native_webrtc_stats(session_id)
+        except Exception:
+            return False
+        if not isinstance(stats, dict) or not stats.get("attached"):
+            return False
+        state = stats.get("ice_connection_state")
+        if state in {"connected", "completed"}:
+            self._disconnected_since.pop(session_id, None)
+            return True
+        if state == "disconnected":
+            since = self._disconnected_since.setdefault(session_id, time.monotonic())
+            return time.monotonic() - since < DISCONNECTED_GRACE_SECONDS
+        return False
+
+    def _tick(self, failures: dict[str, int]) -> None:
+        payload = self.service.reconnect_profiles()
+        profiles = {item["id"]: item for item in payload.get("profiles", [])
+                    if isinstance(item, dict) and isinstance(item.get("id"), str)}
+        background = self.service._workspace_lifecycle_state().get("state") in BACKGROUND_STATES
+        with self._sessions_lock:
+            existing = list(self._sessions.items())
+        for profile_id, session_id in existing:
+            profile = profiles.get(profile_id)
+            if (not background or not profile or profile.get("state") == "stopped"
+                    or not (profile.get("effective") or {}).get("ready")):
+                with self._sessions_lock:
+                    self._sessions.pop(profile_id, None)
+                self._close_session(session_id)
+                failures.pop(profile_id, None)
+        if not background:
+            return
+        for profile_id, profile in profiles.items():
+            if self._stop.is_set() or self.service._shutdown.is_set():
+                return
+            if not (profile.get("effective") or {}).get("ready") or profile.get("state") == "stopped":
+                continue
+            contact_id = profile.get("contact_id")
+            if not isinstance(contact_id, str):
+                continue
+            if not profile.get("active"):
+                self.service.reconnect_start(contact_id)
+            with self._sessions_lock:
+                session_id = self._sessions.get(profile_id)
+            if session_id:
+                if self._session_live(session_id):
+                    continue
+                with self._sessions_lock:
+                    self._sessions.pop(profile_id, None)
+                self._close_session(session_id)
+            # A foreground-created native connection survives backgrounding.
+            # Reuse it until it fails; the service reservation also fences races.
+            other = self.service.native_reconnect_session(profile_id)
+            if other:
+                if self._session_live(other):
+                    continue
+                self._close_session(other)
+            attempts = failures.get(profile_id, 0)
+            if attempts:
+                self._stop.wait(BACKOFF_SECONDS[min(attempts, len(BACKOFF_SECONDS) - 1)])
+            try:
+                session_id = self._attempt(profile)
+                with self._sessions_lock:
+                    cancelled = self._stop.is_set() or self.service._shutdown.is_set()
+                    if not cancelled:
+                        self._sessions[profile_id] = session_id
+                if cancelled:
+                    self._close_session(session_id)
+                    return
+                failures[profile_id] = 0
+            except Exception:
+                failures[profile_id] = attempts + 1
+
+    def _current_profile(self, profile_id: str) -> dict[str, Any]:
+        if self._stop.is_set() or self.service._shutdown.is_set():
+            raise RuntimeError("Background reconnect stopped")
+        if self.service._workspace_lifecycle_state().get("state") not in BACKGROUND_STATES:
+            raise RuntimeError("Background reconnect yielded to the foreground")
+        for profile in self.service.reconnect_profiles().get("profiles", []):
+            if profile.get("id") == profile_id:
+                if profile.get("active") and profile.get("state") != "stopped" and (profile.get("effective") or {}).get("ready"):
+                    return profile
+                break
+        raise RuntimeError("Background reconnect profile is no longer eligible")
+
+    def _step(self, profile_id: str, operation, *args, **kwargs):
+        self._current_profile(profile_id)
+        result = operation(*args, **kwargs)
+        self._current_profile(profile_id)
+        return result
+
     def _attempt(self, profile: dict[str, Any]) -> str:
+        try:
+            return self._negotiate(profile)
+        except Exception:
+            with self._sessions_lock:
+                pending = self._attempt_session_id
+                self._attempt_session_id = None
+            if pending:
+                self._close_session(pending)
+            raise
+
+    def _negotiate(self, profile: dict[str, Any]) -> str:
         service = self.service
         profile_id = profile["id"]
+        profile = self._current_profile(profile_id)
         contact_id = profile["contact_id"]
         preferred = bool((profile.get("effective") or {}).get("preferred"))
-        ice = service.call_ice_servers()
+        ice = self._step(profile_id, service.call_ice_servers)
+        if not profile.get("allow_direct_ip_disclosure"):
+            ice = {**ice, "iceTransportPolicy": "relay"}
         attempt_id = uuid.uuid4().hex
         session_id = f"background-{attempt_id[:20]}"
-        self._attempt_session_id = session_id
+        with self._sessions_lock:
+            self._attempt_session_id = session_id
         deadline = time.monotonic() + MAX_ATTEMPT_SECONDS
         if preferred:
-            request = service.reconnect_request_create(contact_id, attempt_id)
-            service.reconnect_publish(profile_id, request["document"], "request")
+            request = self._step(profile_id, service.reconnect_request_create, contact_id, attempt_id)
+            self._step(profile_id, service.reconnect_publish, profile_id, request["document"], "request")
             offer_document = self._fetch(profile_id, "offer", deadline)
-            offer = service.verify_reconnect_offer(offer_document, profile_id)
-            native = service.native_webrtc_accept(
+            offer = self._step(profile_id, service.verify_reconnect_offer, offer_document, profile_id)
+            native = self._step(profile_id, service.native_webrtc_accept,
                 session_id,
                 offer["sdp"],
                 ice,
                 NATIVE_CHANNELS,
+                profile_id, background=True,
             )
-            answer = service.reconnect_answer_create(
+            answer = self._step(profile_id, service.reconnect_answer_create,
                 contact_id,
                 offer_document,
                 native["sdp"],
                 native["fingerprint"],
             )
-            service.reconnect_publish(profile_id, answer["document"], "answer")
+            self._step(profile_id, service.reconnect_publish, profile_id, answer["document"], "answer")
         else:
             request_document = self._fetch(profile_id, "request", deadline)
-            service.verify_reconnect_request(request_document, profile_id)
-            native = service.native_webrtc_offer(
+            self._step(profile_id, service.verify_reconnect_request, request_document, profile_id)
+            native = self._step(profile_id, service.native_webrtc_offer,
                 session_id,
                 ice,
                 NATIVE_CHANNELS,
+                profile_id, background=True,
             )
-            offer = service.reconnect_offer_create(
+            offer = self._step(profile_id, service.reconnect_offer_create,
                 contact_id,
                 request_document,
                 native["sdp"],
                 native["fingerprint"],
             )
-            service.reconnect_publish(profile_id, offer["document"], "offer")
+            self._step(profile_id, service.reconnect_publish, profile_id, offer["document"], "offer")
             answer_document = self._fetch(profile_id, "answer", deadline)
-            answer = service.verify_reconnect_answer(
+            answer = self._step(profile_id, service.verify_reconnect_answer,
                 answer_document, offer["document"], profile_id
             )
-            service.native_webrtc_apply_answer(session_id, answer["sdp"])
-        self._wait_attached(session_id, deadline)
-        self._attempt_session_id = None
+            self._step(profile_id, service.native_webrtc_apply_answer, session_id, answer["sdp"])
+        self._wait_attached(profile_id, session_id, deadline)
+        self._current_profile(profile_id)
+        with self._sessions_lock:
+            self._attempt_session_id = None
         return session_id
 
     def _fetch(self, profile_id: str, role: str, deadline: float) -> str:
         while not self._stop.is_set() and time.monotonic() < deadline:
+            self._current_profile(profile_id)
             try:
                 result = self.service.reconnect_fetch(profile_id, role)
             except Exception:
                 result = None
-            if isinstance(result, dict) and isinstance(result.get("document"), str):
+            if isinstance(result, dict) and isinstance(result.get("document"), str) and result["document"]:
                 return result["document"]
             self._stop.wait(POLL_SECONDS)
         raise TimeoutError(f"background reconnect {role} timed out")
 
-    def _wait_attached(self, session_id: str, deadline: float) -> None:
+    def _wait_attached(self, profile_id: str, session_id: str, deadline: float) -> None:
         while not self._stop.is_set() and time.monotonic() < deadline:
-            try:
-                stats = self.service.native_webrtc_stats(session_id)
-            except Exception:
-                stats = None
-            if isinstance(stats, dict) and stats.get("attached"):
+            self._current_profile(profile_id)
+            if self._session_live(session_id):
                 return
             self._stop.wait(POLL_SECONDS)
         raise TimeoutError("background reconnect DataChannel did not attach")

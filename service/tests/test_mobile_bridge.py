@@ -178,6 +178,34 @@ def test_mobile_bridge_command_does_not_block_worker_event(
     )
 
     assert response == {"ok": True, "result": {"completed": True}}
+
+
+def test_native_callback_returns_while_command_holds_mobile_lock(monkeypatch):
+    completed = threading.Event()
+    seen = []
+    workers = []
+
+    class Service:
+        def native_webrtc_event(self, *event):
+            seen.append(event)
+
+        def dispatch(self, request):
+            def callback():
+                mobile_bridge.native_webrtc_event("signaling", "session-1", "have_remote_offer")
+                completed.set()
+            worker = threading.Thread(target=callback, daemon=True)
+            workers.append(worker)
+            worker.start()
+            assert completed.wait(1), "native callback blocked behind the waiting command"
+            return {"ok": True, "result": {}}, False
+
+    monkeypatch.setattr(mobile_bridge, "_service", Service())
+    try:
+        assert json.loads(mobile_bridge.command(json.dumps({"command": "native_webrtc_offer"})))["ok"]
+        assert seen == [("signaling", "session-1", "have_remote_offer")]
+    finally:
+        for worker in workers:
+            worker.join(1)
     assert json.loads(mobile_bridge.drain_events())["result"] == [
         {"type": "event", "event": "state_changed"}
     ]

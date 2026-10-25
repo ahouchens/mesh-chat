@@ -78,6 +78,7 @@ export function createReconnectDeps(
   return {
     profiles: async () => {
       const payload = await serviceCommand<ReconnectProfilesPayload>("reconnect_profiles");
+      await Promise.all([...nativeSessions.values()].map(({ peer }) => peer.refreshHealth()));
       maintainReconnectCapabilities();
       return payload;
     },
@@ -145,8 +146,8 @@ export function createReconnectDeps(
       }
       return configuration;
     },
-    createPeer: (ice, role) => isNativeWebRTCPlatform()
-      ? NativeReconnectPeer.create(ice, role)
+    createPeer: (ice, role, profile) => isNativeWebRTCPlatform()
+      ? NativeReconnectPeer.create(ice, role, profile?.id)
       : ReconnectPeer.create(ice, role),
     attach: async (peer: CoordinatorPeer, profile: ReconnectProfile, isCurrent = () => true) => {
       if (peer instanceof NativeReconnectPeer) {

@@ -11,6 +11,7 @@ import {
 } from "./native-webrtc";
 
 const OPEN_POLL_MS = 250;
+const DISCONNECTED_GRACE_MS = 10_000;
 
 /**
  * Coordinator peer backed by the Android native WebRTC host.
@@ -23,16 +24,18 @@ export class NativeReconnectPeer implements CoordinatorPeer {
   readonly sessionId: string;
   private attached = false;
   private closed = false;
+  private disconnectedSince: number | null = null;
 
   private constructor(
     readonly ice: CallIceConfiguration,
     readonly role: "offer" | "answer",
+    readonly profileId?: string,
   ) {
     this.sessionId = `reconnect-${role}-${crypto.randomUUID()}`;
   }
 
-  static create(ice: CallIceConfiguration, role: "offer" | "answer"): NativeReconnectPeer {
-    return new NativeReconnectPeer(ice, role);
+  static create(ice: CallIceConfiguration, role: "offer" | "answer", profileId?: string): NativeReconnectPeer {
+    return new NativeReconnectPeer(ice, role, profileId);
   }
 
   async createOffer(): Promise<string> {
@@ -40,6 +43,7 @@ export class NativeReconnectPeer implements CoordinatorPeer {
       this.sessionId,
       this.ice,
       NATIVE_RECONNECT_CHANNELS,
+      this.profileId,
     );
     return result.sdp;
   }
@@ -50,6 +54,7 @@ export class NativeReconnectPeer implements CoordinatorPeer {
       remoteOffer,
       this.ice,
       NATIVE_RECONNECT_CHANNELS,
+      this.profileId,
     );
     return result.sdp;
   }
@@ -63,7 +68,7 @@ export class NativeReconnectPeer implements CoordinatorPeer {
     while (!this.closed) {
       try {
         const stats = await nativeWebRTCStats(this.sessionId);
-        if (stats.attached) {
+        if (stats.attached && stats.data_channel_state === "open" && ["connected", "completed"].includes(stats.ice_connection_state ?? "")) {
           this.attached = true;
           return stats;
         }
@@ -91,6 +96,26 @@ export class NativeReconnectPeer implements CoordinatorPeer {
 
   isAttached(): boolean {
     return this.attached && !this.closed;
+  }
+
+  async refreshHealth(): Promise<void> {
+    if (!this.isAttached()) return;
+    try {
+      const stats = await nativeWebRTCStats(this.sessionId);
+      if (this.closed) return;
+      if (!stats.attached || stats.data_channel_state !== "open" || ["failed", "closed"].includes(stats.ice_connection_state ?? "")) {
+        this.close();
+      } else if (stats.ice_connection_state === "disconnected") {
+        this.disconnectedSince ??= Date.now();
+        if (Date.now() - this.disconnectedSince >= DISCONNECTED_GRACE_MS) this.close();
+      } else if (["connected", "completed"].includes(stats.ice_connection_state ?? "")) {
+        this.disconnectedSince = null;
+      } else {
+        this.close();
+      }
+    } catch {
+      this.close();
+    }
   }
 
   close(): void {

@@ -41,6 +41,19 @@ export function normalizeWebRTCOfferInput(raw: string): string {
 
 const NATIVE_ONBOARDING_ENABLED: boolean = false;
 
+// Leave headroom below the version 40 byte limits. SDP documents can exceed
+// those limits; the complete signed text always remains available to copy.
+const MAX_WEBRTC_QR_BYTES = { L: 2_800, M: 2_200 };
+
+function WebRTCQrCode({ value, size = 190, level = "L" }: { value: string; size?: number; level?: "L" | "M" }) {
+  const [expanded, setExpanded] = useState(false);
+  if (!value || new TextEncoder().encode(value).byteLength > MAX_WEBRTC_QR_BYTES[level]) return null;
+  return <div>
+    <button className="button button--ghost" type="button" aria-expanded={expanded} onClick={() => setExpanded(!expanded)}>{expanded ? "Hide QR code" : "Show QR code"}</button>
+    {expanded && <div className="webrtc-qr"><QRCodeSVG value={value} size={size} level={level} boostLevel={false} /></div>}
+  </div>;
+}
+
 interface OnboardingOfferResult {
   document: string;
   session_id: string;
@@ -1052,10 +1065,10 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
           {phase === "waiting-answer" && <>
             <h3>Send this offer to the other person</h3>
             <p className="muted">Offer session: <code>{sessionCode(offerDocument)}</code>. The answer must carry the same session.</p>
-            {mailboxCode && <div className="remote-consent"><p>Signaling mailbox code: <code>{mailboxCode}</code></p><div className="webrtc-qr"><QRCodeSVG value={`meshchat://pair/${mailboxCode}`} size={150} level="M" /></div><p className="muted">Give this link or code to the other person instead of the full offer. This device creates one answer per code.</p><div className="dialog-actions"><button className="button button--secondary" onClick={() => void copy(mailboxCode, "code")}>{copied === "code" ? "Copied" : "Copy code"}</button><button className="button button--secondary" onClick={() => void copy(`meshchat://pair/${mailboxCode}`, "link")}>{copied === "link" ? "Copied" : "Copy link"}</button><button className="button button--secondary" onClick={() => void fetchAnswer()}>Fetch answer</button></div></div>}
-            <div className="webrtc-qr"><QRCodeSVG value={offerDocument} size={190} level="L" /></div>
+            {mailboxCode && <div className="remote-consent"><p>Signaling mailbox code: <code>{mailboxCode}</code></p><p className="muted">Give this link or code to the other person instead of the full offer. This device creates one answer per code.</p><div className="dialog-actions"><button className="button button--secondary" onClick={() => void copy(mailboxCode, "code")}>{copied === "code" ? "Copied" : "Copy code"}</button><button className="button button--secondary" onClick={() => void copy(`meshchat://pair/${mailboxCode}`, "link")}>{copied === "link" ? "Copied" : "Copy link"}</button><button className="button button--secondary" onClick={() => void fetchAnswer()}>Fetch answer</button></div><WebRTCQrCode key={mailboxCode} value={`meshchat://pair/${mailboxCode}`} size={150} level="M" /></div>}
             <textarea className="webrtc-document" readOnly value={offerDocument} rows={5} aria-label="Signed WebRTC offer" />
             <div className="dialog-actions"><button className="button button--secondary" onClick={() => void copy(offerDocument, "offer")}>{copied === "offer" ? <Check size={17} /> : <Copy size={17} />} {copied === "offer" ? "Copied" : "Copy offer"}</button></div>
+            <WebRTCQrCode key={offerDocument} value={offerDocument} />
             <label className="field"><span>Paste their signed answer</span><textarea className="webrtc-document" value={answerInput} onChange={(event) => setAnswerInput(event.target.value)} rows={5} spellCheck={false} /></label>
             <div className="dialog-actions"><button className="button button--primary" disabled={!answerInput.trim()} onClick={() => void connectAnswer()}>Connect</button></div>
           </>}
@@ -1066,9 +1079,9 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
           {phase === "waiting-owner" && <>
             <h3>Send this answer back to the offerer</h3>
             <p className="muted">Answer session: <code>{sessionCode(answerDocument)}</code>. It must match the offer session.</p>
-            <div className="webrtc-qr"><QRCodeSVG value={answerDocument} size={190} level="L" /></div>
             <textarea className="webrtc-document" readOnly value={answerDocument} rows={5} aria-label="Signed WebRTC answer" />
             <div className="dialog-actions"><button className="button button--secondary" onClick={() => void copy(answerDocument, "answer")}>{copied === "answer" ? <Check size={17} /> : <Copy size={17} />} {copied === "answer" ? "Copied" : "Copy answer"}</button></div>
+            <WebRTCQrCode key={answerDocument} value={answerDocument} />
             <p className="muted">Keep both windows open. The offerer must paste this answer and press Connect. This device waits up to two minutes from starting the answer, or until the offer expires.</p>
           </>}
           {phase === "connecting" && <><p className="direct-host-status" role="status"><RefreshCw size={17} /> Applying the signed answer and opening the DataChannel…</p><p className="muted">If this takes more than 30 seconds, Mesh Chat will stop and report the likely network cause.</p><div className="dialog-actions"><button className="button button--secondary" onClick={close}>Cancel</button></div></>}

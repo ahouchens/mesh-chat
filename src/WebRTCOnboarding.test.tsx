@@ -15,7 +15,6 @@ vi.mock("./api", () => ({
   serviceCommand: mocks.serviceCommand,
   onServiceEvent: vi.fn(async () => () => undefined),
 }));
-vi.mock("qrcode.react", () => ({ QRCodeSVG: () => null }));
 vi.mock("./webrtc-onboarding", async (importOriginal) => ({
   ...await importOriginal<typeof import("./webrtc-onboarding")>(),
   attachWebRTCBridge: mocks.attachWebRTCBridge,
@@ -29,6 +28,7 @@ vi.mock("./webrtc-session", async (importOriginal) => ({
 }));
 
 import { WebRTCOnboardingDialog, normalizeWebRTCOfferInput } from "./WebRTCOnboarding";
+import RuntimeErrorBoundary from "./RuntimeErrorBoundary";
 
 const sdp = [
   "v=0",
@@ -198,6 +198,87 @@ async function advance(ms: number): Promise<void> {
 }
 
 describe("manual WebRTC answer exchange", () => {
+  it.each(["offer", "answer"] as const)("keeps a candidate-rich %s copyable without crashing the renderer", async (kind) => {
+    const clipboard = { writeText: vi.fn().mockResolvedValue(undefined) };
+    vi.stubGlobal("navigator", { userAgent: "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36", clipboard });
+    const candidateSdp = sdp + Array.from({ length: 24 }, (_, index) =>
+      `a=candidate:${index + 2} 1 udp 16777215 2001:db8::${index + 1} ${50001 + index} typ relay raddr :: rport 0 generation 0 network-cost 999\r\n`
+    ).join("");
+    const document = JSON.stringify({
+      v: 1, type: `webrtc_onboarding_${kind}`, session_id: "session",
+      sdp: candidateSdp, dtls_fingerprint: "sha-256 AA:BB",
+      created_at: Math.floor(Date.now() / 1000), expires_at: offerExpiresAt,
+      signer_public_key: "A".repeat(86), signature: "B".repeat(86),
+      ...(kind === "answer" ? { offer_digest: "c".repeat(64) } : {}),
+    });
+    expect(new TextEncoder().encode(document).byteLength).toBeGreaterThan(2953);
+    const runCommand = mocks.serviceCommand.getMockImplementation()!;
+    mocks.serviceCommand.mockImplementation(async (command: string) => command === `webrtc_onboarding_${kind}`
+      ? { document, session_id: "session", expires_at: offerExpiresAt }
+      : runCommand(command));
+    const errors = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      const { container } = render(<RuntimeErrorBoundary><WebRTCOnboardingDialog onClose={vi.fn()} onChanged={async () => undefined} /></RuntimeErrorBoundary>);
+      await act(async () => undefined);
+      if (kind === "answer") {
+        fireEvent.click(screen.getByRole("button", { name: "Join with WebRTC" }));
+        fireEvent.change(screen.getByLabelText("Paste the signed WebRTC offer or mailbox code"), { target: { value: offerDocument } });
+      }
+      await act(async () => {
+        fireEvent.click(screen.getByRole("button", { name: kind === "answer" ? "Review and create answer" : "Create WebRTC invitation" }));
+      });
+
+      expect(screen.queryByRole("heading", { name: "Mesh Chat needs to reload" })).toBeNull();
+      expect((screen.getByLabelText(`Signed WebRTC ${kind}`) as HTMLTextAreaElement).value).toBe(document);
+      expect(screen.queryByRole("button", { name: "Show QR code" })).toBeNull();
+      expect(container.querySelector(".webrtc-qr svg")).toBeNull();
+      await act(async () => {
+        fireEvent.click(screen.getByRole("button", { name: `Copy ${kind}` }));
+      });
+      expect(clipboard.writeText).toHaveBeenCalledWith(document);
+      expect(FakePeer.instances[0].close).not.toHaveBeenCalled();
+    } finally {
+      errors.mockRestore();
+    }
+  });
+
+  it("only renders an answer QR code on request and lets the user hide it", async () => {
+    const { container } = await join();
+    expect(container.querySelector(".webrtc-qr svg")).toBeNull();
+    expect(screen.getByRole("button", { name: "Show QR code" }).getAttribute("aria-expanded")).toBe("false");
+    fireEvent.click(screen.getByRole("button", { name: "Show QR code" }));
+    expect(container.querySelector(".webrtc-qr svg")).not.toBeNull();
+    expect(screen.getByRole("button", { name: "Hide QR code" }).getAttribute("aria-expanded")).toBe("true");
+    fireEvent.click(screen.getByRole("button", { name: "Hide QR code" }));
+    expect(container.querySelector(".webrtc-qr svg")).toBeNull();
+    expect((screen.getByLabelText("Signed WebRTC answer") as HTMLTextAreaElement).value).toBe(answerDocument);
+  });
+
+  it("keeps both offer and mailbox QR codes hidden until requested", async () => {
+    const runCommand = mocks.serviceCommand.getMockImplementation()!;
+    mocks.serviceCommand.mockImplementation(async (command: string) => {
+      if (command === "call_settings") return { turn_configured: true, signal_mailbox_url: "https://signal.example" };
+      if (command === "signal_publish") return { session_id: "pairing-code" };
+      return runCommand(command);
+    });
+    const { container } = render(<WebRTCOnboardingDialog onClose={vi.fn()} onChanged={async () => undefined} />);
+    await act(async () => undefined);
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Create WebRTC invitation" }));
+    });
+
+    expect(screen.getByRole("button", { name: "Copy offer" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Copy link" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Copy code" })).toBeTruthy();
+    expect(container.querySelector(".webrtc-qr svg")).toBeNull();
+    const qrButtons = screen.getAllByRole("button", { name: "Show QR code" });
+    expect(qrButtons).toHaveLength(2);
+    fireEvent.click(qrButtons[0]);
+    expect(container.querySelectorAll(".remote-consent .webrtc-qr svg")).toHaveLength(1);
+    fireEvent.click(qrButtons[1]);
+    expect(container.querySelectorAll(".webrtc-qr svg")).toHaveLength(2);
+  });
+
   it("keeps manual onboarding on the WebView transport on Android", async () => {
     vi.stubGlobal("navigator", { userAgent: "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36" });
     await join();

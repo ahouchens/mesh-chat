@@ -121,7 +121,7 @@ export interface ReconnectCoordinatorDeps {
   ): Promise<{ document: string | null; pending: boolean }>;
   status(state: ReconnectState, detail?: string, attemptId?: string): Promise<unknown>;
   ice(profile: ReconnectProfile): Promise<CallIceConfiguration>;
-  createPeer(ice: CallIceConfiguration, role: "offer" | "answer"): CoordinatorPeer;
+  createPeer(ice: CallIceConfiguration, role: "offer" | "answer", profile?: ReconnectProfile): CoordinatorPeer;
   attach(peer: CoordinatorPeer, profile: ReconnectProfile, isCurrent?: () => boolean): Promise<void>;
   pathStatus?(
     contactId: string,
@@ -299,14 +299,15 @@ export class ReconnectCoordinator {
     this.wakeSupervisor?.();
   }
 
-  setOnline(online: boolean): void {
-    if (this.online === online) return;
+  setOnline(online: boolean): boolean {
+    if (this.online === online) return false;
     this.online = online;
     if (online) this.wake();
     else {
       this.cancelAttempts();
       this.wakeSupervisor?.();
     }
+    return true;
   }
 
   async start(): Promise<void> {
@@ -632,7 +633,7 @@ export class ReconnectCoordinator {
         }
         retry.waitingForOfferUntil = 0;
         const ice = await step(() => this.deps.ice(profile));
-        attempt.peer = this.deps.createPeer(ice, "answer");
+        attempt.peer = this.deps.createPeer(ice, "answer", profile);
         const sdp = await step(() => attempt.peer!.createAnswer(offer!.sdp));
         const answer = await step(() => this.deps.answerCreate(profile.contact_id, offerDocument, sdp, this.deps.fingerprint?.(sdp) ?? fingerprintOf(sdp)));
         await step(() => this.deps.publish(profile.id, answer.document, "answer"));
@@ -648,7 +649,7 @@ export class ReconnectCoordinator {
           return;
         }
         const ice = await step(() => this.deps.ice(profile));
-        attempt.peer = this.deps.createPeer(ice, "offer");
+        attempt.peer = this.deps.createPeer(ice, "offer", profile);
         const sdp = await step(() => attempt.peer!.createOffer());
         const offer = await step(() => this.deps.offerCreate(profile.contact_id, requestDocument, sdp, this.deps.fingerprint?.(sdp) ?? fingerprintOf(sdp)));
         await step(() => this.deps.publish(profile.id, offer.document, "offer"));

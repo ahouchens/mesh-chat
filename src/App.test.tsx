@@ -2989,7 +2989,10 @@ describe("connected conversation", () => {
     }
   });
 
-  it("resumes background reconnection on network and app lifecycle events and removes listeners on close", async () => {
+  it.each([false, true])("coordinates reconnect visibility and removes lifecycle listeners (Android=%s)", async (android) => {
+    const agent = vi.spyOn(navigator, "userAgent", "get").mockReturnValue(android ? "Mozilla/5.0 (Linux; Android 14)" : "Windows NT 10.0");
+    api.runtimePlatform.mockResolvedValue(android ? "android" : "desktop");
+    api.onMobileBackButton.mockResolvedValue(() => undefined);
     const current = snapshot([approved]);
     api.initializeService.mockResolvedValue(current);
     api.onInvitation.mockResolvedValue(() => undefined);
@@ -3019,6 +3022,7 @@ describe("connected conversation", () => {
       visibility.mockReturnValue("hidden");
       act(() => document.dispatchEvent(new Event("visibilitychange")));
       expect(wake).not.toHaveBeenCalled();
+      expect(online).toHaveBeenLastCalledWith(!android);
       visibility.mockReturnValue("visible");
       act(() => document.dispatchEvent(new Event("visibilitychange")));
       expect(wake).toHaveBeenCalledTimes(1);
@@ -3041,6 +3045,7 @@ describe("connected conversation", () => {
       online.mockRestore();
       wake.mockRestore();
       visibility.mockRestore();
+      agent.mockRestore();
     }
   });
 

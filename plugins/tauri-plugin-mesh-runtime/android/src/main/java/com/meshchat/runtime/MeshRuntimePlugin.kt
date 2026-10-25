@@ -279,6 +279,7 @@ class MeshRuntimePlugin(private val activity: Activity) : Plugin(activity) {
     }
 
     private fun lifecycle(state: String, reason: String) {
+        BackgroundRuntime.onUiLifecycle(state)
         if (!runtimeInitialized) return
         pythonExecutor.execute {
             try {
@@ -318,6 +319,7 @@ class MeshRuntimePlugin(private val activity: Activity) : Plugin(activity) {
 
     override fun load(webView: WebView) {
         super.load(webView)
+        BackgroundRuntime.onUiLifecycle("foreground")
         applyTheme(preferences.getString(UI_THEME, "dark") ?: "dark")
         if (lifecycleRegistered) return
         lifecycleRegistered = true

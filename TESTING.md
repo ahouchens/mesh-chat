@@ -1,5 +1,55 @@
 # Verification and release gates
 
+## Android native WebRTC reconnect lifecycle — 0.9.42
+
+Native callbacks now snapshot the process service without acquiring the mobile
+command lock. Native SDP fingerprints are returned with their algorithm prefix
+and normalized from the actual SDP before signing. Failed ICE and closed data
+channels no longer report a live attachment; foreground and background owners
+poll current health and give temporary disconnects a ten-second recovery grace.
+
+Native reconnect creation reserves one session per profile across both owners.
+The reservation survives cancellation until an in-flight JNI creation returns,
+and a late open event cannot resurrect a closed session. Android's renderer
+pauses attempts while hidden, and the background supervisor yields for all
+foreground/reconciliation states, reuses healthy foreground-created peers, and
+cancels pending work when lifecycle or consent changes. Starting availability
+while the Activity is visible preserves foreground lifecycle state.
+
+Per-contact Stop retires the service-owned peer after persisting the stopped
+state. Consent/privacy changes and background profile removal retire affected
+peers; failed replacements close the old peer first. Background ICE and native
+creation both enforce the contact's direct-IP disclosure preference.
+
+Local validation completed before builds were delegated to CI: 109 focused
+service tests, 75 focused frontend tests, two Android/desktop lifecycle cases,
+and TypeScript checking passed. GitHub CI owns the final full-suite and build
+checks. `android-webrtc.yml` adds a PR Android arm64 debug APK build using the
+existing build script without release signing or publication. Physical cellular
+to Wi-Fi, network-switch, screen-off and stop/lock testing remain required.
+
+## WebRTC answer-screen QR overflow — 0.9.42
+
+On 0.9.41, Android on cellular displayed "Mesh Chat needs to reload" after
+reviewing a Windows Wi-Fi offer. The onboarding screen rendered every signed
+answer as one QR code. A candidate-rich answer exceeds the QR encoder's capacity
+and throws `RangeError: Data too long` during React rendering. The regression
+with the real QR library reproduces the exact recovery screen for oversized
+offers and answers before the fix. Earlier onboarding tests mocked that library.
+
+Offer, answer, and mailbox QR codes now remain hidden until the user selects
+Show QR code. Documents that exceed a conservative UTF-8 byte budget omit that
+option. The complete signed documents stay visible and copyable without closing
+the peer connection or changing signature verification.
+
+Local validation: 42 focused frontend tests pass, including oversized offer and
+answer clipboard exchange and optional QR rendering for all three values.
+TypeScript checking passes. The production bundle check is blocked by Windows
+denying esbuild's temporary-file removal, including with a workspace temp folder.
+Physical Android cellular to Windows Wi-Fi connection and message delivery still
+need retesting with a rebuilt app; renderer coverage does not verify ICE/TURN
+reachability or establish the exception from the reporting device's logs.
+
 ## WebRTC startup packets and messaging-route status — 0.9.36
 
 A field test on 0.9.35 paired Windows on Wi-Fi with Android on cellular using a
