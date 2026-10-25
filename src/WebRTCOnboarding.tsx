@@ -237,9 +237,10 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
   const waitNativeOpen = useCallback(async (sessionId: string, timeoutMs = 20_000): Promise<void> => {
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
+      if (nativeSessionRef.current !== sessionId) throw new Error("Native WebRTC pairing was cancelled.");
       try {
         const stats = await nativeWebRTCStats(sessionId);
-        if (stats.attached) return;
+        if (stats.attached && nativeSessionRef.current === sessionId) return;
       } catch {
         // Native session or Python bridge is still starting.
       }
@@ -307,8 +308,10 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
   const reportFailure = useCallback((phase: string, message: string) => {
     if (failureCapturedRef.current) return;
     if (nativeMode && nativeSessionRef.current) {
+      const sessionId = nativeSessionRef.current;
       failureCapturedRef.current = true;
       void captureDiagnostics(phase, message).finally(() => {
+        if (nativeSessionRef.current !== sessionId) return;
         setError(message);
         setPhase("error");
         cleanup();
@@ -416,10 +419,12 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
       if (!bridgeRef.current || !channelRef.current || channelRef.current.readyState !== "open") return;
     }
     invitationStartedRef.current = true;
+    const attempt = attemptRef.current;
     setOnboarding("sending");
     setOnboardingError("");
     try {
       const created = await serviceCommand<InvitationFormats>("create_invitation", { connection_mode: "webrtc" });
+      if (attemptRef.current !== attempt) return;
       let workspaceDocument: string | undefined;
       if (selectedWorkspaceId) {
         const workspace = await serviceCommand<WorkspaceInvitationFormats>("create_workspace_invitation", {
@@ -430,6 +435,7 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
         });
         workspaceDocument = workspace.value;
       }
+      if (attemptRef.current !== attempt) return;
       if (!(await sendControlText(JSON.stringify({ type: "contact_invitation", document: created.file, workspace_document: workspaceDocument })))) {
         throw new Error("The native control channel is not open.");
       }
@@ -713,6 +719,7 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
     failureCapturedRef.current = false;
     setError(""); setPhase("connecting");
     const pc = pcRef.current;
+    const attempt = attemptRef.current;
     try {
       if (nativeMode) {
         const sessionId = nativeSessionRef.current;
@@ -738,6 +745,7 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
           offer_document: offerDocument,
           answer_document: answerInput.trim(),
         });
+        if (attemptRef.current !== attempt) return;
         peerDestinationRef.current = preview.signer_destination;
         setAnswerPreview(preview);
         await serviceCommand("native_webrtc_bind_onboarding", {
@@ -792,6 +800,7 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
       if (channelRef.current?.readyState === "open") await attach(channelRef.current);
     } catch (reason) {
       if (nativeMode) {
+        if (attemptRef.current !== attempt) return;
         const message = answerErrorMessage(reason);
         void captureDiagnostics("answer-failed", message);
         setError(message);

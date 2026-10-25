@@ -2350,6 +2350,7 @@ function BackgroundAvailabilitySettings({
     : value?.native?.failure || value?.health === "failed" ? "Unavailable"
     : !enabled ? "Off"
     : value?.health === "available" ? "Available"
+    : value?.health === "degraded" ? "WebRTC unavailable"
     : value?.health === "starting" ? "Starting" : "Status unknown";
   const toggle = async () => {
     if (busy) return;

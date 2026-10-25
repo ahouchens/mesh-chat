@@ -18,13 +18,15 @@ object NativeWebRtcBridge {
     }
 
     @JvmStatic
-    fun initialize(context: Context) {
+    fun initialize(context: Context): Boolean {
         NativeWebRtcContext.attach(context)
         try {
             val host = Class.forName(HOST)
             host.getMethod("initialize", Context::class.java).invoke(null, context)
+            return true
         } catch (error: Throwable) {
             Log.e(TAG, "native WebRTC initialize failed (${error.javaClass.simpleName})")
+            return false
         }
     }
 

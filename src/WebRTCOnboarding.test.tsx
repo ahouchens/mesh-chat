@@ -300,6 +300,22 @@ describe("manual WebRTC answer exchange", () => {
     expect(mocks.serviceCommand).toHaveBeenCalledWith("native_webrtc_close", expect.anything());
   });
 
+  it("hands a connected native transport to the service when the dialog closes", async () => {
+    vi.stubGlobal("navigator", { userAgent: "Android" });
+    const runCommand = mocks.serviceCommand.getMockImplementation()!;
+    mocks.serviceCommand.mockImplementation(async (command: string) => command === "native_webrtc_stats"
+      ? { attached: true } : runCommand(command));
+    const onConnected = vi.fn();
+    const view = render(<WebRTCOnboardingDialog onClose={vi.fn()} onChanged={async () => undefined} onConnected={onConnected} />);
+    await act(async () => undefined);
+    fireEvent.click(screen.getByRole("button", { name: "Join with WebRTC" }));
+    fireEvent.change(screen.getByLabelText("Paste the signed WebRTC offer or mailbox code"), { target: { value: offerDocument } });
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Review and create answer" })); });
+    expect(onConnected).toHaveBeenCalledWith("unknown");
+    view.unmount();
+    expect(mocks.serviceCommand).not.toHaveBeenCalledWith("native_webrtc_close", expect.anything());
+  });
+
   it("adds a late control channel to the same registered onboarding session", async () => {
     const { pc } = await join();
     await act(async () => { pc.openIncomingChannel(); });

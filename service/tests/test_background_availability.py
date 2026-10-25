@@ -83,6 +83,8 @@ def test_available_requires_the_actual_native_service_and_initialized_runtime(mo
     assert host.background_availability_status()["health"] == "starting"
     native.update(service_running=True, runtime_initialized=True)
     assert host.background_availability_status()["health"] == "available"
+    native["native_webrtc_ready"] = False
+    assert host.background_availability_status()["health"] == "degraded"
     native["service_running"] = False
     assert host.background_availability_status()["health"] != "available"
     native.update(enabled=False, failure="foreground_start_denied")

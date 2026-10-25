@@ -69,7 +69,7 @@ class NativeWebRtcInteropTest {
         NativeWebRtcHost.attachContext(context)
         val module = Python.getInstance().getModule("mesh_chat.mobile_bridge")
         val initialized = module.callAttr("initialize", JSONObject()
-            .put("profile_dir", context.cacheDir.resolve(id).absolutePath)
+            .put("profile_dir", context.filesDir.resolve("webrtc-ci/$id").absolutePath)
             .put("vault_key", Base64.encodeToString(ByteArray(32) { (it + 1).toByte() }, Base64.NO_WRAP))
             .put("display_name", "WebRTC CI")
             .put("platform", "android").toString()).toString()
@@ -107,6 +107,15 @@ class NativeWebRtcInteropTest {
                       report('sdp', pc.localDescription.sdp);
                     };
                     window.finish = sdp => pc.setRemoteDescription({type:'answer',sdp}).catch(e => report('error',e));
+                    window.probe = async () => {
+                      const deadline = Date.now() + 20000;
+                      while (channels['mesh-reticulum']?.readyState !== 'open' || channels['$control']?.readyState !== 'open') {
+                        if (Date.now() > deadline) throw new Error('Chromium channels did not open');
+                        await new Promise(resolve => setTimeout(resolve, 50));
+                      }
+                      channels['mesh-reticulum'].send(new Uint8Array([9,8,7]));
+                      channels['$control'].send('probe'); report('sent','yes');
+                    };
                     report('ready','yes');
                     </script>
                 """.trimIndent(), "text/html", "UTF-8", null)
@@ -131,7 +140,8 @@ class NativeWebRtcInteropTest {
                 js("return finish(${JSONObject.quote(native.getString("sdp"))})")
             }
             awaitStats(id) { it.optBoolean("attached") && it.optString("ice_connection_state") in setOf("connected", "completed") }
-            js("channels['mesh-reticulum'].send(new Uint8Array([9,8,7])); channels['$control'].send('probe');")
+            js("return probe()")
+            results.await("sent")
             awaitStats(id) { it.optLong("received_packets") >= 1 && it.optLong("received_controls") >= 1 }
             assertTrue(NativeWebRtcHost.send(id, byteArrayOf(4, 5, 6)))
             assertEquals("4,5,6", results.await("mesh-reticulum"))

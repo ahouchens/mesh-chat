@@ -103,7 +103,8 @@ class BackgroundAvailabilityMixin:
             status["health"] = (
                 "off" if not status["enabled"] else
                 "failed" if not native.get("enabled") or native.get("failure") else
-                "available" if native.get("service_running") and native.get("runtime_initialized") else
+                ("degraded" if native.get("native_webrtc_ready") is False else "available")
+                if native.get("service_running") and native.get("runtime_initialized") else
                 "starting"
             )
         else:

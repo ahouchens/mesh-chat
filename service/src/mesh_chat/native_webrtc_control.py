@@ -131,6 +131,11 @@ class NativeWebRTCControlMixin:
         for session_id, peer in list(self._native_webrtc_peers.items()):
             if peer != contact["destination_hash"] or session_id not in self._native_webrtc_live:
                 continue
+            if approved:
+                try:
+                    self._native_control_refresh(session_id, "mesh-onboarding")
+                except Exception:
+                    pass
             message = {"type": "invitation_approved" if approved else "invitation_denied"}
             if approved and capabilities:
                 message["capabilities"] = capabilities
