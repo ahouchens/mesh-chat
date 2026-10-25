@@ -77,6 +77,7 @@ jobs:
         working-directory: src-tauri/gen/android
         run: ./gradlew :webrtc-smoke:assembleReleaseAndroidTest -PmeshWebRtcSmoke=true -PmeshRuntimeAbis=x86_64 --no-configuration-cache
       - name: Test real Chromium and optimized native WebRTC data channels
+        timeout-minutes: 20
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 35

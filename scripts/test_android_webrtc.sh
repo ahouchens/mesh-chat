@@ -2,17 +2,32 @@
 # CI-only real Android WebRTC proof. Always preserve device diagnostics.
 set -euo pipefail
 task_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-mkdir -p "$task_root/dist/reports/android-webrtc"
-trap 'adb logcat -d -v threadtime > "$task_root/dist/reports/android-webrtc/logcat.txt" || true' EXIT
-cd "$task_root/src-tauri/gen/android"
+report_dir="$task_root/dist/reports/android-webrtc"
+apk_dir="$task_root/plugins/tauri-plugin-mesh-runtime/android/webrtc-smoke/build/outputs/apk"
+app_id="com.meshchat.runtime.smoke"
+mkdir -p "$report_dir"
+# Persist diagnostics continuously, including when the outer CI job is stopped.
+adb logcat -c
+adb logcat -v threadtime > "$report_dir/logcat.txt" &
+logcat_pid=$!
+trap 'kill "$logcat_pid" 2>/dev/null || true' EXIT
+timeout 90s adb install -r "$apk_dir/release/webrtc-smoke-release.apk"
+timeout 90s adb install -r "$apk_dir/androidTest/release/webrtc-smoke-release-androidTest.apk"
 result=0
 # RNS, CPython and WebView are process-wide runtimes. Each direction starts
 # with a fresh instrumentation process, just as a fresh app launch does.
 for method in chromiumOfferCanBeAcceptedThroughTheRealPythonBridge nativeOfferCanConnectToChromiumWithReconnectControl backgroundRuntimeCanInitializeNativeWebRtc; do
-  ./gradlew :webrtc-smoke:connectedReleaseAndroidTest \
-    -PmeshWebRtcSmoke=true -PmeshRuntimeAbis=x86_64 --no-configuration-cache \
-    "-Pandroid.testInstrumentationRunnerArguments.class=com.meshchat.runtime.NativeWebRtcInteropTest#$method" || result=1
-  cp -R "$task_root/plugins/tauri-plugin-mesh-runtime/android/webrtc-smoke/build/reports/androidTests" \
-    "$task_root/dist/reports/android-webrtc/$method" || true
+  timeout 15s adb shell am force-stop "$app_id"
+  # Run the already-built APKs directly so a Gradle/UTP hang cannot conceal
+  # instrumentation output or prevent the next scenario from running.
+  if ! timeout --signal=INT --kill-after=10s 240s adb shell am instrument -w -r \
+      -e class "com.meshchat.runtime.NativeWebRtcInteropTest#$method" \
+      "$app_id.test/androidx.test.runner.AndroidJUnitRunner" | tee "$report_dir/$method.txt"; then
+    result=1
+  fi
+  # `am instrument` can exit zero for failed tests or an aborted process.
+  # Require one actual passing test, not merely a successful ADB invocation.
+  if ! grep -Fq 'OK (1 test)' "$report_dir/$method.txt"; then result=1; fi
 done
+timeout 15s adb shell am force-stop "$app_id" || true
 exit "$result"
