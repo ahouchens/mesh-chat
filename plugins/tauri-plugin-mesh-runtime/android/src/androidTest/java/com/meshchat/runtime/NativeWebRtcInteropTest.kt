@@ -14,6 +14,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import java.util.UUID
 import java.util.concurrent.LinkedBlockingQueue
+import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 
 /** Real Chromium SDP, JNI, CPython command/callback locks and SCTP traffic.
@@ -59,6 +60,32 @@ class NativeWebRtcInteropTest {
 
     @Test(timeout = 180_000) fun chromiumOfferCanBeAcceptedThroughTheRealPythonBridge() = exchange(nativeOffers = false)
     @Test(timeout = 180_000) fun nativeOfferCanConnectToChromiumWithReconnectControl() = exchange(nativeOffers = true)
+
+    private fun assertCloseDoesNotBlockTheMainThread(channels: JSONArray) {
+        val id = "cancel-${UUID.randomUUID()}"
+        val worker = Executors.newSingleThreadExecutor()
+        val ice = JSONObject().put("iceTransportPolicy", "all").put("iceServers", JSONArray().put(
+            JSONObject().put("urls", JSONArray().put("stun:192.0.2.1:3478"))))
+        val pending = worker.submit<String> { NativeWebRtcHost.createOffer(id, ice.toString(), channels.toString()) }
+        try {
+            // Observe registration without waiting for stats(), which shares
+            // the SDP lifetime lock. No production-only testing hook is used.
+            val field = NativeWebRtcHost::class.java.getDeclaredField("sessions").apply { isAccessible = true }
+            val sessions = field.get(NativeWebRtcHost) as Map<*, *>
+            val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10)
+            while (!sessions.containsKey(id) && System.nanoTime() < deadline) Thread.sleep(10)
+            assertTrue("Native cancellation test did not create a session", sessions.containsKey(id))
+            val started = System.nanoTime()
+            instrumentation.runOnMainSync { NativeWebRtcHost.close(id) }
+            assertTrue("Closing during ICE gathering blocked the Android main thread",
+                System.nanoTime() - started < TimeUnit.SECONDS.toNanos(1))
+            pending.get(35, TimeUnit.SECONDS)
+            assertFalse(JSONObject(NativeWebRtcHost.stats(id)).optBoolean("ok"))
+        } finally {
+            NativeWebRtcHost.close(id)
+            worker.shutdownNow()
+        }
+    }
 
     private fun exchange(nativeOffers: Boolean) {
         val id = "interop-${UUID.randomUUID()}"
@@ -151,6 +178,7 @@ class NativeWebRtcInteropTest {
             assertFalse(JSONObject(NativeWebRtcHost.stats(id)).optBoolean("ok"))
             Thread.sleep(300) // Let late close/state callbacks drain before leaving the test.
             command("snapshot")
+            if (nativeOffers) assertCloseDoesNotBlockTheMainThread(channels)
             js("pc.close()")
         } finally {
             NativeWebRtcHost.closeAll()

@@ -124,6 +124,7 @@ object NativeWebRtcHost {
                 }
                 val offer = createLocalOffer(sessionId, session)
                 val description = offer.description
+                check(!session.closed) { "native_webrtc_session_closed" }
                 check(description.isNotBlank()) { "native_webrtc_offer_empty" }
                 success(description)
             }
@@ -159,6 +160,7 @@ object NativeWebRtcHost {
                 awaitSetLocal(pc, answer)
                 awaitGather(session)
                 val description = pc.localDescription?.description
+                check(!session.closed) { "native_webrtc_session_closed" }
                 check(!description.isNullOrBlank()) { "native_webrtc_answer_empty" }
                 success(description)
             }
@@ -236,7 +238,10 @@ object NativeWebRtcHost {
     fun close(sessionId: String) {
         val session = sessions.remove(sessionId) ?: return
         session.closed = true
-        synchronized(session) {
+        // Retire routing immediately. Disposal may wait for an in-flight SDP
+        // operation, so it must never block Android's UI/Service thread.
+        session.callbacks.execute {
+          synchronized(session) {
             for (channel in session.channels.values) {
                 // Fence callbacks before disposing their native pointer.
                 try { channel.unregisterObserver() } catch (_: Throwable) { }
@@ -245,8 +250,9 @@ object NativeWebRtcHost {
             session.channels.clear()
             try { session.pc.close() } catch (_: Throwable) { }
             try { session.pc.dispose() } catch (_: Throwable) { }
-            session.callbacks.shutdown()
+          }
         }
+        session.callbacks.shutdown()
         notifyPython("closed", sessionId, "")
     }
 
