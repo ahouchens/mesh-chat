@@ -1,6 +1,6 @@
 # Verification and release gates
 
-## Android native WebRTC reconnect lifecycle
+## Android native WebRTC reconnect lifecycle — 0.9.42
 
 Native callbacks now snapshot the process service without acquiring the mobile
 command lock. Native SDP fingerprints are returned with their algorithm prefix
@@ -28,7 +28,7 @@ checks. `android-webrtc.yml` adds a PR Android arm64 debug APK build using the
 existing build script without release signing or publication. Physical cellular
 to Wi-Fi, network-switch, screen-off and stop/lock testing remain required.
 
-## WebRTC answer-screen QR overflow
+## WebRTC answer-screen QR overflow — 0.9.42
 
 On 0.9.41, Android on cellular displayed "Mesh Chat needs to reload" after
 reviewing a Windows Wi-Fi offer. The onboarding screen rendered every signed
