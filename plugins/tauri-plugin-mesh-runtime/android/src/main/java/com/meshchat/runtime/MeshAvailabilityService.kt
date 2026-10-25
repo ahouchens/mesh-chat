@@ -88,7 +88,7 @@ class MeshAvailabilityService : Service() {
         when (intent?.action) {
             ACTION_STOP -> {
                 BackgroundRuntime.setEnabled(applicationContext, false)
-                NativeWebRtcHost.closeAll()
+                NativeWebRtcBridge.closeAll()
                 BackgroundRuntime.execute {
                     try {
                         BackgroundRuntime.setBackgroundPreference(false)
