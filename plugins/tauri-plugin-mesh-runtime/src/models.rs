@@ -25,6 +25,11 @@ pub struct DirectExchangeRequest {
     pub json: String,
 }
 
+#[derive(Debug, Serialize)]
+pub struct BackgroundAvailabilityRequest {
+    pub enabled: bool,
+}
+
 #[derive(Debug, Default, Deserialize)]
 pub struct NativeResponse {
     pub json: String,

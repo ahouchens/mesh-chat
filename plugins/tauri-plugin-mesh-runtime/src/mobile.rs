@@ -85,4 +85,11 @@ impl<R: Runtime> MeshRuntime<R> {
     pub fn shutdown(&self) -> Result<NativeResponse> {
         Ok(self.0.run_mobile_plugin("shutdown", ())?)
     }
+
+    pub fn set_background_availability(&self, enabled: bool) -> Result<NativeResponse> {
+        Ok(self.0.run_mobile_plugin(
+            "setBackgroundAvailability",
+            BackgroundAvailabilityRequest { enabled },
+        )?)
+    }
 }

@@ -27,10 +27,14 @@ camera, deep links, and packaging are native Android integrations.
 As of 0.9.29, Android shares the shipped renderer/service feature set, including
 1:1 WebRTC calls and automatic reconnect. It is **not full parity**: Android
 cannot complete an I2P join because it has no bundled/managed router; background
-execution is intentionally unavailable; personal/group per-conversation
-notification preferences and generic inbound `ACTION_SEND` are gaps; physical
-validation and accessibility remain incomplete; and the published 0.9.2 APK is
-debug-signed, not a production upgrade identity.
+execution is off by default, with an opt-in availability foreground service that
+keeps the shared runtime and native WebRTC data channels alive while the screen
+is off. Native WebRTC backs Android onboarding and automatic reconnect, and a
+bounded Python supervisor can recreate a native session after service restart;
+physical Doze/network-switch and battery qualification remain pending;
+personal/group per-conversation notification preferences and generic inbound
+`ACTION_SEND` are gaps; physical validation and accessibility remain incomplete;
+and the published 0.9.2 APK is debug-signed, not a production upgrade identity.
 
 Status labels are deliberately strict:
 
@@ -81,7 +85,7 @@ Status labels are deliberately strict:
 | Visible event polling and duplicate delivery | 2 | The native bridge drains only while visible at a bounded 750 ms cadence. Invitation and event paths serialize polling; service identifiers remain idempotent. Hardware timing remains open. |
 | Event overflow and authoritative reconciliation | 2 | The 256-item native queue now emits one explicit overflow marker, persists the service-side gap, clears the marker after drain, and triggers bounded reconciliation/snapshot refresh. Overflow and drain regressions pass. |
 | Resume, renderer recreation, and refresh overlap | 2 | Foreground reconciliation is coalesced; a completed reconciliation always refreshes, while an event arriving during refresh schedules the existing trailing refresh. Foreground/background, overflow, and overlap regressions pass. OS process-death timing remains unverified. |
-| Continuous execution while backgrounded or suspended | 5 | Unlike desktop, Android may suspend or terminate the embedded runtime. Mesh Chat intentionally uses neither cloud push nor a permanent foreground service or battery-optimization exemption. Durable state is reconciled when execution resumes; live receipt/notification timing is therefore best effort. |
+| Continuous execution while backgrounded or suspended | 3 | Default mode has no background service and reconciles when execution resumes. An opt-in **Stay available in the background** mode uses a `remoteMessaging` foreground service, partial wake lock, Wi-Fi/multicast locks, and a process-scoped runtime host while the screen is off. It deliberately does not prevent Doze, process death, OEM kills, or explicit lock. Native WebRTC data transport, physical sleep/Doze/battery evidence, and Play review remain open; WebRTC data channels still depend on the WebView. |
 | Local notifications: Personal direct, group, announcement, workspace channel/DM, thread, and mention | 2 | All live inbound families now share the durable authorization-first queue, opaque ID, sealed route, foreground suppression, preview hiding, native acknowledgement, and open-time reauthorization path. Mutation, replay/duplicate, historical, erasure, and category tests exist. Physical permission, lock-screen, tap, and suspension results remain open. |
 | Per-conversation notification preferences | 3 | Workspace conversation preferences remain supported. Personal direct/group notifications honor device permission, foreground state, hidden conversations, and global preview hiding, but do not add a new per-conversation preference model in this increment. This avoids silently weakening established workspace semantics. |
 | Notification as delivery/read evidence | 5 | Native presentation and taps intentionally never change message delivery or read state. Delivery remains application-level authenticated evidence; reading remains an explicit in-app action. |

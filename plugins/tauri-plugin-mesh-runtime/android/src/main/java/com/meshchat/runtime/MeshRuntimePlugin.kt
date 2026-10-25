@@ -68,6 +68,11 @@ class DirectExchangeArgs {
     var json: String? = null
 }
 
+@InvokeArg
+class BackgroundAvailabilityArgs {
+    var enabled: Boolean? = null
+}
+
 /**
  * Result of opening and validating an invitation document in the host app.
  *
@@ -98,7 +103,14 @@ class MeshRuntimePlugin(private val activity: Activity) : Plugin(activity) {
     // socket loss. This grants no background execution guarantee: process death
     // and the existing native ownership checks still require fresh details.
     private val sharingHandler = Handler(Looper.getMainLooper())
-    private val suspendAfterSharing = Runnable { lifecycle("suspended", "background_grace_expired") }
+    private val suspendAfterSharing = Runnable {
+        if (!availabilityActive()) {
+            lifecycle("suspended", "background_grace_expired")
+        }
+    }
+
+    private fun availabilityActive(): Boolean =
+        MeshAvailabilityService.isRunning() || MeshAvailabilityService.isEnabled(activity)
     @Command
     fun buildInfo(invoke: Invoke) {
         val info = activity.packageManager.getPackageInfo(activity.packageName, 0)
@@ -317,13 +329,21 @@ class MeshRuntimePlugin(private val activity: Activity) : Plugin(activity) {
                 override fun onActivityStopped(value: Activity) {
                     if (value === activity) {
                         sharingHandler.removeCallbacks(suspendAfterSharing)
-                        sharingHandler.postDelayed(suspendAfterSharing, 45_000)
+                        if (availabilityActive()) {
+                            lifecycle("background_available", "activity_stopped")
+                        } else {
+                            sharingHandler.postDelayed(suspendAfterSharing, 45_000)
+                        }
                     }
                 }
                 override fun onActivityDestroyed(value: Activity) {
                     if (value === activity) {
                         sharingHandler.removeCallbacks(suspendAfterSharing)
-                        lifecycle("suspended", "activity_destroyed")
+                        if (availabilityActive()) {
+                            lifecycle("background_available", "activity_destroyed")
+                        } else {
+                            lifecycle("suspended", "activity_destroyed")
+                        }
                     }
                 }
                 override fun onActivityResumed(value: Activity) {
@@ -501,6 +521,7 @@ class MeshRuntimePlugin(private val activity: Activity) : Plugin(activity) {
             try {
                 val profileDir = activity.filesDir.resolve("mesh-chat/profile-v1")
                 check(profileDir.mkdirs() || profileDir.isDirectory)
+                NativeWebRtcHost.initialize(activity.applicationContext)
                 val request = JSONObject()
                     .put("profile_dir", profileDir.canonicalPath)
                     .put("vault_key", Base64.encodeToString(vaultKey(), Base64.NO_WRAP))
@@ -786,11 +807,44 @@ class MeshRuntimePlugin(private val activity: Activity) : Plugin(activity) {
     }
 
     @Command
+    fun setBackgroundAvailability(invoke: Invoke) {
+        val enabled = invoke.parseArgs(BackgroundAvailabilityArgs::class.java).enabled
+        if (enabled == null) {
+            invoke.reject("invalid_background_availability")
+            return
+        }
+        try {
+            BackgroundRuntime.configure(activity.applicationContext)
+            if (enabled && !BackgroundRuntime.notificationAllowed()) {
+                invoke.reject("notification_permission_required")
+                return
+            }
+            if (enabled) {
+                BackgroundRuntime.start(activity)
+            } else {
+                BackgroundRuntime.stop(activity)
+            }
+            resolve(
+                invoke,
+                JSONObject()
+                    .put("ok", true)
+                    .put("result", JSONObject().put("enabled", enabled))
+                    .toString(),
+            )
+        } catch (error: Throwable) {
+            reject(invoke, "set_background_availability", error)
+        }
+    }
+
+    @Command
     fun shutdown(invoke: Invoke) {
+        BackgroundRuntime.stop(activity)
+        NativeWebRtcHost.closeAll()
         pythonExecutor.execute {
             try {
                 val result = bridge("shutdown")
                 runtimeInitialized = false
+                BackgroundRuntime.onRuntimeShutdown()
                 multicastLock?.let { if (it.isHeld) it.release() }
                 multicastLock = null
                 resolve(invoke, result)

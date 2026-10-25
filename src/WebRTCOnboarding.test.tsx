@@ -11,7 +11,10 @@ const mocks = vi.hoisted(() => ({
   updateWebRTCSessionApprovalPending: vi.fn(),
 }));
 
-vi.mock("./api", () => ({ serviceCommand: mocks.serviceCommand }));
+vi.mock("./api", () => ({
+  serviceCommand: mocks.serviceCommand,
+  onServiceEvent: vi.fn(async () => () => undefined),
+}));
 vi.mock("qrcode.react", () => ({ QRCodeSVG: () => null }));
 vi.mock("./webrtc-onboarding", async (importOriginal) => ({
   ...await importOriginal<typeof import("./webrtc-onboarding")>(),

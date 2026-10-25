@@ -10,13 +10,30 @@ import {
 import type { WebRTCSession, WebRTCSessionPath } from "./webrtc-session";
 import { attachWebRTCBridge } from "./webrtc-onboarding";
 import { ReconnectPeer, fingerprint } from "./webrtc-peer";
+import { NativeReconnectPeer } from "./native-reconnect-peer";
+import { isNativeWebRTCPlatform } from "./native-webrtc";
 import { maintainReconnectCapabilities } from "./reconnect-control";
 import { setWebRTCSession, getWebRTCSessions, getWebRTCSessionByKey, closeWebRTCSession, removeWebRTCSession } from "./webrtc-session";
 
 export const DISCONNECTED_SESSION_GRACE_MS = 10_000;
 const disconnectedSince = new WeakMap<WebRTCSession, number>();
+const nativeSessions = new Map<string, { peer: NativeReconnectPeer; contactId: string }>();
+
+export function closeNativeReconnectSessions(contactId?: string): void {
+  for (const [profileId, item] of nativeSessions) {
+    if (contactId && item.contactId !== contactId) continue;
+    nativeSessions.delete(profileId);
+    item.peer.close();
+  }
+}
 
 function hasLiveSession(profileId: string, contactId: string): boolean {
+  const native = nativeSessions.get(profileId);
+  if (native && native.contactId === contactId) {
+    if (native.peer.isAttached()) return true;
+    nativeSessions.delete(profileId);
+    native.peer.close();
+  }
   return getWebRTCSessions().some((session) => {
     if (session.key !== profileId && session.contactId !== contactId) return false;
     const states = [session.pc.connectionState, session.pc.iceConnectionState];
@@ -128,8 +145,26 @@ export function createReconnectDeps(
       }
       return configuration;
     },
-    createPeer: (ice, role) => ReconnectPeer.create(ice, role),
+    createPeer: (ice, role) => isNativeWebRTCPlatform()
+      ? NativeReconnectPeer.create(ice, role)
+      : ReconnectPeer.create(ice, role),
     attach: async (peer: CoordinatorPeer, profile: ReconnectProfile, isCurrent = () => true) => {
+      if (peer instanceof NativeReconnectPeer) {
+        try {
+          if (!isCurrent()) throw new Error("Reconnect attachment was cancelled.");
+          await peer.open();
+          if (!isCurrent()) {
+            peer.close();
+            throw new Error("Reconnect attachment was cancelled.");
+          }
+          nativeSessions.set(profile.id, { peer, contactId: profile.contact_id });
+          options.onSession?.(await peer.path());
+          return;
+        } catch (reason) {
+          peer.close();
+          throw reason;
+        }
+      }
       const concrete = peer as ReconnectPeer;
       concrete.onControl = (control) => {
         const update = () => {
@@ -196,7 +231,14 @@ export function createReconnectDeps(
     pathStatus: (contactId) =>
       serviceCommand("reconnect_path_status", { contact_id: contactId }),
     hasSession: hasLiveSession,
-    closeSession: (profileId) => closeWebRTCSession(profileId),
+    closeSession: async (profileId) => {
+      const native = nativeSessions.get(profileId);
+      if (native) {
+        nativeSessions.delete(profileId);
+        native.peer.close();
+      }
+      await closeWebRTCSession(profileId);
+    },
     fingerprint,
   };
 }

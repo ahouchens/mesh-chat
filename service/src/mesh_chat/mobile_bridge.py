@@ -225,6 +225,21 @@ def direct_exchange(raw: str) -> str:
         return _error(exc)
 
 
+def native_webrtc_event(event: str, session_id: str, data: str = "") -> str:
+    """Native WebRTC callback boundary. Never raises into the WebRTC thread."""
+    try:
+        event = str(event)
+        session_id = str(session_id)
+        data = str(data)
+        with _service_lock:
+            service = _service
+        if service is not None:
+            service.native_webrtc_event(event, session_id, data)
+        return _dumps({"ok": True, "result": None})
+    except Exception as exc:
+        return _error(exc)
+
+
 def shutdown() -> str:
     global _service, _event_overflow, _native_channel
     try:

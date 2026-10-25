@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import json
 import threading
 import time
 import uuid
@@ -11,6 +12,7 @@ from typing import Any, Callable
 import LXMF
 import RNS
 
+from .background_availability import BackgroundAvailabilityMixin
 from .app_protocol import (
     DELIVERY_WINDOW_SECONDS,
     GROUP_KINDS,
@@ -23,6 +25,7 @@ from .errors import (
     ContactNotApproved,
     InvitationInvalid,
     MeshChatError,
+    NativeUnavailable,
     NetworkUnavailable,
     ValidationError,
     DirectConnectionUnavailable,
@@ -154,6 +157,7 @@ def _payload(
 
 
 class MeshChatService(
+    BackgroundAvailabilityMixin,
     ReconnectServiceMixin,
     ReactionServiceMixin,
     GroupServiceMixin,
@@ -235,6 +239,12 @@ class MeshChatService(
         "webrtc_attach",
         "webrtc_packet",
         "webrtc_detach",
+        "native_webrtc_offer",
+        "native_webrtc_accept",
+        "native_webrtc_apply_answer",
+        "native_webrtc_control",
+        "native_webrtc_close",
+        "native_webrtc_stats",
         "webrtc_onboarding_offer",
         "webrtc_onboarding_answer",
         "verify_webrtc_onboarding_offer",
@@ -385,6 +395,8 @@ class MeshChatService(
         "set_workspace_notification_preference",
         "open_notification_target",
         "reconcile_mobile_lifecycle",
+        "set_background_availability",
+        "background_status",
         # Native-only mobile bridge commands. Rust never exposes these names
         # through the renderer allowlist.
         "native_notification_state",
@@ -439,6 +451,7 @@ class MeshChatService(
         "get_notification_state",
         "open_notification_target",
         "reconcile_mobile_lifecycle",
+        "background_status",
         "native_notification_state",
         "mobile_lifecycle_transition",
         "drain_native_notification_work",
@@ -484,6 +497,8 @@ class MeshChatService(
         self._turn_ice_lock = threading.Lock()
         self._turn_ice_cache: tuple[float, list[dict[str, Any]]] | None = None
         self._webrtc_bridges: dict[str, WebRTCInterface] = {}
+        self._native_webrtc_sessions: dict[str, str] = {}
+        self._background_reconnect_supervisor = None
         identity_record = store.get("identity", "local")
         profile_record = store.get("profile", "local")
         if identity_record is not None or profile_record is not None:
@@ -503,6 +518,8 @@ class MeshChatService(
         self._retry_thread = threading.Thread(target=self._retry_loop, daemon=True)
         self._retry_thread.start()
         self._direct_recovery.start()
+        if self._background_availability_enabled():
+            self._sync_background_reconnect()
 
     def _start_network(self, display_name: str) -> None:
         if self._identity is None or self.network is not None:
@@ -2011,6 +2028,234 @@ class MeshChatService(
             }
         )
 
+    # ------------------------------------------------- native WebRTC host
+    _native_webrtc_host_class = None
+
+    @classmethod
+    def _native_webrtc_host(cls):
+        if cls._native_webrtc_host_class is None:
+            try:
+                from java import jclass
+
+                cls._native_webrtc_host_class = jclass(
+                    "com.meshchat.runtime.NativeWebRtcHost"
+                )
+            except Exception as exc:
+                raise NativeUnavailable("Native WebRTC is unavailable") from exc
+        return cls._native_webrtc_host_class
+
+    def webrtc_attach_native(self, session_id: str) -> dict[str, Any]:
+        if self.network is None:
+            raise NetworkUnavailable("Reticulum is not running for a WebRTC bridge")
+        existing = self._native_webrtc_sessions.get(session_id)
+        if existing is not None and existing in self._webrtc_bridges:
+            return {
+                "bridge_id": existing,
+                "max_packet": WebRTCInterface.HW_MTU,
+                "state": "online",
+            }
+        bridge_id = _new_id()
+
+        def send(data: bytes) -> None:
+            try:
+                self._native_webrtc_host().send(session_id, data)
+            except Exception:
+                pass
+
+        interface = WebRTCInterface(
+            RNS.Transport,
+            send,
+            name=f"Mesh Chat native WebRTC {bridge_id[:8]}",
+        )
+        try:
+            self.network.reticulum._add_interface(
+                interface, mode=interface.MODE_POINT_TO_POINT
+            )
+            if interface not in RNS.Transport.interfaces:
+                raise RuntimeError("Reticulum did not register the native WebRTC interface")
+        except Exception as exc:
+            interface.detach()
+            raise NetworkUnavailable("Could not attach the native WebRTC interface") from exc
+        self._webrtc_bridges[bridge_id] = interface
+        self._native_webrtc_sessions[session_id] = bridge_id
+        try:
+            self.network.reannounce()
+        except Exception:
+            pass
+        for delay in (2.0, 6.0):
+            threading.Thread(
+                target=self._webrtc_announce_later,
+                args=(bridge_id, delay),
+                daemon=True,
+                name="mesh-chat-native-webrtc-announce",
+            ).start()
+        self._changed()
+        return {
+            "bridge_id": bridge_id,
+            "max_packet": WebRTCInterface.HW_MTU,
+            "state": "online",
+        }
+
+    def webrtc_detach_native(self, session_id: str) -> dict[str, Any]:
+        bridge_id = self._native_webrtc_sessions.pop(session_id, None)
+        if bridge_id is not None:
+            self.webrtc_detach(bridge_id)
+        return {"state": "closed"}
+
+    def native_webrtc_event(self, event: str, session_id: str, data: str = "") -> None:
+        """Called by NativeWebRtcHost from a WebRTC callback thread."""
+        if not isinstance(event, str) or not isinstance(session_id, str):
+            return
+        with self._dispatch_lock:
+            if event == "open":
+                try:
+                    attached = self.webrtc_attach_native(session_id)
+                except Exception:
+                    return
+                self.emit(
+                    {
+                        "type": "event",
+                        "event": "webrtc_native_open",
+                        "session_id": session_id,
+                        "bridge_id": attached["bridge_id"],
+                    }
+                )
+            elif event == "message":
+                bridge_id = self._native_webrtc_sessions.get(session_id)
+                if bridge_id is not None:
+                    try:
+                        self.webrtc_packet(bridge_id, data)
+                    except Exception:
+                        pass
+            elif event == "control":
+                label, _, encoded = data.partition(":")
+                try:
+                    text = base64.b64decode(encoded, validate=True).decode("utf-8")
+                except Exception:
+                    return
+                if len(text) <= 16_384:
+                    self.emit(
+                        {
+                            "type": "event",
+                            "event": "webrtc_control",
+                            "session_id": session_id,
+                            "label": label,
+                            "data": text,
+                        }
+                    )
+            elif event == "closed":
+                self.webrtc_detach_native(session_id)
+                self.emit(
+                    {
+                        "type": "event",
+                        "event": "webrtc_native_state",
+                        "session_id": session_id,
+                        "state": "closed",
+                    }
+                )
+            elif event in {"ice", "channel", "signaling", "gathering"}:
+                if event == "channel":
+                    label, _, state = data.partition(":")
+                    if label == "mesh-onboarding" and state == "open":
+                        self.emit(
+                            {
+                                "type": "event",
+                                "event": "webrtc_control_open",
+                                "session_id": session_id,
+                                "label": label,
+                            }
+                        )
+                self.emit(
+                    {
+                        "type": "event",
+                        "event": "webrtc_native_state",
+                        "session_id": session_id,
+                        "state": event,
+                        "detail": data[:160],
+                    }
+                )
+
+    def native_webrtc_offer(
+        self, session_id: Any, ice: Any, channels: Any
+    ) -> dict[str, Any]:
+        if not isinstance(session_id, str) or not 8 <= len(session_id) <= 128:
+            raise ValidationError("Native WebRTC session is invalid")
+        if not isinstance(ice, dict) or not isinstance(channels, list):
+            raise ValidationError("Native WebRTC configuration is invalid")
+        result = json.loads(
+            self._native_webrtc_host().createOffer(
+                session_id,
+                json.dumps(ice, separators=(",", ":")),
+                json.dumps(channels, separators=(",", ":")),
+            )
+        )
+        if not result.get("ok"):
+            raise NativeUnavailable(str(result.get("error", "native_webrtc_offer_failed")))
+        return result
+
+    def native_webrtc_accept(
+        self, session_id: Any, offer_sdp: Any, ice: Any, channels: Any
+    ) -> dict[str, Any]:
+        if not isinstance(session_id, str) or not isinstance(offer_sdp, str):
+            raise ValidationError("Native WebRTC session is invalid")
+        if not isinstance(ice, dict) or not isinstance(channels, list):
+            raise ValidationError("Native WebRTC configuration is invalid")
+        result = json.loads(
+            self._native_webrtc_host().acceptOffer(
+                session_id,
+                offer_sdp,
+                json.dumps(ice, separators=(",", ":")),
+                json.dumps(channels, separators=(",", ":")),
+            )
+        )
+        if not result.get("ok"):
+            raise NativeUnavailable(str(result.get("error", "native_webrtc_answer_failed")))
+        return result
+
+    def native_webrtc_apply_answer(self, session_id: Any, answer_sdp: Any) -> dict[str, Any]:
+        if not isinstance(session_id, str) or not isinstance(answer_sdp, str):
+            raise ValidationError("Native WebRTC answer is invalid")
+        result = json.loads(
+            self._native_webrtc_host().applyAnswer(session_id, answer_sdp)
+        )
+        if not result.get("ok"):
+            raise NativeUnavailable(str(result.get("error", "native_webrtc_apply_failed")))
+        return result
+
+    def native_webrtc_control(
+        self, session_id: Any, label: Any, text: Any
+    ) -> dict[str, Any]:
+        if (
+            not isinstance(session_id, str)
+            or label not in {"mesh-onboarding", "meshchat-reconnect"}
+            or not isinstance(text, str)
+            or not 1 <= len(text) <= 16_384
+        ):
+            raise ValidationError("Native WebRTC control message is invalid")
+        accepted = bool(self._native_webrtc_host().sendControl(session_id, label, text))
+        return {"accepted": accepted}
+
+    def native_webrtc_close(self, session_id: Any) -> dict[str, Any]:
+        if not isinstance(session_id, str):
+            raise ValidationError("Native WebRTC session is invalid")
+        try:
+            self._native_webrtc_host().close(session_id)
+        finally:
+            self.webrtc_detach_native(session_id)
+        return {"state": "closed"}
+
+    def native_webrtc_stats(self, session_id: Any) -> dict[str, Any]:
+        if not isinstance(session_id, str):
+            raise ValidationError("Native WebRTC session is invalid")
+        result = json.loads(self._native_webrtc_host().stats(session_id))
+        if not result.get("ok"):
+            raise NativeUnavailable(str(result.get("error", "native_webrtc_stats_failed")))
+        stats = result.get("result", {})
+        if isinstance(stats, dict):
+            stats["attached"] = session_id in self._native_webrtc_sessions
+            stats["session_id"] = session_id
+        return stats
+
 
 
     @staticmethod
@@ -3170,6 +3415,7 @@ class MeshChatService(
             "participant_hosting": self.participant_hosting_snapshot(),
             "participant_connections": self.participant_connection_snapshot(),
             "calls": self.calls.active(),
+            "background_availability": self.background_availability_status(),
             "network": self.network.snapshot() if self.network else None,
             "service_error": (
                 self._network_error
@@ -3738,6 +3984,48 @@ class MeshChatService(
         if command == "webrtc_detach":
             body = _payload(value, allowed={"bridge_id"}, required={"bridge_id"})
             return self.webrtc_detach(body["bridge_id"])
+        if command == "native_webrtc_offer":
+            body = _payload(
+                value,
+                allowed={"session_id", "ice", "channels"},
+                required={"session_id", "ice", "channels"},
+            )
+            return self.native_webrtc_offer(
+                body["session_id"], body["ice"], body["channels"]
+            )
+        if command == "native_webrtc_accept":
+            body = _payload(
+                value,
+                allowed={"session_id", "offer_sdp", "ice", "channels"},
+                required={"session_id", "offer_sdp", "ice", "channels"},
+            )
+            return self.native_webrtc_accept(
+                body["session_id"], body["offer_sdp"], body["ice"], body["channels"]
+            )
+        if command == "native_webrtc_apply_answer":
+            body = _payload(
+                value,
+                allowed={"session_id", "answer_sdp"},
+                required={"session_id", "answer_sdp"},
+            )
+            return self.native_webrtc_apply_answer(
+                body["session_id"], body["answer_sdp"]
+            )
+        if command == "native_webrtc_control":
+            body = _payload(
+                value,
+                allowed={"session_id", "label", "text"},
+                required={"session_id", "label", "text"},
+            )
+            return self.native_webrtc_control(
+                body["session_id"], body["label"], body["text"]
+            )
+        if command == "native_webrtc_close":
+            body = _payload(value, allowed={"session_id"}, required={"session_id"})
+            return self.native_webrtc_close(body["session_id"])
+        if command == "native_webrtc_stats":
+            body = _payload(value, allowed={"session_id"}, required={"session_id"})
+            return self.native_webrtc_stats(body["session_id"])
         if command == "webrtc_onboarding_offer":
             body = _payload(
                 value,
@@ -4955,6 +5243,16 @@ class MeshChatService(
             return self.mobile_lifecycle_transition(
                 "foreground", "renderer_recovery"
             )
+        if command == "set_background_availability":
+            body = _payload(
+                value,
+                allowed={"enabled"},
+                required={"enabled"},
+            )
+            return self.set_background_availability(body["enabled"])
+        if command == "background_status":
+            _payload(value, allowed=set())
+            return self.background_availability_status()
         if command == "native_notification_state":
             body = _payload(
                 value,
@@ -5170,6 +5468,25 @@ class MeshChatService(
                 return
             self._close_started = True
         self._shutdown.set()
+        supervisor = getattr(self, "_background_reconnect_supervisor", None)
+        if supervisor is not None:
+            try:
+                supervisor.stop()
+            except Exception:
+                pass
+            self._background_reconnect_supervisor = None
+        try:
+            # Shutdown means the keys are about to be released. A persisted
+            # background opt-in must not survive into the next lock/unlock.
+            if self._background_availability_enabled():
+                self._write_background_availability(
+                    enabled=False,
+                    state="disabled",
+                    reason="service_closed",
+                )
+                self._changed()
+        except Exception:
+            pass
         if self._direct_native is not None:
             self._direct_native.close()
         self._direct_recovery.retire(close=True)
@@ -5194,6 +5511,7 @@ class MeshChatService(
             except Exception:
                 pass
         getattr(self, "_webrtc_bridges", {}).clear()
+        getattr(self, "_native_webrtc_sessions", {}).clear()
         if self.network:
             # Older/narrow test adapters return None; only an explicit False
             # means a real callback is still executing.

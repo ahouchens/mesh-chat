@@ -6,7 +6,7 @@ import type { NotificationCapability, Snapshot } from "./types";
 
 export interface ServiceEvent {
   type: "event";
-  event: "state_changed" | "message_status" | "workspace_changed" | "webrtc_packet";
+  event: "state_changed" | "message_status" | "workspace_changed" | "webrtc_packet" | "webrtc_control" | "webrtc_control_open" | "webrtc_native_open" | "webrtc_native_state";
   message_id?: string;
   state?: string;
   workspace_id?: string;
@@ -15,6 +15,9 @@ export interface ServiceEvent {
   generation?: number;
   overflow?: boolean;
   bridge_id?: string;
+  session_id?: string;
+  label?: string;
+  detail?: string;
   data?: string;
 }
 
@@ -130,6 +133,18 @@ export async function serviceCommand<T>(
 
 export async function lockService(): Promise<void> {
   return invoke<void>("lock_service");
+}
+
+/**
+ * Start or stop the Android foreground availability service.
+ *
+ * This is deliberately separate from the Python opt-in command: Python owns
+ * the durable preference, Android owns whether the service is actually alive.
+ */
+export function setNativeBackgroundAvailability(
+  enabled: boolean,
+): Promise<{ enabled: boolean }> {
+  return invoke<{ enabled: boolean }>("set_background_availability", { enabled });
 }
 
 export function notificationCapability(): Promise<NotificationCapability> {
