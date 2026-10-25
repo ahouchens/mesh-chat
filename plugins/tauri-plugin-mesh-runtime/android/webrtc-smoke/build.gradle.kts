@@ -21,6 +21,7 @@ android {
         getByName("release") {
             optimization { enable = true }
             signingConfig = signingConfigs.getByName("debug")
+            proguardFiles("host-rules.pro")
             testProguardFiles("test-rules.pro")
         }
     }
