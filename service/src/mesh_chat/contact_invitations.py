@@ -15,6 +15,10 @@ class ContactInvitationsMixin:
     def receive_contact_invitation(self, document, peer_destination, workspace_document=None):
         if not isinstance(document, str) or not isinstance(peer_destination, str):
             raise ValidationError("Contact invitation must be text with a verified peer")
+        if workspace_document is not None and not isinstance(workspace_document, str):
+            raise ValidationError("Workspace invitation must be text")
+        if len(document.encode()) + len((workspace_document or "").encode()) > 65_536:
+            raise ValidationError("Contact invitation is too large")
         invitation = verify_invitation(document)
         if invitation.destination_hash.hex() != peer_destination:
             raise IdentityMismatch("Invitation does not match the connected peer")
@@ -25,8 +29,6 @@ class ContactInvitationsMixin:
             raise ValidationError("This contact cannot send invitations")
         workspace = None
         if workspace_document is not None:
-            if not isinstance(workspace_document, str):
-                raise ValidationError("Workspace invitation must be text")
             workspace = verify_workspace_invitation(workspace_document).preview()
         digest = hashlib.sha256(invitation.serialized.encode()).hexdigest()
         # Include the optional workspace so accepting a personal invitation

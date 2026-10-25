@@ -120,7 +120,7 @@ def test_saved_workspace_invitation_joins_only_after_explicit_acceptance(inbox, 
         service._native_webrtc_peers["owner"] = peer
         service._native_control_receive("owner", "mesh-onboarding", json.dumps({
             "type": "contact_invitation", "document": owner.invitation(connection_mode="webrtc")["file"],
-            "workspace_document": workspace_invite["file"],
+            "workspace_document": workspace_invite["value"],
         }))
         saved = service.contact_invitations()[0]
         assert saved["workspace"]["name"] == "Family"

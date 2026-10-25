@@ -1123,7 +1123,9 @@ async fn service_command(
     let size = serde_json::to_vec(&payload)
         .map_err(|_| "invalid_request".to_string())?
         .len();
-    let maximum = if matches!(
+    let maximum = if command == "receive_contact_invitation" {
+        64 * 1024
+    } else if matches!(
         command.as_str(),
         "preview_direct_connection"
             | "prepare_direct_answer"
@@ -1225,7 +1227,9 @@ async fn service_command(app: AppHandle, command: String, payload: Value) -> Pen
     let size = serde_json::to_vec(&payload)
         .map_err(|_| "invalid_request".to_string())?
         .len();
-    let maximum = if matches!(
+    let maximum = if command == "receive_contact_invitation" {
+        64 * 1024
+    } else if matches!(
         command.as_str(),
         "preview_direct_connection"
             | "prepare_direct_answer"
