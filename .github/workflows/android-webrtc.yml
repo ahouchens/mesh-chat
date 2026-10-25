@@ -68,11 +68,14 @@ jobs:
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
-      - name: Build optimized WebRTC test host and instrumentation APK
+      - name: Build optimized WebRTC test host
         working-directory: src-tauri/gen/android
-        run: ./gradlew :webrtc-smoke:assembleRelease :webrtc-smoke:assembleReleaseAndroidTest -PmeshWebRtcSmoke=true -PmeshRuntimeAbis=x86_64 --no-configuration-cache
+        run: ./gradlew :webrtc-smoke:assembleRelease -PmeshWebRtcSmoke=true -PmeshRuntimeAbis=x86_64 --no-configuration-cache
       - name: Verify optimized WebRTC JNI classes
         run: python scripts/verify_android_webrtc.py plugins/tauri-plugin-mesh-runtime/android/webrtc-smoke/build/outputs/apk/release/webrtc-smoke-release.apk
+      - name: Build WebRTC instrumentation APK
+        working-directory: src-tauri/gen/android
+        run: ./gradlew :webrtc-smoke:assembleReleaseAndroidTest -PmeshWebRtcSmoke=true -PmeshRuntimeAbis=x86_64 --no-configuration-cache
       - name: Test real Chromium and optimized native WebRTC data channels
         uses: reactivecircus/android-emulator-runner@v2
         with:

@@ -1,0 +1,7 @@
+# AndroidX Test's optional compile-time annotations are not runtime code.
+# These rules affect only the instrumentation APK, not the optimized app.
+-dontwarn com.google.errorprone.annotations.CanIgnoreReturnValue
+-dontwarn com.google.errorprone.annotations.MustBeClosed
+
+# The runner selects individual test methods by their command-line names.
+-keep class com.meshchat.runtime.NativeWebRtcInteropTest** { *; }

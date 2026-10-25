@@ -21,6 +21,7 @@ android {
         getByName("release") {
             optimization { enable = true }
             signingConfig = signingConfigs.getByName("debug")
+            testProguardFiles("test-rules.pro")
         }
     }
     testBuildType = "release"
@@ -37,6 +38,4 @@ dependencies {
     implementation(project(":tauri-plugin-mesh-runtime"))
     androidTestImplementation("androidx.test.ext:junit:1.2.1")
     androidTestImplementation("androidx.test:runner:1.6.2")
-    // AndroidX Test references these annotations; R8 validates the test APK too.
-    androidTestImplementation("com.google.errorprone:error_prone_annotations:2.36.0")
 }
