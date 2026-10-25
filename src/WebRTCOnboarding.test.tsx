@@ -198,6 +198,13 @@ async function advance(ms: number): Promise<void> {
 }
 
 describe("manual WebRTC answer exchange", () => {
+  it("keeps manual onboarding on the WebView transport on Android", async () => {
+    vi.stubGlobal("navigator", { userAgent: "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36" });
+    await join();
+    expect(FakePeer.instances).toHaveLength(1);
+    expect(mocks.serviceCommand).not.toHaveBeenCalledWith("native_webrtc_accept", expect.anything());
+  });
+
   it("adds a late control channel to the same registered onboarding session", async () => {
     const { pc } = await join();
     await act(async () => { pc.openIncomingChannel(); });
