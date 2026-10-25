@@ -1005,6 +1005,7 @@ export interface BackgroundAvailability {
 export interface Snapshot {
   profile: Profile | null;
   contacts: Contact[];
+  contact_invitations?: ContactInvitation[];
   messages: ChatMessage[];
   drafts: Array<{ contact_id: string; text: string }>;
   /** Locally deleted threads; trust and group membership remain available for restore. */
@@ -1058,6 +1059,17 @@ export interface InvitationPreview {
   requires_network_consent?: boolean;
   i2p_access_point?: { b32: string; label: string; relay: string };
   requires_i2p_consent?: boolean;
+}
+
+export interface ContactInvitation {
+  id: string;
+  state: "pending" | "accepted" | "declined";
+  received_at: number;
+  expires_at: number;
+  expired: boolean;
+  native_connected: boolean;
+  preview: InvitationPreview;
+  workspace: WorkspaceInvitationPreview | null;
 }
 
 export interface InvitationFormats {

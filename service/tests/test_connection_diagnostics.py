@@ -121,6 +121,41 @@ def test_report_captures_current_outbox_and_transport_without_private_content(mo
     assert current["pending_direct_messages"]["sending"] == 1
 
 
+def test_native_diagnostics_survive_renderer_absence_without_exporting_session_details():
+    secret = "private-session-peer-sdp-control-message"
+    service = SimpleNamespace(store=Store(), _native_webrtc_live={secret},
+        native_webrtc_stats=lambda session_id: {
+            "attached": True, "data_channel_state": "open", "ice_connection_state": "completed",
+            "received_packets": 12, "received_controls": 3, "session_id": session_id, "sdp": secret,
+        })
+    current = diagnostics.report(service)["current_native_webrtc"]
+    assert current["status"] == "available"
+    assert current["sessions"] == current["attached"] == 1
+    assert current["channels"]["open"] == current["ice"]["completed"] == 1
+    assert current["received_controls"] == 3
+    assert secret not in json.dumps(current)
+    service._native_webrtc_live.clear()
+    assert diagnostics.report(service)["current_native_webrtc"]["sessions"] == 0
+
+
+def test_missing_native_statistics_are_unknown_and_do_not_hide_other_sessions():
+    def stats(session_id):
+        if session_id == "closed-during-inspection":
+            raise RuntimeError("private-native-error")
+        return {"attached": "yes", "data_channel_state": {}, "ice_connection_state": "private-state",
+                "received_packets": -1, "received_controls": True}
+    service = SimpleNamespace(store=Store(), _native_webrtc_live={"closed-during-inspection", "other"},
+        native_webrtc_stats=stats)
+    current = diagnostics.report(service)["current_native_webrtc"]
+    assert current["sessions"] == 2
+    assert current["stats_unavailable"] == 1
+    assert current["attached"] == 0
+    assert current["channels"]["unavailable"] == current["ice"]["unavailable"] == 2
+    assert current["received_packets"] == current["received_controls"] == 0
+    assert "private-" not in json.dumps(current)
+    assert diagnostics.native_webrtc_state(SimpleNamespace()) == {"status": "unavailable"}
+
+
 def test_unreadable_current_outbox_does_not_hide_historical_failure():
     class BrokenListStore(Store):
         def list(self, kind):

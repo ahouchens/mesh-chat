@@ -79,12 +79,27 @@ export function currentWebRTCState(raw: unknown = getWebRTCSessions()) {
       values.filter(value => choice(value, choices) === key).length]));
   };
   return {
+    source: "renderer",
     sessions: sessions.length,
     channels: counts(sessions.map(session => object(session.channel).readyState), ["connecting", "open", "closing", "closed"]),
     connections: counts(sessions.map(session => object(session.pc).connectionState), ["new", "connecting", "connected", "disconnected", "failed", "closed"]),
     ice: counts(sessions.map(session => object(session.pc).iceConnectionState), ["new", "checking", "connected", "completed", "disconnected", "failed", "closed"]),
     paths: counts(sessions.map(session => session.path), ["direct", "relayed", "unknown"]),
     pending_approvals: sessions.filter(session => session.approvalPending === true).length,
+  };
+}
+
+function currentNativeWebRTCState(raw: unknown) {
+  const value = object(raw);
+  const counts = (key: string, states: string[]) => Object.fromEntries(states.map(state =>
+    [state, number(object(value[key])[state], Number.MAX_SAFE_INTEGER)]));
+  return {
+    source: "native_service",
+    status: choice(value.status, new Set(["available", unavailable])),
+    ...Object.fromEntries(["sessions", "attached", "stats_unavailable", "received_packets", "received_controls"]
+      .map(key => [key, number(value[key], Number.MAX_SAFE_INTEGER)])),
+    channels: counts("channels", ["connecting", "open", "closing", "closed", unavailable]),
+    ice: counts("ice", ["new", "checking", "connected", "completed", "disconnected", "failed", "closed", unavailable]),
   };
 }
 
@@ -126,6 +141,7 @@ export function diagnosticReport(build: unknown, raw: unknown, log = false) {
     service_version_mismatch: serviceVersion !== unavailable && serviceVersion !== packageInfo.version,
     service_status: value.format_version === 1 ? "available" : unavailable,
     current_service: currentServiceState(value.current_state), current_webrtc: currentWebRTCState(),
+    current_native_webrtc: currentNativeWebRTCState(value.current_native_webrtc),
     current_reconnect: currentReconnectState(value.current_reconnect),
     native_check_counts: rows.at(-1)?.checks_started !== null && rows.length ? "see_event_counts" : unavailable, receipt_status: "see_event_timestamp", approval_status: "see_event_timestamp",
     retention_days: 7, event_limit: 200, events_included: rows.length, history_event_count: history.length,

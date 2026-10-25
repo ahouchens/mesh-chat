@@ -191,6 +191,40 @@ def current_state(service):
     return result
 
 
+def native_webrtc_state(service):
+    """Inspect service-owned transports, including after a WebView reload.
+
+    Only aggregate allowlisted states/counters: never export native session
+    identifiers, SDP, candidates, peer identities, or control-message contents.
+    """
+    live = getattr(service, "_native_webrtc_live", None)
+    if live is None:
+        return {"status": "unavailable"}
+    sessions = list(live)
+    channels = dict.fromkeys(("connecting", "open", "closing", "closed", "unavailable"), 0)
+    ice = dict.fromkeys(("new", "checking", "connected", "completed", "disconnected", "failed", "closed", "unavailable"), 0)
+    result = {"status": "available", "sessions": len(sessions), "attached": 0,
+              "stats_unavailable": 0, "received_packets": 0, "received_controls": 0,
+              "channels": channels, "ice": ice}
+    for session_id in sessions:
+        try:
+            stats = service.native_webrtc_stats(session_id)
+            if not isinstance(stats, dict):
+                raise ValueError("Native statistics unavailable")
+        except Exception:
+            stats = {}
+            result["stats_unavailable"] += 1
+        result["attached"] += stats.get("attached") is True
+        for counts, key in ((channels, "data_channel_state"), (ice, "ice_connection_state")):
+            state = stats.get(key)
+            counts[state if isinstance(state, str) and state in counts else "unavailable"] += 1
+        for key in ("received_packets", "received_controls"):
+            value = stats.get(key)
+            if type(value) is int and 0 <= value <= 2**53 - 1:
+                result[key] = min(2**53 - 1, result[key] + value)
+    return result
+
+
 def reconnect_state(service):
     # reconnect_profiles() promotes pending capabilities and creates device
     # state. Diagnostic inspection must only read the persisted profiles.
@@ -223,7 +257,8 @@ def report(service):
     result = {"format_version":1, "service_version":installed, "captured_at":int(time.time()),
         "retention_days":7, "event_limit":LIMIT, "native_check_counts":"unavailable",
         "receipt_status":"see_event_timestamp", "approval_status":"see_event_timestamp",
-        "current_state":current_state(service), "current_reconnect":reconnect_state(service), **value}
+        "current_state":current_state(service), "current_native_webrtc":native_webrtc_state(service),
+        "current_reconnect":reconnect_state(service), **value}
     while len(json.dumps(result).encode()) >= 65536 and result["events"]:
         result["events"] = result["events"][1:]
         result["truncated"] = True

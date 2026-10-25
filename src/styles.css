@@ -193,6 +193,14 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .new-group-button { color: var(--green-800); background: #eef3ee; border: 1px solid #cbd8cf; }
 .sidebar__footer { display: flex; flex: 0 0 auto; align-items: center; gap: 8px; padding: 5px 20px 16px; color: var(--muted); font-size: 0.73rem; }
 .network-dot { width: 8px; height: 8px; background: #b76a61; border-radius: 50%; }.network-dot--on { background: #4e9a71; box-shadow: 0 0 0 3px #dcebe2; }
+.contact-requests-entry { flex-shrink: 0; }
+.contact-request-item { padding: 16px 0; border-bottom: 1px solid var(--line); overflow-wrap: anywhere; }
+.contact-request-item h4 { margin: 0 0 6px; }
+.contact-request-item p { margin: 8px 0; }
+.contact-request-item details { font-size: .82rem; }
+.contact-request-fingerprint { font-family: monospace; }
+.contact-requests .dialog-actions { flex-wrap: wrap; }
+.contact-requests .button { max-width: 100%; padding-top: 10px; padding-bottom: 10px; white-space: normal; }
 .request-card { margin: 3px 14px 10px; padding: 12px; background: #fff9e8; border: 1px solid #e7d9ad; border-radius: 13px; }
 .request-card > div { display: flex; align-items: center; gap: 10px; }.request-card > div:last-child { margin-top: 10px; }.request-card .button { min-height: 34px; padding: 0 12px; font-size: .78rem; }
 .request-card span { display: grid; }.request-card small { color: #766c50; }

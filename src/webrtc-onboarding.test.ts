@@ -314,6 +314,8 @@ describe("WebRTC onboarding handoff", () => {
   });
 
   it("keeps review, sending, errors, and unhanded sessions visible", () => {
+    expect(shouldAutoCloseWebRTCOnboarding("connected", "idle", true)).toBe(false);
+    expect(shouldAutoCloseWebRTCOnboarding("connected", "unknown", true)).toBe(false);
     expect(shouldAutoCloseWebRTCOnboarding("connected", "preview", true)).toBe(false);
     expect(shouldAutoCloseWebRTCOnboarding("connected", "sending", true)).toBe(false);
     expect(shouldAutoCloseWebRTCOnboarding("connected", "error", true)).toBe(false);

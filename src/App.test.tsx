@@ -5890,3 +5890,40 @@ describe("notification routing", () => {
     });
   });
 });
+
+
+describe("saved contact requests", () => {
+  it("reopens a saved invitation from the sidebar and moves acceptance to waiting for approval", async () => {
+    let current: Snapshot = { ...snapshot(), contact_invitations: [{
+      id: "saved-invitation", state: "pending", received_at: 1, expires_at: 4_000_000_000,
+      expired: false, native_connected: true, workspace: null,
+      preview: { display_name: "Taylor", destination_hash: incoming.destination_hash,
+        identity_hash: incoming.identity_hash, fingerprint: incoming.fingerprint, hints: [], expires_at: 4_000_000_000 },
+    }] };
+    api.runtimePlatform.mockResolvedValue("desktop");
+    api.initializeService.mockResolvedValue(current);
+    api.onInvitation.mockResolvedValue(() => undefined);
+    api.onServiceEvent.mockResolvedValue(() => undefined);
+    api.serviceCommand.mockImplementation(async (command: string, payload?: Record<string, unknown>) => {
+      if (command === "snapshot") return current;
+      if (command === "decide_contact_invitation") {
+        expect(payload).toEqual({ invitation_id: "saved-invitation", accept: true });
+        current = { ...current, contact_invitations: [], contacts: [{ ...incoming, trust: "awaiting_consent" }] };
+        return current.contacts[0];
+      }
+      return {};
+    });
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Contact requests 1" }));
+    let dialog = await screen.findByRole("dialog", { name: "Contact requests" });
+    expect(within(dialog).getByRole("button", { name: "Accept contact" })).toBeTruthy();
+    fireEvent.keyDown(dialog, { key: "Escape" });
+    expect(screen.queryByRole("dialog", { name: "Contact requests" })).toBeNull();
+    expect(api.serviceCommand).not.toHaveBeenCalledWith("decide_contact_invitation", expect.anything());
+    fireEvent.click(screen.getByRole("button", { name: "Contact requests 1" }));
+    dialog = await screen.findByRole("dialog", { name: "Contact requests" });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Accept contact" }));
+    expect(await within(dialog).findByRole("heading", { name: "Waiting for approval" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Contact requests" })).toBeTruthy();
+  });
+});

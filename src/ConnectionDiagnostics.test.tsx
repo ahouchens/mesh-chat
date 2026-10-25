@@ -145,6 +145,25 @@ it("does not turn missing or invalid current evidence into a healthy transport",
   expect(JSON.stringify(renderer)).not.toContain("secret");
 });
 
+it("distinguishes native Android sessions from the empty browser registry", () => {
+  const text = diagnosticReport({}, {current_native_webrtc: {status: "available", sessions: 1, attached: 1,
+    stats_unavailable: 0, received_packets: 12, received_controls: 3,
+    channels: {open: 1}, ice: {completed: 1}, session_id: "private-session", sdp: "private-sdp"}});
+  const report = JSON.parse(text);
+  expect(report.current_webrtc.source).toBe("renderer");
+  expect(report.current_webrtc.sessions).toBe(0);
+  expect(report.current_native_webrtc.source).toBe("native_service");
+  expect(report.current_native_webrtc.sessions).toBe(1);
+  expect(report.current_native_webrtc.channels.open).toBe(1);
+  expect(report.current_native_webrtc.ice.completed).toBe(1);
+  expect(report.current_native_webrtc.received_controls).toBe(3);
+  expect(text).not.toContain("private-");
+  const missing = JSON.parse(diagnosticReport({}, {})).current_native_webrtc;
+  expect(missing.status).toBe("unavailable");
+  expect(missing.sessions).toBeNull();
+  expect(missing.channels.open).toBeNull();
+});
+
 it("includes reconnect readiness reasons after restart without private pairing details", () => {
   const text = diagnosticReport({}, {current_reconnect:{status:"available", mailbox_configured:true,
     profiles:1, profiles_ready:0, profiles_with_mailbox:1, local_consent:0, peer_consent:0,

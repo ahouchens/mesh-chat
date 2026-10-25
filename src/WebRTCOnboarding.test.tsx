@@ -9,11 +9,12 @@ const mocks = vi.hoisted(() => ({
   getWebRTCSessionByKey: vi.fn(),
   updateWebRTCSessionContact: vi.fn(),
   updateWebRTCSessionApprovalPending: vi.fn(),
+  onServiceEvent: vi.fn(),
 }));
 
 vi.mock("./api", () => ({
   serviceCommand: mocks.serviceCommand,
-  onServiceEvent: vi.fn(async () => () => undefined),
+  onServiceEvent: mocks.onServiceEvent,
 }));
 vi.mock("./webrtc-onboarding", async (importOriginal) => ({
   ...await importOriginal<typeof import("./webrtc-onboarding")>(),
@@ -143,6 +144,8 @@ beforeEach(() => {
   vi.useFakeTimers();
   vi.setSystemTime(new Date("2026-10-23T22:00:00Z"));
   vi.clearAllMocks();
+  mocks.onServiceEvent.mockReset();
+  mocks.onServiceEvent.mockResolvedValue(() => undefined);
   mocks.getWebRTCSessionByKey.mockReset();
   FakePeer.instances = [];
   finishGatheringImmediately = true;
@@ -316,6 +319,53 @@ describe("manual WebRTC answer exchange", () => {
     expect(mocks.serviceCommand).not.toHaveBeenCalledWith("native_webrtc_close", expect.anything());
   });
 
+  it("keeps Android listening until a delayed contact invitation can be reviewed and accepted", async () => {
+    vi.stubGlobal("navigator", { userAgent: "Android" });
+    const unlisten = vi.fn();
+    mocks.onServiceEvent.mockResolvedValue(unlisten);
+    const runCommand = mocks.serviceCommand.getMockImplementation()!;
+    mocks.serviceCommand.mockImplementation(async (command: string, payload: unknown) => {
+      if (command === "native_webrtc_stats") return { attached: true };
+      if (command === "receive_contact_invitation") return { id: "saved-invitation", state: "pending", preview: { display_name: "Alex", fingerprint: "verified-peer" }, workspace: null };
+      if (command === "decide_contact_invitation") return { id: "contact-alex" };
+      if (command === "native_webrtc_control") return { accepted: true };
+      return runCommand(command, payload);
+    });
+    const onClose = vi.fn();
+    const onChanged = vi.fn(async () => undefined);
+    const view = render(<WebRTCOnboardingDialog onClose={onClose} onChanged={onChanged} />);
+    await act(async () => undefined);
+    fireEvent.click(screen.getByRole("button", { name: "Join with WebRTC" }));
+    fireEvent.change(screen.getByLabelText("Paste the signed WebRTC offer or mailbox code"), { target: { value: offerDocument } });
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Review and create answer" })); });
+    expect(screen.getByText("WebRTC path connected")).toBeTruthy();
+    // The native path is open, but the inviter may still be creating its
+    // signed contact document. It must survive the old 1.5-second timer.
+    await advance(5_000);
+    expect(onClose).not.toHaveBeenCalled();
+    expect(unlisten).not.toHaveBeenCalled();
+    expect(mocks.serviceCommand).not.toHaveBeenCalledWith("decide_contact_invitation", expect.anything());
+    const sessionId = mocks.serviceCommand.mock.calls.find(([command]) => command === "native_webrtc_accept")![1].session_id;
+    const receive = mocks.onServiceEvent.mock.calls[0][0];
+    await act(async () => {
+      receive({ type: "event", event: "webrtc_control", session_id: sessionId,
+        label: "mesh-onboarding", data: JSON.stringify({ type: "contact_invitation", document: "signed-invitation" }) });
+    });
+    expect(screen.getByRole("button", { name: "Accept contact" })).toBeTruthy();
+    await advance(5_000);
+    expect(onClose).not.toHaveBeenCalled();
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Accept contact" })); });
+    expect(mocks.serviceCommand).toHaveBeenCalledWith("decide_contact_invitation", { invitation_id: "saved-invitation", accept: true });
+    expect(mocks.serviceCommand).toHaveBeenCalledWith("native_webrtc_control", {
+      session_id: sessionId, label: "mesh-onboarding", text: JSON.stringify({ type: "invitation_accepted" }),
+    });
+    expect(screen.getByText(/Contact request sent/)).toBeTruthy();
+    await advance(1_500);
+    expect(onClose).toHaveBeenCalledTimes(1);
+    view.unmount();
+    expect(mocks.serviceCommand).not.toHaveBeenCalledWith("native_webrtc_close", expect.anything());
+  });
+
   it("adds a late control channel to the same registered onboarding session", async () => {
     const { pc } = await join();
     await act(async () => { pc.openIncomingChannel(); });
@@ -422,11 +472,31 @@ describe("manual WebRTC answer exchange", () => {
     });
   });
 
+  it("saves an invitation received after the connected browser dialog unmounts", async () => {
+    const implementation = mocks.serviceCommand.getMockImplementation();
+    mocks.serviceCommand.mockImplementation(async (command: string, payload?: unknown) => {
+      if (command === "receive_contact_invitation") return { id: "saved-invitation", state: "pending", preview: { display_name: "Alex", fingerprint: "fingerprint" }, workspace: null };
+      return implementation?.(command, payload);
+    });
+    const view = await join();
+    let control!: FakeChannel;
+    await act(async () => {
+      view.pc.openIncomingChannel();
+      control = view.pc.openControlChannel();
+    });
+    view.unmount();
+    await act(async () => {
+      control.onmessage?.({ data: JSON.stringify({ type: "contact_invitation", document: "signed-invitation" }) });
+    });
+    expect(mocks.serviceCommand).toHaveBeenCalledWith("receive_contact_invitation", { document: "signed-invitation", peer_destination: "peer" });
+    expect(mocks.serviceCommand).not.toHaveBeenCalledWith("decide_contact_invitation", expect.anything());
+  });
+
   it("ignores an invitation preview that finishes after its control channel closes", async () => {
     const implementation = mocks.serviceCommand.getMockImplementation();
     let finishPreview!: (value: unknown) => void;
     mocks.serviceCommand.mockImplementation(async (command: string, payload?: unknown) => {
-      if (command === "preview_invitation") return new Promise((resolve) => { finishPreview = resolve; });
+      if (command === "receive_contact_invitation") return new Promise((resolve) => { finishPreview = resolve; });
       return implementation?.(command, payload);
     });
     const { pc } = await join();
@@ -438,17 +508,17 @@ describe("manual WebRTC answer exchange", () => {
     });
     await act(async () => {
       control.close();
-      finishPreview({ display_name: "Alex", fingerprint: "fingerprint" });
+      finishPreview({ id: "saved-invitation", state: "pending", preview: { display_name: "Alex", fingerprint: "fingerprint" }, workspace: null });
     });
     expect(screen.queryByRole("button", { name: "Accept contact" })).toBeNull();
-    expect(mocks.serviceCommand.mock.calls.some(([command]) => command === "accept_invitation")).toBe(false);
+    expect(mocks.serviceCommand.mock.calls.some(([command]) => command === "decide_contact_invitation")).toBe(false);
   });
 
   it("shares the service's reconnect capability during contact acceptance without changing preferences", async () => {
     const implementation = mocks.serviceCommand.getMockImplementation();
     mocks.serviceCommand.mockImplementation(async (command: string, payload?: unknown) => {
-      if (command === "preview_invitation") return { display_name: "Alex", fingerprint: "fingerprint" };
-      if (command === "accept_invitation") return { id: "contact-alex", reconnect_capabilities: "signed-reconnect-settings" };
+      if (command === "receive_contact_invitation") return { id: "saved-invitation", state: "pending", preview: { display_name: "Alex", fingerprint: "fingerprint" }, workspace: null };
+      if (command === "decide_contact_invitation") return { id: "contact-alex", reconnect_capabilities: "signed-reconnect-settings" };
       return implementation?.(command, payload);
     });
     const { pc } = await join();
@@ -463,7 +533,7 @@ describe("manual WebRTC answer exchange", () => {
       fireEvent.click(screen.getByRole("button", { name: "Accept contact" }));
     });
 
-    expect(mocks.serviceCommand).toHaveBeenCalledWith("accept_invitation", { invitation: "signed-invitation" });
+    expect(mocks.serviceCommand).toHaveBeenCalledWith("decide_contact_invitation", { invitation_id: "saved-invitation", accept: true });
     expect(control.send).toHaveBeenCalledWith(JSON.stringify({
       type: "invitation_accepted", capabilities: "signed-reconnect-settings",
     }));

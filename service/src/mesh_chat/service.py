@@ -14,6 +14,7 @@ import LXMF
 import RNS
 
 from .background_availability import BackgroundAvailabilityMixin
+from .contact_invitations import ContactInvitationsMixin
 from .native_webrtc_control import NativeWebRTCControlMixin
 from .app_protocol import (
     DELIVERY_WINDOW_SECONDS,
@@ -160,6 +161,7 @@ def _payload(
 
 
 class MeshChatService(
+    ContactInvitationsMixin,
     NativeWebRTCControlMixin,
     BackgroundAvailabilityMixin,
     ReconnectServiceMixin,
@@ -185,6 +187,7 @@ class MeshChatService(
         "create_invitation",
         "preview_invitation",
         "accept_invitation",
+        "receive_contact_invitation", "decide_contact_invitation",
         "create_connection_reply",
         "preview_connection_reply",
         "connect_using_reply",
@@ -3550,6 +3553,7 @@ class MeshChatService(
         snapshot = {
             "profile": profile,
             "contacts": contacts,
+            "contact_invitations": self.contact_invitations(),
             "messages": visible_messages,
             "workspace_invitation_prompts": [
                 {
@@ -3707,6 +3711,13 @@ class MeshChatService(
             return response, command == "shutdown"
 
     def _execute(self, command: str, value: Any) -> Any:
+        if command == "receive_contact_invitation":
+            body = _payload(value, allowed={"document", "peer_destination", "workspace_document"},
+                            required={"document", "peer_destination"})
+            return self.receive_contact_invitation(**body)
+        if command == "decide_contact_invitation":
+            body = _payload(value, allowed={"invitation_id", "accept"}, required={"invitation_id", "accept"})
+            return self.decide_contact_invitation(**body)
         if command in {"connection_diagnostics", "clear_connection_diagnostics"}:
             _payload(value, allowed=set())
             from .connection_diagnostics import report

@@ -24,6 +24,7 @@ import type {
   CallSettings,
   InvitationFormats,
   InvitationPreview,
+  ContactInvitation,
   WorkspaceInvitationFormats,
   WorkspaceInvitationPreview,
 } from "./types";
@@ -190,8 +191,7 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
   const peerDestinationRef = useRef<string | undefined>(undefined);
   const channelRef = useRef<RTCDataChannel | null>(null);
   const controlRef = useRef<RTCDataChannel | null>(null);
-  const controlDocumentRef = useRef("");
-  const workspaceDocumentRef = useRef("");
+  const contactInvitationIdRef = useRef("");
   const roleRef = useRef<"offer" | "join" | null>(null);
   const invitationStartedRef = useRef(false);
   const createOfferBusyRef = useRef(false);
@@ -465,21 +465,21 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
     if (message.type === "contact_invitation" && roleRef.current === "join") {
       if (typeof message.document !== "string" || !message.document) return;
       try {
-        const preview = await serviceCommand<InvitationPreview>("preview_invitation", { invitation: message.document });
+        const saved = await serviceCommand<ContactInvitation>("receive_contact_invitation", {
+          document: message.document,
+          peer_destination: peerDestinationRef.current,
+          ...(typeof message.workspace_document === "string" && message.workspace_document
+            ? { workspace_document: message.workspace_document } : {}),
+        });
+        await onChanged();
         if (!current()) return;
-        controlDocumentRef.current = message.document;
-        setContactInvitation(preview);
-        if (typeof message.workspace_document === "string" && message.workspace_document) {
-          const workspace = await serviceCommand<WorkspaceInvitationPreview>("preview_workspace_invitation", {
-            invitation: message.workspace_document,
-          });
-          if (!current()) return;
-          workspaceDocumentRef.current = message.workspace_document;
-          setWorkspaceInvitation(workspace);
-        } else {
-          workspaceDocumentRef.current = "";
-          setWorkspaceInvitation(null);
+        if (saved.state !== "pending") {
+          setOnboarding(saved.state === "accepted" ? "waiting-approval" : "declined");
+          return;
         }
+        contactInvitationIdRef.current = saved.id;
+        setContactInvitation(saved.preview);
+        setWorkspaceInvitation(saved.workspace);
         setOnboardingError("");
         setOnboarding("preview");
       } catch (reason) {
@@ -982,24 +982,18 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
     setOnboardingBusy(true);
     setOnboardingError("");
     try {
-      if (!controlDocumentRef.current) throw new Error("No contact invitation is available.");
+      if (!contactInvitationIdRef.current) throw new Error("No contact invitation is available.");
       const accepted = await serviceCommand<{ id?: string; reconnect_capabilities?: string }>(
-        "accept_invitation",
-        { invitation: controlDocumentRef.current },
+        "decide_contact_invitation",
+        { invitation_id: contactInvitationIdRef.current, accept: true },
       );
       if (accepted.id) updateWebRTCSessionContact(accepted.id, bridgeRef.current ? `onboarding:${bridgeRef.current.bridgeId}` : undefined);
-      if (workspaceDocumentRef.current) {
-        await serviceCommand("submit_workspace_join", {
-          operation_id: crypto.randomUUID(),
-          invitation: workspaceDocumentRef.current,
-        });
-      }
       await sendControlText(JSON.stringify({
         type: "invitation_accepted",
         ...(accepted.reconnect_capabilities
           ? { capabilities: accepted.reconnect_capabilities }
           : {}),
-      }));
+      })).catch(() => undefined);
       setOnboarding("waiting-approval");
       await onChanged();
     } catch (reason) {
@@ -1010,9 +1004,18 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
     }
   };
 
-  const declineContact = () => {
-    void sendControlText(JSON.stringify({ type: "invitation_declined" }));
-    setOnboarding("declined");
+  const declineContact = async () => {
+    setOnboardingBusy(true);
+    try {
+      await serviceCommand("decide_contact_invitation", { invitation_id: contactInvitationIdRef.current, accept: false });
+      await sendControlText(JSON.stringify({ type: "invitation_declined" })).catch(() => undefined);
+      setOnboarding("declined");
+      await onChanged();
+    } catch (reason) {
+      setOnboardingError(errorMessage(reason));
+    } finally {
+      setOnboardingBusy(false);
+    }
   };
 
   const fetchAnswer = async () => {
@@ -1109,6 +1112,7 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
           {phase === "connecting" && <><p className="direct-host-status" role="status"><RefreshCw size={17} /> Applying the signed answer and opening the DataChannel…</p><p className="muted">If this takes more than 30 seconds, Mesh Chat will stop and report the likely network cause.</p><div className="dialog-actions"><button className="button button--secondary" onClick={close}>Cancel</button></div></>}
           {phase === "connected" && <>
             <p className="direct-host-status" role="status"><Check size={17} /> WebRTC path connected</p>
+            <p className="muted">You can return to saved invitations and approvals from Contact requests in your conversation list.</p>
             <p className="muted">Automatic reconnect is on by default for new approved contacts. When setup is ready, Mesh Chat reconnects quietly when both apps are open and unlocked. Check readiness or turn it off in the contact’s Automatic reconnect settings. Your direct IP and relay choices still apply.</p>
             {onboarding === "preview" && contactInvitation ? <div className="remote-consent">
               <h3>Contact invitation</h3>

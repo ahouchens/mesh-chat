@@ -54,7 +54,7 @@ class NativeWebRTCControlMixin:
         return contact["id"] if contact else None
 
     def _native_control_receive(self, session_id, label, text):
-        if len(text) > MAX_CONTROL_LENGTH or session_id not in self._native_webrtc_live:
+        if len(text) > 65_536 or session_id not in self._native_webrtc_live:
             return
         # Only sessions bound by signed signaling or a verified reconnect
         # profile may update capabilities.
@@ -65,6 +65,13 @@ class NativeWebRTCControlMixin:
         try:
             message = json.loads(text)
             if not isinstance(message, dict):
+                return
+            if label == "mesh-onboarding" and message.get("type") == "contact_invitation":
+                # Save before emitting the renderer event: the WebView may be
+                # suspended or its invitation dialog may already be closed.
+                self.receive_contact_invitation(message.get("document"), peer, message.get("workspace_document"))
+                return
+            if len(text) > MAX_CONTROL_LENGTH:
                 return
             state = self._native_webrtc_controls.setdefault(session_id, {})
             if message.get("type") == "connection_capabilities_request":
