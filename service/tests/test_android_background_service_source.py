@@ -73,10 +73,12 @@ def test_native_webrtc_host_is_pinned_and_isolated() -> None:
     context = (ANDROID / "NativeWebRtcContext.kt").read_text(encoding="utf-8")
     assert "PeerConnection" not in context
     assert "PeerConnectionFactory" not in context
+    bridge = (ANDROID / "NativeWebRtcBridge.kt").read_text(encoding="utf-8")
+    assert "org.webrtc" not in bridge
     plugin = (ANDROID / "MeshRuntimePlugin.kt").read_text(encoding="utf-8")
-    # Normal app startup must not load libwebrtc or construct a peer factory.
-    assert "NativeWebRtcHost.initialize" not in plugin
-    assert "NativeWebRtcContext.attach" in plugin
+    # Normal app startup must not reference the native WebRTC class at all.
+    assert "NativeWebRtcHost" not in plugin
+    assert "NativeWebRtcBridge.attach" in plugin
 
 
 def test_plugin_does_not_suspend_when_availability_is_enabled() -> None:

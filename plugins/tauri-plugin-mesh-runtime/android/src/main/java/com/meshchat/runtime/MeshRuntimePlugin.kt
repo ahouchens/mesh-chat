@@ -521,7 +521,7 @@ class MeshRuntimePlugin(private val activity: Activity) : Plugin(activity) {
             try {
                 val profileDir = activity.filesDir.resolve("mesh-chat/profile-v1")
                 check(profileDir.mkdirs() || profileDir.isDirectory)
-                NativeWebRtcContext.attach(activity.applicationContext)
+                NativeWebRtcBridge.attach(activity.applicationContext)
                 val request = JSONObject()
                     .put("profile_dir", profileDir.canonicalPath)
                     .put("vault_key", Base64.encodeToString(vaultKey(), Base64.NO_WRAP))
@@ -839,7 +839,7 @@ class MeshRuntimePlugin(private val activity: Activity) : Plugin(activity) {
     @Command
     fun shutdown(invoke: Invoke) {
         BackgroundRuntime.stop(activity)
-        NativeWebRtcHost.closeAll()
+        NativeWebRtcBridge.closeAll()
         pythonExecutor.execute {
             try {
                 val result = bridge("shutdown")

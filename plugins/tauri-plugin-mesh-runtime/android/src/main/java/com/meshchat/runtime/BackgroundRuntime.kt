@@ -97,7 +97,7 @@ object BackgroundRuntime {
     fun stop(context: Context) {
         configure(context)
         setEnabled(context, false)
-        NativeWebRtcHost.closeAll()
+        NativeWebRtcBridge.closeAll()
         context.stopService(Intent(context, MeshAvailabilityService::class.java))
     }
 
@@ -118,7 +118,7 @@ object BackgroundRuntime {
         val profileDir = appContext.filesDir.resolve("mesh-chat/profile-v1")
         check(profileDir.mkdirs() || profileDir.isDirectory)
         try {
-            NativeWebRtcHost.initialize(appContext)
+            NativeWebRtcBridge.initialize(appContext)
         } catch (error: Throwable) {
             // A native-library failure must not take down the Python runtime or
             // the foreground service; native sessions will report unavailable.
