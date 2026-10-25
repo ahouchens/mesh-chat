@@ -818,7 +818,11 @@ class MeshRuntimePlugin(private val activity: Activity) : Plugin(activity) {
         try {
             BackgroundRuntime.configure(activity.applicationContext)
             if (enabled && !BackgroundRuntime.notificationAllowed()) {
-                invoke.reject("notification_permission_required")
+                // Preserve the actionable code through Rust's mobile_result;
+                // a plugin rejection is flattened to availability_unavailable.
+                resolve(invoke, JSONObject().put("ok", false)
+                    .put("error", JSONObject().put("code", "notification_permission_required"))
+                    .toString())
                 return
             }
             if (enabled) {

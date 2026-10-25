@@ -1,3 +1,9 @@
 include ':app'
 
 apply from: 'tauri.settings.gradle'
+
+// CI-only optimized app host; never bundled in the shipped application.
+if (providers.gradleProperty('meshWebRtcSmoke').orNull == 'true') {
+    include ':webrtc-smoke'
+    project(':webrtc-smoke').projectDir = new File(settingsDir, '../../../plugins/tauri-plugin-mesh-runtime/android/webrtc-smoke')
+}

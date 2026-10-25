@@ -8,11 +8,11 @@ cd "$task_root/src-tauri/gen/android"
 result=0
 # RNS, CPython and WebView are process-wide runtimes. Each direction starts
 # with a fresh instrumentation process, just as a fresh app launch does.
-for method in chromiumOfferCanBeAcceptedThroughTheRealPythonBridge nativeOfferCanConnectToChromiumWithReconnectControl; do
-  ./gradlew :tauri-plugin-mesh-runtime:connectedDebugAndroidTest \
-    -PmeshRuntimeAbis=x86_64 --no-configuration-cache \
+for method in chromiumOfferCanBeAcceptedThroughTheRealPythonBridge nativeOfferCanConnectToChromiumWithReconnectControl backgroundRuntimeCanInitializeNativeWebRtc; do
+  ./gradlew :webrtc-smoke:connectedReleaseAndroidTest \
+    -PmeshWebRtcSmoke=true -PmeshRuntimeAbis=x86_64 --no-configuration-cache \
     "-Pandroid.testInstrumentationRunnerArguments.class=com.meshchat.runtime.NativeWebRtcInteropTest#$method" || result=1
-  cp -R "$task_root/plugins/tauri-plugin-mesh-runtime/android/build/reports/androidTests" \
+  cp -R "$task_root/plugins/tauri-plugin-mesh-runtime/android/webrtc-smoke/build/reports/androidTests" \
     "$task_root/dist/reports/android-webrtc/$method" || true
 done
 exit "$result"

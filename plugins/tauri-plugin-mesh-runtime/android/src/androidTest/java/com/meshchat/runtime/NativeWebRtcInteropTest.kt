@@ -61,6 +61,23 @@ class NativeWebRtcInteropTest {
     @Test(timeout = 180_000) fun chromiumOfferCanBeAcceptedThroughTheRealPythonBridge() = exchange(nativeOffers = false)
     @Test(timeout = 180_000) fun nativeOfferCanConnectToChromiumWithReconnectControl() = exchange(nativeOffers = true)
 
+    @Test(timeout = 90_000) fun backgroundRuntimeCanInitializeNativeWebRtc() {
+        BackgroundRuntime.configure(context)
+        try {
+            assertTrue(JSONObject(BackgroundRuntime.initialize()).optBoolean("ok"))
+            val status = JSONObject(BackgroundRuntime.status())
+            assertTrue(status.optBoolean("runtime_initialized"))
+            assertTrue(status.optBoolean("native_webrtc_ready"))
+            command("snapshot")
+        } finally {
+            NativeWebRtcHost.closeAll()
+            BackgroundRuntime.onRuntimeShutdown()
+            if (Python.isStarted()) {
+                Python.getInstance().getModule("mesh_chat.mobile_bridge").callAttr("shutdown")
+            }
+        }
+    }
+
     private fun assertCloseDoesNotBlockTheMainThread(channels: JSONArray) {
         val id = "cancel-${UUID.randomUUID()}"
         val worker = Executors.newSingleThreadExecutor()

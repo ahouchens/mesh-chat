@@ -20,8 +20,10 @@ from pathlib import Path
 
 try:
     from .publish_android_release import AndroidReleaseError, publish_android_release
+    from .verify_android_webrtc import verify_android_webrtc
 except ImportError:  # Direct execution: python scripts/build_android.py
     from publish_android_release import AndroidReleaseError, publish_android_release
+    from verify_android_webrtc import verify_android_webrtc
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -575,6 +577,9 @@ def main() -> int:
         return result or 1
 
     try:
+        if release:
+            # Validate the final optimized bytes before publishing any aliases.
+            print("Android WebRTC JNI:", json.dumps(verify_android_webrtc(built_artifact)))
         manifest = publish_android_release(
             built_artifact,
             variant="release" if release else "debug",

@@ -10,6 +10,7 @@ on:
       - 'src-tauri/**'
       - 'scripts/build_android.py'
       - 'scripts/test_android_webrtc.sh'
+      - 'scripts/verify_android_webrtc.py'
       - 'package.json'
       - 'pnpm-lock.yaml'
       - '.github/workflows/android-webrtc.yml'
@@ -23,7 +24,7 @@ concurrency:
 
 jobs:
   android:
-    name: Android build and native Chromium interop
+    name: Android build and optimized native Chromium interop
     runs-on: ubuntu-latest
     timeout-minutes: 120
     steps:
@@ -67,10 +68,12 @@ jobs:
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
-      - name: Build native WebRTC instrumentation APK
+      - name: Build optimized WebRTC test host and instrumentation APK
         working-directory: src-tauri/gen/android
-        run: ./gradlew :tauri-plugin-mesh-runtime:assembleDebugAndroidTest -PmeshRuntimeAbis=x86_64 --no-configuration-cache
-      - name: Test real Chromium and native WebRTC data channels
+        run: ./gradlew :webrtc-smoke:assembleRelease :webrtc-smoke:assembleReleaseAndroidTest -PmeshWebRtcSmoke=true -PmeshRuntimeAbis=x86_64 --no-configuration-cache
+      - name: Verify optimized WebRTC JNI classes
+        run: python scripts/verify_android_webrtc.py plugins/tauri-plugin-mesh-runtime/android/webrtc-smoke/build/outputs/apk/release/webrtc-smoke-release.apk
+      - name: Test real Chromium and optimized native WebRTC data channels
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 35
@@ -87,5 +90,8 @@ jobs:
             dist/reports/**
             plugins/tauri-plugin-mesh-runtime/android/build/reports/androidTests/**
             plugins/tauri-plugin-mesh-runtime/android/build/outputs/androidTest-results/**
+            plugins/tauri-plugin-mesh-runtime/android/webrtc-smoke/build/reports/androidTests/**
+            plugins/tauri-plugin-mesh-runtime/android/webrtc-smoke/build/outputs/androidTest-results/**
+            plugins/tauri-plugin-mesh-runtime/android/webrtc-smoke/build/outputs/mapping/**
           if-no-files-found: warn
           retention-days: 14
