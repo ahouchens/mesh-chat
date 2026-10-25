@@ -15,7 +15,7 @@ from .direct_candidates import prepare_candidates
 from .direct_admitted_carrier import AdmittedCarrier
 from .direct_relationship import relationship_id, record_success
 from . import direct_recovery_protocol as protocol
-from .errors import ValidationError
+from .errors import NativeUnavailable, ValidationError
 from .invitations import canonical_bytes
 from .workspace_protocol import _destination_for, _identity_from_public_key
 from .workspace_wire import build_workspace_fields
@@ -63,7 +63,13 @@ class _PendingNativeOwnership:
         with self.recovery._lock:
             self.closed = True
             for handle in list(self.handles):
-                self.native.request("close", id=handle)
+                try:
+                    self.native.request("close", id=handle)
+                except NativeUnavailable:
+                    # Channel shutdown/reset already retires all native
+                    # ownership. A worker or service finalizer can arrive here
+                    # afterward and must still finish its local cleanup.
+                    pass
                 self.handles.discard(handle)
 
 
