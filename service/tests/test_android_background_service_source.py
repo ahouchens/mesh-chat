@@ -69,6 +69,11 @@ def test_native_webrtc_host_is_pinned_and_isolated() -> None:
     assert '"meshchat-reconnect"' in host
     assert "native_webrtc_event" in host
     assert "media" not in host.lower() or "data-only" in host.lower()
+    assert "CONTROL_LIMIT = 65_536" in host
+    assert 'val limit = if (label == "mesh-reticulum")' in host
+    assert "16_384" not in host
+    assert 'specs.none { it.label == "mesh-reticulum" && it.binary }' in host
+    assert "label !in session.expectedChannels" in host
 
     context = (ANDROID / "NativeWebRtcContext.kt").read_text(encoding="utf-8")
     assert "PeerConnection" not in context
@@ -80,6 +85,11 @@ def test_native_webrtc_host_is_pinned_and_isolated() -> None:
     # Normal app startup must not reference the native WebRTC class at all.
     assert "NativeWebRtcHost" not in plugin
     assert "NativeWebRtcBridge.attach" in plugin
+    proguard = (
+        ROOT / "src-tauri" / "gen" / "android" / "app" / "proguard-rules.pro"
+    ).read_text(encoding="utf-8")
+    assert "-keep class com.meshchat.runtime.NativeWebRtcHost { *; }" in proguard
+    assert "-keep class com.meshchat.runtime.NativeWebRtcBridge { *; }" in proguard
 
 
 def test_plugin_does_not_suspend_when_availability_is_enabled() -> None:

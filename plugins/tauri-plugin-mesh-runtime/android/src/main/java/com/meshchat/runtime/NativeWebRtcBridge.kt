@@ -19,6 +19,7 @@ object NativeWebRtcBridge {
 
     @JvmStatic
     fun initialize(context: Context) {
+        NativeWebRtcContext.attach(context)
         try {
             val host = Class.forName(HOST)
             host.getMethod("initialize", Context::class.java).invoke(null, context)

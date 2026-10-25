@@ -76,6 +76,7 @@ import { WebRTCOnboardingDialog } from "./WebRTCOnboarding";
 import { ReconnectSettings } from "./ReconnectSettings";
 import { createReconnectCoordinator } from "./reconnect-runtime";
 import { closeNativeReconnectSessions } from "./reconnect-runtime";
+import { closeNativeWebRTCSessions } from "./native-webrtc";
 import type { ReconnectCoordinator } from "./reconnect-coordinator";
 import { closeWebRTCSession, getWebRTCSession, getWebRTCSessionCount, getWebRTCSessionForContact, getWebRTCSessions, getWebRTCSessionWithControl, subscribeWebRTCSessions, updateWebRTCSessionApprovalPending, updateWebRTCSessionContact, type WebRTCSessionPath } from "./webrtc-session";
 import { CONNECTION_TRANSPORT_CHOICES, type ConnectionTransportKind } from "./connection-transport";
@@ -4792,6 +4793,8 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
       window.removeEventListener("pageshow", wake);
       document.removeEventListener("visibilitychange", wake);
       void reconnectCoordinator.stop();
+      closeNativeReconnectSessions();
+      void closeNativeWebRTCSessions();
       void closeWebRTCSession();
     };
   }, [reconnectCoordinator]);
@@ -6546,8 +6549,8 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
               known: networkAvailable && Boolean(selectedApprovedContact.route_kind && selectedApprovedContact.route_kind !== "unavailable"),
             } : undefined}
             onReview={() => { if (pending[0]) setDismissedRequests((current) => current.filter((id) => id !== pending[0].id)); }}
-            onReconnect={async () => { closeNativeReconnectSessions(); await closeWebRTCSession().finally(() => { setWebRtcSessionActive(false); setWebRtcSessionCount(0); setWebrtcPath("unknown"); setConnectEntryOpen(true); void refresh(true); }); }}
-            onDisconnect={async () => { closeNativeReconnectSessions(); await closeWebRTCSession().finally(() => { setWebRtcSessionActive(false); setWebRtcSessionCount(0); void refresh(true); }); }} />
+            onReconnect={async () => { closeNativeReconnectSessions(); await closeNativeWebRTCSessions(); await closeWebRTCSession().finally(() => { setWebRtcSessionActive(false); setWebRtcSessionCount(0); setWebrtcPath("unknown"); setConnectEntryOpen(true); void refresh(true); }); }}
+            onDisconnect={async () => { closeNativeReconnectSessions(); await closeNativeWebRTCSessions(); await closeWebRTCSession().finally(() => { setWebRtcSessionActive(false); setWebRtcSessionCount(0); void refresh(true); }); }} />
         )}
         {incomingCall && !callContactId && (
           <div className="incoming-call-banner" role="status">

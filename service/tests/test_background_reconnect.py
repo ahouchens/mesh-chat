@@ -71,6 +71,7 @@ class Service:
         return {"attached": True, "session_id": session_id}
 
     def native_webrtc_close(self, session_id: str) -> dict[str, Any]:
+        self.calls.append(f"close:{session_id}")
         return {"state": "closed"}
 
 
@@ -105,3 +106,13 @@ def test_non_preferred_side_offers_with_native_transport() -> None:
     assert session_id.startswith("background-")
     assert service.calls == ["native_offer", "offer", "native_apply"]
     assert service.published == [("profile-1", "offer-document", "offer")]
+
+
+def test_stop_closes_native_sessions_instead_of_leaking_them() -> None:
+    service = Service(preferred=False)
+    supervisor = BackgroundReconnectSupervisor(service)
+    supervisor._sessions["profile-1"] = "background-session-1"
+    supervisor._attempt_session_id = "background-session-2"
+    supervisor.stop()
+    assert "close:background-session-1" in service.calls
+    assert "close:background-session-2" in service.calls

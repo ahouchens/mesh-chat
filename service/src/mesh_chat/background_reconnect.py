@@ -27,6 +27,7 @@ class BackgroundReconnectSupervisor:
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self._sessions: dict[str, str] = {}
+        self._attempt_session_id: str | None = None
 
     def start(self) -> None:
         if self._thread is not None and self._thread.is_alive():
@@ -45,6 +46,16 @@ class BackgroundReconnectSupervisor:
         self._thread = None
         if thread is not None and thread is not threading.current_thread():
             thread.join(timeout=2.0)
+        pending = [*self._sessions.values()]
+        if self._attempt_session_id:
+            pending.append(self._attempt_session_id)
+        self._sessions.clear()
+        self._attempt_session_id = None
+        for session_id in pending:
+            try:
+                self.service.native_webrtc_close(session_id)
+            except Exception:
+                pass
 
     def _run(self) -> None:
         failures: dict[str, int] = {}
@@ -86,6 +97,16 @@ class BackgroundReconnectSupervisor:
                 contact_id = profile.get("contact_id")
                 if not isinstance(profile_id, str) or not isinstance(contact_id, str):
                     continue
+                if not profile.get("active"):
+                    # An explicit per-contact stop must survive a background
+                    # supervisor restart. Otherwise reactivate a consented
+                    # profile the same way the renderer coordinator does.
+                    if profile.get("state") == "stopped":
+                        continue
+                    try:
+                        self.service.reconnect_start(contact_id)
+                    except Exception:
+                        continue
                 session_id = self._sessions.get(profile_id)
                 if session_id:
                     try:
@@ -106,6 +127,13 @@ class BackgroundReconnectSupervisor:
                     failures[profile_id] = 0
                 except Exception:
                     failures[profile_id] = attempts + 1
+                    pending = self._attempt_session_id
+                    self._attempt_session_id = None
+                    if pending:
+                        try:
+                            self.service.native_webrtc_close(pending)
+                        except Exception:
+                            pass
             self._stop.wait(5.0)
 
     def _attempt(self, profile: dict[str, Any]) -> str:
@@ -116,6 +144,7 @@ class BackgroundReconnectSupervisor:
         ice = service.call_ice_servers()
         attempt_id = uuid.uuid4().hex
         session_id = f"background-{attempt_id[:20]}"
+        self._attempt_session_id = session_id
         deadline = time.monotonic() + MAX_ATTEMPT_SECONDS
         if preferred:
             request = service.reconnect_request_create(contact_id, attempt_id)
@@ -156,6 +185,7 @@ class BackgroundReconnectSupervisor:
             )
             service.native_webrtc_apply_answer(session_id, answer["sdp"])
         self._wait_attached(session_id, deadline)
+        self._attempt_session_id = None
         return session_id
 
     def _fetch(self, profile_id: str, role: str, deadline: float) -> str:

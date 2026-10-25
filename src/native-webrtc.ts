@@ -37,6 +37,25 @@ export const NATIVE_RECONNECT_CHANNELS: NativeChannelSpec[] = [
   { label: "meshchat-reconnect", binary: false, ordered: true },
 ];
 
+const activeSessions = new Set<string>();
+
+export function rememberNativeWebRTCSession(sessionId: string): void {
+  activeSessions.add(sessionId);
+}
+
+export function forgetNativeWebRTCSession(sessionId: string): void {
+  activeSessions.delete(sessionId);
+}
+
+/** Close every native session this WebView created, including onboarding. */
+export async function closeNativeWebRTCSessions(): Promise<void> {
+  const sessions = [...activeSessions];
+  activeSessions.clear();
+  await Promise.all(sessions.map((sessionId) =>
+    serviceCommand("native_webrtc_close", { session_id: sessionId }).catch(() => undefined)
+  ));
+}
+
 function nativeIce(ice: CallIceConfiguration): NativeIceConfiguration {
   return {
     iceTransportPolicy: ice.iceTransportPolicy,
@@ -58,6 +77,9 @@ export function nativeWebRTCOffer(
     session_id: sessionId,
     ice: nativeIce(ice),
     channels,
+  }).then((result) => {
+    rememberNativeWebRTCSession(sessionId);
+    return result;
   });
 }
 
@@ -73,6 +95,9 @@ export function nativeWebRTCAccept(
     offer_sdp: offerSdp,
     ice: nativeIce(ice),
     channels,
+  }).then((result) => {
+    rememberNativeWebRTCSession(sessionId);
+    return result;
   });
 }
 
@@ -100,6 +125,7 @@ export function nativeWebRTCStats(sessionId: string): Promise<NativeWebRTCStats>
 }
 
 export function nativeWebRTCClose(sessionId: string): Promise<unknown> {
+  forgetNativeWebRTCSession(sessionId);
   return serviceCommand("native_webrtc_close", { session_id: sessionId });
 }
 

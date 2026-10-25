@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import queue
 import threading
 import time
 import uuid
@@ -517,6 +518,13 @@ class MeshChatService(
 
         self._retry_thread = threading.Thread(target=self._retry_loop, daemon=True)
         self._retry_thread.start()
+        self._native_webrtc_events: queue.Queue[tuple[str, str, str] | None] = queue.Queue()
+        self._native_webrtc_event_thread = threading.Thread(
+            target=self._native_webrtc_event_loop,
+            daemon=True,
+            name="mesh-chat-native-webrtc-events",
+        )
+        self._native_webrtc_event_thread.start()
         self._direct_recovery.start()
         if self._background_availability_enabled():
             self._sync_background_reconnect()
@@ -2103,9 +2111,41 @@ class MeshChatService(
         return {"state": "closed"}
 
     def native_webrtc_event(self, event: str, session_id: str, data: str = "") -> None:
-        """Called by NativeWebRtcHost from a WebRTC callback thread."""
+        """Queue a WebRTC callback without blocking the WebRTC/JNI thread.
+
+        The callback can run while a Python command still owns the dispatch
+        lock and is waiting for the native method to return. Taking that lock
+        here would deadlock the command; the worker takes it after the command
+        has unwound.
+        """
         if not isinstance(event, str) or not isinstance(session_id, str):
             return
+        if not isinstance(data, str):
+            return
+        queue_ref = getattr(self, "_native_webrtc_events", None)
+        if queue_ref is None or self._shutdown.is_set():
+            return
+        try:
+            queue_ref.put_nowait((event, session_id, data))
+        except Exception:
+            pass
+
+    def _native_webrtc_event_loop(self) -> None:
+        while not self._shutdown.is_set():
+            try:
+                item = self._native_webrtc_events.get(timeout=0.5)
+            except queue.Empty:
+                continue
+            if item is None:
+                return
+            try:
+                self._handle_native_webrtc_event(*item)
+            except Exception:
+                pass
+
+    def _handle_native_webrtc_event(
+        self, event: str, session_id: str, data: str = ""
+    ) -> None:
         with self._dispatch_lock:
             if event == "open":
                 try:
@@ -2133,7 +2173,7 @@ class MeshChatService(
                     text = base64.b64decode(encoded, validate=True).decode("utf-8")
                 except Exception:
                     return
-                if len(text) <= 16_384:
+                if len(text) <= 65_536:
                     self.emit(
                         {
                             "type": "event",
@@ -2229,7 +2269,7 @@ class MeshChatService(
             not isinstance(session_id, str)
             or label not in {"mesh-onboarding", "meshchat-reconnect"}
             or not isinstance(text, str)
-            or not 1 <= len(text) <= 16_384
+            or not 1 <= len(text) <= 65_536
         ):
             raise ValidationError("Native WebRTC control message is invalid")
         accepted = bool(self._native_webrtc_host().sendControl(session_id, label, text))
@@ -5468,6 +5508,19 @@ class MeshChatService(
                 return
             self._close_started = True
         self._shutdown.set()
+        native_events = getattr(self, "_native_webrtc_events", None)
+        if native_events is not None:
+            try:
+                native_events.put_nowait(None)
+            except Exception:
+                pass
+        native_thread = getattr(self, "_native_webrtc_event_thread", None)
+        if (
+            native_thread is not None
+            and native_thread.is_alive()
+            and native_thread is not threading.current_thread()
+        ):
+            native_thread.join(timeout=0.75)
         supervisor = getattr(self, "_background_reconnect_supervisor", None)
         if supervisor is not None:
             try:
