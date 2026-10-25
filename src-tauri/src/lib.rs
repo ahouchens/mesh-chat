@@ -476,6 +476,8 @@ fn allowed_renderer_command(command: &str) -> bool {
             | "create_invitation"
             | "preview_invitation"
             | "accept_invitation"
+            | "receive_contact_invitation"
+            | "decide_contact_invitation"
             | "create_connection_reply"
             | "preview_connection_reply"
             | "connect_using_reply"

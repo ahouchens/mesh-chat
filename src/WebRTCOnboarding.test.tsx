@@ -326,8 +326,8 @@ describe("manual WebRTC answer exchange", () => {
     const runCommand = mocks.serviceCommand.getMockImplementation()!;
     mocks.serviceCommand.mockImplementation(async (command: string, payload: unknown) => {
       if (command === "native_webrtc_stats") return { attached: true };
-      if (command === "preview_invitation") return { display_name: "Alex", fingerprint: "verified-peer" };
-      if (command === "accept_invitation") return { id: "contact-alex" };
+      if (command === "receive_contact_invitation") return { id: "saved-invitation", state: "pending", preview: { display_name: "Alex", fingerprint: "verified-peer" }, workspace: null };
+      if (command === "decide_contact_invitation") return { id: "contact-alex" };
       if (command === "native_webrtc_control") return { accepted: true };
       return runCommand(command, payload);
     });
@@ -344,7 +344,7 @@ describe("manual WebRTC answer exchange", () => {
     await advance(5_000);
     expect(onClose).not.toHaveBeenCalled();
     expect(unlisten).not.toHaveBeenCalled();
-    expect(mocks.serviceCommand).not.toHaveBeenCalledWith("accept_invitation", expect.anything());
+    expect(mocks.serviceCommand).not.toHaveBeenCalledWith("decide_contact_invitation", expect.anything());
     const sessionId = mocks.serviceCommand.mock.calls.find(([command]) => command === "native_webrtc_accept")![1].session_id;
     const receive = mocks.onServiceEvent.mock.calls[0][0];
     await act(async () => {
@@ -355,7 +355,7 @@ describe("manual WebRTC answer exchange", () => {
     await advance(5_000);
     expect(onClose).not.toHaveBeenCalled();
     await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Accept contact" })); });
-    expect(mocks.serviceCommand).toHaveBeenCalledWith("accept_invitation", { invitation: "signed-invitation" });
+    expect(mocks.serviceCommand).toHaveBeenCalledWith("decide_contact_invitation", { invitation_id: "saved-invitation", accept: true });
     expect(mocks.serviceCommand).toHaveBeenCalledWith("native_webrtc_control", {
       session_id: sessionId, label: "mesh-onboarding", text: JSON.stringify({ type: "invitation_accepted" }),
     });
@@ -472,11 +472,31 @@ describe("manual WebRTC answer exchange", () => {
     });
   });
 
+  it("saves an invitation received after the connected browser dialog unmounts", async () => {
+    const implementation = mocks.serviceCommand.getMockImplementation();
+    mocks.serviceCommand.mockImplementation(async (command: string, payload?: unknown) => {
+      if (command === "receive_contact_invitation") return { id: "saved-invitation", state: "pending", preview: { display_name: "Alex", fingerprint: "fingerprint" }, workspace: null };
+      return implementation?.(command, payload);
+    });
+    const view = await join();
+    let control!: FakeChannel;
+    await act(async () => {
+      view.pc.openIncomingChannel();
+      control = view.pc.openControlChannel();
+    });
+    view.unmount();
+    await act(async () => {
+      control.onmessage?.({ data: JSON.stringify({ type: "contact_invitation", document: "signed-invitation" }) });
+    });
+    expect(mocks.serviceCommand).toHaveBeenCalledWith("receive_contact_invitation", { document: "signed-invitation", peer_destination: "peer" });
+    expect(mocks.serviceCommand).not.toHaveBeenCalledWith("decide_contact_invitation", expect.anything());
+  });
+
   it("ignores an invitation preview that finishes after its control channel closes", async () => {
     const implementation = mocks.serviceCommand.getMockImplementation();
     let finishPreview!: (value: unknown) => void;
     mocks.serviceCommand.mockImplementation(async (command: string, payload?: unknown) => {
-      if (command === "preview_invitation") return new Promise((resolve) => { finishPreview = resolve; });
+      if (command === "receive_contact_invitation") return new Promise((resolve) => { finishPreview = resolve; });
       return implementation?.(command, payload);
     });
     const { pc } = await join();
@@ -488,17 +508,17 @@ describe("manual WebRTC answer exchange", () => {
     });
     await act(async () => {
       control.close();
-      finishPreview({ display_name: "Alex", fingerprint: "fingerprint" });
+      finishPreview({ id: "saved-invitation", state: "pending", preview: { display_name: "Alex", fingerprint: "fingerprint" }, workspace: null });
     });
     expect(screen.queryByRole("button", { name: "Accept contact" })).toBeNull();
-    expect(mocks.serviceCommand.mock.calls.some(([command]) => command === "accept_invitation")).toBe(false);
+    expect(mocks.serviceCommand.mock.calls.some(([command]) => command === "decide_contact_invitation")).toBe(false);
   });
 
   it("shares the service's reconnect capability during contact acceptance without changing preferences", async () => {
     const implementation = mocks.serviceCommand.getMockImplementation();
     mocks.serviceCommand.mockImplementation(async (command: string, payload?: unknown) => {
-      if (command === "preview_invitation") return { display_name: "Alex", fingerprint: "fingerprint" };
-      if (command === "accept_invitation") return { id: "contact-alex", reconnect_capabilities: "signed-reconnect-settings" };
+      if (command === "receive_contact_invitation") return { id: "saved-invitation", state: "pending", preview: { display_name: "Alex", fingerprint: "fingerprint" }, workspace: null };
+      if (command === "decide_contact_invitation") return { id: "contact-alex", reconnect_capabilities: "signed-reconnect-settings" };
       return implementation?.(command, payload);
     });
     const { pc } = await join();
@@ -513,7 +533,7 @@ describe("manual WebRTC answer exchange", () => {
       fireEvent.click(screen.getByRole("button", { name: "Accept contact" }));
     });
 
-    expect(mocks.serviceCommand).toHaveBeenCalledWith("accept_invitation", { invitation: "signed-invitation" });
+    expect(mocks.serviceCommand).toHaveBeenCalledWith("decide_contact_invitation", { invitation_id: "saved-invitation", accept: true });
     expect(control.send).toHaveBeenCalledWith(JSON.stringify({
       type: "invitation_accepted", capabilities: "signed-reconnect-settings",
     }));

@@ -70,6 +70,7 @@ import { contactConnectionLabel, deliveryLabel, workspaceJoinStatus } from "./st
 import { EmojiGlyph } from "./EmojiGlyph";
 import { WorkspaceMessageMenu } from "./WorkspaceMessageMenu";
 import { ConnectionDiagnostics } from "./ConnectionDiagnostics";
+import { ContactRequests } from "./ContactRequests";
 import { ConnectionStatus } from "./ConnectionStatus";
 import { DirectConnectionSetup } from "./DirectConnectionSetup";
 import { DirectRecovery } from "./DirectRecovery";
@@ -103,6 +104,7 @@ import type {
   ConnectionDocumentFormats,
   ConnectionReplyPreview,
   Contact,
+  ContactInvitation,
   DirectDoctorReport,
   DirectDoctorStep,
   Group,
@@ -4872,6 +4874,9 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
   const [joinWorkspaceValue, setJoinWorkspaceValue] = useState("");
   const [inviteWorkspaceOpen, setInviteWorkspaceOpen] = useState(false);
   const [pendingJoinsOpen, setPendingJoinsOpen] = useState(false);
+  const [contactRequestsOpen, setContactRequestsOpen] = useState(false);
+  const [invitationBusy, setInvitationBusy] = useState<string | null>(null);
+  const [invitationError, setInvitationError] = useState("");
   const [workspacePeopleOpen, setWorkspacePeopleOpen] = useState(false);
   const [workspaceAuthorityOpen, setWorkspaceAuthorityOpen] = useState(false);
   const [workspaceDevicesOpen, setWorkspaceDevicesOpen] = useState(false);
@@ -5046,11 +5051,14 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
   const contacts = snapshot.contacts.filter((contact) => contact.trust !== "pending_request" && contact.display_name.toLowerCase().includes(normalizedQuery) && (!hiddenConversationKeys.has(`direct:${contact.id}`) || revealDeletedConversations));
   const visibleGroups = groups.filter((group) => (group.title.toLowerCase().includes(normalizedQuery) || group.members.some((member) => member.display_name.toLowerCase().includes(normalizedQuery))) && (!hiddenConversationKeys.has(`group:${group.id}`) || revealDeletedConversations));
   const pending = snapshot.contacts.filter((contact) => contact.trust === "pending_request");
-  const incomingRequest = pending.find((contact) => !dismissedRequests.includes(contact.id)) ?? null;
+  const contactInvitations = (snapshot.contact_invitations ?? []).filter((item) => item.state === "pending");
+  const awaitingContacts = snapshot.contacts.filter((contact) => contact.trust === "awaiting_consent");
+  const contactRequestCount = pending.length + contactInvitations.length;
+  const incomingRequest = contactRequestsOpen ? null : pending.find((contact) => !dismissedRequests.includes(contact.id)) ?? null;
   const incomingGroupInvitation = groupInvitations.find((invitation) => !dismissedGroupInvitations.includes(invitation.id)) ?? null;
-  const foregroundGroupInvitation = incomingRequest ? null : incomingGroupInvitation;
+  const foregroundGroupInvitation = incomingRequest || contactRequestsOpen ? null : incomingGroupInvitation;
   const incomingWorkspaceJoinRequest = workspaceJoinRequests.find((request) => !dismissedWorkspaceJoinRequests.includes(request.id) && workspaces.some((workspace) => workspace.id === request.workspace_id)) ?? null;
-  const foregroundWorkspaceJoinRequest = incomingRequest || foregroundGroupInvitation ? null : incomingWorkspaceJoinRequest;
+  const foregroundWorkspaceJoinRequest = incomingRequest || foregroundGroupInvitation || contactRequestsOpen ? null : incomingWorkspaceJoinRequest;
   const foregroundWorkspaceJoinWorkspace = foregroundWorkspaceJoinRequest
     ? workspaces.find((workspace) => workspace.id === foregroundWorkspaceJoinRequest.workspace_id) ?? null
     : null;
@@ -5653,6 +5661,30 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
   };
   const connectionHelp = async () => {
     if (selectedContact) setHelp(await serviceCommand("connection_help", { contact_id: selectedContact.id }));
+  };
+  const respondToContactInvitation = async (invitation: ContactInvitation, accept: boolean) => {
+    setInvitationBusy(invitation.id);
+    setInvitationError("");
+    try {
+      const accepted = await serviceCommand<{ id?: string; reconnect_capabilities?: string }>(
+        "decide_contact_invitation", { invitation_id: invitation.id, accept },
+      );
+      for (const session of getWebRTCSessions()) {
+        if (session.controlPurpose === "reconnect" || session.peerDestination !== invitation.preview.destination_hash) continue;
+        if (accept && accepted.id) updateWebRTCSessionContact(accepted.id, session.key);
+        try {
+          if (session.control?.readyState === "open") session.control.send(JSON.stringify({
+            type: accept ? "invitation_accepted" : "invitation_declined",
+            ...(accepted.reconnect_capabilities ? { capabilities: accepted.reconnect_capabilities } : {}),
+          }));
+        } catch { /* The decision is saved; delivery resumes when the peer is reachable. */ }
+      }
+      await refresh(true);
+    } catch (reason) {
+      setInvitationError(errorMessage(reason));
+    } finally {
+      setInvitationBusy(null);
+    }
   };
   const respondToRequest = async (contact: Contact, accept: boolean) => {
     setRequestBusy(contact.id);
@@ -6360,6 +6392,10 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
       setWorkspacePeopleOpen(false);
       return;
     }
+    if (contactRequestsOpen) {
+      setContactRequestsOpen(false);
+      return;
+    }
     if (pendingJoinsOpen) {
       setPendingJoinsOpen(false);
       return;
@@ -6442,7 +6478,7 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
       return;
     }
     if (selection) selectConversation(null);
-  }, [activeSpaceId, closeReactionPicker, contactsOpen, conversationDetailsOpen, createWorkspaceOpen, deleteBusy, deleteTarget, foregroundGroupInvitation, foregroundWorkspaceJoinRequest, help, incomingRequest, inviteWorkspaceOpen, joinWorkspaceOpen, mobileSidebarOpen, newChat, newGroup, onInvitationHandled, reactionTarget, selectedWorkspace, selection, settings, workspaceAccessOpen, workspaceAuthorityOpen, workspaceBrowseOpen, workspaceCreateChannelOpen, workspaceDevicesOpen, workspaceHeaderMenuOpen, workspaceManageChannelOpen, workspaceMentionsOpen, workspacePeopleOpen, workspaceRetentionOpen, workspaceSearchOpen, workspaceSettingsOpen, workspaceThreadRootId, workspaceThreadsOpen]);
+  }, [activeSpaceId, closeReactionPicker, contactRequestsOpen, contactsOpen, conversationDetailsOpen, createWorkspaceOpen, deleteBusy, deleteTarget, foregroundGroupInvitation, foregroundWorkspaceJoinRequest, help, incomingRequest, inviteWorkspaceOpen, joinWorkspaceOpen, mobileSidebarOpen, newChat, newGroup, onInvitationHandled, reactionTarget, selectedWorkspace, selection, settings, workspaceAccessOpen, workspaceAuthorityOpen, workspaceBrowseOpen, workspaceCreateChannelOpen, workspaceDevicesOpen, workspaceHeaderMenuOpen, workspaceManageChannelOpen, workspaceMentionsOpen, workspacePeopleOpen, workspaceRetentionOpen, workspaceSearchOpen, workspaceSettingsOpen, workspaceThreadRootId, workspaceThreadsOpen]);
 
   const mobileBackHandlerRef = useRef(handleMobileBack);
   // Keep the single native listener pointed at the newest committed render.
@@ -6472,6 +6508,7 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
       || workspacePeopleOpen
       || inviteWorkspaceOpen
       || pendingJoinsOpen
+      || contactRequestsOpen
       || joinWorkspaceOpen
       || createWorkspaceOpen
       || workspaceHeaderMenuOpen
@@ -6517,6 +6554,7 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
         <header className="sidebar__top"><Brand /><div><button className="icon-button" onClick={() => { setContactsInitialId(null); setContactsOpen(true); }} aria-label="Contacts" title="Contacts"><BookUser size={19} /></button><button className="icon-button" onClick={() => void onLock()} aria-label="Lock Mesh Chat" title="Lock Mesh Chat"><LockKeyhole size={18} /></button><button className="icon-button" onClick={() => setSettings(true)} aria-label="Settings" title="Settings"><Settings size={19} /></button></div></header>
         {workspacesEnabled && <WorkspaceSwitcher workspaces={workspaces} activeId={activeSpaceId} onSelect={(id) => { setActiveSpaceId(id); setMobileSidebarOpen(true); setWorkspaceError(""); setWorkspaceActionError(""); }} onCreate={() => setCreateWorkspaceOpen(true)} onJoin={() => { setJoinWorkspaceValue(""); setJoinWorkspaceOpen(true); }} />}
         {activeSpaceId === "personal" ? <>
+        <button className="workspace-nav-action contact-requests-entry" type="button" onClick={() => { setInvitationError(""); setRequestError(""); setContactRequestsOpen(true); }}><UserRoundPlus size={17} />Contact requests {contactRequestCount > 0 && <b className="unread-badge">{contactRequestCount}</b>}</button>
         <div className="search-box"><Search size={17} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Filter conversations" aria-label="Filter conversations" />{query && <button type="button" className="search-box__clear" onClick={() => setQuery("")} aria-label="Clear conversation filter"><X size={16} /></button>}</div>
         {conversationActionError && <p className="form-error sidebar-action-error" role="alert">{conversationActionError}</p>}
         <nav className="contact-list" aria-label="Conversations">
@@ -6845,6 +6883,7 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
       {notificationTarget && !notificationTarget.available && <Dialog title="Notification unavailable" onClose={onNotificationHandled}><div className="form-stack"><p>{notificationTarget.message ?? "This notification is no longer available or authorized on this device."}</p><p className="muted">Mesh Chat did not open stale content or change any read state.</p><Button onClick={onNotificationHandled}>Done</Button></div></Dialog>}
       {deleteTarget && <div className={hasForegroundRequest ? "dialog-suspended" : ""} aria-hidden={hasForegroundRequest ? true : undefined}><DeleteConversationDialog kind={deleteTarget.kind === "contact" ? "direct" : "group"} name={deleteTargetName} busy={deleteBusy} error={deleteError} onCancel={() => { if (!deleteBusy) { setDeleteError(""); setDeleteTarget(null); } }} onConfirm={() => void deleteConversation()} /></div>}
       {help && <div className={hasForegroundRequest ? "dialog-suspended" : ""} aria-hidden={hasForegroundRequest ? true : undefined}><Dialog title="Connection help" onClose={() => setHelp(null)}><div className="help-content">{help.code === "service_unavailable" ? <><WifiOff size={28} /><h3>Networking is unavailable</h3><p>Connect this device to the same local network as {selectedContact?.display_name}, make sure local-network access is allowed, then reopen Mesh Chat.</p></> : help.code === "waiting_for_keys" ? <><WifiOff size={28} /><h3>Trying to find {selectedContact?.display_name}</h3><p>Keep Mesh Chat open on both devices and connect them to the same local network. We’ll continue trying automatically.</p></> : help.code === "no_route" ? <><WifiOff size={28} /><h3>We can’t reach them yet</h3><p>Your message is saved. Try the same local network, check local-network permission, or request a fresh invitation with a usable connection hint.</p></> : <><Check size={28} /><h3>The secure path is ready</h3><p>Mesh Chat is continuing the connection automatically.</p></>}<Button onClick={() => setHelp(null)}>Done</Button></div></Dialog></div>}
+      {contactRequestsOpen && <Dialog title="Contact requests" onClose={() => setContactRequestsOpen(false)}><ContactRequests invitations={contactInvitations} approvals={pending} waiting={awaitingContacts} busy={Boolean(invitationBusy || requestBusy)} error={invitationError || requestError} connectedPeers={getWebRTCSessions().filter((session) => session.control?.readyState === "open" && session.peerDestination).map((session) => session.peerDestination!)} onInvitation={(invitation, accept) => void respondToContactInvitation(invitation, accept)} onApproval={(contact, approve) => void respondToRequest(contact, approve)} /></Dialog>}
       {incomingRequest && <IncomingRequestDialog contact={incomingRequest} busy={requestBusy === incomingRequest.id} error={requestError} onAccept={() => void respondToRequest(incomingRequest, true)} onDecline={() => void respondToRequest(incomingRequest, false)} onClose={() => { setRequestError(""); setDismissedRequests((current) => [...new Set([...current, incomingRequest.id])]); }} />}
       {foregroundGroupInvitation && <GroupInvitationDialog invitation={foregroundGroupInvitation} busy={groupInvitationBusy === foregroundGroupInvitation.id} error={groupInvitationError} onAccept={() => void respondToGroupInvitation(foregroundGroupInvitation, true)} onDecline={() => void respondToGroupInvitation(foregroundGroupInvitation, false)} onClose={() => { setGroupInvitationError(""); setDismissedGroupInvitations((current) => [...new Set([...current, foregroundGroupInvitation.id])]); }} />}
       {pendingJoinsOpen && <WorkspacePendingJoinsDialog requests={workspaceJoinRequests} workspaces={workspaces} busy={workspaceActionBusy} error={workspaceJoinRequestError} onApprove={(request, role) => void respondToWorkspaceJoin(request, true, role)} onDecline={(request) => void respondToWorkspaceJoin(request, false)} onClose={() => setPendingJoinsOpen(false)} />}
