@@ -57,8 +57,8 @@ class NativeWebRtcInteropTest {
         throw AssertionError("Native transport did not become ready: $last")
     }
 
-    @Test fun chromiumOfferCanBeAcceptedThroughTheRealPythonBridge() = exchange(nativeOffers = false)
-    @Test fun nativeOfferCanConnectToChromiumWithReconnectControl() = exchange(nativeOffers = true)
+    @Test(timeout = 180_000) fun chromiumOfferCanBeAcceptedThroughTheRealPythonBridge() = exchange(nativeOffers = false)
+    @Test(timeout = 180_000) fun nativeOfferCanConnectToChromiumWithReconnectControl() = exchange(nativeOffers = true)
 
     private fun exchange(nativeOffers: Boolean) {
         val id = "interop-${UUID.randomUUID()}"
@@ -149,6 +149,8 @@ class NativeWebRtcInteropTest {
             assertEquals("probe-reply", results.await(control, "probe-reply"))
             command("native_webrtc_close", JSONObject().put("session_id", id))
             assertFalse(JSONObject(NativeWebRtcHost.stats(id)).optBoolean("ok"))
+            Thread.sleep(300) // Let late close/state callbacks drain before leaving the test.
+            command("snapshot")
             js("pc.close()")
         } finally {
             NativeWebRtcHost.closeAll()
