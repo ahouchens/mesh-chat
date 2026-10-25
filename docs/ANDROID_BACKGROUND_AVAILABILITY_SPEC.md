@@ -5,7 +5,9 @@ qualification. The Android foreground service, native WebRTC host, native
 onboarding/reconnect cutover, Python background reconnect supervisor, renderer
 opt-in, and focused tests are in the tree. Doze, network-switch, 16 KB
 page-size, APK-size, and physical Windows↔Android qualification remain release
-gates. This document remains the design and qualification plan.
+gates. The native-WebRTC decision is recorded in
+[ADR 0024](adr/0024-android-background-availability-native-webrtc.md). This
+document remains the design and qualification plan.
 
 This proposal supersedes the following statements when accepted:
 
@@ -261,7 +263,9 @@ Adoption is gated on:
   `zipalign -c -P 16 -v 4` and `readelf -l` (`LOAD` alignment 0x4000), not just
   a successful build.
 - **APK size.** The arm64 native library is expected to add several megabytes;
-  measure the actual release APK and update the size budget.
+  measure the actual release APK and update the size budget. The 0.9.36 CI
+  arm64 release APK (including libwebrtc) measured 46,741,669 bytes and passed
+  `zipalign -c -P 16 -v 4`; this is the current budget baseline.
 - **License/notices.** Add the WebRTC license and any transitive notices to
   `THIRD_PARTY_NOTICES.md`.
 - **ABI policy.** The app currently publishes `arm64-v8a` only; keep that.
