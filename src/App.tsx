@@ -3581,8 +3581,9 @@ function JoinWorkspaceDialog({ initialValue = "", promptId, promptWorkspaceName,
   }, [promptId]);
   const review = async () => { await reviewCandidate(value); };
   useEffect(() => {
-    if (lastReviewInput.current?.value === initialValue && lastReviewInput.current.promptId === promptId) return;
-    lastReviewInput.current = { value: initialValue, promptId };
+    const reviewPromptId = promptId ?? null;
+    if (lastReviewInput.current?.value === initialValue && lastReviewInput.current.promptId === reviewPromptId) return;
+    lastReviewInput.current = { value: initialValue, promptId: reviewPromptId };
     reviewGeneration.current += 1;
     setBusy(false); setValue(initialValue); setError("");
     setPreview(null); setDevicePreview(null); setRemoteConsent(false); setI2PConsent(false);
