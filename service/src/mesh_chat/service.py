@@ -3229,15 +3229,14 @@ class MeshChatService(
             "workspace-contact-invite", invitation.nonce.hex()
         )
         existing = self.store.get("workspace_contact_invite", prompt_id)
-        if existing is not None and existing.get("state") != "dismissed":
+        # A dismissed prompt is a tombstone for this signed invitation nonce.
+        # Retain it until expiry so LXMF retries cannot recreate the banner.
+        if existing is not None:
             self._ensure_receipt(contact, app.logical_id, app.conversation_id)
             return
         now = time.time()
         for stale in self.store.list("workspace_contact_invite"):
-            if (
-                stale.get("state") == "dismissed"
-                or float(stale.get("expires_at", 0)) <= now
-            ):
+            if float(stale.get("expires_at", 0)) <= now:
                 self.store.delete("workspace_contact_invite", stale["id"])
         if len([
             item

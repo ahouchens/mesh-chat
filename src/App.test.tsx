@@ -5082,6 +5082,61 @@ describe("desktop workspaces", () => {
     ));
   });
 
+  it("dismisses a received workspace invitation even while its snapshot is stale", async () => {
+    const current: Snapshot = {
+      ...snapshot([approved]),
+      workspace_invitation_prompts: [{
+        id: "prompt-one", workspace_id: "invited-workspace", workspace_name: "Direct Test",
+        description: "", owner_fingerprint: "AAAA BBBB CCCC DDDD", member_count: 1,
+        retention_days: 90, expires_at: 2_000_000_000, invitation: "signed-invitation",
+        contact_id: approved.id, contact_display_name: approved.display_name,
+        received_at: 1_800_000_000, state: "pending",
+      }],
+    };
+    api.runtimePlatform.mockResolvedValue("android");
+    api.initializeService.mockResolvedValue(current);
+    api.onInvitation.mockResolvedValue(() => undefined);
+    api.onServiceEvent.mockResolvedValue(() => undefined);
+    api.onMobileBackButton.mockResolvedValue(() => undefined);
+    api.serviceCommand.mockImplementation(async (command: string) => {
+      if (command === "snapshot") return current;
+      return {};
+    });
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Dismiss" }));
+    await waitFor(() => expect(api.serviceCommand).toHaveBeenCalledWith(
+      "dismiss_workspace_invitation_prompt", { prompt_id: "prompt-one" },
+    ));
+    await waitFor(() => expect(screen.queryByText(/invited you to Direct Test/)).toBeNull());
+  });
+
+  it("shows a retryable error if a workspace invitation cannot be dismissed", async () => {
+    const current: Snapshot = {
+      ...snapshot([approved]),
+      workspace_invitation_prompts: [{
+        id: "prompt-one", workspace_id: "invited-workspace", workspace_name: "Direct Test",
+        description: "", owner_fingerprint: "AAAA BBBB CCCC DDDD", member_count: 1,
+        retention_days: 90, expires_at: 2_000_000_000, invitation: "signed-invitation",
+        contact_id: approved.id, contact_display_name: approved.display_name,
+        received_at: 1_800_000_000, state: "pending",
+      }],
+    };
+    api.runtimePlatform.mockResolvedValue("android");
+    api.initializeService.mockResolvedValue(current);
+    api.onInvitation.mockResolvedValue(() => undefined);
+    api.onServiceEvent.mockResolvedValue(() => undefined);
+    api.onMobileBackButton.mockResolvedValue(() => undefined);
+    api.serviceCommand.mockImplementation(async (command: string) => {
+      if (command === "snapshot") return current;
+      if (command === "dismiss_workspace_invitation_prompt") throw new Error("service unavailable");
+      return {};
+    });
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Dismiss" }));
+    expect((await screen.findByRole("alert")).textContent).toContain("service unavailable");
+    expect((screen.getByRole("button", { name: "Dismiss" }) as HTMLButtonElement).disabled).toBe(false);
+  });
+
   it("opens an incoming invitation through its matching saved contact prompt", async () => {
     const invitation = JSON.stringify({ type: "workspace_invite", v: 1, signature: "signed" });
     const current: Snapshot = {

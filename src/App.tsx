@@ -4867,8 +4867,13 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
   const [callPeerOverride, setCallPeerOverride] = useState<CallPeer | null>(null);
   const [callSummary, setCallSummary] = useState<CallSummary | undefined>(undefined);
   const [contactInvitePromptId, setContactInvitePromptId] = useState<string | null>(null);
+  const [dismissedContactInviteIds, setDismissedContactInviteIds] = useState<Set<string>>(() => new Set());
+  const [contactInviteDismissBusy, setContactInviteDismissBusy] = useState<string | null>(null);
+  const [contactInviteDismissError, setContactInviteDismissError] = useState<{ id: string; message: string } | null>(null);
   const incomingCall = (snapshot.calls ?? []).find((call) => call.direction === "inbound" && call.state === "ringing");
-  const contactInvitePrompt = (snapshot.workspace_invitation_prompts ?? []).find((prompt) => prompt.state === "pending");
+  const contactInvitePrompt = (snapshot.workspace_invitation_prompts ?? []).find((prompt) =>
+    prompt.state === "pending" && !dismissedContactInviteIds.has(prompt.id),
+  );
   useEffect(() => {
     if (!webrtcSessionActive) return;
     const control = getWebRTCSessionWithControl()?.control;
@@ -4910,7 +4915,7 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
   const [joinWorkspaceValue, setJoinWorkspaceValue] = useState("");
   const joinInvitationValue = joinWorkspaceValue || (isWorkspaceInvitationValue(initialInvitation) ? initialInvitation : "");
   const matchingContactInvitePrompt = (snapshot.workspace_invitation_prompts ?? []).find((prompt) =>
-    prompt.state === "pending" && prompt.invitation === joinInvitationValue,
+    prompt.state === "pending" && !dismissedContactInviteIds.has(prompt.id) && prompt.invitation === joinInvitationValue,
   );
   const reviewContactInvitePromptId = contactInvitePromptId ?? matchingContactInvitePrompt?.id ?? null;
   const reviewContactInviteWorkspaceName = (snapshot.workspace_invitation_prompts ?? []).find((prompt) =>
@@ -6584,11 +6589,17 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
   }, [hasMobileBackTarget]);
 
   const dismissContactInvite = async (promptId: string) => {
+    if (contactInviteDismissBusy) return;
+    setContactInviteDismissBusy(promptId);
+    setContactInviteDismissError(null);
     try {
       await serviceCommand("dismiss_workspace_invitation_prompt", { prompt_id: promptId });
-      await refresh(true);
-    } catch {
-      // A stale prompt disappears on the next snapshot.
+      setDismissedContactInviteIds((current) => new Set(current).add(promptId));
+      void refresh(true).catch(() => undefined);
+    } catch (reason) {
+      setContactInviteDismissError({ id: promptId, message: errorMessage(reason) });
+    } finally {
+      setContactInviteDismissBusy(null);
     }
   };
 
@@ -6681,9 +6692,10 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
             <Users size={18} />
             <span><strong>Workspace invitation</strong><small>{contactInvitePrompt.contact_display_name} invited you to {contactInvitePrompt.workspace_name}. Review it before joining.</small></span>
             <div className="incoming-call-banner__actions">
-              <Button onClick={() => { setContactInvitePromptId(contactInvitePrompt.id); setJoinWorkspaceValue(contactInvitePrompt.invitation); setJoinWorkspaceOpen(true); setMobileSidebarOpen(true); }}>Review</Button>
-              <Button variant="secondary" onClick={() => void dismissContactInvite(contactInvitePrompt.id)}>Dismiss</Button>
+              <Button disabled={contactInviteDismissBusy === contactInvitePrompt.id} onClick={() => { setContactInvitePromptId(contactInvitePrompt.id); setJoinWorkspaceValue(contactInvitePrompt.invitation); setJoinWorkspaceOpen(true); setMobileSidebarOpen(true); }}>Review</Button>
+              <Button variant="secondary" disabled={contactInviteDismissBusy === contactInvitePrompt.id} onClick={() => void dismissContactInvite(contactInvitePrompt.id)}>{contactInviteDismissBusy === contactInvitePrompt.id ? "Dismissing…" : "Dismiss"}</Button>
             </div>
+            {contactInviteDismissError?.id === contactInvitePrompt.id && <p className="form-error" role="alert">{contactInviteDismissError.message}</p>}
           </div>
         )}
         {callContactId && callContact && (
