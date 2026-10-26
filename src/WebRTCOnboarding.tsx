@@ -109,15 +109,19 @@ function documentType(value: string): string {
   }
 }
 
-function offerErrorMessage(reason: unknown): string {
+function offerErrorMessage(reason: unknown, offerVerified = false): string {
   const code = reason && typeof reason === "object" && "code" in reason
     ? String((reason as { code?: unknown }).code ?? "")
     : "";
   if (code === "identity_mismatch") {
-    return "The offer signature could not be verified. Copy the complete current offer from the device that created it; if it was regenerated, use the new offer.";
+    return offerVerified
+      ? "The verified offer could not be bound to this WebRTC session. Create a fresh offer and try again."
+      : "The offer signature could not be verified. Copy the complete current offer from the device that created it; if it was regenerated, use the new offer.";
   }
   if (code === "invalid_request") {
-    return "This is not a complete signed WebRTC offer. Copy the entire offer document, including its outer JSON braces.";
+    return offerVerified
+      ? "The offer was verified, but this device could not create an answer. Create a fresh offer and try again."
+      : "The signed WebRTC offer could not be verified. Create a fresh offer and copy it again.";
   }
   return reason instanceof Error ? reason.message : "The WebRTC offer could not be verified.";
 }
@@ -838,6 +842,7 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
     setMailboxCode("");
     setError(""); setPhase("review");
     setDiagnostics("");
+    let offerVerified = false;
     try {
       let rawOffer = normalizeWebRTCOfferInput(offerInput);
       if (!rawOffer.includes("\"type\"")) {
@@ -859,6 +864,7 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
         document: rawOffer,
       });
       if (attemptRef.current !== attempt) return;
+      offerVerified = true;
       peerDestinationRef.current = preview.signer_destination;
       setOfferPreview(preview);
       const ice = await serviceCommand<CallIceConfiguration>("call_ice_servers");
@@ -974,7 +980,7 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
       setPhase("waiting-owner");
     } catch (reason) {
       if (attemptRef.current !== attempt) return;
-      const message = offerErrorMessage(reason);
+      const message = offerErrorMessage(reason, offerVerified);
       void captureDiagnostics("offer-review-failed", message).finally(() => {
         if (attemptRef.current === attempt) cleanup();
       });

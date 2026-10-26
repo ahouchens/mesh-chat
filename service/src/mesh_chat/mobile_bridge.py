@@ -27,8 +27,18 @@ MAX_JSON_BYTES = 64 * 1024
 # adds a command envelope around that payload, so reserve separate, bounded
 # headroom rather than applying the smaller default request limit to invitations.
 MAX_RENDERER_PAYLOAD_BYTES = 32 * 1024
+MAX_WEBRTC_SIGNALING_PAYLOAD_BYTES = 64 * 1024
 MAX_COMMAND_ENVELOPE_BYTES = 1024
 COMMAND_PAYLOAD_LIMITS = {
+    "webrtc_onboarding_offer": MAX_WEBRTC_SIGNALING_PAYLOAD_BYTES,
+    "verify_webrtc_onboarding_offer": MAX_WEBRTC_SIGNALING_PAYLOAD_BYTES,
+    "webrtc_onboarding_answer": MAX_WEBRTC_SIGNALING_PAYLOAD_BYTES,
+    "verify_webrtc_onboarding_answer": MAX_WEBRTC_SIGNALING_PAYLOAD_BYTES,
+    "native_webrtc_offer": MAX_WEBRTC_SIGNALING_PAYLOAD_BYTES,
+    "native_webrtc_accept": MAX_WEBRTC_SIGNALING_PAYLOAD_BYTES,
+    "native_webrtc_apply_answer": MAX_WEBRTC_SIGNALING_PAYLOAD_BYTES,
+    "native_webrtc_bind_onboarding": MAX_WEBRTC_SIGNALING_PAYLOAD_BYTES,
+    "signal_publish": MAX_WEBRTC_SIGNALING_PAYLOAD_BYTES,
     "preview_direct_connection": 2 * 1024 * 1024,
     "prepare_direct_answer": 2 * 1024 * 1024,
     "prepare_direct_ready": 2 * 1024 * 1024,

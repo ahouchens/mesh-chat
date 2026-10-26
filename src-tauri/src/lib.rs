@@ -52,6 +52,10 @@ const IPC_VERSION: u64 = 1;
 // invalid sidecar length prefix from causing an unbounded allocation.
 const MAX_FRAME_BYTES: usize = 4 * 1024 * 1024;
 const MAX_RENDERER_PAYLOAD_BYTES: usize = 32 * 1024;
+// Signed WebRTC documents may contain a 32 KiB SDP plus JSON escaping and
+// signatures. Keep this above the service's document limit without widening
+// the default renderer command limit.
+const MAX_WEBRTC_SIGNALING_PAYLOAD_BYTES: usize = 64 * 1024;
 const MAX_DIRECT_DOCUMENT_PAYLOAD_BYTES: usize = 2 * 1024 * 1024;
 const MAX_CONNECTION_RESPONSE_PAYLOAD_BYTES: usize = 40 * 1024;
 const MAX_ROUTE_UPDATE_PAYLOAD_BYTES: usize = 24 * 1024;
@@ -59,6 +63,50 @@ const MAX_WORKSPACE_INVITATION_PAYLOAD_BYTES: usize = 600 * 1024;
 const MAX_WORKSPACE_DEVICE_LINK_PAYLOAD_BYTES: usize = 700 * 1024;
 
 type PendingResult = Result<Value, String>;
+
+fn renderer_payload_maximum(command: &str) -> usize {
+    if command == "receive_contact_invitation" {
+        64 * 1024
+    } else if matches!(
+        command,
+        "preview_direct_connection"
+            | "prepare_direct_answer"
+            | "prepare_direct_ready"
+            | "accept_direct_ready"
+            | "connect_direct_setup"
+    ) {
+        MAX_DIRECT_DOCUMENT_PAYLOAD_BYTES
+    } else if matches!(
+        command,
+        "preview_workspace_device_link" | "submit_workspace_device_link"
+    ) {
+        MAX_WORKSPACE_DEVICE_LINK_PAYLOAD_BYTES
+    } else if matches!(
+        command,
+        "preview_workspace_invitation" | "submit_workspace_join" | "create_connection_reply"
+    ) {
+        MAX_WORKSPACE_INVITATION_PAYLOAD_BYTES
+    } else if matches!(command, "preview_connection_reply" | "connect_using_reply") {
+        MAX_CONNECTION_RESPONSE_PAYLOAD_BYTES + 1024
+    } else if matches!(command, "preview_route_update" | "apply_route_update") {
+        MAX_ROUTE_UPDATE_PAYLOAD_BYTES + 1024
+    } else if matches!(
+        command,
+        "webrtc_onboarding_offer"
+            | "verify_webrtc_onboarding_offer"
+            | "webrtc_onboarding_answer"
+            | "verify_webrtc_onboarding_answer"
+            | "native_webrtc_offer"
+            | "native_webrtc_accept"
+            | "native_webrtc_apply_answer"
+            | "native_webrtc_bind_onboarding"
+            | "signal_publish"
+    ) {
+        MAX_WEBRTC_SIGNALING_PAYLOAD_BYTES
+    } else {
+        MAX_RENDERER_PAYLOAD_BYTES
+    }
+}
 
 #[cfg(desktop)]
 #[derive(Clone, Default)]
@@ -1177,40 +1225,7 @@ async fn service_command(
     let size = serde_json::to_vec(&payload)
         .map_err(|_| "invalid_request".to_string())?
         .len();
-    let maximum = if command == "receive_contact_invitation" {
-        64 * 1024
-    } else if matches!(
-        command.as_str(),
-        "preview_direct_connection"
-            | "prepare_direct_answer"
-            | "prepare_direct_ready"
-            | "accept_direct_ready"
-            | "connect_direct_setup"
-    ) {
-        MAX_DIRECT_DOCUMENT_PAYLOAD_BYTES
-    } else if matches!(
-        command.as_str(),
-        "preview_workspace_device_link" | "submit_workspace_device_link"
-    ) {
-        MAX_WORKSPACE_DEVICE_LINK_PAYLOAD_BYTES
-    } else if matches!(
-        command.as_str(),
-        "preview_workspace_invitation" | "submit_workspace_join" | "create_connection_reply"
-    ) {
-        MAX_WORKSPACE_INVITATION_PAYLOAD_BYTES
-    } else if matches!(
-        command.as_str(),
-        "preview_connection_reply" | "connect_using_reply"
-    ) {
-        MAX_CONNECTION_RESPONSE_PAYLOAD_BYTES + 1024
-    } else if matches!(
-        command.as_str(),
-        "preview_route_update" | "apply_route_update"
-    ) {
-        MAX_ROUTE_UPDATE_PAYLOAD_BYTES + 1024
-    } else {
-        MAX_RENDERER_PAYLOAD_BYTES
-    };
+    let maximum = renderer_payload_maximum(&command);
     if size > maximum || contains_forbidden_key(&payload) {
         return Err("invalid_request".into());
     }
@@ -1309,40 +1324,7 @@ async fn service_command(app: AppHandle, command: String, payload: Value) -> Pen
     let size = serde_json::to_vec(&payload)
         .map_err(|_| "invalid_request".to_string())?
         .len();
-    let maximum = if command == "receive_contact_invitation" {
-        64 * 1024
-    } else if matches!(
-        command.as_str(),
-        "preview_direct_connection"
-            | "prepare_direct_answer"
-            | "prepare_direct_ready"
-            | "accept_direct_ready"
-            | "connect_direct_setup"
-    ) {
-        MAX_DIRECT_DOCUMENT_PAYLOAD_BYTES
-    } else if matches!(
-        command.as_str(),
-        "preview_workspace_device_link" | "submit_workspace_device_link"
-    ) {
-        MAX_WORKSPACE_DEVICE_LINK_PAYLOAD_BYTES
-    } else if matches!(
-        command.as_str(),
-        "preview_workspace_invitation" | "submit_workspace_join" | "create_connection_reply"
-    ) {
-        MAX_WORKSPACE_INVITATION_PAYLOAD_BYTES
-    } else if matches!(
-        command.as_str(),
-        "preview_connection_reply" | "connect_using_reply"
-    ) {
-        MAX_CONNECTION_RESPONSE_PAYLOAD_BYTES + 1024
-    } else if matches!(
-        command.as_str(),
-        "preview_route_update" | "apply_route_update"
-    ) {
-        MAX_ROUTE_UPDATE_PAYLOAD_BYTES + 1024
-    } else {
-        MAX_RENDERER_PAYLOAD_BYTES
-    };
+    let maximum = renderer_payload_maximum(&command);
     if size > maximum || contains_forbidden_key(&payload) {
         return Err("invalid_request".into());
     }
@@ -1725,6 +1707,22 @@ pub fn run() {
 #[cfg(all(test, desktop))]
 mod tests {
     use super::*;
+
+    #[test]
+    fn signed_webrtc_exchange_has_room_for_a_full_sdp_document() {
+        for command in [
+            "webrtc_onboarding_offer",
+            "verify_webrtc_onboarding_offer",
+            "webrtc_onboarding_answer",
+            "verify_webrtc_onboarding_answer",
+            "native_webrtc_accept",
+            "native_webrtc_bind_onboarding",
+            "signal_publish",
+        ] {
+            assert_eq!(renderer_payload_maximum(command), 64 * 1024, "{command}");
+        }
+        assert_eq!(renderer_payload_maximum("snapshot"), 32 * 1024);
+    }
 
     #[test]
     fn frame_supports_snapshot_larger_than_legacy_limit() {
