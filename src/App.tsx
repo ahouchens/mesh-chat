@@ -1037,6 +1037,7 @@ function CallDialog({
       pollBusyRef.current = true;
       try {
         const latest = await serviceCommand<CallMedia>("call_media", { call_id: callId });
+        if (!pcRef.current || callIdRef.current !== callId) return;
         setMedia(latest);
         setCall((current) => current ? { ...current, ...latest } : current);
         if (
@@ -1094,6 +1095,7 @@ function CallDialog({
             }
           } catch (reason) {
             failCall(errorMessage(reason));
+            return;
           } finally {
             restartAnswerInFlightRef.current = false;
           }

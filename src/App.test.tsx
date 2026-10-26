@@ -2109,7 +2109,7 @@ describe("contact management", () => {
       expect(audioTrack.stop).toHaveBeenCalledOnce();
       expect(videoTrack.stop).toHaveBeenCalledOnce();
       expect(api.endCallAudio).toHaveBeenCalledOnce();
-      fireEvent.click(within(dialog).getByRole("button", { name: "Close" }));
+      fireEvent.click(within(dialog).getAllByRole("button", { name: "Close" }).at(-1)!);
       expect(api.serviceCommand.mock.calls.some(([command]) => command === "end_call")).toBe(false);
     } finally {
       if (originalMediaDevices) Object.defineProperty(navigator, "mediaDevices", originalMediaDevices);
