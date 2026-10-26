@@ -6166,6 +6166,27 @@ def test_owner_can_send_workspace_invitation_to_verified_contact(tmp_path):
     with pytest.raises(ValidationError, match="unavailable"):
         member.preview_workspace_invitation_prompt(prompts[0]["id"])
 
+    def redeliver(value: str) -> None:
+        member._receive_workspace_contact_invite(
+            contact,
+            SimpleNamespace(
+                invitation=value,
+                logical_id=str(uuid.uuid4()),
+                conversation_id=str(uuid.uuid4()),
+            ),
+        )
+
+    # Both an immediate LXMF retry and a retry after a newer invitation must
+    # leave the dismissed nonce hidden. A distinct invitation remains usable.
+    redeliver(result["invitation"]["value"])
+    assert member.snapshot()["workspace_invitation_prompts"] == []
+    newer = owner.invite_contact_to_workspace(workspace["id"], contact["id"])
+    redeliver(newer["invitation"]["value"])
+    redeliver(result["invitation"]["value"])
+    visible = member.snapshot()["workspace_invitation_prompts"]
+    assert len(visible) == 1
+    assert visible[0]["invitation"] == newer["invitation"]["value"]
+
     contact["trust"] = TrustState.AWAITING_CONSENT.value
     owner.store.put("contact", contact["id"], contact)
     with pytest.raises(ContactNotApproved):
