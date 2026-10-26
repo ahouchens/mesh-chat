@@ -5133,7 +5133,7 @@ describe("desktop workspaces", () => {
     });
     render(<App />);
     fireEvent.click(await screen.findByRole("button", { name: "Dismiss" }));
-    expect((await screen.findByRole("alert")).textContent).toContain("service unavailable");
+    expect((await screen.findByRole("alert")).textContent).toContain("Could not dismiss this invitation. Please try again.");
     expect((screen.getByRole("button", { name: "Dismiss" }) as HTMLButtonElement).disabled).toBe(false);
   });
 

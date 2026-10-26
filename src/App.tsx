@@ -6596,8 +6596,8 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
       await serviceCommand("dismiss_workspace_invitation_prompt", { prompt_id: promptId });
       setDismissedContactInviteIds((current) => new Set(current).add(promptId));
       void refresh(true).catch(() => undefined);
-    } catch (reason) {
-      setContactInviteDismissError({ id: promptId, message: errorMessage(reason) });
+    } catch {
+      setContactInviteDismissError({ id: promptId, message: "Could not dismiss this invitation. Please try again." });
     } finally {
       setContactInviteDismissBusy(null);
     }
