@@ -1,3 +1,5 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
-    <application android:label="Mesh WebRTC CI" android:allowBackup="false" />
+    <application android:label="Mesh WebRTC CI" android:allowBackup="false">
+        <activity android:name=".BackgroundTestActivity" android:exported="false" />
+    </application>
 </manifest>

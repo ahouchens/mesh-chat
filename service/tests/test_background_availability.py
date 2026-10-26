@@ -80,7 +80,10 @@ def test_available_requires_the_actual_native_service_and_initialized_runtime(mo
     host.set_background_availability(True)
     native = {"enabled": True, "service_running": False, "runtime_initialized": False}
     monkeypatch.setattr(host, "_native_background_status", lambda: dict(native))
+    assert host.background_availability_status()["health"] == "stopped"
+    native["start_requested"] = True
     assert host.background_availability_status()["health"] == "starting"
+    native["start_requested"] = False
     native.update(service_running=True, runtime_initialized=True)
     assert host.background_availability_status()["health"] == "available"
     native["native_webrtc_ready"] = False

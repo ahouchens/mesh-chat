@@ -164,6 +164,23 @@ it("distinguishes native Android sessions from the empty browser registry", () =
   expect(missing.channels.open).toBeNull();
 });
 
+it("reports background service evidence separately from the enabled preference", () => {
+  const text = diagnosticReport({}, {current_background: {status: "available", enabled: true,
+    native_enabled: true, health: "stopped", service_running: false, notification_visible: false,
+    restorations: 1, failure: "private-error", token: "private-token"}});
+  const current = JSON.parse(text).current_background;
+  expect(current.enabled).toBe(true);
+  expect(current.service_running).toBe(false);
+  expect(current.notification_visible).toBe(false);
+  expect(current.health).toBe("stopped");
+  expect(current.restorations).toBe(1);
+  expect(current.failure).toBe("unavailable");
+  expect(text).not.toContain("private-");
+  const missing = JSON.parse(diagnosticReport({}, {})).current_background;
+  expect(missing.status).toBe("unavailable");
+  expect(missing.service_running).toBeNull();
+});
+
 it("includes reconnect readiness reasons after restart without private pairing details", () => {
   const text = diagnosticReport({}, {current_reconnect:{status:"available", mailbox_configured:true,
     profiles:1, profiles_ready:0, profiles_with_mailbox:1, local_consent:0, peer_consent:0,

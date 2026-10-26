@@ -52,11 +52,12 @@ class MeshAvailabilityService : Service() {
 
     override fun onCreate() {
         super.onCreate()
-        running = true
         BackgroundRuntime.configure(applicationContext)
         BackgroundRuntime.ensureNotificationChannels()
         try {
             startAsForeground()
+            running = true
+            BackgroundRuntime.onServiceStarted()
         } catch (error: Throwable) {
             Log.e(TAG, "foreground start denied (${error.javaClass.simpleName})")
             running = false
@@ -124,6 +125,7 @@ class MeshAvailabilityService : Service() {
 
     override fun onDestroy() {
         running = false
+        BackgroundRuntime.onServiceStopped()
         releaseLocks()
         BackgroundRuntime.shutdownNotificationPump()
         stopForeground(Service.STOP_FOREGROUND_REMOVE)

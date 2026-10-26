@@ -352,6 +352,7 @@ class MeshRuntimePlugin(private val activity: Activity) : Plugin(activity) {
                     if (value === activity) {
                         sharingHandler.removeCallbacks(suspendAfterSharing)
                         lifecycle("foreground", "activity_resumed")
+                        if (runtimeInitialized) BackgroundRuntime.restoreIfEnabled(activity)
                     }
                 }
                 override fun onActivityPaused(value: Activity) {
@@ -536,13 +537,18 @@ class MeshRuntimePlugin(private val activity: Activity) : Plugin(activity) {
                 }
                 createNotificationChannels()
                 val initialized = bridge("initialize", request.toString())
-                runtimeInitialized = true
+                runtimeInitialized = JSONObject(initialized).optBoolean("ok", false)
+                if (!runtimeInitialized) {
+                    resolve(invoke, initialized)
+                    return@execute
+                }
                 syncNativeState()
                 internalCommand(
                     "mobile_lifecycle_transition",
                     JSONObject().put("state", "foreground").put("reason", "runtime_initialized"),
                 )
                 startNotificationPump()
+                activity.runOnUiThread { BackgroundRuntime.restoreIfEnabled(activity) }
                 resolve(invoke, initialized)
             } catch (error: Throwable) {
                 reject(invoke, "initialize", error)

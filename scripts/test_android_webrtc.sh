@@ -13,10 +13,11 @@ logcat_pid=$!
 trap 'kill "$logcat_pid" 2>/dev/null || true' EXIT
 timeout 90s adb install -r "$apk_dir/release/webrtc-smoke-release.apk"
 timeout 90s adb install -r "$apk_dir/androidTest/release/webrtc-smoke-release-androidTest.apk"
+timeout 15s adb shell pm grant "$app_id" android.permission.POST_NOTIFICATIONS
 result=0
 # RNS, CPython and WebView are process-wide runtimes. Each direction starts
 # with a fresh instrumentation process, just as a fresh app launch does.
-for method in chromiumOfferCanBeAcceptedThroughTheRealPythonBridge nativeOfferCanConnectToChromiumWithReconnectControl backgroundRuntimeCanInitializeNativeWebRtc; do
+for method in chromiumOfferCanBeAcceptedThroughTheRealPythonBridge nativeOfferCanConnectToChromiumWithReconnectControl backgroundRuntimeCanInitializeNativeWebRtc optedInServiceRestoresAndKeepsNativeTrafficWhileActivityIsStopped; do
   timeout 15s adb shell am force-stop "$app_id"
   # Run the already-built APKs directly so a Gradle/UTP hang cannot conceal
   # instrumentation output or prevent the next scenario from running.

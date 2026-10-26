@@ -156,6 +156,28 @@ def test_missing_native_statistics_are_unknown_and_do_not_hide_other_sessions():
     assert diagnostics.native_webrtc_state(SimpleNamespace()) == {"status": "unavailable"}
 
 
+def test_background_diagnostics_distinguish_opt_in_from_running_service():
+    service = SimpleNamespace(store=Store(), background_availability_status=lambda: {
+        "enabled": True, "health": "stopped", "lifecycle_state": "background_available",
+        "native": {"enabled": True, "service_running": False, "runtime_initialized": True,
+                   "notification_visible": False, "restorations": 1, "private": "secret"},
+    })
+    current = diagnostics.report(service)["current_background"]
+    assert current["enabled"] is True
+    assert current["service_running"] is False
+    assert current["notification_visible"] is False
+    assert current["health"] == "stopped"
+    assert current["restorations"] == 1
+    assert "secret" not in json.dumps(current)
+    service.background_availability_status = lambda: {
+        "enabled": "secret", "health": {}, "native": {"failure": "secret", "restorations": True}}
+    current = diagnostics.report(service)["current_background"]
+    assert current["enabled"] is None
+    assert current["health"] == current["failure"] == "unavailable"
+    assert current["restorations"] is None
+    assert "secret" not in json.dumps(current)
+
+
 def test_unreadable_current_outbox_does_not_hide_historical_failure():
     class BrokenListStore(Store):
         def list(self, kind):
