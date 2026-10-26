@@ -70,6 +70,7 @@ struct ServiceState {
     start_lock: Arc<AsyncMutex<()>>,
     pending_invitation: Arc<Mutex<Option<String>>>,
     closing: Arc<AtomicBool>,
+    locked: Arc<AtomicBool>,
 }
 
 #[cfg(desktop)]
@@ -1069,13 +1070,15 @@ fn restore_main_window(app: &AppHandle) {
 }
 
 #[cfg(desktop)]
-#[tauri::command]
-async fn initialize_service(
-    app: AppHandle,
-    state: State<'_, ServiceState>,
+async fn start_or_snapshot_service(
+    app: &AppHandle,
+    state: &ServiceState,
     display_name: Option<String>,
 ) -> PendingResult {
     let _guard = state.start_lock.lock().await;
+    if state.closing.load(Ordering::Acquire) || state.locked.load(Ordering::Acquire) {
+        return Err("service_not_running".into());
+    }
     if state
         .child
         .lock()
@@ -1088,7 +1091,7 @@ async fn initialize_service(
             .app_data_dir()
             .map_err(|_| "profile_path_unavailable".to_string())?
             .join("profile-v1");
-        spawn_service(&app, &state)?;
+        spawn_service(app, state)?;
         let initialized = request(
             &state,
             "initialize",
@@ -1112,7 +1115,21 @@ async fn initialize_service(
 
 #[cfg(desktop)]
 #[tauri::command]
+async fn initialize_service(
+    app: AppHandle,
+    state: State<'_, ServiceState>,
+    display_name: Option<String>,
+) -> PendingResult {
+    // Explicit Unlock is the only path that re-enables a deliberately locked
+    // service. Ordinary commands may recover an unexpected exit below.
+    state.locked.store(false, Ordering::Release);
+    start_or_snapshot_service(&app, &state, display_name).await
+}
+
+#[cfg(desktop)]
+#[tauri::command]
 async fn service_command(
+    app: AppHandle,
     state: State<'_, ServiceState>,
     command: String,
     payload: Value,
@@ -1160,16 +1177,30 @@ async fn service_command(
     if size > maximum || contains_forbidden_key(&payload) {
         return Err("invalid_request".into());
     }
-    request(&state, &command, payload, Duration::from_secs(20)).await
+    let result = request(&state, &command, payload.clone(), Duration::from_secs(20)).await;
+    if result.as_ref().err().is_some_and(|error| error == "service_not_running")
+        && !matches!(command.as_str(), "snapshot" | "workspace_snapshot" | "background_status")
+        && !state.closing.load(Ordering::Acquire)
+        && !state.locked.load(Ordering::Acquire)
+    {
+        // The command was not written, so a single retry is safe even for a
+        // mutation. The start lock coalesces concurrent recovery attempts.
+        start_or_snapshot_service(&app, &state, None).await?;
+        return request(&state, &command, payload, Duration::from_secs(20)).await;
+    }
+    result
 }
 
 #[cfg(desktop)]
 #[tauri::command]
 async fn lock_service(state: State<'_, ServiceState>) -> Result<(), String> {
-    let shutdown = request(&state, "shutdown", json!({}), Duration::from_secs(2)).await;
+    state.locked.store(true, Ordering::Release);
+    let _ = request(&state, "shutdown", json!({}), Duration::from_secs(2)).await;
     tokio::time::sleep(Duration::from_millis(250)).await;
     retire_service_child(&state);
-    shutdown.map(|_| ())
+    // The exact sidecar PID has been retired even if it could not acknowledge
+    // shutdown. Keep the renderer on the locked screen in that case.
+    Ok(())
 }
 
 #[cfg(desktop)]

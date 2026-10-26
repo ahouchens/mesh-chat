@@ -206,6 +206,28 @@ async function advance(ms: number): Promise<void> {
 }
 
 describe("manual WebRTC answer exchange", () => {
+  it("keeps service failures copyable before a peer connection exists", async () => {
+    const clipboard = { writeText: vi.fn().mockResolvedValue(undefined) };
+    vi.stubGlobal("navigator", { userAgent: "Windows NT 10.0", clipboard });
+    const runCommand = mocks.serviceCommand.getMockImplementation()!;
+    mocks.serviceCommand.mockImplementation(async (command: string) => {
+      if (command === "call_ice_servers") throw new Error("service_not_running");
+      return runCommand(command);
+    });
+    render(<WebRTCOnboardingDialog onClose={vi.fn()} onChanged={async () => undefined} />);
+    await act(async () => undefined);
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Create WebRTC invitation" }));
+    });
+    expect(FakePeer.instances).toHaveLength(0);
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Copy diagnostics" }));
+    });
+    expect(JSON.parse(clipboard.writeText.mock.calls[0][0])).toEqual({
+      phase: "offer-failed", message: "service_not_running", peer_connection: "not_created",
+    });
+  });
+
   it.each(["offer", "answer"] as const)("keeps a candidate-rich %s copyable without crashing the renderer", async (kind) => {
     const clipboard = { writeText: vi.fn().mockResolvedValue(undefined) };
     vi.stubGlobal("navigator", { userAgent: "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36", clipboard });
