@@ -2410,7 +2410,7 @@ function BackgroundAvailabilitySettings({
     <div className="settings-section__heading"><h3 id="background-availability-title">Background availability</h3><p>Keep the messaging runtime and established native messaging paths alive while the screen is off. Android may still pause networking in Doze, and some device makers stop background apps.</p></div>
     <fieldset className="settings-fields" disabled={busy}>
       <div className="settings-list">
-        <Toggle title="Stay available in the background" description="Shows an ongoing notification. Locking Mesh Chat stops this mode and releases the vault." checked={enabled} onChange={() => void toggle()} />
+        <Toggle title="Stay available in the background" description="Shows an ongoing notification and alerts for incoming calls. Locking Mesh Chat stops this mode and releases the vault." checked={enabled} onChange={() => void toggle()} />
       </div>
     </fieldset>
     <p className="muted" role="status">Status: {status}</p>

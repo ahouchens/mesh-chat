@@ -833,6 +833,10 @@ class MeshRuntimePlugin(private val activity: Activity) : Plugin(activity) {
     @Command
     fun endCallAudio(invoke: Invoke) {
         try {
+            if (!callAudioActive) {
+                resolve(invoke, successful(JSONObject().put("active", false)))
+                return
+            }
             val audio = activity.getSystemService(Context.AUDIO_SERVICE) as AudioManager
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 audioFocusRequest?.let { audio.abandonAudioFocusRequest(it) }

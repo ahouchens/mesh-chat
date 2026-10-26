@@ -44,6 +44,8 @@ object BackgroundRuntime {
     private const val TAG = "MeshChatBackground"
     private const val MESSAGE_CHANNEL = "mesh_chat_messages_v1"
     private const val MENTION_CHANNEL = "mesh_chat_mentions_v1"
+    private const val INCOMING_CALL_CHANNEL = "mesh_chat_incoming_calls_v1"
+    private const val INCOMING_CALL_NOTIFICATION_ID = 7003
     private const val AVAILABILITY_CHANNEL = "mesh_chat_availability_v1"
     private const val PREFERENCES = "mesh-chat-vault"
     private const val AVAILABILITY_KEY = "background-availability-enabled"
@@ -65,6 +67,7 @@ object BackgroundRuntime {
     private var notificationPump: java.util.concurrent.ScheduledExecutorService? = null
     private val pumpQueued = AtomicBoolean(false)
     private val pumpStarted = AtomicBoolean(false)
+    private val shownIncomingCalls = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
     private var multicastLock: WifiManager.MulticastLock? = null
 
     fun configure(context: Context) {
@@ -134,6 +137,7 @@ object BackgroundRuntime {
         setEnabled(context, false)
         NativeWebRtcBridge.closeAll()
         context.stopService(Intent(context, MeshAvailabilityService::class.java))
+        execute { clearIncomingCallNotifications() }
     }
 
     fun initialize(): String {
@@ -200,6 +204,7 @@ object BackgroundRuntime {
     fun onRuntimeShutdown() {
         runtimeInitialized = false
         shutdownNotificationPump()
+        execute { clearIncomingCallNotifications() }
     }
 
     fun statusJson(): JSONObject = JSONObject()
@@ -347,6 +352,13 @@ object BackgroundRuntime {
                     description = "Local structured-mention notifications"
                 },
                 NotificationChannel(
+                    INCOMING_CALL_CHANNEL,
+                    "Incoming calls",
+                    NotificationManager.IMPORTANCE_HIGH,
+                ).apply {
+                    description = "Calls received while Mesh Chat is available in the background"
+                },
+                NotificationChannel(
                     AVAILABILITY_CHANNEL,
                     "Background availability",
                     NotificationManager.IMPORTANCE_LOW,
@@ -454,6 +466,87 @@ object BackgroundRuntime {
         }
     }
 
+    private fun activeIncomingCallNotificationIds(): Set<String> = try {
+        val manager = appContext.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        manager.activeNotifications.mapNotNull { notification ->
+            if (notification.id != INCOMING_CALL_NOTIFICATION_ID) return@mapNotNull null
+            val tag = notification.tag ?: return@mapNotNull null
+            if (!tag.startsWith("mesh_chat_incoming_call_")) return@mapNotNull null
+            tag.removePrefix("mesh_chat_incoming_call_")
+                .takeIf { it.matches(Regex("^[0-9a-f]{32}$")) }
+        }.toSet()
+    } catch (_: Throwable) { emptySet() }
+
+    private fun clearIncomingCallNotifications() {
+        val manager = NotificationManagerCompat.from(appContext)
+        for (callId in shownIncomingCalls.toSet() + activeIncomingCallNotificationIds()) {
+            manager.cancel("mesh_chat_incoming_call_$callId", INCOMING_CALL_NOTIFICATION_ID)
+            shownIncomingCalls.remove(callId)
+        }
+    }
+
+    private fun syncIncomingCallNotifications() {
+        if (
+            !runtimeInitialized || uiForeground || !isEnabled(appContext) ||
+            !MeshAvailabilityService.isRunning() || permissionState() != "allowed"
+        ) {
+            clearIncomingCallNotifications()
+            return
+        }
+        val response = internalCommand("native_ringing_calls")
+        if (!response.optBoolean("ok")) return
+        val calls = response.optJSONObject("result")?.optJSONArray("calls") ?: return
+        val current = mutableSetOf<String>()
+        val manager = NotificationManagerCompat.from(appContext)
+        shownIncomingCalls.addAll(activeIncomingCallNotificationIds())
+        for (index in 0 until calls.length()) {
+            val call = calls.optJSONObject(index) ?: continue
+            val callId = call.optString("id")
+            val media = call.optString("media")
+            if (!callId.matches(Regex("^[0-9a-f]{32}$")) || media !in setOf("audio", "video")) continue
+            val remainingMillis = (call.optDouble("ring_expires_at") * 1000 - System.currentTimeMillis())
+                .toLong()
+            if (remainingMillis <= 0) continue
+            current.add(callId)
+            if (shownIncomingCalls.contains(callId)) continue
+            val launch = appContext.packageManager.getLaunchIntentForPackage(appContext.packageName)
+                ?: continue
+            launch.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+            val pending = PendingIntent.getActivity(
+                appContext,
+                INCOMING_CALL_NOTIFICATION_ID,
+                launch,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+            )
+            val notification = NotificationCompat.Builder(appContext, INCOMING_CALL_CHANNEL)
+                .setSmallIcon(android.R.drawable.ic_menu_call)
+                .setContentTitle(if (media == "video") "Incoming Mesh Chat video call" else "Incoming Mesh Chat audio call")
+                .setContentText("Tap to answer in Mesh Chat")
+                .setContentIntent(pending)
+                .setCategory(NotificationCompat.CATEGORY_CALL)
+                .setPriority(NotificationCompat.PRIORITY_HIGH)
+                .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
+                .setOnlyAlertOnce(true)
+                .setAutoCancel(true)
+                .setTimeoutAfter(remainingMillis)
+                .build()
+            try {
+                manager.notify("mesh_chat_incoming_call_$callId", INCOMING_CALL_NOTIFICATION_ID, notification)
+                shownIncomingCalls.add(callId)
+            } catch (error: SecurityException) {
+                syncNativeState()
+            } catch (error: Throwable) {
+                Log.e(TAG, "incoming call notification failed (${error.javaClass.simpleName})")
+            }
+        }
+        for (callId in shownIncomingCalls.toList()) {
+            if (callId !in current) {
+                manager.cancel("mesh_chat_incoming_call_$callId", INCOMING_CALL_NOTIFICATION_ID)
+                shownIncomingCalls.remove(callId)
+            }
+        }
+    }
+
     private fun startNotificationPump() {
         if (!pumpStarted.compareAndSet(false, true)) return
         val pump = Executors.newSingleThreadScheduledExecutor { runnable ->
@@ -466,6 +559,7 @@ object BackgroundRuntime {
                 pythonExecutor.execute {
                     try {
                         drainNativeNotifications()
+                        syncIncomingCallNotifications()
                     } catch (error: Throwable) {
                         Log.e(TAG, "notification pump failed (${error.javaClass.simpleName})")
                     } finally {

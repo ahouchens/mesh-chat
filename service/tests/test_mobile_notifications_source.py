@@ -84,6 +84,7 @@ def test_renderer_cannot_invoke_native_notification_work_commands() -> None:
     renderer_allowlist = rust[rust.index("fn allowed_renderer_command") : rust.index("#[cfg(desktop)]")]
     for command in (
         "native_notification_state",
+        "native_ringing_calls",
         "mobile_lifecycle_transition",
         "drain_native_notification_work",
         "acknowledge_native_notification",
