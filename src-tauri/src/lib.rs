@@ -608,6 +608,8 @@ fn allowed_renderer_command(command: &str) -> bool {
             | "create_workspace_invitation"
             | "invite_contact_to_workspace"
             | "dismiss_workspace_invitation_prompt"
+            | "preview_workspace_invitation_prompt"
+            | "submit_workspace_invitation_prompt"
             | "preview_workspace_invitation"
             | "preview_direct_connection"
             | "prepare_direct_offer"
