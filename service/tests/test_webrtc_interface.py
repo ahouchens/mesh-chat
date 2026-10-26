@@ -121,9 +121,10 @@ def test_detach_retires_only_its_links_and_routes(reticulum) -> None:
         entry[IDX_PT_RVCD_IF] = via
         RNS.Transport.path_table[destination] = entry
 
-    interface.detach()
+    lost = interface.detach()
 
     assert closed == ["pending", "active"]
+    assert lost == [b"retired"]
     assert not RNS.Transport.has_path(b"retired")
     assert RNS.Transport.next_hop_interface(b"replacement") is replacement
     assert replacement.online
@@ -228,3 +229,23 @@ def test_service_detach_discards_only_retired_lxmf_link_cache(bridge_service) ->
     assert service.network.router.direct_links == {b"kept": kept_link}
     assert service.network.router.backchannel_links == {b"kept-back": kept_link}
     assert service._webrtc_bridges[kept].online
+
+
+def test_detaching_failed_bridge_recovers_paths_over_surviving_bridge(bridge_service) -> None:
+    service = bridge_service
+    retired = service.webrtc_attach()["bridge_id"]
+    kept = service.webrtc_attach()["bridge_id"]
+    destination = b"peer-destination"
+    entry = [None] * (IDX_PT_RVCD_IF + 1)
+    entry[IDX_PT_RVCD_IF] = service._webrtc_bridges[retired]
+    RNS.Transport.path_table[destination] = entry
+    announcements: list[str] = []
+    requests: list[bytes] = []
+    service.network.reannounce = lambda: announcements.append("announce")
+    service.network.request_path = requests.append
+
+    service.webrtc_detach(retired)
+
+    assert service._webrtc_bridges[kept].online
+    assert announcements == ["announce"]
+    assert requests == [destination]

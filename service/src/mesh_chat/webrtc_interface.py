@@ -65,7 +65,7 @@ class WebRTCInterface(Interface):
         except Exception:
             self.detach()
 
-    def detach(self) -> None:
+    def detach(self) -> list[bytes]:
         self.online = False
         self.receives = False
         self.detached = True
@@ -107,7 +107,10 @@ class WebRTCInterface(Interface):
         # expire_path() defers removal to transport maintenance. Remove only
         # this interface's entries now, checking under the table lock so a route
         # already learned on a replacement interface is never invalidated.
+        lost_destinations: list[bytes] = []
         with RNS.Transport.path_table_lock:
             for destination, entry in list(RNS.Transport.path_table.items()):
                 if entry[IDX_PT_RVCD_IF] is self:
                     RNS.Transport.path_table.pop(destination)
+                    lost_destinations.append(destination)
+        return lost_destinations

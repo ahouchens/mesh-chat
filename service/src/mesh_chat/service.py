@@ -410,6 +410,7 @@ class MeshChatService(
         # Native-only mobile bridge commands. Rust never exposes these names
         # through the renderer allowlist.
         "native_notification_state",
+        "native_ringing_calls",
         "mobile_lifecycle_transition",
         "drain_native_notification_work",
         "acknowledge_native_notification",
@@ -464,6 +465,7 @@ class MeshChatService(
         "reconcile_mobile_lifecycle",
         "background_status",
         "native_notification_state",
+        "native_ringing_calls",
         "mobile_lifecycle_transition",
         "drain_native_notification_work",
         "acknowledge_native_notification",
@@ -1819,6 +1821,20 @@ class MeshChatService(
         )
         return result
 
+    def native_ringing_calls(self) -> dict[str, Any]:
+        """Return only live inbound ring metadata for the Android service."""
+        return {
+            "calls": [
+                {
+                    "id": call["id"],
+                    "media": call["media"],
+                    "ring_expires_at": call["ring_expires_at"],
+                }
+                for call in self.calls.active()
+                if call["direction"] == "inbound" and call["state"] == "ringing"
+            ]
+        }
+
     def call_settings(self) -> dict[str, Any]:
         return self._call_settings.public()
 
@@ -2015,7 +2031,7 @@ class MeshChatService(
     def webrtc_detach(self, bridge_id: str) -> dict[str, Any]:
         interface = self._webrtc_bridges.pop(bridge_id, None)
         if interface is not None:
-            interface.detach()
+            lost_destinations = interface.detach()
             router = getattr(self.network, "router", None)
             if router is not None:
                 # LXMF retains even CLOSED cached links until a send notices
@@ -2027,8 +2043,44 @@ class MeshChatService(
                             if getattr(link, "attached_interface", None) is interface:
                                 if links.get(destination) is link:
                                     links.pop(destination)
+            survivor = next(
+                (candidate for candidate, bridge in self._webrtc_bridges.items() if bridge.online),
+                None,
+            )
+            if survivor is not None:
+                # A newer failed channel may have become the selected Reticulum
+                # path even while an older data channel remains healthy.
+                self._webrtc_recover_routes(survivor, lost_destinations)
+                for delay in (2.0, 6.0):
+                    threading.Thread(
+                        target=self._webrtc_recover_routes_later,
+                        args=(survivor, lost_destinations, delay),
+                        daemon=True,
+                        name="mesh-chat-webrtc-route-recovery",
+                    ).start()
         self._changed()
         return {"state": "closed"}
+
+    def _webrtc_recover_routes(self, bridge_id: str, destinations: list[bytes]) -> None:
+        if self.network is None or not self._webrtc_bridges.get(bridge_id, None):
+            return
+        if not self._webrtc_bridges[bridge_id].online:
+            return
+        try:
+            self.network.reannounce()
+        except Exception:
+            pass
+        for destination in destinations[:32]:
+            try:
+                self.network.request_path(destination)
+            except Exception:
+                pass
+
+    def _webrtc_recover_routes_later(
+        self, bridge_id: str, destinations: list[bytes], delay: float
+    ) -> None:
+        if not self._shutdown.wait(delay):
+            self._webrtc_recover_routes(bridge_id, destinations)
 
     def _webrtc_announce_later(self, bridge_id: str, delay: float) -> None:
         if self._shutdown.wait(delay):
@@ -2229,14 +2281,14 @@ class MeshChatService(
                 )
             elif event in {"ice", "channel", "signaling", "gathering"}:
                 if event == "ice" and data in {"failed", "closed"}:
-                    self.webrtc_detach_native(session_id)
+                    self.native_webrtc_close(session_id)
                 if event == "channel":
                     label, _, state = data.partition(":")
                     if session_id in self._native_webrtc_live and label in {"mesh-onboarding", "meshchat-reconnect"} and state == "open":
                         self._native_webrtc_controls.setdefault(session_id, {})["label"] = label
                         self._native_control_next = 0
                     if label == "mesh-reticulum" and state in {"closing", "closed"}:
-                        self.webrtc_detach_native(session_id)
+                        self.native_webrtc_close(session_id)
                     if label == "mesh-onboarding" and state == "open":
                         self.emit(
                             {
@@ -3999,6 +4051,9 @@ class MeshChatService(
         if command == "call_media":
             body = _payload(value, allowed={"call_id"}, required={"call_id"})
             return self.call_media(body["call_id"])
+        if command == "native_ringing_calls":
+            _payload(value, allowed=set())
+            return self.native_ringing_calls()
         if command == "restart_call":
             body = _payload(
                 value,

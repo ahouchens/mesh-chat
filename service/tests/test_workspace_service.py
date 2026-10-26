@@ -542,6 +542,7 @@ def test_workspace_dm_call_signal_uses_active_peer_without_contact(tmp_path):
         FINGERPRINT,
     )
     assert call["contact_id"] == peer_id
+    assert owner.native_ringing_calls() == {"calls": []}
     packets = _flush(owner, owner_network)
     assert packets
     assert parse_workspace_payload(_native(packets[0], source=b"\x00" * 16, destination=b"\x01" * 16)).kind == "workspace_call_signal"
@@ -553,6 +554,19 @@ def test_workspace_dm_call_signal_uses_active_peer_without_contact(tmp_path):
         if item["state"] == "ringing"
     ]
     assert incoming
+    response, _ = member.dispatch({
+        "v": 1,
+        "id": str(uuid.uuid4()),
+        "command": "native_ringing_calls",
+        "payload": {},
+    })
+    assert response["result"] == {"calls": [{
+        "id": call["id"],
+        "media": "audio",
+        "ring_expires_at": incoming[0]["ring_expires_at"],
+    }]}
+    member.end_call(call["id"], "declined")
+    assert member.native_ringing_calls() == {"calls": []}
 
 
 def test_workspace_admin_can_admit_join_while_owner_offline(tmp_path):
