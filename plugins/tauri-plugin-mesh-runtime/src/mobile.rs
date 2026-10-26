@@ -62,12 +62,18 @@ impl<R: Runtime> MeshRuntime<R> {
             .run_mobile_plugin("requestNotificationPermission", ())?)
     }
 
-    pub fn request_media_permission(&self) -> Result<NativeResponse> {
-        Ok(self.0.run_mobile_plugin("requestMediaPermission", ())?)
+    pub fn request_media_permission(&self, media: &str) -> Result<NativeResponse> {
+        Ok(self.0.run_mobile_plugin(
+            "requestMediaPermission",
+            CallMediaRequest { media: media.into() },
+        )?)
     }
 
-    pub fn begin_call_audio(&self) -> Result<NativeResponse> {
-        Ok(self.0.run_mobile_plugin("beginCallAudio", ())?)
+    pub fn begin_call_audio(&self, media: &str) -> Result<NativeResponse> {
+        Ok(self.0.run_mobile_plugin(
+            "beginCallAudio",
+            CallMediaRequest { media: media.into() },
+        )?)
     }
 
     pub fn end_call_audio(&self) -> Result<NativeResponse> {

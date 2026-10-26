@@ -1507,32 +1507,40 @@ fn request_notification_permission(app: AppHandle) -> PendingResult {
 
 #[cfg(desktop)]
 #[tauri::command]
-fn request_media_permission() -> serde_json::Value {
+fn request_media_permission(media: String) -> serde_json::Value {
+    let _ = media;
     serde_json::json!({"audio": false, "camera": false})
 }
 
 #[cfg(mobile)]
 #[tauri::command]
-fn request_media_permission(app: AppHandle) -> PendingResult {
+fn request_media_permission(app: AppHandle, media: String) -> PendingResult {
+    if !matches!(media.as_str(), "audio" | "video") {
+        return Err("invalid_request".into());
+    }
     mobile_result(
         app.mesh_runtime()
-            .request_media_permission()
+            .request_media_permission(&media)
             .map_err(|_| "media_permission_unavailable".to_string())?,
     )
 }
 
 #[cfg(desktop)]
 #[tauri::command]
-fn begin_call_audio() -> serde_json::Value {
+fn begin_call_audio(media: String) -> serde_json::Value {
+    let _ = media;
     serde_json::json!({"granted": true})
 }
 
 #[cfg(mobile)]
 #[tauri::command]
-fn begin_call_audio(app: AppHandle) -> PendingResult {
+fn begin_call_audio(app: AppHandle, media: String) -> PendingResult {
+    if !matches!(media.as_str(), "audio" | "video") {
+        return Err("invalid_request".into());
+    }
     mobile_result(
         app.mesh_runtime()
-            .begin_call_audio()
+            .begin_call_audio(&media)
             .map_err(|_| "call_audio_unavailable".to_string())?,
     )
 }
