@@ -2098,7 +2098,7 @@ describe("contact management", () => {
       fireEvent.click(within(conversation).getByRole("button", { name: "Call Taylor" }));
       const dialog = await screen.findByRole("dialog", { name: "Call Taylor" });
       fireEvent.click(within(dialog).getByRole("button", { name: "Video call" }));
-      const cameraOff = await within(dialog).findByRole("button", { name: "Camera off" }, {}, { timeout: 3000 });
+      const cameraOff = await within(dialog).findByRole("button", { name: "Camera off" }, { timeout: 3000 });
       fireEvent.click(cameraOff);
       expect(videoTrack.enabled).toBe(false);
       expect((dialog.querySelector("video.call-video--local") as HTMLVideoElement).hidden).toBe(true);

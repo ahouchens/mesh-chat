@@ -1229,10 +1229,11 @@ function CallDialog({
     setError("");
     setPhase("preparing");
     try {
-      stream = await prepareMedia(media);
-      streamRef.current = stream;
+      const capturedStream = await prepareMedia(media);
+      stream = capturedStream;
+      streamRef.current = capturedStream;
       if (!current()) throw new Error("Call cancelled.");
-      if (localVideoRef.current) localVideoRef.current.srcObject = stream;
+      if (localVideoRef.current) localVideoRef.current.srcObject = capturedStream;
       const focus = await beginCallAudio(media);
       audioStarted = focus.granted;
       callAudioStartedRef.current = focus.granted;
@@ -1241,8 +1242,8 @@ function CallDialog({
       const configuration = await serviceCommand<CallIceConfiguration>("call_ice_servers");
       if (!current()) throw new Error("Call cancelled.");
       const pc = attachPeer(configuration);
-      stream.getTracks().forEach((track) => pc.addTrack(track, stream));
-      void configureVideoSender(pc, stream);
+      capturedStream.getTracks().forEach((track) => pc.addTrack(track, capturedStream));
+      void configureVideoSender(pc, capturedStream);
       const offer = await pc.createOffer();
       await pc.setLocalDescription(offer);
       await waitForCandidates(pc);
@@ -1292,10 +1293,11 @@ function CallDialog({
       const details = await serviceCommand<CallMedia>("call_media", { call_id: call.id });
       if (!current()) throw new Error("Call cancelled.");
       if (!details.remote_sdp) throw new Error("This call invitation has no media description.");
-      stream = await prepareMedia(call.media);
-      streamRef.current = stream;
+      const capturedStream = await prepareMedia(call.media);
+      stream = capturedStream;
+      streamRef.current = capturedStream;
       if (!current()) throw new Error("Call cancelled.");
-      if (localVideoRef.current) localVideoRef.current.srcObject = stream;
+      if (localVideoRef.current) localVideoRef.current.srcObject = capturedStream;
       const focus = await beginCallAudio(call.media);
       audioStarted = focus.granted;
       callAudioStartedRef.current = focus.granted;
@@ -1306,8 +1308,8 @@ function CallDialog({
       const pc = attachPeer(configuration);
       await pc.setRemoteDescription({ type: "offer", sdp: details.remote_sdp });
       if (!current()) throw new Error("Call cancelled.");
-      stream.getTracks().forEach((track) => pc.addTrack(track, stream));
-      void configureVideoSender(pc, stream);
+      capturedStream.getTracks().forEach((track) => pc.addTrack(track, capturedStream));
+      void configureVideoSender(pc, capturedStream);
       const answer = await pc.createAnswer();
       await pc.setLocalDescription(answer);
       await waitForCandidates(pc);
