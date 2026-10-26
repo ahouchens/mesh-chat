@@ -6157,9 +6157,14 @@ def test_owner_can_send_workspace_invitation_to_verified_contact(tmp_path):
     assert prompts[0]["workspace_name"] == workspace["name"]
     assert prompts[0]["contact_display_name"] == "Taylor"
     assert prompts[0]["state"] == "pending"
+    reviewed = member.preview_workspace_invitation_prompt(prompts[0]["id"])
+    assert reviewed["workspace_id"] == workspace["id"]
+    assert reviewed["name"] == workspace["name"]
 
     member.dismiss_workspace_invitation_prompt(prompts[0]["id"])
     assert member.snapshot()["workspace_invitation_prompts"] == []
+    with pytest.raises(ValidationError, match="unavailable"):
+        member.preview_workspace_invitation_prompt(prompts[0]["id"])
 
     contact["trust"] = TrustState.AWAITING_CONSENT.value
     owner.store.put("contact", contact["id"], contact)

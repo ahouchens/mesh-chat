@@ -283,6 +283,8 @@ class MeshChatService(
         "create_workspace_invitation",
         "invite_contact_to_workspace",
         "dismiss_workspace_invitation_prompt",
+        "preview_workspace_invitation_prompt",
+        "submit_workspace_invitation_prompt",
         "preview_workspace_invitation",
         "revoke_workspace_invitation",
         "submit_workspace_join",
@@ -446,6 +448,7 @@ class MeshChatService(
         "preview_remote_profile",
         "list_remote_profiles",
         "preview_workspace_invitation",
+        "preview_workspace_invitation_prompt",
         "invite_contact_to_workspace",
         "dismiss_workspace_invitation_prompt",
         "preview_workspace_device_link",
@@ -3189,6 +3192,26 @@ class MeshChatService(
         self._changed()
         return {"dismissed": True}
 
+    def _pending_workspace_invitation_prompt(self, prompt_id: Any) -> dict[str, Any]:
+        if not isinstance(prompt_id, str):
+            raise ValidationError("Workspace invitation prompt ID is invalid")
+        record = self.store.get("workspace_contact_invite", prompt_id)
+        if record is None or record.get("state") != "pending":
+            raise ValidationError("Workspace invitation prompt is unavailable")
+        if float(record.get("expires_at", 0)) <= time.time():
+            raise ValidationError("Workspace invitation has expired")
+        return record
+
+    def preview_workspace_invitation_prompt(self, prompt_id: Any) -> dict[str, Any]:
+        record = self._pending_workspace_invitation_prompt(prompt_id)
+        return self.preview_workspace_invitation(record["invitation"])
+
+    def submit_workspace_invitation_prompt(
+        self, prompt_id: Any, operation_id: Any
+    ) -> dict[str, Any]:
+        record = self._pending_workspace_invitation_prompt(prompt_id)
+        return self.submit_workspace_join(record["invitation"], operation_id)
+
     def _receive_workspace_contact_invite(self, contact: dict[str, Any], app: Any) -> None:
         if contact.get("trust") not in {
             TrustState.APPROVED.value,
@@ -4368,6 +4391,18 @@ class MeshChatService(
                 value, allowed={"prompt_id"}, required={"prompt_id"}
             )
             return self.dismiss_workspace_invitation_prompt(body["prompt_id"])
+        if command == "preview_workspace_invitation_prompt":
+            body = _payload(value, allowed={"prompt_id"}, required={"prompt_id"})
+            return self.preview_workspace_invitation_prompt(body["prompt_id"])
+        if command == "submit_workspace_invitation_prompt":
+            body = _payload(
+                value,
+                allowed={"prompt_id", "operation_id"},
+                required={"prompt_id", "operation_id"},
+            )
+            return self.submit_workspace_invitation_prompt(
+                body["prompt_id"], body["operation_id"]
+            )
         if command == "preview_workspace_invitation":
             body = _payload(
                 value, allowed={"invitation"}, required={"invitation"}
