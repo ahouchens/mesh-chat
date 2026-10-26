@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { QRCodeSVG } from "qrcode.react";
 import { Check, Copy, Phone, RefreshCw, X } from "lucide-react";
 
-import { serviceCommand, onServiceEvent, type ServiceEvent } from "./api";
+import { desktopServiceHealth, serviceCommand, onServiceEvent, type ServiceEvent } from "./api";
 import { attachWebRTCBridge, isWindowsWebRTCPlatform, shouldAutoCloseWebRTCOnboarding, webRTCWindowsChecklist, type WebRTCBridge } from "./webrtc-onboarding";
 import { isNativeWebRTCPlatform, nativeWebRTCAccept, nativeWebRTCApplyAnswer, nativeWebRTCClose, nativeWebRTCControl, nativeWebRTCOffer, nativeWebRTCStats, type NativeChannelSpec } from "./native-webrtc";
 import { rememberWebRTCDiagnostics } from "./webrtc-diagnostics";
@@ -266,7 +266,8 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
     if (!pc) {
       // ICE configuration can fail before a peer connection exists. Preserve
       // that failure so the error screen still has something useful to copy.
-      const text = JSON.stringify({ phase, message, peer_connection: "not_created" }, null, 2);
+      const host = await desktopServiceHealth().catch(() => null);
+      const text = JSON.stringify({ phase, message, peer_connection: "not_created", desktop_service: host }, null, 2);
       setDiagnostics(text);
       rememberWebRTCDiagnostics(text);
       return text;

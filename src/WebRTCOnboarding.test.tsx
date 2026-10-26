@@ -10,11 +10,13 @@ const mocks = vi.hoisted(() => ({
   updateWebRTCSessionContact: vi.fn(),
   updateWebRTCSessionApprovalPending: vi.fn(),
   onServiceEvent: vi.fn(),
+  desktopServiceHealth: vi.fn(),
 }));
 
 vi.mock("./api", () => ({
   serviceCommand: mocks.serviceCommand,
   onServiceEvent: mocks.onServiceEvent,
+  desktopServiceHealth: mocks.desktopServiceHealth,
 }));
 vi.mock("./webrtc-onboarding", async (importOriginal) => ({
   ...await importOriginal<typeof import("./webrtc-onboarding")>(),
@@ -146,6 +148,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mocks.onServiceEvent.mockReset();
   mocks.onServiceEvent.mockResolvedValue(() => undefined);
+  mocks.desktopServiceHealth.mockResolvedValue({ running: false, last_unexpected_exit: { reason: "terminated", exit_code: 3, signal: null, recorded_at: 1792792800 } });
   mocks.getWebRTCSessionByKey.mockReset();
   FakePeer.instances = [];
   finishGatheringImmediately = true;
@@ -225,6 +228,7 @@ describe("manual WebRTC answer exchange", () => {
     });
     expect(JSON.parse(clipboard.writeText.mock.calls[0][0])).toEqual({
       phase: "offer-failed", message: "service_not_running", peer_connection: "not_created",
+      desktop_service: { running: false, last_unexpected_exit: { reason: "terminated", exit_code: 3, signal: null, recorded_at: 1792792800 } },
     });
   });
 

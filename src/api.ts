@@ -135,6 +135,13 @@ export async function lockService(): Promise<void> {
   return invoke<void>("lock_service");
 }
 
+export function desktopServiceHealth(): Promise<{
+  running: boolean | null;
+  last_unexpected_exit: { reason: string; exit_code: number | null; signal: number | null; recorded_at: number | null } | null;
+}> {
+  return invoke("desktop_service_health");
+}
+
 /**
  * Start or stop the Android foreground availability service.
  *

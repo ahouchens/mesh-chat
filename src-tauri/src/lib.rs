@@ -17,7 +17,7 @@ use std::{
         atomic::{AtomicBool, Ordering},
         Arc, Mutex,
     },
-    time::Duration,
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 #[cfg(windows)]
 use std::{
@@ -71,6 +71,7 @@ struct ServiceState {
     pending_invitation: Arc<Mutex<Option<String>>>,
     closing: Arc<AtomicBool>,
     locked: Arc<AtomicBool>,
+    last_unexpected_exit: Arc<Mutex<Option<Value>>>,
 }
 
 #[cfg(desktop)]
@@ -216,6 +217,30 @@ fn fail_all_pending(state: &ServiceState, code: &str) {
         for (_, sender) in pending.drain() {
             let _ = sender.send(Err(code.to_string()));
         }
+    }
+}
+
+#[cfg(desktop)]
+fn record_unexpected_service_exit(
+    state: &ServiceState,
+    reason: &str,
+    exit_code: Option<i32>,
+    signal: Option<i32>,
+) {
+    if state.closing.load(Ordering::Acquire) || state.locked.load(Ordering::Acquire) {
+        return;
+    }
+    let recorded_at = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .ok()
+        .map(|elapsed| elapsed.as_secs());
+    if let Ok(mut last) = state.last_unexpected_exit.lock() {
+        *last = Some(json!({
+            "reason": reason,
+            "exit_code": exit_code,
+            "signal": signal,
+            "recorded_at": recorded_at,
+        }));
     }
 }
 
@@ -391,11 +416,19 @@ fn spawn_service(app: &AppHandle, state: &ServiceState) -> Result<(), String> {
                     if consume_stdout(&app_handle, &event_state, &native, sidecar_pid, &mut buffer)
                         .is_err()
                     {
-                        fail_all_pending(&event_state, "service_protocol_error");
-                        let _ = app_handle.emit(
-                            "mesh-chat://service-event",
-                            json!({"type":"event", "event":"service_error"}),
-                        );
+                        let is_current = event_state
+                            .sidecar_pid
+                            .lock()
+                            .ok()
+                            .is_some_and(|pid| *pid == Some(sidecar_pid));
+                        if is_current {
+                            record_unexpected_service_exit(&event_state, "protocol_error", None, None);
+                            retire_service_child(&event_state);
+                            let _ = app_handle.emit(
+                                "mesh-chat://service-event",
+                                json!({"type":"event", "event":"service_error"}),
+                            );
+                        }
                         break;
                     }
                 }
@@ -410,6 +443,7 @@ fn spawn_service(app: &AppHandle, state: &ServiceState) -> Result<(), String> {
                         .map(|current| *current == Some(sidecar_pid))
                         .unwrap_or(false);
                     if is_current {
+                        record_unexpected_service_exit(&event_state, "process_event_error", None, None);
                         retire_service_child(&event_state);
                         let _ = app_handle.emit(
                             "mesh-chat://service-event",
@@ -418,7 +452,7 @@ fn spawn_service(app: &AppHandle, state: &ServiceState) -> Result<(), String> {
                     }
                     break;
                 }
-                CommandEvent::Terminated(_) => {
+                CommandEvent::Terminated(exit) => {
                     let is_current = event_state
                         .sidecar_pid
                         .lock()
@@ -433,6 +467,7 @@ fn spawn_service(app: &AppHandle, state: &ServiceState) -> Result<(), String> {
                         })
                         .unwrap_or(false);
                     if is_current {
+                        record_unexpected_service_exit(&event_state, "terminated", exit.code, exit.signal);
                         fail_all_pending(&event_state, "service_stopped");
                         if let Ok(mut child) = event_state.child.lock() {
                             if child.as_ref().map(CommandChild::pid) == Some(sidecar_pid) {
@@ -1205,6 +1240,20 @@ async fn lock_service(state: State<'_, ServiceState>) -> Result<(), String> {
 
 #[cfg(desktop)]
 #[tauri::command]
+fn desktop_service_health(state: State<'_, ServiceState>) -> Value {
+    let running = state.child.lock().ok().is_some_and(|child| child.is_some());
+    let last_exit = state.last_unexpected_exit.lock().ok().and_then(|last| last.clone());
+    json!({"running":running, "last_unexpected_exit":last_exit})
+}
+
+#[cfg(mobile)]
+#[tauri::command]
+fn desktop_service_health() -> Value {
+    serde_json::json!({"running":null, "last_unexpected_exit":null})
+}
+
+#[cfg(desktop)]
+#[tauri::command]
 fn take_pending_invitation(state: State<'_, ServiceState>) -> Result<Option<String>, String> {
     state
         .pending_invitation
@@ -1625,6 +1674,7 @@ pub fn run() {
             initialize_service,
             service_command,
             lock_service,
+            desktop_service_health,
             set_background_availability,
             take_pending_invitation,
             pick_invitation_file,
