@@ -2281,14 +2281,14 @@ class MeshChatService(
                 )
             elif event in {"ice", "channel", "signaling", "gathering"}:
                 if event == "ice" and data in {"failed", "closed"}:
-                    self.webrtc_detach_native(session_id)
+                    self.native_webrtc_close(session_id)
                 if event == "channel":
                     label, _, state = data.partition(":")
                     if session_id in self._native_webrtc_live and label in {"mesh-onboarding", "meshchat-reconnect"} and state == "open":
                         self._native_webrtc_controls.setdefault(session_id, {})["label"] = label
                         self._native_control_next = 0
                     if label == "mesh-reticulum" and state in {"closing", "closed"}:
-                        self.webrtc_detach_native(session_id)
+                        self.native_webrtc_close(session_id)
                     if label == "mesh-onboarding" and state == "open":
                         self.emit(
                             {

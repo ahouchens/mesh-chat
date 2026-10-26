@@ -146,6 +146,7 @@ def test_native_fingerprint_can_sign_a_document_verified_by_the_real_parser(answ
 @pytest.mark.parametrize("state", ["failed", "closed"])
 def test_native_stats_and_events_stop_claiming_a_failed_bridge_is_attached(state):
     service, host = runtime()
+    service._native_webrtc_live.add("native-session")
     service._native_webrtc_sessions["native-session"] = "bridge"
     service._webrtc_bridges["bridge"] = object()
     assert service.native_webrtc_stats("native-session")["attached"]
@@ -154,15 +155,20 @@ def test_native_stats_and_events_stop_claiming_a_failed_bridge_is_attached(state
     service._handle_native_webrtc_event("ice", "native-session", state)
     assert not service._native_webrtc_sessions
     assert not service._webrtc_bridges
+    assert not service._native_webrtc_live
+    assert host.closed == ["native-session"]
 
 
 def test_channel_closure_detaches_even_if_the_peer_ice_state_is_connected():
     service, host = runtime()
+    service._native_webrtc_live.add("native-session")
     service._native_webrtc_sessions["native-session"] = "bridge"
     host.state["data_channel_state"] = "closed"
     assert not service.native_webrtc_stats("native-session")["attached"]
     service._handle_native_webrtc_event("channel", "native-session", "mesh-reticulum:closed")
     assert not service._native_webrtc_sessions
+    assert not service._native_webrtc_live
+    assert host.closed == ["native-session"]
 
 
 def test_profile_reservation_prevents_overlapping_native_creation_and_is_released():
