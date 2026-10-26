@@ -5,6 +5,7 @@ import packageInfo from "../package.json";
 import type { ChatMessage, Contact, Group, GroupInvitation, GroupMessage, Snapshot, Workspace, WorkspaceAdminRequest, WorkspaceChannel, WorkspaceDirect, WorkspaceJoinRequest, WorkspaceMentionPage, WorkspaceMessage, WorkspaceMessagePage, WorkspaceSearchPage, WorkspaceThreadActivityPage, WorkspaceThreadPage } from "./types";
 
 const api = vi.hoisted(() => ({
+  beginCallAudio: vi.fn(async () => ({ granted: true })),
   endCallAudio: vi.fn(async () => ({ active: false })),
   initializeService: vi.fn(),
   lockService: vi.fn(),
@@ -2044,6 +2045,111 @@ describe("Settings page navigation and saved state", () => {
 });
 
 describe("contact management", () => {
+  it("keeps remote video visible when the camera is off and stops capture on remote hangup", async () => {
+    const current = snapshot([approved]);
+    const audioTrack = { kind: "audio", enabled: true, stop: vi.fn() };
+    const videoTrack = { kind: "video", enabled: true, stop: vi.fn() };
+    const stream = {
+      getTracks: () => [audioTrack, videoTrack],
+      getAudioTracks: () => [audioTrack],
+      getVideoTracks: () => [videoTrack],
+    } as unknown as MediaStream;
+    const originalMediaDevices = Object.getOwnPropertyDescriptor(navigator, "mediaDevices");
+    Object.defineProperty(navigator, "mediaDevices", {
+      configurable: true, value: { getUserMedia: vi.fn(async () => stream) },
+    });
+    const sdp = `v=0\r\na=fingerprint:sha-256 ${"AB:".repeat(31)}AB\r\na=candidate:1 1 UDP 1 127.0.0.1 12345 typ host\r\n`;
+    class Peer {
+      connectionState: RTCPeerConnectionState = "new";
+      iceGatheringState: RTCIceGatheringState = "complete";
+      signalingState: RTCSignalingState = "stable";
+      localDescription: RTCSessionDescriptionInit | null = null;
+      ontrack: ((event: RTCTrackEvent) => void) | null = null;
+      onconnectionstatechange: (() => void) | null = null;
+      addTrack() { return {} as RTCRtpSender; }
+      getSenders() { return [] as RTCRtpSender[]; }
+      createOffer() { return Promise.resolve({ type: "offer" as RTCSdpType, sdp }); }
+      setLocalDescription(description: RTCSessionDescriptionInit) { this.localDescription = description; return Promise.resolve(); }
+      close() { this.connectionState = "closed"; }
+    }
+    vi.stubGlobal("RTCPeerConnection", Peer);
+    const call = {
+      id: "a".repeat(32), contact_id: approved.id, role: "caller" as const,
+      media: "video" as const, state: "dialing" as const, direction: "outbound" as const,
+      created_at: 1, updated_at: 1, expires_at: 1000,
+      candidate_count: 1, has_local_sdp: true, has_remote_sdp: false,
+    };
+    let remoteEnded = false;
+    api.runtimePlatform.mockResolvedValue("desktop");
+    api.initializeService.mockResolvedValue(current);
+    api.onInvitation.mockResolvedValue(() => undefined);
+    api.onServiceEvent.mockResolvedValue(() => undefined);
+    api.serviceCommand.mockImplementation(async (command: string) => {
+      if (command === "snapshot") return current;
+      if (command === "call_ice_servers") return { iceServers: [], iceTransportPolicy: "all" };
+      if (command === "start_call") return call;
+      if (command === "call_media") return { ...call, state: remoteEnded ? "ended" : "in_call", local_sdp: sdp, remote_sdp: null, candidates: [], restart_offer: null, restart_answer: null };
+      return {};
+    });
+
+    try {
+      render(<App />);
+      const conversation = await screen.findByLabelText("Conversation with Taylor");
+      fireEvent.click(within(conversation).getByRole("button", { name: "Call Taylor" }));
+      const dialog = await screen.findByRole("dialog", { name: "Call Taylor" });
+      fireEvent.click(within(dialog).getByRole("button", { name: "Video call" }));
+      const cameraOff = await within(dialog).findByRole("button", { name: "Camera off" }, {}, { timeout: 3000 });
+      fireEvent.click(cameraOff);
+      expect(videoTrack.enabled).toBe(false);
+      expect((dialog.querySelector("video.call-video--local") as HTMLVideoElement).hidden).toBe(true);
+      expect((dialog.querySelector("video.call-video:not(.call-video--local)") as HTMLVideoElement).hidden).toBe(false);
+
+      remoteEnded = true;
+      await within(dialog).findByText("Call ended.", {}, { timeout: 3000 });
+      expect(audioTrack.stop).toHaveBeenCalledOnce();
+      expect(videoTrack.stop).toHaveBeenCalledOnce();
+      expect(api.endCallAudio).toHaveBeenCalledOnce();
+      fireEvent.click(within(dialog).getByRole("button", { name: "Close" }));
+      expect(api.serviceCommand.mock.calls.some(([command]) => command === "end_call")).toBe(false);
+    } finally {
+      if (originalMediaDevices) Object.defineProperty(navigator, "mediaDevices", originalMediaDevices);
+      else Reflect.deleteProperty(navigator, "mediaDevices");
+    }
+  });
+
+  it("stops video capture if the call is cancelled while camera permission is pending", async () => {
+    const current = snapshot([approved]);
+    const capture = deferred<MediaStream>();
+    const videoTrack = { kind: "video", enabled: true, stop: vi.fn() };
+    const stream = { getTracks: () => [videoTrack] } as unknown as MediaStream;
+    const originalMediaDevices = Object.getOwnPropertyDescriptor(navigator, "mediaDevices");
+    Object.defineProperty(navigator, "mediaDevices", {
+      configurable: true, value: { getUserMedia: vi.fn(() => capture.promise) },
+    });
+    api.runtimePlatform.mockResolvedValue("desktop");
+    api.initializeService.mockResolvedValue(current);
+    api.onInvitation.mockResolvedValue(() => undefined);
+    api.onServiceEvent.mockResolvedValue(() => undefined);
+    api.serviceCommand.mockImplementation(async (command: string) => command === "snapshot" ? current : {});
+
+    try {
+      render(<App />);
+      const conversation = await screen.findByLabelText("Conversation with Taylor");
+      fireEvent.click(within(conversation).getByRole("button", { name: "Call Taylor" }));
+      const dialog = await screen.findByRole("dialog", { name: "Call Taylor" });
+      fireEvent.click(within(dialog).getByRole("button", { name: "Video call" }));
+      fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+      await waitFor(() => expect(screen.queryByRole("dialog", { name: "Call Taylor" })).toBeNull());
+      await act(async () => capture.resolve(stream));
+      expect(videoTrack.stop).toHaveBeenCalledOnce();
+      expect(api.beginCallAudio).not.toHaveBeenCalled();
+      expect(api.serviceCommand.mock.calls.some(([command]) => command === "start_call")).toBe(false);
+    } finally {
+      if (originalMediaDevices) Object.defineProperty(navigator, "mediaDevices", originalMediaDevices);
+      else Reflect.deleteProperty(navigator, "mediaDevices");
+    }
+  });
+
   it("leaves the existing audio route alone when call media cannot start", async () => {
     const current = snapshot([approved]);
     const getUserMedia = vi.fn().mockRejectedValue(new Error("Microphone unavailable"));
