@@ -5031,10 +5031,55 @@ describe("desktop workspaces", () => {
     fireEvent.click(await screen.findByRole("button", { name:"Invite people to Lakewatcher" }));
     const dialog = await screen.findByRole("dialog");
     expect(await within(dialog).findByText(/Invite a verified contact/i)).toBeTruthy();
+    expect((within(dialog).getByRole("combobox", { name:"Verified contact" }) as HTMLSelectElement).value).toBe(approved.id);
+    expect(within(dialog).queryByRole("group", { name: "Invitation path" })).toBeNull();
     fireEvent.change(within(dialog).getByRole("combobox", { name:"Verified contact" }), { target:{ value:approved.id } });
     fireEvent.click(within(dialog).getByRole("button", { name:"Send workspace invitation" }));
     await waitFor(() => expect(api.serviceCommand).toHaveBeenCalledWith("invite_contact_to_workspace", { workspace_id:workspace.id, contact_id:approved.id }));
     expect(await within(dialog).findByText(/queued over the existing verified contact route/i)).toBeTruthy();
+  });
+
+  it("reviews and joins a received contact invitation by saved prompt ID", async () => {
+    const invitation = JSON.stringify({ type: "workspace_invite", v: 1, signature: "signed" });
+    const current: Snapshot = {
+      ...snapshot([approved]),
+      workspace_invitation_prompts: [{
+        id: "prompt-one", workspace_id: "invited-workspace", workspace_name: "Direct Test",
+        description: "", owner_fingerprint: "AAAA BBBB CCCC DDDD", member_count: 1,
+        retention_days: 90, expires_at: 2_000_000_000, invitation,
+        contact_id: approved.id, contact_display_name: approved.display_name,
+        received_at: 1_800_000_000, state: "pending",
+      }],
+    };
+    api.runtimePlatform.mockResolvedValue("android");
+    api.initializeService.mockResolvedValue(current);
+    api.onInvitation.mockResolvedValue(() => undefined);
+    api.onServiceEvent.mockResolvedValue(() => undefined);
+    api.onMobileBackButton.mockResolvedValue(() => undefined);
+    api.serviceCommand.mockImplementation(async (command: string) => {
+      if (command === "snapshot") return current;
+      if (command === "preview_workspace_invitation_prompt") return {
+        workspace_id: "invited-workspace", name: "Direct Test", description: "",
+        owner_fingerprint: "AAAA BBBB CCCC DDDD", member_count: 1,
+        retention_days: 90, expires_at: 2_000_000_000,
+      };
+      if (command === "submit_workspace_invitation_prompt") return {
+        ...workspace, id: "invited-workspace", name: "Direct Test", state: "joining",
+      };
+      return {};
+    });
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Review" }));
+    const dialog = await screen.findByRole("dialog", { name: "Review workspace invitation" });
+    expect(await within(dialog).findByRole("heading", { name: "Direct Test" })).toBeTruthy();
+    expect(within(dialog).queryByRole("textbox", { name: "Workspace invitation or device link" })).toBeNull();
+    expect(api.serviceCommand).toHaveBeenCalledWith("preview_workspace_invitation_prompt", { prompt_id: "prompt-one" });
+    expect(api.serviceCommand.mock.calls.some(([command]) => command === "preview_workspace_invitation")).toBe(false);
+    fireEvent.click(within(dialog).getByRole("button", { name: "Send join request" }));
+    await waitFor(() => expect(api.serviceCommand).toHaveBeenCalledWith(
+      "submit_workspace_invitation_prompt",
+      { prompt_id: "prompt-one", operation_id: expect.any(String) },
+    ));
   });
 
   it("starts the guided controller from Invite and exposes the email invitation fallback", async () => {
