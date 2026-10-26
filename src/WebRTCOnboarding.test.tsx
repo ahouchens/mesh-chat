@@ -329,6 +329,22 @@ describe("manual WebRTC answer exchange", () => {
     expect(mocks.serviceCommand).toHaveBeenCalledWith("native_webrtc_close", expect.anything());
   });
 
+  it("does not call a verified offer incomplete when Android cannot create an answer", async () => {
+    vi.stubGlobal("navigator", { userAgent: "Android" });
+    const runCommand = mocks.serviceCommand.getMockImplementation()!;
+    mocks.serviceCommand.mockImplementation(async (command: string, payload: unknown) => {
+      if (command === "native_webrtc_accept") throw { code: "invalid_request" };
+      return runCommand(command, payload);
+    });
+    render(<WebRTCOnboardingDialog onClose={vi.fn()} onChanged={async () => undefined} />);
+    await act(async () => undefined);
+    fireEvent.click(screen.getByRole("button", { name: "Join with WebRTC" }));
+    fireEvent.change(screen.getByLabelText("Paste the signed WebRTC offer or mailbox code"), { target: { value: offerDocument } });
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Review and create answer" })); });
+    expect(screen.getByRole("alert").textContent).toMatch(/offer was verified.*could not create an answer/i);
+    expect(screen.getByRole("alert").textContent).not.toMatch(/complete signed WebRTC offer|outer JSON braces/i);
+  });
+
   it("hands a connected native transport to the service when the dialog closes", async () => {
     vi.stubGlobal("navigator", { userAgent: "Android" });
     const runCommand = mocks.serviceCommand.getMockImplementation()!;

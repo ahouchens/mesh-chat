@@ -106,6 +106,15 @@ def test_mobile_workspace_preview_and_submit_share_invitation_size_limit(monkeyp
 
 
 @pytest.mark.parametrize(("command", "maximum"), [
+    ("webrtc_onboarding_offer", 64 * 1024),
+    ("verify_webrtc_onboarding_offer", 64 * 1024),
+    ("webrtc_onboarding_answer", 64 * 1024),
+    ("verify_webrtc_onboarding_answer", 64 * 1024),
+    ("native_webrtc_offer", 64 * 1024),
+    ("native_webrtc_accept", 64 * 1024),
+    ("native_webrtc_apply_answer", 64 * 1024),
+    ("native_webrtc_bind_onboarding", 64 * 1024),
+    ("signal_publish", 64 * 1024),
     ("preview_direct_connection", 2 * 1024 * 1024),
     ("prepare_direct_answer", 2 * 1024 * 1024),
     ("prepare_direct_ready", 2 * 1024 * 1024),
