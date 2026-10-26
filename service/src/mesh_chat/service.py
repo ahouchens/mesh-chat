@@ -2031,7 +2031,7 @@ class MeshChatService(
     def webrtc_detach(self, bridge_id: str) -> dict[str, Any]:
         interface = self._webrtc_bridges.pop(bridge_id, None)
         if interface is not None:
-            interface.detach()
+            lost_destinations = interface.detach()
             router = getattr(self.network, "router", None)
             if router is not None:
                 # LXMF retains even CLOSED cached links until a send notices
@@ -2043,8 +2043,44 @@ class MeshChatService(
                             if getattr(link, "attached_interface", None) is interface:
                                 if links.get(destination) is link:
                                     links.pop(destination)
+            survivor = next(
+                (candidate for candidate, bridge in self._webrtc_bridges.items() if bridge.online),
+                None,
+            )
+            if survivor is not None:
+                # A newer failed channel may have become the selected Reticulum
+                # path even while an older data channel remains healthy.
+                self._webrtc_recover_routes(survivor, lost_destinations)
+                for delay in (2.0, 6.0):
+                    threading.Thread(
+                        target=self._webrtc_recover_routes_later,
+                        args=(survivor, lost_destinations, delay),
+                        daemon=True,
+                        name="mesh-chat-webrtc-route-recovery",
+                    ).start()
         self._changed()
         return {"state": "closed"}
+
+    def _webrtc_recover_routes(self, bridge_id: str, destinations: list[bytes]) -> None:
+        if self.network is None or not self._webrtc_bridges.get(bridge_id, None):
+            return
+        if not self._webrtc_bridges[bridge_id].online:
+            return
+        try:
+            self.network.reannounce()
+        except Exception:
+            pass
+        for destination in destinations[:32]:
+            try:
+                self.network.request_path(destination)
+            except Exception:
+                pass
+
+    def _webrtc_recover_routes_later(
+        self, bridge_id: str, destinations: list[bytes], delay: float
+    ) -> None:
+        if not self._shutdown.wait(delay):
+            self._webrtc_recover_routes(bridge_id, destinations)
 
     def _webrtc_announce_later(self, bridge_id: str, delay: float) -> None:
         if self._shutdown.wait(delay):
