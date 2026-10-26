@@ -886,13 +886,15 @@ function CallDialog({
     initialCall?.direction === "inbound" && initialCall.state === "ringing" ? "ringing" : "idle",
   );
   const [muted, setMuted] = useState(false);
-  const [videoEnabled, setVideoEnabled] = useState(initialCall?.media === "video");
+  const [cameraEnabled, setCameraEnabled] = useState(initialCall?.media === "video");
   const [path, setPath] = useState<"direct" | "relay" | "unknown">("unknown");
   const [quality, setQuality] = useState<"good" | "fair" | "poor" | "unknown">("unknown");
   const [error, setError] = useState("");
   const pcRef = useRef<RTCPeerConnection | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const callAudioStartedRef = useRef(false);
+  const mediaOperationRef = useRef(0);
+  const mediaOperationPendingRef = useRef(false);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const localVideoRef = useRef<HTMLVideoElement | null>(null);
   const remoteVideoRef = useRef<HTMLVideoElement | null>(null);
@@ -908,6 +910,8 @@ function CallDialog({
   const restartRef = useRef<() => void>(() => undefined);
 
   const cleanup = useCallback(() => {
+    mediaOperationRef.current += 1;
+    mediaOperationPendingRef.current = false;
     if (pollRef.current !== null) {
       window.clearInterval(pollRef.current);
       pollRef.current = null;
@@ -924,6 +928,16 @@ function CallDialog({
       void endCallAudio().catch(() => undefined);
     }
   }, []);
+
+  const failCall = useCallback((message: string) => {
+    const callId = callIdRef.current;
+    cleanup();
+    if (callId) {
+      void serviceCommand("end_call", { call_id: callId, reason: "cancelled" }).catch(() => undefined);
+    }
+    setError(message);
+    setPhase("error");
+  }, [cleanup]);
 
   useEffect(() => cleanup, [cleanup]);
 
@@ -993,7 +1007,6 @@ function CallDialog({
       }
       if (event.track.kind === "video" && remoteVideoRef.current) {
         remoteVideoRef.current.srcObject = stream;
-        setVideoEnabled(true);
         void remoteVideoRef.current.play().catch(() => undefined);
       }
     };
@@ -1010,13 +1023,12 @@ function CallDialog({
         window.setTimeout(() => restartRef.current(), 1500);
       }
       if (pc.connectionState === "failed") {
-        setError("The media path could not be established.");
-        setPhase("error");
+        failCall("The media path could not be established.");
       }
     };
     pcRef.current = pc;
     return pc;
-  }, [inspectPath, inspectQuality]);
+  }, [failCall, inspectPath, inspectQuality]);
 
   const startPolling = useCallback((callId: string) => {
     if (pollRef.current !== null) window.clearInterval(pollRef.current);
@@ -1025,6 +1037,7 @@ function CallDialog({
       pollBusyRef.current = true;
       try {
         const latest = await serviceCommand<CallMedia>("call_media", { call_id: callId });
+        if (!pcRef.current || callIdRef.current !== callId) return;
         setMedia(latest);
         setCall((current) => current ? { ...current, ...latest } : current);
         if (
@@ -1081,8 +1094,8 @@ function CallDialog({
               }
             }
           } catch (reason) {
-            setError(errorMessage(reason));
-            setPhase("error");
+            failCall(errorMessage(reason));
+            return;
           } finally {
             restartAnswerInFlightRef.current = false;
           }
@@ -1094,6 +1107,7 @@ function CallDialog({
         }
         if (latest.state === "in_call") setPhase("in_call");
         if (["ended", "declined", "busy", "no_answer", "failed"].includes(latest.state)) {
+          cleanup();
           setPhase(latest.state === "failed" ? "error" : "ended");
           if (latest.state === "failed") setError("The call ended unexpectedly.");
         }
@@ -1103,7 +1117,7 @@ function CallDialog({
         pollBusyRef.current = false;
       }
     }, 1000);
-  }, [inspectPath]);
+  }, [cleanup, failCall, inspectPath]);
 
   const prepareMedia = useCallback(async (media: "audio" | "video") => {
     if (!navigator.mediaDevices?.getUserMedia) {
@@ -1162,12 +1176,11 @@ function CallDialog({
       });
       setPhase("connecting");
     } catch (reason) {
-      setError(errorMessage(reason));
-      setPhase("error");
+      failCall(errorMessage(reason));
     } finally {
       restartInFlightRef.current = false;
     }
-  }, [waitForCandidates]);
+  }, [failCall, waitForCandidates]);
   restartRef.current = () => { void attemptRestart(); };
 
   const configureVideoSender = useCallback(async (pc: RTCPeerConnection, stream: MediaStream) => {
@@ -1199,22 +1212,44 @@ function CallDialog({
   }, []);
 
   const startCall = useCallback(async (media: "audio" | "video") => {
+    if (mediaOperationPendingRef.current) return;
+    mediaOperationPendingRef.current = true;
+    const operation = ++mediaOperationRef.current;
+    const current = () => operation === mediaOperationRef.current;
+    let stream: MediaStream | null = null;
+    let audioStarted = false;
+    callIdRef.current = undefined;
+    roleRef.current = undefined;
+    remoteSetRef.current = false;
+    lastRestartOfferRef.current = "";
+    lastRestartAnswerRef.current = "";
+    setCall(undefined);
+    setMedia(null);
+    setMuted(false);
+    setPath("unknown");
+    setQuality("unknown");
     setError("");
     setPhase("preparing");
     try {
-      const stream = await prepareMedia(media);
-      streamRef.current = stream;
-      if (localVideoRef.current) localVideoRef.current.srcObject = stream;
+      const capturedStream = await prepareMedia(media);
+      stream = capturedStream;
+      streamRef.current = capturedStream;
+      if (!current()) throw new Error("Call cancelled.");
+      if (localVideoRef.current) localVideoRef.current.srcObject = capturedStream;
       const focus = await beginCallAudio(media);
+      audioStarted = focus.granted;
+      callAudioStartedRef.current = focus.granted;
+      if (!current()) throw new Error("Call cancelled.");
       if (!focus.granted) throw new Error("Android could not take call-audio focus.");
-      callAudioStartedRef.current = true;
       const configuration = await serviceCommand<CallIceConfiguration>("call_ice_servers");
+      if (!current()) throw new Error("Call cancelled.");
       const pc = attachPeer(configuration);
-      stream.getTracks().forEach((track) => pc.addTrack(track, stream));
-      void configureVideoSender(pc, stream);
+      capturedStream.getTracks().forEach((track) => pc.addTrack(track, capturedStream));
+      void configureVideoSender(pc, capturedStream);
       const offer = await pc.createOffer();
       await pc.setLocalDescription(offer);
       await waitForCandidates(pc);
+      if (!current()) throw new Error("Call cancelled.");
       const sdp = pc.localDescription?.sdp;
       if (!sdp) throw new Error("The call offer could not be created.");
       if (!callHasNetworkCandidate(sdp)) throw new Error("No call network candidate was found. Check the connection or configure TURN.");
@@ -1224,41 +1259,63 @@ function CallDialog({
         sdp,
         dtls_fingerprint: callFingerprint(sdp),
       });
+      if (!current()) {
+        await serviceCommand("end_call", { call_id: result.id, reason: "cancelled" }).catch(() => undefined);
+        throw new Error("Call cancelled.");
+      }
       callIdRef.current = result.id;
       roleRef.current = result.role;
       setCall(result);
-      setVideoEnabled(media === "video");
+      setCameraEnabled(media === "video");
       setPhase("calling");
       startPolling(result.id);
       await onChanged();
     } catch (reason) {
-      cleanup();
-      setError(errorMessage(reason));
-      setPhase("error");
+      if (!current()) {
+        stream?.getTracks().forEach((track) => track.stop());
+        if (audioStarted) void endCallAudio().catch(() => undefined);
+        return;
+      }
+      failCall(errorMessage(reason));
+    } finally {
+      if (current()) mediaOperationPendingRef.current = false;
     }
-  }, [attachPeer, cleanup, configureVideoSender, contact.id, onChanged, prepareMedia, startPolling, waitForCandidates]);
+  }, [attachPeer, configureVideoSender, contact.id, failCall, onChanged, prepareMedia, startPolling, waitForCandidates]);
 
   const acceptCall = useCallback(async () => {
-    if (!call) return;
+    if (!call || mediaOperationPendingRef.current) return;
+    mediaOperationPendingRef.current = true;
+    const operation = ++mediaOperationRef.current;
+    const current = () => operation === mediaOperationRef.current;
+    let stream: MediaStream | null = null;
+    let audioStarted = false;
     setError("");
     setPhase("preparing");
     try {
       const details = await serviceCommand<CallMedia>("call_media", { call_id: call.id });
+      if (!current()) throw new Error("Call cancelled.");
       if (!details.remote_sdp) throw new Error("This call invitation has no media description.");
-      const stream = await prepareMedia(call.media);
-      streamRef.current = stream;
-      if (localVideoRef.current) localVideoRef.current.srcObject = stream;
+      const capturedStream = await prepareMedia(call.media);
+      stream = capturedStream;
+      streamRef.current = capturedStream;
+      if (!current()) throw new Error("Call cancelled.");
+      if (localVideoRef.current) localVideoRef.current.srcObject = capturedStream;
       const focus = await beginCallAudio(call.media);
+      audioStarted = focus.granted;
+      callAudioStartedRef.current = focus.granted;
+      if (!current()) throw new Error("Call cancelled.");
       if (!focus.granted) throw new Error("Android could not take call-audio focus.");
-      callAudioStartedRef.current = true;
       const configuration = await serviceCommand<CallIceConfiguration>("call_ice_servers");
+      if (!current()) throw new Error("Call cancelled.");
       const pc = attachPeer(configuration);
       await pc.setRemoteDescription({ type: "offer", sdp: details.remote_sdp });
-      stream.getTracks().forEach((track) => pc.addTrack(track, stream));
-      void configureVideoSender(pc, stream);
+      if (!current()) throw new Error("Call cancelled.");
+      capturedStream.getTracks().forEach((track) => pc.addTrack(track, capturedStream));
+      void configureVideoSender(pc, capturedStream);
       const answer = await pc.createAnswer();
       await pc.setLocalDescription(answer);
       await waitForCandidates(pc);
+      if (!current()) throw new Error("Call cancelled.");
       const sdp = pc.localDescription?.sdp;
       if (!sdp) throw new Error("The call answer could not be created.");
       if (!callHasNetworkCandidate(sdp)) throw new Error("No call network candidate was found. Check the connection or configure TURN.");
@@ -1267,19 +1324,25 @@ function CallDialog({
         sdp,
         dtls_fingerprint: callFingerprint(sdp),
       });
+      if (!current()) throw new Error("Call cancelled.");
       setCall(result);
       roleRef.current = result.role;
       setMedia(details);
-      setVideoEnabled(call.media === "video");
+      setCameraEnabled(call.media === "video");
       setPhase("connecting");
       startPolling(call.id);
       await onChanged();
     } catch (reason) {
-      cleanup();
-      setError(errorMessage(reason));
-      setPhase("error");
+      if (!current()) {
+        stream?.getTracks().forEach((track) => track.stop());
+        if (audioStarted) void endCallAudio().catch(() => undefined);
+        return;
+      }
+      failCall(errorMessage(reason));
+    } finally {
+      if (current()) mediaOperationPendingRef.current = false;
     }
-  }, [attachPeer, call, cleanup, configureVideoSender, onChanged, prepareMedia, startPolling, waitForCandidates]);
+  }, [attachPeer, call, configureVideoSender, failCall, onChanged, prepareMedia, startPolling, waitForCandidates]);
 
   const hangup = useCallback(async (reason: "completed" | "declined" | "cancelled") => {
     const callId = callIdRef.current;
@@ -1296,6 +1359,15 @@ function CallDialog({
     onClose();
   }, [cleanup, onChanged, onClose]);
 
+  const closeCall = useCallback(() => {
+    if (phase === "idle" || phase === "ended" || phase === "error") {
+      cleanup();
+      onClose();
+      return;
+    }
+    void hangup("cancelled");
+  }, [cleanup, hangup, onClose, phase]);
+
   const toggleMute = useCallback(() => {
     const next = !muted;
     streamRef.current?.getAudioTracks().forEach((track) => { track.enabled = !next; });
@@ -1303,20 +1375,20 @@ function CallDialog({
   }, [muted]);
 
   const toggleCamera = useCallback(() => {
-    const next = !videoEnabled;
+    const next = !cameraEnabled;
     streamRef.current?.getVideoTracks().forEach((track) => { track.enabled = next; });
-    setVideoEnabled(next);
-  }, [videoEnabled]);
+    setCameraEnabled(next);
+  }, [cameraEnabled]);
 
   const incoming = call?.direction === "inbound";
   const active = phase === "in_call";
 
   return (
-    <Dialog title={incoming ? `Call from ${contact.display_name}` : `Call ${contact.display_name}`} onClose={() => void hangup("cancelled")}>
+    <Dialog title={incoming ? `Call from ${contact.display_name}` : `Call ${contact.display_name}`} onClose={closeCall}>
       <div className="stack">
         <audio ref={audioRef} autoPlay playsInline hidden />
-        <video ref={localVideoRef} className="call-video call-video--local" autoPlay muted playsInline hidden={!videoEnabled} />
-        <video ref={remoteVideoRef} className="call-video" autoPlay playsInline hidden={!videoEnabled} />
+        <video ref={localVideoRef} className="call-video call-video--local" autoPlay muted playsInline hidden={!cameraEnabled || phase === "ended" || phase === "error"} />
+        <video ref={remoteVideoRef} className="call-video" autoPlay playsInline hidden={call?.media !== "video" || phase === "ended" || phase === "error"} />
         {phase === "idle" && (
           <>
             <p className="muted">Audio and video are sent directly to {contact.display_name} over the authenticated call path. Your microphone and camera start only after you choose a call.</p>
@@ -1353,15 +1425,15 @@ function CallDialog({
             <p className="direct-host-status" role="status"><Phone size={17} /> In call · {path === "relay" ? "Relayed via TURN" : path === "direct" ? "Direct media" : "Checking media path"} · {quality === "unknown" ? "Measuring quality" : quality === "good" ? "Good quality" : quality === "fair" ? "Fair quality" : "Poor quality"}</p>
             <div className="dialog-actions">
               <Button variant="secondary" onClick={toggleMute}>{muted ? <MicOff size={17} /> : <Mic size={17} />} {muted ? "Unmute" : "Mute"}</Button>
-              {call?.media === "video" && <Button variant="secondary" onClick={toggleCamera}>{videoEnabled ? <Video size={17} /> : <VideoOff size={17} />} {videoEnabled ? "Camera off" : "Camera on"}</Button>}
+              {call?.media === "video" && <Button variant="secondary" onClick={toggleCamera}>{cameraEnabled ? <Video size={17} /> : <VideoOff size={17} />} {cameraEnabled ? "Camera off" : "Camera on"}</Button>}
               <Button variant="danger" onClick={() => void hangup("completed")}><PhoneOff size={17} /> Hang up</Button>
             </div>
           </>
         )}
-        {phase === "ended" && <p className="muted">Call ended.</p>}
+        {phase === "ended" && <><p className="muted">Call ended.</p><div className="dialog-actions"><Button onClick={closeCall}>Close</Button></div></>}
         {phase === "error" && <p className="form-error" role="alert">{error || "The call could not connect."}</p>}
         {media && active && <p className="muted">{media.candidate_count} network candidate{media.candidate_count === 1 ? "" : "s"} exchanged.</p>}
-        {phase === "error" && <div className="dialog-actions">{call && <Button onClick={() => void startCall(call.media)}>Try again</Button>}<Button variant="secondary" onClick={onClose}>Close</Button></div>}
+        {phase === "error" && <div className="dialog-actions">{call && <Button onClick={() => void startCall(call.media)}>Try again</Button>}<Button variant="secondary" onClick={closeCall}>Close</Button></div>}
       </div>
     </Dialog>
   );
