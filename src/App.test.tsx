@@ -5082,6 +5082,48 @@ describe("desktop workspaces", () => {
     ));
   });
 
+  it("opens an incoming invitation through its matching saved contact prompt", async () => {
+    const invitation = JSON.stringify({ type: "workspace_invite", v: 1, signature: "signed" });
+    const current: Snapshot = {
+      ...snapshot([approved]),
+      workspace_invitation_prompts: [{
+        id: "prompt-one", workspace_id: "invited-workspace", workspace_name: "Direct Test",
+        description: "", owner_fingerprint: "AAAA BBBB CCCC DDDD", member_count: 1,
+        retention_days: 90, expires_at: 2_000_000_000, invitation,
+        contact_id: approved.id, contact_display_name: approved.display_name,
+        received_at: 1_800_000_000, state: "pending",
+      }],
+    };
+    let deliverInvitation: ((value: string) => void) | undefined;
+    api.runtimePlatform.mockResolvedValue("android");
+    api.initializeService.mockResolvedValue(current);
+    api.onInvitation.mockImplementation(async (callback) => {
+      deliverInvitation = callback;
+      return () => undefined;
+    });
+    api.onServiceEvent.mockResolvedValue(() => undefined);
+    api.onMobileBackButton.mockResolvedValue(() => undefined);
+    api.serviceCommand.mockImplementation(async (command: string) => {
+      if (command === "snapshot") return current;
+      if (command === "preview_workspace_invitation_prompt") return {
+        workspace_id: "invited-workspace", name: "Direct Test", description: "",
+        owner_fingerprint: "AAAA BBBB CCCC DDDD", member_count: 1,
+        retention_days: 90, expires_at: 2_000_000_000,
+      };
+      if (command === "preview_workspace_invitation") throw new Error("invalid_request");
+      return {};
+    });
+    render(<App />);
+    await waitFor(() => expect(deliverInvitation).toBeTypeOf("function"));
+    act(() => deliverInvitation?.(invitation));
+
+    const dialog = await screen.findByRole("dialog", { name: "Review workspace invitation" });
+    expect(await within(dialog).findByRole("heading", { name: "Direct Test" })).toBeTruthy();
+    expect(within(dialog).queryByText("That information could not be validated.")).toBeNull();
+    expect(api.serviceCommand).toHaveBeenCalledWith("preview_workspace_invitation_prompt", { prompt_id: "prompt-one" });
+    expect(api.serviceCommand.mock.calls.some(([command]) => command === "preview_workspace_invitation")).toBe(false);
+  });
+
   it("starts the guided controller from Invite and exposes the email invitation fallback", async () => {
     const current: Snapshot = { ...snapshot(), workspaces:[workspace], workspace_channels:[workspaceChannel], workspace_join_requests:[], workspace_invitations:[], workspace_drafts:[] };
     api.runtimePlatform.mockResolvedValue("desktop");
