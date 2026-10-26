@@ -15,12 +15,20 @@ vi.mock("@tauri-apps/plugin-deep-link", () => ({
 }));
 vi.mock("@tauri-apps/api/app", () => ({ onBackButtonPress: vi.fn() }));
 
-import { onInvitation, pickInvitationFile, type ServiceEvent } from "./api";
+import { beginCallAudio, onInvitation, pickInvitationFile, requestMediaPermission, type ServiceEvent } from "./api";
 
 afterEach(() => {
   vi.useRealTimers();
   vi.restoreAllMocks();
   vi.clearAllMocks();
+});
+
+it("passes the chosen call media to Android permission and foreground-service commands", async () => {
+  tauri.invoke.mockResolvedValue({ audio: true, camera: false, granted: true });
+  await requestMediaPermission("audio");
+  await beginCallAudio("audio");
+  expect(tauri.invoke).toHaveBeenCalledWith("request_media_permission", { media: "audio" });
+  expect(tauri.invoke).toHaveBeenCalledWith("begin_call_audio", { media: "audio" });
 });
 
 describe("Android invitation ingress", () => {

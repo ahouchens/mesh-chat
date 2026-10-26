@@ -863,6 +863,10 @@ function callFingerprint(sdp: string): string {
   throw new Error("The call could not be secured (no DTLS fingerprint).");
 }
 
+function callHasNetworkCandidate(sdp: string): boolean {
+  return /(?:^|\r?\n)a=candidate:/u.test(sdp);
+}
+
 type CallPeer = { id: string; display_name: string };
 
 function CallDialog({
@@ -1045,7 +1049,12 @@ function CallDialog({
               await pc.setLocalDescription(answer);
               if (pc.iceGatheringState !== "complete") {
                 await new Promise<void>((resolve) => {
-                  const timeout = window.setTimeout(resolve, 3000);
+                  // Call signaling sends one SDP and does not trickle later ICE
+                  // candidates. Allow relay candidates to finish gathering.
+                  const timeout = window.setTimeout(() => {
+                    pc.removeEventListener("icegatheringstatechange", onChange);
+                    resolve();
+                  }, 15000);
                   const onChange = () => {
                     if (pc.iceGatheringState === "complete") {
                       window.clearTimeout(timeout);
@@ -1097,7 +1106,7 @@ function CallDialog({
       throw new Error("This device does not expose a microphone to Mesh Chat.");
     }
     if (await runtimePlatform() !== "desktop") {
-      const permission = await requestMediaPermission();
+      const permission = await requestMediaPermission(media);
       if (!permission.audio || (media === "video" && !permission.camera)) {
         throw new Error(media === "video" ? "Microphone and camera access are required for a video call." : "Microphone access is required for an audio call.");
       }
@@ -1111,7 +1120,12 @@ function CallDialog({
   const waitForCandidates = useCallback(async (pc: RTCPeerConnection) => {
     if (pc.iceGatheringState === "complete") return;
     await new Promise<void>((resolve) => {
-      const timeout = window.setTimeout(resolve, 3000);
+      // A three-second cutoff can omit cellular STUN/TURN candidates. This
+      // call path currently sends only the candidates embedded in its SDP.
+      const timeout = window.setTimeout(() => {
+        pc.removeEventListener("icegatheringstatechange", onChange);
+        resolve();
+      }, 15000);
       const onChange = () => {
         if (pc.iceGatheringState === "complete") {
           window.clearTimeout(timeout);
@@ -1136,6 +1150,7 @@ function CallDialog({
       await waitForCandidates(pc);
       const sdp = pc.localDescription?.sdp;
       if (!sdp) throw new Error("The reconnecting call offer could not be created.");
+      if (!callHasNetworkCandidate(sdp)) throw new Error("No call network candidate was found. Check the connection or configure TURN.");
       await serviceCommand("restart_call", {
         call_id: callId,
         sdp,
@@ -1186,7 +1201,7 @@ function CallDialog({
       const stream = await prepareMedia(media);
       streamRef.current = stream;
       if (localVideoRef.current) localVideoRef.current.srcObject = stream;
-      const focus = await beginCallAudio();
+      const focus = await beginCallAudio(media);
       if (!focus.granted) throw new Error("Android could not take call-audio focus.");
       const configuration = await serviceCommand<CallIceConfiguration>("call_ice_servers");
       const pc = attachPeer(configuration);
@@ -1197,6 +1212,7 @@ function CallDialog({
       await waitForCandidates(pc);
       const sdp = pc.localDescription?.sdp;
       if (!sdp) throw new Error("The call offer could not be created.");
+      if (!callHasNetworkCandidate(sdp)) throw new Error("No call network candidate was found. Check the connection or configure TURN.");
       const result = await serviceCommand<CallSummary>("start_call", {
         contact_id: contact.id,
         media,
@@ -1227,7 +1243,7 @@ function CallDialog({
       const stream = await prepareMedia(call.media);
       streamRef.current = stream;
       if (localVideoRef.current) localVideoRef.current.srcObject = stream;
-      const focus = await beginCallAudio();
+      const focus = await beginCallAudio(call.media);
       if (!focus.granted) throw new Error("Android could not take call-audio focus.");
       const configuration = await serviceCommand<CallIceConfiguration>("call_ice_servers");
       const pc = attachPeer(configuration);
@@ -1239,6 +1255,7 @@ function CallDialog({
       await waitForCandidates(pc);
       const sdp = pc.localDescription?.sdp;
       if (!sdp) throw new Error("The call answer could not be created.");
+      if (!callHasNetworkCandidate(sdp)) throw new Error("No call network candidate was found. Check the connection or configure TURN.");
       const result = await serviceCommand<CallSummary>("answer_call", {
         call_id: call.id,
         sdp,

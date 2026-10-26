@@ -73,6 +73,11 @@ class BackgroundAvailabilityArgs {
     var enabled: Boolean? = null
 }
 
+@InvokeArg
+class CallMediaArgs {
+    var media: String? = null
+}
+
 /**
  * Result of opening and validating an invitation document in the host app.
  *
@@ -96,6 +101,7 @@ interface InvitationDocumentHost {
             strings = [Manifest.permission.RECORD_AUDIO, Manifest.permission.CAMERA],
             alias = "media",
         ),
+        Permission(strings = [Manifest.permission.RECORD_AUDIO], alias = "audio"),
     ],
 )
 class MeshRuntimePlugin(private val activity: Activity) : Plugin(activity) {
@@ -139,6 +145,7 @@ class MeshRuntimePlugin(private val activity: Activity) : Plugin(activity) {
     private var audioFocusRequest: AudioFocusRequest? = null
     private var legacyAudioFocusListener: AudioManager.OnAudioFocusChangeListener? = null
     private var previousAudioMode: Int = AudioManager.MODE_NORMAL
+    private var callAudioActive = false
     private val pythonExecutor = Executors.newSingleThreadExecutor { runnable ->
         Thread(runnable, "mesh-chat-python").apply { isDaemon = true }
     }
@@ -715,16 +722,21 @@ class MeshRuntimePlugin(private val activity: Activity) : Plugin(activity) {
 
     @Command
     fun requestMediaPermission(invoke: Invoke) {
+        val media = invoke.parseArgs(CallMediaArgs::class.java).media
+        if (media != "audio" && media != "video") {
+            reject(invoke, "request_media_permission", IllegalArgumentException("invalid_media"))
+            return
+        }
         val audio = ContextCompat.checkSelfPermission(activity, Manifest.permission.RECORD_AUDIO) ==
             PackageManager.PERMISSION_GRANTED
         val camera = ContextCompat.checkSelfPermission(activity, Manifest.permission.CAMERA) ==
             PackageManager.PERMISSION_GRANTED
-        if (audio && camera) {
-            resolve(invoke, successful(JSONObject().put("audio", true).put("camera", true)))
+        if (audio && (media == "audio" || camera)) {
+            resolve(invoke, successful(JSONObject().put("audio", audio).put("camera", camera)))
             return
         }
         try {
-            requestPermissionForAlias("media", invoke, "mediaPermissionResult")
+            requestPermissionForAlias(if (media == "video") "media" else "audio", invoke, "mediaPermissionResult")
         } catch (error: Throwable) {
             reject(invoke, "request_media_permission", error)
         }
@@ -741,9 +753,22 @@ class MeshRuntimePlugin(private val activity: Activity) : Plugin(activity) {
 
     @Command
     fun beginCallAudio(invoke: Invoke) {
+        val media = invoke.parseArgs(CallMediaArgs::class.java).media
+        if (media != "audio" && media != "video") {
+            reject(invoke, "begin_call_audio", IllegalArgumentException("invalid_media"))
+            return
+        }
+        val audioAllowed = ContextCompat.checkSelfPermission(activity, Manifest.permission.RECORD_AUDIO) ==
+            PackageManager.PERMISSION_GRANTED
+        val cameraAllowed = ContextCompat.checkSelfPermission(activity, Manifest.permission.CAMERA) ==
+            PackageManager.PERMISSION_GRANTED
+        if (!audioAllowed || (media == "video" && !cameraAllowed)) {
+            resolve(invoke, successful(JSONObject().put("granted", false)))
+            return
+        }
         try {
             val audio = activity.getSystemService(Context.AUDIO_SERVICE) as AudioManager
-            if (audioFocusRequest == null) {
+            if (!callAudioActive) {
                 previousAudioMode = audio.mode
                 val granted = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                     val request = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT)
@@ -755,28 +780,52 @@ class MeshRuntimePlugin(private val activity: Activity) : Plugin(activity) {
                         )
                         .setOnAudioFocusChangeListener { }
                         .build()
-                    audioFocusRequest = request
-                    audio.requestAudioFocus(request) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
+                    val acquired = audio.requestAudioFocus(request) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
+                    if (acquired) audioFocusRequest = request
+                    acquired
                 } else {
                     @Suppress("DEPRECATION")
                     val listener = AudioManager.OnAudioFocusChangeListener { }
-                    legacyAudioFocusListener = listener
-                    audio.requestAudioFocus(
+                    val acquired = audio.requestAudioFocus(
                         listener,
                         AudioManager.STREAM_VOICE_CALL,
                         AudioManager.AUDIOFOCUS_GAIN_TRANSIENT,
                     ) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
+                    if (acquired) legacyAudioFocusListener = listener
+                    acquired
+                }
+                if (!granted) {
+                    resolve(invoke, successful(JSONObject().put("granted", false)))
+                    return
                 }
                 audio.mode = AudioManager.MODE_IN_COMMUNICATION
                 ContextCompat.startForegroundService(
                     activity,
-                    Intent(activity, CallService::class.java),
+                    Intent(activity, CallService::class.java)
+                        .putExtra(CallService.EXTRA_MEDIA, media),
                 )
-                resolve(invoke, successful(JSONObject().put("granted", granted)))
+                callAudioActive = true
+                resolve(invoke, successful(JSONObject().put("granted", true)))
                 return
             }
+            ContextCompat.startForegroundService(
+                activity,
+                Intent(activity, CallService::class.java)
+                    .putExtra(CallService.EXTRA_MEDIA, media),
+            )
             resolve(invoke, successful(JSONObject().put("granted", true)))
         } catch (error: Throwable) {
+            val audio = activity.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                audioFocusRequest?.let { audio.abandonAudioFocusRequest(it) }
+            } else {
+                @Suppress("DEPRECATION")
+                legacyAudioFocusListener?.let { audio.abandonAudioFocus(it) }
+            }
+            audioFocusRequest = null
+            legacyAudioFocusListener = null
+            callAudioActive = false
+            audio.mode = previousAudioMode
             reject(invoke, "begin_call_audio", error)
         }
     }
@@ -793,6 +842,7 @@ class MeshRuntimePlugin(private val activity: Activity) : Plugin(activity) {
             }
             audioFocusRequest = null
             legacyAudioFocusListener = null
+            callAudioActive = false
             audio.mode = previousAudioMode
             activity.stopService(Intent(activity, CallService::class.java))
             resolve(invoke, successful(JSONObject().put("active", false)))

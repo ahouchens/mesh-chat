@@ -5,9 +5,12 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
 import android.content.Intent
+import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
+import android.util.Log
 import androidx.core.app.NotificationCompat
+import androidx.core.app.ServiceCompat
 
 /**
  * Keeps an active audio/video call alive while the activity is backgrounded.
@@ -18,9 +21,13 @@ import androidx.core.app.NotificationCompat
  */
 class CallService : Service() {
     companion object {
+        private const val TAG = "MeshChatCall"
         const val CHANNEL_ID = "mesh_chat_calls_v1"
         const val NOTIFICATION_ID = 7001
+        const val EXTRA_MEDIA = "call_media"
     }
+
+    private var foregroundStarted = false
 
     override fun onCreate() {
         super.onCreate()
@@ -37,6 +44,9 @@ class CallService : Service() {
                 },
             )
         }
+    }
+
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val launch = packageManager.getLaunchIntentForPackage(packageName)
         val pending = PendingIntent.getActivity(
             this,
@@ -53,15 +63,33 @@ class CallService : Service() {
             .setSilent(true)
             .setCategory(NotificationCompat.CATEGORY_CALL)
             .build()
-        startForeground(NOTIFICATION_ID, notification)
+        val type = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            val cameraType = if (intent?.getStringExtra(EXTRA_MEDIA) == "video") {
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA
+            } else {
+                0
+            }
+            ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE or cameraType
+        } else {
+            0
+        }
+        return try {
+            ServiceCompat.startForeground(this, NOTIFICATION_ID, notification, type)
+            foregroundStarted = true
+            START_NOT_STICKY
+        } catch (error: Throwable) {
+            // A permission or foreground-start denial must not kill the process
+            // that owns the independent messaging WebRTC bridge.
+            Log.e(TAG, "call foreground start failed (${error.javaClass.simpleName})")
+            stopSelf(startId)
+            START_NOT_STICKY
+        }
     }
-
-    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int = START_NOT_STICKY
 
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onDestroy() {
-        stopForeground(STOP_FOREGROUND_REMOVE)
+        if (foregroundStarted) stopForeground(STOP_FOREGROUND_REMOVE)
         super.onDestroy()
     }
 }

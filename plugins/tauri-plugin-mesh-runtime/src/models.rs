@@ -30,6 +30,11 @@ pub struct BackgroundAvailabilityRequest {
     pub enabled: bool,
 }
 
+#[derive(Debug, Serialize)]
+pub struct CallMediaRequest {
+    pub media: String,
+}
+
 #[derive(Debug, Default, Deserialize)]
 pub struct NativeResponse {
     pub json: String,
