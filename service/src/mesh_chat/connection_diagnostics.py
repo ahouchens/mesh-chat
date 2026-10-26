@@ -225,6 +225,31 @@ def native_webrtc_state(service):
     return result
 
 
+def background_state(service):
+    """Export service health, never arbitrary native status or exception text."""
+    try:
+        value = service.background_availability_status()
+        native = value.get("native") or {}
+        def choice(raw, allowed):
+            return raw if isinstance(raw, str) and raw in allowed else "unavailable"
+        def boolean(raw):
+            return raw if type(raw) is bool else None
+        restorations = native.get("restorations")
+        return {
+            "status": "available", "enabled": boolean(value.get("enabled")),
+            "health": choice(value.get("health"), {"off", "starting", "available", "degraded", "failed", "stopped", "unknown"}),
+            "lifecycle_state": choice(value.get("lifecycle_state"), {"foreground", "background", "background_available", "suspended", "reconciling", "caught_up"}),
+            **{key: boolean(native.get(key)) for key in ("service_running", "runtime_initialized", "native_webrtc_ready", "start_requested", "notification_visible", "ui_foreground")},
+            "native_enabled": boolean(native.get("enabled")),
+            "notification_state": choice(native.get("notification_state"), {"allowed", "denied", "not_requested", "settings_required", "unknown"}),
+            "failure": None if native.get("failure") is None else choice(native.get("failure"), {
+                "foreground_start_denied", "foreground_restart_denied", "runtime_initialization_failed", "notification_permission_required"}),
+            "restorations": restorations if type(restorations) is int and 0 <= restorations <= 2**53 - 1 else None,
+        }
+    except Exception:
+        return {"status": "unavailable"}
+
+
 def reconnect_state(service):
     # reconnect_profiles() promotes pending capabilities and creates device
     # state. Diagnostic inspection must only read the persisted profiles.
@@ -258,7 +283,7 @@ def report(service):
         "retention_days":7, "event_limit":LIMIT, "native_check_counts":"unavailable",
         "receipt_status":"see_event_timestamp", "approval_status":"see_event_timestamp",
         "current_state":current_state(service), "current_native_webrtc":native_webrtc_state(service),
-        "current_reconnect":reconnect_state(service), **value}
+        "current_reconnect":reconnect_state(service), "current_background":background_state(service), **value}
     while len(json.dumps(result).encode()) >= 65536 and result["events"]:
         result["events"] = result["events"][1:]
         result["truncated"] = True

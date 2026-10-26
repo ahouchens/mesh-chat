@@ -1,6 +1,9 @@
 package com.meshchat.runtime
 
 import android.util.Base64
+import android.app.ActivityManager
+import android.content.Context
+import android.content.Intent
 import android.webkit.JavascriptInterface
 import android.webkit.WebView
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -75,6 +78,81 @@ class NativeWebRtcInteropTest {
             if (Python.isStarted()) {
                 Python.getInstance().getModule("mesh_chat.mobile_bridge").callAttr("shutdown")
             }
+        }
+    }
+
+    @Test(timeout = 180_000) fun optedInServiceRestoresAndKeepsNativeTrafficWhileActivityIsStopped() {
+        BackgroundRuntime.configure(context)
+        assertTrue(JSONObject(BackgroundRuntime.initialize()).optBoolean("ok"))
+        // Simulate an update/process restart: persisted opt-in, no Service.
+        BackgroundRuntime.setEnabled(context, true)
+        command("set_background_availability", JSONObject().put("enabled", true))
+        assertFalse(MeshAvailabilityService.isRunning())
+        val launch = Intent().setClassName(context, "com.meshchat.runtime.smoke.BackgroundTestActivity")
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        var activity = instrumentation.startActivitySync(launch)
+        fun awaitState(message: String, condition: () -> Boolean) {
+            val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(20)
+            while (!condition() && System.nanoTime() < deadline) Thread.sleep(100)
+            assertTrue(message, condition())
+        }
+        fun nativeStats(id: String): JSONObject = JSONObject(NativeWebRtcHost.stats(id)).getJSONObject("result")
+        fun assertForegroundService() {
+            val manager = context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
+            @Suppress("DEPRECATION")
+            assertTrue("Android did not promote the availability Service", manager.getRunningServices(20).any {
+                it.service.className == MeshAvailabilityService::class.java.name && it.foreground
+            })
+            assertTrue(BackgroundRuntime.statusJson().optBoolean("notification_visible"))
+        }
+        try {
+            awaitState("Saved opt-in did not restore the Service") {
+                MeshAvailabilityService.isRunning() && BackgroundRuntime.statusJson().optBoolean("notification_visible")
+            }
+            assertForegroundService()
+            val channels = JSONArray().put(JSONObject().put("label", "mesh-reticulum").put("binary", true).put("ordered", true))
+            val ice = JSONObject().put("iceServers", JSONArray()).put("iceTransportPolicy", "all").toString()
+            val offer = JSONObject(NativeWebRtcHost.createOffer("background-a", ice, channels.toString()))
+            assertTrue(offer.toString(), offer.getBoolean("ok"))
+            val answer = JSONObject(NativeWebRtcHost.acceptOffer("background-b", offer.getString("sdp"), ice, channels.toString()))
+            assertTrue(answer.toString(), answer.getBoolean("ok"))
+            assertTrue(JSONObject(NativeWebRtcHost.applyAnswer("background-a", answer.getString("sdp"))).getBoolean("ok"))
+            awaitState("Native channels did not open") {
+                nativeStats("background-a").optString("data_channel_state") == "open" &&
+                    nativeStats("background-b").optString("data_channel_state") == "open"
+            }
+            instrumentation.runOnMainSync { assertTrue(activity.moveTaskToBack(true)) }
+            awaitState("The Activity did not leave the foreground") { !BackgroundRuntime.statusJson().optBoolean("ui_foreground") }
+            repeat(12) {
+                assertForegroundService()
+                assertTrue(NativeWebRtcHost.send("background-a", byteArrayOf(1, 2, 3)))
+                assertTrue(NativeWebRtcHost.send("background-b", byteArrayOf(4, 5, 6)))
+                Thread.sleep(1000)
+            }
+            assertTrue(nativeStats("background-a").getLong("received_packets") >= 12)
+            assertTrue(nativeStats("background-b").getLong("received_packets") >= 12)
+            // A stopped Service is restored on the next foreground launch,
+            // without replacing the established native transport.
+            context.stopService(Intent(context, MeshAvailabilityService::class.java))
+            awaitState("Service did not stop") { !MeshAvailabilityService.isRunning() }
+            assertTrue(BackgroundRuntime.isEnabled(context))
+            instrumentation.runOnMainSync { activity.finish() }
+            activity = instrumentation.startActivitySync(launch)
+            awaitState("Returning to the app did not restore its Service") { MeshAvailabilityService.isRunning() }
+            assertEquals("open", nativeStats("background-a").getString("data_channel_state"))
+            assertTrue(BackgroundRuntime.statusJson().getInt("restorations") >= 2)
+            // Explicit opt-out must win over a later foreground resume.
+            BackgroundRuntime.stop(context)
+            command("set_background_availability", JSONObject().put("enabled", false))
+            awaitState("Explicit stop did not stop the Service") { !MeshAvailabilityService.isRunning() }
+            instrumentation.runOnMainSync { BackgroundRuntime.restoreIfEnabled(context) }
+            assertFalse(BackgroundRuntime.isEnabled(context))
+            assertFalse(MeshAvailabilityService.isRunning())
+        } finally {
+            BackgroundRuntime.stop(context)
+            instrumentation.runOnMainSync { activity.finish() }
+            BackgroundRuntime.onRuntimeShutdown()
+            Python.getInstance().getModule("mesh_chat.mobile_bridge").callAttr("shutdown")
         }
     }
 

@@ -57,6 +57,20 @@ function currentReconnectState(raw: unknown) {
   };
 }
 
+function currentBackgroundState(raw: unknown) {
+  const value = object(raw);
+  return {
+    status: choice(value.status, new Set(["available", unavailable])),
+    ...Object.fromEntries(["enabled", "native_enabled", "service_running", "runtime_initialized", "native_webrtc_ready", "start_requested", "notification_visible", "ui_foreground"]
+      .map(key => [key, boolean(value[key])])),
+    health: choice(value.health, new Set(["off", "starting", "available", "degraded", "failed", "stopped", "unknown"])),
+    lifecycle_state: choice(value.lifecycle_state, new Set(["foreground", "background", "background_available", "suspended", "reconciling", "caught_up"])),
+    notification_state: choice(value.notification_state, new Set(["allowed", "denied", "not_requested", "settings_required", "unknown"])),
+    failure: value.failure === null ? null : choice(value.failure, new Set(["foreground_start_denied", "foreground_restart_denied", "runtime_initialization_failed", "notification_permission_required"])),
+    restorations: number(value.restorations, Number.MAX_SAFE_INTEGER),
+  };
+}
+
 function currentServiceState(raw: unknown) {
   const value = object(raw);
   return {
@@ -143,6 +157,7 @@ export function diagnosticReport(build: unknown, raw: unknown, log = false) {
     current_service: currentServiceState(value.current_state), current_webrtc: currentWebRTCState(),
     current_native_webrtc: currentNativeWebRTCState(value.current_native_webrtc),
     current_reconnect: currentReconnectState(value.current_reconnect),
+    current_background: currentBackgroundState(value.current_background),
     native_check_counts: rows.at(-1)?.checks_started !== null && rows.length ? "see_event_counts" : unavailable, receipt_status: "see_event_timestamp", approval_status: "see_event_timestamp",
     retention_days: 7, event_limit: 200, events_included: rows.length, history_event_count: history.length,
     truncated: value.truncated === true || rows.length < history.length,

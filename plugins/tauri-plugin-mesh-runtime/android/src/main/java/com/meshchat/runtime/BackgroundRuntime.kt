@@ -10,6 +10,7 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import android.net.wifi.WifiManager
 import android.os.Build
+import android.os.SystemClock
 import android.provider.Settings
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
@@ -52,6 +53,8 @@ object BackgroundRuntime {
     @Volatile private var nativeWebRtcReady = false
     @Volatile private var availabilityFailure: String? = null
     @Volatile private var uiForeground = false
+    @Volatile private var startRequestedAt = 0L
+    @Volatile private var restorations = 0
     private lateinit var appContext: Context
     private val preferences by lazy {
         appContext.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
@@ -83,10 +86,15 @@ object BackgroundRuntime {
         preferences.edit().putBoolean(AVAILABILITY_KEY, enabled).apply()
     }
 
+    @Synchronized
     fun start(context: Context) {
         configure(context)
+        ensureNotificationChannels()
+        check(notificationAllowed()) { "notification_permission_required" }
         availabilityFailure = null
         setEnabled(context, true)
+        if (MeshAvailabilityService.isRunning() || startPending()) return
+        startRequestedAt = SystemClock.elapsedRealtime()
         try {
             ContextCompat.startForegroundService(
                 context,
@@ -99,8 +107,30 @@ object BackgroundRuntime {
         }
     }
 
+    /** Restore an existing opt-in only after the unlocked UI returns. */
+    @Synchronized
+    fun restoreIfEnabled(context: Context) {
+        if (!uiForeground || !isEnabled(context) || MeshAvailabilityService.isRunning() || startPending()) return
+        try {
+            start(context)
+            restorations++
+        } catch (error: Throwable) {
+            Log.e(TAG, "availability restore failed (${error.javaClass.simpleName})")
+            availabilityFailed(if (!notificationAllowed()) "notification_permission_required" else "foreground_start_denied")
+        }
+    }
+
+    private fun startPending(): Boolean = startRequestedAt != 0L &&
+        SystemClock.elapsedRealtime() - startRequestedAt < 15_000
+
+    fun onServiceStarted() { startRequestedAt = 0L }
+
+    fun onServiceStopped() { startRequestedAt = 0L }
+
+    @Synchronized
     fun stop(context: Context) {
         configure(context)
+        startRequestedAt = 0L
         setEnabled(context, false)
         NativeWebRtcBridge.closeAll()
         context.stopService(Intent(context, MeshAvailabilityService::class.java))
@@ -177,6 +207,10 @@ object BackgroundRuntime {
         .put("runtime_initialized", runtimeInitialized)
         .put("native_webrtc_ready", nativeWebRtcReady)
         .put("service_running", MeshAvailabilityService.isRunning())
+        .put("start_requested", startPending())
+        .put("restorations", restorations)
+        .put("ui_foreground", uiForeground)
+        .put("notification_visible", if (configured) notificationVisible() else false)
         .put("failure", availabilityFailure ?: JSONObject.NULL)
         .put("notification_state", if (configured) permissionState() else "unknown")
 
@@ -184,6 +218,7 @@ object BackgroundRuntime {
     fun status(): String = statusJson().toString()
 
     fun availabilityFailed(reason: String) {
+        startRequestedAt = 0L
         availabilityFailure = reason
         setEnabled(appContext, false)
         execute {
@@ -450,7 +485,17 @@ object BackgroundRuntime {
 
     fun availabilityChannelId(): String = AVAILABILITY_CHANNEL
 
-    fun notificationAllowed(): Boolean = permissionState() == "allowed"
+    fun notificationAllowed(): Boolean {
+        if (permissionState() != "allowed") return false
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return true
+        val manager = appContext.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        return manager.getNotificationChannel(AVAILABILITY_CHANNEL)?.importance != NotificationManager.IMPORTANCE_NONE
+    }
+
+    private fun notificationVisible(): Boolean = try {
+        val manager = appContext.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        notificationAllowed() && manager.activeNotifications.any { it.id == MeshAvailabilityService.NOTIFICATION_ID }
+    } catch (_: Throwable) { false }
 
     fun ensureNotificationChannels() {
         createNotificationChannels()
@@ -487,6 +532,7 @@ object BackgroundRuntime {
             .setContentText("Keeping your conversations connected")
             .setCategory(NotificationCompat.CATEGORY_SERVICE)
             .setOngoing(true)
+            .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
             .setSilent(true)
             .setShowWhen(false)
             .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
