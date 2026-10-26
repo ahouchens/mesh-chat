@@ -3527,7 +3527,7 @@ function JoinWorkspaceDialog({ initialValue = "", promptId, promptWorkspaceName,
   const [replyDoctor, setReplyDoctor] = useState<DirectDoctorReport | null>(null);
   const replyHostSession = useRef<string | null>(null);
   const reviewGeneration = useRef(0);
-  const lastInitialValue = useRef<string | null>(null);
+  const lastReviewInput = useRef<{ value: string; promptId: string | null } | null>(null);
   const joinAttempt = useRef<{ command: string; document: string; operationId: string } | null>(null);
   const stopUnsharedReply = async () => {
     const hostId = replyHostSession.current;
@@ -3536,7 +3536,7 @@ function JoinWorkspaceDialog({ initialValue = "", promptId, promptWorkspaceName,
   };
   const closeDialog = async () => { await stopUnsharedReply(); onClose(); };
   const reviewCandidate = useCallback(async (candidate: string) => {
-    if (!candidate.trim()) return;
+    if (!candidate.trim() && !promptId) return;
     const generation = ++reviewGeneration.current;
     setBusy(true); setError("");
     setConnectionResults([]); setJoinedWorkspace(null); setReplyDoctor(null);
@@ -3581,15 +3581,16 @@ function JoinWorkspaceDialog({ initialValue = "", promptId, promptWorkspaceName,
   }, [promptId]);
   const review = async () => { await reviewCandidate(value); };
   useEffect(() => {
-    if (lastInitialValue.current === initialValue) return;
-    lastInitialValue.current = initialValue;
+    const reviewPromptId = promptId ?? null;
+    if (lastReviewInput.current?.value === initialValue && lastReviewInput.current.promptId === reviewPromptId) return;
+    lastReviewInput.current = { value: initialValue, promptId: reviewPromptId };
     reviewGeneration.current += 1;
     setBusy(false); setValue(initialValue); setError("");
     setPreview(null); setDevicePreview(null); setRemoteConsent(false); setI2PConsent(false);
     setConnectionResults([]); setJoinedWorkspace(null); setReplyFormats(null); setReplyDoctor(null);
     void stopUnsharedReply();
-    if (initialValue.trim()) void reviewCandidate(initialValue);
-  }, [initialValue, reviewCandidate]);
+    if (initialValue.trim() || promptId) void reviewCandidate(initialValue);
+  }, [initialValue, promptId, reviewCandidate]);
   const join = async () => {
     if ((!preview && !devicePreview) || (existingWorkspace && !canResumeExisting) || busy) return;
     setBusy(true); setError("");
@@ -4907,6 +4908,14 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
   const [createWorkspaceOpen, setCreateWorkspaceOpen] = useState(false);
   const [joinWorkspaceOpen, setJoinWorkspaceOpen] = useState(false);
   const [joinWorkspaceValue, setJoinWorkspaceValue] = useState("");
+  const joinInvitationValue = joinWorkspaceValue || (isWorkspaceInvitationValue(initialInvitation) ? initialInvitation : "");
+  const matchingContactInvitePrompt = (snapshot.workspace_invitation_prompts ?? []).find((prompt) =>
+    prompt.state === "pending" && prompt.invitation === joinInvitationValue,
+  );
+  const reviewContactInvitePromptId = contactInvitePromptId ?? matchingContactInvitePrompt?.id ?? null;
+  const reviewContactInviteWorkspaceName = (snapshot.workspace_invitation_prompts ?? []).find((prompt) =>
+    prompt.id === reviewContactInvitePromptId,
+  )?.workspace_name;
   const [inviteWorkspaceOpen, setInviteWorkspaceOpen] = useState(false);
   const [pendingJoinsOpen, setPendingJoinsOpen] = useState(false);
   const [contactRequestsOpen, setContactRequestsOpen] = useState(false);
@@ -6881,7 +6890,7 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
         )}
       </div>
       {createWorkspaceOpen && <CreateWorkspaceDialog onClose={() => setCreateWorkspaceOpen(false)} onCreated={async (workspace) => { await refresh(true); setActiveSpaceId(workspace.id); setCreateWorkspaceOpen(false); }} />}
-      {joinWorkspaceOpen && <JoinWorkspaceDialog resumeWorkspaceId={resumeWorkspaceId} workspaces={workspaces} initialValue={joinWorkspaceValue || (isWorkspaceInvitationValue(initialInvitation) ? initialInvitation : "")} promptId={contactInvitePromptId} promptWorkspaceName={contactInvitePrompt?.workspace_name} onClose={() => { setJoinWorkspaceOpen(false); setContactInvitePromptId(null); setResumeWorkspaceId(undefined); setJoinWorkspaceValue(""); onInvitationHandled(); }} onJoined={async (workspace) => { const promptId = contactInvitePromptId; await refresh(true); setActiveSpaceId(workspace.id); setJoinWorkspaceOpen(false); setResumeWorkspaceId(undefined); setJoinWorkspaceValue(""); onInvitationHandled(); if (promptId) { setContactInvitePromptId(null); await dismissContactInvite(promptId); } }} />}
+      {joinWorkspaceOpen && <JoinWorkspaceDialog resumeWorkspaceId={resumeWorkspaceId} workspaces={workspaces} initialValue={joinInvitationValue} promptId={reviewContactInvitePromptId} promptWorkspaceName={reviewContactInviteWorkspaceName} onClose={() => { setJoinWorkspaceOpen(false); setContactInvitePromptId(null); setResumeWorkspaceId(undefined); setJoinWorkspaceValue(""); onInvitationHandled(); }} onJoined={async (workspace) => { const promptId = reviewContactInvitePromptId; await refresh(true); setActiveSpaceId(workspace.id); setJoinWorkspaceOpen(false); setResumeWorkspaceId(undefined); setJoinWorkspaceValue(""); onInvitationHandled(); if (promptId) { setContactInvitePromptId(null); await dismissContactInvite(promptId); } }} />}
       {selectedWorkspace && workspaceBrowseOpen && <BrowseWorkspaceChannelsDialog workspace={selectedWorkspace} channels={selectedWorkspaceChannels.filter((channel) => channel.visibility === "public")} busy={workspaceActionBusy} error={workspaceActionError} onClose={() => setWorkspaceBrowseOpen(false)} onOpen={(channelId) => { setWorkspaceMentionsOpen(false); setWorkspaceThreadsOpen(false); setWorkspaceThreadRootId(null); setWorkspaceSelectedChannelId(channelId); setWorkspaceSelectedDirectId(null); setWorkspaceBrowseOpen(false); setMobileSidebarOpen(false); }} onSubscribe={(channelId, subscribed) => void runWorkspaceChannelAction("set_workspace_channel_subscription", { channel_id: channelId, subscribed })} onSync={() => void runWorkspaceChannelAction("sync_workspace_channels")} onCreate={() => { setWorkspaceBrowseOpen(false); setWorkspaceCreateChannelOpen(true); }} />}
       {selectedWorkspace && workspaceCreateChannelOpen && <CreateWorkspaceChannelDialog workspace={selectedWorkspace} busy={workspaceActionBusy} error={workspaceActionError} onClose={() => setWorkspaceCreateChannelOpen(false)} onCreate={(name, topic, visibility, memberIds) => void runWorkspaceChannelAction("create_workspace_channel", { name, topic, visibility, member_ids: memberIds })} />}
       {selectedWorkspace && selectedWorkspaceChannel && workspaceManageChannelOpen && <ManageWorkspaceChannelDialog workspace={selectedWorkspace} channel={selectedWorkspaceChannel} transfers={workspaceChannelTransfers.filter((item) => item.workspace_id === selectedWorkspace.id)} busy={workspaceActionBusy} error={workspaceActionError} onClose={() => setWorkspaceManageChannelOpen(false)} onUpdate={(name, topic, archived) => void runWorkspaceChannelAction("update_workspace_channel", { channel_id: selectedWorkspaceChannel.id, name, topic, archived })} onMembers={(memberIds) => void runWorkspaceChannelAction("update_workspace_private_channel_members", { channel_id: selectedWorkspaceChannel.id, member_ids: memberIds })} onLeave={() => void runWorkspaceChannelAction("leave_workspace_private_channel", { channel_id: selectedWorkspaceChannel.id })} onOfferTransfer={(successorMemberId) => void runWorkspaceChannelAction("offer_workspace_channel_transfer", { channel_id: selectedWorkspaceChannel.id, successor_member_id: successorMemberId })} onAcceptTransfer={(transferId) => void runWorkspaceChannelAction("accept_workspace_channel_transfer", { transfer_id: transferId })} onRecover={() => void runWorkspaceChannelAction("recover_workspace_channel", { channel_id: selectedWorkspaceChannel.id })} />}
