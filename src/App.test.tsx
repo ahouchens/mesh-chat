@@ -2044,6 +2044,32 @@ describe("Settings page navigation and saved state", () => {
 });
 
 describe("contact management", () => {
+  it("leaves the existing audio route alone when call media cannot start", async () => {
+    const current = snapshot([approved]);
+    const getUserMedia = vi.fn().mockRejectedValue(new Error("Microphone unavailable"));
+    vi.stubGlobal("navigator", Object.assign(Object.create(navigator), {
+      mediaDevices: { getUserMedia },
+    }));
+    api.runtimePlatform.mockResolvedValue("desktop");
+    api.initializeService.mockResolvedValue(current);
+    api.onInvitation.mockResolvedValue(() => undefined);
+    api.onServiceEvent.mockResolvedValue(() => undefined);
+    api.serviceCommand.mockImplementation(async (command: string) => {
+      if (command === "snapshot") return current;
+      return {};
+    });
+
+    render(<App />);
+    const conversation = await screen.findByLabelText("Conversation with Taylor");
+    fireEvent.click(within(conversation).getByRole("button", { name: "Call Taylor" }));
+    const dialog = await screen.findByRole("dialog", { name: "Call Taylor" });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Audio call" }));
+    expect(await within(dialog).findByRole("alert")).toBeTruthy();
+    expect(getUserMedia).toHaveBeenCalledOnce();
+    expect(api.endCallAudio).not.toHaveBeenCalled();
+    expect(api.serviceCommand.mock.calls.some(([command]) => command === "start_call")).toBe(false);
+  });
+
   it("exports a reconnect update only when the approved contact has no remaining route", async () => {
     const disconnected = { ...approved, route_status: "reconnect_update_required" as const };
     const current = snapshot([disconnected]);

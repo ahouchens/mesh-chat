@@ -892,6 +892,7 @@ function CallDialog({
   const [error, setError] = useState("");
   const pcRef = useRef<RTCPeerConnection | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  const callAudioStartedRef = useRef(false);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const localVideoRef = useRef<HTMLVideoElement | null>(null);
   const remoteVideoRef = useRef<HTMLVideoElement | null>(null);
@@ -918,7 +919,10 @@ function CallDialog({
     if (audioRef.current) audioRef.current.srcObject = null;
     if (localVideoRef.current) localVideoRef.current.srcObject = null;
     if (remoteVideoRef.current) remoteVideoRef.current.srcObject = null;
-    void endCallAudio().catch(() => undefined);
+    if (callAudioStartedRef.current) {
+      callAudioStartedRef.current = false;
+      void endCallAudio().catch(() => undefined);
+    }
   }, []);
 
   useEffect(() => cleanup, [cleanup]);
@@ -1203,6 +1207,7 @@ function CallDialog({
       if (localVideoRef.current) localVideoRef.current.srcObject = stream;
       const focus = await beginCallAudio(media);
       if (!focus.granted) throw new Error("Android could not take call-audio focus.");
+      callAudioStartedRef.current = true;
       const configuration = await serviceCommand<CallIceConfiguration>("call_ice_servers");
       const pc = attachPeer(configuration);
       stream.getTracks().forEach((track) => pc.addTrack(track, stream));
@@ -1245,6 +1250,7 @@ function CallDialog({
       if (localVideoRef.current) localVideoRef.current.srcObject = stream;
       const focus = await beginCallAudio(call.media);
       if (!focus.granted) throw new Error("Android could not take call-audio focus.");
+      callAudioStartedRef.current = true;
       const configuration = await serviceCommand<CallIceConfiguration>("call_ice_servers");
       const pc = attachPeer(configuration);
       await pc.setRemoteDescription({ type: "offer", sdp: details.remote_sdp });
