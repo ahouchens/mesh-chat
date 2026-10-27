@@ -1,12 +1,38 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-const api = vi.hoisted(() => ({ serviceCommand: vi.fn(), appBuildInfo: vi.fn() }));
+const api = vi.hoisted(() => ({ serviceCommand: vi.fn(), appBuildInfo: vi.fn(), desktopServiceHealth: vi.fn() }));
 vi.mock("./api", () => api);
 import { ConnectionDiagnostics, currentWebRTCState, diagnosticReport, versionDetails } from "./ConnectionDiagnostics";
 import { closeWebRTCSession, setWebRTCSession, type WebRTCSession } from "./webrtc-session";
 import packageInfo from "../package.json";
-beforeEach(() => { api.serviceCommand.mockReset(); api.appBuildInfo.mockResolvedValue({ installed_version: packageInfo.version, native_version: packageInfo.version, platform: "android", android_version_code: 2050 }); });
+beforeEach(() => { api.serviceCommand.mockReset(); api.desktopServiceHealth.mockResolvedValue({ running: null, last_unexpected_exit: null }); api.appBuildInfo.mockResolvedValue({ installed_version: packageInfo.version, native_version: packageInfo.version, platform: "android", android_version_code: 2050 }); });
 afterEach(async () => { cleanup(); await closeWebRTCSession(); });
+
+it("copies desktop exit evidence even when the service diagnostics request fails", async () => {
+  api.serviceCommand.mockRejectedValue(new Error("secret-path"));
+  api.desktopServiceHealth.mockResolvedValue({ running: false, last_unexpected_exit: {
+    reason: "protocol_error", exit_code: -1, signal: null, recorded_at: 1793119542, stderr: "secret-path",
+  } });
+  const write = vi.fn().mockResolvedValue(undefined);
+  Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText: write } });
+  render(<ConnectionDiagnostics />);
+  fireEvent.click(screen.getByText("Copy diagnostics"));
+  await screen.findByText("Copied");
+  const report = JSON.parse(write.mock.calls[0][0]);
+  expect(report.desktop_service).toEqual({ running: false, last_unexpected_exit: {
+    reason: "protocol_error", exit_code: -1, signal: null, recorded_at: 1793119542,
+  } });
+  expect(write.mock.calls[0][0]).not.toContain("secret-path");
+});
+
+it("does not export arbitrary host exit strings or invalid numeric values", () => {
+  const report = JSON.parse(diagnosticReport({}, {}, false, { running: "secret", last_unexpected_exit: {
+    reason: "secret", exit_code: "secret", signal: Infinity, recorded_at: -1,
+  } }));
+  expect(report.desktop_service).toEqual({ running: null, last_unexpected_exit: {
+    reason: "unavailable", exit_code: null, signal: null, recorded_at: null,
+  } });
+});
 
 it("copies a bounded allowlisted log without seeded credentials or addresses", () => {
   const secret = "private-key-MESHWORKSPACE-192.0.2.1";

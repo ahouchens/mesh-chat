@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
-import { appBuildInfo, serviceCommand } from "./api";
+import { appBuildInfo, desktopServiceHealth, serviceCommand } from "./api";
 import packageInfo from "../package.json";
-import { getWebRTCSessions } from "./webrtc-session";
+import { clearWebRTCSessionEvents, getWebRTCSessions, recentWebRTCSessionEvents } from "./webrtc-session";
 
 const unavailable = "unavailable";
 const phases = new Set(["waiting_for_reply", "waiting_for_ready", "ready_to_share", "ready_received", "connecting",
@@ -145,7 +145,23 @@ export function versionDetails(raw: unknown) {
     version_mismatch: [installed, native].some(v => v !== unavailable && v !== packageInfo.version) };
 }
 
-export function diagnosticReport(build: unknown, raw: unknown, log = false) {
+function desktopHealth(raw: unknown) {
+  const value = object(raw);
+  const exit = object(value.last_unexpected_exit);
+  const integer = (raw: unknown, minimum: number, maximum: number) =>
+    typeof raw === "number" && Number.isSafeInteger(raw) && raw >= minimum && raw <= maximum ? raw : null;
+  return {
+    running: typeof value.running === "boolean" ? value.running : null,
+    last_unexpected_exit: Object.keys(exit).length ? {
+      reason: ["protocol_error", "process_event_error", "terminated"].includes(String(exit.reason)) ? exit.reason : unavailable,
+      exit_code: integer(exit.exit_code, -2147483648, 4294967295),
+      signal: integer(exit.signal, 0, 255),
+      recorded_at: integer(exit.recorded_at, 0, Number.MAX_SAFE_INTEGER),
+    } : null,
+  };
+}
+
+export function diagnosticReport(build: unknown, raw: unknown, log = false, host: unknown = null) {
   const value = object(raw);
   const cleanEvent = (rawEvent: unknown) => {
     const event = object(rawEvent);
@@ -172,6 +188,8 @@ export function diagnosticReport(build: unknown, raw: unknown, log = false) {
     ...versionDetails(build), service_version: serviceVersion,
     service_version_mismatch: serviceVersion !== unavailable && serviceVersion !== packageInfo.version,
     service_status: value.format_version === 1 ? "available" : unavailable,
+    desktop_service: desktopHealth(host),
+    renderer_transport_history: recentWebRTCSessionEvents(),
     current_service: currentServiceState(value.current_state), current_webrtc: currentWebRTCState(),
     current_native_webrtc: currentNativeWebRTCState(value.current_native_webrtc),
     current_reconnect: currentReconnectState(value.current_reconnect),
@@ -202,17 +220,21 @@ export function ConnectionDiagnostics({ full = false }: { full?: boolean }) {
   const copy = async (mode: "summary" | "log" | "version") => {
     setBusy(true); setFeedback(""); setFallback("");
     let report: unknown = null;
+    // Read the host before requesting service diagnostics: that command may
+    // restart an unexpectedly exited sidecar and erase its stopped state.
+    let host: unknown = null;
+    try { host = await desktopServiceHealth(); } catch { /* Mobile/older hosts may not expose this. */ }
     try { report = await serviceCommand("connection_diagnostics"); } catch { /* Copy app information even when the service cannot start. */ }
     const text = mode === "version"
       ? JSON.stringify({ ...versionDetails(build), service_version: version(object(report).service_version) }, null, 2)
-      : diagnosticReport(build, report, mode === "log");
+      : diagnosticReport(build, report, mode === "log", host);
     try { await navigator.clipboard.writeText(text); setFeedback("Copied"); }
     catch { setFallback(text); setFeedback("Copy is unavailable. Select the report below or save it to a file."); }
     finally { setBusy(false); }
   };
   const clear = async () => {
     setBusy(true); setFeedback("");
-    try { await serviceCommand("clear_connection_diagnostics"); setFallback(""); setFeedback("Diagnostic history cleared. Your workspace and messages are unchanged."); }
+    try { await serviceCommand("clear_connection_diagnostics"); clearWebRTCSessionEvents(); setFallback(""); setFeedback("Diagnostic history cleared. Your workspace and messages are unchanged."); }
     catch { setFeedback("Diagnostic history could not be cleared. Try again when the app is unlocked."); }
     finally { setBusy(false); }
   };

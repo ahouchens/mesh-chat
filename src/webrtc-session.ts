@@ -23,6 +23,31 @@ export interface WebRTCSession {
 const sessions = new Map<string, WebRTCSession>();
 let activeKey: string | null = null;
 const listeners = new Set<() => void>();
+type SessionEvent = {
+  time: number;
+  event: "registered" | "removed" | "close_requested";
+  channel: string;
+  connection: string;
+  ice: string;
+};
+const recentEvents: SessionEvent[] = [];
+
+function recordSessionEvent(event: SessionEvent["event"], session: WebRTCSession): void {
+  const state = (value: string, allowed: string[]) => allowed.includes(value) ? value : "unavailable";
+  recentEvents.push({ time: Math.floor(Date.now() / 1000), event,
+    channel: state(session.channel.readyState, ["connecting", "open", "closing", "closed"]),
+    connection: state(session.pc.connectionState, ["new", "connecting", "connected", "disconnected", "failed", "closed"]),
+    ice: state(session.pc.iceConnectionState, ["new", "checking", "connected", "completed", "disconnected", "failed", "closed"]),
+  });
+  if (recentEvents.length > 32) recentEvents.shift();
+}
+
+/** Keep retirement evidence after the live-session list becomes empty. */
+export function recentWebRTCSessionEvents(): readonly SessionEvent[] {
+  return recentEvents.map((event) => ({ ...event }));
+}
+
+export function clearWebRTCSessionEvents(): void { recentEvents.length = 0; }
 
 function emit(): void {
   for (const listener of listeners) listener();
@@ -49,6 +74,7 @@ function newestSession(): WebRTCSession | null {
  * exposed through getWebRTCSession() for legacy UI handlers.
  */
 export function setWebRTCSession(session: WebRTCSession): void {
+  if (sessions.get(session.key) !== session) recordSessionEvent("registered", session);
   sessions.set(session.key, session);
   activeKey = session.key;
   emit();
@@ -144,6 +170,7 @@ export function updateWebRTCSessionContact(
 export function removeWebRTCSession(key: string, bridgeId?: string): void {
   const session = sessions.get(key);
   if (!session || (bridgeId !== undefined && session.bridge.bridgeId !== bridgeId)) return;
+  recordSessionEvent("removed", session);
   sessions.delete(key);
   if (activeKey === key) activeKey = [...sessions.keys()].pop() ?? null;
   try { session.control?.close(); } catch { /* already closed */ }
@@ -163,6 +190,7 @@ export async function closeWebRTCSession(key?: string): Promise<void> {
     ? [sessions.get(key)].filter((session): session is WebRTCSession => Boolean(session))
     : [...sessions.values()];
   for (const session of targets) {
+    recordSessionEvent("close_requested", session);
     // Native detach can yield while another peer installs its replacement.
     // Retire only the session captured by this close operation.
     if (sessions.get(session.key) === session) {
