@@ -199,6 +199,9 @@ class NativeWebRtcInteropTest {
             .put("display_name", "WebRTC CI")
             .put("platform", "android").toString()).toString()
         assertTrue(initialized, JSONObject(initialized).optBoolean("ok"))
+        if (JSONObject(initialized).getJSONObject("result").optJSONObject("profile") == null) {
+            command("create_profile", JSONObject().put("display_name", "WebRTC CI"))
+        }
         try {
             instrumentation.runOnMainSync {
                 browser = WebView(context)
