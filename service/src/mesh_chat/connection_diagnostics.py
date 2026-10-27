@@ -22,15 +22,20 @@ PHASES = frozenset({"waiting_for_reply", "waiting_for_ready", "ready_to_share", 
     "refresh_required", "cancelled", "failed", "verified", "recovery", "unavailable",
     "connected", "reconnecting", "connection_update_needed", "dormant",
     "checking", "no_route", "network_changed", "test_failed", "both_no_address",
-    "address_prepared", "no_local_address", "testing", "peer_verified", "complete"})
-EVENTS = frozenset({"state", "import_verified", "import_rejected", "action_failed", "lifecycle_interrupted"})
+    "address_prepared", "no_local_address", "testing", "peer_verified", "complete",
+    "new", "open", "closed", "closing", "disconnected", "completed", "dialing", "ringing",
+    "in_call", "ended", "declined", "busy", "no_answer", "queued", "waiting_for_keys", "sending",
+    "stored_for_delivery", "received_by_endpoint", "delivered", "expired"})
+EVENTS = frozenset({"state", "import_verified", "import_rejected", "action_failed", "lifecycle_interrupted",
+    "call_outbound", "call_inbound", "call_rejected", "transport_state"})
 KINDS = frozenset({"offer", "answer", "ready", "recovery", "unavailable"})
 SOURCES = ("ipv4", "ipv6", "local_global", "pcp", "upnp", "upnp_ipv6", "nat_pmp")
 FAILURE_PHASES = frozenset({"failed", "existing_routes_only", "refresh_required",
     "connection_update_needed", "no_route", "network_changed", "test_failed", "both_no_address"})
 COMMANDS = frozenset({"preview_direct_connection", "prepare_direct_offer", "prepare_direct_answer",
     "prepare_direct_ready", "accept_direct_ready", "connect_direct_setup", "configure_direct_firewall",
-    "direct_setup_status", "check_direct_setup", "retry_direct_setup", "cancel_direct_setup", "resume_direct_setup"})
+    "direct_setup_status", "check_direct_setup", "retry_direct_setup", "cancel_direct_setup", "resume_direct_setup",
+    "send_call_signal", "receive_call_signal", "native_webrtc_event", "native_webrtc_close", "webrtc_attach", "webrtc_detach"})
 ERROR_CODES = frozenset({"internal_error", "invalid_request", "identity_mismatch", "invitation_invalid",
     "invitation_expired", "workspace_already_known", "workspace_limit_reached", "protected_storage_unavailable",
     "profile_in_use", "network_unavailable", "direct_connection_unavailable", "native_unavailable", "contact_not_approved",
@@ -74,6 +79,8 @@ def sanitize(value):
         "workspace_state":enum("workspace_state", WORKSPACE_STATES, "unavailable"),
         "phase":enum("phase", PHASES, "unavailable"),
         "kind":enum("kind", KINDS, "unavailable"),
+        "component":enum("component", {"call_signal", "ice", "data_channel", "bridge"}, "unavailable"),
+        "signal":enum("signal", {"call_invite", "call_answer", "call_candidate", "call_hangup", "call_renegotiate"}, "unavailable"),
         "candidate_count":integer("candidate_count", 8),
         "route":enum("route", {"available", "unavailable"}, "unavailable"),
         "socket":enum("socket", {"retained", "unavailable"}, "unavailable"),
@@ -116,7 +123,7 @@ def record(service, event, state=None):
 def _record(service, event, state=None):
     state = state or {}
     setup_id = state.get("setup_id")
-    row = sanitize({**{key:state.get(key) for key in ("state", "kind", "command", "error_code", "failure_stage", "failure_reason", "workspace_state", "route", "socket", "mapping", "firewall", "candidate_count", "candidate_sources", "receipt_status", "approval_status", "expires_at", "checks_started", "checks_authenticated", "elapsed_ms")},
+    row = sanitize({**{key:state.get(key) for key in ("state", "kind", "command", "component", "signal", "error_code", "failure_stage", "failure_reason", "workspace_state", "route", "socket", "mapping", "firewall", "candidate_count", "candidate_sources", "receipt_status", "approval_status", "expires_at", "checks_started", "checks_authenticated", "elapsed_ms")},
         "phase":state.get("state"), "event":event, "time":int(time.time()),
         "attempt":hashlib.sha256(setup_id.encode()).hexdigest()[:12] if isinstance(setup_id, str) and setup_id else "unavailable"})
     value = history(service)
@@ -124,9 +131,46 @@ def _record(service, event, state=None):
         return
     value["truncated"] = value["truncated"] or len(value["events"]) >= LIMIT
     value["events"] = (value["events"] + [row])[-LIMIT:]
-    if row["phase"] in FAILURE_PHASES or event in {"import_rejected", "action_failed"}:
+    if row["phase"] in FAILURE_PHASES or event in {"import_rejected", "action_failed", "call_rejected"}:
         value["last_failure"] = row
     service.store.put("connection_diagnostics", "history", value)
+
+
+def call_signal(service, event, document, state, *, error_code=None):
+    """Retain signaling progress, never the signed document or peer identity."""
+    try:
+        value = json.loads(document)
+        record(service, event, {"setup_id": value.get("call_id"), "state": state,
+            "command": "receive_call_signal" if event in {"call_inbound", "call_rejected"} else "send_call_signal",
+            "component": "call_signal", "signal": value.get("type"), "error_code": error_code})
+    except Exception:
+        pass
+
+
+def call_state(service):
+    """Aggregate recent call/outbox evidence, including failed invitation sends."""
+    try:
+        now = time.time()
+        recent = [row for row in service.calls._list() if now - row.get("updated_at", 0) <= 600]
+        states = ("dialing", "ringing", "connecting", "in_call", "ended", "declined", "busy", "no_answer", "failed")
+        signals = [row for row in service.store.list("message") if row.get("kind") == "call_signal"
+                   and row.get("direction") == "outbound" and now - row.get("created_at", 0) <= 600]
+        delivery_states = (*PENDING_MESSAGE_STATES, "delivered", "failed", "expired")
+        peers = {row["peer_destination"] for row in recent if isinstance(row.get("peer_destination"), str)}
+        routes = keys = unchecked = 0
+        for peer in peers:
+            try:
+                destination = bytes.fromhex(peer)
+                routes += bool(service.network and service.network.path_known(destination))
+                keys += bool(service.network and service.network.recipient_ready(destination))
+            except Exception:
+                unchecked += 1
+        return {"status": "available", "window_seconds": 600,
+            "peers": len(peers), "peers_with_route": routes, "peers_with_keys": keys, "peers_unchecked": unchecked,
+            "states": {state: sum(row.get("state") == state for row in recent) for state in states},
+            "outbound_signals": {state: sum(row.get("state") == state for row in signals) for state in delivery_states}}
+    except Exception:
+        return {"status": "unavailable"}
 
 
 def current_state(service):
@@ -283,7 +327,8 @@ def report(service):
         "retention_days":7, "event_limit":LIMIT, "native_check_counts":"unavailable",
         "receipt_status":"see_event_timestamp", "approval_status":"see_event_timestamp",
         "current_state":current_state(service), "current_native_webrtc":native_webrtc_state(service),
-        "current_reconnect":reconnect_state(service), "current_background":background_state(service), **value}
+        "current_reconnect":reconnect_state(service), "current_background":background_state(service),
+        "current_calls":call_state(service), **value}
     while len(json.dumps(result).encode()) >= 65536 and result["events"]:
         result["events"] = result["events"][1:]
         result["truncated"] = True

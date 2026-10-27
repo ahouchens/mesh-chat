@@ -70,6 +70,25 @@ it("includes recent events in a summary copy and reports why it is truncated", (
   expect(report.truncated).toBe(true);
 });
 
+it("exports call signaling, carrier history and route evidence without private documents", () => {
+  const secret = "private-peer-sdp-address-call-id";
+  const report = JSON.parse(diagnosticReport({}, { format_version: 1,
+    current_calls: { status: "available", window_seconds: 600, peers: 1, peers_with_route: 0,
+      peers_with_keys: 1, peers_unchecked: 0, states: { dialing: 1 }, outbound_signals: { sending: 1 }, sdp: secret },
+    events: [{ event: "call_outbound", phase: "sending", component: "call_signal", signal: "call_invite",
+      command: "send_call_signal", document: secret },
+      { event: "transport_state", phase: "failed", component: "ice", command: "native_webrtc_event" },
+      { event: "call_rejected", phase: "failed", error_code: "identity_mismatch", signal: "call_invite" }],
+  }, false));
+  expect(report.current_calls.states.dialing).toBe(1);
+  expect(report.current_calls.outbound_signals.sending).toBe(1);
+  expect(report.current_calls.peers_with_route).toBe(0);
+  expect(report.events[0]).toMatchObject({ event: "call_outbound", component: "call_signal", phase: "sending", signal: "call_invite" });
+  expect(report.events[1]).toMatchObject({ event: "transport_state", component: "ice", phase: "failed" });
+  expect(report.events[2]).toMatchObject({ event: "call_rejected", error_code: "identity_mismatch" });
+  expect(JSON.stringify(report)).not.toContain(secret);
+});
+
 it("exports the saved-workspace failure reason and state only when allowlisted", () => {
   const failure = {time:1, event:"action_failed", phase:"failed", command:"prepare_direct_answer",
     error_code:"workspace_already_known", failure_stage:"join_authorization",

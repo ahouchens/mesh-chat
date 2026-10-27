@@ -6,11 +6,14 @@ import { getWebRTCSessions } from "./webrtc-session";
 const unavailable = "unavailable";
 const phases = new Set(["waiting_for_reply", "waiting_for_ready", "ready_to_share", "ready_received", "connecting",
   "bootstrap_connected", "relationship_active", "admitted_path", "existing_routes_only", "refresh_required",
-  "cancelled", "failed", "verified", "recovery", "unavailable", "connected", "reconnecting", "connection_update_needed", "dormant", "checking", "no_route", "network_changed", "test_failed", "both_no_address", "address_prepared", "no_local_address", "testing", "peer_verified", "complete"]);
-const events = new Set(["state", "import_verified", "import_rejected", "action_failed", "lifecycle_interrupted"]);
+  "cancelled", "failed", "verified", "recovery", "unavailable", "connected", "reconnecting", "connection_update_needed", "dormant", "checking", "no_route", "network_changed", "test_failed", "both_no_address", "address_prepared", "no_local_address", "testing", "peer_verified", "complete",
+  "new", "open", "closed", "closing", "disconnected", "completed", "dialing", "ringing", "in_call", "ended", "declined", "busy", "no_answer",
+  "queued", "waiting_for_keys", "sending", "stored_for_delivery", "received_by_endpoint", "delivered", "expired"]);
+const events = new Set(["state", "import_verified", "import_rejected", "action_failed", "lifecycle_interrupted", "call_outbound", "call_inbound", "call_rejected", "transport_state"]);
 const kinds = new Set(["offer", "answer", "ready", "recovery"]);
 const commands = new Set(["preview_direct_connection", "prepare_direct_offer", "prepare_direct_answer", "prepare_direct_ready",
-  "accept_direct_ready", "connect_direct_setup", "configure_direct_firewall", "direct_setup_status", "check_direct_setup", "retry_direct_setup", "cancel_direct_setup", "resume_direct_setup"]);
+  "accept_direct_ready", "connect_direct_setup", "configure_direct_firewall", "direct_setup_status", "check_direct_setup", "retry_direct_setup", "cancel_direct_setup", "resume_direct_setup",
+  "send_call_signal", "receive_call_signal", "native_webrtc_event", "native_webrtc_close", "webrtc_attach", "webrtc_detach"]);
 const errorCodes = new Set(["internal_error", "invalid_request", "identity_mismatch", "invitation_invalid", "invitation_expired",
   "workspace_already_known", "workspace_limit_reached", "protected_storage_unavailable", "profile_in_use", "network_unavailable",
   "direct_connection_unavailable", "native_unavailable", "contact_not_approved", "contact_in_use", "recipient_keys_unavailable",
@@ -44,6 +47,19 @@ const reconnectReasons = ["local_capabilities_missing", "peer_capabilities_missi
   "local_capabilities_expired", "consent_missing", "peer_consent_missing", "relay_required", "mailbox_not_configured", "workspace_peer_inactive"];
 const reconnectStates = ["idle", "waiting_for_peer", "probing", "offer_pending", "answer_pending", "connecting",
   "connected", "retry_wait", "peer_offline", "manual_required", "stopped", unavailable];
+
+function currentCallState(raw: unknown) {
+  const value = object(raw);
+  const counts = (key: string, states: string[]) => Object.fromEntries(states.map(state =>
+    [state, number(object(value[key])[state], Number.MAX_SAFE_INTEGER)]));
+  return {
+    status: choice(value.status, new Set(["available", unavailable])),
+    ...Object.fromEntries(["window_seconds", "peers", "peers_with_route", "peers_with_keys", "peers_unchecked"]
+      .map(key => [key, number(value[key], Number.MAX_SAFE_INTEGER)])),
+    states: counts("states", ["dialing", "ringing", "connecting", "in_call", "ended", "declined", "busy", "no_answer", "failed"]),
+    outbound_signals: counts("outbound_signals", [...pendingMessageStates, "delivered", "failed", "expired"]),
+  };
+}
 
 function currentReconnectState(raw: unknown) {
   const value = object(raw);
@@ -135,6 +151,8 @@ export function diagnosticReport(build: unknown, raw: unknown, log = false) {
     const event = object(rawEvent);
     return { time: number(event.time, 2**53 - 1), attempt: token(event.attempt, /^[0-9a-f]{12}$/),
       event: choice(event.event, events), phase: choice(event.phase, phases), kind: choice(event.kind, kinds),
+      component: choice(event.component, new Set(["call_signal", "ice", "data_channel", "bridge"])),
+      signal: choice(event.signal, new Set(["call_invite", "call_answer", "call_candidate", "call_hangup", "call_renegotiate"])),
       command: choice(event.command, commands), error_code: choice(event.error_code, errorCodes), failure_stage: choice(event.failure_stage, failureStages),
       failure_reason: choice(event.failure_reason, failureReasons), workspace_state: choice(event.workspace_state, workspaceStates),
       candidate_count: number(event.candidate_count, 8),
@@ -158,6 +176,7 @@ export function diagnosticReport(build: unknown, raw: unknown, log = false) {
     current_native_webrtc: currentNativeWebRTCState(value.current_native_webrtc),
     current_reconnect: currentReconnectState(value.current_reconnect),
     current_background: currentBackgroundState(value.current_background),
+    current_calls: currentCallState(value.current_calls),
     native_check_counts: rows.at(-1)?.checks_started !== null && rows.length ? "see_event_counts" : unavailable, receipt_status: "see_event_timestamp", approval_status: "see_event_timestamp",
     retention_days: 7, event_limit: 200, events_included: rows.length, history_event_count: history.length,
     truncated: value.truncated === true || rows.length < history.length,

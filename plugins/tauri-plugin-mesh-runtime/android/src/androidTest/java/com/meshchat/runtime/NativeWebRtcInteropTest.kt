@@ -66,6 +66,8 @@ class NativeWebRtcInteropTest {
     @Test(timeout = 180_000) fun chromiumOfferSurvivesEarlyIceFailureDuringManualAnswerExchange() =
         exchange(nativeOffers = false, earlyIceFailure = true)
     @Test(timeout = 180_000) fun nativeOfferCanConnectToChromiumWithReconnectControl() = exchange(nativeOffers = true)
+    @Test(timeout = 180_000) fun repeatedChromiumMediaCallsPreserveNativeMessaging() =
+        exchange(nativeOffers = false, repeatedMedia = true)
 
     @Test(timeout = 30_000) fun backgroundDefaultResumesAfterUnlockAndPreservesAnExplicitOffChoice() {
         val prefs = context.getSharedPreferences("mesh-chat-vault", Context.MODE_PRIVATE)
@@ -232,7 +234,7 @@ class NativeWebRtcInteropTest {
         }
     }
 
-    private fun exchange(nativeOffers: Boolean, earlyIceFailure: Boolean = false) {
+    private fun exchange(nativeOffers: Boolean, earlyIceFailure: Boolean = false, repeatedMedia: Boolean = false) {
         val id = "interop-${UUID.randomUUID()}"
         val control = if (nativeOffers) "meshchat-reconnect" else "mesh-onboarding"
         val results = BrowserResults()
@@ -271,6 +273,7 @@ class NativeWebRtcInteropTest {
             instrumentation.runOnMainSync {
                 browser = WebView(context)
                 browser.settings.javaScriptEnabled = true
+                if (repeatedMedia) browser.settings.mediaPlaybackRequiresUserGesture = false
                 browser.addJavascriptInterface(results, "TestResults")
                 browser.loadDataWithBaseURL("https://meshchat.invalid/", """
                     <script>
@@ -308,6 +311,69 @@ class NativeWebRtcInteropTest {
                       }
                       channels['mesh-reticulum'].send(new Uint8Array([9,8,7]));
                       channels['$control'].send('probe'); report('sent','yes');
+                    };
+                    window.mediaCycle = async (media, cycle) => {
+                      // Real Chromium RTP with generated tracks: no hardware
+                      // microphone/camera, app media lifecycle or cellular NAT
+                      // is simulated by this engine coexistence test.
+                      const audio = new AudioContext();
+                      const oscillator = audio.createOscillator();
+                      const destination = audio.createMediaStreamDestination();
+                      oscillator.connect(destination); oscillator.start();
+                      const stream = destination.stream;
+                      const left = new RTCPeerConnection({iceServers: []});
+                      const right = new RTCPeerConnection({iceServers: []});
+                      let frames = null;
+                      const gatherMedia = peer => new Promise((resolve, reject) => {
+                        if (peer.iceGatheringState === 'complete') return resolve();
+                        const timer = setTimeout(() => reject(new Error('Media ICE gathering timed out')), 10000);
+                        peer.addEventListener('icegatheringstatechange', () => {
+                          if (peer.iceGatheringState === 'complete') { clearTimeout(timer); resolve(); }
+                        });
+                      });
+                      try {
+                        await audio.resume();
+                        if (media === 'video') {
+                          const canvas = document.createElement('canvas');
+                          canvas.width = 160; canvas.height = 120;
+                          const paint = canvas.getContext('2d');
+                          const draw = () => { paint.fillStyle = Date.now() % 2 ? 'red' : 'blue'; paint.fillRect(0,0,160,120); };
+                          draw(); frames = setInterval(draw, 100);
+                          stream.addTrack(canvas.captureStream(10).getVideoTracks()[0]);
+                        }
+                        for (const track of stream.getTracks()) {
+                          left.addTrack(track, stream); right.addTrack(track, stream);
+                        }
+                        await left.setLocalDescription(await left.createOffer()); await gatherMedia(left);
+                        await right.setRemoteDescription(left.localDescription);
+                        await right.setLocalDescription(await right.createAnswer()); await gatherMedia(right);
+                        await left.setRemoteDescription(right.localDescription);
+                        const kinds = media === 'video' ? ['audio','video'] : ['audio'];
+                        const receiving = async peer => {
+                          const stats = [...(await peer.getStats()).values()];
+                          return kinds.every(kind => stats.some(row => row.type === 'inbound-rtp' &&
+                            (row.kind || row.mediaType) === kind && row.bytesReceived > 0 && row.packetsReceived > 0));
+                        };
+                        const deadline = Date.now() + 15000;
+                        while (!(await receiving(left)) || !(await receiving(right))) {
+                          if (Date.now() > deadline) throw new Error('Bidirectional ' + media + ' RTP did not flow');
+                          await new Promise(resolve => setTimeout(resolve, 100));
+                        }
+                        channels['mesh-reticulum'].send(new Uint8Array([20,cycle]));
+                        const finish = new Promise(resolve => { window.finishMedia = resolve; });
+                        report('media-active', cycle);
+                        await finish;
+                      } finally {
+                        left.close(); right.close();
+                        stream.getTracks().forEach(track => track.stop());
+                        if (frames !== null) clearInterval(frames);
+                        oscillator.stop(); await audio.close();
+                      }
+                      if (pc.connectionState !== 'connected' || channels['mesh-reticulum'].readyState !== 'open') {
+                        throw new Error('Media teardown retired the messaging carrier');
+                      }
+                      channels['mesh-reticulum'].send(new Uint8Array([30,cycle]));
+                      report('media-closed', cycle);
                     };
                     report('ready','yes');
                     </script>
@@ -359,6 +425,22 @@ class NativeWebRtcInteropTest {
             assertEquals("4,5,6", results.await("mesh-reticulum"))
             assertTrue(NativeWebRtcHost.sendControl(id, control, "probe-reply"))
             assertEquals("probe-reply", results.await(control, "probe-reply"))
+            if (repeatedMedia) {
+                for ((cycle, media) in listOf("audio", "video", "audio", "video").withIndex()) {
+                    val before = command("native_webrtc_stats", JSONObject().put("session_id", id)).getLong("received_packets")
+                    js("return mediaCycle(${JSONObject.quote(media)}, $cycle)")
+                    results.await("media-active", cycle.toString())
+                    awaitStats(id) { it.optBoolean("attached") && it.optLong("received_packets") > before }
+                    assertTrue(NativeWebRtcHost.send(id, byteArrayOf(40, cycle.toByte())))
+                    assertEquals("40,$cycle", results.await("mesh-reticulum", "40,$cycle"))
+                    js("finishMedia()")
+                    results.await("media-closed", cycle.toString())
+                    awaitStats(id) { it.optBoolean("attached") && it.optLong("received_packets") >= before + 2 &&
+                        it.optString("ice_connection_state") in setOf("connected", "completed") }
+                    assertTrue(NativeWebRtcHost.send(id, byteArrayOf(50, cycle.toByte())))
+                    assertEquals("50,$cycle", results.await("mesh-reticulum", "50,$cycle"))
+                }
+            }
             command("native_webrtc_close", JSONObject().put("session_id", id))
             assertFalse(JSONObject(NativeWebRtcHost.stats(id)).optBoolean("ok"))
             Thread.sleep(300) // Let late close/state callbacks drain before leaving the test.

@@ -180,7 +180,13 @@ export async function attachWebRTCBridge(
     pendingInboundBytes += size;
   };
   channel.onclose = () => { void close(); };
-  channel.onerror = () => { void close(); };
+  channel.onerror = () => {
+    // An error notification is not itself a channel closure. Retiring an open
+    // messaging carrier here turns a recoverable SCTP error into a permanent
+    // outage when the peers have no mailbox to negotiate a replacement.
+    fail(new Error("The WebRTC DataChannel reported an error."));
+    if (channel.readyState === "closing" || channel.readyState === "closed") void close();
+  };
   attachment = Promise.resolve().then(async () => {
     // Native attach announces immediately. Its listener must already exist;
     // Android's shared UI poll irreversibly drains each native event batch.

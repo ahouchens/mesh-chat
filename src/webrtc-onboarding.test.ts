@@ -62,6 +62,34 @@ afterEach(async () => {
 });
 
 describe("WebRTC DataChannel pump", () => {
+  it("keeps an open carrier usable after an error event and retires it on close", async () => {
+    let listener!: (event: unknown) => void;
+    onServiceEvent.mockImplementation(async (callback) => {
+      listener = callback;
+      return () => undefined;
+    });
+    serviceCommand.mockImplementation(async (command: string) => command === "webrtc_attach"
+      ? { bridge_id: "error-carrier", max_packet: 1064, state: "online" } : {});
+    const channel = fakeChannel();
+    const onError = vi.fn();
+    const bridge = await attachWebRTCBridge(channel, { onError });
+    channel.onerror?.call(channel, new Event("error") as RTCErrorEvent);
+    await Promise.resolve();
+    expect(channel.close).not.toHaveBeenCalled();
+    expect(serviceCommand.mock.calls.some(([command]) => command === "webrtc_detach")).toBe(false);
+    listener({ event: "webrtc_packet", bridge_id: bridge.bridgeId, data: "AQI=" });
+    channel.onmessage?.({ data: new Uint8Array([3, 4]).buffer } as MessageEvent);
+    await vi.waitFor(() => expect(serviceCommand).toHaveBeenCalledWith("webrtc_packet", {
+      bridge_id: bridge.bridgeId, data: "AwQ=",
+    }));
+    expect(channel.send).toHaveBeenCalledOnce();
+    expect(onError).toHaveBeenCalledOnce();
+    closeChannel(channel);
+    await vi.waitFor(() => expect(serviceCommand).toHaveBeenCalledWith("webrtc_detach", {
+      bridge_id: bridge.bridgeId,
+    }));
+  });
+
   it("rejects and detaches when the channel closes during native attachment", async () => {
     const native = deferred<{ bridge_id: string; max_packet: number; state: string }>();
     serviceCommand.mockImplementation(async (command: string) =>

@@ -21,6 +21,69 @@ class Store:
         return [value for (row_kind, _), value in self.rows.items() if row_kind == kind]
 
 
+def test_call_diagnostics_separate_lxmf_progress_from_receipt_and_transport_failure():
+    secret = "private-peer-sdp-and-address"
+    now = time.time()
+    store = Store()
+    peer = "ab" * 16
+    service = SimpleNamespace(store=store,
+        calls=SimpleNamespace(_list=lambda: [{"id": secret, "peer_destination": peer,
+            "state": "dialing", "updated_at": now, "invite": secret}]),
+        network=SimpleNamespace(path_known=lambda destination: False, recipient_ready=lambda destination: True))
+    store.put("message", "signal", {"kind": "call_signal", "direction": "outbound", "state": "received_by_endpoint",
+        "created_at": now, "text": secret})
+    store.put("message", "old", {"kind": "call_signal", "direction": "outbound", "state": "queued", "created_at": now - 601})
+    document = json.dumps({"type": "call_invite", "call_id": secret, "sdp": secret})
+    diagnostics.call_signal(service, "call_outbound", document, "received_by_endpoint")
+    diagnostics.call_signal(service, "call_rejected", document, "failed", error_code="identity_mismatch")
+    diagnostics.record(service, "transport_state", {"setup_id": secret, "state": "failed",
+        "command": "native_webrtc_event", "component": "ice"})
+    report = diagnostics.report(service)
+    assert report["current_calls"]["states"]["dialing"] == 1
+    assert report["current_calls"]["outbound_signals"]["received_by_endpoint"] == 1
+    assert report["current_calls"]["outbound_signals"]["queued"] == 0
+    assert report["current_calls"]["peers_with_route"] == 0
+    assert report["current_calls"]["peers_with_keys"] == 1
+    assert report["events"][0]["signal"] == "call_invite"
+    assert report["events"][0]["phase"] == "received_by_endpoint"
+    assert report["events"][1]["event"] == "call_rejected"
+    assert report["events"][1]["error_code"] == "identity_mismatch"
+    assert report["events"][2]["component"] == "ice"
+    assert report["last_failure"]["phase"] == "failed"
+    assert secret not in json.dumps(report) and peer not in json.dumps(report)
+
+
+def test_received_and_rejected_signed_calls_are_retained_by_service():
+    import RNS
+    from mesh_chat.call_manager import CallManager
+    from mesh_chat.errors import IdentityMismatch
+    from mesh_chat.invitations import canonical_bytes
+    from mesh_chat.service import MeshChatService
+    from mesh_chat.webrtc_signaling import create_call_invite
+
+    caller, callee = RNS.Identity(), RNS.Identity()
+    destination = lambda identity: RNS.Destination.hash(identity, "lxmf", "delivery").hex()
+    fingerprint = "sha-256 " + ":".join(["AB"] * 32)
+    sdp = f"v=0\r\na=fingerprint:{fingerprint}\r\nm=audio 9 UDP/TLS/RTP/SAVPF 111\r\n"
+    document = create_call_invite(caller, call_id="call_0123456789abcdef", callee_destination=destination(callee),
+                                  media="audio", sdp=sdp, dtls_fingerprint=fingerprint)
+    service = object.__new__(MeshChatService)
+    service.store = Store()
+    service._identity = callee
+    service.calls = CallManager(service.store, lambda *_: None)
+    service._changed = lambda: None
+    contact = {"id": "contact", "destination_hash": destination(caller), "trust": "approved"}
+    service._receive_call_signal(contact, document)
+    tampered = json.loads(document)
+    tampered["media"] = "video"
+    with pytest.raises(IdentityMismatch):
+        service._receive_call_signal(contact, canonical_bytes(tampered).decode())
+    events = diagnostics.history(service)["events"]
+    assert events[0]["event"] == "call_inbound" and events[0]["phase"] == "ringing"
+    assert events[1]["event"] == "call_rejected" and events[1]["error_code"] == "identity_mismatch"
+    assert sdp not in json.dumps(events) and destination(caller) not in json.dumps(events)
+
+
 def test_allowlist_excludes_seeded_secrets_and_unexpected_structures():
     service = SimpleNamespace(store=Store())
     secret = "MESHWORKSPACE-secret-key-192.0.2.1-person-name"

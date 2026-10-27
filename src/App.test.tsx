@@ -1869,6 +1869,31 @@ describe("incoming connection requests", () => {
 });
 
 describe("network settings", () => {
+  it("leaves packet events to the WebRTC pump without queuing full snapshots", async () => {
+    const current = snapshot([approved]);
+    let listener!: (event: ServiceEvent) => void;
+    api.runtimePlatform.mockResolvedValue("desktop");
+    api.initializeService.mockResolvedValue(current);
+    api.onInvitation.mockResolvedValue(() => undefined);
+    api.onServiceEvent.mockImplementation(async (callback) => {
+      listener = callback;
+      return () => undefined;
+    });
+    api.serviceCommand.mockImplementation(async (command: string) => command === "snapshot" ? current : {});
+    render(<App />);
+    await screen.findByLabelText("Conversation with Taylor");
+    const snapshots = () => api.serviceCommand.mock.calls.filter(([command]) => command === "snapshot").length;
+    const before = snapshots();
+    await act(async () => {
+      for (let index = 0; index < 128; index++) {
+        listener({ type: "event", event: "webrtc_packet", bridge_id: "carrier", data: "AQI=" });
+      }
+    });
+    expect(snapshots()).toBe(before);
+    await act(async () => { listener({ type: "event", event: "state_changed" }); });
+    expect(snapshots()).toBe(before + 1);
+  });
+
   it("saves the direct local connection preference", async () => {
     const current = snapshot();
     api.runtimePlatform.mockResolvedValue("desktop");
@@ -2108,6 +2133,42 @@ describe("Settings page navigation and saved state", () => {
 });
 
 describe("contact management", () => {
+  it("shows and reviews an incoming call above Settings while its conversation pane is hidden", async () => {
+    const call = {
+      id: "c".repeat(32), contact_id: approved.id, role: "callee" as const,
+      media: "audio" as const, state: "ringing" as const, direction: "inbound" as const,
+      created_at: 1, updated_at: 1, expires_at: 2_000_000_000,
+      candidate_count: 1, has_local_sdp: false, has_remote_sdp: true,
+    };
+    let current: Snapshot = snapshot([approved]);
+    let listener!: (event: ServiceEvent) => void;
+    api.runtimePlatform.mockResolvedValue("desktop");
+    api.initializeService.mockResolvedValue(current);
+    api.onInvitation.mockResolvedValue(() => undefined);
+    api.onServiceEvent.mockImplementation(async (callback) => {
+      listener = callback;
+      return () => undefined;
+    });
+    api.serviceCommand.mockImplementation(async (command: string) => command === "snapshot" ? current : {});
+    render(<App />);
+    await screen.findByLabelText("Conversation with Taylor");
+    fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+    await screen.findByRole("region", { name: "Settings" });
+    // Match settings-page.css: Settings hides the entire conversation pane.
+    (document.querySelector(".main-pane") as HTMLElement).style.visibility = "hidden";
+    current = { ...current, calls: [call] };
+    await act(async () => { listener({ type: "event", event: "state_changed" }); });
+    const prompt = await screen.findByRole("dialog", { name: "Incoming audio call" });
+    expect(prompt.closest(".main-pane")).toBeNull();
+    expect(prompt.contains(document.activeElement)).toBe(true);
+    fireEvent.click(within(prompt).getByRole("button", { name: "Review" }));
+    const review = await screen.findByRole("dialog", { name: "Call from Taylor" });
+    expect(review.closest(".main-pane")).toBeNull();
+    expect(review.contains(document.activeElement)).toBe(true);
+    expect(api.beginCallAudio).not.toHaveBeenCalled();
+    expect(api.serviceCommand.mock.calls.some(([command]) => command === "answer_call")).toBe(false);
+  });
+
   it.each(["audio", "video"] as const)("preserves an accepted %s call through an early connection and failed refresh", async (media) => {
     const call = {
       id: "c".repeat(32), contact_id: approved.id, role: "callee" as const,
