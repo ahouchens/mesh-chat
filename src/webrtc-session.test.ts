@@ -2,6 +2,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   closeWebRTCSession,
+  clearWebRTCSessionEvents,
+  recentWebRTCSessionEvents,
+  removeWebRTCSession,
   getWebRTCSession,
   getWebRTCSessionByKey,
   getWebRTCSessionCount,
@@ -32,6 +35,29 @@ function session(key: string, createdAt = 1): WebRTCSession {
 describe("WebRTC session registry", () => {
   afterEach(async () => {
     await closeWebRTCSession();
+  });
+
+  it("retains bounded sanitized retirement evidence after the live registry empties", async () => {
+    clearWebRTCSessionEvents();
+    for (let index = 0; index < 20; index++) {
+      const value = session(`private-peer-${index}`);
+      Object.assign(value.channel, { readyState: "open" });
+      Object.assign(value.pc, { connectionState: "connected", iceConnectionState: "connected" });
+      setWebRTCSession(value);
+      // Updating a late control channel must not consume another history slot.
+      setWebRTCSession(value);
+      Object.assign(value.pc, { connectionState: "failed", iceConnectionState: "private-address" });
+      if (index % 2) await closeWebRTCSession(value.key);
+      else removeWebRTCSession(value.key);
+    }
+    expect(getWebRTCSessions()).toEqual([]);
+    const events = recentWebRTCSessionEvents();
+    expect(events).toHaveLength(32);
+    expect(events.at(-1)).toMatchObject({ event: "close_requested", channel: "open", connection: "failed", ice: "unavailable" });
+    expect(events.some((event) => event.event === "removed")).toBe(true);
+    expect(JSON.stringify(events)).not.toContain("private");
+    clearWebRTCSessionEvents();
+    expect(recentWebRTCSessionEvents()).toEqual([]);
   });
 
   it("keeps every peer transport alive and close only the requested session", async () => {

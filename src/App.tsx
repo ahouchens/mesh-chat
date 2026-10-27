@@ -2551,7 +2551,7 @@ function BackgroundAvailabilitySettings({
       </div>
     </fieldset>
     <p className="muted" role="status">Status: {status}</p>
-    {enabled && value?.health === "stopped" && <div role="alert"><p className="form-error">Background availability is enabled, but Android's service is not running.</p><Button disabled={busy} onClick={() => void toggle(true)}>Restart background service</Button></div>}
+    {enabled && (value?.health === "stopped" || value?.health === "failed") && <div role="alert"><p className="form-error">Background availability is enabled, but Android's service is not available.</p><Button disabled={busy} onClick={() => void toggle(true)}>Restart background service</Button></div>}
     <p className="muted">Native WebRTC messaging stays connected while this mode is available. Automatic reconnection also needs an agreed signaling mailbox. Complete invitation review and contact approval while the app is open. Audio and video calls use the call service.</p>
     <p className="muted">Notifications must be allowed so Android can show the required ongoing notice. Stopping the mode removes the notice and releases the wake and Wi-Fi locks.</p>
     {error && <p className="form-error" role="alert">{error}</p>}

@@ -272,6 +272,32 @@ afterEach(() => {
 });
 
 describe("Android background default", () => {
+  it("lets an enabled but failed background service restart without toggling the preference off", async () => {
+    const current = snapshot();
+    current.background_availability = { enabled: true, mode: "native_webrtc", state: "enabled",
+      reason: "user_enabled", lifecycle_state: "caught_up", updated_at: 1, health: "failed",
+      native: { enabled: false, service_running: false, runtime_initialized: false } };
+    api.runtimePlatform.mockResolvedValue("android");
+    api.initializeService.mockResolvedValue(current);
+    api.onInvitation.mockResolvedValue(() => undefined);
+    api.onServiceEvent.mockResolvedValue(() => undefined);
+    api.onMobileBackButton.mockResolvedValue(() => undefined);
+    api.serviceCommand.mockImplementation(async (command: string) => {
+      if (command === "snapshot") return current;
+      if (command === "background_status" || command === "set_background_availability") return current.background_availability;
+      if (command === "reconnect_profiles") return { profiles: [] };
+      return {};
+    });
+    render(<App />);
+    await screen.findByRole("heading", { name: "Your private conversations" });
+    fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+    fireEvent.click(screen.getByRole("button", { name: "Connections" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Restart background service" }));
+    await waitFor(() => expect(api.setNativeBackgroundAvailability).toHaveBeenCalledWith(true));
+    expect(api.serviceCommand).toHaveBeenCalledWith("set_background_availability", { enabled: true });
+    expect(api.setNativeBackgroundAvailability).not.toHaveBeenCalledWith(false);
+  });
+
   it.each(["not_requested", "allowed", "denied", "off"] as const)("uses native permission restoration when notification state is %s", async (state) => {
     const originalCapability = api.notificationCapability.getMockImplementation()!;
     const originalRequest = api.requestNotificationPermission.getMockImplementation()!;

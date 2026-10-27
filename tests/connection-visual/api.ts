@@ -12,5 +12,6 @@ export async function serviceCommand(command: string) {
   throw new Error("No mutation is available in this presentation fixture");
 }
 export async function appBuildInfo() { return {}; }
+export async function desktopServiceHealth() { return { running: false, last_unexpected_exit: null }; }
 export async function runtimePlatform() { return "desktop"; }
 export async function pickInvitationFile() { return null; }

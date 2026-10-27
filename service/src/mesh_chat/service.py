@@ -2872,7 +2872,27 @@ class MeshChatService(
         ).to_dict()
         if invitation is not None:
             message["invitation"] = invitation
+        self._bound_call_signal_expiry(message)
         return message
+
+    @staticmethod
+    def _bound_call_signal_expiry(message: dict[str, Any]) -> None:
+        """A queued SDP/control document cannot outlive its signed deadline.
+
+        Apply at creation and on retry/recovery for records saved by older
+        versions with the seven-day chat delivery window. These are local
+        outbound records; this only shortens retention, never authenticates
+        an incoming document or extends its validity.
+        """
+        if message.get("kind") != MessageKind.CALL_SIGNAL.value:
+            return
+        try:
+            expiry = json.loads(message["text"])["expires_at"]
+            if type(expiry) is not int or expiry <= 0:
+                raise ValueError("Invalid call deadline")
+        except (ValueError, TypeError, KeyError):
+            expiry = 0
+        message["expires_at"] = min(message["expires_at"], expiry)
 
     def _queue_direct_retry(self, message_id: str) -> None:
         with self._retry_queue_lock:
@@ -2913,6 +2933,7 @@ class MeshChatService(
             self._drop_direct_retry(message_id)
             return
         self._queue_direct_retry(message_id)
+        self._bound_call_signal_expiry(message)
         if message["expires_at"] <= time.time():
             if (
                 message.get("kind") == MessageKind.REACTION.value
@@ -3054,6 +3075,13 @@ class MeshChatService(
             if not self._on_group_native_status(logical_id, state, native_id):
                 self._on_workspace_native_status(logical_id, state, native_id)
             return
+        if message.get("kind") == MessageKind.CALL_SIGNAL.value:
+            self._bound_call_signal_expiry(message)
+            if message["expires_at"] <= time.time():
+                message["state"] = DeliveryState.EXPIRED.value
+                self.store.put("message", logical_id, message)
+                self._drop_direct_retry(logical_id)
+                return
         if message["state"] == DeliveryState.DELIVERED.value:
             if (
                 message.get("kind") == MessageKind.REACTION.value
@@ -3493,6 +3521,7 @@ class MeshChatService(
         for message in self.store.list("message"):
             if message["direction"] != "outbound":
                 continue
+            self._bound_call_signal_expiry(message)
             reaction_only = bool(
                 message.get("kind") == MessageKind.REACTION.value
                 or message.get("reaction_receipt") is True
