@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import json
 import os
 import time
@@ -159,6 +160,22 @@ def test_connection_documents_reject_oversize_and_excessive_nesting() -> None:
         nested = {"x": nested}
     with pytest.raises(ValidationError, match="nesting"):
         verify_connection_response(json.dumps({"v": 1, "x": nested}))
+
+
+@pytest.mark.parametrize("encoding", ["json", "link", "text"])
+@pytest.mark.parametrize("shape", ["deep", "wide"])
+def test_email_format_probe_preserves_its_own_structure_limits(encoding, shape):
+    value: object = list(range(200))
+    if shape == "deep":
+        value = "leaf"
+        for _ in range(8):
+            value = {"child": value}
+    raw = json.dumps({"v": 4, "type": "email_invitation", "extra": value})
+    if encoding != "json":
+        token = base64.urlsafe_b64encode(raw.encode()).decode().rstrip("=")
+        raw = ("meshchat://workspace/" if encoding == "link" else "MESHWORKSPACE4:") + token
+    with pytest.raises(ValidationError, match="nesting"):
+        verify_email_invitation(raw, "workspace", now=NOW)
 
 
 class FakeNetwork:

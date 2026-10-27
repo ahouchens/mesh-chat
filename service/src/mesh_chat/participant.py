@@ -520,6 +520,25 @@ def _extract_versioned_document(
     value = raw.translate(_INVISIBLE).strip()
     if not value or len(value.encode("utf-8")) > maximum * 2:
         raise ValidationError("Signed connection document is empty or too large")
+
+    def matching_version(serialized: str) -> str | None:
+        # This helper also probes ordinary workspace invitations. Their signed
+        # manifests/device cards can legitimately exceed an email envelope's
+        # depth and node limits. Apply those limits only after selecting this
+        # format; the other format's verifier still validates its own bounds.
+        if len(serialized.encode("utf-8")) > maximum:
+            raise ValidationError("Signed connection document is too large")
+        try:
+            candidate = json.loads(serialized)
+        except (json.JSONDecodeError, RecursionError) as exc:
+            raise ValidationError("Signed connection document encoding is invalid") from exc
+        if not isinstance(candidate, dict):
+            raise ValidationError("Signed connection document fields are invalid")
+        if candidate.get("v") != version:
+            return None
+        _bounded_json(serialized, "Signed connection document", maximum=maximum)
+        return serialized
+
     compact = "".join(value.split())
     lower = compact.lower()
     if lower.startswith(text_prefix.lower()):
@@ -540,11 +559,9 @@ def _extract_versioned_document(
         decoded = _b64decode(
             parsed.path[1:], "Signed connection token", maximum=maximum
         ).decode("utf-8")
-        candidate = _bounded_json(decoded, "Signed connection document", maximum=maximum)
-        return decoded if candidate.get("v") == version else None
+        return matching_version(decoded)
     if value.startswith("{"):
-        candidate = _bounded_json(value, "Signed connection document", maximum=maximum)
-        return value if candidate.get("v") == version else None
+        return matching_version(value)
     return None
 
 
