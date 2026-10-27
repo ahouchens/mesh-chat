@@ -316,7 +316,8 @@ def test_real_webrtc_bridge_learns_routes_and_delivers_messages_with_receipts(tm
 
 
 @pytest.mark.integration
-def test_repeated_call_signaling_preserves_webrtc_message_delivery(tmp_path: Path) -> None:
+@pytest.mark.parametrize("accept", [False, True], ids=["cancelled", "answered"])
+def test_repeated_call_signaling_preserves_webrtc_message_delivery(tmp_path: Path, accept: bool) -> None:
     peers = WebRTCPeers(tmp_path)
     peers.relay_intervals = [0.0, 0.75]
     fingerprint = "sha-256 " + ":".join(["AB"] * 32)
@@ -338,21 +339,11 @@ def test_repeated_call_signaling_preserves_webrtc_message_delivery(tmp_path: Pat
         left = peers.command(0, "approve_request", contact_id=pending["id"])
         right = peers.wait("contact acceptance", lambda: contact(1, "approved"))
         contacts = [left, right]
-        for attempt, media in enumerate(("audio", "video")):
-            call = peers.command(1, "start_call", contact_id=right["id"], media=media,
-                                 sdp=sdp, dtls_fingerprint=fingerprint)
-
-            def ringing():
-                return next((row for row in peers.command(0, "snapshot")["calls"]
-                             if row["id"] == call["id"] and row["state"] == "ringing"), None)
-
-            assert peers.wait("incoming call invitation", ringing)["media"] == media
-            peers.command(1, "end_call", call_id=call["id"], reason="cancelled")
-            peers.wait("remote cancellation", lambda: not peers.command(0, "snapshot")["calls"])
+        def deliver_messages(stage: str) -> None:
             for sender in range(2):
                 sent = peers.command(sender, "send_message", contact_id=contacts[sender]["id"],
-                                     text=f"Message after call attempt {attempt} from {sender}")
-                peers.wait("post-call message and receipt", lambda: all(
+                                     text=f"{stage} from {sender}")
+                peers.wait("message and receipt", lambda: all(
                     any(row["id"] == sent["id"] and row["state"] == "delivered"
                         for row in peers.command(index, "snapshot")["messages"])
                     for index in range(2)))
@@ -360,6 +351,42 @@ def test_repeated_call_signaling_preserves_webrtc_message_delivery(tmp_path: Pat
                                    destination=profiles[1 - sender]["destination_hash"],
                                    bridge_id=peers.bridges[sender]["bridge_id"])
                 assert state["uses_bridge"] and state["interface_count"] == 1
+
+        deliver_messages("After pairing, before any call")
+        # Reuse the original carrier throughout: both peers initiate both media
+        # types, and either caller or callee can hang up an answered call.
+        for attempt, (caller, media) in enumerate(((1, "audio"), (0, "audio"),
+                                                 (1, "video"), (0, "video"))):
+            callee = 1 - caller
+            offer_sdp = sdp + ("m=video 9 UDP/TLS/RTP/SAVPF 96\r\na=mid:1\r\n" if media == "video" else "")
+            answer_sdp = offer_sdp.replace("o=- 1 2", "o=- 3 4")
+            call = peers.command(caller, "start_call", contact_id=contacts[caller]["id"], media=media,
+                                 sdp=offer_sdp, dtls_fingerprint=fingerprint)
+
+            def ringing():
+                return next((row for row in peers.command(callee, "snapshot")["calls"]
+                             if row["id"] == call["id"] and row["state"] == "ringing"), None)
+
+            assert peers.wait("incoming call invitation", ringing)["media"] == media
+            if accept:
+                # Real signed signaling over RNS/LXMF; RTP itself is covered by
+                # NativeWebRtcInteropTest, not simulated by this service test.
+                assert peers.command(callee, "call_media", call_id=call["id"])["remote_sdp"] == offer_sdp
+                answer = peers.command(callee, "answer_call", call_id=call["id"],
+                                       sdp=answer_sdp, dtls_fingerprint=fingerprint)
+                assert answer["state"] == "connecting"
+                peers.wait("signed answer at caller", lambda: (
+                    peers.command(caller, "call_media", call_id=call["id"])["remote_sdp"] == answer_sdp))
+                assert peers.command(caller, "call_media", call_id=call["id"])["state"] == "connecting"
+                deliver_messages(f"During answered {media} call {attempt}")
+            ending_peer = callee if accept and media == "video" else caller
+            peers.command(ending_peer, "end_call", call_id=call["id"],
+                          reason="completed" if accept else "cancelled")
+            peers.wait("both peers retire the call", lambda: all(
+                not peers.command(index, "snapshot")["calls"] for index in range(2)))
+            for index in range(2):
+                assert peers.command(index, "call_media", call_id=call["id"])["state"] == "ended"
+            deliver_messages(f"After {media} call {attempt}")
         incoming = peers.command(0, "connection_diagnostics")
         outgoing = peers.command(1, "connection_diagnostics")
         assert incoming["current_calls"]["peers_with_route"] == 1

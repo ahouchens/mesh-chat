@@ -16,6 +16,7 @@ const api = vi.hoisted(() => ({
   onServiceEvent: vi.fn(),
   openNotificationSettings: vi.fn(async () => ({ supported: false, platform: "desktop", permission_state: "unsupported" })),
   pickInvitationFile: vi.fn(),
+  requestMediaPermission: vi.fn(async () => ({ audio: true, camera: true })),
   requestNotificationPermission: vi.fn(async () => ({ supported: false, platform: "desktop", permission_state: "unsupported" })),
   runtimePlatform: vi.fn(),
   setNativeBackgroundAvailability: vi.fn(async () => ({ enabled: true })),
@@ -27,7 +28,7 @@ vi.mock("./api", () => api);
 
 import App from "./App";
 import { ReconnectCoordinator } from "./reconnect-coordinator";
-import { getWebRTCSessionCount, setWebRTCSession, type WebRTCSession } from "./webrtc-session";
+import { getWebRTCSessionByKey, getWebRTCSessionCount, removeWebRTCSession, setWebRTCSession, type WebRTCSession } from "./webrtc-session";
 import type { ServiceEvent } from "./api";
 
 const B32 = "a".repeat(52) + ".b32.i2p";
@@ -2159,6 +2160,122 @@ describe("Settings page navigation and saved state", () => {
 });
 
 describe("contact management", () => {
+  it.each(["desktop", "android"] as const)("preserves messaging through repeated answered audio/video calls on %s", async (platform) => {
+    const current = snapshot([approved]);
+    const sdp = `v=0\r\na=fingerprint:sha-256 ${"AB:".repeat(31)}AB\r\na=candidate:1 1 UDP 1 127.0.0.1 12345 typ host\r\n`;
+    const captures: { kind: string; enabled: boolean; stop: ReturnType<typeof vi.fn> }[][] = [];
+    const originalMediaDevices = Object.getOwnPropertyDescriptor(navigator, "mediaDevices");
+    const capture = vi.fn(async (constraints: MediaStreamConstraints) => {
+      const tracks = (constraints.video ? ["audio", "video"] : ["audio"]).map(kind => ({ kind, enabled: true, stop: vi.fn() }));
+      captures.push(tracks);
+      return { getTracks: () => tracks, getAudioTracks: () => tracks.filter(t => t.kind === "audio"),
+        getVideoTracks: () => tracks.filter(t => t.kind === "video") } as unknown as MediaStream;
+    });
+    Object.defineProperty(navigator, "mediaDevices", { configurable: true, value: { getUserMedia: capture } });
+    class Peer {
+      static instances: Peer[] = [];
+      constructor() { Peer.instances.push(this); }
+      connectionState = "new";
+      iceGatheringState = "complete";
+      signalingState = "stable";
+      localDescription: RTCSessionDescriptionInit | null = null;
+      onconnectionstatechange: (() => void) | null = null;
+      addTrack() {}
+      getSenders() { return []; }
+      getStats() { return Promise.resolve(new Map()); }
+      createOffer() { return Promise.resolve({ type: "offer", sdp }); }
+      setLocalDescription(description: RTCSessionDescriptionInit) {
+        this.localDescription = description;
+        this.signalingState = "have-local-offer";
+        return Promise.resolve();
+      }
+      setRemoteDescription = vi.fn(async () => {
+        this.signalingState = "stable";
+        this.connectionState = "connected";
+        this.onconnectionstatechange?.();
+      });
+      close = vi.fn(() => { this.connectionState = "closed"; });
+    }
+    vi.stubGlobal("RTCPeerConnection", Peer);
+    const carrier: WebRTCSession = {
+      key: "repeated-calls-carrier", contactId: approved.id, peerDestination: approved.destination_hash,
+      bridge: { bridgeId: "original-bridge", maxPacket: 500, close: vi.fn(async () => undefined) },
+      channel: { readyState: "open", close: vi.fn() } as unknown as RTCDataChannel,
+      pc: { connectionState: "connected", iceConnectionState: "connected", close: vi.fn() } as unknown as RTCPeerConnection,
+      control: null, path: "relayed", createdAt: 1, approvalPending: false,
+    };
+    let activeCall: { id: string; media: string } | null = null;
+    let remoteEnded = false;
+    api.runtimePlatform.mockResolvedValue(platform);
+    api.initializeService.mockResolvedValue(current);
+    api.onInvitation.mockResolvedValue(() => undefined);
+    api.onServiceEvent.mockResolvedValue(() => undefined);
+    api.serviceCommand.mockImplementation(async (command: string, payload?: Record<string, unknown>) => {
+      if (command === "snapshot") return current;
+      if (command === "reconnect_profiles") return { profiles: [] };
+      if (command === "call_ice_servers") return { iceServers: [], iceTransportPolicy: "all" };
+      if (command === "start_call") {
+        activeCall = { id: String(Peer.instances.length).repeat(32), media: String(payload?.media) };
+        remoteEnded = false;
+        return { ...activeCall, contact_id: approved.id, role: "caller", direction: "outbound", state: "dialing" };
+      }
+      if (command === "call_media") return { ...activeCall, state: remoteEnded ? "ended" : "connecting",
+        remote_sdp: sdp, candidates: [], restart_offer: null, restart_answer: null };
+      return {};
+    });
+    setWebRTCSession(carrier);
+    try {
+      render(<App />);
+      const conversation = await screen.findByLabelText("Conversation with Taylor");
+      const staleCallbacks: (() => void)[] = [];
+      for (const [cycle, media] of ["audio", "video", "audio", "video"].entries()) {
+        fireEvent.click(within(conversation).getByRole("button", { name: "Call Taylor" }));
+        const dialog = await screen.findByRole("dialog", { name: "Call Taylor" });
+        expect(capture).toHaveBeenCalledTimes(cycle);
+        expect(api.requestMediaPermission).toHaveBeenCalledTimes(platform === "android" ? cycle : 0);
+        fireEvent.click(within(dialog).getByRole("button", { name: media === "audio" ? "Audio call" : "Video call" }));
+        const hangup = await within(dialog).findByRole("button", { name: "Hang up" }, { timeout: 3000 });
+        const peer = Peer.instances[cycle];
+        expect(peer.setRemoteDescription).toHaveBeenCalledWith({ type: "answer", sdp });
+        expect(captures[cycle].map(track => track.kind)).toEqual(media === "audio" ? ["audio"] : ["audio", "video"]);
+        act(() => { for (const callback of staleCallbacks) callback(); });
+        expect(within(dialog).queryByRole("alert")).toBeNull();
+        for (const track of captures[cycle]) expect(track.stop).not.toHaveBeenCalled();
+        const queuedStateChange = peer.onconnectionstatechange;
+        staleCallbacks.push(() => { peer.connectionState = "failed"; queuedStateChange?.(); });
+        // Exercise local and remote hangup for each media type across cycles.
+        if (cycle < 2) {
+          fireEvent.click(hangup);
+          await waitFor(() => expect(screen.queryByRole("dialog", { name: "Call Taylor" })).toBeNull());
+          expect(api.serviceCommand).toHaveBeenCalledWith("end_call", { call_id: activeCall!.id, reason: "completed" });
+        } else {
+          remoteEnded = true;
+          await within(dialog).findByText("Call ended.", {}, { timeout: 3000 });
+          fireEvent.click(within(dialog).getAllByRole("button", { name: "Close" }).at(-1)!);
+        }
+        expect(peer.close).toHaveBeenCalledOnce();
+        for (const track of captures[cycle]) expect(track.stop).toHaveBeenCalledOnce();
+        await waitFor(() => expect(api.endCallAudio).toHaveBeenCalledTimes(cycle + 1));
+        expect(getWebRTCSessionByKey(carrier.key)).toBe(carrier);
+        expect(carrier.bridge.close).not.toHaveBeenCalled();
+        expect(carrier.channel.close).not.toHaveBeenCalled();
+        expect(carrier.pc.close).not.toHaveBeenCalled();
+      }
+      expect(Peer.instances).toHaveLength(4);
+      expect(api.beginCallAudio).toHaveBeenCalledTimes(4);
+      if (platform === "android") {
+        expect(api.requestMediaPermission.mock.calls).toEqual([["audio"], ["video"], ["audio"], ["video"]]);
+      }
+      expect(api.serviceCommand.mock.calls.filter(([command]) => command === "end_call")).toHaveLength(2);
+      expect(api.serviceCommand.mock.calls.some(([command]) => command === "webrtc_detach")).toBe(false);
+    } finally {
+      cleanup();
+      removeWebRTCSession(carrier.key);
+      if (originalMediaDevices) Object.defineProperty(navigator, "mediaDevices", originalMediaDevices);
+      else Reflect.deleteProperty(navigator, "mediaDevices");
+    }
+  }, 20_000);
+
   it("shows and reviews an incoming call above Settings while its conversation pane is hidden", async () => {
     const call = {
       id: "c".repeat(32), contact_id: approved.id, role: "callee" as const,
