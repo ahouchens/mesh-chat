@@ -25,17 +25,21 @@ export async function waitForCandidates(
   pc: RTCPeerConnection,
   timeoutMs = 15000,
 ): Promise<void> {
-  if (pc.iceGatheringState === "complete") return;
+  if (pc.iceGatheringState === "complete" || pc.connectionState === "closed") return;
   await new Promise<void>((resolve) => {
-    const timeout = window.setTimeout(resolve, timeoutMs);
-    const onChange = () => {
-      if (pc.iceGatheringState === "complete") {
-        window.clearTimeout(timeout);
-        pc.removeEventListener("icegatheringstatechange", onChange);
-        resolve();
-      }
+    const finish = () => {
+      window.clearTimeout(timeout);
+      pc.removeEventListener("icegatheringstatechange", onChange);
+      pc.removeEventListener("connectionstatechange", onChange);
+      resolve();
     };
+    const onChange = () => {
+      if (pc.iceGatheringState === "complete" || pc.connectionState === "closed") finish();
+    };
+    const timeout = window.setTimeout(finish, timeoutMs);
     pc.addEventListener("icegatheringstatechange", onChange);
+    pc.addEventListener("connectionstatechange", onChange);
+    onChange();
   });
 }
 
@@ -83,27 +87,24 @@ export async function waitForOpen(
   timeoutMs = 20000,
 ): Promise<void> {
   if (channel.readyState === "open") return;
+  if (channel.readyState === "closed" || channel.readyState === "closing") {
+    throw new Error("The DataChannel closed before it opened.");
+  }
   await new Promise<void>((resolve, reject) => {
-    const timeout = window.setTimeout(
-      () => reject(new Error("The DataChannel did not open.")),
-      timeoutMs,
-    );
-    channel.addEventListener(
-      "open",
-      () => {
-        window.clearTimeout(timeout);
-        resolve();
-      },
-      { once: true },
-    );
-    channel.addEventListener(
-      "error",
-      () => {
-        window.clearTimeout(timeout);
-        reject(new Error("The DataChannel failed."));
-      },
-      { once: true },
-    );
+    const finish = (reason?: Error) => {
+      window.clearTimeout(timeout);
+      channel.removeEventListener("open", opened);
+      channel.removeEventListener("error", failed);
+      channel.removeEventListener("close", closed);
+      if (reason) reject(reason); else resolve();
+    };
+    const opened = () => finish();
+    const failed = () => finish(new Error("The DataChannel failed."));
+    const closed = () => finish(new Error("The DataChannel closed before it opened."));
+    const timeout = window.setTimeout(() => finish(new Error("The DataChannel did not open.")), timeoutMs);
+    channel.addEventListener("open", opened);
+    channel.addEventListener("error", failed);
+    channel.addEventListener("close", closed);
   });
 }
 
