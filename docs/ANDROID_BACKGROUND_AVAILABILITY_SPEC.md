@@ -3,7 +3,10 @@
 Status: implemented in source on 2026-10-24, pending CI and physical
 qualification. The Android foreground service, native WebRTC host, native
 onboarding/reconnect cutover, Python background reconnect supervisor, renderer
-opt-in, and focused tests are in the tree. Doze, network-switch, 16 KB
+controls, and focused tests are in the tree. Version 0.9.56 enables the mode
+by default after unlock and requests notification permission when needed.
+An explicit off choice persists, and locking still stops the runtime and
+releases keys. Doze, network-switch, 16 KB
 page-size, APK-size, and physical Windows↔Android qualification remain release
 gates. The native-WebRTC decision is recorded in
 [ADR 0024](adr/0024-android-background-availability-native-webrtc.md). This
@@ -19,7 +22,7 @@ This proposal supersedes the following statements when accepted:
   **Native WebRTC is now required for the first release of this mode**, because
   the requirement is specifically to keep WebRTC connections alive.
 
-Those statements remain true for the default foreground-only mode.
+Those foreground-only constraints remain relevant when availability is disabled.
 
 Acceptance of this spec requires a new ADR (next free number is 0024) that
 records the native-WebRTC decision and narrows ADR 0014's blanket rejection of
@@ -54,9 +57,11 @@ document is a proposal, not a release commitment.
 6. **Calls keep their existing path.** Audio/video media continues to use the
    WebView plus `CallService` in this phase. Only data channels move native.
    Moving media is a separate project.
-7. **The mode is opt-in, visible, and stoppable.** It starts only from a visible
-   user action, shows a persistent generic notification with **Stop**, and is
-   disabled by explicit Mesh Chat lock.
+7. **The mode is enabled by default, visible, and stoppable.** After unlock,
+   apply the default once on upgrade and preserve subsequent off choices.
+   Notification permission is required before starting from the foreground.
+   Show a persistent generic notification with **Stop**. Explicit Mesh Chat
+   lock stops the runtime; the saved preference resumes after unlock.
 8. **No FCM/APNs, no hosted relay, no boot autostart in v1.** Those preserve
    the server-free model and avoid new push infrastructure.
 9. **Enabling the mode renegotiates active WebRTC data sessions.** A WebView

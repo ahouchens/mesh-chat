@@ -4,6 +4,7 @@ import android.util.Base64
 import android.app.ActivityManager
 import android.content.Context
 import android.content.Intent
+import android.os.Build
 import android.webkit.JavascriptInterface
 import android.webkit.WebView
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -64,6 +65,26 @@ class NativeWebRtcInteropTest {
     @Test(timeout = 180_000) fun chromiumOfferCanBeAcceptedThroughTheRealPythonBridge() = exchange(nativeOffers = false)
     @Test(timeout = 180_000) fun nativeOfferCanConnectToChromiumWithReconnectControl() = exchange(nativeOffers = true)
 
+    @Test(timeout = 30_000) fun backgroundDefaultResumesAfterUnlockAndPreservesAnExplicitOffChoice() {
+        val prefs = context.getSharedPreferences("mesh-chat-vault", Context.MODE_PRIVATE)
+        val keys = listOf("background-availability-enabled", "background-availability-default-v2", "background-availability-preference-v2")
+        val saved = keys.associateWith { if (prefs.contains(it)) prefs.getBoolean(it, false) else null }
+        try {
+            prefs.edit().apply { keys.forEach { remove(it) } }.commit()
+            BackgroundRuntime.applyDefault(context)
+            assertTrue(BackgroundRuntime.isEnabled(context))
+            BackgroundRuntime.stop(context, preservePreference = true)
+            assertFalse(BackgroundRuntime.isEnabled(context))
+            BackgroundRuntime.applyDefault(context)
+            assertTrue(BackgroundRuntime.isEnabled(context))
+            BackgroundRuntime.setPreference(context, false)
+            BackgroundRuntime.applyDefault(context)
+            assertFalse(BackgroundRuntime.isEnabled(context))
+        } finally {
+            prefs.edit().apply { saved.forEach { (key, value) -> if (value == null) remove(key) else putBoolean(key, value) } }.commit()
+        }
+    }
+
     @Test(timeout = 90_000) fun backgroundRuntimeCanInitializeNativeWebRtc() {
         BackgroundRuntime.configure(context)
         try {
@@ -81,11 +102,35 @@ class NativeWebRtcInteropTest {
         }
     }
 
+    @Test(timeout = 30_000) fun queuedAvailabilityStartHonorsStopWithoutCrashingOrOpeningTheRuntime() {
+        BackgroundRuntime.configure(context)
+        BackgroundRuntime.setPreference(context, false)
+        val launch = Intent().setClassName(context, "com.meshchat.runtime.smoke.BackgroundTestActivity")
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        val activity = instrumentation.startActivitySync(launch)
+        try {
+            instrumentation.runOnMainSync {
+                val service = Intent(context, MeshAvailabilityService::class.java)
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) context.startForegroundService(service)
+                else context.startService(service)
+            }
+            // Observe Android's foreground-promotion deadline, including a
+            // delayed process exception after an apparently successful Stop.
+            Thread.sleep(7_000)
+            assertFalse(MeshAvailabilityService.isRunning())
+            assertFalse(BackgroundRuntime.statusJson().optBoolean("runtime_initialized"))
+            assertFalse(BackgroundRuntime.isEnabled(context))
+        } finally {
+            BackgroundRuntime.stop(context)
+            instrumentation.runOnMainSync { activity.finish() }
+        }
+    }
+
     @Test(timeout = 180_000) fun optedInServiceRestoresAndKeepsNativeTrafficWhileActivityIsStopped() {
         BackgroundRuntime.configure(context)
         assertTrue(JSONObject(BackgroundRuntime.initialize()).optBoolean("ok"))
         // Simulate an update/process restart: persisted opt-in, no Service.
-        BackgroundRuntime.setEnabled(context, true)
+        BackgroundRuntime.setPreference(context, true)
         command("set_background_availability", JSONObject().put("enabled", true))
         assertFalse(MeshAvailabilityService.isRunning())
         val launch = Intent().setClassName(context, "com.meshchat.runtime.smoke.BackgroundTestActivity")
@@ -199,6 +244,9 @@ class NativeWebRtcInteropTest {
             .put("display_name", "WebRTC CI")
             .put("platform", "android").toString()).toString()
         assertTrue(initialized, JSONObject(initialized).optBoolean("ok"))
+        if (JSONObject(initialized).getJSONObject("result").optJSONObject("profile") == null) {
+            command("create_profile", JSONObject().put("display_name", "WebRTC CI"))
+        }
         try {
             instrumentation.runOnMainSync {
                 browser = WebView(context)
@@ -260,9 +308,26 @@ class NativeWebRtcInteropTest {
                 command("native_webrtc_apply_answer", JSONObject().put("session_id", id).put("answer_sdp", results.await("sdp")))
             } else {
                 js("return offer()")
-                val native = command("native_webrtc_accept", payload.put("offer_sdp", results.await("sdp")))
+                val browserSdp = results.await("sdp")
+                val fingerprint = browserSdp.lineSequence().first { it.startsWith("a=fingerprint:") }
+                    .removePrefix("a=fingerprint:").trim()
+                val offer = command("webrtc_onboarding_offer", JSONObject()
+                    .put("sdp", browserSdp).put("dtls_fingerprint", fingerprint))
+                val document = offer.getString("document")
+                val preview = command("verify_webrtc_onboarding_offer", JSONObject().put("document", document))
+                val native = command("native_webrtc_accept", payload.put("offer_sdp", preview.getString("sdp")))
                 assertTrue(native.getString("fingerprint").startsWith("sha-256 "))
-                js("return finish(${JSONObject.quote(native.getString("sdp"))})")
+                command("native_webrtc_bind_onboarding", JSONObject()
+                    .put("session_id", id).put("offer_document", document))
+                val nativeSdp = native.getString("sdp")
+                val completeSdp = if (nativeSdp.lineSequence().any { it.trim() == "a=end-of-candidates" }) nativeSdp
+                    else nativeSdp.trimEnd() + "\r\na=end-of-candidates\r\n"
+                val answer = command("webrtc_onboarding_answer", JSONObject()
+                    .put("offer_document", document).put("sdp", completeSdp)
+                    .put("dtls_fingerprint", native.getString("fingerprint")))
+                val verified = command("verify_webrtc_onboarding_answer", JSONObject()
+                    .put("offer_document", document).put("answer_document", answer.getString("document")))
+                js("return finish(${JSONObject.quote(verified.getString("sdp"))})")
             }
             awaitStats(id) { it.optBoolean("attached") && it.optString("ice_connection_state") in setOf("connected", "completed") }
             js("return probe()")

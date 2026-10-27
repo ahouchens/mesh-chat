@@ -143,6 +143,12 @@ function errorMessage(reason: unknown): string {
   return reason instanceof Error ? reason.message : "The WebRTC onboarding step failed.";
 }
 
+function diagnosticErrorCode(reason: unknown): string {
+  const value = reason && typeof reason === "object" && "code" in reason
+    ? String(reason.code) : "";
+  return /^[a-z0-9_]{1,80}$/.test(value) ? value : "unavailable";
+}
+
 function sessionCode(document: string): string {
   try {
     const value = JSON.parse(document) as { session_id?: unknown };
@@ -175,6 +181,7 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
   const [error, setError] = useState("");
   const [copied, setCopied] = useState("");
   const [diagnostics, setDiagnostics] = useState("");
+  const failureContextRef = useRef<{ operation: string; error_code: string; offer_verified: boolean } | null>(null);
   const [onboarding, setOnboarding] = useState<OnboardingState>("idle");
   const [onboardingError, setOnboardingError] = useState("");
   const [contactInvitation, setContactInvitation] = useState<InvitationPreview | null>(null);
@@ -255,15 +262,27 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
 
   const captureDiagnostics = useCallback(async (phase: string, message: string): Promise<string> => {
     const nativeSession = nativeMode ? nativeSessionRef.current : null;
-    if (nativeSession) {
-      try {
-        const stats = await nativeWebRTCStats(nativeSession);
-        const text = JSON.stringify({ phase, message, native: true, ...stats }, null, 2);
+    const attempt = attemptRef.current;
+    const context = failureContextRef.current ?? {};
+    const save = (detail: Record<string, unknown>) => {
+      const text = JSON.stringify({ phase, message, ...context, ...detail }, null, 2);
+      if (attemptRef.current === attempt) {
         setDiagnostics(text);
         rememberWebRTCDiagnostics(text);
-        return text;
-      } catch {
-        return "";
+      }
+      return text;
+    };
+    if (nativeMode) {
+      const detail = { native: true, native_session: nativeSession ? "requested" : "not_requested" };
+      // Save a useful report before any optional stats query can fail or yield
+      // to cleanup. A native session is independent of the browser's pcRef.
+      const fallback = save({ ...detail, native_stats: "unavailable" });
+      if (!nativeSession) return fallback;
+      try {
+        const stats = await nativeWebRTCStats(nativeSession);
+        return save({ ...detail, native_stats: "available", ...stats });
+      } catch (reason) {
+        return save({ ...detail, native_stats: "unavailable", native_stats_error: diagnosticErrorCode(reason) });
       }
     }
     const pc = pcRef.current;
@@ -271,15 +290,12 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
       // ICE configuration can fail before a peer connection exists. Preserve
       // that failure so the error screen still has something useful to copy.
       const host = await desktopServiceHealth().catch(() => null);
-      const text = JSON.stringify({ phase, message, peer_connection: "not_created", desktop_service: host }, null, 2);
-      setDiagnostics(text);
-      rememberWebRTCDiagnostics(text);
-      return text;
+      return save({ peer_connection: "not_created", desktop_service: host });
     }
     const trace = traceRef.current;
     try {
       const detail = await peerDiagnostics(pc, phase, message, iceSummaryRef.current);
-      const text = JSON.stringify({ ...JSON.parse(detail), timeline: trace?.snapshot() ?? [] }, null, 2);
+      const text = JSON.stringify({ ...JSON.parse(detail), ...context, timeline: trace?.snapshot() ?? [] }, null, 2);
       if (pcRef.current !== pc) return text;
       setDiagnostics(text);
       rememberWebRTCDiagnostics(text);
@@ -587,7 +603,8 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
       }
       setPhase("connected");
       void sendInvitation();
-      await onChanged();
+      // Snapshot refreshes do not own the transport handed to the registry.
+      await onChanged().catch(() => undefined);
     } catch (reason) {
       if (pcRef.current !== pc) return;
       const message = errorMessage(reason);
@@ -628,6 +645,7 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
 
   const createOffer = useCallback(async () => {
     if (createOfferBusyRef.current) return;
+    failureContextRef.current = null;
     cleanup();
     handedOffRef.current = false;
     invitationStartedRef.current = false;
@@ -727,6 +745,7 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
 
   const connectAnswer = useCallback(async () => {
     if (connectAnswerBusyRef.current) return;
+    failureContextRef.current = null;
     connectAnswerBusyRef.current = true;
     failureCapturedRef.current = false;
     setError(""); setPhase("connecting");
@@ -771,7 +790,7 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
         void sendInvitationRef.current?.();
         onConnected?.("unknown");
         setPhase("connected");
-        await onChanged();
+        await onChanged().catch(() => undefined);
         return;
       }
       if (!pc || !offerDocument) throw new Error("Create an offer first.");
@@ -842,10 +861,13 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
     setMailboxCode("");
     setError(""); setPhase("review");
     setDiagnostics("");
+    failureContextRef.current = null;
     let offerVerified = false;
+    let operation = "parse_offer";
     try {
       let rawOffer = normalizeWebRTCOfferInput(offerInput);
       if (!rawOffer.includes("\"type\"")) {
+        operation = "signal_fetch";
         const fetched = await serviceCommand<{ document: string }>("signal_fetch", { session_id: rawOffer, role: "offer" });
         if (attemptRef.current !== attempt) return;
         rawOffer = fetched.document;
@@ -860,6 +882,7 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
       if (parsedOffer.type !== "webrtc_onboarding_offer") {
         throw new Error("That document is not a WebRTC offer. Paste the offer created on the other device, not an answer.");
       }
+      operation = "verify_webrtc_onboarding_offer";
       const preview = await serviceCommand<OnboardingOfferPreview>("verify_webrtc_onboarding_offer", {
         document: rawOffer,
       });
@@ -867,6 +890,7 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
       offerVerified = true;
       peerDestinationRef.current = preview.signer_destination;
       setOfferPreview(preview);
+      operation = "call_ice_servers";
       const ice = await serviceCommand<CallIceConfiguration>("call_ice_servers");
       if (attemptRef.current !== attempt) return;
       iceSummaryRef.current = summarizeIce(ice);
@@ -874,11 +898,14 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
         roleRef.current = "join";
         const sessionId = `onboarding-${crypto.randomUUID()}`;
         nativeSessionRef.current = sessionId;
+        operation = "native_webrtc_accept";
         const native = await nativeWebRTCAccept(sessionId, preview.sdp, ice, NATIVE_ONBOARDING_CHANNELS);
         if (attemptRef.current !== attempt) return;
+        operation = "native_webrtc_bind_onboarding";
         await serviceCommand("native_webrtc_bind_onboarding", { session_id: sessionId, offer_document: preview.document });
         if (attemptRef.current !== attempt) return;
         const sdp = withEndOfCandidates(native.sdp);
+        operation = "webrtc_onboarding_answer";
         const result = await serviceCommand<OnboardingAnswerResult>("webrtc_onboarding_answer", {
           offer_document: preview.document,
           sdp,
@@ -904,7 +931,7 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
           handedOffRef.current = true;
           onConnected?.("unknown");
           setPhase("connected");
-          await onChanged();
+          await onChanged().catch(() => undefined);
         }).catch((reason) => {
           if (attemptRef.current !== attempt) return;
           setError(errorMessage(reason));
@@ -913,6 +940,7 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
         });
         return;
       }
+      operation = "create_peer_connection";
       const pc = new RTCPeerConnection({ iceServers: ice.iceServers, iceTransportPolicy: ice.iceTransportPolicy });
       roleRef.current = "join";
       pc.ondatachannel = (event) => {
@@ -945,17 +973,22 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
         }, waitMs),
       };
       traceRef.current?.record("applying-remote-offer");
+      operation = "set_remote_offer";
       await pc.setRemoteDescription({ type: "offer", sdp: preview.sdp });
       if (pcRef.current !== pc) return;
       traceRef.current?.record("remote-offer-applied");
+      operation = "create_answer";
       const answer = await pc.createAnswer();
       if (pcRef.current !== pc) return;
+      operation = "set_local_answer";
       await pc.setLocalDescription(answer);
+      operation = "gather_answer_candidates";
       await waitForCandidates(pc);
       if (pcRef.current !== pc) return;
       const gathered = pc.localDescription?.sdp;
       if (!gathered) throw new Error("Could not create the WebRTC answer.");
       const sdp = withEndOfCandidates(gathered);
+      operation = "webrtc_onboarding_answer";
       const result = await serviceCommand<OnboardingAnswerResult>("webrtc_onboarding_answer", {
         offer_document: preview.document,
         sdp,
@@ -980,6 +1013,7 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
       setPhase("waiting-owner");
     } catch (reason) {
       if (attemptRef.current !== attempt) return;
+      failureContextRef.current = { operation, error_code: diagnosticErrorCode(reason), offer_verified: offerVerified };
       const message = offerErrorMessage(reason, offerVerified);
       void captureDiagnostics("offer-review-failed", message).finally(() => {
         if (attemptRef.current === attempt) cleanup();

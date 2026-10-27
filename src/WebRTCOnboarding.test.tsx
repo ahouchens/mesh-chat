@@ -190,10 +190,10 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-async function join() {
+async function join(onChanged: () => Promise<void> = async () => undefined) {
   const onConnected = vi.fn();
   const onClose = vi.fn();
-  const view = render(<WebRTCOnboardingDialog onClose={onClose} onChanged={async () => undefined} onConnected={onConnected} />);
+  const view = render(<WebRTCOnboardingDialog onClose={onClose} onChanged={onChanged} onConnected={onConnected} />);
   await act(async () => undefined);
   fireEvent.click(screen.getByRole("button", { name: "Join with WebRTC" }));
   fireEvent.change(screen.getByLabelText("Paste the signed WebRTC offer or mailbox code"), { target: { value: offerDocument } });
@@ -344,6 +344,32 @@ describe("manual WebRTC answer exchange", () => {
     expect(screen.getByRole("alert").textContent).toMatch(/offer was verified.*could not create an answer/i);
     expect(screen.getByRole("alert").textContent).not.toMatch(/complete signed WebRTC offer|outer JSON braces/i);
   });
+
+  it.each(["call_ice_servers", "native_webrtc_accept", "native_webrtc_bind_onboarding", "webrtc_onboarding_answer"])(
+    "preserves Android's failing %s command when native stats are unavailable", async (failedCommand) => {
+      const clipboard = { writeText: vi.fn().mockResolvedValue(undefined) };
+      vi.stubGlobal("navigator", { userAgent: "Android", clipboard });
+      const runCommand = mocks.serviceCommand.getMockImplementation()!;
+      mocks.serviceCommand.mockImplementation(async (command: string, payload: unknown) => {
+        if (command === failedCommand) throw { code: "invalid_request" };
+        if (command === "native_webrtc_stats") throw { code: "native_unavailable" };
+        return runCommand(command, payload);
+      });
+      render(<WebRTCOnboardingDialog onClose={vi.fn()} onChanged={async () => undefined} />);
+      await act(async () => undefined);
+      fireEvent.click(screen.getByRole("button", { name: "Join with WebRTC" }));
+      fireEvent.change(screen.getByLabelText("Paste the signed WebRTC offer or mailbox code"), { target: { value: offerDocument } });
+      await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Review and create answer" })); });
+      await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Copy diagnostics" })); });
+      const report = JSON.parse(clipboard.writeText.mock.calls[0][0]);
+      expect(report).toMatchObject({ phase: "offer-review-failed", operation: failedCommand,
+        error_code: "invalid_request", offer_verified: true, native: true, native_stats: "unavailable" });
+      expect(report).not.toHaveProperty("desktop_service");
+      expect(report).not.toHaveProperty("peer_connection");
+      expect(clipboard.writeText.mock.calls[0][0]).not.toContain(offerDocument);
+      expect(mocks.desktopServiceHealth).not.toHaveBeenCalled();
+    },
+  );
 
   it("hands a connected native transport to the service when the dialog closes", async () => {
     vi.stubGlobal("navigator", { userAgent: "Android" });
@@ -532,6 +558,38 @@ describe("manual WebRTC answer exchange", () => {
     });
     expect(mocks.serviceCommand).toHaveBeenCalledWith("receive_contact_invitation", { document: "signed-invitation", peer_destination: "peer" });
     expect(mocks.serviceCommand).not.toHaveBeenCalledWith("decide_contact_invitation", expect.anything());
+  });
+
+  it.each([false, true])("preserves a connected browser transport when snapshot refresh fails (dialog closed: %s)", async (closed) => {
+    let rejectRefresh!: (reason: Error) => void;
+    const refresh = new Promise<void>((_, reject) => { rejectRefresh = reject; });
+    const view = await join(() => refresh);
+    let channel!: FakeChannel;
+    await act(async () => { channel = view.pc.openIncomingChannel(); });
+    expect(view.onConnected).toHaveBeenCalledOnce();
+    if (closed) view.unmount();
+    await act(async () => { rejectRefresh(new Error("temporary snapshot failure")); });
+    const bridge = await mocks.attachWebRTCBridge.mock.results[0].value;
+    expect(bridge.close).not.toHaveBeenCalled();
+    expect(channel.close).not.toHaveBeenCalled();
+    expect(view.pc.close).not.toHaveBeenCalled();
+    if (!closed) expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("preserves a connected native answerer when its snapshot refresh fails", async () => {
+    vi.stubGlobal("navigator", { userAgent: "Android" });
+    const runCommand = mocks.serviceCommand.getMockImplementation()!;
+    mocks.serviceCommand.mockImplementation(async (command: string, payload: unknown) => command === "native_webrtc_stats"
+      ? { attached: true } : runCommand(command, payload));
+    const onConnected = vi.fn();
+    render(<WebRTCOnboardingDialog onClose={vi.fn()} onChanged={async () => { throw new Error("temporary snapshot failure"); }} onConnected={onConnected} />);
+    await act(async () => undefined);
+    fireEvent.click(screen.getByRole("button", { name: "Join with WebRTC" }));
+    fireEvent.change(screen.getByLabelText("Paste the signed WebRTC offer or mailbox code"), { target: { value: offerDocument } });
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Review and create answer" })); });
+    expect(onConnected).toHaveBeenCalledOnce();
+    expect(mocks.serviceCommand).not.toHaveBeenCalledWith("native_webrtc_close", expect.anything());
+    expect(screen.queryByRole("alert")).toBeNull();
   });
 
   it("ignores an invitation preview that finishes after its control channel closes", async () => {

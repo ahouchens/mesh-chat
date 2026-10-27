@@ -66,13 +66,20 @@ class MeshAvailabilityService : Service() {
             stopSelf()
             return
         }
+        // Even a cancelled startForegroundService request must be promoted
+        // before stopping, or Android can terminate the whole app. A queued
+        // start must never initialize the vault after Lock or Stop.
+        if (!BackgroundRuntime.isEnabled(applicationContext)) {
+            stopSelf()
+            return
+        }
         acquireLocks()
         BackgroundRuntime.execute {
             try {
                 if (BackgroundRuntime.isEnabled(applicationContext)) {
                     BackgroundRuntime.initialize()
                     BackgroundRuntime.setBackgroundPreference(true)
-                }
+                } else stopSelf()
             } catch (error: Throwable) {
                 Log.e(TAG, "background runtime initialization failed (${error.javaClass.simpleName})")
                 BackgroundRuntime.setEnabled(applicationContext, false)
@@ -90,7 +97,7 @@ class MeshAvailabilityService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_STOP -> {
-                BackgroundRuntime.setEnabled(applicationContext, false)
+                BackgroundRuntime.setPreference(applicationContext, false)
                 NativeWebRtcBridge.closeAll()
                 BackgroundRuntime.execute {
                     try {
@@ -105,7 +112,10 @@ class MeshAvailabilityService : Service() {
             else -> {
                 return try {
                     startAsForeground()
-                    START_STICKY
+                    if (!BackgroundRuntime.isEnabled(applicationContext)) {
+                        stopSelf()
+                        START_NOT_STICKY
+                    } else START_STICKY
                 } catch (error: Throwable) {
                     Log.e(TAG, "foreground restart denied (${error.javaClass.simpleName})")
                     BackgroundRuntime.setEnabled(applicationContext, false)

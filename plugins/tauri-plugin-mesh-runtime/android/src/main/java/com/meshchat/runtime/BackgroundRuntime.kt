@@ -49,6 +49,8 @@ object BackgroundRuntime {
     private const val AVAILABILITY_CHANNEL = "mesh_chat_availability_v1"
     private const val PREFERENCES = "mesh-chat-vault"
     private const val AVAILABILITY_KEY = "background-availability-enabled"
+    private const val DEFAULT_APPLIED_KEY = "background-availability-default-v2"
+    private const val PREFERENCE_KEY = "background-availability-preference-v2"
 
     @Volatile private var configured = false
     @Volatile private var runtimeInitialized = false
@@ -84,6 +86,24 @@ object BackgroundRuntime {
         return preferences.getBoolean(AVAILABILITY_KEY, false)
     }
 
+    /** Apply the new default once, after the person unlocks the app. */
+    @Synchronized
+    fun applyDefault(context: Context) {
+        configure(context)
+        val enabled = if (preferences.getBoolean(DEFAULT_APPLIED_KEY, false)) {
+            preferences.getBoolean(PREFERENCE_KEY, true)
+        } else true
+        preferences.edit().putBoolean(AVAILABILITY_KEY, enabled)
+            .putBoolean(PREFERENCE_KEY, enabled).putBoolean(DEFAULT_APPLIED_KEY, true).apply()
+    }
+
+    /** An explicit settings/notification Stop choice survives later unlocks. */
+    fun setPreference(context: Context, enabled: Boolean) {
+        configure(context)
+        preferences.edit().putBoolean(PREFERENCE_KEY, enabled)
+            .putBoolean(AVAILABILITY_KEY, enabled).putBoolean(DEFAULT_APPLIED_KEY, true).apply()
+    }
+
     fun setEnabled(context: Context, enabled: Boolean) {
         configure(context)
         preferences.edit().putBoolean(AVAILABILITY_KEY, enabled).apply()
@@ -113,7 +133,8 @@ object BackgroundRuntime {
     /** Restore an existing opt-in only after the unlocked UI returns. */
     @Synchronized
     fun restoreIfEnabled(context: Context) {
-        if (!uiForeground || !isEnabled(context) || MeshAvailabilityService.isRunning() || startPending()) return
+        configure(context)
+        if (!uiForeground || !preferences.getBoolean(PREFERENCE_KEY, true) || !notificationAllowed() || MeshAvailabilityService.isRunning() || startPending()) return
         try {
             start(context)
             restorations++
@@ -131,10 +152,10 @@ object BackgroundRuntime {
     fun onServiceStopped() { startRequestedAt = 0L }
 
     @Synchronized
-    fun stop(context: Context) {
+    fun stop(context: Context, preservePreference: Boolean = false) {
         configure(context)
         startRequestedAt = 0L
-        setEnabled(context, false)
+        if (preservePreference) setEnabled(context, false) else setPreference(context, false)
         NativeWebRtcBridge.closeAll()
         context.stopService(Intent(context, MeshAvailabilityService::class.java))
         execute { clearIncomingCallNotifications() }
