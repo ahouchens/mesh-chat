@@ -63,6 +63,8 @@ class NativeWebRtcInteropTest {
     }
 
     @Test(timeout = 180_000) fun chromiumOfferCanBeAcceptedThroughTheRealPythonBridge() = exchange(nativeOffers = false)
+    @Test(timeout = 180_000) fun chromiumOfferSurvivesEarlyIceFailureDuringManualAnswerExchange() =
+        exchange(nativeOffers = false, earlyIceFailure = true)
     @Test(timeout = 180_000) fun nativeOfferCanConnectToChromiumWithReconnectControl() = exchange(nativeOffers = true)
 
     @Test(timeout = 30_000) fun backgroundDefaultResumesAfterUnlockAndPreservesAnExplicitOffChoice() {
@@ -230,7 +232,7 @@ class NativeWebRtcInteropTest {
         }
     }
 
-    private fun exchange(nativeOffers: Boolean) {
+    private fun exchange(nativeOffers: Boolean, earlyIceFailure: Boolean = false) {
         val id = "interop-${UUID.randomUUID()}"
         val control = if (nativeOffers) "meshchat-reconnect" else "mesh-onboarding"
         val results = BrowserResults()
@@ -246,6 +248,24 @@ class NativeWebRtcInteropTest {
         assertTrue(initialized, JSONObject(initialized).optBoolean("ok"))
         if (JSONObject(initialized).getJSONObject("result").optJSONObject("profile") == null) {
             command("create_profile", JSONObject().put("display_name", "WebRTC CI"))
+        }
+        fun injectEarlyIceFailure() {
+            // Deterministic callback ordering regression: the production queue
+            // must preserve this real peer until the signed answer is returned.
+            // The test injects the notification, not a carrier/network failure.
+            module.callAttr("native_webrtc_event", "ice", id, "failed")
+            val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10)
+            while (System.nanoTime() < deadline) {
+                val events = JSONObject(module.callAttr("drain_events").toString()).getJSONArray("result")
+                for (index in 0 until events.length()) {
+                    val event = events.getJSONObject(index)
+                    if (event.optString("event") == "webrtc_native_state" &&
+                        event.optString("session_id") == id && event.optString("state") == "ice" &&
+                        event.optString("detail") == "failed") return
+                }
+                Thread.sleep(20)
+            }
+            fail("The native ICE failure callback was not processed")
         }
         try {
             instrumentation.runOnMainSync {
@@ -317,6 +337,7 @@ class NativeWebRtcInteropTest {
                 val preview = command("verify_webrtc_onboarding_offer", JSONObject().put("document", document))
                 val native = command("native_webrtc_accept", payload.put("offer_sdp", preview.getString("sdp")))
                 assertTrue(native.getString("fingerprint").startsWith("sha-256 "))
+                if (earlyIceFailure) injectEarlyIceFailure()
                 command("native_webrtc_bind_onboarding", JSONObject()
                     .put("session_id", id).put("offer_document", document))
                 val nativeSdp = native.getString("sdp")
@@ -327,6 +348,7 @@ class NativeWebRtcInteropTest {
                     .put("dtls_fingerprint", native.getString("fingerprint")))
                 val verified = command("verify_webrtc_onboarding_answer", JSONObject()
                     .put("offer_document", document).put("answer_document", answer.getString("document")))
+                if (earlyIceFailure) injectEarlyIceFailure()
                 js("return finish(${JSONObject.quote(verified.getString("sdp"))})")
             }
             awaitStats(id) { it.optBoolean("attached") && it.optString("ice_connection_state") in setOf("connected", "completed") }

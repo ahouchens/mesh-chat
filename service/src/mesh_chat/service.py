@@ -2109,6 +2109,7 @@ class MeshChatService(
 
     # ------------------------------------------------- native WebRTC host
     _native_webrtc_host_class = None
+    _native_answer_exchange_timeout = 120.0
 
     @classmethod
     def _native_webrtc_host(cls):
@@ -2205,6 +2206,7 @@ class MeshChatService(
         while not self._shutdown.is_set():
             try:
                 with self._dispatch_lock:
+                    self._expire_native_answer_exchanges()
                     self._maintain_native_controls()
             except Exception:
                 pass
@@ -2226,6 +2228,7 @@ class MeshChatService(
             if event == "open":
                 if session_id not in self._native_webrtc_live:
                     return
+                self._native_webrtc_descriptions.get(session_id, {}).pop("answer_wait_until", None)
                 try:
                     attached = self.webrtc_attach_native(session_id)
                 except Exception:
@@ -2280,7 +2283,9 @@ class MeshChatService(
                     }
                 )
             elif event in {"ice", "channel", "signaling", "gathering"}:
-                if event == "ice" and data in {"failed", "closed"}:
+                if event == "ice" and (data == "closed" or (
+                    data == "failed" and not self._native_answer_exchange_pending(session_id)
+                )):
                     self.native_webrtc_close(session_id)
                 if event == "channel":
                     label, _, state = data.partition(":")
@@ -2307,6 +2312,25 @@ class MeshChatService(
                         "detail": data[:160],
                     }
                 )
+
+    def _native_answer_exchange_pending(self, session_id: str) -> bool:
+        with self._native_webrtc_lock:
+            deadline = self._native_webrtc_descriptions.get(session_id, {}).get("answer_wait_until", 0)
+            return (session_id in self._native_webrtc_live
+                    and session_id not in self._native_webrtc_sessions
+                    and time.monotonic() < deadline)
+
+    def _expire_native_answer_exchanges(self) -> None:
+        # Run in the native event worker, even if the WebView is suspended.
+        # Preserving a pending answer must not leave abandoned peers alive.
+        now = time.monotonic()
+        with self._native_webrtc_lock:
+            expired = [session_id for session_id, description in self._native_webrtc_descriptions.items()
+                       if session_id in self._native_webrtc_live
+                       and session_id not in self._native_webrtc_sessions
+                       and description.get("answer_wait_until", float("inf")) <= now]
+        for session_id in expired:
+            self.native_webrtc_close(session_id)
 
     def native_reconnect_session(self, profile_id: str) -> str | None:
         with self._native_webrtc_lock:
@@ -2415,6 +2439,17 @@ class MeshChatService(
         if self._claim_native_session(session_id, profile_id, background=background):
             ice = {**ice, "iceTransportPolicy": "relay"}
         self._native_webrtc_descriptions[session_id] = {"remote_offer": offer_sdp}
+        if profile_id is None and any(
+            isinstance(channel, dict) and channel.get("label") == "mesh-onboarding" for channel in channels
+        ):
+            # The offerer cannot send checks to this peer until the person
+            # returns its signed answer. An early ICE failure must not destroy
+            # the session before binding/signing or during that manual wait.
+            # Match the browser answerer's bounded exchange window; established
+            # channels and automatic reconnect retain immediate failure cleanup.
+            self._native_webrtc_descriptions[session_id]["answer_wait_until"] = (
+                time.monotonic() + self._native_answer_exchange_timeout
+            )
         try:
             return self._native_sdp_result(session_id, self._native_webrtc_host().acceptOffer(
                 session_id,

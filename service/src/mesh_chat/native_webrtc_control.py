@@ -40,6 +40,11 @@ class NativeWebRTCControlMixin:
             if previous and previous != peer:
                 raise IdentityMismatch("Native session is already bound to another peer")
             self._native_webrtc_peers[session_id] = peer
+            if "answer_wait_until" in description:
+                description["answer_wait_until"] = min(
+                    description["answer_wait_until"],
+                    time.monotonic() + max(0, offer.expires_at - time.time()),
+                )
         return {"peer_destination": peer}
 
     def _native_control_contact(self, session_id):
