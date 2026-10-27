@@ -2045,6 +2045,71 @@ describe("Settings page navigation and saved state", () => {
 });
 
 describe("contact management", () => {
+  it.each(["audio", "video"] as const)("preserves an accepted %s call through an early connection and failed refresh", async (media) => {
+    const call = {
+      id: "c".repeat(32), contact_id: approved.id, role: "callee" as const,
+      media, state: "ringing" as const, direction: "inbound" as const,
+      created_at: 1, updated_at: 1, expires_at: 2_000_000_000,
+      candidate_count: 1, has_local_sdp: false, has_remote_sdp: true,
+    };
+    const current = { ...snapshot([approved]), calls: [call] };
+    const track = { kind: "audio", stop: vi.fn() };
+    const stream = { getTracks: () => [track], getVideoTracks: () => [] } as unknown as MediaStream;
+    const original = Object.getOwnPropertyDescriptor(navigator, "mediaDevices");
+    Object.defineProperty(navigator, "mediaDevices", { configurable: true, value: { getUserMedia: vi.fn(async () => stream) } });
+    const sdp = `v=0\r\na=fingerprint:sha-256 ${"AB:".repeat(31)}AB\r\na=candidate:1 1 UDP 1 127.0.0.1 12345 typ host\r\n`;
+    class Peer {
+      connectionState = "new";
+      iceGatheringState = "complete";
+      signalingState = "stable";
+      localDescription: RTCSessionDescriptionInit | null = null;
+      onconnectionstatechange: (() => void) | null = null;
+      addTrack() {}
+      getStats() { return Promise.resolve(new Map()); }
+      setRemoteDescription() { return Promise.resolve(); }
+      createAnswer() { return Promise.resolve({ type: "answer", sdp }); }
+      setLocalDescription(description: RTCSessionDescriptionInit) {
+        this.localDescription = description;
+        this.connectionState = "connected";
+        this.onconnectionstatechange?.();
+        return Promise.resolve();
+      }
+      close() { this.connectionState = "closed"; }
+    }
+    vi.stubGlobal("RTCPeerConnection", Peer);
+    let answered = false;
+    api.runtimePlatform.mockResolvedValue("desktop");
+    api.initializeService.mockResolvedValue(current);
+    api.onInvitation.mockResolvedValue(() => undefined);
+    api.onServiceEvent.mockResolvedValue(() => undefined);
+    api.serviceCommand.mockImplementation(async (command: string) => {
+      if (command === "snapshot") {
+        if (answered) throw new Error("Snapshot temporarily unavailable");
+        return current;
+      }
+      if (command === "call_media") return { ...call, remote_sdp: sdp };
+      if (command === "call_ice_servers") return { iceServers: [], iceTransportPolicy: "all" };
+      if (command === "answer_call") { answered = true; return { ...call, state: "connecting" }; }
+      return {};
+    });
+    try {
+      render(<App />);
+      await screen.findByText(`Incoming ${media} call`);
+      fireEvent.click(screen.getByRole("button", { name: "Review" }));
+      const dialog = await screen.findByRole("dialog", { name: "Call from Taylor" });
+      fireEvent.click(within(dialog).getByRole("button", { name: "Accept" }));
+      await waitFor(() => expect(answered).toBe(true));
+      const hangup = await within(dialog).findByRole("button", { name: "Hang up" });
+      expect(track.stop).not.toHaveBeenCalled();
+      expect(within(dialog).queryByRole("alert")).toBeNull();
+      fireEvent.click(hangup);
+      await waitFor(() => expect(track.stop).toHaveBeenCalledOnce());
+    } finally {
+      if (original) Object.defineProperty(navigator, "mediaDevices", original);
+      else Reflect.deleteProperty(navigator, "mediaDevices");
+    }
+  });
+
   it("retires an incoming call review when the caller cancels before acceptance", async () => {
     const call = {
       id: "b".repeat(32), contact_id: approved.id, role: "callee" as const,
@@ -2071,7 +2136,7 @@ describe("contact management", () => {
     expect(api.beginCallAudio).not.toHaveBeenCalled();
   });
 
-  it("keeps remote video visible when the camera is off and stops capture on remote hangup", async () => {
+  it.each([false, true])("keeps video and call teardown working when snapshot refresh fails: %s", async (refreshFails) => {
     const current = snapshot([approved]);
     const audioTrack = { kind: "audio", enabled: true, stop: vi.fn() };
     const videoTrack = { kind: "video", enabled: true, stop: vi.fn() };
@@ -2120,14 +2185,18 @@ describe("contact management", () => {
       candidate_count: 1, has_local_sdp: true, has_remote_sdp: false,
     };
     let remoteEnded = false;
+    let callStarted = false;
     api.runtimePlatform.mockResolvedValue("desktop");
     api.initializeService.mockResolvedValue(current);
     api.onInvitation.mockResolvedValue(() => undefined);
     api.onServiceEvent.mockResolvedValue(() => undefined);
     api.serviceCommand.mockImplementation(async (command: string) => {
-      if (command === "snapshot") return current;
+      if (command === "snapshot") {
+        if (callStarted && refreshFails) throw new Error("Snapshot temporarily unavailable");
+        return current;
+      }
       if (command === "call_ice_servers") return { iceServers: [], iceTransportPolicy: "all" };
-      if (command === "start_call") return call;
+      if (command === "start_call") { callStarted = true; return call; }
       if (command === "call_media") return { ...call, state: remoteEnded ? "ended" : "in_call", local_sdp: sdp, remote_sdp: null, candidates: [], restart_offer: null, restart_answer: null };
       return {};
     });
@@ -3189,6 +3258,45 @@ describe("connected conversation", () => {
     } else {
       expect(pending.contactId).toBeUndefined();
       expect(pending.control?.send).not.toHaveBeenCalled();
+    }
+  });
+
+  it("stops automatic reconnect on Disconnect and stays stopped through lifecycle wakeups", async () => {
+    const current = snapshot([approved]);
+    api.runtimePlatform.mockResolvedValue("desktop");
+    api.initializeService.mockResolvedValue(current);
+    api.onInvitation.mockResolvedValue(() => undefined);
+    api.onServiceEvent.mockResolvedValue(() => undefined);
+    api.serviceCommand.mockImplementation(async (command: string) => {
+      if (command === "snapshot") return current;
+      if (command === "reconnect_profiles") return { profiles: [] };
+      return {};
+    });
+    const stop = vi.spyOn(ReconnectCoordinator.prototype, "stop");
+    try {
+      render(<App />);
+      await screen.findByLabelText("Conversation with Taylor");
+      const manual = pairingSession(approved.destination_hash);
+      act(() => setWebRTCSession(manual));
+      fireEvent.click(screen.getByRole("button", { name: /Transport connected.*Details/ }));
+      fireEvent.click(screen.getByRole("button", { name: "Disconnect" }));
+      expect(stop).toHaveBeenCalledOnce();
+      const coordinator = stop.mock.contexts[0] as ReconnectCoordinator;
+      expect(coordinator.isActive()).toBe(false);
+      await waitFor(() => expect(api.serviceCommand).toHaveBeenCalledWith("reconnect_stop", {}));
+      await waitFor(() => expect(getWebRTCSessionCount()).toBe(0));
+      api.serviceCommand.mockClear();
+      act(() => {
+        window.dispatchEvent(new Event("online"));
+        window.dispatchEvent(new Event("focus"));
+        window.dispatchEvent(new Event("pageshow"));
+        document.dispatchEvent(new Event("visibilitychange"));
+      });
+      expect(coordinator.isActive()).toBe(false);
+      expect(api.serviceCommand.mock.calls.some(([command]) => command === "reconnect_start")).toBe(false);
+      expect(manual.pc.close).toHaveBeenCalledOnce();
+    } finally {
+      stop.mockRestore();
     }
   });
 

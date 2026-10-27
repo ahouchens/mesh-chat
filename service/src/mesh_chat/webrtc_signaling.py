@@ -115,7 +115,7 @@ def create_call_invite(
     _destination(callee_destination)
     sdp = _sdp(sdp)
     fingerprint = _fingerprint(dtls_fingerprint)
-    if sdp.lower().find(fingerprint.lower()) < 0:
+    if _sdp_fingerprint(sdp) != fingerprint:
         raise ValidationError("Call SDP does not contain the DTLS fingerprint")
     unsigned = {
         "v": CALL_VERSION,
@@ -148,7 +148,7 @@ def verify_call_invite(
         raise IdentityMismatch("Call invitation is addressed to a different destination")
     sdp = _sdp(value["sdp"])
     fingerprint = _fingerprint(value["dtls_fingerprint"])
-    if sdp.lower().find(fingerprint.lower()) < 0:
+    if _sdp_fingerprint(sdp) != fingerprint:
         raise ValidationError("Call SDP does not contain the DTLS fingerprint")
     _expiry_value(value, now)
     public_key = _verify_signature(value, raw)
@@ -183,7 +183,7 @@ def create_call_answer(
         expiry = invite.expires_at
     sdp = _sdp(sdp)
     fingerprint = _fingerprint(dtls_fingerprint)
-    if sdp.lower().find(fingerprint.lower()) < 0:
+    if _sdp_fingerprint(sdp) != fingerprint:
         raise ValidationError("Call SDP does not contain the DTLS fingerprint")
     if _destination_for(identity) != invite.callee_destination:
         raise IdentityMismatch("Only the invited callee can answer this call")
@@ -220,7 +220,7 @@ def verify_call_answer(
         raise IdentityMismatch("Call answer changed the participants")
     sdp = _sdp(value["sdp"])
     fingerprint = _fingerprint(value["dtls_fingerprint"])
-    if sdp.lower().find(fingerprint.lower()) < 0:
+    if _sdp_fingerprint(sdp) != fingerprint:
         raise ValidationError("Call SDP does not contain the DTLS fingerprint")
     _expiry_value(value, now)
     public_key = _verify_signature(value, raw)
@@ -389,7 +389,7 @@ def create_call_renegotiate(
         raise ValidationError("Call renegotiation generation is invalid")
     sdp = _sdp(sdp)
     fingerprint = _fingerprint(dtls_fingerprint)
-    if sdp.lower().find(fingerprint.lower()) < 0:
+    if _sdp_fingerprint(sdp) != fingerprint:
         raise ValidationError("Call SDP does not contain the DTLS fingerprint")
     unsigned = {
         "v": CALL_VERSION,
@@ -430,7 +430,7 @@ def verify_call_renegotiate(
         raise ValidationError("Call renegotiation generation is invalid")
     sdp = _sdp(value["sdp"])
     fingerprint = _fingerprint(value["dtls_fingerprint"])
-    if sdp.lower().find(fingerprint.lower()) < 0:
+    if _sdp_fingerprint(sdp) != fingerprint:
         raise ValidationError("Call SDP does not contain the DTLS fingerprint")
     _expiry_value(value, now)
     public_key = _verify_signature(value, raw)
@@ -644,10 +644,20 @@ def _sdp(value: Any) -> str:
         for line in media
     ):
         raise ValidationError("Call SDP must describe audio or video")
-    fingerprints = [line for line in lines if line.startswith("a=fingerprint:")]
-    if len(fingerprints) != 1:
-        raise ValidationError("Call SDP must contain exactly one DTLS fingerprint")
+    _sdp_fingerprint(value)
     return value
+
+
+def _sdp_fingerprint(value: str) -> str:
+    # JSEP permits the same certificate at session scope or in each media
+    # section. Audio+video offers commonly repeat it for their two sections.
+    fingerprints = {
+        _fingerprint(line.removeprefix("a=fingerprint:"))
+        for line in value.splitlines() if line.startswith("a=fingerprint:")
+    }
+    if len(fingerprints) != 1:
+        raise ValidationError("Call SDP must use one consistent DTLS fingerprint")
+    return fingerprints.pop()
 
 
 def _fingerprint(value: Any) -> str:

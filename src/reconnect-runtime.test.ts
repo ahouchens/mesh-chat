@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { createReconnectDeps, DISCONNECTED_SESSION_GRACE_MS } from "./reconnect-runtime";
+import { createReconnectDeps, closeNativeReconnectSessions, DISCONNECTED_SESSION_GRACE_MS } from "./reconnect-runtime";
 import {
   closeWebRTCSession,
   getWebRTCSessionCount,
@@ -92,6 +92,7 @@ function deferred<T>() {
 }
 
 afterEach(async () => {
+  closeNativeReconnectSessions();
   await closeWebRTCSession();
   attachMock.mockClear();
   commandMock.mockClear();
@@ -99,6 +100,88 @@ afterEach(async () => {
 });
 
 describe("production reconnect wiring", () => {
+  it.each(["all", "contact", "profile"])("fences a pending service-session refresh when closing %s", async (scope) => {
+    const selected = { ...profile("refresh-race"), native_session_id: "native-refresh" };
+    const stats = deferred<{ attached: boolean; ice_connection_state: string }>();
+    let pending = false;
+    commandMock.mockImplementation(async (...args: unknown[]) => {
+      if (args[0] === "reconnect_profiles") return { profiles: [selected] };
+      if (args[0] === "native_webrtc_stats") return pending ? stats.promise : { attached: true, ice_connection_state: "connected" };
+      return {};
+    });
+    const deps = createReconnectDeps({ refresh: async () => undefined });
+    await deps.profiles();
+    pending = true;
+    const refreshing = deps.profiles();
+    await vi.waitFor(() => expect(commandMock.mock.calls.filter(([command]) => command === "native_webrtc_stats")).toHaveLength(2));
+    expect(deps.hasSession?.(selected.id, selected.contact_id)).toBe(true);
+    if (scope === "profile") await deps.closeSession?.(selected.id);
+    else closeNativeReconnectSessions(scope === "contact" ? selected.contact_id : undefined);
+    expect(commandMock).toHaveBeenCalledWith("native_webrtc_close", { session_id: selected.native_session_id });
+    stats.resolve({ attached: true, ice_connection_state: "connected" });
+    await refreshing;
+    expect(deps.hasSession?.(selected.id, selected.contact_id)).toBe(false);
+  });
+
+  it("closes a service peer first discovered by a refresh that finishes after Disconnect", async () => {
+    const response = deferred<{ profiles: Array<ReturnType<typeof profile> & { native_session_id: string }> }>();
+    commandMock.mockImplementation(async (...args: unknown[]) => {
+      if (args[0] === "reconnect_profiles") return response.promise;
+      if (args[0] === "native_webrtc_stats") return { attached: true, ice_connection_state: "connected" };
+      return {};
+    });
+    const deps = createReconnectDeps({ refresh: async () => undefined });
+    const refreshing = deps.profiles();
+    closeNativeReconnectSessions();
+    response.resolve({ profiles: [{ ...profile("late-discovery"), native_session_id: "late-native" }] });
+    await refreshing;
+    expect(commandMock).toHaveBeenCalledWith("native_webrtc_close", { session_id: "late-native" });
+    expect(deps.hasSession?.("late-discovery", "contact-late-discovery")).toBe(false);
+  });
+
+  it("keeps a known service peer through transient stats failures and retires a sustained outage", async () => {
+    vi.useFakeTimers();
+    let unavailable = false;
+    commandMock.mockImplementation(async (...args: unknown[]) => {
+      if (args[0] === "reconnect_profiles") return { profiles: [{ ...profile("query-error"), native_session_id: "native-query" }] };
+      if (args[0] === "native_webrtc_stats") {
+        if (unavailable) throw new Error("temporary query failure");
+        return { attached: true, ice_connection_state: "connected" };
+      }
+      return {};
+    });
+    const deps = createReconnectDeps({ refresh: async () => undefined });
+    await deps.profiles();
+    unavailable = true;
+    await deps.profiles();
+    expect(deps.hasSession?.("query-error", "contact-query-error")).toBe(true);
+    await vi.advanceTimersByTimeAsync(DISCONNECTED_SESSION_GRACE_MS);
+    await deps.profiles();
+    expect(deps.hasSession?.("query-error", "contact-query-error")).toBe(false);
+    expect(commandMock).toHaveBeenCalledWith("native_webrtc_close", { session_id: "native-query" });
+  });
+
+  it("ignores an older health result after a replacement session was discovered", async () => {
+    const oldStats = deferred<{ attached: boolean; ice_connection_state: string }>();
+    let newest = false;
+    commandMock.mockImplementation(async (...args: unknown[]) => {
+      if (args[0] === "reconnect_profiles") return { profiles: [{ ...profile("replaced"), native_session_id: newest ? "new-peer" : "old-peer" }] };
+      if (args[0] === "native_webrtc_stats") return (args[1] as { session_id: string }).session_id === "old-peer"
+        ? oldStats.promise : { attached: true, ice_connection_state: "connected" };
+      return {};
+    });
+    const deps = createReconnectDeps({ refresh: async () => undefined });
+    const older = deps.profiles();
+    await vi.waitFor(() => expect(commandMock).toHaveBeenCalledWith("native_webrtc_stats", { session_id: "old-peer" }));
+    newest = true;
+    await deps.profiles();
+    oldStats.resolve({ attached: true, ice_connection_state: "disconnected" });
+    await older;
+    await deps.closeSession?.("replaced");
+    expect(commandMock).toHaveBeenCalledWith("native_webrtc_close", { session_id: "new-peer" });
+    expect(commandMock).not.toHaveBeenCalledWith("native_webrtc_close", { session_id: "old-peer" });
+  });
+
   it("adopts a live service-owned manual session instead of negotiating a duplicate", async () => {
     commandMock.mockImplementation(async (...args: unknown[]) => {
       if (args[0] === "reconnect_profiles") return { profiles: [{ ...profile("manual"), native_session_id: "native-manual" }] };

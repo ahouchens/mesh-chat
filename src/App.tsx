@@ -1109,7 +1109,7 @@ function CallDialog({
           if (!current()) return;
           lastRestartAnswerRef.current = latest.restart_answer;
           remoteSetRef.current = true;
-          setPhase("connecting");
+          setPhase(pc.connectionState === "connected" ? "in_call" : "connecting");
           void inspectPath(pc);
         }
         if (
@@ -1138,7 +1138,7 @@ function CallDialog({
                 });
                 if (!current()) return;
                 lastRestartOfferRef.current = latest.restart_offer;
-                setPhase("connecting");
+                setPhase(pc.connectionState === "connected" ? "in_call" : "connecting");
               }
             }
           } catch (reason) {
@@ -1152,7 +1152,7 @@ function CallDialog({
           await pc.setRemoteDescription({ type: "answer", sdp: latest.remote_sdp });
           if (!current()) return;
           remoteSetRef.current = true;
-          setPhase("connecting");
+          setPhase(pc.connectionState === "connected" ? "in_call" : "connecting");
         }
         if (latest.state === "in_call" && pc.connectionState === "connected") setPhase("in_call");
       } catch (reason) {
@@ -1205,7 +1205,7 @@ function CallDialog({
         dtls_fingerprint: callFingerprint(sdp),
       });
       if (!current()) return;
-      setPhase("connecting");
+      setPhase(pc.connectionState === "connected" ? "in_call" : "connecting");
     } catch (reason) {
       if (current()) failCall(errorMessage(reason));
     } finally {
@@ -1299,9 +1299,9 @@ function CallDialog({
       roleRef.current = result.role;
       setCall(result);
       setCameraEnabled(media === "video");
-      setPhase("calling");
+      setPhase(pc.connectionState === "connected" ? "in_call" : "calling");
       startPolling(result.id);
-      await onChanged();
+      await onChanged().catch(() => undefined);
     } catch (reason) {
       if (!current()) {
         stream?.getTracks().forEach((track) => track.stop());
@@ -1362,9 +1362,9 @@ function CallDialog({
       roleRef.current = result.role;
       setMedia(details);
       setCameraEnabled(call.media === "video");
-      setPhase("connecting");
+      setPhase(pc.connectionState === "connected" ? "in_call" : "connecting");
       startPolling(call.id);
-      await onChanged();
+      await onChanged().catch(() => undefined);
     } catch (reason) {
       if (!current()) {
         stream?.getTracks().forEach((track) => track.stop());
@@ -6787,7 +6787,17 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
             } : undefined}
             onReview={() => { if (pending[0]) setDismissedRequests((current) => current.filter((id) => id !== pending[0].id)); }}
             onReconnect={async () => { closeNativeReconnectSessions(); await closeNativeWebRTCSessions(); await closeWebRTCSession().finally(() => { setWebRtcSessionActive(false); setWebRtcSessionCount(0); setWebrtcPath("unknown"); setConnectEntryOpen(true); void refresh(true); }); }}
-            onDisconnect={async () => { closeNativeReconnectSessions(); await closeNativeWebRTCSessions(); await closeWebRTCSession().finally(() => { setWebRtcSessionActive(false); setWebRtcSessionCount(0); void refresh(true); }); }} />
+            onDisconnect={async () => {
+              const stopping = reconnectCoordinator.stop();
+              closeNativeReconnectSessions();
+              await stopping;
+              await closeNativeWebRTCSessions();
+              await closeWebRTCSession();
+              setWebRtcSessionActive(false);
+              setWebRtcSessionCount(0);
+              setWebrtcPath("unknown");
+              void refresh(true).catch(() => undefined);
+            }} />
         )}
         {incomingCall && !callContactId && (
           <div className="incoming-call-banner" role="status">

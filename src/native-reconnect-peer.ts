@@ -25,6 +25,7 @@ export class NativeReconnectPeer implements CoordinatorPeer {
   private attached = false;
   private closed = false;
   private disconnectedSince: number | null = null;
+  private unavailableSince: number | null = null;
 
   private constructor(
     readonly ice: CallIceConfiguration,
@@ -68,6 +69,7 @@ export class NativeReconnectPeer implements CoordinatorPeer {
     while (!this.closed) {
       try {
         const stats = await nativeWebRTCStats(this.sessionId);
+        if (this.closed) break;
         if (stats.attached && stats.data_channel_state === "open" && ["connected", "completed"].includes(stats.ice_connection_state ?? "")) {
           this.attached = true;
           return stats;
@@ -103,6 +105,7 @@ export class NativeReconnectPeer implements CoordinatorPeer {
     try {
       const stats = await nativeWebRTCStats(this.sessionId);
       if (this.closed) return;
+      this.unavailableSince = null;
       if (!stats.attached || stats.data_channel_state !== "open" || ["failed", "closed"].includes(stats.ice_connection_state ?? "")) {
         this.close();
       } else if (stats.ice_connection_state === "disconnected") {
@@ -114,7 +117,8 @@ export class NativeReconnectPeer implements CoordinatorPeer {
         this.close();
       }
     } catch {
-      this.close();
+      this.unavailableSince ??= Date.now();
+      if (Date.now() - this.unavailableSince >= DISCONNECTED_GRACE_MS) this.close();
     }
   }
 

@@ -70,6 +70,18 @@ describe("NativeReconnectPeer", () => {
     peer.close();
   });
 
+  it("rejects a late healthy status after the peer has been closed", async () => {
+    let complete!: (value: unknown) => void;
+    native.stats.mockImplementation(() => new Promise((resolve) => { complete = resolve; }));
+    const peer = NativeReconnectPeer.create(ice, "offer");
+    const pending = peer.open();
+    const cancelled = expect(pending).rejects.toThrow("closed");
+    peer.close();
+    complete({ attached: true, data_channel_state: "open", ice_connection_state: "connected" });
+    await cancelled;
+    expect(peer.isAttached()).toBe(false);
+  });
+
   it.each([
     { attached: true, ice_connection_state: "failed", data_channel_state: "open" },
     { attached: true, ice_connection_state: "connected", data_channel_state: "closed" },
@@ -104,5 +116,30 @@ describe("NativeReconnectPeer", () => {
     await vi.advanceTimersByTimeAsync(1);
     await peer.refreshHealth();
     expect(peer.isAttached()).toBe(false);
+  });
+
+  it("retries status failures, resets after recovery, and bounds a sustained outage", async () => {
+    vi.useFakeTimers();
+    const healthy = { attached: true, ice_connection_state: "connected", data_channel_state: "open" };
+    native.stats.mockResolvedValue(healthy);
+    const peer = NativeReconnectPeer.create(ice, "offer");
+    await peer.open();
+    native.stats.mockRejectedValue(new Error("temporary bridge failure"));
+    await peer.refreshHealth();
+    await vi.advanceTimersByTimeAsync(9_000);
+    await peer.refreshHealth();
+    expect(peer.isAttached()).toBe(true);
+    expect(native.close).not.toHaveBeenCalled();
+    native.stats.mockResolvedValue(healthy);
+    await peer.refreshHealth();
+    native.stats.mockRejectedValue(new Error("bridge unavailable"));
+    await peer.refreshHealth();
+    await vi.advanceTimersByTimeAsync(9_999);
+    await peer.refreshHealth();
+    expect(peer.isAttached()).toBe(true);
+    await vi.advanceTimersByTimeAsync(1);
+    await peer.refreshHealth();
+    expect(peer.isAttached()).toBe(false);
+    expect(native.close).toHaveBeenCalledOnce();
   });
 });

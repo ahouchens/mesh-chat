@@ -105,6 +105,30 @@ def test_invite_rejects_missing_fingerprint() -> None:
         _invite(caller, callee, sdp=bad_sdp)
 
 
+def test_video_offer_answer_and_restart_allow_the_same_fingerprint_in_each_media_section():
+    caller, callee = RNS.Identity(), RNS.Identity()
+    sdp = SDP.replace("a=fingerprint:" + FINGERPRINT + "\r\n", "")
+    sdp += "a=fingerprint:" + FINGERPRINT + "\r\n"
+    sdp += "m=video 9 UDP/TLS/RTP/SAVPF 96\r\na=mid:1\r\na=fingerprint:" + FINGERPRINT + "\r\n"
+    raw = create_call_invite(caller, call_id=CALL_ID, callee_destination=_destination(callee),
+                            media="video", sdp=sdp, dtls_fingerprint=FINGERPRINT, now=NOW)
+    invite = verify_call_invite(raw, now=NOW)
+    answer = create_call_answer(callee, invite, sdp=sdp, dtls_fingerprint=FINGERPRINT, now=NOW)
+    assert verify_call_answer(answer, invite, now=NOW).sdp == sdp
+    restart = create_call_renegotiate(caller, call_id=CALL_ID, role="offer", generation=2,
+                                     sdp=sdp, dtls_fingerprint=FINGERPRINT, now=NOW)
+    assert verify_call_renegotiate(restart, call_id=CALL_ID,
+                                  expected_signer_destination=_destination(caller), now=NOW).sdp == sdp
+
+
+def test_signed_fingerprint_must_match_the_fingerprint_attribute():
+    caller, callee = RNS.Identity(), RNS.Identity()
+    different = "sha-256 " + ":".join(["CD"] * 32)
+    sdp = SDP.replace(FINGERPRINT, different) + "a=x-comment:" + FINGERPRINT + "\r\n"
+    with pytest.raises(ValidationError):
+        _invite(caller, callee, sdp=sdp)
+
+
 def test_invite_rejects_expired_document() -> None:
     caller = RNS.Identity()
     callee = RNS.Identity()
@@ -246,7 +270,7 @@ def test_renegotiate_binds_call_role_and_generation() -> None:
         "v=0\r\na=fingerprint:" + FINGERPRINT,
         "v=0\r\nm=application 9 UDP/DTLS/SCTP webrtc-datachannel\r\na=fingerprint:"
         + FINGERPRINT,
-        SDP + "a=fingerprint:" + FINGERPRINT + "\r\n",
+        SDP + "a=fingerprint:sha-256 " + ":".join(["CD"] * 32) + "\r\n",
         SDP.replace("\r\n", "\x00\r\n"),
         "v=0\r\n" + "\r\n".join(["a=x"] * 513) + "\r\na=fingerprint:" + FINGERPRINT,
     ],

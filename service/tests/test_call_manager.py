@@ -249,7 +249,8 @@ def test_unapproved_contact_cannot_start() -> None:
         )
 
 
-def test_outbound_call_attempts_are_rate_limited() -> None:
+@pytest.mark.parametrize("persist", [False, True])
+def test_outbound_call_attempts_are_rate_limited(persist) -> None:
     caller = RNS.Identity()
     callee = RNS.Identity()
     counter = iter(range(100))
@@ -258,6 +259,7 @@ def test_outbound_call_attempts_are_rate_limited() -> None:
         lambda _contact_id, _document: None,
         now=lambda: float(NOW),
         new_id=lambda: f"call_rate_{next(counter):08d}",
+        persist=persist,
     )
     contact = _contact(callee)
     for _ in range(3):
@@ -331,5 +333,39 @@ def test_ringing_call_times_out_and_is_not_active() -> None:
         dtls_fingerprint=FINGERPRINT,
     )
     clock[0] += 46
+    # A call dialog polls one call without necessarily fetching a snapshot.
+    assert manager.get("call_ring_timeout_01")["state"] == "no_answer"
     assert manager.active() == []
     assert manager.get("call_ring_timeout_01")["state"] == "no_answer"
+
+
+@pytest.mark.parametrize("media", ["audio", "video"])
+@pytest.mark.parametrize("late", ["offer", "answer", "local_answer"])
+def test_late_restart_cannot_revive_an_ended_call(media, late):
+    caller, callee = RNS.Identity(), RNS.Identity()
+    sent = []
+    outgoing, incoming = _manager(sent), _manager(sent)
+    call = outgoing.start(caller, _contact(callee), media=media, sdp=SDP, dtls_fingerprint=FINGERPRINT)
+    call_id = call["id"]
+    incoming.receive(callee, _contact(caller), sent[-1][1])
+    incoming.answer(callee, call_id, sdp=SDP, dtls_fingerprint=FINGERPRINT)
+    outgoing.receive(caller, _contact(callee), sent[-1][1])
+    outgoing.restart(caller, call_id, sdp=SDP, dtls_fingerprint=FINGERPRINT)
+    offer = sent[-1][1]
+    if late == "offer":
+        incoming.end(callee, call_id)
+        incoming.receive(callee, _contact(caller), offer)
+        assert incoming.get(call_id)["state"] == "ended"
+    else:
+        incoming.receive(callee, _contact(caller), offer)
+        if late == "local_answer":
+            incoming.end(callee, call_id)
+            with pytest.raises(ValidationError):
+                incoming.answer_restart(callee, call_id, sdp=SDP, dtls_fingerprint=FINGERPRINT)
+            assert incoming.get(call_id)["state"] == "ended"
+        else:
+            incoming.answer_restart(callee, call_id, sdp=SDP, dtls_fingerprint=FINGERPRINT)
+            answer = sent[-1][1]
+            outgoing.end(caller, call_id)
+            outgoing.receive(caller, _contact(callee), answer)
+            assert outgoing.get(call_id)["state"] == "ended"

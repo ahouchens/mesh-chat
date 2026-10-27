@@ -18,8 +18,27 @@ const ice: CallIceConfiguration = {
 };
 
 describe("native WebRTC session registry", () => {
-  beforeEach(() => {
+  beforeEach(async () => {
+    mocks.serviceCommand.mockResolvedValue({});
+    await closeNativeWebRTCSessions();
     mocks.serviceCommand.mockReset();
+  });
+
+  it.each([
+    ["offer", "all"], ["answer", "all"], ["offer", "one"], ["answer", "one"],
+  ])("retires a pending %s after closing %s sessions", async (role, scope) => {
+    let complete!: (value: unknown) => void;
+    mocks.serviceCommand.mockImplementation((command) => command === "native_webrtc_close"
+      ? Promise.resolve({}) : new Promise((resolve) => { complete = resolve; }));
+    const pending = role === "offer"
+      ? nativeWebRTCOffer("pending-session", ice)
+      : nativeWebRTCAccept("pending-session", "offer", ice);
+    const cancelled = expect(pending).rejects.toThrow(/cancelled/);
+    if (scope === "all") await closeNativeWebRTCSessions();
+    else await nativeWebRTCClose("pending-session");
+    complete({ ok: true, sdp: "late-sdp", fingerprint: "sha-256 AA" });
+    await cancelled;
+    expect(mocks.serviceCommand.mock.calls.filter(([command]) => command === "native_webrtc_close")).toHaveLength(2);
   });
 
   it("tracks offered sessions and closes them on an explicit teardown", async () => {

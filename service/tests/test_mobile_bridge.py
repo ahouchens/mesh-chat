@@ -120,6 +120,10 @@ def test_mobile_workspace_preview_and_submit_share_invitation_size_limit(monkeyp
     ("verify_reconnect_offer", 128 * 1024),
     ("verify_reconnect_answer", 128 * 1024),
     ("reconnect_publish", 128 * 1024),
+    ("start_call", 128 * 1024),
+    ("answer_call", 128 * 1024),
+    ("restart_call", 128 * 1024),
+    ("answer_call_restart", 128 * 1024),
     ("preview_direct_connection", 2 * 1024 * 1024),
     ("prepare_direct_answer", 2 * 1024 * 1024),
     ("prepare_direct_ready", 2 * 1024 * 1024),
@@ -165,6 +169,34 @@ def test_mobile_command_matches_native_payload_bounds(monkeypatch, command, maxi
         "ok": False, "error": {"code": "invalid_request"},
     }
     assert len(dispatched) == 1
+
+
+@pytest.mark.parametrize("media", ["audio", "video"])
+def test_mobile_bridge_accepts_a_full_size_call_sdp(monkeypatch, media):
+    import RNS
+    from mesh_chat.webrtc_signaling import create_call_invite, verify_call_invite
+
+    fingerprint = "sha-256 " + ":".join(["AB"] * 32)
+    sdp = "v=0\r\nm=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=fingerprint:" + fingerprint + "\r\n"
+    if media == "video":
+        sdp += "m=video 9 UDP/TLS/RTP/SAVPF 96\r\na=fingerprint:" + fingerprint + "\r\n"
+    sdp += "a=x-padding:"
+    sdp += "x" * (32 * 1024 - len(sdp) - 2) + "\r\n"
+    signer = RNS.Identity()
+
+    class Service:
+        def dispatch(self, request):
+            payload = request["payload"]
+            document = create_call_invite(signer, call_id="call_0123456789abcdef",
+                callee_destination="a" * 32, media=media, sdp=payload["sdp"],
+                dtls_fingerprint=payload["dtls_fingerprint"])
+            return {"ok": True, "result": {"media": verify_call_invite(document).media}}, False
+
+    monkeypatch.setattr(mobile_bridge, "_service", Service())
+    payload = {"sdp": sdp, "dtls_fingerprint": fingerprint, "media": media}
+    assert len(json.dumps(payload).encode()) > 32 * 1024
+    raw = json.dumps({"command": "start_call", "payload": payload})
+    assert json.loads(mobile_bridge.command(raw)) == {"ok": True, "result": {"media": media}}
 
 
 def test_mobile_bridge_verifies_a_large_signed_offer_and_answer_together(monkeypatch):

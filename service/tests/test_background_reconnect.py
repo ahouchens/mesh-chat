@@ -173,11 +173,75 @@ def test_profile_removal_or_stop_retires_the_existing_peer(change):
         service.profile.update(active=False, state="stopped")
     else:
         service.profile["effective"]["ready"] = False
+        service.profile["effective"]["reasons"] = ["consent_missing"]
     supervisor = BackgroundReconnectSupervisor(service)
     supervisor._sessions["profile-1"] = "old-session"
     supervisor._tick({})
     assert service.calls == ["close:old-session"]
     assert not supervisor._sessions
+
+
+@pytest.mark.parametrize("lifecycle", ["background_available", "caught_up"])
+def test_mailbox_loss_preserves_an_established_peer_without_new_negotiation(lifecycle):
+    service = Service(False)
+    service.lifecycle = lifecycle
+    service.profile["effective"].update(ready=False, reasons=["mailbox_not_configured"])
+    supervisor = BackgroundReconnectSupervisor(service)
+    supervisor._sessions["profile-1"] = "healthy-peer"
+    supervisor._tick({})
+    assert not service.calls
+    assert supervisor._sessions == {"profile-1": "healthy-peer"}
+
+
+@pytest.mark.parametrize("reason", ["consent_missing", "peer_consent_missing", "workspace_peer_inactive"])
+def test_mailbox_loss_does_not_override_consent_or_workspace_revocation(reason):
+    service = Service(False)
+    service.profile["effective"].update(ready=False, reasons=["mailbox_not_configured", reason])
+    supervisor = BackgroundReconnectSupervisor(service)
+    supervisor._sessions["profile-1"] = "revoked-peer"
+    supervisor._tick({})
+    assert service.calls == ["close:revoked-peer"]
+
+
+def test_mailbox_loss_still_retires_a_failed_transport():
+    service = Service(False)
+    service.profile["effective"].update(ready=False, reasons=["mailbox_not_configured"])
+    service.stats["ice_connection_state"] = "failed"
+    supervisor = BackgroundReconnectSupervisor(service)
+    supervisor._sessions["profile-1"] = "failed-peer"
+    supervisor._tick({})
+    assert service.calls == ["close:failed-peer"]
+    assert not supervisor._workers
+
+
+def test_failed_health_queries_retry_with_a_bounded_grace_and_reset_on_recovery(monkeypatch):
+    service = Service(False)
+    supervisor = BackgroundReconnectSupervisor(service)
+    supervisor._sessions["profile-1"] = "healthy-peer"
+    now = [0.0]
+    monkeypatch.setattr("mesh_chat.background_reconnect.time.monotonic", lambda: now[0])
+    supervisor._tick({})
+    healthy_stats = service.native_webrtc_stats
+    def unavailable(_session):
+        raise RuntimeError("temporary native query failure")
+    service.native_webrtc_stats = unavailable
+    supervisor._tick({})
+    now[0] = 9
+    supervisor._tick({})
+    assert not service.calls
+    service.native_webrtc_stats = healthy_stats
+    supervisor._tick({})
+    service.native_webrtc_stats = unavailable
+    supervisor._tick({})
+    now[0] = 18
+    supervisor._tick({})
+    assert not service.calls
+    monkeypatch.setattr(supervisor, "_attempt", lambda profile: "replacement")
+    now[0] = 19
+    supervisor._tick({})
+    for worker in list(supervisor._workers.values()):
+        worker.join(2)
+    assert service.calls == ["close:healthy-peer"]
 
 
 @pytest.mark.parametrize("stats", [
@@ -317,3 +381,24 @@ def test_health_tick_does_not_close_a_peer_still_being_negotiated():
     supervisor._workers["profile-1"] = object()
     supervisor._tick({})
     assert not service.calls
+
+
+@pytest.mark.parametrize("preferred", [False, True])
+def test_stop_retires_a_native_peer_created_after_the_initial_close(monkeypatch, preferred):
+    service = Service(preferred)
+    supervisor = BackgroundReconnectSupervisor(service)
+    live = set()
+    def close(session_id):
+        live.discard(session_id)
+    def create(session_id, *args, **kwargs):
+        supervisor.stop()
+        # A native creation already in flight can finish after stop's close.
+        live.add(session_id)
+        return {"sdp": "late-sdp", "fingerprint": "sha-256 AA"}
+    monkeypatch.setattr(service, "native_webrtc_close", close)
+    monkeypatch.setattr(service, "native_webrtc_offer", create)
+    monkeypatch.setattr(service, "native_webrtc_accept", create)
+    with pytest.raises(RuntimeError):
+        supervisor._attempt(service.profile)
+    assert not live
+    assert not supervisor._attempt_sessions
