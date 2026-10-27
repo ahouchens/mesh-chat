@@ -8,7 +8,7 @@ import RNS
 
 from mesh_chat.errors import NativeUnavailable
 from mesh_chat.service import MeshChatService
-from mesh_chat.webrtc_onboarding import create_onboarding_offer, verify_onboarding_offer
+from mesh_chat.webrtc_onboarding import create_onboarding_offer, verify_onboarding_offer, verify_onboarding_answer
 
 FINGERPRINT = "sha-256 " + ":".join(["AB"] * 32)
 SDP = "v=0\r\nm=application 9 UDP/DTLS/SCTP webrtc-datachannel\r\na=fingerprint:" + FINGERPRINT + "\r\n"
@@ -94,6 +94,21 @@ def test_native_capabilities_exchange_and_consent_updates_without_a_renderer():
     service._maintain_native_controls()
     assert len(host.controls) == count
     assert not service._native_webrtc_controls
+
+
+def test_native_answer_can_be_bound_signed_and_verified_as_a_complete_exchange():
+    service, host = runtime()
+    service._call_identity = lambda: RNS.Identity()
+    offer = create_onboarding_offer(RNS.Identity(), session_id="a" * 32, sdp=SDP, dtls_fingerprint=FINGERPRINT)
+    preview = service.verify_webrtc_onboarding_offer(offer)
+    native = service.native_webrtc_accept("manual-answer", preview["sdp"], ICE, [])
+    service.native_webrtc_bind_onboarding("manual-answer", preview["document"])
+    complete_sdp = native["sdp"] + "a=end-of-candidates\r\n"
+    answer = service.webrtc_onboarding_answer(preview["document"], complete_sdp, native["fingerprint"])
+    verified = verify_onboarding_answer(answer["document"], verify_onboarding_offer(offer))
+    assert verified.sdp == complete_sdp
+    assert verified.session_id == preview["session_id"]
+    assert not host.closed
 
 
 def test_manual_session_binding_uses_verified_signaling_and_survives_dialog_closure():

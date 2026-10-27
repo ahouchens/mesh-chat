@@ -345,6 +345,32 @@ describe("manual WebRTC answer exchange", () => {
     expect(screen.getByRole("alert").textContent).not.toMatch(/complete signed WebRTC offer|outer JSON braces/i);
   });
 
+  it.each(["call_ice_servers", "native_webrtc_accept", "native_webrtc_bind_onboarding", "webrtc_onboarding_answer"])(
+    "preserves Android's failing %s command when native stats are unavailable", async (failedCommand) => {
+      const clipboard = { writeText: vi.fn().mockResolvedValue(undefined) };
+      vi.stubGlobal("navigator", { userAgent: "Android", clipboard });
+      const runCommand = mocks.serviceCommand.getMockImplementation()!;
+      mocks.serviceCommand.mockImplementation(async (command: string, payload: unknown) => {
+        if (command === failedCommand) throw { code: "invalid_request" };
+        if (command === "native_webrtc_stats") throw { code: "native_unavailable" };
+        return runCommand(command, payload);
+      });
+      render(<WebRTCOnboardingDialog onClose={vi.fn()} onChanged={async () => undefined} />);
+      await act(async () => undefined);
+      fireEvent.click(screen.getByRole("button", { name: "Join with WebRTC" }));
+      fireEvent.change(screen.getByLabelText("Paste the signed WebRTC offer or mailbox code"), { target: { value: offerDocument } });
+      await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Review and create answer" })); });
+      await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Copy diagnostics" })); });
+      const report = JSON.parse(clipboard.writeText.mock.calls[0][0]);
+      expect(report).toMatchObject({ phase: "offer-review-failed", operation: failedCommand,
+        error_code: "invalid_request", offer_verified: true, native: true, native_stats: "unavailable" });
+      expect(report).not.toHaveProperty("desktop_service");
+      expect(report).not.toHaveProperty("peer_connection");
+      expect(clipboard.writeText.mock.calls[0][0]).not.toContain(offerDocument);
+      expect(mocks.desktopServiceHealth).not.toHaveBeenCalled();
+    },
+  );
+
   it("hands a connected native transport to the service when the dialog closes", async () => {
     vi.stubGlobal("navigator", { userAgent: "Android" });
     const runCommand = mocks.serviceCommand.getMockImplementation()!;

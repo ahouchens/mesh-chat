@@ -260,9 +260,26 @@ class NativeWebRtcInteropTest {
                 command("native_webrtc_apply_answer", JSONObject().put("session_id", id).put("answer_sdp", results.await("sdp")))
             } else {
                 js("return offer()")
-                val native = command("native_webrtc_accept", payload.put("offer_sdp", results.await("sdp")))
+                val browserSdp = results.await("sdp")
+                val fingerprint = browserSdp.lineSequence().first { it.startsWith("a=fingerprint:") }
+                    .removePrefix("a=fingerprint:").trim()
+                val offer = command("webrtc_onboarding_offer", JSONObject()
+                    .put("sdp", browserSdp).put("dtls_fingerprint", fingerprint))
+                val document = offer.getString("document")
+                val preview = command("verify_webrtc_onboarding_offer", JSONObject().put("document", document))
+                val native = command("native_webrtc_accept", payload.put("offer_sdp", preview.getString("sdp")))
                 assertTrue(native.getString("fingerprint").startsWith("sha-256 "))
-                js("return finish(${JSONObject.quote(native.getString("sdp"))})")
+                command("native_webrtc_bind_onboarding", JSONObject()
+                    .put("session_id", id).put("offer_document", document))
+                val nativeSdp = native.getString("sdp")
+                val completeSdp = if (nativeSdp.lineSequence().any { it.trim() == "a=end-of-candidates" }) nativeSdp
+                    else nativeSdp.trimEnd() + "\r\na=end-of-candidates\r\n"
+                val answer = command("webrtc_onboarding_answer", JSONObject()
+                    .put("offer_document", document).put("sdp", completeSdp)
+                    .put("dtls_fingerprint", native.getString("fingerprint")))
+                val verified = command("verify_webrtc_onboarding_answer", JSONObject()
+                    .put("offer_document", document).put("answer_document", answer.getString("document")))
+                js("return finish(${JSONObject.quote(verified.getString("sdp"))})")
             }
             awaitStats(id) { it.optBoolean("attached") && it.optString("ice_connection_state") in setOf("connected", "completed") }
             js("return probe()")
