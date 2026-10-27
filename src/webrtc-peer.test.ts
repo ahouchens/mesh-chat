@@ -9,6 +9,8 @@ import {
   summarizeIce,
   withEndOfCandidates,
   ReconnectPeer,
+  waitForCandidates,
+  waitForOpen,
 } from "./webrtc-peer";
 
 afterEach(() => vi.unstubAllGlobals());
@@ -124,6 +126,23 @@ function fakePeer() {
 }
 
 describe("WebRTC diagnostics", () => {
+  it("ends candidate gathering when the peer closes", async () => {
+    const peer = Object.assign(new EventTarget(), { iceGatheringState: "gathering", connectionState: "connecting" });
+    const waiting = waitForCandidates(peer as unknown as RTCPeerConnection, 60_000);
+    peer.connectionState = "closed";
+    peer.dispatchEvent(new Event("connectionstatechange"));
+    await waiting;
+  });
+
+  it("rejects a channel that closes before opening without waiting for its timeout", async () => {
+    const channel = Object.assign(new EventTarget(), { readyState: "connecting" });
+    const waiting = waitForOpen(channel as unknown as RTCDataChannel, 60_000);
+    const rejected = expect(waiting).rejects.toThrow("closed before it opened");
+    channel.readyState = "closed";
+    channel.dispatchEvent(new Event("close"));
+    await rejected;
+  });
+
   it("marks gathered SDP as complete exactly once", () => {
     const unmarked = localSdp.replace("\r\na=end-of-candidates", "");
     const marked = withEndOfCandidates(unmarked);

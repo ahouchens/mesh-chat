@@ -2045,6 +2045,32 @@ describe("Settings page navigation and saved state", () => {
 });
 
 describe("contact management", () => {
+  it("retires an incoming call review when the caller cancels before acceptance", async () => {
+    const call = {
+      id: "b".repeat(32), contact_id: approved.id, role: "callee" as const,
+      media: "audio" as const, state: "ringing" as const, direction: "inbound" as const,
+      created_at: 1, updated_at: 1, expires_at: 2_000_000_000,
+      candidate_count: 1, has_local_sdp: false, has_remote_sdp: true,
+    };
+    const current = { ...snapshot([approved]), calls: [call] };
+    api.runtimePlatform.mockResolvedValue("desktop");
+    api.initializeService.mockResolvedValue(current);
+    api.onInvitation.mockResolvedValue(() => undefined);
+    api.onServiceEvent.mockResolvedValue(() => undefined);
+    api.serviceCommand.mockImplementation(async (command: string) => {
+      if (command === "snapshot") return current;
+      if (command === "call_media") return { ...call, state: "ended" };
+      return {};
+    });
+    render(<App />);
+    await screen.findByText("Incoming audio call");
+    fireEvent.click(screen.getByRole("button", { name: "Review" }));
+    const dialog = await screen.findByRole("dialog", { name: "Call from Taylor" });
+    await within(dialog).findByText("Call ended.", {}, { timeout: 3000 });
+    expect(within(dialog).queryByRole("button", { name: /Accept/ })).toBeNull();
+    expect(api.beginCallAudio).not.toHaveBeenCalled();
+  });
+
   it("keeps remote video visible when the camera is off and stops capture on remote hangup", async () => {
     const current = snapshot([approved]);
     const audioTrack = { kind: "audio", enabled: true, stop: vi.fn() };
@@ -2059,8 +2085,19 @@ describe("contact management", () => {
       configurable: true, value: { getUserMedia: vi.fn(async () => stream) },
     });
     const sdp = `v=0\r\na=fingerprint:sha-256 ${"AB:".repeat(31)}AB\r\na=candidate:1 1 UDP 1 127.0.0.1 12345 typ host\r\n`;
+    const restartOffer = deferred<RTCSessionDescriptionInit>();
+    let restarting = false;
+    const play = vi.spyOn(HTMLMediaElement.prototype, "play").mockResolvedValue(undefined);
+    class RemoteStream {
+      tracks: MediaStreamTrack[] = [];
+      getTracks() { return this.tracks; }
+      addTrack(track: MediaStreamTrack) { this.tracks.push(track); }
+    }
+    vi.stubGlobal("MediaStream", RemoteStream);
     class Peer {
-      connectionState: RTCPeerConnectionState = "new";
+      static instance: Peer;
+      constructor() { Peer.instance = this; }
+      connectionState: RTCPeerConnectionState = "connected";
       iceGatheringState: RTCIceGatheringState = "complete";
       signalingState: RTCSignalingState = "stable";
       localDescription: RTCSessionDescriptionInit | null = null;
@@ -2068,7 +2105,10 @@ describe("contact management", () => {
       onconnectionstatechange: (() => void) | null = null;
       addTrack() { return {} as RTCRtpSender; }
       getSenders() { return [] as RTCRtpSender[]; }
-      createOffer() { return Promise.resolve({ type: "offer" as RTCSdpType, sdp }); }
+      createOffer(options?: RTCOfferOptions) {
+        if (options?.iceRestart) { restarting = true; return restartOffer.promise; }
+        return Promise.resolve({ type: "offer" as RTCSdpType, sdp });
+      }
       setLocalDescription(description: RTCSessionDescriptionInit) { this.localDescription = description; return Promise.resolve(); }
       close() { this.connectionState = "closed"; }
     }
@@ -2104,18 +2144,43 @@ describe("contact management", () => {
       expect((dialog.querySelector("video.call-video--local") as HTMLVideoElement).hidden).toBe(true);
       expect((dialog.querySelector("video.call-video:not(.call-video--local)") as HTMLVideoElement).hidden).toBe(false);
 
+      const pc = Peer.instance;
+      const queuedStateChange = pc.onconnectionstatechange;
+      const remoteAudio = { kind: "audio" } as MediaStreamTrack;
+      const remoteVideo = { kind: "video" } as MediaStreamTrack;
+      act(() => {
+        pc.ontrack?.({ streams: [], track: remoteAudio } as unknown as RTCTrackEvent);
+        pc.ontrack?.({ streams: [], track: remoteVideo } as unknown as RTCTrackEvent);
+      });
+      const playback = dialog.querySelector("audio") as HTMLAudioElement;
+      const video = dialog.querySelector("video.call-video:not(.call-video--local)") as HTMLVideoElement;
+      expect((playback.srcObject as MediaStream).getTracks()).toEqual([remoteAudio, remoteVideo]);
+      expect(video.srcObject).toBe(playback.srcObject);
+      expect(video.muted).toBe(true);
+
+      act(() => { pc.connectionState = "disconnected"; pc.onconnectionstatechange?.(); });
+      await waitFor(() => expect(restarting).toBe(true), { timeout: 2500 });
+
       remoteEnded = true;
       await within(dialog).findByText("Call ended.", {}, { timeout: 3000 });
       expect(audioTrack.stop).toHaveBeenCalledOnce();
       expect(videoTrack.stop).toHaveBeenCalledOnce();
-      expect(api.endCallAudio).toHaveBeenCalledOnce();
+      await waitFor(() => expect(api.endCallAudio).toHaveBeenCalledOnce());
+      await act(async () => {
+        restartOffer.resolve({ type: "offer", sdp });
+        pc.connectionState = "failed";
+        queuedStateChange?.();
+      });
+      expect(within(dialog).getByText("Call ended.")).toBeTruthy();
+      expect(api.serviceCommand.mock.calls.some(([command]) => command === "restart_call")).toBe(false);
       fireEvent.click(within(dialog).getAllByRole("button", { name: "Close" }).at(-1)!);
       expect(api.serviceCommand.mock.calls.some(([command]) => command === "end_call")).toBe(false);
     } finally {
+      play.mockRestore();
       if (originalMediaDevices) Object.defineProperty(navigator, "mediaDevices", originalMediaDevices);
       else Reflect.deleteProperty(navigator, "mediaDevices");
     }
-  });
+  }, 10_000);
 
   it("stops video capture if the call is cancelled while camera permission is pending", async () => {
     const current = snapshot([approved]);

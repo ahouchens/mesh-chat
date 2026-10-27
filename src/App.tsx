@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
+import { connectionPath, waitForCandidates } from "./webrtc-peer";
+import { acquireCallAudio, releaseCallAudio } from "./call-audio";
 import {
   BookUser,
   Bell,
@@ -49,7 +51,6 @@ import {
   X,
 } from "lucide-react";
 import {
-  beginCallAudio,
   initializeService,
   lockService,
   notificationCapability,
@@ -64,7 +65,6 @@ import {
   setNativeTheme,
   setNativeBackgroundAvailability,
   serviceCommand,
-  endCallAudio,
 } from "./api";
 import { contactConnectionLabel, deliveryLabel, workspaceJoinStatus } from "./status";
 import { EmojiGlyph } from "./EmojiGlyph";
@@ -892,7 +892,10 @@ function CallDialog({
   const [error, setError] = useState("");
   const pcRef = useRef<RTCPeerConnection | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
-  const callAudioStartedRef = useRef(false);
+  const remoteStreamRef = useRef<MediaStream | null>(null);
+  const restartTimerRef = useRef<number | null>(null);
+  const qualityTimerRef = useRef<number | null>(null);
+  const audioOwnerRef = useRef<object | null>(null);
   const mediaOperationRef = useRef(0);
   const mediaOperationPendingRef = useRef(false);
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -902,7 +905,7 @@ function CallDialog({
   const roleRef = useRef<"caller" | "callee" | undefined>(initialCall?.role);
   const remoteSetRef = useRef(false);
   const pollRef = useRef<number | null>(null);
-  const pollBusyRef = useRef(false);
+  const pollBusyRef = useRef<object | null>(null);
   const restartInFlightRef = useRef(false);
   const restartAnswerInFlightRef = useRef(false);
   const lastRestartOfferRef = useRef("");
@@ -912,20 +915,34 @@ function CallDialog({
   const cleanup = useCallback(() => {
     mediaOperationRef.current += 1;
     mediaOperationPendingRef.current = false;
+    pollBusyRef.current = null;
+    restartInFlightRef.current = false;
+    restartAnswerInFlightRef.current = false;
     if (pollRef.current !== null) {
       window.clearInterval(pollRef.current);
       pollRef.current = null;
     }
     streamRef.current?.getTracks().forEach((track) => track.stop());
     streamRef.current = null;
-    pcRef.current?.close();
+    remoteStreamRef.current = null;
+    for (const timer of [restartTimerRef, qualityTimerRef]) {
+      if (timer.current !== null) window.clearTimeout(timer.current);
+      timer.current = null;
+    }
+    const pc = pcRef.current;
     pcRef.current = null;
+    if (pc) {
+      pc.ontrack = null;
+      pc.onconnectionstatechange = null;
+      pc.close();
+    }
     if (audioRef.current) audioRef.current.srcObject = null;
     if (localVideoRef.current) localVideoRef.current.srcObject = null;
     if (remoteVideoRef.current) remoteVideoRef.current.srcObject = null;
-    if (callAudioStartedRef.current) {
-      callAudioStartedRef.current = false;
-      void endCallAudio().catch(() => undefined);
+    if (audioOwnerRef.current) {
+      const owner = audioOwnerRef.current;
+      audioOwnerRef.current = null;
+      void releaseCallAudio(owner).catch(() => undefined);
     }
   }, []);
 
@@ -942,40 +959,52 @@ function CallDialog({
   useEffect(() => cleanup, [cleanup]);
 
   useEffect(() => {
+    if (phase !== "ringing" || !call?.id) return;
+    let active = true;
+    let busy = false;
+    const timer = window.setInterval(async () => {
+      if (busy) return;
+      busy = true;
+      try {
+        const latest = await serviceCommand<CallMedia>("call_media", { call_id: call.id });
+        if (!active) return;
+        if (["ended", "declined", "busy", "no_answer", "failed"].includes(latest.state)) {
+          cleanup();
+          setPhase(latest.state === "failed" ? "error" : "ended");
+          if (latest.state === "failed") setError("The call ended unexpectedly.");
+        }
+      } catch {
+        // Keep the invitation visible through a transient service read error.
+      } finally {
+        busy = false;
+      }
+    }, 1000);
+    return () => { active = false; window.clearInterval(timer); };
+  }, [call?.id, cleanup, phase]);
+
+  useEffect(() => {
     const onOnline = () => {
-      if (!callIdRef.current) return;
-      window.setTimeout(() => restartRef.current(), 1000);
+      const pc = pcRef.current;
+      if (!callIdRef.current || !pc) return;
+      if (restartTimerRef.current !== null) window.clearTimeout(restartTimerRef.current);
+      restartTimerRef.current = window.setTimeout(() => {
+        restartTimerRef.current = null;
+        if (pcRef.current === pc) restartRef.current();
+      }, 1000);
     };
     window.addEventListener("online", onOnline);
     return () => window.removeEventListener("online", onOnline);
   }, []);
 
   const inspectPath = useCallback(async (pc: RTCPeerConnection) => {
-    try {
-      const stats = await pc.getStats();
-      let relayed = false;
-      let selectedPairId: string | null = null;
-      stats.forEach((report) => {
-        if (report.type === "transport" && report.selectedCandidatePairId) {
-          selectedPairId = report.selectedCandidatePairId;
-        }
-      });
-      stats.forEach((report) => {
-        if (report.type === "candidate-pair" && (report.id === selectedPairId || report.selected)) {
-          const local = stats.get(report.localCandidateId);
-          const remote = stats.get(report.remoteCandidateId);
-          if (local?.candidateType === "relay" || remote?.candidateType === "relay") relayed = true;
-        }
-      });
-      setPath(relayed ? "relay" : "direct");
-    } catch {
-      setPath("unknown");
-    }
+    const path = await connectionPath(pc);
+    if (pcRef.current === pc) setPath(path === "relayed" ? "relay" : path);
   }, []);
 
   const inspectQuality = useCallback(async (pc: RTCPeerConnection) => {
     try {
       const stats = await pc.getStats();
+      if (pcRef.current !== pc) return;
       let lost = 0;
       let received = 0;
       let jitter = 0;
@@ -990,7 +1019,7 @@ function CallDialog({
       const loss = total > 0 ? lost / total : 0;
       setQuality(loss > 0.08 || jitter > 0.08 ? "poor" : loss > 0.02 || jitter > 0.03 ? "fair" : total > 0 ? "good" : "unknown");
     } catch {
-      setQuality("unknown");
+      if (pcRef.current === pc) setQuality("unknown");
     }
   }, []);
 
@@ -1000,7 +1029,10 @@ function CallDialog({
       iceTransportPolicy: configuration.iceTransportPolicy,
     });
     pc.ontrack = (event) => {
-      const stream = event.streams[0] ?? new MediaStream([event.track]);
+      if (pcRef.current !== pc) return;
+      const stream = remoteStreamRef.current ?? event.streams[0] ?? new MediaStream();
+      if (!stream.getTracks().includes(event.track)) stream.addTrack(event.track);
+      remoteStreamRef.current = stream;
       if (audioRef.current) {
         audioRef.current.srcObject = stream;
         void audioRef.current.play().catch(() => undefined);
@@ -1011,16 +1043,28 @@ function CallDialog({
       }
     };
     pc.onconnectionstatechange = () => {
+      if (pcRef.current !== pc) return;
       if (pc.connectionState === "connected") {
+        if (restartTimerRef.current !== null) window.clearTimeout(restartTimerRef.current);
+        restartTimerRef.current = null;
         setPhase("in_call");
         setError("");
         void inspectPath(pc);
         void inspectQuality(pc);
-        window.setTimeout(() => { void inspectQuality(pc); }, 3000);
+        if (qualityTimerRef.current !== null) window.clearTimeout(qualityTimerRef.current);
+        qualityTimerRef.current = window.setTimeout(() => {
+          qualityTimerRef.current = null;
+          if (pcRef.current === pc) void inspectQuality(pc);
+        }, 3000);
       }
       if (pc.connectionState === "disconnected") {
         setPhase("connecting");
-        window.setTimeout(() => restartRef.current(), 1500);
+        if (restartTimerRef.current === null) {
+          restartTimerRef.current = window.setTimeout(() => {
+            restartTimerRef.current = null;
+            if (pcRef.current === pc) restartRef.current();
+          }, 1500);
+        }
       }
       if (pc.connectionState === "failed") {
         failCall("The media path could not be established.");
@@ -1033,23 +1077,40 @@ function CallDialog({
   const startPolling = useCallback((callId: string) => {
     if (pollRef.current !== null) window.clearInterval(pollRef.current);
     pollRef.current = window.setInterval(async () => {
-      if (pollBusyRef.current) return;
-      pollBusyRef.current = true;
+      const pc = pcRef.current;
+      if (!pc || callIdRef.current !== callId || pollBusyRef.current) return;
+      const operation = mediaOperationRef.current;
+      const current = () => pcRef.current === pc && callIdRef.current === callId && mediaOperationRef.current === operation;
+      const poll = {};
+      pollBusyRef.current = poll;
       try {
-        const latest = await serviceCommand<CallMedia>("call_media", { call_id: callId });
-        if (!pcRef.current || callIdRef.current !== callId) return;
+        let latest: CallMedia;
+        try {
+          latest = await serviceCommand<CallMedia>("call_media", { call_id: callId });
+        } catch {
+          // A transient service read can be retried on the next poll.
+          return;
+        }
+        if (!current()) return;
         setMedia(latest);
         setCall((current) => current ? { ...current, ...latest } : current);
+        if (["ended", "declined", "busy", "no_answer", "failed"].includes(latest.state)) {
+          cleanup();
+          setPhase(latest.state === "failed" ? "error" : "ended");
+          if (latest.state === "failed") setError("The call ended unexpectedly.");
+          return;
+        }
         if (
           latest.restart_answer &&
           lastRestartAnswerRef.current !== latest.restart_answer &&
-          pcRef.current?.signalingState === "have-local-offer"
+          pc.signalingState === "have-local-offer"
         ) {
-          await pcRef.current.setRemoteDescription({ type: "answer", sdp: latest.restart_answer });
+          await pc.setRemoteDescription({ type: "answer", sdp: latest.restart_answer });
+          if (!current()) return;
           lastRestartAnswerRef.current = latest.restart_answer;
           remoteSetRef.current = true;
           setPhase("connecting");
-          void inspectPath(pcRef.current);
+          void inspectPath(pc);
         }
         if (
           latest.restart_offer &&
@@ -1059,29 +1120,15 @@ function CallDialog({
         ) {
           restartAnswerInFlightRef.current = true;
           try {
-            const pc = pcRef.current;
-            if (pc) {
+            if (current()) {
               await pc.setRemoteDescription({ type: "offer", sdp: latest.restart_offer });
+              if (!current()) return;
               const answer = await pc.createAnswer();
+              if (!current()) return;
               await pc.setLocalDescription(answer);
-              if (pc.iceGatheringState !== "complete") {
-                await new Promise<void>((resolve) => {
-                  // Call signaling sends one SDP and does not trickle later ICE
-                  // candidates. Allow relay candidates to finish gathering.
-                  const timeout = window.setTimeout(() => {
-                    pc.removeEventListener("icegatheringstatechange", onChange);
-                    resolve();
-                  }, 15000);
-                  const onChange = () => {
-                    if (pc.iceGatheringState === "complete") {
-                      window.clearTimeout(timeout);
-                      pc.removeEventListener("icegatheringstatechange", onChange);
-                      resolve();
-                    }
-                  };
-                  pc.addEventListener("icegatheringstatechange", onChange);
-                });
-              }
+              if (!current()) return;
+              await waitForCandidates(pc);
+              if (!current()) return;
               const sdp = pc.localDescription?.sdp;
               if (sdp) {
                 await serviceCommand("answer_call_restart", {
@@ -1089,32 +1136,29 @@ function CallDialog({
                   sdp,
                   dtls_fingerprint: callFingerprint(sdp),
                 });
+                if (!current()) return;
                 lastRestartOfferRef.current = latest.restart_offer;
                 setPhase("connecting");
               }
             }
           } catch (reason) {
-            failCall(errorMessage(reason));
+            if (current()) failCall(errorMessage(reason));
             return;
           } finally {
-            restartAnswerInFlightRef.current = false;
+            if (current()) restartAnswerInFlightRef.current = false;
           }
         }
-        if (latest.remote_sdp && !remoteSetRef.current && pcRef.current?.signalingState === "have-local-offer") {
-          await pcRef.current.setRemoteDescription({ type: "answer", sdp: latest.remote_sdp });
+        if (latest.remote_sdp && !remoteSetRef.current && pc.signalingState === "have-local-offer") {
+          await pc.setRemoteDescription({ type: "answer", sdp: latest.remote_sdp });
+          if (!current()) return;
           remoteSetRef.current = true;
           setPhase("connecting");
         }
-        if (latest.state === "in_call") setPhase("in_call");
-        if (["ended", "declined", "busy", "no_answer", "failed"].includes(latest.state)) {
-          cleanup();
-          setPhase(latest.state === "failed" ? "error" : "ended");
-          if (latest.state === "failed") setError("The call ended unexpectedly.");
-        }
-      } catch {
-        // Keep the last safe state; the next event or explicit hangup updates it.
+        if (latest.state === "in_call" && pc.connectionState === "connected") setPhase("in_call");
+      } catch (reason) {
+        if (current()) failCall(errorMessage(reason));
       } finally {
-        pollBusyRef.current = false;
+        if (pollBusyRef.current === poll) pollBusyRef.current = null;
       }
     }, 1000);
   }, [cleanup, failCall, inspectPath]);
@@ -1135,37 +1179,23 @@ function CallDialog({
     });
   }, []);
 
-  const waitForCandidates = useCallback(async (pc: RTCPeerConnection) => {
-    if (pc.iceGatheringState === "complete") return;
-    await new Promise<void>((resolve) => {
-      // A three-second cutoff can omit cellular STUN/TURN candidates. This
-      // call path currently sends only the candidates embedded in its SDP.
-      const timeout = window.setTimeout(() => {
-        pc.removeEventListener("icegatheringstatechange", onChange);
-        resolve();
-      }, 15000);
-      const onChange = () => {
-        if (pc.iceGatheringState === "complete") {
-          window.clearTimeout(timeout);
-          pc.removeEventListener("icegatheringstatechange", onChange);
-          resolve();
-        }
-      };
-      pc.addEventListener("icegatheringstatechange", onChange);
-    });
-  }, []);
-
   const attemptRestart = useCallback(async () => {
     const callId = callIdRef.current;
     const pc = pcRef.current;
     if (!callId || !pc || restartInFlightRef.current) return;
-    if (roleRef.current !== "caller" || pc.connectionState === "closed") return;
+    if (roleRef.current !== "caller" || pc.signalingState !== "stable" ||
+        !["disconnected", "failed"].includes(pc.connectionState)) return;
+    const operation = mediaOperationRef.current;
+    const current = () => pcRef.current === pc && callIdRef.current === callId && mediaOperationRef.current === operation;
     restartInFlightRef.current = true;
     try {
       setPhase("connecting");
       const offer = await pc.createOffer({ iceRestart: true });
+      if (!current()) return;
       await pc.setLocalDescription(offer);
+      if (!current()) return;
       await waitForCandidates(pc);
+      if (!current()) return;
       const sdp = pc.localDescription?.sdp;
       if (!sdp) throw new Error("The reconnecting call offer could not be created.");
       if (!callHasNetworkCandidate(sdp)) throw new Error("No call network candidate was found. Check the connection or configure TURN.");
@@ -1174,11 +1204,12 @@ function CallDialog({
         sdp,
         dtls_fingerprint: callFingerprint(sdp),
       });
+      if (!current()) return;
       setPhase("connecting");
     } catch (reason) {
-      failCall(errorMessage(reason));
+      if (current()) failCall(errorMessage(reason));
     } finally {
-      restartInFlightRef.current = false;
+      if (current()) restartInFlightRef.current = false;
     }
   }, [failCall, waitForCandidates]);
   restartRef.current = () => { void attemptRestart(); };
@@ -1217,7 +1248,7 @@ function CallDialog({
     const operation = ++mediaOperationRef.current;
     const current = () => operation === mediaOperationRef.current;
     let stream: MediaStream | null = null;
-    let audioStarted = false;
+    const audioOwner = {};
     callIdRef.current = undefined;
     roleRef.current = undefined;
     remoteSetRef.current = false;
@@ -1233,12 +1264,11 @@ function CallDialog({
     try {
       const capturedStream = await prepareMedia(media);
       stream = capturedStream;
-      streamRef.current = capturedStream;
       if (!current()) throw new Error("Call cancelled.");
+      streamRef.current = capturedStream;
       if (localVideoRef.current) localVideoRef.current.srcObject = capturedStream;
-      const focus = await beginCallAudio(media);
-      audioStarted = focus.granted;
-      callAudioStartedRef.current = focus.granted;
+      audioOwnerRef.current = audioOwner;
+      const focus = await acquireCallAudio(audioOwner, media);
       if (!current()) throw new Error("Call cancelled.");
       if (!focus.granted) throw new Error("Android could not take call-audio focus.");
       const configuration = await serviceCommand<CallIceConfiguration>("call_ice_servers");
@@ -1247,7 +1277,9 @@ function CallDialog({
       capturedStream.getTracks().forEach((track) => pc.addTrack(track, capturedStream));
       void configureVideoSender(pc, capturedStream);
       const offer = await pc.createOffer();
+      if (!current()) throw new Error("Call cancelled.");
       await pc.setLocalDescription(offer);
+      if (!current()) throw new Error("Call cancelled.");
       await waitForCandidates(pc);
       if (!current()) throw new Error("Call cancelled.");
       const sdp = pc.localDescription?.sdp;
@@ -1273,7 +1305,7 @@ function CallDialog({
     } catch (reason) {
       if (!current()) {
         stream?.getTracks().forEach((track) => track.stop());
-        if (audioStarted) void endCallAudio().catch(() => undefined);
+        void releaseCallAudio(audioOwner).catch(() => undefined);
         return;
       }
       failCall(errorMessage(reason));
@@ -1288,7 +1320,7 @@ function CallDialog({
     const operation = ++mediaOperationRef.current;
     const current = () => operation === mediaOperationRef.current;
     let stream: MediaStream | null = null;
-    let audioStarted = false;
+    const audioOwner = {};
     setError("");
     setPhase("preparing");
     try {
@@ -1297,12 +1329,11 @@ function CallDialog({
       if (!details.remote_sdp) throw new Error("This call invitation has no media description.");
       const capturedStream = await prepareMedia(call.media);
       stream = capturedStream;
-      streamRef.current = capturedStream;
       if (!current()) throw new Error("Call cancelled.");
+      streamRef.current = capturedStream;
       if (localVideoRef.current) localVideoRef.current.srcObject = capturedStream;
-      const focus = await beginCallAudio(call.media);
-      audioStarted = focus.granted;
-      callAudioStartedRef.current = focus.granted;
+      audioOwnerRef.current = audioOwner;
+      const focus = await acquireCallAudio(audioOwner, call.media);
       if (!current()) throw new Error("Call cancelled.");
       if (!focus.granted) throw new Error("Android could not take call-audio focus.");
       const configuration = await serviceCommand<CallIceConfiguration>("call_ice_servers");
@@ -1313,7 +1344,9 @@ function CallDialog({
       capturedStream.getTracks().forEach((track) => pc.addTrack(track, capturedStream));
       void configureVideoSender(pc, capturedStream);
       const answer = await pc.createAnswer();
+      if (!current()) throw new Error("Call cancelled.");
       await pc.setLocalDescription(answer);
+      if (!current()) throw new Error("Call cancelled.");
       await waitForCandidates(pc);
       if (!current()) throw new Error("Call cancelled.");
       const sdp = pc.localDescription?.sdp;
@@ -1335,7 +1368,7 @@ function CallDialog({
     } catch (reason) {
       if (!current()) {
         stream?.getTracks().forEach((track) => track.stop());
-        if (audioStarted) void endCallAudio().catch(() => undefined);
+        void releaseCallAudio(audioOwner).catch(() => undefined);
         return;
       }
       failCall(errorMessage(reason));
@@ -1388,7 +1421,7 @@ function CallDialog({
       <div className="stack">
         <audio ref={audioRef} autoPlay playsInline hidden />
         <video ref={localVideoRef} className="call-video call-video--local" autoPlay muted playsInline hidden={!cameraEnabled || phase === "ended" || phase === "error"} />
-        <video ref={remoteVideoRef} className="call-video" autoPlay playsInline hidden={call?.media !== "video" || phase === "ended" || phase === "error"} />
+        <video ref={remoteVideoRef} className="call-video" autoPlay muted playsInline hidden={call?.media !== "video" || phase === "ended" || phase === "error"} />
         {phase === "idle" && (
           <>
             <p className="muted">Audio and video are sent directly to {contact.display_name} over the authenticated call path. Your microphone and camera start only after you choose a call.</p>

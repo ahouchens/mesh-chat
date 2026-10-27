@@ -104,6 +104,7 @@ class NativeWebRtcInteropTest {
                 it.service.className == MeshAvailabilityService::class.java.name && it.foreground
             })
             assertTrue(BackgroundRuntime.statusJson().optBoolean("notification_visible"))
+            assertTrue(BackgroundRuntime.statusJson().optBoolean("multicast_lock_held"))
         }
         try {
             awaitState("Saved opt-in did not restore the Service") {
@@ -138,7 +139,9 @@ class NativeWebRtcInteropTest {
             assertTrue(BackgroundRuntime.isEnabled(context))
             instrumentation.runOnMainSync { activity.finish() }
             activity = instrumentation.startActivitySync(launch)
-            awaitState("Returning to the app did not restore its Service") { MeshAvailabilityService.isRunning() }
+            awaitState("Returning to the app did not restore its Service and network lock") {
+                MeshAvailabilityService.isRunning() && BackgroundRuntime.statusJson().optBoolean("multicast_lock_held")
+            }
             assertEquals("open", nativeStats("background-a").getString("data_channel_state"))
             assertTrue(BackgroundRuntime.statusJson().getInt("restorations") >= 2)
             // Explicit opt-out must win over a later foreground resume.

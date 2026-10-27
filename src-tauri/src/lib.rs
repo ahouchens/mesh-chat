@@ -52,10 +52,10 @@ const IPC_VERSION: u64 = 1;
 // invalid sidecar length prefix from causing an unbounded allocation.
 const MAX_FRAME_BYTES: usize = 4 * 1024 * 1024;
 const MAX_RENDERER_PAYLOAD_BYTES: usize = 32 * 1024;
-// Signed WebRTC documents may contain a 32 KiB SDP plus JSON escaping and
-// signatures. Keep this above the service's document limit without widening
-// the default renderer command limit.
-const MAX_WEBRTC_SIGNALING_PAYLOAD_BYTES: usize = 64 * 1024;
+// Answer verification carries both signed documents, and answer creation
+// carries the offer plus a 32 KiB SDP. Include nested JSON escaping while
+// keeping the service's per-document and SDP validation bounds in force.
+const MAX_WEBRTC_SIGNALING_PAYLOAD_BYTES: usize = 128 * 1024;
 const MAX_DIRECT_DOCUMENT_PAYLOAD_BYTES: usize = 2 * 1024 * 1024;
 const MAX_CONNECTION_RESPONSE_PAYLOAD_BYTES: usize = 40 * 1024;
 const MAX_ROUTE_UPDATE_PAYLOAD_BYTES: usize = 24 * 1024;
@@ -101,6 +101,11 @@ fn renderer_payload_maximum(command: &str) -> usize {
             | "native_webrtc_apply_answer"
             | "native_webrtc_bind_onboarding"
             | "signal_publish"
+            | "reconnect_offer_create"
+            | "reconnect_answer_create"
+            | "verify_reconnect_offer"
+            | "verify_reconnect_answer"
+            | "reconnect_publish"
     ) {
         MAX_WEBRTC_SIGNALING_PAYLOAD_BYTES
     } else {
@@ -1718,10 +1723,21 @@ mod tests {
             "native_webrtc_accept",
             "native_webrtc_bind_onboarding",
             "signal_publish",
+            "reconnect_offer_create",
+            "reconnect_answer_create",
+            "verify_reconnect_offer",
+            "verify_reconnect_answer",
+            "reconnect_publish",
         ] {
-            assert_eq!(renderer_payload_maximum(command), 64 * 1024, "{command}");
+            assert_eq!(renderer_payload_maximum(command), 128 * 1024, "{command}");
         }
         assert_eq!(renderer_payload_maximum("snapshot"), 32 * 1024);
+        let answer_exchange = serde_json::to_vec(&json!({
+            "offer_document": "x".repeat(36 * 1024),
+            "answer_document": "y".repeat(36 * 1024),
+        })).unwrap();
+        assert!(answer_exchange.len() > 64 * 1024);
+        assert!(answer_exchange.len() <= renderer_payload_maximum("verify_webrtc_onboarding_answer"));
     }
 
     #[test]

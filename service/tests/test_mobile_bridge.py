@@ -106,15 +106,20 @@ def test_mobile_workspace_preview_and_submit_share_invitation_size_limit(monkeyp
 
 
 @pytest.mark.parametrize(("command", "maximum"), [
-    ("webrtc_onboarding_offer", 64 * 1024),
-    ("verify_webrtc_onboarding_offer", 64 * 1024),
-    ("webrtc_onboarding_answer", 64 * 1024),
-    ("verify_webrtc_onboarding_answer", 64 * 1024),
-    ("native_webrtc_offer", 64 * 1024),
-    ("native_webrtc_accept", 64 * 1024),
-    ("native_webrtc_apply_answer", 64 * 1024),
-    ("native_webrtc_bind_onboarding", 64 * 1024),
-    ("signal_publish", 64 * 1024),
+    ("webrtc_onboarding_offer", 128 * 1024),
+    ("verify_webrtc_onboarding_offer", 128 * 1024),
+    ("webrtc_onboarding_answer", 128 * 1024),
+    ("verify_webrtc_onboarding_answer", 128 * 1024),
+    ("native_webrtc_offer", 128 * 1024),
+    ("native_webrtc_accept", 128 * 1024),
+    ("native_webrtc_apply_answer", 128 * 1024),
+    ("native_webrtc_bind_onboarding", 128 * 1024),
+    ("signal_publish", 128 * 1024),
+    ("reconnect_offer_create", 128 * 1024),
+    ("reconnect_answer_create", 128 * 1024),
+    ("verify_reconnect_offer", 128 * 1024),
+    ("verify_reconnect_answer", 128 * 1024),
+    ("reconnect_publish", 128 * 1024),
     ("preview_direct_connection", 2 * 1024 * 1024),
     ("prepare_direct_answer", 2 * 1024 * 1024),
     ("prepare_direct_ready", 2 * 1024 * 1024),
@@ -160,6 +165,35 @@ def test_mobile_command_matches_native_payload_bounds(monkeypatch, command, maxi
         "ok": False, "error": {"code": "invalid_request"},
     }
     assert len(dispatched) == 1
+
+
+def test_mobile_bridge_verifies_a_large_signed_offer_and_answer_together(monkeypatch):
+    import RNS
+    from mesh_chat.webrtc_onboarding import (
+        create_onboarding_answer, create_onboarding_offer,
+        verify_onboarding_answer, verify_onboarding_offer,
+    )
+
+    fingerprint = "sha-256 " + ":".join(["AB"] * 32)
+    sdp = ("v=0\r\nm=application 9 UDP/DTLS/SCTP webrtc-datachannel\r\na=fingerprint:"
+           + fingerprint + "\r\n"
+           + "a=candidate:1 1 udp 2122260223 192.0.2.1 50000 typ host generation 0 network-id 1 network-cost 999\r\n" * 320)
+    assert len(sdp.encode()) < 32 * 1024
+    offer = create_onboarding_offer(RNS.Identity(), session_id="a" * 32, sdp=sdp, dtls_fingerprint=fingerprint)
+    verified_offer = verify_onboarding_offer(offer)
+    answer = create_onboarding_answer(RNS.Identity(), verified_offer, sdp=sdp, dtls_fingerprint=fingerprint)
+
+    class Service:
+        def dispatch(self, request):
+            payload = request["payload"]
+            verified = verify_onboarding_answer(payload["answer_document"], verify_onboarding_offer(payload["offer_document"]))
+            return {"ok": True, "result": {"session_id": verified.session_id}}, False
+
+    monkeypatch.setattr(mobile_bridge, "_service", Service())
+    raw = json.dumps({"command": "verify_webrtc_onboarding_answer",
+                      "payload": {"offer_document": offer, "answer_document": answer}})
+    assert len(raw.encode()) > 64 * 1024
+    assert json.loads(mobile_bridge.command(raw)) == {"ok": True, "result": {"session_id": "a" * 32}}
 
 
 def test_mobile_bridge_command_does_not_block_worker_event(

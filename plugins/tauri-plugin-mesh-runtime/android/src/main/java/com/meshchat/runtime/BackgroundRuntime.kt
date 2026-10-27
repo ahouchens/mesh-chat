@@ -68,7 +68,7 @@ object BackgroundRuntime {
     private val pumpQueued = AtomicBoolean(false)
     private val pumpStarted = AtomicBoolean(false)
     private val shownIncomingCalls = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
-    private var multicastLock: WifiManager.MulticastLock? = null
+    @Volatile private var multicastLock: WifiManager.MulticastLock? = null
 
     fun configure(context: Context) {
         if (configured) return
@@ -143,6 +143,8 @@ object BackgroundRuntime {
     fun initialize(): String {
         check(configured)
         nativeWebRtcReady = NativeWebRtcBridge.initialize(appContext)
+        createNotificationChannels()
+        acquireMulticast()
         if (runtimeInitialized) {
             startNotificationPump()
             try {
@@ -161,8 +163,6 @@ object BackgroundRuntime {
             .put("profile_dir", profileDir.canonicalPath)
             .put("vault_key", Base64.encodeToString(vaultKey(), Base64.NO_WRAP))
             .put("platform", "android")
-        createNotificationChannels()
-        acquireMulticast()
         val initialized = bridge("initialize", request.toString())
         check(JSONObject(initialized).optBoolean("ok", false)) {
             "background runtime initialization was rejected"
@@ -192,6 +192,7 @@ object BackgroundRuntime {
         return internalCommandRaw(request.toString())
     }
 
+    @Synchronized
     fun shutdownNotificationPump() {
         pumpStarted.set(false)
         notificationPump?.shutdownNow()
@@ -211,6 +212,7 @@ object BackgroundRuntime {
         .put("enabled", configured && preferences.getBoolean(AVAILABILITY_KEY, false))
         .put("runtime_initialized", runtimeInitialized)
         .put("native_webrtc_ready", nativeWebRtcReady)
+        .put("multicast_lock_held", multicastLock?.isHeld == true)
         .put("service_running", MeshAvailabilityService.isRunning())
         .put("start_requested", startPending())
         .put("restorations", restorations)
@@ -231,6 +233,7 @@ object BackgroundRuntime {
         }
     }
 
+    @Synchronized
     private fun acquireMulticast() {
         if (multicastLock != null) return
         val wifi = appContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
@@ -547,6 +550,7 @@ object BackgroundRuntime {
         }
     }
 
+    @Synchronized
     private fun startNotificationPump() {
         if (!pumpStarted.compareAndSet(false, true)) return
         val pump = Executors.newSingleThreadScheduledExecutor { runnable ->
