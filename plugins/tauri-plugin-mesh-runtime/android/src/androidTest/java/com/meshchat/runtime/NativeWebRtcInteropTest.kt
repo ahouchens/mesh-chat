@@ -4,11 +4,11 @@ import android.util.Base64
 import android.app.ActivityManager
 import android.content.Context
 import android.content.Intent
+import android.os.Build
 import android.webkit.JavascriptInterface
 import android.webkit.WebView
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
-import androidx.core.content.ContextCompat
 import com.chaquo.python.Python
 import com.chaquo.python.android.AndroidPlatform
 import org.json.JSONArray
@@ -110,7 +110,9 @@ class NativeWebRtcInteropTest {
         val activity = instrumentation.startActivitySync(launch)
         try {
             instrumentation.runOnMainSync {
-                ContextCompat.startForegroundService(context, Intent(context, MeshAvailabilityService::class.java))
+                val service = Intent(context, MeshAvailabilityService::class.java)
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) context.startForegroundService(service)
+                else context.startService(service)
             }
             // Observe Android's foreground-promotion deadline, including a
             // delayed process exception after an apparently successful Stop.
