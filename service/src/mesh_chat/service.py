@@ -13,6 +13,7 @@ from typing import Any, Callable
 import LXMF
 import RNS
 
+from . import connection_diagnostics
 from .background_availability import BackgroundAvailabilityMixin
 from .contact_invitations import ContactInvitationsMixin
 from .native_webrtc_control import NativeWebRTCControlMixin
@@ -1746,6 +1747,7 @@ class MeshChatService(
         if contact["trust"] not in {TrustState.APPROVED.value, TrustState.VERIFIED.value}:
             raise ContactNotApproved("Calls require an approved contact")
         message = self._create_outbound(contact, MessageKind.CALL_SIGNAL, document)
+        connection_diagnostics.call_signal(self, "call_outbound", document, message["state"])
         self._attempt(message["id"])
 
     def start_call(
@@ -1995,6 +1997,9 @@ class MeshChatService(
         # startup. Announce the local LXMF destination on it so the peer can
         # learn a path/ratchet and the accepted contact request can leave the
         # outbox instead of waiting for an unrelated announce.
+        connection_diagnostics.record(self, "transport_state", {
+            "setup_id": bridge_id, "state": "open", "command": "webrtc_attach", "component": "bridge",
+        })
         try:
             self.network.reannounce()
         except Exception:
@@ -2031,6 +2036,9 @@ class MeshChatService(
     def webrtc_detach(self, bridge_id: str) -> dict[str, Any]:
         interface = self._webrtc_bridges.pop(bridge_id, None)
         if interface is not None:
+            connection_diagnostics.record(self, "transport_state", {
+                "setup_id": bridge_id, "state": "closed", "command": "webrtc_detach", "component": "bridge",
+            })
             lost_destinations = interface.detach()
             router = getattr(self.network, "router", None)
             if router is not None:
@@ -2225,6 +2233,16 @@ class MeshChatService(
         self, event: str, session_id: str, data: str = ""
     ) -> None:
         with self._dispatch_lock:
+            if event == "ice" or event in {"open", "closed"}:
+                connection_diagnostics.record(self, "transport_state", {
+                    "setup_id": session_id, "state": data if event == "ice" else event,
+                    "command": "native_webrtc_event", "component": "ice" if event == "ice" else "bridge",
+                })
+            elif event == "channel" and data.startswith("mesh-reticulum:"):
+                connection_diagnostics.record(self, "transport_state", {
+                    "setup_id": session_id, "state": data.partition(":")[2],
+                    "command": "native_webrtc_event", "component": "data_channel",
+                })
             if event == "open":
                 if session_id not in self._native_webrtc_live:
                     return
@@ -2493,7 +2511,12 @@ class MeshChatService(
         if not isinstance(session_id, str):
             raise ValidationError("Native WebRTC session is invalid")
         with self._native_webrtc_lock:
+            was_live = session_id in self._native_webrtc_live
             self._native_webrtc_live.discard(session_id)
+        if was_live:
+            connection_diagnostics.record(self, "transport_state", {
+                "setup_id": session_id, "state": "closed", "command": "native_webrtc_close", "component": "bridge",
+            })
         try:
             self._native_webrtc_host().close(session_id)
         finally:
@@ -3102,6 +3125,8 @@ class MeshChatService(
                 self._queue_direct_retry(logical_id)
             else:
                 self._drop_direct_retry(logical_id)
+        if message.get("kind") == MessageKind.CALL_SIGNAL.value:
+            connection_diagnostics.call_signal(self, "call_outbound", message.get("text"), state.value)
         self.emit(
             {
                 "type": "event",
@@ -3201,8 +3226,14 @@ class MeshChatService(
             return
         if self._identity is None:
             return
-        result = self.calls.receive(self._identity, contact, document)
+        try:
+            result = self.calls.receive(self._identity, contact, document)
+        except Exception as exc:
+            connection_diagnostics.call_signal(self, "call_rejected", document, "failed",
+                                               error_code=exc.code if isinstance(exc, MeshChatError) else "internal_error")
+            raise
         if result is not None:
+            connection_diagnostics.call_signal(self, "call_inbound", document, result["state"])
             self._changed()
 
     def _receive_contact_request(

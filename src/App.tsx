@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { connectionPath, waitForCandidates } from "./webrtc-peer";
 import { acquireCallAudio, releaseCallAudio } from "./call-audio";
 import {
@@ -869,6 +870,36 @@ function callHasNetworkCandidate(sdp: string): boolean {
 
 type CallPeer = { id: string; display_name: string };
 
+function IncomingCallPrompt({ call, name, onReview, onChanged }: {
+  call: CallSummary; name: string; onReview: () => void; onChanged: () => Promise<void>;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const decline = async () => {
+    if (busy) return;
+    setBusy(true);
+    setError("");
+    try {
+      await serviceCommand("end_call", { call_id: call.id, reason: "declined" });
+      await onChanged();
+    } catch {
+      setError("The call could not be dismissed. Try again.");
+    } finally {
+      setBusy(false);
+    }
+  };
+  // Keep the alert above Settings and an invitation dialog which may still be
+  // open. Receiving an invitation never starts microphone or camera capture.
+  return createPortal(<Dialog title={`Incoming ${call.media === "video" ? "video" : "audio"} call`} onClose={() => void decline()}>
+    <p>{name} is calling.</p>
+    {error && <p className="form-error" role="alert">{error}</p>}
+    <div className="dialog-actions">
+      <Button variant="secondary" disabled={busy} onClick={() => void decline()}>Decline</Button>
+      <Button disabled={busy} onClick={onReview}>Review</Button>
+    </div>
+  </Dialog>, document.body);
+}
+
 function CallDialog({
   contact,
   initialCall,
@@ -1416,7 +1447,7 @@ function CallDialog({
   const incoming = call?.direction === "inbound";
   const active = phase === "in_call";
 
-  return (
+  return createPortal(
     <Dialog title={incoming ? `Call from ${contact.display_name}` : `Call ${contact.display_name}`} onClose={closeCall}>
       <div className="stack">
         <audio ref={audioRef} autoPlay playsInline hidden />
@@ -1468,7 +1499,7 @@ function CallDialog({
         {media && active && <p className="muted">{media.candidate_count} network candidate{media.candidate_count === 1 ? "" : "s"} exchanged.</p>}
         {phase === "error" && <div className="dialog-actions">{call && <Button onClick={() => void startCall(call.media)}>Try again</Button>}<Button variant="secondary" onClick={closeCall}>Close</Button></div>}
       </div>
-    </Dialog>
+    </Dialog>, document.body
   );
 }
 
@@ -6647,7 +6678,9 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
   mobileBackHandlerRef.current = handleMobileBack;
 
   const hasMobileBackTarget = Boolean(
-    incomingRequest
+    incomingCall
+      || callContactId
+      || incomingRequest
       || foregroundGroupInvitation
       || foregroundWorkspaceJoinRequest
       || (notificationTarget && !notificationTarget.available)
@@ -6801,13 +6834,10 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
             }} />
         )}
         {incomingCall && !callContactId && (
-          <div className="incoming-call-banner" role="status">
-            <Phone size={18} />
-            <span><strong>Incoming {incomingCall.media === "video" ? "video" : "audio"} call</strong><small>{callPeerFor(incomingCall.contact_id)?.display_name ?? "An approved contact"} is calling.</small></span>
-            <div className="incoming-call-banner__actions">
-              <Button onClick={() => { setCallSummary(incomingCall); setCallContactId(incomingCall.contact_id); }}>Review</Button>
-            </div>
-          </div>
+          <IncomingCallPrompt key={incomingCall.id} call={incomingCall}
+            name={callPeerFor(incomingCall.contact_id)?.display_name ?? "An approved contact"}
+            onReview={() => { setCallSummary(incomingCall); setCallContactId(incomingCall.contact_id); }}
+            onChanged={async () => { await refresh(true); }} />
         )}
         {contactInvitePrompt && (
           <div className="incoming-call-banner" role="status">
@@ -7149,6 +7179,10 @@ export default function App() {
     void (async () => {
       try {
         keepCleanup(await onServiceEvent((event) => {
+          // The bridge's own subscriber forwards binary packets. Refreshing
+          // the entire UI for each resource fragment competes with that pump
+          // and with call signaling on the same service command queue.
+          if (event.event === "webrtc_packet") return;
           if (event.event === "workspace_changed" && event.workspace_id && ["message", "message_mutation", "message_visibility", "delivery"].includes(event.resource_kind ?? "")) {
             const workspaceId = event.workspace_id;
             // Native mobile polls deliver several events in one React batch.

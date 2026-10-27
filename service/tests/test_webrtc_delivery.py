@@ -316,6 +316,65 @@ def test_real_webrtc_bridge_learns_routes_and_delivers_messages_with_receipts(tm
 
 
 @pytest.mark.integration
+def test_repeated_call_signaling_preserves_webrtc_message_delivery(tmp_path: Path) -> None:
+    peers = WebRTCPeers(tmp_path)
+    peers.relay_intervals = [0.0, 0.75]
+    fingerprint = "sha-256 " + ":".join(["AB"] * 32)
+    sdp = ("v=0\r\no=- 1 2 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\n"
+           f"a=fingerprint:{fingerprint}\r\nm=audio 9 UDP/TLS/RTP/SAVPF 111\r\n"
+           "a=mid:0\r\n" + "a=x-test:" + "x" * 6000 + "\r\n")
+    try:
+        profiles = peers.start()
+        for index in range(2):
+            peers.bridges.append(peers.command(index, "webrtc_attach"))
+        invitation = peers.command(0, "create_invitation", connection_mode="webrtc")
+        peers.command(1, "accept_invitation", invitation=invitation["text"])
+
+        def contact(index: int, trust: str) -> dict[str, Any] | None:
+            return next((row for row in peers.command(index, "snapshot")["contacts"]
+                         if row["trust"] == trust), None)
+
+        pending = peers.wait("contact request", lambda: contact(0, "pending_request"))
+        left = peers.command(0, "approve_request", contact_id=pending["id"])
+        right = peers.wait("contact acceptance", lambda: contact(1, "approved"))
+        contacts = [left, right]
+        for attempt, media in enumerate(("audio", "video")):
+            call = peers.command(1, "start_call", contact_id=right["id"], media=media,
+                                 sdp=sdp, dtls_fingerprint=fingerprint)
+
+            def ringing():
+                return next((row for row in peers.command(0, "snapshot")["calls"]
+                             if row["id"] == call["id"] and row["state"] == "ringing"), None)
+
+            assert peers.wait("incoming call invitation", ringing)["media"] == media
+            peers.command(1, "end_call", call_id=call["id"], reason="cancelled")
+            peers.wait("remote cancellation", lambda: not peers.command(0, "snapshot")["calls"])
+            for sender in range(2):
+                sent = peers.command(sender, "send_message", contact_id=contacts[sender]["id"],
+                                     text=f"Message after call attempt {attempt} from {sender}")
+                peers.wait("post-call message and receipt", lambda: all(
+                    any(row["id"] == sent["id"] and row["state"] == "delivered"
+                        for row in peers.command(index, "snapshot")["messages"])
+                    for index in range(2)))
+                state = peers.call(sender, "diagnostic",
+                                   destination=profiles[1 - sender]["destination_hash"],
+                                   bridge_id=peers.bridges[sender]["bridge_id"])
+                assert state["uses_bridge"] and state["interface_count"] == 1
+        incoming = peers.command(0, "connection_diagnostics")
+        outgoing = peers.command(1, "connection_diagnostics")
+        assert incoming["current_calls"]["peers_with_route"] == 1
+        assert outgoing["current_calls"]["peers_with_route"] == 1
+        assert any(row["event"] == "call_inbound" and row["signal"] == "call_invite"
+                   and row["phase"] == "ringing" for row in incoming["events"])
+        assert any(row["event"] == "call_outbound" and row["signal"] == "call_invite"
+                   and row["phase"] == "received_by_endpoint" for row in outgoing["events"])
+        assert sdp not in str(incoming) and sdp not in str(outgoing)
+    finally:
+        peers.close()
+    assert all(process.exitcode == 0 for process in peers.processes)
+
+
+@pytest.mark.integration
 def test_manual_pairing_recovers_lost_initial_announces_with_mobile_polling(tmp_path: Path) -> None:
     peers = WebRTCPeers(tmp_path)
     # Android's native packet events are polled in batches every 750 ms;
