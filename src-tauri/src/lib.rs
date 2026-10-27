@@ -106,6 +106,10 @@ fn renderer_payload_maximum(command: &str) -> usize {
             | "verify_reconnect_offer"
             | "verify_reconnect_answer"
             | "reconnect_publish"
+            | "start_call"
+            | "answer_call"
+            | "restart_call"
+            | "answer_call_restart"
     ) {
         MAX_WEBRTC_SIGNALING_PAYLOAD_BYTES
     } else {
@@ -1728,6 +1732,10 @@ mod tests {
             "verify_reconnect_offer",
             "verify_reconnect_answer",
             "reconnect_publish",
+            "start_call",
+            "answer_call",
+            "restart_call",
+            "answer_call_restart",
         ] {
             assert_eq!(renderer_payload_maximum(command), 128 * 1024, "{command}");
         }

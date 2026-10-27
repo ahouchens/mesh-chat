@@ -202,6 +202,8 @@ class CallManager:
             answer = verify_call_answer(document, invite, now=int(self.now()))
             if answer.callee_destination != record["peer_destination"]:
                 raise IdentityMismatch("Call answer signer does not match the contact")
+            if record["state"] != "dialing" or record.get("answer"):
+                return None
             record.update(
                 answer=document,
                 remote_sdp=answer.sdp,
@@ -240,6 +242,10 @@ class CallManager:
                 expected_signer_destination=record["peer_destination"],
                 now=int(self.now()),
             )
+            # Authenticated signaling can arrive after a local/remote hangup.
+            # Terminal calls must never be resurrected by delayed media work.
+            if record["state"] not in {"connecting", "in_call"}:
+                return None
             if update.role == "offer":
                 if record["role"] != "callee":
                     raise IdentityMismatch("Only the callee receives a renegotiation offer")
@@ -359,7 +365,8 @@ class CallManager:
         dtls_fingerprint: str,
     ) -> dict[str, Any]:
         record = self._require_call(call_id)
-        if record["role"] != "callee" or not record.get("restart_offer"):
+        if (record["role"] != "callee" or not record.get("restart_offer")
+                or record["state"] not in {"connecting", "in_call"}):
             raise ValidationError("This call has no pending ICE restart")
         offer = verify_call_renegotiate(
             record["restart_offer"],
@@ -429,7 +436,7 @@ class CallManager:
     def _enforce_rate_limit(self, contact_id: str) -> None:
         calls = [
             record
-            for record in self.store.list("call")
+            for record in self._list()
             if record.get("contact_id") == contact_id and record.get("direction") == "outbound"
         ]
         now = self.now()
@@ -441,19 +448,19 @@ class CallManager:
     def active(self) -> list[dict[str, Any]]:
         calls = []
         for record in self._list():
+            self._expire_ring(record)
             if record.get("state") not in ACTIVE_STATES:
-                continue
-            if (
-                record.get("state") in {"dialing", "ringing"}
-                and self.now() > float(record.get("ring_expires_at", 0))
-            ):
-                record["state"] = "no_answer"
-                record["updated_at"] = self.now()
-                self._write(record)
                 continue
             calls.append(record)
         calls.sort(key=lambda record: record.get("updated_at", 0), reverse=True)
         return [self.public(record) for record in calls]
+
+    def _expire_ring(self, record: dict[str, Any]) -> None:
+        if (record.get("state") in {"dialing", "ringing"}
+                and self.now() > float(record.get("ring_expires_at", 0))):
+            record["state"] = "no_answer"
+            record["updated_at"] = self.now()
+            self._write(record)
 
     def get(self, call_id: str) -> dict[str, Any]:
         return self.public(self._require_call(call_id))
@@ -481,6 +488,7 @@ class CallManager:
         record = self._get(call_id)
         if record is None:
             raise ValidationError("Call is unknown")
+        self._expire_ring(record)
         return record
 
     @staticmethod

@@ -38,6 +38,7 @@ class BackgroundReconnectSupervisor:
         self._last_scheduled: dict[str, float] = {}
         self._sessions_lock = threading.RLock()
         self._disconnected_since: dict[str, float] = {}
+        self._unavailable_since: dict[str, float] = {}
 
     def start(self) -> None:
         if self._thread is not None and self._thread.is_alive():
@@ -59,8 +60,10 @@ class BackgroundReconnectSupervisor:
             pending = [*self._sessions.values()]
             pending.extend(self._attempt_sessions.values())
             self._sessions.clear()
-            self._attempt_sessions.clear()
+            # Workers retain ownership until their blocking native call returns.
+            # They must close again if creation finishes after this first close.
             self._disconnected_since.clear()
+            self._unavailable_since.clear()
         for session_id in pending:
             try:
                 self.service.native_webrtc_close(session_id)
@@ -80,16 +83,21 @@ class BackgroundReconnectSupervisor:
 
     def _close_session(self, session_id: str) -> None:
         self._disconnected_since.pop(session_id, None)
+        self._unavailable_since.pop(session_id, None)
         try:
             self.service.native_webrtc_close(session_id)
         except Exception:
             pass
 
-    def _session_live(self, session_id: str) -> bool:
+    def _session_live(self, session_id: str) -> bool | None:
         try:
             stats = self.service.native_webrtc_stats(session_id)
         except Exception:
-            return False
+            since = self._unavailable_since.setdefault(session_id, time.monotonic())
+            # Unknown health preserves an existing transport briefly, but may
+            # never count as a successful attachment for a new negotiation.
+            return None if time.monotonic() - since < DISCONNECTED_GRACE_SECONDS else False
+        self._unavailable_since.pop(session_id, None)
         if not isinstance(stats, dict) or not stats.get("attached"):
             return False
         state = stats.get("ice_connection_state")
@@ -101,6 +109,16 @@ class BackgroundReconnectSupervisor:
             return time.monotonic() - since < DISCONNECTED_GRACE_SECONDS
         return False
 
+    @staticmethod
+    def _retain_established(profile: dict[str, Any] | None) -> bool:
+        if not profile or profile.get("state") == "stopped":
+            return False
+        effective = profile.get("effective") or {}
+        reasons = effective.get("reasons") or []
+        # A mailbox is needed to negotiate a replacement. An authenticated
+        # live transport remains usable when only the mailbox is removed.
+        return bool(effective.get("ready") or reasons and set(reasons) == {"mailbox_not_configured"})
+
     def _tick(self, failures: dict[str, int]) -> None:
         payload = self.service.reconnect_profiles()
         profiles = {item["id"]: item for item in payload.get("profiles", [])
@@ -110,8 +128,9 @@ class BackgroundReconnectSupervisor:
             existing = list(self._sessions.items())
         for profile_id, session_id in existing:
             profile = profiles.get(profile_id)
-            if (not profile or profile.get("state") == "stopped"
-                    or not (profile.get("effective") or {}).get("ready")):
+            if (not self._retain_established(profile)
+                    or (not (profile.get("effective") or {}).get("ready")
+                        and self._session_live(session_id) is False)):
                 with self._sessions_lock:
                     self._sessions.pop(profile_id, None)
                 self._close_session(session_id)
@@ -135,7 +154,7 @@ class BackgroundReconnectSupervisor:
             with self._sessions_lock:
                 session_id = self._sessions.get(profile_id)
             if session_id:
-                if self._session_live(session_id):
+                if self._session_live(session_id) is not False:
                     continue
                 with self._sessions_lock:
                     self._sessions.pop(profile_id, None)
@@ -147,7 +166,7 @@ class BackgroundReconnectSupervisor:
                 if profile_id in self._workers:
                     continue
             if other:
-                if self._session_live(other):
+                if self._session_live(other) is not False:
                     continue
                 self._close_session(other)
             eligible.append(profile)
@@ -303,7 +322,7 @@ class BackgroundReconnectSupervisor:
     def _wait_attached(self, profile_id: str, session_id: str, deadline: float) -> None:
         while not self._stop.is_set() and time.monotonic() < deadline:
             self._current_profile(profile_id)
-            if self._session_live(session_id):
+            if self._session_live(session_id) is True:
                 return
             self._stop.wait(POLL_SECONDS)
         raise TimeoutError("background reconnect DataChannel did not attach")

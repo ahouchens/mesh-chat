@@ -39,6 +39,7 @@ export const NATIVE_RECONNECT_CHANNELS: NativeChannelSpec[] = [
 ];
 
 const activeSessions = new Set<string>();
+const pendingCreations = new Map<string, object>();
 
 export function rememberNativeWebRTCSession(sessionId: string): void {
   activeSessions.add(sessionId);
@@ -46,15 +47,43 @@ export function rememberNativeWebRTCSession(sessionId: string): void {
 
 export function forgetNativeWebRTCSession(sessionId: string): void {
   activeSessions.delete(sessionId);
+  pendingCreations.delete(sessionId);
 }
 
 /** Close every native session this WebView created, including onboarding. */
 export async function closeNativeWebRTCSessions(): Promise<void> {
   const sessions = [...activeSessions];
   activeSessions.clear();
+  pendingCreations.clear();
   await Promise.all(sessions.map((sessionId) =>
     serviceCommand("native_webrtc_close", { session_id: sessionId }).catch(() => undefined)
   ));
+}
+
+async function createNativeSession(
+  command: string,
+  sessionId: string,
+  payload: Record<string, unknown>,
+): Promise<NativeSdpResult> {
+  const creation = {};
+  pendingCreations.set(sessionId, creation);
+  rememberNativeWebRTCSession(sessionId);
+  try {
+    const result = await serviceCommand<NativeSdpResult>(command, payload);
+    if (pendingCreations.get(sessionId) !== creation) {
+      // Cancellation may have closed the ID before the native host created it.
+      await serviceCommand("native_webrtc_close", { session_id: sessionId }).catch(() => undefined);
+      throw new Error("Native WebRTC creation was cancelled.");
+    }
+    return result;
+  } catch (reason) {
+    if (pendingCreations.get(sessionId) === creation) {
+      await nativeWebRTCClose(sessionId).catch(() => undefined);
+    }
+    throw reason;
+  } finally {
+    if (pendingCreations.get(sessionId) === creation) pendingCreations.delete(sessionId);
+  }
 }
 
 function nativeIce(ice: CallIceConfiguration): NativeIceConfiguration {
@@ -75,14 +104,11 @@ export function nativeWebRTCOffer(
   channels: NativeChannelSpec[] = NATIVE_RECONNECT_CHANNELS,
   profileId?: string,
 ): Promise<NativeSdpResult> {
-  return serviceCommand<NativeSdpResult>("native_webrtc_offer", {
+  return createNativeSession("native_webrtc_offer", sessionId, {
     session_id: sessionId,
     ice: nativeIce(ice),
     channels,
     ...(profileId ? { profile_id: profileId } : {}),
-  }).then((result) => {
-    rememberNativeWebRTCSession(sessionId);
-    return result;
   });
 }
 
@@ -94,15 +120,12 @@ export function nativeWebRTCAccept(
   channels: NativeChannelSpec[] = NATIVE_RECONNECT_CHANNELS,
   profileId?: string,
 ): Promise<NativeSdpResult> {
-  return serviceCommand<NativeSdpResult>("native_webrtc_accept", {
+  return createNativeSession("native_webrtc_accept", sessionId, {
     session_id: sessionId,
     offer_sdp: offerSdp,
     ice: nativeIce(ice),
     channels,
     ...(profileId ? { profile_id: profileId } : {}),
-  }).then((result) => {
-    rememberNativeWebRTCSession(sessionId);
-    return result;
   });
 }
 
