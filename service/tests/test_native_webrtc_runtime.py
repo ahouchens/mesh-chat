@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+import queue
 import threading
+import time
 
 import pytest
 import RNS
@@ -13,6 +15,10 @@ from mesh_chat.webrtc_onboarding import create_onboarding_offer, verify_onboardi
 FINGERPRINT = "sha-256 " + ":".join(["AB"] * 32)
 SDP = "v=0\r\nm=application 9 UDP/DTLS/SCTP webrtc-datachannel\r\na=fingerprint:" + FINGERPRINT + "\r\n"
 ICE = {"iceServers": [], "iceTransportPolicy": "all"}
+ONBOARDING_CHANNELS = [
+    {"label": "mesh-reticulum", "binary": True, "ordered": True},
+    {"label": "mesh-onboarding", "binary": False, "ordered": True},
+]
 
 
 class Host:
@@ -96,19 +102,121 @@ def test_native_capabilities_exchange_and_consent_updates_without_a_renderer():
     assert not service._native_webrtc_controls
 
 
-def test_native_answer_can_be_bound_signed_and_verified_as_a_complete_exchange():
+@pytest.mark.parametrize("failure_at", [None, "before_binding", "after_binding"])
+def test_native_answer_can_be_bound_signed_and_verified_as_a_complete_exchange(failure_at):
     service, host = runtime()
     service._call_identity = lambda: RNS.Identity()
     offer = create_onboarding_offer(RNS.Identity(), session_id="a" * 32, sdp=SDP, dtls_fingerprint=FINGERPRINT)
     preview = service.verify_webrtc_onboarding_offer(offer)
-    native = service.native_webrtc_accept("manual-answer", preview["sdp"], ICE, [])
+    native = service.native_webrtc_accept("manual-answer", preview["sdp"], ICE, ONBOARDING_CHANNELS)
+    if failure_at == "before_binding":
+        service._handle_native_webrtc_event("ice", "manual-answer", "failed")
     service.native_webrtc_bind_onboarding("manual-answer", preview["document"])
+    if failure_at == "after_binding":
+        service._handle_native_webrtc_event("ice", "manual-answer", "failed")
     complete_sdp = native["sdp"] + "a=end-of-candidates\r\n"
     answer = service.webrtc_onboarding_answer(preview["document"], complete_sdp, native["fingerprint"])
     verified = verify_onboarding_answer(answer["document"], verify_onboarding_offer(offer))
     assert verified.sdp == complete_sdp
     assert verified.session_id == preview["session_id"]
     assert not host.closed
+
+
+def test_manual_answer_grace_ends_when_the_data_channel_opens(monkeypatch):
+    service, host = runtime()
+    clock = [1000.0]
+    monkeypatch.setattr(time, "monotonic", lambda: clock[0])
+    service.native_webrtc_accept("manual-answer", SDP, ICE, ONBOARDING_CHANNELS)
+    service._handle_native_webrtc_event("ice", "manual-answer", "failed")
+    assert not host.closed
+
+    def attach(session_id):
+        service._native_webrtc_sessions[session_id] = "bridge"
+        return {"bridge_id": "bridge"}
+
+    service.webrtc_attach_native = attach
+    service._handle_native_webrtc_event("open", "manual-answer")
+    clock[0] += 121
+    service._expire_native_answer_exchanges()
+    assert not host.closed
+    # Once the channel has opened, the 0.9.51 cleanup remains necessary.
+    service._handle_native_webrtc_event("ice", "manual-answer", "failed")
+    assert host.closed == ["manual-answer"]
+    assert not service._native_webrtc_sessions
+
+
+@pytest.mark.parametrize("ending", ["timeout", "cancel", "ice_closed", "channel_closed"])
+def test_manual_answer_grace_is_bounded_and_does_not_hide_closure(monkeypatch, ending):
+    service, host = runtime()
+    clock = [1000.0]
+    monkeypatch.setattr(time, "monotonic", lambda: clock[0])
+    service.native_webrtc_accept("manual-answer", SDP, ICE, ONBOARDING_CHANNELS)
+    service._handle_native_webrtc_event("ice", "manual-answer", "failed")
+    assert not host.closed
+    if ending == "timeout":
+        clock[0] += 119
+        service._expire_native_answer_exchanges()
+        assert not host.closed
+        clock[0] += 2
+        service._expire_native_answer_exchanges()
+    elif ending == "cancel":
+        service.native_webrtc_close("manual-answer")
+    elif ending == "ice_closed":
+        service._handle_native_webrtc_event("ice", "manual-answer", "closed")
+    else:
+        service._handle_native_webrtc_event("channel", "manual-answer", "mesh-reticulum:closed")
+    assert host.closed == ["manual-answer"]
+    assert not service._native_webrtc_live
+    assert not service._native_webrtc_descriptions
+
+
+def test_manual_answer_grace_cannot_outlive_the_signed_offer(monkeypatch):
+    service, host = runtime()
+    clock = [1000.0]
+    now = int(time.time())
+    monkeypatch.setattr(time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(time, "time", lambda: now)
+    offer = create_onboarding_offer(RNS.Identity(), session_id="a" * 32, sdp=SDP,
+        dtls_fingerprint=FINGERPRINT, now=now, expires_at=now + 10)
+    service.native_webrtc_accept("manual-answer", SDP, ICE, ONBOARDING_CHANNELS)
+    service.native_webrtc_bind_onboarding("manual-answer", offer)
+    clock[0] += 11
+    service._expire_native_answer_exchanges()
+    assert host.closed == ["manual-answer"]
+
+
+def test_native_worker_expires_abandoned_answer_without_renderer_commands():
+    service, host = runtime()
+    service._native_webrtc_events = queue.Queue()
+    service._native_answer_exchange_timeout = 0
+    service.native_webrtc_accept("manual-answer", SDP, ICE, ONBOARDING_CHANNELS)
+    closed = threading.Event()
+
+    def close(session_id):
+        host.closed.append(session_id)
+        closed.set()
+
+    host.close = close
+    worker = threading.Thread(target=service._native_webrtc_event_loop, daemon=True)
+    worker.start()
+    try:
+        assert closed.wait(2), "The native worker did not expire the abandoned answer"
+        assert host.closed == ["manual-answer"]
+    finally:
+        service._shutdown.set()
+        service._native_webrtc_events.put_nowait(None)
+        worker.join(2)
+
+
+@pytest.mark.parametrize("kind", ["offerer", "reconnect_answerer"])
+def test_answer_exchange_grace_does_not_delay_other_native_failure_cleanup(kind):
+    service, host = runtime()
+    if kind == "offerer":
+        service.native_webrtc_offer("native-session", ICE, ONBOARDING_CHANNELS)
+    else:
+        service.native_webrtc_accept("native-session", SDP, ICE, ONBOARDING_CHANNELS, "profile-1")
+    service._handle_native_webrtc_event("ice", "native-session", "failed")
+    assert host.closed == ["native-session"]
 
 
 def test_manual_session_binding_uses_verified_signaling_and_survives_dialog_closure():
