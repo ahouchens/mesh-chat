@@ -53,6 +53,11 @@ class MeshAvailabilityService : Service() {
     override fun onCreate() {
         super.onCreate()
         BackgroundRuntime.configure(applicationContext)
+        // A start intent queued before Lock or Stop cannot resurrect the mode.
+        if (!BackgroundRuntime.isEnabled(applicationContext)) {
+            stopSelf()
+            return
+        }
         BackgroundRuntime.ensureNotificationChannels()
         try {
             startAsForeground()
@@ -72,7 +77,7 @@ class MeshAvailabilityService : Service() {
                 if (BackgroundRuntime.isEnabled(applicationContext)) {
                     BackgroundRuntime.initialize()
                     BackgroundRuntime.setBackgroundPreference(true)
-                }
+                } else stopSelf()
             } catch (error: Throwable) {
                 Log.e(TAG, "background runtime initialization failed (${error.javaClass.simpleName})")
                 BackgroundRuntime.setEnabled(applicationContext, false)
@@ -103,6 +108,10 @@ class MeshAvailabilityService : Service() {
                 return START_NOT_STICKY
             }
             else -> {
+                if (!BackgroundRuntime.isEnabled(applicationContext)) {
+                    stopSelf()
+                    return START_NOT_STICKY
+                }
                 return try {
                     startAsForeground()
                     START_STICKY
