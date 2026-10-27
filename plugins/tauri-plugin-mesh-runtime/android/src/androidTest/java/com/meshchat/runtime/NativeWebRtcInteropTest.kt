@@ -68,6 +68,8 @@ class NativeWebRtcInteropTest {
     @Test(timeout = 180_000) fun nativeOfferCanConnectToChromiumWithReconnectControl() = exchange(nativeOffers = true)
     @Test(timeout = 180_000) fun repeatedChromiumMediaCallsPreserveNativeMessaging() =
         exchange(nativeOffers = false, repeatedMedia = true)
+    @Test(timeout = 180_000) fun repeatedChromiumMediaCallsPreserveNativeOfferedMessaging() =
+        exchange(nativeOffers = true, repeatedMedia = true)
 
     @Test(timeout = 30_000) fun backgroundDefaultResumesAfterUnlockAndPreservesAnExplicitOffChoice() {
         val prefs = context.getSharedPreferences("mesh-chat-vault", Context.MODE_PRIVATE)

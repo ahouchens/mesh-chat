@@ -46,6 +46,50 @@ network type.
    without a new approval.
 7. Verify the app does not request microphone/camera before the user accepts.
 
+### B1. Pairing and repeated calls over one WebRTC connection
+
+Use Android on cellular and Windows on Wi-Fi. Run once with a Windows offer
+and Android answer, then again with an Android offer and Windows answer.
+Leave the signaling mailbox unconfigured for this established-connection test.
+
+1. Complete signed pairing and contact acceptance. Send a message each way and
+   confirm delivery receipts before making any calls.
+2. Without re-pairing, complete audio calls initiated by each device, then video
+   calls initiated by each device. Verify two-way media. End audio calls from
+   the caller and video calls from the recipient.
+3. Send messages both ways during each call and after each hangup. Verify
+   receipts and that the original messaging route remains available.
+4. With Android background availability enabled and its ongoing notification
+   visible, switch apps, lock the phone, send messages from Windows, then
+   return to Mesh Chat. Confirm delivery and repeat an audio/video call.
+5. If a step fails, capture Settings connection diagnostics from both devices
+   before restarting or making another offer. Record whether the failure was
+   before, during, or after a call and which device ended it.
+
+### Automated regression coverage and limits
+
+- `service/tests/test_webrtc_delivery.py` pairs real RNS/LXMF service processes
+  over a packet relay, including Android-like 750 ms packet polling. It checks
+  signed audio/video invitations and answers in both directions, cancellation,
+  caller/recipient hangup, and two-way messages with receipts before, during,
+  and after calls on the original bridges. It does not transport RTP.
+- `src/App.test.tsx` runs repeated answered audio/video call dialogs with
+  desktop and Android platform responses. It checks media permission timing,
+  local/remote hangup, track and audio-focus cleanup, late callbacks from old
+  calls, and preservation of the separate messaging session. Browser media and
+  native APIs are mocked in these UI tests.
+- `NativeWebRtcInteropTest` checks real native/Chromium data channels with both
+  offer directions and four successive Chromium audio/video RTP sessions.
+  Messaging is probed during and after each media session. Tracks are generated
+  and both media peers run in the same WebView; this is engine coexistence
+  coverage, not a complete Android-to-Windows call. Separate instrumentation
+  covers foreground-service restoration and packet traffic with the activity
+  stopped. The runner is `scripts/test_android_webrtc.sh`.
+
+These layers complement the physical test above. They do not reproduce a
+carrier's NAT, prolonged device sleep, hardware camera/microphone behavior, or
+every Windows WebView/Android OS combination.
+
 ## C. TURN/relay
 
 1. Configure STUN only. Verify a direct path is preferred.
