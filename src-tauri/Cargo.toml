@@ -1,6 +1,6 @@
 [package]
 name = "mesh-chat"
-version = "0.9.59"
+version = "0.9.60"
 description = "A private server-free Reticulum messenger"
 authors = ["Mesh Chat contributors"]
 license = "MIT"

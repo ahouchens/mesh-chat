@@ -6130,6 +6130,65 @@ def test_administrative_request_lifecycle_permissions_and_conflict_fail_closed(
     owner.close()
     admin.close()
 
+@pytest.mark.parametrize("entry", ["prompt", "value", "link"])
+def test_mobile_reviews_and_joins_contact_workspace_with_nested_route_hints(tmp_path, monkeypatch, entry):
+    from mesh_chat import mobile_bridge
+
+    owner, owner_network = _service(tmp_path / "owner", RNS.Identity(), "Alex")
+    member, member_network = _service(tmp_path / "member", RNS.Identity(), "Blair")
+    try:
+        # Real Windows workspaces can retain route hints in their signed device
+        # cards even when the invitation is delivered over an existing WebRTC path.
+        monkeypatch.setattr(owner_network, "invitation_hints", lambda: [
+            {"type": "tcp", "host": "198.51.100.23", "port": 4242},
+        ])
+        profiles = [owner._require_profile(), member._require_profile()]
+        for service, peer in ((owner, profiles[1]), (member, profiles[0])):
+            service.store.put("contact", "peer", Contact(
+                id="peer", display_name=peer["display_name"],
+                public_identity=peer["public_identity"], identity_hash=peer["identity_hash"],
+                destination_hash=peer["destination_hash"], fingerprint=peer["fingerprint"],
+                trust=TrustState.VERIFIED, created_at=1, updated_at=1,
+            ).to_dict())
+        workspace = owner.create_workspace(_op(143_000), "Direct Test", "")
+        sent = owner.invite_contact_to_workspace(workspace["id"], "peer")
+        member._receive_workspace_contact_invite(member.store.get("contact", "peer"), SimpleNamespace(
+            invitation=sent["invitation"]["value"], logical_id=str(uuid.uuid4()), conversation_id=str(uuid.uuid4()),
+        ))
+        prompt = member.snapshot()["workspace_invitation_prompts"][0]
+        assert prompt["workspace_name"] == "Direct Test"
+        assert member.workspace_snapshot()["workspaces"] == []
+        monkeypatch.setattr(mobile_bridge, "_service", member)
+
+        def command(name, **payload):
+            response = json.loads(mobile_bridge.command(json.dumps({"command": name, "payload": payload})))
+            assert response["ok"], response
+            return response["result"]
+
+        # Preview is local: losing the route must not invalidate the document.
+        member_network.path_available = False
+        if entry == "prompt":
+            preview = command("preview_workspace_invitation_prompt", prompt_id=prompt["id"])
+        else:
+            preview = command("preview_workspace_invitation", invitation=sent["invitation"][entry])
+        assert preview["name"] == "Direct Test"
+        assert preview["workspace_id"] == workspace["id"]
+        member_network.path_available = True
+        if entry == "prompt":
+            joined = command("submit_workspace_invitation_prompt", prompt_id=prompt["id"], operation_id=_op(143_001))
+        else:
+            joined = command("submit_workspace_join", invitation=sent["invitation"][entry], operation_id=_op(143_001))
+        assert joined["state"] == "joining"
+        for item in _flush(member, member_network):
+            _deliver(owner, item, source_profile=profiles[1], recipient_profile=profiles[0])
+        request = owner.workspace_snapshot()["workspace_join_requests"][0]
+        assert request["workspace_id"] == workspace["id"]
+        assert request["state"] == "pending"
+    finally:
+        owner.close()
+        member.close()
+
+
 def test_owner_can_send_workspace_invitation_to_verified_contact(tmp_path):
     owner, _owner_network, _owner_profile, member, _member_network, _member_profile, workspace, _key, _identity = _joined_pair(tmp_path, base=142_000)
     contact = Contact(
