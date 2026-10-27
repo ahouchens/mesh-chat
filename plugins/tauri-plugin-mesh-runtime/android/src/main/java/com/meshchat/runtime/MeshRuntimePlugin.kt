@@ -549,6 +549,7 @@ class MeshRuntimePlugin(private val activity: Activity) : Plugin(activity) {
                     resolve(invoke, initialized)
                     return@execute
                 }
+                BackgroundRuntime.applyDefault(activity)
                 syncNativeState()
                 internalCommand(
                     "mobile_lifecycle_transition",
@@ -885,6 +886,11 @@ class MeshRuntimePlugin(private val activity: Activity) : Plugin(activity) {
                     .toString())
                 return
             }
+            if (enabled && !runtimeInitialized) {
+                invoke.reject("background_runtime_locked")
+                return
+            }
+            BackgroundRuntime.setPreference(activity, enabled)
             if (enabled) {
                 BackgroundRuntime.start(activity)
             } else {
@@ -904,6 +910,7 @@ class MeshRuntimePlugin(private val activity: Activity) : Plugin(activity) {
 
     @Command
     fun shutdown(invoke: Invoke) {
+        runtimeInitialized = false
         BackgroundRuntime.stop(activity)
         NativeWebRtcBridge.closeAll()
         pythonExecutor.execute {

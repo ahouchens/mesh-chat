@@ -64,6 +64,26 @@ class NativeWebRtcInteropTest {
     @Test(timeout = 180_000) fun chromiumOfferCanBeAcceptedThroughTheRealPythonBridge() = exchange(nativeOffers = false)
     @Test(timeout = 180_000) fun nativeOfferCanConnectToChromiumWithReconnectControl() = exchange(nativeOffers = true)
 
+    @Test(timeout = 30_000) fun backgroundDefaultResumesAfterUnlockAndPreservesAnExplicitOffChoice() {
+        val prefs = context.getSharedPreferences("mesh-chat-vault", Context.MODE_PRIVATE)
+        val keys = listOf("background-availability-enabled", "background-availability-default-v2", "background-availability-preference-v2")
+        val saved = keys.associateWith { if (prefs.contains(it)) prefs.getBoolean(it, false) else null }
+        try {
+            prefs.edit().apply { keys.forEach { remove(it) } }.commit()
+            BackgroundRuntime.applyDefault(context)
+            assertTrue(BackgroundRuntime.isEnabled(context))
+            BackgroundRuntime.stop(context)
+            assertFalse(BackgroundRuntime.isEnabled(context))
+            BackgroundRuntime.applyDefault(context)
+            assertTrue(BackgroundRuntime.isEnabled(context))
+            BackgroundRuntime.setPreference(context, false)
+            BackgroundRuntime.applyDefault(context)
+            assertFalse(BackgroundRuntime.isEnabled(context))
+        } finally {
+            prefs.edit().apply { saved.forEach { (key, value) -> if (value == null) remove(key) else putBoolean(key, value) } }.commit()
+        }
+    }
+
     @Test(timeout = 90_000) fun backgroundRuntimeCanInitializeNativeWebRtc() {
         BackgroundRuntime.configure(context)
         try {

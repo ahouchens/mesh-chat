@@ -271,6 +271,70 @@ afterEach(() => {
   document.documentElement.removeAttribute("data-theme");
 });
 
+describe("Android background default", () => {
+  it.each(["not_requested", "allowed", "denied", "off"] as const)("starts automatically when notification state is %s", async (state) => {
+    const originalCapability = api.notificationCapability.getMockImplementation()!;
+    const originalRequest = api.requestNotificationPermission.getMockImplementation()!;
+    const current = snapshot();
+    api.runtimePlatform.mockResolvedValue("android");
+    api.initializeService.mockResolvedValue(current);
+    api.onInvitation.mockResolvedValue(() => undefined);
+    api.onServiceEvent.mockResolvedValue(() => undefined);
+    api.onMobileBackButton.mockResolvedValue(() => undefined);
+    api.notificationCapability.mockResolvedValue({ supported: true, platform: "android", permission_state: state === "off" ? "allowed" : state });
+    api.requestNotificationPermission.mockResolvedValue({ supported: true, platform: "android", permission_state: "allowed" });
+    api.serviceCommand.mockImplementation(async (command: string) => {
+      if (command === "snapshot") return current;
+      if (command === "background_status") return { enabled: state !== "off", native: { enabled: state !== "off", service_running: false } };
+      if (command === "reconnect_profiles") return { profiles: [] };
+      return {};
+    });
+    try {
+      render(<App />);
+      await screen.findByRole("heading", { name: "Your private conversations" });
+      await act(async () => undefined);
+      if (state === "allowed" || state === "not_requested") {
+        await waitFor(() => expect(api.setNativeBackgroundAvailability).toHaveBeenCalledWith(true));
+        expect(api.serviceCommand).toHaveBeenCalledWith("set_background_availability", { enabled: true });
+      } else expect(api.setNativeBackgroundAvailability).not.toHaveBeenCalled();
+      expect(api.requestNotificationPermission).toHaveBeenCalledTimes(state === "not_requested" ? 1 : 0);
+    } finally {
+      api.notificationCapability.mockImplementation(originalCapability);
+      api.requestNotificationPermission.mockImplementation(originalRequest);
+    }
+  });
+
+  it("honors an opt-out made while the notification prompt is pending", async () => {
+    const originalCapability = api.notificationCapability.getMockImplementation()!;
+    const originalRequest = api.requestNotificationPermission.getMockImplementation()!;
+    const permission = deferred<{ supported: boolean; platform: string; permission_state: "allowed" }>();
+    let enabled = true;
+    const current = snapshot();
+    api.runtimePlatform.mockResolvedValue("android");
+    api.initializeService.mockResolvedValue(current);
+    api.onInvitation.mockResolvedValue(() => undefined);
+    api.onServiceEvent.mockResolvedValue(() => undefined);
+    api.notificationCapability.mockResolvedValue({ supported: true, platform: "android", permission_state: "not_requested" });
+    api.requestNotificationPermission.mockImplementation(() => permission.promise);
+    api.serviceCommand.mockImplementation(async (command: string) => {
+      if (command === "snapshot") return current;
+      if (command === "background_status") return { native: { enabled } };
+      if (command === "reconnect_profiles") return { profiles: [] };
+      return {};
+    });
+    try {
+      render(<App />);
+      await waitFor(() => expect(api.requestNotificationPermission).toHaveBeenCalledOnce());
+      enabled = false;
+      await act(async () => { permission.resolve({ supported: true, platform: "android", permission_state: "allowed" }); });
+      expect(api.setNativeBackgroundAvailability).not.toHaveBeenCalled();
+    } finally {
+      api.notificationCapability.mockImplementation(originalCapability);
+      api.requestNotificationPermission.mockImplementation(originalRequest);
+    }
+  });
+});
+
 describe("startup storage errors", () => {
   it("distinguishes a busy encrypted profile from unavailable protected storage", async () => {
     api.runtimePlatform.mockResolvedValue("desktop");

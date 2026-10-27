@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import pytest
 
 from mesh_chat.background_availability import BackgroundAvailabilityMixin
 
@@ -92,6 +93,20 @@ def test_available_requires_the_actual_native_service_and_initialized_runtime(mo
     assert host.background_availability_status()["health"] != "available"
     native.update(enabled=False, failure="foreground_start_denied")
     assert host.background_availability_status()["health"] == "failed"
+
+
+@pytest.mark.parametrize("permission", ["not_requested", "denied", "allowed"])
+def test_android_default_waits_for_permission_and_the_real_service(monkeypatch, permission):
+    host = Host()
+    native = {"enabled": True, "notification_state": permission, "service_running": False, "runtime_initialized": False}
+    monkeypatch.setattr(host, "_native_background_status", lambda: dict(native))
+    status = host.background_availability_status()
+    assert status["enabled"] is True
+    assert status["reason"] == "default_enabled"
+    assert status["health"] == ("stopped" if permission == "allowed" else "permission_required")
+    # A requested default cannot authorize new background negotiations until
+    # the native service has actually started and persisted its runtime state.
+    assert host._background_availability_enabled() is False
 
 
 def test_enabled_lifecycle_does_not_retire_native_transports() -> None:

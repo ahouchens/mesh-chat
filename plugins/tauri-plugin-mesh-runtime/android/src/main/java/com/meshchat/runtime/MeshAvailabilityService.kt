@@ -90,7 +90,7 @@ class MeshAvailabilityService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_STOP -> {
-                BackgroundRuntime.setEnabled(applicationContext, false)
+                BackgroundRuntime.setPreference(applicationContext, false)
                 NativeWebRtcBridge.closeAll()
                 BackgroundRuntime.execute {
                     try {

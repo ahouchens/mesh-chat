@@ -1,14 +1,18 @@
-# 0024: Opt-in Android availability service with native WebRTC
+# 0024: Android availability service with native WebRTC
 
 Status: accepted. Narrows ADR 0014's blanket rejection of Android foreground
-services to one explicit, user-enabled availability mode. Supersedes the
+services to one visible, user-controllable availability mode. Updated in 0.9.56
+to enable availability by default after unlock, subject to notification permission. Supersedes the
 WebView-owned DataChannel assumption for Android onboarding and automatic
 reconnect; desktop and iOS keep the renderer peer.
 
 ## Decision
 
-1. Add an explicit, off-by-default **Stay available in background** mode. Plain
-   closing, explicit lock, consent removal, or disabling the mode stops it.
+1. Enable **Stay available in background** by default after unlock. Apply this
+   default once on upgrade; subsequent settings and notification Stop choices
+   persist. Request Android notification permission when needed. Explicit lock
+   stops the runtime and releases keys, while the preference resumes after
+   unlock. Disabling the mode stops it; a task swipe preserves the service.
 2. Use one `remoteMessaging` foreground service in the existing app process. Do
    not create a second Python process, copy identity keys, or start a second
    Reticulum/LXMF runtime.
@@ -34,7 +38,7 @@ reconnect; desktop and iOS keep the renderer peer.
 
 - Android onboarding and automatic reconnect now create native DataChannels;
   calls remain on the WebView + `CallService` path.
-- Background execution is opt-in and visibly stops on lock. Locking releases the
+- Background execution requires notification permission and visibly stops on lock. Locking releases the
   service, native sessions, and Python keys.
 - The app is larger and carries the libwebrtc BSD notice.
 - Physical Doze, network-switch, process-death restoration, battery, and

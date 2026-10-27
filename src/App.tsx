@@ -2477,6 +2477,7 @@ function BackgroundAvailabilitySettings({
     return () => { active = false; window.clearInterval(timer); };
   }, []);
   const status = value?.state === "locked" ? "Locked"
+    : value?.health === "permission_required" ? "Notifications required"
     : value?.native?.failure || value?.health === "failed" ? "Unavailable"
     : !enabled ? "Off"
     : value?.health === "stopped" ? "Not running"
@@ -7204,6 +7205,45 @@ export default function App() {
     }).then(keepCleanup).catch(() => undefined);
     return () => { active = false; cleanups.forEach((cleanup) => cleanup()); };
   }, [refresh, refreshWorkspace]);
+  useEffect(() => {
+    if (!snapshot?.profile || locked) return;
+    let active = true;
+    let busy = false;
+    const visible = () => document.visibilityState !== "hidden";
+    const restoreBackground = async () => {
+      if (!active || busy || !visible()) return;
+      busy = true;
+      try {
+        if (await runtimePlatform() !== "android" || !active) return;
+        const background = await serviceCommand<BackgroundAvailability>("background_status");
+        if (!active || background?.native?.enabled !== true) return;
+        let capability = await notificationCapability();
+        if (!active) return;
+        if (capability.permission_state === "not_requested") capability = await requestNotificationPermission();
+        if (!active || !visible() || capability.permission_state !== "allowed") return;
+        // A settings opt-out or lock can happen while Android shows its prompt.
+        const latest = await serviceCommand<BackgroundAvailability>("background_status");
+        if (!active || latest?.native?.enabled !== true) return;
+        await setNativeBackgroundAvailability(true);
+        if (!active) return;
+        await serviceCommand("set_background_availability", { enabled: true });
+        if (active) await refresh(true);
+      } catch {
+        // Native status retains permission/start failures for Settings to show.
+      } finally {
+        busy = false;
+      }
+    };
+    const restore = () => { void restoreBackground(); };
+    restore();
+    window.addEventListener("focus", restore);
+    document.addEventListener("visibilitychange", restore);
+    return () => {
+      active = false;
+      window.removeEventListener("focus", restore);
+      document.removeEventListener("visibilitychange", restore);
+    };
+  }, [snapshot?.profile?.destination_hash, locked, refresh]);
   useEffect(() => {
     let active = true;
     let timer: number | undefined;

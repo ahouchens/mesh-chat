@@ -992,7 +992,7 @@ export interface CallIceConfiguration {
 }
 
 export interface BackgroundAvailability {
-  health?: "off" | "starting" | "available" | "degraded" | "failed" | "stopped" | "unknown";
+  health?: "off" | "starting" | "available" | "degraded" | "failed" | "stopped" | "unknown" | "permission_required";
   native?: { enabled: boolean; service_running: boolean; runtime_initialized: boolean; failure?: string | null };
   enabled: boolean;
   mode: "native_webrtc";

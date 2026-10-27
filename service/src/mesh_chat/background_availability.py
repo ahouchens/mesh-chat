@@ -99,9 +99,14 @@ class BackgroundAvailabilityMixin:
         }
         native = self._native_background_status()
         if native is not None:
+            if native.get("enabled") and not status["enabled"]:
+                # Android's first-unlock migration establishes the default
+                # before its foreground service persists the runtime state.
+                status.update(enabled=True, state="enabled", reason="default_enabled")
             status["native"] = native
             status["health"] = (
                 "off" if not status["enabled"] else
+                "permission_required" if native.get("enabled") and native.get("notification_state") in {"not_requested", "denied", "blocked"} else
                 "failed" if not native.get("enabled") or native.get("failure") else
                 "stopped" if not native.get("service_running") and not native.get("start_requested") else
                 ("degraded" if native.get("native_webrtc_ready") is False else "available")

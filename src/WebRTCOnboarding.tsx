@@ -603,7 +603,8 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
       }
       setPhase("connected");
       void sendInvitation();
-      await onChanged();
+      // Snapshot refreshes do not own the transport handed to the registry.
+      await onChanged().catch(() => undefined);
     } catch (reason) {
       if (pcRef.current !== pc) return;
       const message = errorMessage(reason);
@@ -789,7 +790,7 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
         void sendInvitationRef.current?.();
         onConnected?.("unknown");
         setPhase("connected");
-        await onChanged();
+        await onChanged().catch(() => undefined);
         return;
       }
       if (!pc || !offerDocument) throw new Error("Create an offer first.");
@@ -930,7 +931,7 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
           handedOffRef.current = true;
           onConnected?.("unknown");
           setPhase("connected");
-          await onChanged();
+          await onChanged().catch(() => undefined);
         }).catch((reason) => {
           if (attemptRef.current !== attempt) return;
           setError(errorMessage(reason));
