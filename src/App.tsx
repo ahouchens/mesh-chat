@@ -7221,12 +7221,8 @@ export default function App() {
         if (!active) return;
         if (capability.permission_state === "not_requested") capability = await requestNotificationPermission();
         if (!active || !visible() || capability.permission_state !== "allowed") return;
-        // A settings opt-out or lock can happen while Android shows its prompt.
-        const latest = await serviceCommand<BackgroundAvailability>("background_status");
-        if (!active || latest?.native?.enabled !== true) return;
-        await setNativeBackgroundAvailability(true);
-        if (!active) return;
-        await serviceCommand("set_background_availability", { enabled: true });
+        // Native permission callbacks restore the saved preference. The UI
+        // must never turn an opt-out back on after an asynchronous prompt.
         if (active) await refresh(true);
       } catch {
         // Native status retains permission/start failures for Settings to show.

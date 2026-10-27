@@ -677,11 +677,18 @@ class MeshRuntimePlugin(private val activity: Activity) : Plugin(activity) {
         }
     }
 
+    private fun restoreAvailabilityAfterPermission() {
+        activity.runOnUiThread {
+            if (runtimeInitialized) BackgroundRuntime.restoreIfEnabled(activity)
+        }
+    }
+
     @Command
     fun notificationCapability(invoke: Invoke) {
         pythonExecutor.execute {
             try {
                 syncNativeState()
+                restoreAvailabilityAfterPermission()
                 resolve(invoke, successful(capability()))
             } catch (error: Throwable) {
                 reject(invoke, "notification_capability", error)
@@ -694,6 +701,7 @@ class MeshRuntimePlugin(private val activity: Activity) : Plugin(activity) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU || permissionState() == "allowed") {
             pythonExecutor.execute {
                 syncNativeState()
+                restoreAvailabilityAfterPermission()
                 resolve(invoke, successful(capability()))
             }
             return
@@ -701,6 +709,7 @@ class MeshRuntimePlugin(private val activity: Activity) : Plugin(activity) {
         if (preferences.getBoolean("notification-permission-requested", false)) {
             pythonExecutor.execute {
                 syncNativeState()
+                restoreAvailabilityAfterPermission()
                 resolve(invoke, successful(capability()))
             }
             return
@@ -714,6 +723,7 @@ class MeshRuntimePlugin(private val activity: Activity) : Plugin(activity) {
         pythonExecutor.execute {
             try {
                 syncNativeState()
+                restoreAvailabilityAfterPermission()
                 resolve(invoke, successful(capability()))
             } catch (error: Throwable) {
                 reject(invoke, "request_notification_permission", error)

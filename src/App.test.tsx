@@ -272,7 +272,7 @@ afterEach(() => {
 });
 
 describe("Android background default", () => {
-  it.each(["not_requested", "allowed", "denied", "off"] as const)("starts automatically when notification state is %s", async (state) => {
+  it.each(["not_requested", "allowed", "denied", "off"] as const)("uses native permission restoration when notification state is %s", async (state) => {
     const originalCapability = api.notificationCapability.getMockImplementation()!;
     const originalRequest = api.requestNotificationPermission.getMockImplementation()!;
     const current = snapshot();
@@ -293,10 +293,9 @@ describe("Android background default", () => {
       render(<App />);
       await screen.findByRole("heading", { name: "Your private conversations" });
       await act(async () => undefined);
-      if (state === "allowed" || state === "not_requested") {
-        await waitFor(() => expect(api.setNativeBackgroundAvailability).toHaveBeenCalledWith(true));
-        expect(api.serviceCommand).toHaveBeenCalledWith("set_background_availability", { enabled: true });
-      } else expect(api.setNativeBackgroundAvailability).not.toHaveBeenCalled();
+      expect(api.notificationCapability).toHaveBeenCalledTimes(state === "off" ? 0 : 1);
+      expect(api.setNativeBackgroundAvailability).not.toHaveBeenCalled();
+      expect(api.serviceCommand).not.toHaveBeenCalledWith("set_background_availability", expect.anything());
       expect(api.requestNotificationPermission).toHaveBeenCalledTimes(state === "not_requested" ? 1 : 0);
     } finally {
       api.notificationCapability.mockImplementation(originalCapability);
