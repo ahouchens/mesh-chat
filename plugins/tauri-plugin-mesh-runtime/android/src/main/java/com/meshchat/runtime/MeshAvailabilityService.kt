@@ -53,11 +53,6 @@ class MeshAvailabilityService : Service() {
     override fun onCreate() {
         super.onCreate()
         BackgroundRuntime.configure(applicationContext)
-        // A start intent queued before Lock or Stop cannot resurrect the mode.
-        if (!BackgroundRuntime.isEnabled(applicationContext)) {
-            stopSelf()
-            return
-        }
         BackgroundRuntime.ensureNotificationChannels()
         try {
             startAsForeground()
@@ -68,6 +63,13 @@ class MeshAvailabilityService : Service() {
             running = false
             BackgroundRuntime.setEnabled(applicationContext, false)
             BackgroundRuntime.availabilityFailed("foreground_start_denied")
+            stopSelf()
+            return
+        }
+        // Even a cancelled startForegroundService request must be promoted
+        // before stopping, or Android can terminate the whole app. A queued
+        // start must never initialize the vault after Lock or Stop.
+        if (!BackgroundRuntime.isEnabled(applicationContext)) {
             stopSelf()
             return
         }
@@ -108,13 +110,12 @@ class MeshAvailabilityService : Service() {
                 return START_NOT_STICKY
             }
             else -> {
-                if (!BackgroundRuntime.isEnabled(applicationContext)) {
-                    stopSelf()
-                    return START_NOT_STICKY
-                }
                 return try {
                     startAsForeground()
-                    START_STICKY
+                    if (!BackgroundRuntime.isEnabled(applicationContext)) {
+                        stopSelf()
+                        START_NOT_STICKY
+                    } else START_STICKY
                 } catch (error: Throwable) {
                     Log.e(TAG, "foreground restart denied (${error.javaClass.simpleName})")
                     BackgroundRuntime.setEnabled(applicationContext, false)

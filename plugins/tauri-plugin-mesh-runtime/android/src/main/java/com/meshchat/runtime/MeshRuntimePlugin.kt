@@ -911,7 +911,7 @@ class MeshRuntimePlugin(private val activity: Activity) : Plugin(activity) {
     @Command
     fun shutdown(invoke: Invoke) {
         runtimeInitialized = false
-        BackgroundRuntime.stop(activity)
+        BackgroundRuntime.stop(activity, preservePreference = true)
         NativeWebRtcBridge.closeAll()
         pythonExecutor.execute {
             try {

@@ -152,10 +152,10 @@ object BackgroundRuntime {
     fun onServiceStopped() { startRequestedAt = 0L }
 
     @Synchronized
-    fun stop(context: Context) {
+    fun stop(context: Context, preservePreference: Boolean = false) {
         configure(context)
         startRequestedAt = 0L
-        setEnabled(context, false)
+        if (preservePreference) setEnabled(context, false) else setPreference(context, false)
         NativeWebRtcBridge.closeAll()
         context.stopService(Intent(context, MeshAvailabilityService::class.java))
         execute { clearIncomingCallNotifications() }

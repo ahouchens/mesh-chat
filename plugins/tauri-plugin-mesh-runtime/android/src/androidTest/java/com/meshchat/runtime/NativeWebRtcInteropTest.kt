@@ -8,6 +8,7 @@ import android.webkit.JavascriptInterface
 import android.webkit.WebView
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import androidx.core.content.ContextCompat
 import com.chaquo.python.Python
 import com.chaquo.python.android.AndroidPlatform
 import org.json.JSONArray
@@ -72,7 +73,7 @@ class NativeWebRtcInteropTest {
             prefs.edit().apply { keys.forEach { remove(it) } }.commit()
             BackgroundRuntime.applyDefault(context)
             assertTrue(BackgroundRuntime.isEnabled(context))
-            BackgroundRuntime.stop(context)
+            BackgroundRuntime.stop(context, preservePreference = true)
             assertFalse(BackgroundRuntime.isEnabled(context))
             BackgroundRuntime.applyDefault(context)
             assertTrue(BackgroundRuntime.isEnabled(context))
@@ -101,11 +102,33 @@ class NativeWebRtcInteropTest {
         }
     }
 
+    @Test(timeout = 30_000) fun queuedAvailabilityStartHonorsStopWithoutCrashingOrOpeningTheRuntime() {
+        BackgroundRuntime.configure(context)
+        BackgroundRuntime.setPreference(context, false)
+        val launch = Intent().setClassName(context, "com.meshchat.runtime.smoke.BackgroundTestActivity")
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        val activity = instrumentation.startActivitySync(launch)
+        try {
+            instrumentation.runOnMainSync {
+                ContextCompat.startForegroundService(context, Intent(context, MeshAvailabilityService::class.java))
+            }
+            // Observe Android's foreground-promotion deadline, including a
+            // delayed process exception after an apparently successful Stop.
+            Thread.sleep(7_000)
+            assertFalse(MeshAvailabilityService.isRunning())
+            assertFalse(BackgroundRuntime.statusJson().optBoolean("runtime_initialized"))
+            assertFalse(BackgroundRuntime.isEnabled(context))
+        } finally {
+            BackgroundRuntime.stop(context)
+            instrumentation.runOnMainSync { activity.finish() }
+        }
+    }
+
     @Test(timeout = 180_000) fun optedInServiceRestoresAndKeepsNativeTrafficWhileActivityIsStopped() {
         BackgroundRuntime.configure(context)
         assertTrue(JSONObject(BackgroundRuntime.initialize()).optBoolean("ok"))
         // Simulate an update/process restart: persisted opt-in, no Service.
-        BackgroundRuntime.setEnabled(context, true)
+        BackgroundRuntime.setPreference(context, true)
         command("set_background_availability", JSONObject().put("enabled", true))
         assertFalse(MeshAvailabilityService.isRunning())
         val launch = Intent().setClassName(context, "com.meshchat.runtime.smoke.BackgroundTestActivity")
