@@ -1029,6 +1029,42 @@ describe("new chat invitations", () => {
     expect(submissions()[2][1]?.operation_id).not.toBe(submissions()[0][1]?.operation_id);
   });
 
+  it.each(["removed", "active"] as const)("reviews a fresh rejoin invitation when the saved workspace is %s", async (state) => {
+    const initial = snapshot();
+    const saved: Workspace = { ...workspace, state, local_role: "member" };
+    const current: Snapshot = { ...initial, workspaces: [saved], workspace_channels: [] };
+    api.runtimePlatform.mockResolvedValue("android");
+    api.initializeService.mockResolvedValue(initial);
+    api.onInvitation.mockResolvedValue(() => undefined);
+    api.onServiceEvent.mockResolvedValue(() => undefined);
+    api.serviceCommand.mockImplementation(async (command: string) => {
+      if (command === "snapshot" || command === "workspace_snapshot") return current;
+      if (command === "preview_workspace_invitation") return {
+        workspace_id: saved.id, name: saved.name, description: "", owner_fingerprint: "AAAA BBBB",
+        member_count: 1, retention_days: 90, expires_at: 2_000_000_000,
+        connection_reply_available: true, existing_workspace: saved, can_rejoin: true,
+      };
+      if (command === "submit_workspace_join") return { ...saved, state: "joining", local_member_id: "new-member", join_delivery_state: "queued" };
+      return {};
+    });
+    render(<App />);
+    await screen.findByRole("heading", { name: "Your private conversations" });
+    fireEvent.click(screen.getAllByRole("button", { name: "Connect" })[0]);
+    fireEvent.click(screen.getByRole("button", { name: "Invite someone" }));
+    fireEvent.click(await screen.findByRole("tab", { name: "Open an invite" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "Invitation" }), { target: { value: "MESHWORKSPACE4:fresh-reinvite" } });
+    fireEvent.click(screen.getByRole("button", { name: "Check invitation" }));
+    const dialog = await screen.findByRole("dialog", { name: "Join or connect" });
+    expect(await within(dialog).findByRole("heading", { name: "Rejoin workspace" })).toBeTruthy();
+    expect(within(dialog).getByText(/previous roles and private-channel access are not restored/)).toBeTruthy();
+    expect(api.serviceCommand.mock.calls.some(([command]) => command === "submit_workspace_join")).toBe(false);
+    fireEvent.click(within(dialog).getByRole("button", { name: "Request to rejoin" }));
+    await waitFor(() => expect(api.serviceCommand).toHaveBeenCalledWith("submit_workspace_join", {
+      invitation: "MESHWORKSPACE4:fresh-reinvite", operation_id: expect.any(String),
+    }));
+    expect(api.serviceCommand.mock.calls.some(([command]) => command === "remove_workspace_data")).toBe(false);
+  });
+
   it.each([
     ["active", undefined, "Active"],
     ["joining", "queued", "Join request saved · trying to reach owner"],
