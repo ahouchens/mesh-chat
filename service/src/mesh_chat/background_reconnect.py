@@ -36,6 +36,7 @@ class BackgroundReconnectSupervisor:
         self._workers: dict[str, threading.Thread] = {}
         self._retry_at: dict[str, float] = {}
         self._requests: dict[str, dict[str, Any]] = {}
+        self._completed_requests: dict[str, str] = {}
         self._last_scheduled: dict[str, float] = {}
         self._sessions_lock = threading.RLock()
         self._disconnected_since: dict[str, float] = {}
@@ -289,9 +290,14 @@ class BackgroundReconnectSupervisor:
             self._step(profile_id, service.reconnect_publish, profile_id, answer["document"], "answer")
             self._requests.pop(profile_id, None)
         else:
+            def verify_request(document):
+                request = service.verify_reconnect_request(document, profile_id)
+                if document == self._completed_requests.get(profile_id):
+                    raise IdentityMismatch("Request belongs to an established connection")
+                return request
             request_document, _ = self._fetch(profile_id, "request",
                 time.monotonic() + MAX_PHASE_WAIT_SECONDS,
-                lambda document: service.verify_reconnect_request(document, profile_id))
+                verify_request)
             native = self._step(profile_id, service.native_webrtc_offer,
                 session_id,
                 ice,
@@ -311,6 +317,11 @@ class BackgroundReconnectSupervisor:
             self._step(profile_id, service.native_webrtc_apply_answer, session_id, answer["sdp"])
         self._wait_attached(profile_id, session_id, time.monotonic() + MAX_PHASE_WAIT_SECONDS)
         self._current_profile(profile_id)
+        if not preferred:
+            # The mailbox retains the last request after a successful exchange.
+            # After a disconnect, wait for the peer's new request instead of
+            # publishing an offer for a connection it has already retired.
+            self._completed_requests[profile_id] = request_document
         with self._sessions_lock:
             self._attempt_sessions.pop(profile_id, None)
         return session_id

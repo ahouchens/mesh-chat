@@ -26,7 +26,8 @@ addresses, request timing, and ciphertext sizes.
 Consenting contacts and workspace peers can automatically negotiate a fresh
 connection after connectivity returns, without manually exchanging another
 offer/answer. Recovery reuses each signed request until it expires or is answered,
-and gives each negotiation phase its own bounded wait. Android now completes
+ignores requests for connections that already succeeded, and gives each
+negotiation phase its own bounded wait. Android now completes
 one-shot ICE gathering before sending its complete SDP, avoiding repeated gather
 timeouts. This does not preserve a live connection while a device is offline.
 

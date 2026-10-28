@@ -163,6 +163,31 @@ def test_expired_background_request_is_replaced():
     assert all(document != "expired" for _, document, _ in service.published)
 
 
+def test_recovery_ignores_request_for_the_connection_that_already_succeeded(monkeypatch):
+    service = Service(False)
+    supervisor = BackgroundReconnectSupervisor(service)
+    supervisor._attempt(service.profile)
+    fetch = service.reconnect_fetch
+    requests = iter(["request-document", "fresh-request-document"])
+    offered = []
+    create = service.reconnect_offer_create
+
+    def mailbox(profile_id, role):
+        if role == "request":
+            return {"document": next(requests)}
+        return fetch(profile_id, role)
+
+    def offer(contact_id, document, *args):
+        offered.append(document)
+        return create(contact_id, document, *args)
+
+    monkeypatch.setattr(service, "reconnect_fetch", mailbox)
+    monkeypatch.setattr(service, "reconnect_offer_create", offer)
+    monkeypatch.setattr(supervisor._stop, "wait", lambda _: None)
+    supervisor._attempt(service.profile)
+    assert offered == ["fresh-request-document"]
+
+
 @pytest.mark.parametrize("preferred", [True, False])
 def test_slow_native_gathering_does_not_consume_the_next_protocol_wait(monkeypatch, preferred):
     service = Service(preferred)
