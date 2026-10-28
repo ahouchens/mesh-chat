@@ -170,8 +170,10 @@ class NativeWebRtcInteropTest {
             val ice = JSONObject().put("iceServers", JSONArray()).put("iceTransportPolicy", "all").toString()
             val offer = JSONObject(NativeWebRtcHost.createOffer("background-a", ice, channels.toString()))
             assertTrue(offer.toString(), offer.getBoolean("ok"))
+            assertTrue("Native offer has no ICE candidate", offer.getString("sdp").contains("a=candidate:"))
             val answer = JSONObject(NativeWebRtcHost.acceptOffer("background-b", offer.getString("sdp"), ice, channels.toString()))
             assertTrue(answer.toString(), answer.getBoolean("ok"))
+            assertTrue("Native answer has no ICE candidate", answer.getString("sdp").contains("a=candidate:"))
             assertTrue(JSONObject(NativeWebRtcHost.applyAnswer("background-a", answer.getString("sdp"))).getBoolean("ok"))
             awaitState("Native channels did not open") {
                 nativeStats("background-a").optString("data_channel_state") == "open" &&

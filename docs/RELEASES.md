@@ -29,7 +29,9 @@ offer/answer. Recovery reuses each signed request until it expires or is answere
 ignores requests for connections that already succeeded, and gives each
 negotiation phase its own bounded wait. Android now completes
 one-shot ICE gathering before sending its complete SDP, avoiding repeated gather
-timeouts. This does not preserve a live connection while a device is offline.
+timeouts. A bounded startup retry handles gathering that finishes before Android
+has reported usable candidates; empty descriptions fail instead of being sent.
+This does not preserve a live connection while a device is offline.
 
 The new Android instrumentation tests passed on an API 35 emulator: persisted
 default/custom/disabled settings across process restarts, encrypted mailbox

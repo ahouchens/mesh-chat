@@ -106,6 +106,10 @@ object NativeWebRtcHost {
 
     @JvmStatic
     fun createOffer(sessionId: String, iceJson: String, channelsJson: String): String {
+        return retryEmptyDescription(sessionId) { createOfferAttempt(sessionId, iceJson, channelsJson) }
+    }
+
+    private fun createOfferAttempt(sessionId: String, iceJson: String, channelsJson: String): String {
         return try {
             val factory = requireFactory()
             if (sessions.size >= MAX_SESSIONS) return error("native_webrtc_session_limit")
@@ -137,6 +141,17 @@ object NativeWebRtcHost {
 
     @JvmStatic
     fun acceptOffer(
+        sessionId: String,
+        offerSdp: String,
+        iceJson: String,
+        expectedChannelsJson: String,
+    ): String {
+        return retryEmptyDescription(sessionId) {
+            acceptOfferAttempt(sessionId, offerSdp, iceJson, expectedChannelsJson)
+        }
+    }
+
+    private fun acceptOfferAttempt(
         sessionId: String,
         offerSdp: String,
         iceJson: String,
@@ -523,6 +538,27 @@ object NativeWebRtcHost {
             latch.countDown()
         }
         latch.await(GATHER_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+    }
+
+    private fun retryEmptyDescription(sessionId: String, create: () -> String): String {
+        // Android's network monitor can still be initializing when one-shot
+        // gathering completes without candidates. Such SDP cannot bootstrap
+        // our non-trickle exchange. Recreate the peer after a short bounded
+        // delay, keeping its ICE policy (including relay-only) unchanged.
+        val retryUntil = System.nanoTime() + TimeUnit.SECONDS.toNanos(2)
+        repeat(3) { attempt ->
+            val result = create()
+            val value = JSONObject(result)
+            if (!value.optBoolean("ok") || value.optString("sdp").lineSequence().any { it.startsWith("a=candidate:") }) {
+                return result
+            }
+            close(sessionId)
+            // Do not multiply the full gathering timeout when an unavailable
+            // TURN server or network genuinely has no usable candidates.
+            if (System.nanoTime() >= retryUntil) return error("native_webrtc_no_candidates")
+            if (attempt < 2) Thread.sleep(500)
+        }
+        return error("native_webrtc_no_candidates")
     }
 
     private fun parseChannels(raw: String): List<ChannelSpec> {
