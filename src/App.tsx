@@ -3662,6 +3662,7 @@ function JoinWorkspaceDialog({ initialValue = "", promptId, promptWorkspaceName,
   const existingJoinStatus = existingWorkspace ? workspaceJoinStatus(existingWorkspace) : null;
   const canResumeExisting = preview?.can_resume_join === true
     && existingWorkspace?.state === "joining" && existingJoinStatus?.terminal === false;
+  const canRejoin = preview?.can_rejoin === true && Boolean(existingWorkspace);
   const resumeExplanation = preview?.join_resume_reason ? ({
     invitation_mismatch: "This invitation does not match the invitation saved for this request. To continue it, reopen the exact original invitation.",
     request_stopped: "This saved request has stopped. Open Workspace settings to review the failed join before starting again.",
@@ -3742,7 +3743,7 @@ function JoinWorkspaceDialog({ initialValue = "", promptId, promptWorkspaceName,
     if (initialValue.trim() || promptId) void reviewCandidate(initialValue);
   }, [initialValue, promptId, reviewCandidate]);
   const join = async () => {
-    if ((!preview && !devicePreview) || (existingWorkspace && !canResumeExisting) || busy) return;
+    if ((!preview && !devicePreview) || (existingWorkspace && !canResumeExisting && !canRejoin) || busy) return;
     setBusy(true); setError("");
     try {
       const document = value.trim();
@@ -3805,7 +3806,7 @@ function JoinWorkspaceDialog({ initialValue = "", promptId, promptWorkspaceName,
         <div className="workspace-preview"><span className="workspace-preview__avatar">{initials(preview.name)}</span><div><h3>{preview.name}</h3><p>{preview.description || "No description"}</p></div></div>
         <dl className="security-list"><div><dt>Owner fingerprint</dt><dd>{preview.owner_fingerprint}</dd></div><div><dt>Current members</dt><dd>{preview.member_count}</dd></div><div><dt>History preference</dt><dd>{preview.retention_days === null ? "Indefinite" : `${preview.retention_days} days`}</dd></div></dl>
         {preview.i2p_access_point && <section className="direct-consent" aria-labelledby="workspace-i2p-connection"><h3 id="workspace-i2p-connection">Relayed via I2P</h3><p>This signed workspace invitation asks to use an I2P access point. Traffic is relayed; it is not a direct connection. The access point can see connection metadata, not message contents.</p><p><code>{preview.i2p_access_point.b32}</code></p><label className="checkbox-line"><input type="checkbox" checked={i2pConsent} onChange={(event) => setI2PConsent(event.target.checked)} /> Use this I2P access point for this join</label></section>}
-        {existingWorkspace ? <section className="direct-host-warning" role="status">
+        {existingWorkspace && !canRejoin ? <section className="direct-host-warning" role="status">
           <h3>Workspace already saved</h3>
           <p><strong>{workspaceStateLabel(existingWorkspace)}</strong></p>
           <p>{existingJoinStatus?.detail ?? "Open the saved workspace to view its current status and available actions."}</p>
@@ -3814,6 +3815,7 @@ function JoinWorkspaceDialog({ initialValue = "", promptId, promptWorkspaceName,
           {canResumeExisting && <Button variant="secondary" disabled={busy} onClick={() => void join()}>Continue saved request</Button>}
           <Button disabled={busy} onClick={() => void openExisting()}>{busy ? "Opening…" : "Open saved workspace"}</Button>
         </section> : <>
+        {canRejoin && <section className="direct-host-warning" role="status"><h3>Rejoin workspace</h3><p>Your previous membership has ended. This fresh invitation lets you request a new membership. Your saved messages stay on this device. The owner must approve you again; previous roles and private-channel access are not restored.</p></section>}
         <p className="muted">Joining does not approve a global contact. The owner must verify this device and approve your request.</p>
         {preview.participant_access && <section className="direct-consent" aria-labelledby="workspace-direct-connection"><h3 id="workspace-direct-connection">Direct connection to the workspace owner</h3><p>{preview.participant_access.privacy_disclosure}</p><p>The owner must keep Mesh Chat open until your request arrives.</p></section>}
         {preview.connection_reply_available && <section className="direct-consent"><h3>How this request will be sent</h3><p>{preview.participant_access ? "Mesh Chat will connect outbound to the owner’s signed route first. If every candidate fails, this device can be checked for an optional return connection." : "Mesh Chat will first save and try the signed join request over any existing or same-network Mesh route. If no route is confirmed, it will then offer to check this device for an optional return connection."}</p></section>}
@@ -3836,7 +3838,7 @@ function JoinWorkspaceDialog({ initialValue = "", promptId, promptWorkspaceName,
       {error && <p className="form-error" role="alert">{error}</p>}
       <div className="dialog-actions">{!joinedWorkspace && <>
         <Button variant="ghost" onClick={reviewed && !promptId ? () => { void stopUnsharedReply(); setPreview(null); setDevicePreview(null); setRemoteConsent(false); setI2PConsent(false); setReplyFormats(null); setReplyDoctor(null); } : () => void closeDialog()}>{reviewed && !promptId ? "Back" : "Cancel"}</Button>
-        {!existingWorkspace && <Button disabled={busy || (!reviewed && !value.trim() && !promptId) || Boolean(preview?.remote_profile) && !remoteConsent || Boolean(preview?.i2p_access_point) && !i2pConsent} onClick={() => void (reviewed ? join() : review())}>{busy ? "Working…" : devicePreview ? "Request device approval" : preview ? replyFormats ? "Send join request after sharing" : preview.remote_profile ? "Connect and send join request" : preview.participant_access ? "Connect directly and send join request" : "Send join request" : "Review"}</Button>}
+        {(!existingWorkspace || canRejoin) && <Button disabled={busy || (!reviewed && !value.trim() && !promptId) || Boolean(preview?.remote_profile) && !remoteConsent || Boolean(preview?.i2p_access_point) && !i2pConsent} onClick={() => void (reviewed ? join() : review())}>{busy ? "Working…" : devicePreview ? "Request device approval" : canRejoin ? "Request to rejoin" : preview ? replyFormats ? "Send join request after sharing" : preview.remote_profile ? "Connect and send join request" : preview.participant_access ? "Connect directly and send join request" : "Send join request" : "Review"}</Button>}
       </>}</div>
     </div>
   </Dialog>;

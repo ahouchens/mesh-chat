@@ -2577,10 +2577,17 @@ class WorkspaceServiceMixin:
         workspace = self._require_workspace(workspace_id)
         if (
             not isinstance(participants, list)
-            or workspace.get("local_member_id") not in participants
+            or not self._workspace_local_members(workspace).intersection(participants)
         ):
             raise ContactNotApproved("Workspace direct message is unavailable")
         return direct
+
+    @staticmethod
+    def _workspace_local_members(workspace: dict[str, Any]) -> set[str]:
+        """Current identity plus archived identities, for local reads only."""
+        return {workspace.get("local_member_id", "")} | {
+            item["member_id"] for item in workspace.get("local_membership_history", [])
+        }
 
     def _require_workspace_conversation(
         self, workspace_id: str, conversation_id: str
@@ -3661,6 +3668,18 @@ class WorkspaceServiceMixin:
             "closed",
             "forked",
         }
+        if not require_writable:
+            audience = conversation.get(
+                "participant_member_ids" if kind == "direct" else "member_ids", ()
+            )
+            if local_member_id not in audience:
+                previous_local = next(
+                    (item for item in audience if item in self._workspace_local_members(workspace)),
+                    None,
+                )
+                if previous_local is not None:
+                    local_member_id = previous_local
+                    former_archive = True
         if kind == "direct":
             if conversation.get("hidden") or local_member_id not in conversation.get(
                 "participant_member_ids", ()
@@ -3917,6 +3936,13 @@ class WorkspaceServiceMixin:
             if duplicate_name
             else channel.get("name", "")
         )
+        if (
+            workspace is not None
+            and channel.get("visibility") == "private"
+            and workspace.get("local_member_id") not in channel.get("member_ids", [])
+            and self._workspace_local_members(workspace).intersection(channel.get("member_ids", []))
+        ):
+            public["state"] = "removed"
         if not public["subscribed"]:
             public["unread_count"] = 0
         return public
@@ -3928,14 +3954,19 @@ class WorkspaceServiceMixin:
         manifest = self._workspace_current_manifest(workspace)
         local_member_id = str(workspace.get("local_member_id", ""))
         participants = tuple(direct.get("participant_member_ids", ()))
+        historical_local = next(
+            (item for item in participants if item in self._workspace_local_members(workspace)),
+            local_member_id,
+        )
         peer_member_id = next(
-            (member_id for member_id in participants if member_id != local_member_id),
+            (member_id for member_id in participants if member_id != historical_local),
             "",
         )
         peer = find_member(manifest, peer_member_id)
         local = find_member(manifest, local_member_id)
         active = bool(
             workspace.get("state") in {"active", "incomplete_sync"}
+            and local_member_id in participants
             and local is not None
             and local.status == "active"
             and peer is not None
@@ -4130,6 +4161,19 @@ class WorkspaceServiceMixin:
             else None
         )
         if historical_member is None or historical_member.status != "active":
+            # Stored messages from a previous membership remain a local archive.
+            # This does not authorize network history fetches or old-ID writes.
+            for former in workspace.get("local_membership_history", []):
+                if historical_manifest is not None and historical_manifest.epoch <= former["end_epoch"]:
+                    archive = {
+                        **workspace,
+                        "state": "removed",
+                        "local_member_id": former["member_id"],
+                        "local_device_id": former["device_id"],
+                        "local_membership_history": [],
+                    }
+                    if self._workspace_message_is_visible(archive, message, visibility_cache):
+                        return True
             return False
         workspace_state = str(workspace.get("state", ""))
         former_archive = workspace_state in {"left", "removed", "device_removed", "closed", "forked"}
@@ -4865,6 +4909,7 @@ class WorkspaceServiceMixin:
         )
         if existing is not None:
             preview["existing_workspace"] = self._public_workspace(existing)
+            preview["can_rejoin"] = self._workspace_can_rejoin(existing, invitation)
             try:
                 self._saved_workspace_join_owner(existing, invitation)
             except WorkspaceAlreadyKnown as exc:
@@ -5314,6 +5359,44 @@ class WorkspaceServiceMixin:
             raise WorkspaceAlreadyKnown(str(error), reason="identity_mismatch")
         return owner[1]
 
+    def _workspace_can_rejoin(
+        self,
+        workspace: dict[str, Any],
+        invite: VerifiedWorkspaceInvitation,
+    ) -> bool:
+        """A fresh owner-signed invitation can replace a revoked local membership.
+
+        The old member/device IDs remain revoked. This only authorizes saving a
+        new join request, never admission or restoration of private-channel access.
+        """
+        if (
+            self._identity is None
+            or workspace.get("state") not in {"removed", "left", "active", "incomplete_sync"}
+            or workspace.get("genesis_digest") != invite.genesis_digest
+            or invite.offered_manifest.epoch < int(workspace.get("epoch", 0))
+            or self.store.get("workspace_invitation", self._workspace_invitation_record_id(invite.nonce)) is not None
+        ):
+            return False
+        offered = invite.offered_manifest
+        known = self._workspace_manifest_at_epoch(workspace["id"], offered.epoch)
+        if known is not None and known.digest != offered.digest:
+            return False
+        former = find_member(offered, workspace.get("local_member_id", ""))
+        device = find_device(offered, workspace.get("local_device_id", ""))
+        public_identity = self._identity.get_public_key()
+        return bool(
+            former is not None
+            and former.status in {"removed", "left"}
+            and device is not None
+            and device[0].member_id == former.member_id
+            and device[1].public_identity == public_identity
+            and not any(
+                member.status == "active"
+                and any(card.public_identity == public_identity for card in member.devices)
+                for member in offered.members
+            )
+        )
+
     def _resume_workspace_join(
         self,
         workspace: dict[str, Any],
@@ -5369,9 +5452,10 @@ class WorkspaceServiceMixin:
                 raise ValidationError("I2P access point consent is required")
             self._adopt_i2p_access_point(i2p.access_point["b32"])
         existing = self.store.get("workspace", self._workspace_record_id(invite.workspace_id))
-        if existing is not None:
+        rejoining = existing is not None and self._workspace_can_rejoin(existing, invite)
+        if existing is not None and not rejoining:
             return self._resume_workspace_join(existing, invite, operation_id, digest)
-        if len(self.store.list("workspace")) >= MAX_WORKSPACES:
+        if existing is None and len(self.store.list("workspace")) >= MAX_WORKSPACES:
             raise WorkspaceLimitReached("This profile already has 16 workspaces")
         profile = self._require_profile()
         identity = self._identity
@@ -5462,6 +5546,48 @@ class WorkspaceServiceMixin:
                     verified = find_device(invite.offered_manifest, summary.get("id", ""))
                     if verified is not None:
                         summary["public_identity"] = _b64(verified[1].public_identity)
+        retired_deliveries: list[tuple[str, str, dict[str, Any]]] = []
+        retired_ids: set[str] = set()
+        retired_messages: dict[str, dict[str, Any]] = {}
+        if rejoining:
+            workspace["created_at"] = existing["created_at"]
+            workspace["general_channel_id"] = existing.get("general_channel_id")
+            workspace["authorization_generation"] = int(existing.get("authorization_generation", 1)) + 1
+            workspace["retention_generation"] = int(existing.get("retention_generation", 1)) + 1
+            workspace["local_membership_history"] = [
+                *existing.get("local_membership_history", []),
+                {
+                    "member_id": existing["local_member_id"],
+                    "device_id": existing["local_device_id"],
+                    "end_epoch": invite.offered_manifest.epoch,
+                },
+            ]
+            # Old signed traffic belongs to the revoked membership. Never let a
+            # new approval revive it, including when removal arrived via invite.
+            for record_id, stored in self.store.items("workspace_delivery"):
+                if stored.get("workspace_id") == workspace["id"] and stored.get("state") not in FINAL_DELIVERY_STATES:
+                    retired_deliveries.append(("workspace_delivery", record_id, {
+                        **stored, "state": DeliveryState.CANCELLED.value, "cancelled_at": now,
+                    }))
+                    retired_ids.add(record_id)
+                    event_id = stored.get("event_id")
+                    if isinstance(event_id, str):
+                        message_id = self._workspace_message_record_id(event_id)
+                        message = retired_messages.get(message_id) or self.store.get("workspace_message_state", message_id)
+                        if message is not None:
+                            devices = dict(message.get("delivery_devices", {}))
+                            device_id = stored["recipient_device_id"]
+                            devices[device_id] = {
+                                **devices.get(device_id, {}),
+                                "member_id": stored["recipient_member_id"],
+                                "member_display_name": stored.get("recipient_display_name", "Member"),
+                                "state": DeliveryState.CANCELLED.value,
+                            }
+                            retired_messages[message_id] = {
+                                **message,
+                                "delivery_devices": devices,
+                                "delivery_summary": self._workspace_delivery_summary_from_devices(devices),
+                            }
         local_invitation_id = self._workspace_invitation_record_id(invite.nonce)
         invitation_record = {
             "id": local_invitation_id,
@@ -5487,7 +5613,9 @@ class WorkspaceServiceMixin:
             self._manifest_epoch_record(invite.offered_manifest),
             ("workspace_invitation", local_invitation_id, invitation_record),
             ("workspace_delivery", delivery["id"], delivery),
-            *self._due_records(add=[delivery]),
+            *retired_deliveries,
+            *(("workspace_message_state", key, value) for key, value in retired_messages.items()),
+            *self._due_records(add=[delivery], remove=retired_ids),
         ]
         if email is not None:
             callback_response = self.store.get("connection_response", email.digest)
@@ -5499,6 +5627,9 @@ class WorkspaceServiceMixin:
         committed = self.store.commit_operation(
             operation_id, digest, outcome, records
         )
+        network = getattr(self, "network", None)
+        if network is not None and retired_ids:
+            network.cancel_outbound(retired_ids)
         # The exact signed request survives a failed route setup or process
         # interruption. Network work must never precede this durable commit.
         committed.update(self._prepare_workspace_join_route(invite.workspace_id))
@@ -20786,12 +20917,16 @@ class WorkspaceServiceMixin:
             for item in self.store.list("workspace")
             if isinstance(item.get("id"), str)
         }
+        workspace_history_members = {
+            item["id"]: self._workspace_local_members(item) for item in stored_workspaces
+        }
         stored_channels = [
             item
             for item in self.store.list("workspace_channel")
             if item.get("visibility") != "private"
             or workspace_local_members.get(item.get("workspace_id"))
             in item.get("member_ids", [])
+            or workspace_history_members.get(item.get("workspace_id"), set()).intersection(item.get("member_ids", []))
             or item.get("state") in {"leaving", "left", "removed"}
         ]
         # Increment 10 migration is metadata-bounded here: startup already
@@ -20839,8 +20974,7 @@ class WorkspaceServiceMixin:
             self._public_workspace_direct(item)
             for item in self.store.list("workspace_direct")
             if not item.get("hidden")
-            and workspace_local_members.get(item.get("workspace_id"))
-            in item.get("participant_member_ids", [])
+            and workspace_history_members.get(item.get("workspace_id"), set()).intersection(item.get("participant_member_ids", []))
         ]
         directs.sort(
             key=lambda item: (
