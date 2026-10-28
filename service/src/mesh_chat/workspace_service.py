@@ -3199,6 +3199,30 @@ class WorkspaceServiceMixin:
         manifests.append(final_manifest)
         return manifests
 
+    def _workspace_channel_manifest_deliveries(
+        self,
+        workspace_id: str,
+        controls: list[dict[str, Any]],
+        recipients: Iterable[tuple[str, Any]],
+        *,
+        before_epoch: int,
+    ) -> list[dict[str, Any]]:
+        # Invitations pin a current checkpoint, but public channel controls can
+        # still reference earlier epochs (#general always starts at epoch 1).
+        # Supply the history needed to authenticate those controls as well.
+        if not controls:
+            return []
+        manifests: list[VerifiedWorkspaceManifest] = []
+        for epoch in range(1, before_epoch):
+            manifest = self._workspace_manifest_at_epoch(workspace_id, epoch)
+            # Another member may itself have joined at a sparse checkpoint.
+            # Share its available history without withholding channel controls.
+            if manifest is not None:
+                manifests.append(manifest)
+        return self._workspace_manifest_deliveries(
+            workspace_id, manifests, recipients,
+        )
+
     def _apply_manifest_public_identities(
         self, workspace: dict[str, Any], manifest: VerifiedWorkspaceManifest
     ) -> None:
@@ -6363,6 +6387,12 @@ class WorkspaceServiceMixin:
             )
             for control in channel_controls
         ]
+        manifest_deliveries.extend(
+            self._workspace_channel_manifest_deliveries(
+                workspace_id, channel_controls, [(join.member_id, join.device)],
+                before_epoch=checked_invitation.offered_manifest.epoch,
+            )
+        )
         outcome = {
             "request_id": request_id,
             "state": "approved",
@@ -9910,7 +9940,45 @@ class WorkspaceServiceMixin:
                 self._store_pending_workspace_control(wire, "missing_manifest_predecessor")
                 return False
             if incoming.epoch <= current.epoch:
-                return False
+                # Historical records validate channel controls, never replace
+                # the current roster or roll back local membership. Authenticate
+                # against a pinned successor hash or a verified predecessor.
+                successor = self._workspace_manifest_at_epoch(
+                    wire.workspace_id, incoming.epoch + 1
+                )
+                if successor is not None:
+                    if successor.previous_manifest_hash != incoming.digest:
+                        return False
+                else:
+                    predecessor = (
+                        self._workspace_genesis(workspace)
+                        if incoming.epoch == 1
+                        else self._workspace_manifest_at_epoch(
+                            wire.workspace_id, incoming.epoch - 1
+                        )
+                    )
+                    if predecessor is None or (
+                        incoming.authority_transition_digest is not None
+                        or incoming.device_transition_digest is not None
+                    ):
+                        self._store_pending_workspace_control(
+                            wire, "missing_manifest_predecessor"
+                        )
+                        return False
+                    verify_workspace_manifest_transition(wire.document, predecessor)
+                self.store.put_many([
+                    (
+                        "workspace_manifest",
+                        self._workspace_manifest_record_id(incoming.digest),
+                        self._manifest_record(incoming),
+                    ),
+                    self._manifest_epoch_record(incoming),
+                ])
+                if drain_pending:
+                    self._drain_workspace_pending_controls(wire.workspace_id)
+                    self._drain_workspace_pending_events(wire.workspace_id)
+                self._workspace_changed(wire.workspace_id, resource_kind="manifest")
+                return True
             authority_record: dict[str, Any] | None = None
             device_record: dict[str, Any] | None = None
             if incoming.device_transition_digest is not None:
@@ -11372,6 +11440,12 @@ class WorkspaceServiceMixin:
                 )
                 for control in controls
             ]
+            deliveries.extend(
+                self._workspace_channel_manifest_deliveries(
+                    wire.workspace_id, controls, [(fetch.member_id, requester[1])],
+                    before_epoch=manifest.epoch,
+                )
+            )
             deliveries.extend(
                 self._workspace_channel_summary_deliveries(
                     workspace,

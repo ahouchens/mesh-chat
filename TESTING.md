@@ -1,5 +1,32 @@
 # Verification and release gates
 
+## Workspace channels after joining an updated workspace — 0.9.61
+
+A join invitation pins the current workspace manifest, while the original
+`#general` control references epoch 1. Previously, approval sent only manifests
+newer than the invitation. Joining after a metadata or membership update could
+therefore succeed while `#general` remained pending on a missing historical
+manifest. Channel-directory fetches repeated the control without its dependency.
+
+Approval and channel fetches now include available historical manifests. The
+receiver authenticates older records against a pinned successor hash or a
+verified predecessor and stores them for control validation without replacing
+the current membership or activating a pending join. Sparse peers still send
+their available history and controls.
+
+`service/tests/test_workspace_channel_bootstrap.py` covers joining after multiple
+updates, reordered deliveries, repair through channel-directory sync, forged
+historical authorities, and preservation of the current roster and join state.
+The missing-channel cases failed before the fix. These are service-level tests;
+physical Android/Windows WebRTC retesting requires rebuilt apps on both devices.
+For an existing stuck join, keep both devices connected and use Browse channels
+then Sync directory after updating.
+
+Local validation: 1,348 service tests passed with 46 environment/platform skips;
+all 474 frontend tests, 14 signaling/asset verification tests, and TypeScript
+checks passed. No local application build was run. GitHub Actions builds and
+publishes the Windows installers and signed Android APK from the version tag.
+
 ## Android native WebRTC reconnect lifecycle — 0.9.42
 
 Native callbacks now snapshot the process service without acquiring the mobile

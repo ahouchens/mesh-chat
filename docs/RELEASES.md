@@ -14,6 +14,25 @@ Android capability status, hardware gaps, and the exact physical test matrix are
 tracked separately in [docs/ANDROID_PARITY.md](ANDROID_PARITY.md). Shared
 React/Python code is not treated as physical Android verification.
 
+## 0.9.61 — Recover workspace channels after joining
+
+Fix a workspace join that succeeds but leaves Android or Windows showing
+"Channel controls are syncing" without `#general`. Invitations created after
+workspace updates could omit older signed manifests required to validate the
+channel records. Approval and channel-directory fetches now supply available
+historical manifests, and recipients validate and retain them without rolling
+back current membership.
+
+Update both devices, keep them connected, and use **Browse channels → Sync
+directory** to recover an existing affected workspace; a new invitation is not
+required.
+
+Local validation passed 1,348 service tests (46 skipped), 474 frontend tests,
+14 signaling/asset checks, and TypeScript checks. The regressions cover fresh
+joins, recovery, reordered delivery, and rejection of forged historical records.
+Physical Android/Windows retesting remains pending. GitHub Actions builds and
+publishes installers from the version tag; no local application build was run.
+
 ## 0.9.36 — WebRTC startup packets and clearer route status
 
 - Preserve early routing packets while the native WebRTC bridge is attaching.
