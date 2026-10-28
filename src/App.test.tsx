@@ -15,6 +15,7 @@ const api = vi.hoisted(() => ({
   onNotificationOpen: vi.fn<(callback: (notificationId: string) => void) => Promise<() => void>>(async () => () => undefined),
   onServiceEvent: vi.fn(),
   openNotificationSettings: vi.fn(async () => ({ supported: false, platform: "desktop", permission_state: "unsupported" })),
+  openBatterySettings: vi.fn(async () => ({ opened: true })),
   pickInvitationFile: vi.fn(),
   requestMediaPermission: vi.fn(async () => ({ audio: true, camera: true })),
   requestNotificationPermission: vi.fn(async () => ({ supported: false, platform: "desktop", permission_state: "unsupported" })),
@@ -273,6 +274,39 @@ afterEach(() => {
 });
 
 describe("Android background default", () => {
+  it.each([false, true, undefined])("reports battery exemption %s without claiming a live connection", async (exempt) => {
+    const current = snapshot();
+    current.background_availability = { enabled: true, mode: "native_webrtc", state: "enabled",
+      reason: "user_enabled", lifecycle_state: "caught_up", updated_at: 1, health: "available",
+      native: { enabled: true, service_running: true, runtime_initialized: true, battery_optimization_exempt: exempt } };
+    api.runtimePlatform.mockResolvedValue("android");
+    api.initializeService.mockResolvedValue(current);
+    api.onInvitation.mockResolvedValue(() => undefined);
+    api.onServiceEvent.mockResolvedValue(() => undefined);
+    api.onMobileBackButton.mockResolvedValue(() => undefined);
+    api.serviceCommand.mockImplementation(async (command: string) => {
+      if (command === "snapshot") return current;
+      if (command === "background_status") return current.background_availability;
+      if (command === "reconnect_profiles") return { profiles: [] };
+      return {};
+    });
+    render(<App />);
+    await screen.findByRole("heading", { name: "Your private conversations" });
+    fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+    fireEvent.click(screen.getByRole("button", { name: "Connections" }));
+    await screen.findByText(/Status: Running/);
+    expect(screen.getByText(/Restarting the service does not restore a lost connection/)).toBeTruthy();
+    expect(api.openBatterySettings).not.toHaveBeenCalled();
+    if (exempt === true) {
+      expect(screen.queryByRole("button", { name: "Open battery settings" })).toBeNull();
+    } else {
+      expect(screen.getByText(exempt === false ? /Battery optimization is on/ : /could not check Android's battery/)).toBeTruthy();
+      fireEvent.click(screen.getByRole("button", { name: "Open battery settings" }));
+      await waitFor(() => expect(api.openBatterySettings).toHaveBeenCalledOnce());
+      expect(api.setNativeBackgroundAvailability).not.toHaveBeenCalled();
+    }
+  });
+
   it("lets an enabled but failed background service restart without toggling the preference off", async () => {
     const current = snapshot();
     current.background_availability = { enabled: true, mode: "native_webrtc", state: "enabled",

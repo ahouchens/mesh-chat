@@ -156,6 +156,10 @@ class NativeWebRtcInteropTest {
             })
             assertTrue(BackgroundRuntime.statusJson().optBoolean("notification_visible"))
             assertTrue(BackgroundRuntime.statusJson().optBoolean("multicast_lock_held"))
+            val power = context.getSystemService(Context.POWER_SERVICE) as android.os.PowerManager
+            assertEquals(power.isIgnoringBatteryOptimizations(context.packageName),
+                BackgroundRuntime.statusJson().getBoolean("battery_optimization_exempt"))
+            assertEquals(power.isDeviceIdleMode, BackgroundRuntime.statusJson().getBoolean("device_idle"))
         }
         try {
             awaitState("Saved opt-in did not restore the Service") {
@@ -195,6 +199,14 @@ class NativeWebRtcInteropTest {
             }
             assertEquals("open", nativeStats("background-a").getString("data_channel_state"))
             assertTrue(BackgroundRuntime.statusJson().getInt("restorations") >= 2)
+            // Restart must not erase the preceding stop. Check persisted storage
+            // as well as status, because the in-memory failure resets on start.
+            val history = BackgroundRuntime.statusJson().getJSONArray("service_history")
+            val events = (0 until history.length()).map { history.getJSONObject(it).getString("event") }
+            assertTrue(events.indexOfLast { it == "destroyed" } >= 0)
+            assertTrue(events.indexOfLast { it == "started" } > events.indexOfLast { it == "destroyed" })
+            assertEquals(history.toString(), context.getSharedPreferences("mesh-chat-vault", Context.MODE_PRIVATE)
+                .getString("background-availability-history-v1", null))
             // Explicit opt-out must win over a later foreground resume.
             BackgroundRuntime.stop(context)
             command("set_background_availability", JSONObject().put("enabled", false))

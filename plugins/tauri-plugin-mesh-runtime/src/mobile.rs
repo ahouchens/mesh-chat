@@ -84,6 +84,10 @@ impl<R: Runtime> MeshRuntime<R> {
         Ok(self.0.run_mobile_plugin("openNotificationSettings", ())?)
     }
 
+    pub fn open_battery_settings(&self) -> Result<NativeResponse> {
+        Ok(self.0.run_mobile_plugin("openBatterySettings", ())?)
+    }
+
     pub fn set_theme(&self, payload: ThemeRequest) -> Result<NativeResponse> {
         Ok(self.0.run_mobile_plugin("setTheme", payload)?)
     }

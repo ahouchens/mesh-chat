@@ -90,6 +90,37 @@ These layers complement the physical test above. They do not reproduce a
 carrier's NAT, prolonged device sleep, hardware camera/microphone behavior, or
 every Windows WebView/Android OS combination.
 
+### Android sleep qualification (separate from short activity-stop coverage)
+
+On a disposable test device, test battery optimization both enabled and exempt.
+The Background availability screen must report the actual exemption and offer
+system battery settings when restricted or unknown. Opening settings must not
+silently change the background opt-in or claim a successful exemption.
+
+Keep Windows awake throughout. Establish a fresh connection, exchange messages,
+then leave Android unplugged, stationary and screen-off for at least 30 minutes.
+Send messages from Windows during sleep; verify Android notifications and replies
+after wake. Record direct/relay path and battery configuration. Also exercise
+forced Doze using Android's documented `adb shell dumpsys deviceidle force-idle`
+procedure on the test device; always restore it with
+`adb shell dumpsys deviceidle unforce` afterwards. Run both restricted and exempt
+cases. Network suspension is possible in the restricted case even with a
+foreground service; don't count that case as proof of sleep delivery.
+
+Capture diagnostics before restarting anything, then again after restarting the
+background service. Compare `battery_optimization_exempt`, `device_idle`,
+`power_save`, `service_history`, and `previous_process_exit` with the transport
+events. Service history must retain the stop/start sequence. A process killed
+without `onDestroy` may have no `destroyed` event; the previous exit is an OS
+reason code and timestamp, not proof that Doze caused the exit. Restarting the
+service must not be presented as restoring a lost peer connection. With no
+signaling mailbox, re-establish the connection with a fresh invitation.
+
+Automated instrumentation checks the power flags against Android APIs and that
+service restart preserves its persisted history. It does not qualify prolonged
+sleep or Samsung power management. Reference:
+https://developer.android.com/training/monitoring-device-state/doze-standby
+
 ## C. TURN/relay
 
 1. Configure STUN only. Verify a direct path is preferred.

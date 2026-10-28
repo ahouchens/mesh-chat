@@ -241,6 +241,33 @@ def test_background_diagnostics_distinguish_opt_in_from_running_service():
     assert "secret" not in json.dumps(current)
 
 
+def test_sleep_diagnostics_keep_history_after_restart_without_exporting_private_fields():
+    native = {"enabled": True, "service_running": True, "runtime_initialized": True,
+              "failure": None, "battery_optimization_exempt": False, "device_idle": False,
+              "power_save": True, "service_history": [
+                  {"time": 100, "event": "runtime_initialization_failed", "detail": "secret"},
+                  {"time": 101, "event": "destroyed"}, {"time": 102, "event": "started"}],
+              "previous_process_exit": {"time": 99, "reason_code": 3, "description": "secret"}}
+    service = SimpleNamespace(background_availability_status=lambda: {"enabled": True, "health": "available", "native": native})
+    current = diagnostics.background_state(service)
+    assert current["failure"] is None
+    assert current["service_history"] == [{"time": 100, "event": "runtime_initialization_failed"},
+                                          {"time": 101, "event": "destroyed"}, {"time": 102, "event": "started"}]
+    assert current["previous_process_exit"] == {"time": 99, "reason_code": 3}
+    assert current["battery_optimization_exempt"] is False
+    assert current["device_idle"] is False
+    assert current["power_save"] is True
+    assert "secret" not in json.dumps(current)
+    native.update(battery_optimization_exempt="secret", device_idle=1, power_save={},
+                  service_history=[{"time": True, "event": "secret"}] * 100,
+                  previous_process_exit={"time": -1, "reason_code": True})
+    current = diagnostics.background_state(service)
+    assert current["battery_optimization_exempt"] is current["device_idle"] is current["power_save"] is None
+    assert current["service_history"] == [{"time": None, "event": "unavailable"}] * 16
+    assert current["previous_process_exit"] == {"time": None, "reason_code": None}
+    assert "secret" not in json.dumps(current)
+
+
 def test_unreadable_current_outbox_does_not_hide_historical_failure():
     class BrokenListStore(Store):
         def list(self, kind):

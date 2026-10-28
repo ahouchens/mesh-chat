@@ -278,16 +278,34 @@ def background_state(service):
             return raw if isinstance(raw, str) and raw in allowed else "unavailable"
         def boolean(raw):
             return raw if type(raw) is bool else None
+        def timestamp(raw):
+            return raw if type(raw) is int and 0 <= raw <= 2**53 - 1 else None
+        history = native.get("service_history")
+        history = history[-16:] if isinstance(history, list) else []
+        history = [{"time": timestamp(row.get("time")), "event": choice(row.get("event"), {
+            "started", "destroyed", "locked", "disabled", "notification_stop", "system_restart",
+            "foreground_start_denied", "foreground_restart_denied", "runtime_initialization_failed",
+            "notification_permission_required", "power_lock_failed",
+        })} for row in history if isinstance(row, dict)]
+        previous_exit = native.get("previous_process_exit")
+        if isinstance(previous_exit, dict):
+            reason = previous_exit.get("reason_code")
+            previous_exit = {"time": timestamp(previous_exit.get("time")),
+                             "reason_code": reason if type(reason) is int and 0 <= reason <= 255 else None}
+        else:
+            previous_exit = None
         restorations = native.get("restorations")
         return {
             "status": "available", "enabled": boolean(value.get("enabled")),
             "health": choice(value.get("health"), {"off", "starting", "available", "degraded", "failed", "stopped", "unknown"}),
             "lifecycle_state": choice(value.get("lifecycle_state"), {"foreground", "background", "background_available", "suspended", "reconciling", "caught_up"}),
-            **{key: boolean(native.get(key)) for key in ("service_running", "runtime_initialized", "native_webrtc_ready", "start_requested", "notification_visible", "ui_foreground")},
+            **{key: boolean(native.get(key)) for key in ("service_running", "runtime_initialized", "native_webrtc_ready", "start_requested", "notification_visible", "ui_foreground", "battery_optimization_exempt", "device_idle", "power_save")},
+            "service_history": history,
+            "previous_process_exit": previous_exit,
             "native_enabled": boolean(native.get("enabled")),
             "notification_state": choice(native.get("notification_state"), {"allowed", "denied", "not_requested", "settings_required", "unknown"}),
             "failure": None if native.get("failure") is None else choice(native.get("failure"), {
-                "foreground_start_denied", "foreground_restart_denied", "runtime_initialization_failed", "notification_permission_required"}),
+                "foreground_start_denied", "foreground_restart_denied", "runtime_initialization_failed", "notification_permission_required", "power_lock_failed"}),
             "restorations": restorations if type(restorations) is int and 0 <= restorations <= 2**53 - 1 else None,
         }
     except Exception:

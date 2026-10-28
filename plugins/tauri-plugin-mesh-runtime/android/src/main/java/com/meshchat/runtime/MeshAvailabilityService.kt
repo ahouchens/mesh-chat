@@ -73,7 +73,14 @@ class MeshAvailabilityService : Service() {
             stopSelf()
             return
         }
-        acquireLocks()
+        try {
+            acquireLocks()
+        } catch (error: Throwable) {
+            Log.e(TAG, "availability locks failed (${error.javaClass.simpleName})")
+            BackgroundRuntime.availabilityFailed("power_lock_failed")
+            stopSelf()
+            return
+        }
         BackgroundRuntime.execute {
             try {
                 if (BackgroundRuntime.isEnabled(applicationContext)) {
@@ -97,6 +104,7 @@ class MeshAvailabilityService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_STOP -> {
+                BackgroundRuntime.recordServiceEvent("notification_stop")
                 BackgroundRuntime.setPreference(applicationContext, false)
                 NativeWebRtcBridge.closeAll()
                 BackgroundRuntime.execute {
@@ -110,6 +118,7 @@ class MeshAvailabilityService : Service() {
                 return START_NOT_STICKY
             }
             else -> {
+                if (intent == null) BackgroundRuntime.recordServiceEvent("system_restart")
                 return try {
                     startAsForeground()
                     if (!BackgroundRuntime.isEnabled(applicationContext)) {

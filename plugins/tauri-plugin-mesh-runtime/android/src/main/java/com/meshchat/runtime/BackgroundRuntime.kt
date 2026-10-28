@@ -1,6 +1,7 @@
 package com.meshchat.runtime
 
 import android.Manifest
+import android.app.ActivityManager
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
@@ -10,6 +11,7 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import android.net.wifi.WifiManager
 import android.os.Build
+import android.os.PowerManager
 import android.os.SystemClock
 import android.provider.Settings
 import android.security.keystore.KeyGenParameterSpec
@@ -22,6 +24,7 @@ import androidx.core.content.ContextCompat
 import com.chaquo.python.Python
 import com.chaquo.python.android.AndroidPlatform
 import org.json.JSONObject
+import org.json.JSONArray
 import java.security.KeyStore
 import java.security.SecureRandom
 import java.util.concurrent.Executors
@@ -51,6 +54,7 @@ object BackgroundRuntime {
     private const val AVAILABILITY_KEY = "background-availability-enabled"
     private const val DEFAULT_APPLIED_KEY = "background-availability-default-v2"
     private const val PREFERENCE_KEY = "background-availability-preference-v2"
+    private const val HISTORY_KEY = "background-availability-history-v1"
 
     @Volatile private var configured = false
     @Volatile private var runtimeInitialized = false
@@ -60,6 +64,15 @@ object BackgroundRuntime {
     @Volatile private var startRequestedAt = 0L
     @Volatile private var restorations = 0
     private lateinit var appContext: Context
+    private val previousProcessExit: JSONObject? by lazy {
+        // Read once per process, never include OS descriptions, traces or names.
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) null else try {
+            val manager = appContext.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
+            manager.getHistoricalProcessExitReasons(appContext.packageName, 0, 16)
+                .firstOrNull { it.processName == appContext.applicationInfo.processName }
+                ?.let { JSONObject().put("time", it.timestamp / 1000).put("reason_code", it.reason) }
+        } catch (_: Exception) { null }
+    }
     private val preferences by lazy {
         appContext.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
     }
@@ -147,14 +160,42 @@ object BackgroundRuntime {
     private fun startPending(): Boolean = startRequestedAt != 0L &&
         SystemClock.elapsedRealtime() - startRequestedAt < 15_000
 
-    fun onServiceStarted() { startRequestedAt = 0L }
+    fun onServiceStarted() {
+        startRequestedAt = 0L
+        recordServiceEvent("started")
+    }
 
-    fun onServiceStopped() { startRequestedAt = 0L }
+    fun onServiceStopped() {
+        startRequestedAt = 0L
+        recordServiceEvent("destroyed")
+    }
+
+    /** Bounded, content-free evidence retained across manual and process restarts. */
+    @Synchronized
+    fun recordServiceEvent(event: String) {
+        if (!configured) return
+        val previous = serviceHistory()
+        val history = JSONArray()
+        for (index in maxOf(0, previous.length() - 15) until previous.length()) {
+            previous.optJSONObject(index)?.let { history.put(it) }
+        }
+        history.put(JSONObject().put("event", event).put("time", System.currentTimeMillis() / 1000))
+        preferences.edit().putString(HISTORY_KEY, history.toString()).apply()
+    }
+
+    private fun serviceHistory(): JSONArray = if (!configured) JSONArray() else try {
+        JSONArray(preferences.getString(HISTORY_KEY, "[]"))
+    } catch (_: Exception) { JSONArray() }
+
+    private fun powerState(read: (PowerManager) -> Boolean): Any = try {
+        if (!configured) JSONObject.NULL else read(appContext.getSystemService(Context.POWER_SERVICE) as PowerManager)
+    } catch (_: Exception) { JSONObject.NULL }
 
     @Synchronized
     fun stop(context: Context, preservePreference: Boolean = false) {
         configure(context)
         startRequestedAt = 0L
+        recordServiceEvent(if (preservePreference) "locked" else "disabled")
         if (preservePreference) setEnabled(context, false) else setPreference(context, false)
         NativeWebRtcBridge.closeAll()
         context.stopService(Intent(context, MeshAvailabilityService::class.java))
@@ -241,6 +282,11 @@ object BackgroundRuntime {
         .put("notification_visible", if (configured) notificationVisible() else false)
         .put("failure", availabilityFailure ?: JSONObject.NULL)
         .put("notification_state", if (configured) permissionState() else "unknown")
+        .put("battery_optimization_exempt", powerState { it.isIgnoringBatteryOptimizations(appContext.packageName) })
+        .put("device_idle", powerState { it.isDeviceIdleMode })
+        .put("power_save", powerState { it.isPowerSaveMode })
+        .put("service_history", serviceHistory())
+        .put("previous_process_exit", if (configured) previousProcessExit ?: JSONObject.NULL else JSONObject.NULL)
 
     @JvmStatic
     fun status(): String = statusJson().toString()
@@ -248,6 +294,7 @@ object BackgroundRuntime {
     fun availabilityFailed(reason: String) {
         startRequestedAt = 0L
         availabilityFailure = reason
+        recordServiceEvent(reason)
         setEnabled(appContext, false)
         execute {
             try { setBackgroundPreference(false) } catch (_: Throwable) { }

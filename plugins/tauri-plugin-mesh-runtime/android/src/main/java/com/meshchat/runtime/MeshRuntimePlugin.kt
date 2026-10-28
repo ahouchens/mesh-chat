@@ -880,6 +880,26 @@ class MeshRuntimePlugin(private val activity: Activity) : Plugin(activity) {
     }
 
     @Command
+    fun openBatterySettings(invoke: Invoke) {
+        activity.runOnUiThread {
+            try {
+                // User-controlled exemption list; no silent change or automatic prompt.
+                val battery = Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
+                val fallback = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
+                    .setData(Uri.parse("package:${activity.packageName}"))
+                try {
+                    activity.startActivity(battery)
+                } catch (_: android.content.ActivityNotFoundException) {
+                    activity.startActivity(fallback)
+                }
+                resolve(invoke, successful(JSONObject().put("opened", true)))
+            } catch (error: Throwable) {
+                reject(invoke, "open_battery_settings", error)
+            }
+        }
+    }
+
+    @Command
     fun setBackgroundAvailability(invoke: Invoke) {
         val enabled = invoke.parseArgs(BackgroundAvailabilityArgs::class.java).enabled
         if (enabled == null) {

@@ -178,6 +178,10 @@ export function openNotificationSettings(): Promise<NotificationCapability> {
   return invoke<NotificationCapability>("open_notification_settings");
 }
 
+export function openBatterySettings(): Promise<{ opened: boolean }> {
+  return invoke<{ opened: boolean }>("open_battery_settings");
+}
+
 /**
  * Open Android's document picker and return a native-validated Mesh Chat
  * invitation. Cancellation resolves to null; validation and provider failures
