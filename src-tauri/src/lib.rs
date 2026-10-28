@@ -1570,6 +1570,22 @@ fn open_notification_settings(app: AppHandle) -> PendingResult {
     )
 }
 
+#[cfg(desktop)]
+#[tauri::command]
+fn open_battery_settings() -> PendingResult {
+    Err("battery_settings_unavailable".to_string())
+}
+
+#[cfg(mobile)]
+#[tauri::command]
+fn open_battery_settings(app: AppHandle) -> PendingResult {
+    mobile_result(
+        app.mesh_runtime()
+            .open_battery_settings()
+            .map_err(|_| "battery_settings_unavailable".to_string())?,
+    )
+}
+
 #[tauri::command]
 fn app_build_info(app: AppHandle) -> serde_json::Value {
     let mut info = serde_json::json!({
@@ -1688,7 +1704,8 @@ pub fn run() {
             request_media_permission,
             begin_call_audio,
             end_call_audio,
-            open_notification_settings
+            open_notification_settings,
+            open_battery_settings
         ])
         .setup(|_app| {
             #[cfg(any(target_os = "linux", all(debug_assertions, windows)))]

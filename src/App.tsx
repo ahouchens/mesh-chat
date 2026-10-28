@@ -60,6 +60,7 @@ import {
   onNotificationOpen,
   onServiceEvent,
   openNotificationSettings,
+  openBatterySettings,
   requestNotificationPermission,
   requestMediaPermission,
   runtimePlatform,
@@ -2512,7 +2513,7 @@ function BackgroundAvailabilitySettings({
     : value?.native?.failure || value?.health === "failed" ? "Unavailable"
     : !enabled ? "Off"
     : value?.health === "stopped" ? "Not running"
-    : value?.health === "available" ? "Available"
+    : value?.health === "available" ? (value.native?.battery_optimization_exempt === false ? "Running · sleep restrictions apply" : "Running")
     : value?.health === "degraded" ? "WebRTC unavailable"
     : value?.health === "starting" ? "Starting" : "Status unknown";
   const toggle = async (restart = false) => {
@@ -2551,8 +2552,14 @@ function BackgroundAvailabilitySettings({
       </div>
     </fieldset>
     <p className="muted" role="status">Status: {status}</p>
+    {enabled && value?.native?.battery_optimization_exempt !== true && <div>
+      <p>{value?.native?.battery_optimization_exempt === false
+        ? "Battery optimization is on. Android can pause Mesh Chat's network while your phone sleeps, even when the background notification is visible."
+        : "Mesh Chat could not check Android's battery optimization setting."} For messages and calls during sleep, open battery settings and allow Mesh Chat to run without battery optimization. This can use more battery.</p>
+      <Button variant="secondary" onClick={() => { setError(""); void openBatterySettings().catch(() => setError("Could not open battery settings. Open Android Settings → Apps → Mesh Chat → Battery.")); }}>Open battery settings</Button>
+    </div>}
     {enabled && (value?.health === "stopped" || value?.health === "failed") && <div role="alert"><p className="form-error">Background availability is enabled, but Android's service is not available.</p><Button disabled={busy} onClick={() => void toggle(true)}>Restart background service</Button></div>}
-    <p className="muted">Native WebRTC messaging stays connected while this mode is available. Automatic reconnection also needs an agreed signaling mailbox. Complete invitation review and contact approval while the app is open. Audio and video calls use the call service.</p>
+    <p className="muted">This service helps keep existing messaging connections alive; it cannot guarantee that Android or the network will preserve them. Restarting the service does not restore a lost connection. Exchange a fresh invitation to reconnect, or configure an agreed signaling mailbox for automatic reconnection. Complete invitation review and contact approval while the app is open. Audio and video calls use the call service.</p>
     <p className="muted">Notifications must be allowed so Android can show the required ongoing notice. Stopping the mode removes the notice and releases the wake and Wi-Fi locks.</p>
     {error && <p className="form-error" role="alert">{error}</p>}
   </section>;

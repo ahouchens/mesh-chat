@@ -115,3 +115,9 @@ def test_native_command_and_renderer_command_are_wired() -> None:
     assert "BackgroundAvailabilityRequest" in models
     assert "set_background_availability" in rust
     assert 'invoke<{ enabled: boolean }>("set_background_availability"' in api
+    assert "open_battery_settings" in mobile
+    assert "open_battery_settings" in rust
+    assert 'invoke<{ opened: boolean }>("open_battery_settings")' in api
+    plugin = (ANDROID / "MeshRuntimePlugin.kt").read_text(encoding="utf-8")
+    assert "ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS" in plugin
+    assert "ACTION_APPLICATION_DETAILS_SETTINGS" in plugin
