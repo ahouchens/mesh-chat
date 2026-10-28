@@ -399,6 +399,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .remote-profile-row small, .remote-profile-row p, .remote-consent p, .direct-consent p { color: var(--muted); font-size: .76rem; line-height: 1.45; margin: 0; }
 .remote-profile-row > div { display: flex; flex-wrap: wrap; gap: 6px; }
 .remote-consent h3, .direct-consent h3 { margin: 0; font-size: .9rem; }
+.remote-consent code { overflow-wrap: anywhere; }
 .direct-consent { border-color: color-mix(in srgb, var(--green-700) 42%, var(--line)); gap: 12px; padding: 16px; }
 .direct-consent h4 { margin: 0; font-size: .92rem; line-height: 1.35; }
 .reachability-list { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }

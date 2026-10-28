@@ -47,6 +47,7 @@ from .call_settings import CallSettings
 from .turn_credentials import fetch_ice_servers
 from .signal_mailbox import fetch as fetch_signal
 from .signal_mailbox import publish as publish_signal
+from .signal_mailbox import create_pairing, parse_pairing
 from .webrtc_interface import WebRTCInterface
 from .webrtc_signaling import _fingerprint
 from .webrtc_onboarding import (
@@ -1883,13 +1884,42 @@ class MeshChatService(
         base = self._call_settings.signal_mailbox_url
         if base is None:
             raise ValidationError("Signaling mailbox is not configured")
-        return publish_signal(
-            base,
-            document,
-            role,
-            token=mailbox_token,
-            session=session_id,
-        )
+        if mailbox_token is not None or session_id is not None:
+            raise ValidationError("Use an encrypted pairing context")
+        contexts = self._signal_contexts()
+        if role == "offer":
+            offer = verify_onboarding_offer(document)
+            if offer.signer_destination != self._require_profile()["destination_hash"]:
+                raise ValidationError("Only this device's offer can be published")
+            code = create_pairing(base)
+            contexts[offer.session_id] = {"code": code, "offer": offer, "expires_at": time.time() + 600}
+        elif role == "answer":
+            try:
+                context = contexts[json.loads(document)["session_id"]]
+            except (KeyError, TypeError, ValueError):
+                raise ValidationError("Encrypted pairing context is missing; import the invitation again") from None
+            offer = context["offer"]
+            answer = verify_onboarding_answer(document, offer)
+            if answer.signer_destination != self._require_profile()["destination_hash"]:
+                raise ValidationError("Only this device's answer can be published")
+            code = context["code"]
+        else:
+            raise ValidationError("Onboarding role is invalid")
+        pairing = parse_pairing(code, base)
+        result = publish_signal(base, document, role, token=pairing["token"],
+                                session=pairing["session"], secret=pairing["secret"])
+        # The UI shares this code explicitly, never in diagnostics or persistence.
+        return {**result, "session_id": code}
+
+    def _signal_contexts(self) -> dict[str, Any]:
+        contexts = getattr(self, "_signal_pairing_contexts", {})
+        for key in list(contexts):
+            if contexts[key]["expires_at"] <= time.time():
+                del contexts[key]
+        while len(contexts) >= 32:
+            del contexts[next(iter(contexts))]
+        self._signal_pairing_contexts = contexts
+        return contexts
 
     def signal_fetch(
         self,
@@ -1900,7 +1930,17 @@ class MeshChatService(
         base = self._call_settings.signal_mailbox_url
         if base is None:
             raise ValidationError("Signaling mailbox is not configured")
-        return fetch_signal(base, session, role, token=mailbox_token)
+        if mailbox_token is not None or role not in {"offer", "answer"}:
+            raise ValidationError("Use an encrypted pairing context")
+        pairing = parse_pairing(session, base)
+        fetched = fetch_signal(base, pairing["session"], role,
+                               token=pairing["token"], secret=pairing["secret"])
+        if role == "offer":
+            offer = verify_onboarding_offer(fetched["document"])
+            self._signal_contexts()[offer.session_id] = {
+                "code": session, "offer": offer, "expires_at": pairing["expires_at"],
+            }
+        return {**fetched, "session_id": session}
 
     def _broker_ice_servers(self, broker: str) -> list[dict[str, Any]]:
         now = time.monotonic()
@@ -5836,6 +5876,7 @@ class MeshChatService(
                 return
             self._close_started = True
         self._shutdown.set()
+        getattr(self, "_signal_pairing_contexts", {}).clear()
         native_events = getattr(self, "_native_webrtc_events", None)
         if native_events is not None:
             try:

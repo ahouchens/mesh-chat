@@ -285,3 +285,81 @@ def test_delayed_capability_after_contact_request_preserves_newer_pending_consen
     assert stored["remote_auto_reconnect"] is False
     assert blair.store.get("reconnect_pending_capability", alex.destination) is None
     assert blair.store.get("contact", alex.device)["trust"] == "pending_request"
+
+
+@pytest.mark.parametrize("workspace_id", [None, *WORKSPACES])
+def test_encrypted_capabilities_survive_long_outage_and_still_enforce_revocation(pair, workspace_id, monkeypatch):
+    from mesh_chat.signal_crypto import seal, unseal
+    alex, blair = pair
+    left, right = enable_pair(alex, blair, workspace_id)
+    left_id, right_id = left["profile"]["id"], right["profile"]["id"]
+    future = time.time() + 45 * 24 * 60 * 60
+    monkeypatch.setattr(time, "time", lambda: future)
+    a = alex._reconnect_profile(left_id)
+    b = blair._reconnect_profile(right_id)
+    assert alex._reconnect_profile_public(a)["effective"]["ready"]
+    assert blair._reconnect_profile_public(b)["effective"]["ready"]
+    am, bm = alex._profile_mailbox(a), blair._profile_mailbox(b)
+    assert am["secret"] == bm["secret"]
+    assert am["secret"] != am["token"]
+    request = alex.reconnect_request_create(scope(blair, workspace_id), uuid.uuid4().hex)
+    encrypted = seal(request["document"], am["secret"], am["session"], "request")
+    received = unseal(encrypted, bm["secret"], bm["session"], "request")
+    assert blair.verify_reconnect_request(received, right_id)["contact_id"] == scope(alex, workspace_id)
+    if workspace_id:
+        alex.manifests[workspace_id].members[1].status = "removed"
+    else:
+        contact = alex.store.get("contact", blair.device)
+        contact["trust"] = "blocked"
+        alex.store.put("contact", blair.device, contact)
+    with pytest.raises((ContactNotApproved, IdentityMismatch)):
+        alex.reconnect_request_create(scope(blair, workspace_id), uuid.uuid4().hex)
+
+
+def test_workspace_protocol_upgrade_retries_delivery_without_changing_consent(pair, monkeypatch):
+    from mesh_chat.workspace_reconnect import verify_workspace_reconnect_capability
+
+    alex, blair = pair
+    workspace_id = WORKSPACES[0]
+    left, _ = enable_pair(alex, blair, workspace_id)
+    profile_id = left["profile"]["id"]
+    profile = alex.store.get("reconnect_profile", profile_id)
+    profile["local_capabilities_version"] = 1
+    profile["local_capabilities_persistent"] = False
+    profile.pop("mailbox_secret")
+    alex.store.put("reconnect_profile", profile_id, profile)
+    workspace = alex.store.get("workspace", workspace_id)
+    workspace["manifest_hash"] = "a" * 64
+    alex.store.put("workspace", workspace_id, workspace)
+    remote_device = alex.manifests[workspace_id].members[1].devices[0]
+    remote_device.display_name = "Peer"
+    remote_device.public_identity = blair.identity.get_public_key()
+    remote_device.hints = []
+    monkeypatch.setattr(alex, "_due_records", lambda **kwargs: [])
+    commits = []
+
+    def put_many(records):
+        commits.append(records)
+        if len(commits) == 1:
+            raise RuntimeError("Synthetic transient queue failure")
+        for record in records:
+            alex.store.put(*record)
+
+    monkeypatch.setattr(alex.store, "put_many", put_many, raising=False)
+    alex.reconnect_profiles()
+    upgraded = alex.store.get("reconnect_profile", profile_id)
+    assert upgraded["local_capabilities_version"] == 3
+    assert upgraded["auto_reconnect"] == profile["auto_reconnect"]
+    assert upgraded["allow_direct_ip_disclosure"] == profile["allow_direct_ip_disclosure"]
+    assert upgraded["capability_delivery_pending"] is True
+    assert upgraded["mailbox_pair_token"] != profile["mailbox_pair_token"]
+    alex.reconnect_profiles()
+    assert alex.store.get("reconnect_profile", profile_id)["capability_delivery_pending"] is False
+    deliveries = alex.store.list("workspace_delivery")
+    assert len(deliveries) == 1
+    wrapper = verify_workspace_reconnect_capability(deliveries[0]["document"])
+    assert wrapper.workspace_id == workspace_id
+    assert wrapper.expires_at == 0
+    assert wrapper.capability == upgraded["local_capabilities"]
+    alex.reconnect_profiles()
+    assert len(commits) == 2

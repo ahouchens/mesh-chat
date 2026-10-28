@@ -15,7 +15,16 @@ vi.mock("@tauri-apps/plugin-deep-link", () => ({
 }));
 vi.mock("@tauri-apps/api/app", () => ({ onBackButtonPress: vi.fn() }));
 
-import { beginCallAudio, onInvitation, pickInvitationFile, requestMediaPermission, type ServiceEvent } from "./api";
+import { beginCallAudio, lockService, onInvitation, pickInvitationFile, requestMediaPermission, type ServiceEvent } from "./api";
+import { loadPairingResume, savePairingResume } from "./pairing-resume";
+
+it("forgets encrypted pairing secrets when locking the service", async () => {
+  savePairingResume("MESHPAIR2.synthetic-secret", "offer");
+  tauri.invoke.mockResolvedValueOnce(undefined);
+  await lockService();
+  expect(loadPairingResume()).toBeNull();
+  expect(tauri.invoke).toHaveBeenCalledWith("lock_service");
+});
 
 afterEach(() => {
   vi.useRealTimers();

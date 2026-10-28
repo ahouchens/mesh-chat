@@ -170,3 +170,22 @@ def test_call_signaling_storage_defaults_on_and_can_be_disabled() -> None:
 def test_turn_credentials_require_turn() -> None:
     with pytest.raises(ValidationError):
         CallSettings.from_dict({"turn_username": "user", "turn_credential": "secret"})
+
+
+@pytest.mark.parametrize("url", ["https://signal.example.test?room=secret", "https://signal.example.test:0", "https://signal.example.test:invalid"])
+def test_mailbox_rejects_query_strings_and_invalid_ports(url):
+    with pytest.raises(ValidationError):
+        CallSettings.from_dict({"signal_mailbox_url": url})
+
+
+def test_mailbox_normalizes_trailing_slash():
+    assert CallSettings.from_dict({"signal_mailbox_url": "https://signal.example.test/"}).signal_mailbox_url == "https://signal.example.test"
+
+
+def test_operator_default_is_normalized_for_new_profiles(monkeypatch):
+    from mesh_chat import call_settings
+
+    monkeypatch.setattr(call_settings, "DEFAULT_SIGNAL_MAILBOX_URL", "https://signal.example.test/")
+    settings = CallSettings.from_dict(None)
+    assert settings.signal_mailbox_url == "https://signal.example.test"
+    assert settings.public()["signal_mailbox_default_url"] == settings.signal_mailbox_url

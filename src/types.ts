@@ -978,6 +978,7 @@ export interface CallSettings {
   turn_broker_consent?: boolean;
   turn_broker_default_url?: string | null;
   signal_mailbox_url?: string | null;
+  signal_mailbox_default_url?: string | null;
   relay_only: boolean;
   /** Sealed call signaling records are stored in the vault by default. */
   store_call_signaling?: boolean;

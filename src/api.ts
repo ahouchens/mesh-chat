@@ -3,6 +3,7 @@ import { onBackButtonPress } from "@tauri-apps/api/app";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { getCurrent, onOpenUrl } from "@tauri-apps/plugin-deep-link";
 import type { NotificationCapability, Snapshot } from "./types";
+import { clearPairingResume } from "./pairing-resume";
 
 export interface ServiceEvent {
   type: "event";
@@ -132,6 +133,7 @@ export async function serviceCommand<T>(
 }
 
 export async function lockService(): Promise<void> {
+  clearPairingResume();
   return invoke<void>("lock_service");
 }
 

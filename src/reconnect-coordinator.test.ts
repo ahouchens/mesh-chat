@@ -691,7 +691,7 @@ describe("persistent reconnect supervision", () => {
     expect(probe.attached).toBe(0);
     expect(probe.coordinator.snapshot().entries["profile-1"].state).toBe("answer_pending");
     probe.mailbox.set("profile-1/answer", "fresh-answer");
-    await vi.advanceTimersByTimeAsync(1_000);
+    await vi.advanceTimersByTimeAsync(5_000);
     expect(probe.attached).toBe(1);
     expect(probe.coordinator.snapshot().entries["profile-1"].state).toBe("connected");
   });

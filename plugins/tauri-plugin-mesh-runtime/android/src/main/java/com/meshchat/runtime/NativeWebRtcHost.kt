@@ -288,7 +288,11 @@ object NativeWebRtcHost {
         configuration.sdpSemantics = PeerConnection.SdpSemantics.UNIFIED_PLAN
         configuration.bundlePolicy = PeerConnection.BundlePolicy.MAXBUNDLE
         configuration.rtcpMuxPolicy = PeerConnection.RtcpMuxPolicy.REQUIRE
-        configuration.continualGatheringPolicy = PeerConnection.ContinualGatheringPolicy.GATHER_CONTINUALLY
+        // Signaling sends a complete SDP, not incremental ICE candidates.
+        // Continuous gathering never reports COMPLETE and makes awaitGather
+        // consume its full timeout on every offer/answer. Mailbox recovery
+        // creates a new native session to exchange fresh candidates.
+        configuration.continualGatheringPolicy = PeerConnection.ContinualGatheringPolicy.GATHER_ONCE
         configuration.iceTransportsType = if (ice.optString("iceTransportPolicy") == "relay") {
             PeerConnection.IceTransportsType.RELAY
         } else {

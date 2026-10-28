@@ -65,19 +65,23 @@ and expects the app to allocate a transport or change trust.
 
 - **Mailbox confidentiality and integrity.** Every reconnect document is
   canonical, signed, expiring, and bound to sender, recipient, device, attempt,
-  session, and (for an answer) the offer digest. The operator sees signed
-  envelopes, source IPs, and timing, but no message plaintext and no contact or
-  workspace state it could forge.
+  session, and (for an answer) the offer digest. The service encrypts the whole
+  signed document with an independent device-held secret and session/role-derived
+  keys. The operator sees ciphertext, source IPs, room activity, and timing; it
+  cannot read signaling identities, SDP, or message content. See the normative
+  [mailbox protocol and test vector](docs/SIGNAL_MAILBOX_SPEC.md).
 - **Capability authentication.** Reconnect always requires a pair token sent as
   `X-Mesh-Token`. The Worker stores only its SHA-256 hash, pins it on the first
-  authenticated write, rejects wrong or missing tokens, and accepts rotation
-  only from the current holder. A leaked token permits rendezvous abuse for that
+  authenticated write, and rejects wrong or missing tokens. Rotation replaces
+  the room, token, and independent encryption secret through authenticated peer
+  capability exchange. A leaked access token permits rendezvous abuse for that
   pair, not contact approval or decryption.
-- **Abuse limits.** Ten-minute sessions, a 48 KiB envelope cap, role/type
-  matching, and per-token and per-client-IP read/write budgets bound storage and
-  request floods. The Worker's alarm deletes expired documents and counters.
-  Sessions remain tokenless only for the manual onboarding path; reconnect is
-  never tokenless.
+- **Abuse limits.** Each document expires after ten minutes, with a 48 KiB
+  plaintext / 68 KiB wire cap. Clients verify encrypted role/type matching.
+  Fixed room counters and edge IP budgets bound traffic; edge budgets are
+  approximate and location-scoped, not a global spending cap. Alarms clean
+  individual expiries and empty rooms. No tokenless or plaintext mailbox path
+  remains. Missing-room reads and rejected capabilities retain no counters.
 - **Consent, not approval.** Reconnect requires local and peer auto-reconnect
   consent, a separate direct-IP-disclosure decision, and an approved,
   non-blocked contact. It never creates or approves a contact, workspace member,
@@ -85,6 +89,9 @@ and expects the app to allocate a transport or change trust.
 - **Replay and expiry.** The replay cache is durable and sealed, one answer is
   accepted per offer digest, and expired or tampered documents are rejected
   before a peer connection exists. A restart does not clear replay state.
+  Version 3 personal/workspace reconnect capabilities persist until revoked;
+  offline time does not force another manual offer/answer exchange. Current
+  membership/device authorization and independent grant expiry still apply.
 - **Transport isolation.** A blocked, deleted, or rejected peer is refused by the
   service before the renderer allocates an `RTCPeerConnection`. A transport,
   TURN, or mailbox failure never changes trust.
@@ -92,9 +99,11 @@ and expects the app to allocate a transport or change trust.
   chat plaintext, and none are logged. Call signaling records store the
   negotiated SDP and ICE candidates in the vault by default; the
   `store_call_signaling` setting can keep them in service memory only, at the
-  cost of losing call history/restart state. The mailbox holds the signed
-  offer/answer envelope, including its ephemeral SDP, only for the ten-minute
-  TTL. Broker-issued TURN credentials stay in service memory; a manually
+  cost of losing call history/restart state. The mailbox API returns encrypted
+  signaling only within its ten-minute TTL. Provider recovery history can retain
+  ciphertext longer; deletion is not the confidentiality boundary. Initial
+  encrypted pairing codes contain bearer secrets and stay in memory, not browser
+  localStorage. Broker-issued TURN credentials stay in service memory; a manually
   configured TURN credential is sealed in call settings.
 - **Reciprocal auto-answer.** A responder verifies that the request is from an
   approved contact with reciprocal consent before creating an offer. A capability

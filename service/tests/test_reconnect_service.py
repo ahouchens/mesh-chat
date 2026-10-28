@@ -27,6 +27,7 @@ from mesh_chat.reconnect import (
     verify_reconnect_offer,
 )
 from mesh_chat.reconnect_service import reconnect_session_id
+from mesh_chat.signal_crypto import seal, unseal
 from mesh_chat.reticulum_config import NetworkSettings
 from mesh_chat.service import MeshChatService
 from mesh_chat.vault import VaultStore
@@ -137,11 +138,12 @@ class FakeMailbox:
         *,
         token: str | None = None,
         session: str | None = None,
+        secret: str | None = None,
     ) -> dict[str, Any]:
         assert token, "reconnect publish must carry a capability token"
         assert session, "reconnect publish must carry a session"
         self.published.append({"url": url, "role": role, "token": token, "session": session})
-        self.documents[(session, role)] = document
+        self.documents[(session, role)] = seal(document, secret, session, role)
         return {
             "session_id": session,
             "role": role,
@@ -157,12 +159,13 @@ class FakeMailbox:
         *,
         token: str | None = None,
         pending: bool = False,
+        secret: str | None = None,
     ) -> dict[str, Any]:
         assert token, "reconnect fetch must carry a capability token"
         document = self.documents.get((session, role))
         if document is None:
             return {"session_id": session, "role": role, "document": None, "pending": True}
-        return {"session_id": session, "role": role, "document": document}
+        return {"session_id": session, "role": role, "document": unseal(document, secret, session, role)}
 
 
 @pytest.fixture()
@@ -241,6 +244,8 @@ def test_capabilities_default_on_and_persist_without_exposing_token(
         stored = alex.store.get("reconnect_profile", profile["id"])
         assert stored["remote_capabilities"]
         assert stored["mailbox_pair_token"]
+        assert stored["mailbox_secret"] != stored["mailbox_pair_token"]
+        assert stored["mailbox_secret"] not in json.dumps(profiles)
         # A restart sees the same profile and token.
         alex.close()
         reopened, _, _ = _service(
@@ -1068,3 +1073,24 @@ def test_invalid_mailbox_token_is_rejected_by_the_transport() -> None:
         )
     assert reconnect_session_id("a" * 32) == reconnect_session_id("a" * 32)
     assert reconnect_session_id("a" * 32) != reconnect_session_id("b" * 32)
+
+
+def test_disabled_or_custom_mailbox_never_falls_back_to_peer_endpoint(tmp_path):
+    alex, _, blair, _ = _pair(tmp_path)
+    try:
+        _consent(alex, blair)
+        before = alex._reconnect_profile_for_contact("contact-blair")
+        old_secret, old_token = before["mailbox_secret"], before["mailbox_pair_token"]
+        alex._call_settings.signal_mailbox_url = None
+        assert alex._profile_mailbox(before)["configured"] is False
+        assert not alex.reconnect_profiles()["profiles"][0]["effective"]["ready"]
+        alex._call_settings.signal_mailbox_url = "https://custom.example.test"
+        alex.reconnect_profiles()
+        after = alex._reconnect_profile_for_contact("contact-blair")
+        assert alex._profile_mailbox(after)["url"] == "https://custom.example.test"
+        assert after["mailbox_pair_token"] != old_token
+        assert after["mailbox_secret"] != old_secret
+        assert after["remote_mailbox_url"] == MAILBOX
+    finally:
+        alex.close()
+        blair.close()

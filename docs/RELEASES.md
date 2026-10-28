@@ -4,7 +4,7 @@ This page preserves the release-by-release notes, installation paths, and
 per-version details that previously lived in the repository README. For the
 current project overview, see [README.md](../README.md).
 
-Mesh Chat is a security-sensitive desktop and mobile messenger prototype built on the reference [Reticulum](https://reticulum.network/) and [LXMF](https://github.com/markqvist/LXMF) implementations. It has no account service, signaling service, key directory, analytics endpoint, hosted relay, or required always-on machine.
+Mesh Chat is a security-sensitive desktop and mobile messenger prototype built on the reference [Reticulum](https://reticulum.network/) and [LXMF](https://github.com/markqvist/LXMF) implementations. It has no account service, key directory, or analytics endpoint. A lightweight encrypted signaling mailbox is enabled by default for pairing and automatic connection recovery; users can disable it or deploy their own. Chat messages continue to travel through Reticulum/LXMF.
 
 Messages use native individual LXMF delivery destinations. Reticulum owns paths and transport; LXMF owns direct and propagated delivery; Mesh Chat owns contact consent, encrypted local records, a durable logical outbox, deduplication, and application-level delivery receipts.
 
@@ -13,6 +13,35 @@ Messages use native individual LXMF delivery destinations. Reticulum owns paths 
 Android capability status, hardware gaps, and the exact physical test matrix are
 tracked separately in [docs/ANDROID_PARITY.md](ANDROID_PARITY.md). Shared
 React/Python code is not treated as physical Android verification.
+
+## 0.9.64 — Global encrypted signaling and Android recovery
+
+Windows and Android now include the deployed global signaling mailbox at
+`https://mesh-chat-signal.webtechalex.workers.dev` as their default. Explicitly
+saved custom endpoints and disabled settings remain unchanged. The mailbox
+stores short-lived encrypted signaling envelopes, not chat messages or plaintext
+offers/answers. Its operator can still observe network metadata such as IP
+addresses, request timing, and ciphertext sizes.
+
+Consenting contacts and workspace peers can automatically negotiate a fresh
+connection after connectivity returns, without manually exchanging another
+offer/answer. Recovery reuses each signed request until it expires or is answered,
+and gives each negotiation phase its own bounded wait. Android now completes
+one-shot ICE gathering before sending its complete SDP, avoiding repeated gather
+timeouts. This does not preserve a live connection while a device is offline.
+
+The new Android instrumentation tests passed on an API 35 emulator: persisted
+default/custom/disabled settings across process restarts, encrypted mailbox
+exchange, and personal/workspace recovery after connection loss and lifecycle
+changes. All three native WebRTC/Chromium interoperability checks also passed.
+The focused service regression suite passed 145 tests. Physical two-device,
+cellular, Doze, and end-to-end message receipt qualification remain pending;
+see [Android mailbox tests](ANDROID_SIGNAL_MAILBOX_TESTS.md).
+
+GitHub Actions verifies the release and builds Windows EXE/MSI installers and a
+signed Android arm64 APK. Self-hosting instructions are in the
+[Cloudflare deployment README](../deploy/cloudflare-signal/README.md) and
+[self-hosting guide](../deploy/cloudflare-signal/SELF_HOSTING.md).
 
 ## 0.9.61 — Recover workspace channels after joining
 

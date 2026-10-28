@@ -8,3 +8,4 @@
 
 # The runner selects individual test methods by their command-line names.
 -keep class com.meshchat.runtime.NativeWebRtcInteropTest** { *; }
+-keep class com.meshchat.runtime.SignalMailboxAndroidTest** { *; }

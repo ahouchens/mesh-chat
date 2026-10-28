@@ -7,126 +7,158 @@ from unittest.mock import patch
 
 import pytest
 
-from mesh_chat.errors import (
-    MailboxRateLimited,
-    MailboxUnauthorized,
-    NetworkUnavailable,
-    ValidationError,
-)
-from mesh_chat.signal_mailbox import TOKEN, fetch, publish
+from mesh_chat.errors import MailboxRateLimited, MailboxUnauthorized, NetworkUnavailable, ValidationError
+from mesh_chat import signal_mailbox as mailbox
+from mesh_chat.signal_crypto import (MAX_DOCUMENT_BYTES, derive_key, encode, new_secret, seal, unseal)
 
 BASE = "https://signal.example.workers.dev"
 SESSION = "a" * 40
-TOKEN_VALUE = "token-0123456789abcdefghijklmnop"
+TOKEN = "t" * 43
+SECRET = encode(bytes(range(32)))
 
 
 class FakeResponse:
-    def __init__(self, body: dict | None = None, status: int = 201) -> None:
-        self._body = b"" if body is None else json.dumps(body).encode("utf-8")
+    def __init__(self, body=b"", status=200):
+        self.body = body
         self.status = status
-
-    def read(self, amount: int = -1) -> bytes:
-        return self._body
-
-    def __enter__(self) -> "FakeResponse":
+    def read(self, amount=-1):
+        return self.body[:amount] if amount >= 0 else self.body
+    def __enter__(self):
         return self
-
-    def __exit__(self, *_: object) -> bool:
+    def __exit__(self, *_):
         return False
 
 
-def _http_error(status: int) -> urllib.error.HTTPError:
-    return urllib.error.HTTPError(BASE, status, "error", {}, io.BytesIO(b""))
+@pytest.fixture(autouse=True)
+def reset_cooldowns():
+    mailbox._cooldowns.clear()
+    yield
+    mailbox._cooldowns.clear()
 
 
-def test_publish_sends_the_capability_header_and_explicit_session() -> None:
-    document = json.dumps({"type": "webrtc_reconnect_request", "v": 1})
-    captured: dict[str, object] = {}
-
-    def fake_urlopen(request, timeout=10, context=None):
-        captured["url"] = request.full_url
-        captured["headers"] = {key.lower(): value for key, value in request.header_items()}
-        captured["method"] = request.get_method()
-        return FakeResponse({"expires_in": 600}, 201)
-
-    with patch("mesh_chat.signal_mailbox.urllib.request.urlopen", fake_urlopen):
-        result = publish(BASE, document, "request", token=TOKEN_VALUE, session=SESSION)
-
-    assert captured["url"] == f"{BASE}/signal/{SESSION}/request"
-    assert captured["headers"]["x-mesh-token"] == TOKEN_VALUE
-    assert captured["method"] == "PUT"
-    assert result["session_id"] == SESSION
-    assert TOKEN_VALUE not in json.dumps(result)
+def http_error(status, headers=None):
+    return urllib.error.HTTPError(BASE, status, "redacted", headers or {}, io.BytesIO(b""))
 
 
-def test_publish_derives_the_session_from_the_document_for_legacy_flows() -> None:
-    document = json.dumps(
-        {"type": "webrtc_onboarding_offer", "session_id": "onboarding-0123456789"}
-    )
-    captured: dict[str, str] = {}
-
-    def fake_urlopen(request, timeout=10, context=None):
-        captured["url"] = request.full_url
-        return FakeResponse({}, 201)
-
-    with patch("mesh_chat.signal_mailbox.urllib.request.urlopen", fake_urlopen):
-        publish(BASE, document, "offer")
-    assert captured["url"].endswith("/signal/onboarding-0123456789/offer")
-
-
-def test_fetch_sends_the_token_and_reports_pending_documents() -> None:
-    captured: dict[str, object] = {}
-
-    def fake_urlopen(request, timeout=10, context=None):
-        captured["headers"] = {key.lower(): value for key, value in request.header_items()}
-        return FakeResponse({"document": "{}"}, 200)
-
-    with patch("mesh_chat.signal_mailbox.urllib.request.urlopen", fake_urlopen):
-        result = fetch(BASE, SESSION, "request", token=TOKEN_VALUE)
-    assert captured["headers"]["x-mesh-token"] == TOKEN_VALUE
-    assert result["document"] == "{}"
-
-    def missing(request, timeout=10, context=None):
-        raise _http_error(404)
-
-    with patch("mesh_chat.signal_mailbox.urllib.request.urlopen", missing):
-        pending = fetch(BASE, SESSION, "request", token=TOKEN_VALUE, pending=True)
-        assert pending["pending"] is True
-        assert pending["document"] is None
-        with pytest.raises(NetworkUnavailable):
-            fetch(BASE, SESSION, "request", token=TOKEN_VALUE)
+def test_encrypted_http_round_trip_leaves_no_plaintext_or_key_at_host():
+    stored = {}
+    document = json.dumps({"type": "webrtc_reconnect_offer", "sdp": "private-ip and ice-password", "signer": "identity"})
+    def transport(request):
+        assert request.full_url == f"{BASE}/v2/signal/{SESSION}/offer"
+        assert request.get_header("X-mesh-token") == TOKEN
+        assert request.get_header("User-agent") == mailbox.USER_AGENT
+        assert SECRET not in str(request.header_items()) + request.full_url
+        if request.get_method() == "PUT":
+            stored["body"] = request.data
+            assert all(value.encode() not in request.data for value in ("private-ip", "ice-password", "identity", SECRET))
+            return FakeResponse(b'{"expires_in":600}', 201)
+        return FakeResponse(stored["body"])
+    with patch.object(mailbox, "_open", transport):
+        result = mailbox.publish(BASE, document, "offer", token=TOKEN, session=SESSION, secret=SECRET)
+        assert result["session_id"] == SESSION
+        assert mailbox.fetch(BASE, SESSION, "offer", token=TOKEN, secret=SECRET)["document"] == document
 
 
-@pytest.mark.parametrize(
-    ("status", "error"),
-    [
-        (401, MailboxUnauthorized),
-        (403, MailboxUnauthorized),
-        (429, MailboxRateLimited),
-        (500, NetworkUnavailable),
-    ],
-)
-def test_mailbox_statuses_map_to_redacted_errors(status: int, error: type[Exception]) -> None:
-    def fake_urlopen(request, timeout=10, context=None):
-        raise _http_error(status)
-
-    with patch("mesh_chat.signal_mailbox.urllib.request.urlopen", fake_urlopen):
-        with pytest.raises(error) as caught:
-            publish(BASE, "{}", "request", token=TOKEN_VALUE, session=SESSION)
-    assert TOKEN_VALUE not in str(caught.value)
-
-
-@pytest.mark.parametrize("token", ["short", "bad token with spaces", "x" * 161, 42])
-def test_invalid_tokens_are_rejected_before_any_request(token: object) -> None:
-    with patch("mesh_chat.signal_mailbox.urllib.request.urlopen") as opened:
+def test_crypto_context_tamper_and_no_plaintext_downgrade():
+    raw = seal("signed-document", SECRET, SESSION, "offer")
+    assert unseal(raw, SECRET, SESSION, "offer") == "signed-document"
+    assert seal("signed-document", SECRET, SESSION, "offer") != raw
+    for secret, session, role in [(new_secret(), SESSION, "offer"), (SECRET, "b"*40, "offer"), (SECRET, SESSION, "answer")]:
         with pytest.raises(ValidationError):
-            publish(BASE, "{}", "request", token=token, session=SESSION)  # type: ignore[arg-type]
+            unseal(raw, secret, session, role)
+    altered = json.loads(raw)
+    altered["ciphertext"] = ("A" if altered["ciphertext"][0] != "A" else "B") + altered["ciphertext"][1:]
+    for invalid in [json.dumps(altered).encode(), b'{"v":1,"document":"plaintext"}', b'null', b'{"v":true,"ciphertext":"abc"}']:
+        with pytest.raises(ValidationError):
+            unseal(invalid, SECRET, SESSION, "offer")
+
+
+def test_size_boundary_and_secret_validation():
+    raw = seal("x" * MAX_DOCUMENT_BYTES, SECRET, SESSION, "request")
+    assert len(unseal(raw, SECRET, SESSION, "request")) == MAX_DOCUMENT_BYTES
+    with pytest.raises(ValidationError):
+        seal("x" * (MAX_DOCUMENT_BYTES + 1), SECRET, SESSION, "request")
+    for token, secret in [(None, SECRET), ("short", SECRET), (TOKEN, None), (TOKEN, "bad")]:
+        with patch.object(mailbox, "_open") as opened, pytest.raises(ValidationError):
+            mailbox.publish(BASE, "{}", "offer", token=token, session=SESSION, secret=secret)
         opened.assert_not_called()
 
 
-def test_roles_and_sessions_are_validated() -> None:
-    with pytest.raises(ValidationError):
-        publish(BASE, "{}", "bogus", token=TOKEN_VALUE, session=SESSION)
-    with pytest.raises(ValidationError):
-        fetch(BASE, "short", "request", token=TOKEN_VALUE)
-    assert TOKEN.fullmatch(TOKEN_VALUE)
+def test_pending_and_redacted_http_errors():
+    with patch.object(mailbox, "_open", side_effect=http_error(404)):
+        assert mailbox.fetch(BASE, SESSION, "request", token=TOKEN, secret=SECRET, pending=True)["pending"]
+        with pytest.raises(NetworkUnavailable):
+            mailbox.fetch(BASE, SESSION, "request", token=TOKEN, secret=SECRET)
+    for status, kind in [(401, MailboxUnauthorized), (403, MailboxUnauthorized), (500, NetworkUnavailable), (302, NetworkUnavailable)]:
+        with patch.object(mailbox, "_open", side_effect=http_error(status)), pytest.raises(kind) as caught:
+            mailbox.publish(BASE, "{}", "request", token=TOKEN, session=SESSION, secret=SECRET)
+        assert TOKEN not in str(caught.value) and SECRET not in str(caught.value)
+
+
+def test_retry_after_prevents_requests_until_cooldown_ends():
+    with patch.object(mailbox.time, "monotonic", return_value=100), patch.object(mailbox, "_open", side_effect=http_error(429, {"Retry-After": "120"})) as opened:
+        for _ in range(2):
+            with pytest.raises(MailboxRateLimited):
+                mailbox.fetch(BASE, SESSION, "request", token=TOKEN, secret=SECRET)
+        assert opened.call_count == 1
+    with patch.object(mailbox.time, "monotonic", return_value=221), patch.object(mailbox, "_open", return_value=FakeResponse(seal("{}", SECRET, SESSION, "request"))) as opened:
+        mailbox.fetch(BASE, SESSION, "request", token=TOKEN, secret=SECRET)
+        opened.assert_called_once()
+
+
+def test_redirect_handler_never_forwards_capabilities():
+    request = mailbox.urllib.request.Request(BASE, headers={"X-Mesh-Token": TOKEN})
+    assert mailbox._NoRedirect().redirect_request(request, None, 302, "", {}, "https://other.example") is None
+
+
+def test_pairing_expiry_schema_and_configured_host():
+    with patch.object(mailbox.time, "time", return_value=1000):
+        code = mailbox.create_pairing(BASE)
+        parsed = mailbox.parse_pairing(code, BASE)
+        assert parsed["secret"] != parsed["token"]
+        assert parsed["expires_at"] == 1600
+        with pytest.raises(ValidationError, match="same signaling mailbox"):
+            mailbox.parse_pairing(code, "https://other.example")
+        with pytest.raises(ValidationError):
+            mailbox.parse_pairing("legacy-session-0123456789", BASE)
+    with patch.object(mailbox.time, "time", return_value=1601), pytest.raises(ValidationError):
+        mailbox.parse_pairing(code, BASE)
+
+
+def test_derivation_vector_matches_rfc5869_reference():
+    # Independent stdlib reference, not the library implementation under test.
+    import hashlib
+    import hmac
+    salt = b"mesh-chat:signal:v2"
+    context = b'["mesh-chat:signal:v2","aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","offer"]'
+    prk = hmac.new(salt, bytes(range(32)), hashlib.sha256).digest()
+    first = hmac.new(prk, context + bytes([1]), hashlib.sha256).digest()
+    second = hmac.new(prk, first + context + bytes([2]), hashlib.sha256).digest()
+    assert derive_key(SECRET, SESSION, "offer") == first + second
+    with patch("os.urandom", return_value=bytes(range(16))):
+        vector = json.loads(seal("mesh-chat signaling vector", SECRET, SESSION, "offer"))
+    assert vector["ciphertext"] == "AAECAwQFBgcICQoLDA0ODwhO9MYGHUzAqsG7rMbbDMyAEmTI7Ph1Z8Hq8q1euHYuXYcg8UH7RmaGppOoaA_UeKZ-gw2WqFXz2_kDIASwIj0"
+
+
+def test_mobile_internal_crypto_interoperates_with_desktop():
+    import subprocess
+    import sys
+    from pathlib import Path
+    raw = seal("desktop to mobile", SECRET, SESSION, "offer")
+    script = f"import sys; sys.path.insert(0, {str(Path(__file__).resolve().parents[1] / 'src')!r})\n" + '''
+import importlib.util, json, sys
+original = importlib.util.find_spec
+importlib.util.find_spec = lambda name, *args, **kwargs: None if name == "cryptography" else original(name, *args, **kwargs)
+from mesh_chat.signal_crypto import seal, unseal
+from RNS.Cryptography import Provider
+value = json.load(sys.stdin)
+print(json.dumps({"provider": Provider.backend(),
+    "document": unseal(value["envelope"].encode(), value["secret"], value["session"], "offer"),
+    "envelope": seal("mobile to desktop", value["secret"], value["session"], "answer").decode()}))
+'''
+    result = subprocess.run([sys.executable, "-c", script], text=True, capture_output=True, check=True, timeout=30,
+                            input=json.dumps({"envelope": raw.decode(), "secret": SECRET, "session": SESSION}))
+    value = json.loads(result.stdout)
+    assert value["provider"] == "internal"
+    assert value["document"] == "desktop to mobile"
+    assert unseal(value["envelope"].encode(), SECRET, SESSION, "answer") == "mobile to desktop"
