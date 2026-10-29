@@ -23,6 +23,7 @@ from .direct_native import NativeChannel, NativeFrameReader
 from .ipc import FrameWriter, IPC_VERSION, read_frame
 from .service import MeshChatService
 from .vault import VaultStore
+from .crash_diagnostics import report_failure
 
 
 PARENT_EXIT_GRACE_SECONDS = 5.0
@@ -278,10 +279,16 @@ def main() -> int:
     writer = FrameWriter(sys.stdout.buffer)
     service: MeshChatService | None = None
     requests = None
+    stage = "read_initial"
+    command = "initialize"
+    previous_thread_hook = threading.excepthook
+    threading.excepthook = lambda args: report_failure("thread", args.exc_value)
     try:
         initial = read_frame(reader)
         try:
+            stage = "initialize"
             service = _initialize(initial, writer)
+            stage = "write_response"
             writer.write(
                 {
                     "type": "response",
@@ -291,15 +298,20 @@ def main() -> int:
                 }
             )
         except Exception as exc:
+            report_failure(stage, exc, command)
             writer.write(_error_response(initial.get("id"), exc))
             return 2
 
         requests = NativeFrameReader(reader, service._direct_native)
         while True:
+            stage = "read_command"
             request = requests.read()
             command_id = request.get("id")
+            command = request.get("command")
             try:
+                stage = "dispatch"
                 result, should_stop = service.dispatch(request)
+                stage = "write_response"
                 writer.write({"type": "response", "id": command_id, **result})
                 if should_stop:
                     break
@@ -307,18 +319,21 @@ def main() -> int:
                 writer.write(_error_response(command_id, exc))
     except EOFError:
         pass
-    except Exception:
-        # Stderr is deliberately content-free: the desktop may retain it.
-        print("mesh-chat-service: fatal protocol error", file=sys.stderr)
+    except Exception as exc:
+        report_failure(stage, exc, command, requests)
         return 3
     finally:
         if requests is not None:
-            requests.close()
+            try:
+                requests.close()
+            except Exception as exc:
+                report_failure("shutdown", exc, command, requests)
         if service is not None:
             try:
                 service.close()
-            except Exception:
-                print("mesh-chat-service: shutdown error", file=sys.stderr)
+            except Exception as exc:
+                report_failure("shutdown", exc, command, requests)
+        threading.excepthook = previous_thread_hook
     return 0
 
 

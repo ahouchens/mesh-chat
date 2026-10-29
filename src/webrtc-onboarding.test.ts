@@ -14,7 +14,8 @@ const serviceCommand = mocks.serviceCommand;
 const onServiceEvent = mocks.onServiceEvent;
 
 import {
-  attachWebRTCBridge,
+  attachWebRTCBridge as attachBridge,
+  BRIDGE_HEALTH_INTERVAL_MS,
   base64ToBytes,
   bytesToBase64,
   isWindowsWebRTCPlatform,
@@ -22,6 +23,13 @@ import {
   webRTCWindowsChecklist,
 } from "./webrtc-onboarding";
 import { closeWebRTCSession, setWebRTCSession } from "./webrtc-session";
+
+const testBridges: Awaited<ReturnType<typeof attachBridge>>[] = [];
+async function attachWebRTCBridge(...args: Parameters<typeof attachBridge>) {
+  const bridge = await attachBridge(...args);
+  testBridges.push(bridge);
+  return bridge;
+}
 
 function fakeChannel() {
   const channel = {
@@ -57,11 +65,157 @@ beforeEach(() => {
 });
 
 afterEach(async () => {
+  await Promise.all(testBridges.splice(0).map((bridge) => bridge.close()));
   await closeWebRTCSession();
   vi.clearAllMocks();
 });
 
 describe("WebRTC DataChannel pump", () => {
+  it("repairs an idle missing bridge without an exit event or incoming traffic and stops probing on close", async () => {
+    vi.useFakeTimers();
+    try {
+      let available = true;
+      let restorations = 0;
+      serviceCommand.mockImplementation(async (command) => {
+        if (command === "webrtc_attach") {
+          if (!available) { restorations++; available = true; }
+          return { bridge_id: "stable-bridge", max_packet: 1064, state: "online" };
+        }
+        return {};
+      });
+      const channel = fakeChannel();
+      const bridge = await attachWebRTCBridge(channel, { peerDestination: () => "verified-peer" });
+      available = false;
+      await vi.advanceTimersByTimeAsync(BRIDGE_HEALTH_INTERVAL_MS);
+      expect(restorations).toBe(1);
+      expect(serviceCommand).toHaveBeenCalledWith("webrtc_attach", { bridge_id: bridge.bridgeId, peer_destination: "verified-peer" });
+      expect(channel.close).not.toHaveBeenCalled();
+      await bridge.close();
+      const calls = serviceCommand.mock.calls.length;
+      await vi.advanceTimersByTimeAsync(3 * BRIDGE_HEALTH_INTERVAL_MS);
+      expect(serviceCommand).toHaveBeenCalledTimes(calls);
+    } finally { vi.useRealTimers(); }
+  });
+  it("restores a restarted service without replacing the open peer or its registry handle", async () => {
+    let listener!: (event: any) => void;
+    onServiceEvent.mockImplementation(async (callback) => { listener = callback; return () => undefined; });
+    const restoring = deferred<{ bridge_id: string; max_packet: number; state: string }>();
+    const result = { bridge_id: "stable-bridge", max_packet: 1064, state: "online" };
+    serviceCommand.mockImplementation(async (command, payload) => {
+      if (command === "webrtc_attach") return payload ? restoring.promise : result;
+      return {};
+    });
+    const channel = fakeChannel();
+    const onError = vi.fn();
+    const onClosed = vi.fn();
+    const bridge = await attachWebRTCBridge(channel, { onError, onClosed });
+    listener({ event: "service_error" });
+    listener({ event: "service_error" });
+    channel.onmessage?.({ data: new Uint8Array([3, 4]).buffer } as MessageEvent);
+    await vi.waitFor(() => expect(serviceCommand).toHaveBeenCalledWith("webrtc_attach", { bridge_id: bridge.bridgeId }));
+    expect(serviceCommand.mock.calls.filter(([command]) => command === "webrtc_attach")).toHaveLength(2);
+    // Fresh announcements emitted inside attach must cross the existing pump.
+    listener({ event: "webrtc_packet", bridge_id: bridge.bridgeId, data: "AQI=" });
+    restoring.resolve(result);
+    await vi.waitFor(() => expect(serviceCommand).toHaveBeenCalledWith("webrtc_packet", { bridge_id: "stable-bridge", data: "AwQ=" }));
+    expect(channel.send).toHaveBeenCalledOnce();
+    expect(channel.close).not.toHaveBeenCalled();
+    expect(onError).not.toHaveBeenCalled();
+    expect(onClosed).not.toHaveBeenCalled();
+    await bridge.close();
+  });
+
+  it("recovers a missing bridge even when the service exit event was missed", async () => {
+    let attached = true;
+    serviceCommand.mockImplementation(async (command, payload) => {
+      if (command === "webrtc_attach") {
+        attached = true;
+        return { bridge_id: "stable-bridge", max_packet: 1064, state: "online" };
+      }
+      if (command === "webrtc_packet" && !attached) throw { code: "webrtc_bridge_missing" };
+      return payload;
+    });
+    const channel = fakeChannel();
+    const onError = vi.fn();
+    const bridge = await attachWebRTCBridge(channel, { onError });
+    attached = false;
+    channel.onmessage?.({ data: new Uint8Array([3, 4]).buffer } as MessageEvent);
+    await vi.waitFor(() => expect(serviceCommand.mock.calls.filter(([name]) => name === "webrtc_packet")).toHaveLength(2));
+    expect(serviceCommand).toHaveBeenCalledWith("webrtc_attach", { bridge_id: "stable-bridge" });
+    expect(onError).not.toHaveBeenCalled();
+    expect(channel.close).not.toHaveBeenCalled();
+    await bridge.close();
+  });
+
+  it("keeps the carrier open under packet load during a slow service restart", async () => {
+    let listener!: (event: any) => void;
+    onServiceEvent.mockImplementation(async (callback) => { listener = callback; return () => undefined; });
+    const restoring = deferred<{ bridge_id: string; max_packet: number; state: string }>();
+    const result = { bridge_id: "stable-bridge", max_packet: 1064, state: "online" };
+    serviceCommand.mockImplementation(async (command, payload) => command === "webrtc_attach" ? payload ? restoring.promise : result : {});
+    const channel = fakeChannel();
+    const onError = vi.fn();
+    const bridge = await attachWebRTCBridge(channel, { onError });
+    listener({ event: "service_error" });
+    for (let index = 0; index < 256; index++) {
+      channel.onmessage?.({ data: new Uint8Array([3, 4]).buffer } as MessageEvent);
+    }
+    expect(channel.close).not.toHaveBeenCalled();
+    expect(onError).not.toHaveBeenCalled();
+    restoring.resolve(result);
+    await vi.waitFor(() => expect(serviceCommand.mock.calls.filter(([name]) => name === "webrtc_packet")).toHaveLength(128));
+    channel.onmessage?.({ data: new Uint8Array([5, 6]).buffer } as MessageEvent);
+    await vi.waitFor(() => expect(serviceCommand).toHaveBeenCalledWith("webrtc_packet", { bridge_id: bridge.bridgeId, data: "BQY=" }));
+    await bridge.close();
+  });
+
+  it("detaches a late restoration when the person closes the connection", async () => {
+    let listener!: (event: any) => void;
+    onServiceEvent.mockImplementation(async (callback) => { listener = callback; return () => undefined; });
+    const restoring = deferred<{ bridge_id: string; max_packet: number; state: string }>();
+    const result = { bridge_id: "stable-bridge", max_packet: 1064, state: "online" };
+    serviceCommand.mockImplementation(async (command, payload) => command === "webrtc_attach" ? payload ? restoring.promise : result : {});
+    const channel = fakeChannel();
+    const bridge = await attachWebRTCBridge(channel);
+    listener({ event: "service_error" });
+    await vi.waitFor(() => expect(serviceCommand).toHaveBeenCalledWith("webrtc_attach", { bridge_id: bridge.bridgeId }));
+    const closing = bridge.close();
+    restoring.resolve(result);
+    await closing;
+    expect(serviceCommand).toHaveBeenCalledWith("webrtc_detach", { bridge_id: bridge.bridgeId });
+    expect(channel.close).toHaveBeenCalledOnce();
+  });
+
+  it("retries a temporarily unavailable service and cancels retries when closed", async () => {
+    vi.useFakeTimers();
+    try {
+      let listener!: (event: any) => void;
+      onServiceEvent.mockImplementation(async (callback) => { listener = callback; return () => undefined; });
+      let unavailable = true;
+      serviceCommand.mockImplementation(async (command, payload) => {
+        if (command === "webrtc_attach") {
+          if (payload && unavailable) throw { code: "service_not_running" };
+          return { bridge_id: "stable-bridge", max_packet: 1064, state: "online" };
+        }
+        return {};
+      });
+      const channel = fakeChannel();
+      const bridge = await attachWebRTCBridge(channel);
+      listener({ event: "service_error" });
+      await vi.advanceTimersByTimeAsync(0);
+      unavailable = false;
+      await vi.advanceTimersByTimeAsync(3000);
+      expect(serviceCommand.mock.calls.filter(([name]) => name === "webrtc_attach")).toHaveLength(3);
+      unavailable = true;
+      listener({ event: "service_error" });
+      await vi.advanceTimersByTimeAsync(0);
+      await bridge.close();
+      const count = serviceCommand.mock.calls.length;
+      await vi.advanceTimersByTimeAsync(9000);
+      expect(serviceCommand).toHaveBeenCalledTimes(count);
+    } finally { vi.useRealTimers(); }
+  });
+
   it("keeps an open carrier usable after an error event and retires it on close", async () => {
     let listener!: (event: unknown) => void;
     onServiceEvent.mockImplementation(async (callback) => {

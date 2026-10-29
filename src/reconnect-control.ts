@@ -23,6 +23,41 @@ interface ControlState {
 }
 
 const controls = new WeakMap<RTCDataChannel, ControlState>();
+const requestRetryAt = new WeakMap<RTCDataChannel, number>();
+type ContactProfile = { contact_id: string; destination_hash?: string };
+
+function bindKnownContact(session: WebRTCSession, profiles: ContactProfile[]): void {
+  if (session.contactId || !session.peerDestination || session.controlPurpose === "reconnect") return;
+  const contact = profiles.find((profile) => profile.destination_hash === session.peerDestination &&
+    !profile.contact_id.startsWith("workspace:"));
+  // The destination came from verified offer/answer signaling. This only
+  // binds transport ownership; service-side approval remains mandatory.
+  if (contact) session.contactId = contact.contact_id;
+}
+
+/** Respond on the exact authenticated channel, including existing contacts. */
+export async function resendReconnectCapabilities(session: WebRTCSession): Promise<void> {
+  const control = session.control;
+  if (!control || control.readyState !== "open" || !getWebRTCSessions().includes(session)) return;
+  if ((requestRetryAt.get(control) ?? -Infinity) > Date.now()) return;
+  requestRetryAt.set(control, Date.now() + CAPABILITY_RETRY_MS);
+  const peer = session.peerDestination;
+  try {
+    if (!session.contactId) {
+      const result = await serviceCommand<{ profiles: ContactProfile[] }>("reconnect_profiles");
+      if (session.control !== control || control.readyState !== "open" || session.peerDestination !== peer || !getWebRTCSessions().includes(session)) return;
+      bindKnownContact(session, result.profiles);
+    }
+    maintainReconnectCapabilities();
+    const state = controls.get(control);
+    if (!state || !controlIsCurrent(session, control, state)) return;
+    state.lastSent = "";
+    state.nextRefreshAt = 0;
+    if (!state.refreshing) await refreshCapabilities(session, control, state);
+  } catch {
+    // Transient service errors can be retried; peer requests are rate limited.
+  }
+}
 
 /**
  * Send a freshly signed capability document over the authenticated WebRTC
@@ -70,8 +105,9 @@ export async function storeReconnectCapabilities(document: string, expectedConta
 }
 
 /** Called by foreground supervision; no independent timers survive lock/stop. */
-export function maintainReconnectCapabilities(): void {
+export function maintainReconnectCapabilities(profiles: ContactProfile[] = []): void {
   for (const session of getWebRTCSessions()) {
+    bindKnownContact(session, profiles);
     const control = session.control;
     const contactId = session.contactId;
     // Workspace capabilities have a separate signed authority wrapper.

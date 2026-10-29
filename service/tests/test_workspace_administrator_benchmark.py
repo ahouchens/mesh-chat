@@ -15,7 +15,11 @@ def test_increment12_administrator_benchmark_schema_and_correctness(
     result = run(tmp_path / "administrator-benchmark", 2_000, 3)
     if not all(result["assertions"].values()):
         result = run(tmp_path / "administrator-benchmark-retry", 2_000, 3)
-    assert all(result["assertions"].values())
+    assert all(result["assertions"].values()), {
+        "failed": [name for name, passed in result["assertions"].items() if not passed],
+        "timings": result["timings_ms"],
+        "limits": result["limits"],
+    }
     assert result["fixture"]["members"] == 8
     assert result["fixture"]["channels"] == 32
     assert result["fixture"]["private_control_chains"] == 4

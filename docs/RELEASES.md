@@ -14,6 +14,31 @@ Android capability status, hardware gaps, and the exact physical test matrix are
 tracked separately in [docs/ANDROID_PARITY.md](ANDROID_PARITY.md). Shared
 React/Python code is not treated as physical Android verification.
 
+## 0.9.65 — Restore messaging after service interruption
+
+An open WebRTC connection now restores its packet bridge after the Windows
+service restarts. Periodic checks also repair missing bridges and request missing
+messaging routes while the connection is idle. Recovery retains the live data
+channel and retries queued messages. Existing verified contacts exchange updated
+reconnect settings, including Android requests for encrypted mailbox capabilities.
+
+Mailbox pairing now explains when the mailbox is disabled and offers an explicit
+action to use the default mailbox. Late mailbox responses cannot overwrite a
+new connection attempt or a manually pasted answer. Workspace member removal
+places its confirmation beside the selected member and makes failures visible.
+
+Connection diagnostics retain bounded, redacted service-exit evidence across app
+restarts, including failure category, processing stage, queue depth, and source
+locations. They exclude raw stderr, exception messages, and signaling contents.
+The cause of the previously reported Windows exit remains unconfirmed; this
+release adds recovery and evidence rather than claiming that exit is prevented.
+
+Regression coverage includes real Reticulum/LXMF messages and receipts after
+service termination, queued messages during an outage, idle bridge repair,
+capability exchange, stale mailbox responses, and diagnostic redaction. Packaged
+Windows/Android and physical cellular/background testing remain separate from
+these automated checks. Builds run in GitHub Actions, not locally.
+
 ## 0.9.64 — Global encrypted signaling and Android recovery
 
 Windows and Android now include the deployed global signaling mailbox at

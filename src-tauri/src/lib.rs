@@ -6,6 +6,8 @@ use rand::{rngs::OsRng, RngCore};
 use serde_json::json;
 use serde_json::Value;
 mod direct_native;
+#[cfg(desktop)]
+mod service_diagnostics;
 #[cfg(target_os = "android")]
 mod mobile_direct;
 #[cfg(desktop)]
@@ -17,14 +19,13 @@ use std::{
         atomic::{AtomicBool, Ordering},
         Arc, Mutex,
     },
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 #[cfg(windows)]
 use std::{
     os::windows::process::CommandExt,
     path::PathBuf,
     process::{Command, Stdio},
-    time::Instant,
 };
 use tauri::AppHandle;
 #[cfg(desktop)]
@@ -279,10 +280,13 @@ fn fail_all_pending(state: &ServiceState, code: &str) {
 
 #[cfg(desktop)]
 fn record_unexpected_service_exit(
+    app: &AppHandle,
     state: &ServiceState,
     reason: &str,
     exit_code: Option<i32>,
     signal: Option<i32>,
+    evidence: Value,
+    uptime_ms: u64,
 ) {
     if state.closing.load(Ordering::Acquire) || state.locked.load(Ordering::Acquire) {
         return;
@@ -291,13 +295,31 @@ fn record_unexpected_service_exit(
         .duration_since(UNIX_EPOCH)
         .ok()
         .map(|elapsed| elapsed.as_secs());
-    if let Ok(mut last) = state.last_unexpected_exit.lock() {
-        *last = Some(json!({
+    let mut record = json!({
             "reason": reason,
             "exit_code": exit_code,
             "signal": signal,
             "recorded_at": recorded_at,
-        }));
+            "native_version": env!("CARGO_PKG_VERSION"),
+            "build_commit": env!("MESH_BUILD_COMMIT"),
+            "uptime_ms": uptime_ms,
+            "pending_requests": state.pending.lock().ok().map(|pending| pending.len()),
+            "from_previous_app_run": false,
+        });
+    if let (Some(record), Some(evidence)) = (record.as_object_mut(), evidence.as_object()) {
+        record.extend(evidence.clone());
+    }
+    if let Ok(mut last) = state.last_unexpected_exit.lock() {
+        *last = Some(record.clone());
+    }
+    // Persist only the last sanitized exit, so closing/reopening the app does
+    // not erase the evidence. No stderr text, request bodies or paths are saved.
+    if let Ok(directory) = app.path().app_data_dir() {
+        if fs::create_dir_all(&directory).is_ok() {
+            if let Ok(bytes) = serde_json::to_vec(&record) {
+                if bytes.len() <= 16_384 { let _ = fs::write(directory.join("service-exit-diagnostics.json"), bytes); }
+            }
+        }
     }
 }
 
@@ -458,6 +480,8 @@ fn spawn_service(app: &AppHandle, state: &ServiceState) -> Result<(), String> {
     let event_state = state.clone();
     tauri::async_runtime::spawn(async move {
         let mut buffer = Vec::new();
+        let mut stderr = service_diagnostics::Capture::default();
+        let started = Instant::now();
         while let Some(event) = receiver.recv().await {
             match event {
                 CommandEvent::Stdout(bytes) => {
@@ -479,7 +503,7 @@ fn spawn_service(app: &AppHandle, state: &ServiceState) -> Result<(), String> {
                             .ok()
                             .is_some_and(|pid| *pid == Some(sidecar_pid));
                         if is_current {
-                            record_unexpected_service_exit(&event_state, "protocol_error", None, None);
+                            record_unexpected_service_exit(&app_handle, &event_state, "protocol_error", None, None, stderr.finish(), started.elapsed().as_millis() as u64);
                             retire_service_child(&event_state);
                             let _ = app_handle.emit(
                                 "mesh-chat://service-event",
@@ -489,9 +513,7 @@ fn spawn_service(app: &AppHandle, state: &ServiceState) -> Result<(), String> {
                         break;
                     }
                 }
-                CommandEvent::Stderr(_) => {
-                    // Diagnostics are intentionally not forwarded to the renderer.
-                }
+                CommandEvent::Stderr(bytes) => stderr.push(&bytes),
                 CommandEvent::Error(_) => {
                     let is_current = event_state
                         .sidecar_pid
@@ -500,7 +522,7 @@ fn spawn_service(app: &AppHandle, state: &ServiceState) -> Result<(), String> {
                         .map(|current| *current == Some(sidecar_pid))
                         .unwrap_or(false);
                     if is_current {
-                        record_unexpected_service_exit(&event_state, "process_event_error", None, None);
+                        record_unexpected_service_exit(&app_handle, &event_state, "process_event_error", None, None, stderr.finish(), started.elapsed().as_millis() as u64);
                         retire_service_child(&event_state);
                         let _ = app_handle.emit(
                             "mesh-chat://service-event",
@@ -524,7 +546,7 @@ fn spawn_service(app: &AppHandle, state: &ServiceState) -> Result<(), String> {
                         })
                         .unwrap_or(false);
                     if is_current {
-                        record_unexpected_service_exit(&event_state, "terminated", exit.code, exit.signal);
+                        record_unexpected_service_exit(&app_handle, &event_state, "terminated", exit.code, exit.signal, stderr.finish(), started.elapsed().as_millis() as u64);
                         fail_all_pending(&event_state, "service_stopped");
                         if let Ok(mut child) = event_state.child.lock() {
                             if child.as_ref().map(CommandChild::pid) == Some(sidecar_pid) {
@@ -1266,9 +1288,13 @@ async fn lock_service(state: State<'_, ServiceState>) -> Result<(), String> {
 
 #[cfg(desktop)]
 #[tauri::command]
-fn desktop_service_health(state: State<'_, ServiceState>) -> Value {
+fn desktop_service_health(app: AppHandle, state: State<'_, ServiceState>) -> Value {
     let running = state.child.lock().ok().is_some_and(|child| child.is_some());
-    let last_exit = state.last_unexpected_exit.lock().ok().and_then(|last| last.clone());
+    let last_exit = state.last_unexpected_exit.lock().ok().and_then(|last| last.clone()).or_else(|| {
+        let path = app.path().app_data_dir().ok()?.join("service-exit-diagnostics.json");
+        if fs::metadata(&path).ok()?.len() > 16_384 { return None; }
+        service_diagnostics::saved_exit(&fs::read(path).ok()?)
+    });
     json!({"running":running, "last_unexpected_exit":last_exit})
 }
 

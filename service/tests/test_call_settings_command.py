@@ -5,8 +5,68 @@ import threading
 from types import SimpleNamespace
 from unittest.mock import Mock
 
+import pytest
 from mesh_chat.call_settings import CallSettings, DEFAULT_TURN_BROKER_URL
 from mesh_chat.service import MeshChatService
+
+
+@pytest.mark.parametrize("role", ["offer", "answer"])
+def test_mobile_reports_disabled_mailbox_without_fetching_or_exposing_code(tmp_path, monkeypatch, role):
+    import RNS
+    from mesh_chat import mobile_bridge
+    from test_workspace_service import _service
+
+    service, _ = _service(tmp_path, RNS.Identity(), "Android")
+    try:
+        service._call_settings = CallSettings(signal_mailbox_url=None)
+        monkeypatch.setattr(mobile_bridge, "_service", service)
+        fetch = Mock()
+        monkeypatch.setattr("mesh_chat.service.fetch_signal", fetch)
+        response = json.loads(mobile_bridge.command(json.dumps({
+            "command": "signal_fetch", "payload": {"session_id": "MESHPAIR2.private-code", "role": role},
+        })))
+        assert response == {"ok": False, "error": {"code": "mailbox_not_configured"}}
+        fetch.assert_not_called()
+        assert service._call_settings.signal_mailbox_url is None
+    finally:
+        service.close()
+
+
+def test_mobile_can_enable_default_mailbox_and_retry_same_pairing_code(tmp_path, monkeypatch):
+    import RNS
+    from mesh_chat import mobile_bridge, signal_mailbox
+    from mesh_chat.webrtc_onboarding import create_onboarding_offer
+    from test_reconnect_service import SDP, FINGERPRINT
+    from test_signal_mailbox import FakeResponse
+    from test_workspace_service import _service
+
+    service, _ = _service(tmp_path, RNS.Identity(), "Android")
+    try:
+        service._call_settings = CallSettings(signal_mailbox_url=None, store_call_signaling=False)
+        monkeypatch.setattr(mobile_bridge, "_service", service)
+        base = service.call_settings()["signal_mailbox_default_url"]
+        code = signal_mailbox.create_pairing(base)
+        context = signal_mailbox.parse_pairing(code, base)
+        document = create_onboarding_offer(RNS.Identity(), session_id="a" * 32, sdp=SDP, dtls_fingerprint=FINGERPRINT)
+        encrypted = signal_mailbox.seal(document, context["secret"], context["session"], "offer")
+        opened = Mock(return_value=FakeResponse(encrypted))
+        monkeypatch.setattr(signal_mailbox, "_open", opened)
+
+        def command(name, **payload):
+            return json.loads(mobile_bridge.command(json.dumps({"command": name, "payload": payload})))
+
+        assert command("signal_fetch", session_id=code, role="offer")["error"]["code"] == "mailbox_not_configured"
+        opened.assert_not_called()
+        update = command("update_call_settings", **{**service._call_settings.to_dict(), "signal_mailbox_url": base})
+        assert update["ok"]
+        assert update["result"]["store_call_signaling"] is False
+        fetched = command("signal_fetch", session_id=code, role="offer")
+        assert fetched["ok"], fetched
+        assert fetched["result"]["document"] == document
+        assert len(service._signal_contexts()) == 1
+        opened.assert_called_once()
+    finally:
+        service.close()
 
 
 def test_update_call_settings_accepts_broker_consent_payload() -> None:

@@ -9,7 +9,7 @@ import RNS
 from RNS.Interfaces.Interface import Interface
 from RNS.Transport import IDX_PT_RVCD_IF
 
-from mesh_chat.errors import NetworkUnavailable
+from mesh_chat.errors import NetworkUnavailable, ValidationError, WebRTCBridgeMissing
 from mesh_chat.service import MeshChatService
 from mesh_chat.webrtc_interface import WebRTCInterface
 
@@ -185,6 +185,70 @@ def test_attach_registers_transport_defaults_before_announcing(bridge_service, m
     assert service.webrtc_detach(bridge_id) == {"state": "closed"}
     assert not service._webrtc_bridges
     assert not RNS.Transport.interfaces
+
+
+def test_bridge_restoration_reuses_handle_without_duplicating_live_interfaces(bridge_service, monkeypatch):
+    service = bridge_service
+    announcements = []
+    service.network.reannounce = lambda: announcements.append(True)
+    original = service.webrtc_attach()
+    bridge_id = original["bridge_id"]
+    interface = service._webrtc_bridges[bridge_id]
+    assert service.webrtc_attach(bridge_id) == original
+    assert service._webrtc_bridges[bridge_id] is interface
+    assert len(announcements) == 1
+    service.webrtc_detach(bridge_id)
+    with pytest.raises(WebRTCBridgeMissing):
+        service.webrtc_packet(bridge_id, "AQI=")
+    assert service.webrtc_attach(bridge_id) == original
+    assert len(announcements) == 2
+    assert len(RNS.Transport.interfaces) == 1
+    received = []
+    monkeypatch.setattr(RNS.Transport, "inbound", lambda data, via: received.append(data))
+    assert service.webrtc_packet(bridge_id, "AQI=") == {"accepted": 2}
+    assert received == [b"\x01\x02"]
+    assert service._webrtc_bridges[bridge_id] is not interface
+
+
+@pytest.mark.parametrize("identifier", ["", "bad", 3, {}, "A" * 1000])
+def test_bridge_restoration_rejects_invalid_handles(bridge_service, identifier):
+    with pytest.raises(ValidationError):
+        bridge_service.webrtc_attach(identifier)
+    assert not bridge_service._webrtc_bridges
+
+
+def test_live_bridge_repairs_missing_routes_at_a_bounded_rate(bridge_service, monkeypatch):
+    service = bridge_service
+    bridge = service.webrtc_attach()["bridge_id"]
+    peer = "ab" * 16
+    ready = False
+    now = 100.0
+    requests = []
+    announcements = []
+    service.network.path_known = lambda _peer: ready
+    service.network.recipient_ready = lambda _peer: ready
+    service.network.request_path = requests.append
+    service.network.reannounce = lambda: announcements.append(True)
+    monkeypatch.setattr("mesh_chat.service.time.monotonic", lambda: now)
+    service.webrtc_attach(bridge, peer)
+    service.webrtc_attach(bridge, peer)
+    assert requests == [bytes.fromhex(peer)]
+    assert len(announcements) == 1
+    now += 10
+    service.webrtc_attach(bridge, peer)
+    assert len(requests) == 2
+    ready = True
+    now += 10
+    service.webrtc_attach(bridge, peer)
+    assert len(requests) == 2
+    assert len(RNS.Transport.interfaces) == 1
+
+
+@pytest.mark.parametrize("peer", ["", "bad", "ab" * 15, "zz" * 16, 10])
+def test_bridge_probe_rejects_invalid_peer_destination(bridge_service, peer):
+    with pytest.raises(ValidationError):
+        bridge_service.webrtc_attach(peer_destination=peer)
+    assert not bridge_service._webrtc_bridges
 
 
 def test_attach_cleans_up_partial_registration(bridge_service, monkeypatch) -> None:

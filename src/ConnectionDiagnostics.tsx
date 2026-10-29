@@ -150,6 +150,30 @@ function desktopHealth(raw: unknown) {
   const exit = object(value.last_unexpected_exit);
   const integer = (raw: unknown, minimum: number, maximum: number) =>
     typeof raw === "number" && Number.isSafeInteger(raw) && raw >= minimum && raw <= maximum ? raw : null;
+  const evidence = Array.isArray(exit.failures) ? {
+    native_version: version(exit.native_version),
+    build_commit: token(exit.build_commit, /^[0-9a-f]{40}$/),
+    uptime_ms: integer(exit.uptime_ms, 0, Number.MAX_SAFE_INTEGER),
+    pending_requests: integer(exit.pending_requests, 0, 1_000_000),
+    stderr_bytes: integer(exit.stderr_bytes, 0, Number.MAX_SAFE_INTEGER),
+    unrecognized_stderr_lines: integer(exit.unrecognized_stderr_lines, 0, Number.MAX_SAFE_INTEGER),
+    from_previous_app_run: exit.from_previous_app_run === true,
+    failures: exit.failures.slice(-8).map((rawFailure) => {
+      const failure = object(rawFailure);
+      return {
+        stage: choice(failure.stage, new Set(["read_initial", "initialize", "read_command", "dispatch", "write_response", "shutdown", "thread"])),
+        category: choice(failure.category, new Set(["command_queue_full", "validation_error", "broken_pipe", "end_of_stream", "out_of_memory", "os_error", "value_error", "runtime_error", "unexpected_error"])),
+        last_command: choice(failure.last_command, new Set(["initialize", "snapshot", "workspace_snapshot", "webrtc_packet", "webrtc_attach", "webrtc_detach", "signal_fetch", "signal_publish", "reconnect_profiles", "reconnect_capabilities_get", "reconnect_capabilities_store", "other"])),
+        pending_commands: integer(failure.pending_commands, 0, 1_000_000),
+        queue_capacity: integer(failure.queue_capacity, 0, 1_000_000),
+        frames: (Array.isArray(failure.frames) ? failure.frames : []).slice(-8).map((rawFrame) => {
+          const frame = object(rawFrame);
+          return { module: choice(frame.module, new Set(["__main__", "ipc", "direct_native", "service", "vault", "network", "webrtc_interface", "reconnect_service"])),
+            line: integer(frame.line, 1, 1_000_000) };
+        }),
+      };
+    }),
+  } : {};
   return {
     running: typeof value.running === "boolean" ? value.running : null,
     last_unexpected_exit: Object.keys(exit).length ? {
@@ -157,6 +181,7 @@ function desktopHealth(raw: unknown) {
       exit_code: integer(exit.exit_code, -2147483648, 4294967295),
       signal: integer(exit.signal, 0, 255),
       recorded_at: integer(exit.recorded_at, 0, Number.MAX_SAFE_INTEGER),
+      ...evidence,
     } : null,
   };
 }

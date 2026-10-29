@@ -100,6 +100,18 @@ afterEach(async () => {
 });
 
 describe("production reconnect wiring", () => {
+  it("keeps bridge supervision current after negotiation completes, but fences retired sessions", async () => {
+    const deps = createReconnectDeps({ refresh: async () => undefined });
+    let negotiating = true;
+    const connected = peer("supervised");
+    await deps.attach(connected as never, profile("supervised"), () => negotiating);
+    const current = attachMock.mock.calls.at(-1)?.[1]?.isCurrent;
+    expect(current?.()).toBe(true);
+    negotiating = false;
+    expect(current?.()).toBe(true);
+    await closeWebRTCSession("supervised");
+    expect(current?.()).toBe(false);
+  });
   it.each(["all", "contact", "profile"])("fences a pending service-session refresh when closing %s", async (scope) => {
     const selected = { ...profile("refresh-race"), native_session_id: "native-refresh" };
     const stats = deferred<{ attached: boolean; ice_connection_state: string }>();

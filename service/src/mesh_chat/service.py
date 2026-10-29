@@ -29,6 +29,8 @@ from .errors import (
     ContactNotApproved,
     InvitationInvalid,
     MeshChatError,
+    MailboxNotConfigured,
+    WebRTCBridgeMissing,
     NativeUnavailable,
     NetworkUnavailable,
     ValidationError,
@@ -1883,7 +1885,7 @@ class MeshChatService(
     ) -> dict[str, Any]:
         base = self._call_settings.signal_mailbox_url
         if base is None:
-            raise ValidationError("Signaling mailbox is not configured")
+            raise MailboxNotConfigured("Signaling mailbox is not configured")
         if mailbox_token is not None or session_id is not None:
             raise ValidationError("Use an encrypted pairing context")
         contexts = self._signal_contexts()
@@ -1929,7 +1931,7 @@ class MeshChatService(
     ) -> dict[str, Any]:
         base = self._call_settings.signal_mailbox_url
         if base is None:
-            raise ValidationError("Signaling mailbox is not configured")
+            raise MailboxNotConfigured("Signaling mailbox is not configured")
         if mailbox_token is not None or role not in {"offer", "answer"}:
             raise ValidationError("Use an encrypted pairing context")
         pairing = parse_pairing(session, base)
@@ -2012,10 +2014,40 @@ class MeshChatService(
         }
 
 
-    def webrtc_attach(self) -> dict[str, Any]:
+    def webrtc_attach(self, bridge_id: str | None = None, peer_destination: str | None = None) -> dict[str, Any]:
         if self.network is None:
             raise NetworkUnavailable("Reticulum is not running for a WebRTC bridge")
-        bridge_id = _new_id()
+        peer = None
+        if peer_destination is not None:
+            try:
+                if not isinstance(peer_destination, str) or len(peer_destination) != 32:
+                    raise ValueError()
+                peer = bytes.fromhex(peer_destination)
+                if len(peer) != 16:
+                    raise ValueError()
+            except (ValueError, TypeError) as exc:
+                raise ValidationError("WebRTC peer destination is invalid") from exc
+        if bridge_id is not None:
+            try:
+                if not isinstance(bridge_id, str) or str(uuid.UUID(bridge_id)) != bridge_id:
+                    raise ValueError()
+            except (ValueError, TypeError, AttributeError) as exc:
+                raise ValidationError("WebRTC bridge identifier is invalid") from exc
+            existing = self._webrtc_bridges.get(bridge_id)
+            if existing is not None and existing.online:
+                if peer is not None and (not self.network.path_known(peer) or not self.network.recipient_ready(peer)):
+                    # Bound repair traffic even if several callers probe at once.
+                    now = time.monotonic()
+                    if now >= getattr(existing, "_next_route_repair", 0):
+                        existing._next_route_repair = now + 10.0
+                        self._webrtc_recover_routes(bridge_id, [peer])
+                return {"bridge_id": bridge_id, "max_packet": WebRTCInterface.HW_MTU, "state": "online"}
+            if existing is not None:
+                self.webrtc_detach(bridge_id)
+        else:
+            bridge_id = _new_id()
+        # A renderer-owned DataChannel survives a desktop sidecar restart.
+        # Reuse its handle so subscriptions and session ownership remain valid.
         interface = WebRTCInterface(
             RNS.Transport,
             lambda data: self._webrtc_outbound(bridge_id, data),
@@ -2061,7 +2093,7 @@ class MeshChatService(
     def webrtc_packet(self, bridge_id: str, data: str) -> dict[str, Any]:
         interface = self._webrtc_bridges.get(bridge_id)
         if interface is None or not interface.online:
-            raise ValidationError("WebRTC bridge is not active")
+            raise WebRTCBridgeMissing("WebRTC bridge is not active")
         if not isinstance(data, str) or not data:
             raise ValidationError("WebRTC packet is empty")
         try:
@@ -4368,8 +4400,8 @@ class MeshChatService(
                 body["document"], body["offer_document"], body.get("profile_id")
             )
         if command == "webrtc_attach":
-            _payload(value, allowed=set())
-            return self.webrtc_attach()
+            body = _payload(value, allowed={"bridge_id", "peer_destination"})
+            return self.webrtc_attach(body.get("bridge_id"), body.get("peer_destination"))
         if command == "webrtc_packet":
             body = _payload(value, allowed={"bridge_id", "data"}, required={"bridge_id", "data"})
             return self.webrtc_packet(body["bridge_id"], body["data"])

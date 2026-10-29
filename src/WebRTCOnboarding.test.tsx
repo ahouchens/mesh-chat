@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   attachWebRTCBridge: vi.fn(),
   setWebRTCSession: vi.fn(),
   getWebRTCSessionByKey: vi.fn(),
+  getWebRTCSessions: vi.fn(),
   updateWebRTCSessionContact: vi.fn(),
   updateWebRTCSessionApprovalPending: vi.fn(),
   onServiceEvent: vi.fn(),
@@ -26,6 +27,7 @@ vi.mock("./webrtc-session", async (importOriginal) => ({
   ...await importOriginal<typeof import("./webrtc-session")>(),
   setWebRTCSession: mocks.setWebRTCSession,
   getWebRTCSessionByKey: mocks.getWebRTCSessionByKey,
+  getWebRTCSessions: mocks.getWebRTCSessions,
   updateWebRTCSessionContact: mocks.updateWebRTCSessionContact,
   updateWebRTCSessionApprovalPending: mocks.updateWebRTCSessionApprovalPending,
 }));
@@ -51,6 +53,125 @@ describe("WebRTC offer input", () => {
     expect(normalizeWebRTCOfferInput("  meshchat://pair/abc123  ")).toBe("abc123");
     expect(normalizeWebRTCOfferInput("abc123")).toBe("abc123");
     expect(normalizeWebRTCOfferInput(offerDocument)).toBe(offerDocument);
+  });
+});
+
+describe("mailbox recovery", () => {
+  it.each(["success", "error"])("ignores a stale mailbox %s after starting a new offer", async (outcome) => {
+    const implementation = mocks.serviceCommand.getMockImplementation();
+    let resolve!: (value: unknown) => void;
+    let reject!: (reason: unknown) => void;
+    const fetched = new Promise((done, failed) => { resolve = done; reject = failed; });
+    let offer = 0;
+    mocks.serviceCommand.mockImplementation(async (command: string, payload?: unknown) => {
+      if (command === "call_settings") return { signal_mailbox_url: "https://signal.example" };
+      if (command === "signal_publish") return { session_id: `mailbox-${++offer}` };
+      if (command === "signal_fetch") return fetched;
+      return implementation?.(command, payload);
+    });
+    render(<WebRTCOnboardingDialog onClose={vi.fn()} onChanged={async () => undefined} />);
+    await act(async () => undefined);
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Create WebRTC invitation" })); });
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Fetch answer" })); });
+    expect((screen.getByRole("button", { name: "Fetching…" }) as HTMLButtonElement).disabled).toBe(true);
+    const pc = FakePeer.instances[0];
+    await act(async () => { pc.connectionState = "failed"; pc.onconnectionstatechange?.(); });
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Create WebRTC invitation" })); });
+    await act(async () => {
+      if (outcome === "success") resolve({ document: "old-answer" });
+      else reject(new Error("old-fetch-error"));
+    });
+    expect((screen.getByLabelText("Paste their signed answer") as HTMLTextAreaElement).value).toBe("");
+    expect(screen.queryByText("old-fetch-error")).toBeNull();
+    expect(screen.getByText("mailbox-2")).toBeTruthy();
+    expect((screen.getByRole("button", { name: "Fetch answer" }) as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it("does not overwrite an answer pasted while a mailbox fetch is pending", async () => {
+    const implementation = mocks.serviceCommand.getMockImplementation();
+    let resolve!: (value: unknown) => void;
+    const fetched = new Promise((done) => { resolve = done; });
+    mocks.serviceCommand.mockImplementation(async (command: string, payload?: unknown) => {
+      if (command === "call_settings") return { signal_mailbox_url: "https://signal.example" };
+      if (command === "signal_publish") return { session_id: "code" };
+      if (command === "signal_fetch") return fetched;
+      return implementation?.(command, payload);
+    });
+    render(<WebRTCOnboardingDialog onClose={vi.fn()} onChanged={async () => undefined} />);
+    await act(async () => undefined);
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Create WebRTC invitation" })); });
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Fetch answer" })); });
+    fireEvent.change(screen.getByLabelText("Paste their signed answer"), { target: { value: "manual-answer" } });
+    await act(async () => { resolve({ document: "late-mailbox-answer" }); });
+    expect((screen.getByLabelText("Paste their signed answer") as HTMLTextAreaElement).value).toBe("manual-answer");
+  });
+  it.each([true, false])("offers explicit default-mailbox recovery on Android (save succeeds: %s)", async (saveSucceeds) => {
+    const clipboard = { writeText: vi.fn().mockResolvedValue(undefined) };
+    vi.stubGlobal("navigator", { userAgent: "Android", clipboard });
+    const code = "MESHPAIR2.private-pairing-code";
+    const settings = { stun_urls: ["stun:example.test"], turn_url: null, turn_username: null,
+      turn_broker_url: "https://relay.example.test", turn_broker_consent: true, relay_only: false,
+      store_call_signaling: false, signal_mailbox_url: null, signal_mailbox_default_url: "https://signal.example.test" };
+    let enabled = false;
+    const run = mocks.serviceCommand.getMockImplementation()!;
+    mocks.serviceCommand.mockImplementation(async (command: string, payload: unknown) => {
+      if (command === "call_settings") return settings;
+      if (command === "signal_fetch") {
+        if (!enabled) throw { code: "mailbox_not_configured" };
+        return { document: offerDocument };
+      }
+      if (command === "update_call_settings") {
+        if (!saveSucceeds) throw { code: "protected_storage_unavailable" };
+        enabled = true;
+        return { ...settings, signal_mailbox_url: settings.signal_mailbox_default_url };
+      }
+      return run(command, payload);
+    });
+    render(<WebRTCOnboardingDialog onClose={vi.fn()} onChanged={async () => undefined} />);
+    await act(async () => undefined);
+    fireEvent.click(screen.getByRole("button", { name: "Join with WebRTC" }));
+    fireEvent.change(screen.getByLabelText("Paste the signed WebRTC offer or mailbox code"), { target: { value: code } });
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Review and create answer" })); });
+    expect(screen.getByRole("alert").textContent).toMatch(/mailbox is off/i);
+    expect(mocks.serviceCommand.mock.calls.some(([name]) => name === "native_webrtc_accept")).toBe(false);
+    expect(mocks.serviceCommand.mock.calls.some(([name]) => name === "update_call_settings")).toBe(false);
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Copy diagnostics" })); });
+    expect(JSON.parse(clipboard.writeText.mock.calls[0][0])).toMatchObject({ operation: "signal_fetch", error_code: "mailbox_not_configured", offer_verified: false });
+    expect(clipboard.writeText.mock.calls[0][0]).not.toContain(code);
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Use default mailbox" })); });
+    expect(mocks.serviceCommand).toHaveBeenCalledWith("update_call_settings", {
+      stun_urls: settings.stun_urls, turn_url: null, turn_username: null, turn_credential: null,
+      turn_broker_url: settings.turn_broker_url, turn_broker_consent: true,
+      signal_mailbox_url: settings.signal_mailbox_default_url, relay_only: false, store_call_signaling: false,
+    });
+    if (!saveSucceeds) {
+      expect(screen.getByText(/mailbox setting could not be saved/i)).toBeTruthy();
+      expect(mocks.serviceCommand.mock.calls.filter(([name]) => name === "signal_fetch")).toHaveLength(1);
+      return;
+    }
+    expect((screen.getByLabelText("Paste the signed WebRTC offer or mailbox code") as HTMLTextAreaElement).value).toBe(code);
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Review and create answer" })); });
+    expect(mocks.serviceCommand.mock.calls.filter(([name]) => name === "native_webrtc_accept")).toHaveLength(1);
+    expect(screen.getByLabelText("Signed WebRTC answer")).toBeTruthy();
+  });
+
+  it("does not call a mailbox fetch failure a signature error or replace a custom mailbox", async () => {
+    vi.stubGlobal("navigator", { userAgent: "Android" });
+    const run = mocks.serviceCommand.getMockImplementation()!;
+    mocks.serviceCommand.mockImplementation(async (command: string, payload: unknown) => {
+      if (command === "call_settings") return { signal_mailbox_url: "https://custom.example.test", signal_mailbox_default_url: "https://default.example.test" };
+      if (command === "signal_fetch") throw { code: "invalid_request" };
+      return run(command, payload);
+    });
+    render(<WebRTCOnboardingDialog onClose={vi.fn()} onChanged={async () => undefined} />);
+    await act(async () => undefined);
+    fireEvent.click(screen.getByRole("button", { name: "Join with WebRTC" }));
+    fireEvent.change(screen.getByLabelText("Paste the signed WebRTC offer or mailbox code"), { target: { value: "MESHPAIR2.code" } });
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Review and create answer" })); });
+    expect(screen.getByRole("alert").textContent).toMatch(/both devices use the same mailbox/);
+    expect(screen.queryByRole("button", { name: "Use default mailbox" })).toBeNull();
+    expect(mocks.serviceCommand.mock.calls.some(([name]) => name === "native_webrtc_accept")).toBe(false);
   });
 });
 
@@ -150,6 +271,8 @@ beforeEach(() => {
   mocks.onServiceEvent.mockResolvedValue(() => undefined);
   mocks.desktopServiceHealth.mockResolvedValue({ running: false, last_unexpected_exit: { reason: "terminated", exit_code: 3, signal: null, recorded_at: 1792792800 } });
   mocks.getWebRTCSessionByKey.mockReset();
+  mocks.setWebRTCSession.mockReset();
+  mocks.getWebRTCSessions.mockReturnValue([]);
   FakePeer.instances = [];
   finishGatheringImmediately = true;
   offerExpiresAt = Math.floor(Date.now() / 1000) + 600;
@@ -517,6 +640,33 @@ describe("manual WebRTC answer exchange", () => {
       control.onmessage?.({ data: JSON.stringify({ type: "invitation_declined" }) });
     });
     expect(mocks.updateWebRTCSessionApprovalPending).toHaveBeenLastCalledWith(false, "onboarding:bridge");
+  });
+
+  it("answers Android capability requests on the desktop onboarding channel before and after dialog dismissal", async () => {
+    const implementation = mocks.serviceCommand.getMockImplementation();
+    mocks.serviceCommand.mockImplementation(async (command: string, payload?: unknown) => {
+      if (command === "reconnect_profiles") return { profiles: [{ contact_id: "known", destination_hash: "peer" }] };
+      if (command === "reconnect_capabilities_get") return { local_capabilities: "encrypted-settings" };
+      return implementation?.(command, payload);
+    });
+    const view = await join();
+    let control!: FakeChannel;
+    await act(async () => { control = view.pc.openControlChannel(); });
+    // Android's control channel can open before the messaging bridge exists.
+    await act(async () => { control.onmessage?.({ data: '{"type":"connection_capabilities_request"}' }); });
+    mocks.setWebRTCSession.mockImplementation((session) => {
+      mocks.getWebRTCSessionByKey.mockReturnValue(session);
+      mocks.getWebRTCSessions.mockReturnValue([session]);
+    });
+    await act(async () => { view.pc.openIncomingChannel(); });
+    expect(control.send).toHaveBeenCalledWith(JSON.stringify({ type: "connection_capabilities", document: "encrypted-settings" }));
+    expect(mocks.getWebRTCSessions()[0].contactId).toBe("known");
+    view.unmount();
+    await advance(60_000);
+    control.send.mockClear();
+    await act(async () => { control.onmessage?.({ data: '{"type":"connection_capabilities_request"}' }); });
+    expect(control.send).toHaveBeenCalledWith(JSON.stringify({ type: "connection_capabilities", document: "encrypted-settings" }));
+    mocks.setWebRTCSession.mockReset();
   });
 
   it("checks refreshed capabilities against the contact bound to this channel", async () => {
