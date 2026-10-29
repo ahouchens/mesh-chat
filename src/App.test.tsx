@@ -4451,7 +4451,7 @@ describe("small private groups", () => {
     render(<App />);
     fireEvent.click(await screen.findByRole("button", { name: "Workspace Lakewatcher" }));
     fireEvent.click(await screen.findByRole("button", { name: "People in Lakewatcher" }));
-    const dialog = screen.getByRole("dialog");
+    const dialog = screen.getByRole("region", { name: "Workspace settings for Lakewatcher" });
     fireEvent.click(within(dialog).getByRole("button", { name: "Remove" }));
     expect(document.activeElement).toBe(within(dialog).getByRole("alertdialog"));
     fireEvent.click(within(dialog).getByRole("button", { name: "Confirm removal" }));
@@ -4588,7 +4588,7 @@ describe("desktop workspaces", () => {
     expect(screen.queryByText(/#general appears only after/i)).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Open Workspace settings" }));
 
-    const dialog = screen.getByRole("dialog", { name: "Workspace settings" });
+    const dialog = screen.getByRole("region", { name: "Workspace settings for Lakewatcher" });
     fireEvent.click(within(dialog).getByRole("button", { name: "Remove local data…" }));
     fireEvent.change(within(dialog).getByRole("textbox", { name: "Workspace removal confirmation" }), { target: { value: failedWorkspace.name } });
     fireEvent.click(within(dialog).getByRole("button", { name: "Remove local data" }));
@@ -4730,8 +4730,9 @@ describe("desktop workspaces", () => {
     fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
 
     fireEvent.click(await screen.findByRole("button", { name: "Workspace Lakewatcher" }));
-    fireEvent.click(await screen.findByRole("button", { name: "Linked devices" }));
-    dialog = await screen.findByRole("dialog", { name: "Linked devices · Lakewatcher" });
+    fireEvent.click(await screen.findByRole("button", { name: "Lakewatcher settings" }));
+    fireEvent.click(screen.getByRole("button", { name: /^Devices/ }));
+    dialog = await screen.findByRole("region", { name: "Workspace settings for Lakewatcher" });
     expect(within(dialog).getByText(/Each device has its own private identity/i)).toBeTruthy();
     expect(within(dialog).getByText(/Your admitted devices/i)).toBeTruthy();
     expect(within(dialog).getByRole("button", { name: "Link another device" })).toBeTruthy();
@@ -4774,8 +4775,9 @@ describe("desktop workspaces", () => {
 
     render(<App />);
     fireEvent.click(await screen.findByRole("button", { name: "Workspace Lakewatcher" }));
-    fireEvent.click(await screen.findByRole("button", { name: "Authority continuity" }));
-    const dialog = screen.getByRole("dialog", { name: "Authority continuity · Lakewatcher" });
+    fireEvent.click(await screen.findByRole("button", { name: "Lakewatcher settings" }));
+    fireEvent.click(screen.getByRole("button", { name: /^Ownership\ \&\ recovery/ }));
+    const dialog = screen.getByRole("region", { name: "Workspace settings for Lakewatcher" });
     const submit = within(dialog).getByRole("button", { name: "Offer ownership transfer" });
     fireEvent.change(within(dialog).getByRole("combobox", { name: "Authority successor device" }), {
       target: { value: `${successor.id}:${successor.device.id}` },
@@ -4837,7 +4839,7 @@ describe("desktop workspaces", () => {
     expect(await screen.findByRole("textbox", { name: "Message general" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Create channel" })).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "People in Lakewatcher" }));
-    const dialog = screen.getByRole("dialog");
+    const dialog = screen.getByRole("region", { name: "Workspace settings for Lakewatcher" });
     expect(within(dialog).getByRole("status").textContent).toMatch(/effective role is administrator/i);
     fireEvent.click(within(dialog).getByRole("button", { name: "Request invitation" }));
     await waitFor(() => expect(api.serviceCommand).toHaveBeenCalledWith("submit_workspace_admin_request", expect.objectContaining({ workspace_id: workspace.id, request_kind: "invitation", operation_id: expect.any(String) })));
@@ -4890,7 +4892,7 @@ describe("desktop workspaces", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Workspace Lakewatcher, 1 owner review pending" }));
     expect((await screen.findByRole("status")).textContent).toContain("1 pending owner review");
     fireEvent.click(await screen.findByRole("button", { name: "People in Lakewatcher" }));
-    const dialog = screen.getByRole("dialog");
+    const dialog = screen.getByRole("region", { name: "Workspace settings for Lakewatcher" });
     expect(within(dialog).getByText(/Effective state is unchanged/i)).toBeTruthy();
     expect(within(dialog).getByText(/Change Bailey from member to admin/)).toBeTruthy();
     fireEvent.click(within(dialog).getByRole("button", { name: "Approve" }));
@@ -4964,7 +4966,7 @@ describe("desktop workspaces", () => {
     render(<App />);
     fireEvent.click(await screen.findByRole("button", { name: "Workspace Lakewatcher" }));
     fireEvent.click(await screen.findByRole("button", { name: "People in Lakewatcher" }));
-    fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Message" }));
+    fireEvent.click(within(screen.getByRole("region", { name: "Workspace settings for Lakewatcher" })).getByRole("button", { name: "Message" }));
     await waitFor(() => expect(api.serviceCommand).toHaveBeenCalledWith("open_workspace_direct", expect.objectContaining({ workspace_id: workspace.id, member_id: member.id, operation_id: expect.any(String) })));
     let conversation = await screen.findByLabelText("Workspace direct message with Bailey");
     expect(within(conversation).getByText(/does not create a global Contact/i)).toBeTruthy();
@@ -4976,10 +4978,10 @@ describe("desktop workspaces", () => {
     fireEvent.click(within(callDialog).getByRole("button", { name: "Cancel" }));
     fireEvent.click(within(conversation).getByRole("button", { name: "More actions for Bailey" }));
     fireEvent.click(screen.getByRole("menuitem", { name: "People in Lakewatcher" }));
-    const peopleDialog = await screen.findByRole("dialog", { name: "People and administration · Lakewatcher" });
+    const peopleDialog = await screen.findByRole("region", { name: "Workspace settings for Lakewatcher" });
     expect(within(peopleDialog).getByText("Bailey")).toBeTruthy();
     expect(screen.queryByRole("menu")).toBeNull();
-    fireEvent.click(within(peopleDialog).getByRole("button", { name: "Close" }));
+    fireEvent.click(within(peopleDialog).getByRole("button", { name: "Back from workspace settings" }));
     const composer = within(conversation).getByRole("textbox", { name: "Message Bailey" });
     fireEvent.paste(composer, {
       clipboardData: {
@@ -4996,7 +4998,7 @@ describe("desktop workspaces", () => {
     await waitFor(() => expect(api.serviceCommand).toHaveBeenCalledWith("hide_workspace_direct", expect.objectContaining({ workspace_id: workspace.id, conversation_id: direct.id, operation_id: expect.any(String) })));
     expect(await screen.findByText("Start a private workspace chat from People.")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "People in Lakewatcher" }));
-    fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Message" }));
+    fireEvent.click(within(screen.getByRole("region", { name: "Workspace settings for Lakewatcher" })).getByRole("button", { name: "Message" }));
     conversation = await screen.findByLabelText("Workspace direct message with Bailey");
     expect(conversation).toBeTruthy();
 
@@ -5642,9 +5644,9 @@ describe("desktop workspaces", () => {
     const view = render(<App />);
     fireEvent.click(await screen.findByRole("button", { name: "Workspace Lakewatcher" }));
     fireEvent.click(await screen.findByRole("button", { name: "Lakewatcher settings" }));
-    fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Close workspace…" }));
+    fireEvent.click(within(screen.getByRole("region", { name: "Workspace settings for Lakewatcher" })).getByRole("button", { name: "Close workspace…" }));
     expect(api.serviceCommand).not.toHaveBeenCalledWith("close_workspace", expect.anything());
-    fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Confirm close workspace" }));
+    fireEvent.click(within(screen.getByRole("region", { name: "Workspace settings for Lakewatcher" })).getByRole("button", { name: "Confirm close workspace" }));
     await waitFor(() => expect(api.serviceCommand).toHaveBeenCalledWith("close_workspace", expect.objectContaining({ workspace_id: workspace.id })));
 
     view.unmount();
@@ -5653,7 +5655,7 @@ describe("desktop workspaces", () => {
     render(<App />);
     fireEvent.click(await screen.findByRole("button", { name: "Workspace Lakewatcher, Paused for a security conflict" }));
     fireEvent.click(await screen.findByRole("button", { name: "Lakewatcher settings" }));
-    const paused = screen.getByRole("dialog");
+    const paused = screen.getByRole("region", { name: "Workspace settings for Lakewatcher" });
     expect(within(paused).getByText(/will not choose between conflicting signed histories/i)).toBeTruthy();
     expect(within(paused).queryByRole("button", { name: /close workspace/i })).toBeNull();
     expect(within(paused).queryByRole("button", { name: /leave workspace/i })).toBeNull();
@@ -5963,7 +5965,7 @@ describe("desktop workspaces", () => {
     render(<App />);
     fireEvent.click(await screen.findByRole("button", { name: "Workspace Lakewatcher" }));
     fireEvent.click(await screen.findByRole("button", { name: "People in Lakewatcher" }));
-    let dialog = screen.getByRole("dialog");
+    let dialog = screen.getByRole("region", { name: "Workspace settings for Lakewatcher" });
     expect(await within(dialog).findByRole("heading", { name: "Connectivity" })).toBeTruthy();
     expect(within(dialog).getByText(/1 of 2 member devices/)).toBeTruthy();
     fireEvent.click(within(dialog).getByRole("button", { name: "Request missing paths" }));
@@ -5985,10 +5987,12 @@ describe("desktop workspaces", () => {
     fireEvent.change(ownName, { target: { value: "Alex North" } });
     fireEvent.click(within(dialog).getByRole("button", { name: "Request name change" }));
     await waitFor(() => expect(api.serviceCommand).toHaveBeenCalledWith("request_workspace_display_name", expect.objectContaining({ workspace_id: workspace.id, display_name: "Alex North", operation_id: expect.any(String) })));
-    fireEvent.click(within(dialog).getByRole("button", { name: "Close" }));
+    await waitFor(() => expect((within(dialog).getByRole("button", { name: "Back from workspace settings" }) as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Back from workspace settings" }));
 
     fireEvent.click(await screen.findByRole("button", { name: "Lakewatcher settings" }));
-    dialog = screen.getByRole("dialog");
+    dialog = screen.getByRole("region", { name: "Workspace settings for Lakewatcher" });
+    fireEvent.click(within(dialog).getByRole("button", { name: /^Connections/ }));
     const node = within(dialog).getByRole("textbox", { name: "Propagation-node address" });
     fireEvent.change(node, { target: { value: "ab".repeat(16) } });
     expect((within(dialog).getByRole("button", { name: "Approve node" }) as HTMLButtonElement).disabled).toBe(true);
@@ -6433,6 +6437,50 @@ describe("desktop workspaces", () => {
     await waitFor(() => expect(api.serviceCommand).toHaveBeenCalledWith("list_workspace_thread_messages", expect.objectContaining({ workspace_id: workspace.id, thread_root_id: root.id })));
   });
 
+  it.each(["desktop", "android"] as const)("consolidates workspace settings without losing section or conversation drafts on %s", async (platform) => {
+    vi.stubGlobal("innerWidth", platform === "android" ? 393 : 1280);
+    const current: Snapshot = { ...snapshot(), workspaces: [workspace], workspace_channels: [workspaceChannel], workspace_drafts: [] };
+    let back: (() => void) | undefined;
+    api.runtimePlatform.mockResolvedValue(platform);
+    api.initializeService.mockResolvedValue(current);
+    api.onInvitation.mockResolvedValue(() => undefined);
+    api.onServiceEvent.mockResolvedValue(() => undefined);
+    api.onMobileBackButton.mockImplementation(async (handler) => { back = handler; return () => undefined; });
+    api.serviceCommand.mockImplementation(async (command: string) => {
+      if (command === "snapshot" || command === "workspace_snapshot") return current;
+      if (command === "list_workspace_messages") return { messages: [], next_cursor: null, high_water: 0 };
+      if (command === "get_workspace_history_status") return { status: "complete_known", eligible: true, notice: "History is current." };
+      return {};
+    });
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Workspace Lakewatcher" }));
+    const composer = await screen.findByRole("textbox", { name: "Message general" });
+    fireEvent.change(composer, { target: { value: "An unfinished message" } });
+    fireEvent.click(screen.getByRole("button", { name: "Lakewatcher settings" }));
+    const page = screen.getByRole("region", { name: "Workspace settings for Lakewatcher" });
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(composer.closest(".main-pane")?.getAttribute("aria-hidden")).toBe("true");
+    fireEvent.click(within(page).getByRole("button", { name: /^General/ }));
+    fireEvent.change(within(page).getByRole("textbox", { name: "Workspace name" }), { target: { value: "A new name" } });
+    fireEvent.click(within(page).getByRole("button", { name: /^History & retention/ }));
+    expect(await within(page).findByText("History is current.")).toBeTruthy();
+    expect(api.serviceCommand).toHaveBeenCalledWith("get_workspace_history_status", { workspace_id: workspace.id, conversation_id: workspaceChannel.id });
+    fireEvent.change(within(page).getByRole("combobox", { name: "Keep local history for" }), { target: { value: "30" } });
+    fireEvent.click(within(page).getByRole("button", { name: /^General/ }));
+    expect((within(page).getByRole("textbox", { name: "Workspace name" }) as HTMLInputElement).value).toBe("A new name");
+    fireEvent.click(within(page).getByRole("button", { name: /^History & retention/ }));
+    expect((within(page).getByRole("combobox", { name: "Keep local history for" }) as HTMLSelectElement).value).toBe("30");
+    if (platform === "android") {
+      await waitFor(() => expect(back).toBeTypeOf("function"));
+      act(() => back?.());
+      expect(page.className).toContain("--index");
+      act(() => back?.());
+    } else fireEvent.click(within(page).getByRole("button", { name: "Back from workspace settings" }));
+    expect(screen.queryByRole("region", { name: "Workspace settings for Lakewatcher" })).toBeNull();
+    expect((screen.getByRole("textbox", { name: "Message general" }) as HTMLTextAreaElement).value).toBe("An unfinished message");
+    expect(api.serviceCommand).not.toHaveBeenCalledWith("update_workspace_metadata", expect.anything());
+  });
+
   it("publishes cooperative retention and runs a bounded local prune", async () => {
     const current: Snapshot = { ...snapshot(), workspaces: [workspace], workspace_channels: [workspaceChannel], workspace_join_requests: [], workspace_invitations: [], workspace_drafts: [] };
     api.runtimePlatform.mockResolvedValue("desktop");
@@ -6448,11 +6496,12 @@ describe("desktop workspaces", () => {
 
     render(<App />);
     fireEvent.click(await screen.findByRole("button", { name: "Workspace Lakewatcher" }));
-    fireEvent.click(await screen.findByRole("button", { name: "History & retention" }));
-    const dialog = screen.getByRole("dialog", { name: "History & retention" });
+    fireEvent.click(await screen.findByRole("button", { name: "Lakewatcher settings" }));
+    fireEvent.click(screen.getByRole("button", { name: /^History\ \&\ retention/ }));
+    const dialog = screen.getByRole("region", { name: "Workspace settings for Lakewatcher" });
     expect(within(dialog).getByText(/cannot remotely delete plaintext, exports, or backups/i)).toBeTruthy();
-    fireEvent.change(within(dialog).getByRole("combobox", { name: "Cooperative retention" }), { target: { value: "30" } });
-    fireEvent.click(within(dialog).getByRole("button", { name: "Publish signed retention update" }));
+    fireEvent.change(within(dialog).getByRole("combobox", { name: "Keep local history for" }), { target: { value: "30" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Save retention preference" }));
     await waitFor(() => expect(api.serviceCommand).toHaveBeenCalledWith("update_workspace_retention", expect.objectContaining({ workspace_id: workspace.id, retention_days: 30, operation_id: expect.any(String) })));
     fireEvent.click(within(dialog).getByRole("button", { name: "Prune local history now" }));
     await waitFor(() => expect(api.serviceCommand).toHaveBeenCalledWith("prune_workspace_history", expect.objectContaining({ workspace_id: workspace.id, max_events: 500, operation_id: expect.any(String) })));
@@ -6529,6 +6578,7 @@ describe("workspace reconnect consent", () => {
     render(<App />);
     fireEvent.click(await screen.findByRole("button", { name: "Workspace Lakewatcher" }));
     fireEvent.click(await screen.findByRole("button", { name: "Lakewatcher settings" }));
+    fireEvent.click(screen.getByRole("button", { name: /^Connections/ }));
     const auto = await screen.findByLabelText("Reconnect this workspace automatically");
     fireEvent.click(auto);
     fireEvent.click(screen.getByRole("button", { name: "Save reconnect consent" }));
@@ -6581,8 +6631,8 @@ describe("workspace access recommendations", () => {
     render(<App />);
     fireEvent.click(await screen.findByRole("button", { name: "Workspace Lakewatcher" }));
     fireEvent.click(await screen.findByRole("button", { name: "Lakewatcher settings" }));
-    fireEvent.click(await screen.findByRole("button", { name: /Workspace access point/ }));
-    const access = await screen.findByRole("dialog", { name: /Workspace access point/ });
+    fireEvent.click(await screen.findByRole("button", { name: /^Access points/ }));
+    const access = await screen.findByRole("region", { name: "Access points" });
     const createButton = within(access).getByRole("button", { name: "Create recommendation" }) as HTMLButtonElement;
     await waitFor(() => expect(createButton.disabled).toBe(false));
     fireEvent.click(createButton);

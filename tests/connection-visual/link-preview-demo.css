@@ -1,0 +1,15 @@
+.preview-demo { display: flex; height: 100%; background: var(--app-bg); }
+.preview-demo__sidebar { position: relative; width: 260px; flex: 0 0 auto; padding: 28px 22px; background: var(--sidebar-bg); border-right: 1px solid var(--line); }
+.preview-demo__sidebar h1 { margin: 0 0 7px; font-size: 1.5rem; letter-spacing: -.045em; }
+.preview-demo__sidebar > span { color: var(--muted); font-size: .62rem; letter-spacing: .18em; }
+.preview-demo__contact { display: flex; align-items: center; gap: 12px; margin: 32px -10px; padding: 14px; border-radius: 12px; background: var(--surface-selected); }
+.preview-demo__contact p { margin: 4px 0 0; color: var(--muted); font-size: .75rem; }
+.preview-demo__sidebar > small { position: absolute; bottom: 25px; display: flex; gap: 8px; color: var(--muted); font-size: .65rem; }
+.preview-demo__conversation { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+.preview-demo__conversation .conversation__header { flex-shrink: 0; gap: 12px; }
+.preview-demo__calls { display: flex; gap: 22px; margin-left: auto; color: var(--muted); }
+.preview-demo__messages { display: flex; flex-direction: column; flex: 1; gap: 20px; padding: 20px 36px; overflow-y: auto; background: var(--message-canvas); }
+.preview-demo__messages > .message { flex-shrink: 0; width: 450px; max-width: 90%; }
+.preview-demo__messages .message--inbound { align-self: flex-start; }
+.preview-demo__messages .message--outbound { align-self: flex-end; }
+@media (max-width: 600px) { .preview-demo__sidebar { display: none; } .preview-demo__messages { padding: 16px 12px; gap: 16px; } .preview-demo__messages > .message { width: 100%; max-width: 100%; } }

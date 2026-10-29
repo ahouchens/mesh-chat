@@ -1,6 +1,7 @@
 """CI-only production component layout checks; synthetic state, not device proof."""
 import json
 import os
+import re
 from pathlib import Path
 from playwright.sync_api import sync_playwright
 
@@ -39,7 +40,55 @@ with sync_playwright() as playwright:
                     page.screenshot(path=str(output/(name+".png")))
                     results.append({"case":name,"overflow":overflow})
                     page.close()
+        for width in (360, 393, 1280):
+            page = browser.new_page(viewport={"width": width, "height": 1000})
+            outside_requests = []
+            page.on("request", lambda request: outside_requests.append(request.url)
+                    if not request.url.startswith("http://127.0.0.1:1421/") else None)
+            # Provider availability is not a deterministic CI prerequisite.
+            # The actual provider rendering/playback check is documented separately.
+            page.route("https://www.youtube-nocookie.com/**", lambda route: route.fulfill(
+                content_type="text/html", body="<html><body>Provider frame fixture</body></html>"))
+            page.route("https://platform.twitter.com/**", lambda route: route.fulfill(
+                content_type="text/html", body="<html><body>Provider frame fixture</body></html>"))
+            page.goto("http://127.0.0.1:1421/?links")
+            page.get_by_role("button", name="Load video", exact=True).wait_for()
+            assert not outside_requests, outside_requests
+            assert page.locator("iframe").count() == 0
+            page.get_by_role("button", name="Load video", exact=True).click()
+            page.get_by_role("button", name="Load post", exact=True).click()
+            assert page.locator("iframe").count() == 2
+            overflow = page.evaluate("""() => [...document.querySelectorAll('.message-content, .link-preview, .link-preview button, .link-preview iframe')]
+              .filter(e => {const r=e.getBoundingClientRect();return r.width && (r.left < -1 || r.right > innerWidth+1 || e.scrollWidth > e.clientWidth+2);})
+              .map(e => e.tagName+':'+e.className)""")
+            name = f"{width}-link-previews"
+            page.screenshot(path=str(output/(name+".png")))
+            results.append({"case": name, "overflow": overflow})
+            page.get_by_role("button", name="Close YouTube preview", exact=True).click()
+            page.get_by_role("button", name="Close X preview", exact=True).click()
+            assert page.locator("iframe").count() == 0
+            page.close()
+        for width in (360, 393, 1280):
+            page = browser.new_page(viewport={"width": width, "height": 1000})
+            page_errors = []
+            page.on("pageerror", lambda error: page_errors.append(str(error)))
+            page.goto("http://127.0.0.1:1421/?workspace-settings")
+            page.get_by_role("heading", name="Workspace settings", exact=True).wait_for()
+            assert page.get_by_role("dialog").count() == 0
+            for section in ("People", "History & retention", "General", "Devices", "Ownership & recovery", "Access points", "Connections"):
+                if width <= 760 and section != "People":
+                    page.get_by_role("button", name="All workspace settings", exact=True).click()
+                page.get_by_role("navigation", name="Workspace settings sections").get_by_role("button", name=re.compile("^" + re.escape(section))).click()
+                page.get_by_role("heading", name=section, exact=True).wait_for()
+                overflow = page.evaluate("""() => [...document.querySelectorAll('.workspace-settings-page button, .workspace-settings-page input, .workspace-settings-page select, .workspace-settings-page textarea, .workspace-settings-page__content')]
+                  .filter(e => {const r=e.getBoundingClientRect();return r.width && (r.left < -1 || r.right > innerWidth+1 || e.scrollWidth > e.clientWidth+2);})
+                  .map(e => e.tagName+':'+e.className)""")
+                name = f"{width}-workspace-{section.lower().replace(' ', '-').replace('&', 'and')}"
+                page.screenshot(path=str(output/(name+".png")))
+                results.append({"case": name, "overflow": overflow})
+            assert not page_errors, page_errors
+            page.close()
     finally:
         browser.close()
         (output/"results.json").write_text(json.dumps(results,indent=2))
-assert len(results) == 48 and not any(row["overflow"] for row in results), results
+assert len(results) == 72 and not any(row["overflow"] for row in results), results

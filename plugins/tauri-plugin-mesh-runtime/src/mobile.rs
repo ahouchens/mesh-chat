@@ -88,6 +88,10 @@ impl<R: Runtime> MeshRuntime<R> {
         Ok(self.0.run_mobile_plugin("openBatterySettings", ())?)
     }
 
+    pub fn open_external_link(&self, url: &str) -> Result<NativeResponse> {
+        Ok(self.0.run_mobile_plugin("openExternalLink", ExternalLinkRequest { url: url.into() })?)
+    }
+
     pub fn set_theme(&self, payload: ThemeRequest) -> Result<NativeResponse> {
         Ok(self.0.run_mobile_plugin("setTheme", payload)?)
     }

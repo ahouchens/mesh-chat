@@ -14,6 +14,29 @@ Android capability status, hardware gaps, and the exact physical test matrix are
 tracked separately in [docs/ANDROID_PARITY.md](ANDROID_PARITY.md). Shared
 React/Python code is not treated as physical Android verification.
 
+## 0.9.66 — Link previews and consolidated workspace settings
+
+Messages now support clickable links, YouTube inline players and embedded public
+X posts in personal chats, groups, workspace channels, workspace direct messages
+and threads. Previews contact the provider only after the reader chooses to load
+them. Other sites display destination cards; external links open in the system
+browser. No preview hosting service is added. Provider restrictions can prevent
+some content from displaying; packaged-device playback remains a separate test.
+
+Workspace administration now uses one settings page with General, People,
+Devices, History & retention, Connections, Access points, and Ownership & recovery
+sections. Phone layouts use a section list and Back navigation; desktop layouts
+use a sidebar. Unfinished entries survive section changes, conversation drafts
+remain intact, and existing permission checks, pending-request indicators and
+destructive-action confirmations are preserved. History synchronization and local
+retention controls are available from the same page.
+
+Local source validation passed 521 frontend tests and TypeScript checks. Browser
+checks covered all seven settings sections at 360px, 393px and desktop widths,
+with no horizontal overflow or page errors. Additional CI layout cases cover
+settings and previews. Windows and Android installers are built in GitHub Actions;
+no local application build was run.
+
 ## 0.9.65 — Restore messaging after service interruption
 
 An open WebRTC connection now restores its packet bridge after the Windows

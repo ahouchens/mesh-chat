@@ -1612,6 +1612,32 @@ fn open_battery_settings(app: AppHandle) -> PendingResult {
     )
 }
 
+fn external_link_url(url: &str) -> Result<tauri::Url, String> {
+    let parsed = tauri::Url::parse(url).map_err(|_| "invalid_url".to_string())?;
+    if url.len() > 4096 || url.chars().any(|c| c.is_control()) ||
+        !matches!(parsed.scheme(), "https" | "http") || parsed.host_str().is_none() ||
+        !parsed.username().is_empty() || parsed.password().is_some() {
+        return Err("invalid_url".into());
+    }
+    Ok(parsed)
+}
+
+#[tauri::command]
+fn open_external_link(app: AppHandle, url: String) -> Result<(), String> {
+    let parsed = external_link_url(&url)?;
+    #[cfg(desktop)]
+    {
+        #[allow(deprecated)]
+        app.shell().open(parsed.as_str(), None).map_err(|_| "browser_unavailable".to_string())?;
+    }
+    #[cfg(mobile)]
+    {
+        mobile_result(app.mesh_runtime().open_external_link(parsed.as_str())
+            .map_err(|_| "browser_unavailable".to_string())?)?;
+    }
+    Ok(())
+}
+
 #[tauri::command]
 fn app_build_info(app: AppHandle) -> serde_json::Value {
     let mut info = serde_json::json!({
@@ -1731,6 +1757,7 @@ pub fn run() {
             begin_call_audio,
             end_call_audio,
             open_notification_settings,
+            open_external_link,
             open_battery_settings
         ])
         .setup(|_app| {
@@ -1759,6 +1786,16 @@ pub fn run() {
 #[cfg(all(test, desktop))]
 mod tests {
     use super::*;
+
+    #[test]
+    fn external_links_cannot_launch_non_web_handlers_or_include_credentials() {
+        for url in ["javascript:alert(1)", "file:///secret", "data:text/html,hi", "meshchat://connect", "https://user:secret@example.com", "https://example.com/\nsecret"] {
+            assert!(external_link_url(url).is_err(), "accepted {url}");
+        }
+        assert!(external_link_url("https://www.youtube.com/watch?v=aqz-KE-bpKQ").is_ok());
+        assert!(external_link_url("http://example.com/page").is_ok());
+        assert!(external_link_url(&format!("https://example.com/{}", "x".repeat(4096))).is_err());
+    }
 
     #[test]
     fn signed_webrtc_exchange_has_room_for_a_full_sdp_document() {
