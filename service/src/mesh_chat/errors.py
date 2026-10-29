@@ -81,10 +81,18 @@ class NetworkUnavailable(MeshChatError):
     code = "network_unavailable"
 
 
+class WebRTCBridgeMissing(ValidationError):
+    code = "webrtc_bridge_missing"
+
+
 class MailboxUnauthorized(MeshChatError):
     """The signaling capability token was missing, wrong, or rotated."""
 
     code = "mailbox_unauthorized"
+
+
+class MailboxNotConfigured(ValidationError):
+    code = "mailbox_not_configured"
 
 
 class MailboxRateLimited(MeshChatError):

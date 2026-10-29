@@ -4431,6 +4431,41 @@ describe("small private groups", () => {
     expect(screen.queryByRole("textbox", { name: `Message ${emptyGroup.title}` })).toBeNull();
   });
 
+  it.each(["desktop", "android"] as const)("shows removal failures and updates member status after retry on %s", async (platform) => {
+    const member = { ...workspace.members[0], id: "member-to-remove", display_name: "Android member", role: "member" as const, status: "active" as const };
+    const current: Snapshot = { ...snapshot(), workspaces: [{ ...workspace, members: [...workspace.members, member] }], workspace_channels: [workspaceChannel] };
+    let rejectRemoval = true;
+    api.runtimePlatform.mockResolvedValue(platform);
+    api.initializeService.mockResolvedValue(current);
+    api.onInvitation.mockResolvedValue(() => undefined);
+    api.onServiceEvent.mockResolvedValue(() => undefined);
+    api.serviceCommand.mockImplementation(async (command: string) => {
+      if (command === "snapshot" || command === "workspace_snapshot") return current;
+      if (command === "list_workspace_messages") return { messages: [], next_cursor: null, high_water: 0 };
+      if (command === "remove_workspace_member") {
+        if (rejectRemoval) throw new Error("network_unavailable");
+        current.workspaces = [{ ...current.workspaces![0], members: [...workspace.members, { ...member, status: "removed" }] }];
+      }
+      return {};
+    });
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Workspace Lakewatcher" }));
+    fireEvent.click(await screen.findByRole("button", { name: "People in Lakewatcher" }));
+    const dialog = screen.getByRole("dialog");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Remove" }));
+    expect(document.activeElement).toBe(within(dialog).getByRole("alertdialog"));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Confirm removal" }));
+    const error = await within(dialog).findByRole("alert");
+    await waitFor(() => expect(document.activeElement).toBe(error));
+    expect(within(dialog).getByRole("button", { name: "Remove" })).toBeTruthy();
+    rejectRemoval = false;
+    fireEvent.click(within(dialog).getByRole("button", { name: "Remove" }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Confirm removal" }));
+    await waitFor(() => expect(within(dialog).queryByRole("button", { name: "Remove" })).toBeNull());
+    expect(within(dialog).getByText(/member · removed/)).toBeTruthy();
+    expect(within(dialog).queryByRole("alert")).toBeNull();
+  });
+
   it("pauses the composer while a signed membership update is pending", async () => {
     const updatingGroup: Group = { ...group, membership_update_pending: true };
     const current = { ...snapshot(), groups: [updatingGroup], group_messages: [], group_drafts: [], group_invitations: [] };
@@ -5935,6 +5970,14 @@ describe("desktop workspaces", () => {
     await waitFor(() => expect(api.serviceCommand).toHaveBeenCalledWith("workspace_request_paths", { workspace_id: workspace.id }));
     fireEvent.click(within(dialog).getByRole("button", { name: "Approve" }));
     await waitFor(() => expect(api.serviceCommand).toHaveBeenCalledWith("decide_workspace_display_name", expect.objectContaining({ workspace_id: workspace.id, request_id: "name-request", approve: true, operation_id: expect.any(String) })));
+    fireEvent.click(within(dialog).getByRole("button", { name: /Remove/i }));
+    const removal = within(dialog).getByRole("alertdialog", { name: "Confirm member removal" });
+    expect(document.activeElement).toBe(removal);
+    expect(removal.closest(".workspace-member-entry")?.textContent).toContain(member.display_name);
+    expect(removal.compareDocumentPosition(within(dialog).getByRole("heading", { name: "Connectivity" })) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(api.serviceCommand.mock.calls.some(([command]) => command === "remove_workspace_member")).toBe(false);
+    fireEvent.click(within(removal).getByRole("button", { name: "Cancel" }));
+    expect(within(dialog).queryByRole("alertdialog")).toBeNull();
     fireEvent.click(within(dialog).getByRole("button", { name: /Remove/i }));
     fireEvent.click(within(dialog).getByRole("button", { name: "Confirm removal" }));
     await waitFor(() => expect(api.serviceCommand).toHaveBeenCalledWith("remove_workspace_member", expect.objectContaining({ workspace_id: workspace.id, member_id: member.id, operation_id: expect.any(String) })));

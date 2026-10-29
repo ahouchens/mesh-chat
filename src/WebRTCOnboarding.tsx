@@ -9,7 +9,7 @@ import { rememberWebRTCDiagnostics } from "./webrtc-diagnostics";
 import { startPeerTrace, type PeerTrace } from "./webrtc-trace";
 import { getWebRTCSessionByKey, removeWebRTCSession, setWebRTCSession, updateWebRTCSessionApprovalPending, updateWebRTCSessionContact, type WebRTCSessionPath } from "./webrtc-session";
 import { clearPairingResume, savePairingResume } from "./pairing-resume";
-import { storeReconnectCapabilities } from "./reconnect-control";
+import { resendReconnectCapabilities, storeReconnectCapabilities } from "./reconnect-control";
 import {
   connectionPath,
   fingerprint,
@@ -98,6 +98,7 @@ type ControlMessage =
   | { type: "invitation_declined" }
   | { type: "invitation_approved"; capabilities?: string }
   | { type: "invitation_denied" }
+  | { type: "connection_capabilities_request" }
   | { type: "connection_capabilities"; document: string };
 
 function documentType(value: string): string {
@@ -109,10 +110,18 @@ function documentType(value: string): string {
   }
 }
 
-function offerErrorMessage(reason: unknown, offerVerified = false): string {
+function offerErrorMessage(reason: unknown, offerVerified = false, operation = ""): string {
   const code = reason && typeof reason === "object" && "code" in reason
     ? String((reason as { code?: unknown }).code ?? "")
     : "";
+  if (operation === "signal_fetch") {
+    if (code === "mailbox_not_configured") return "Signaling mailbox is off on this device. Use the default mailbox or set the same mailbox as the other device in Settings, then try this code again.";
+    if (code === "mailbox_rate_limited") return "The signaling mailbox is busy. Wait a little before trying this code again.";
+    if (code === "mailbox_unauthorized") return "The mailbox rejected this pairing code. Ask the other device to create a fresh invitation and copy its complete code.";
+    if (code === "network_unavailable") return "The offer could not be retrieved from the mailbox. Check your internet connection and try again; if the code expired, ask for a fresh invitation.";
+    if (code === "invitation_expired") return "The offer in the mailbox has expired. Ask the other device to create a fresh invitation.";
+    return "The mailbox code could not be opened. Check that both devices use the same mailbox, then copy a fresh, complete code from the other device.";
+  }
   if (code === "identity_mismatch") {
     return offerVerified
       ? "The verified offer could not be bound to this WebRTC session. Create a fresh offer and try again."
@@ -193,6 +202,13 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
   const [relayBusy, setRelayBusy] = useState(false);
   const [relayError, setRelayError] = useState("");
   const [mailboxCode, setMailboxCode] = useState("");
+  const [fetchingAnswer, setFetchingAnswer] = useState(false);
+  const answerFetchRef = useRef(0);
+  const answerFetchBusyRef = useRef(false);
+  const capabilityRequestPendingRef = useRef(false);
+  const phaseRef = useRef(phase);
+  phaseRef.current = phase;
+  useEffect(() => () => { answerFetchRef.current += 1; }, []);
   const windowsPlatform = isWindowsWebRTCPlatform(typeof navigator === "undefined" ? "" : navigator.userAgent);
   const nativeMode = isNativeWebRTCPlatform(typeof navigator === "undefined" ? "" : navigator.userAgent);
   const nativeSessionRef = useRef<string | null>(null);
@@ -307,6 +323,10 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
 
   const cleanup = useCallback(() => {
     attemptRef.current += 1;
+    answerFetchRef.current += 1;
+    answerFetchBusyRef.current = false;
+    setFetchingAnswer(false);
+    capabilityRequestPendingRef.current = false;
     stopAnswerWait();
     traceRef.current?.stop();
     traceRef.current = null;
@@ -547,8 +567,18 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
       if (typeof message.document === "string" && message.document) {
         const bridge = bridgeRef.current;
         const contactId = bridge ? getWebRTCSessionByKey(`onboarding:${bridge.bridgeId}`)?.contactId : undefined;
-        await storeReconnectCapabilities(message.document, contactId, peerDestinationRef.current).catch(() => undefined);
+        const stored = await storeReconnectCapabilities(message.document, contactId, peerDestinationRef.current).catch(() => undefined);
+        if (current() && bridge && stored?.profile?.contact_id) {
+          updateWebRTCSessionContact(stored.profile.contact_id, `onboarding:${bridge.bridgeId}`);
+        }
       }
+    } else if (message.type === "connection_capabilities_request") {
+      const bridge = bridgeRef.current;
+      const session = bridge ? getWebRTCSessionByKey(`onboarding:${bridge.bridgeId}`) : null;
+      if (session) {
+        capabilityRequestPendingRef.current = false;
+        await resendReconnectCapabilities(session);
+      } else capabilityRequestPendingRef.current = true;
     } else if (message.type === "invitation_declined" && roleRef.current === "offer") {
       const bridge = bridgeRef.current;
       if (bridge) updateWebRTCSessionApprovalPending(false, `onboarding:${bridge.bridgeId}`);
@@ -587,7 +617,7 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
     try {
       await waitForOpen(channel);
       if (pcRef.current !== pc) return;
-      const bridge = await attachWebRTCBridge(channel, { isCurrent: () => pcRef.current === pc, onError: (reason) => { setError(errorMessage(reason)); setPhase("error"); }, onClosed: (bridgeId) => removeWebRTCSession(`onboarding:${bridgeId}`) });
+      const bridge = await attachWebRTCBridge(channel, { isCurrent: () => pcRef.current === pc, peerDestination: () => peerDestinationRef.current, onError: (reason) => { setError(errorMessage(reason)); setPhase("error"); }, onClosed: (bridgeId) => removeWebRTCSession(`onboarding:${bridgeId}`) });
       if (pcRef.current !== pc) {
         await bridge.close();
         return;
@@ -598,6 +628,7 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
         if (pcRef.current !== pc) return;
         if (channel.readyState !== "open") throw new Error("The DataChannel closed before the connection completed.");
         setWebRTCSession({ key: `onboarding:${bridge.bridgeId}`, bridge, channel, pc, control: controlRef.current, controlPurpose: "onboarding", peerDestination: peerDestinationRef.current, path, createdAt: Date.now(), approvalPending: false });
+        if (capabilityRequestPendingRef.current) void handleControlMessageRef.current?.('{"type":"connection_capabilities_request"}');
         handedOffRef.current = true;
         onConnected?.(path);
       }
@@ -1014,7 +1045,7 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
     } catch (reason) {
       if (attemptRef.current !== attempt) return;
       failureContextRef.current = { operation, error_code: diagnosticErrorCode(reason), offer_verified: offerVerified };
-      const message = offerErrorMessage(reason, offerVerified);
+      const message = offerErrorMessage(reason, offerVerified, operation);
       void captureDiagnostics("offer-review-failed", message).finally(() => {
         if (attemptRef.current === attempt) cleanup();
       });
@@ -1068,17 +1099,30 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
 
   const fetchAnswer = async () => {
     const session = mailboxCode;
-    if (!session) return;
+    if (!session || answerFetchBusyRef.current) return;
+    const attempt = attemptRef.current;
+    const fetch = ++answerFetchRef.current;
+    const current = () => answerFetchRef.current === fetch && attemptRef.current === attempt && phaseRef.current === "waiting-answer";
+    answerFetchBusyRef.current = true;
+    setFetchingAnswer(true);
     try {
       const fetched = await serviceCommand<{ document: string }>("signal_fetch", { session_id: session, role: "answer" });
+      if (!current()) return;
       setAnswerInput(fetched.document);
     } catch (reason) {
+      if (!current()) return;
       setError(errorMessage(reason));
       setPhase("error");
+    } finally {
+      if (answerFetchRef.current === fetch) {
+        answerFetchBusyRef.current = false;
+        setFetchingAnswer(false);
+      }
     }
   };
 
   const close = () => {
+    answerFetchRef.current += 1;
     if (!handedOffRef.current) cleanup();
     else traceRef.current?.stop();
     onClose();
@@ -1116,9 +1160,37 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
     }
   };
 
+  const enableDefaultMailbox = async () => {
+    if (!relaySettings?.signal_mailbox_default_url || relayBusy) return;
+    const attempt = attemptRef.current;
+    setRelayBusy(true);
+    setRelayError("");
+    try {
+      const updated = await serviceCommand<CallSettings>("update_call_settings", {
+        stun_urls: relaySettings.stun_urls,
+        turn_url: relaySettings.turn_url ?? null,
+        turn_username: relaySettings.turn_username ?? null,
+        turn_credential: null,
+        turn_broker_url: relaySettings.turn_broker_url ?? null,
+        turn_broker_consent: relaySettings.turn_broker_consent,
+        signal_mailbox_url: relaySettings.signal_mailbox_default_url,
+        relay_only: relaySettings.relay_only,
+        store_call_signaling: relaySettings.store_call_signaling ?? true,
+      });
+      if (attemptRef.current !== attempt) return;
+      setRelaySettings(updated);
+      setError("");
+      setPhase("review");
+    } catch {
+      if (attemptRef.current === attempt) setRelayError("The mailbox setting could not be saved. Try again or enable it in Settings.");
+    } finally {
+      setRelayBusy(false);
+    }
+  };
+
   return (
     <div className="dialog-backdrop" role="presentation" onMouseDown={close}>
-      <section className="dialog dialog--wide" role="dialog" aria-modal="true" aria-labelledby="webrtc-onboarding-title" onMouseDown={(event) => event.stopPropagation()}>
+      <section className="dialog dialog--wide webrtc-onboarding" role="dialog" aria-modal="true" aria-labelledby="webrtc-onboarding-title" onMouseDown={(event) => event.stopPropagation()}>
         <div className="dialog__header"><h2 id="webrtc-onboarding-title">Connect with WebRTC</h2><button className="icon-button" onClick={close} aria-label="Close"><X size={20} /></button></div>
         <div className="stack">
           <p className="muted">WebRTC carries Reticulum packets over a direct or relayed DataChannel. The other person must review the signed offer and return a signed answer. This is experimental and does not approve a contact by itself.</p>
@@ -1138,11 +1210,11 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
           {phase === "waiting-answer" && <>
             <h3>Send this offer to the other person</h3>
             <p className="muted">Offer session: <code>{sessionCode(offerDocument)}</code>. The answer must carry the same session.</p>
-            {mailboxCode && <div className="remote-consent"><p>Signaling mailbox code: <code>{mailboxCode}</code></p><p className="muted">Give this link or code to the other person instead of the full offer. This device creates one answer per code.</p><div className="dialog-actions"><button className="button button--secondary" onClick={() => void copy(mailboxCode, "code")}>{copied === "code" ? "Copied" : "Copy code"}</button><button className="button button--secondary" onClick={() => void copy(`meshchat://pair/${mailboxCode}`, "link")}>{copied === "link" ? "Copied" : "Copy link"}</button><button className="button button--secondary" onClick={() => void fetchAnswer()}>Fetch answer</button></div><WebRTCQrCode key={mailboxCode} value={`meshchat://pair/${mailboxCode}`} size={150} level="M" /></div>}
+            {mailboxCode && <div className="remote-consent"><p>Signaling mailbox code: <code>{mailboxCode}</code></p><p className="muted">Give this link or code to the other person instead of the full offer. This device creates one answer per code.</p><div className="dialog-actions"><button className="button button--secondary" onClick={() => void copy(mailboxCode, "code")}>{copied === "code" ? "Copied" : "Copy code"}</button><button className="button button--secondary" onClick={() => void copy(`meshchat://pair/${mailboxCode}`, "link")}>{copied === "link" ? "Copied" : "Copy link"}</button><button className="button button--secondary" disabled={fetchingAnswer} onClick={() => void fetchAnswer()}>{fetchingAnswer ? "Fetching…" : "Fetch answer"}</button></div><WebRTCQrCode key={mailboxCode} value={`meshchat://pair/${mailboxCode}`} size={150} level="M" /></div>}
             <textarea className="webrtc-document" readOnly value={offerDocument} rows={5} aria-label="Signed WebRTC offer" />
             <div className="dialog-actions"><button className="button button--secondary" onClick={() => void copy(offerDocument, "offer")}>{copied === "offer" ? <Check size={17} /> : <Copy size={17} />} {copied === "offer" ? "Copied" : "Copy offer"}</button></div>
             <WebRTCQrCode key={offerDocument} value={offerDocument} />
-            <label className="field"><span>Paste their signed answer</span><textarea className="webrtc-document" value={answerInput} onChange={(event) => setAnswerInput(event.target.value)} rows={5} spellCheck={false} /></label>
+            <label className="field"><span>Paste their signed answer</span><textarea className="webrtc-document" value={answerInput} onChange={(event) => { answerFetchRef.current += 1; answerFetchBusyRef.current = false; setFetchingAnswer(false); setAnswerInput(event.target.value); }} rows={5} spellCheck={false} /></label>
             <div className="dialog-actions"><button className="button button--primary" disabled={!answerInput.trim()} onClick={() => void connectAnswer()}>Connect</button></div>
           </>}
           {phase === "review" && <>
@@ -1178,7 +1250,7 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
             <div className="dialog-actions"><button className="button button--secondary" onClick={() => void copyDiagnostics()}>{copied === "diagnostics" ? "Copied" : "Copy diagnostics"}</button><button className="button button--primary" onClick={close}>Close</button></div>
           </>}
           {(offerPreview || answerPreview) && phase !== "choose" && <p className="muted">Offers are signed and expire automatically. Destination: <code>{(answerPreview?.signer_destination ?? offerPreview?.signer_destination ?? "").slice(0, 12)}</code>…</p>}
-          {phase === "error" && <><p className="form-error" role="alert">{error}</p>{windowsPlatform && <div className="direct-help__note" role="note"><strong>Windows firewall checklist</strong><ul>{webRTCWindowsChecklist(roleRef.current).map((item) => <li key={item}>{item}</li>)}</ul><p>Copy diagnostics to see whether any relay candidates or a selected candidate pair were present.</p></div>}<div className="dialog-actions"><button className="button button--secondary" onClick={() => void copyDiagnostics()}>{copied === "diagnostics" ? "Copied" : "Copy diagnostics"}</button>{relaySettings?.turn_broker_configured && !relaySettings.turn_broker_consent && <button className="button button--secondary" disabled={relayBusy} onClick={() => { void enableRelay().then(() => setPhase("choose")); }}>{relayBusy ? "Enabling…" : "Enable relay and retry"}</button>}{onFallback && <button className="button button--secondary" onClick={() => { close(); onFallback(); }}>Use invitation instead</button>}<button className="button button--secondary" onClick={() => setPhase("choose")}>Try again</button><button className="button button--primary" onClick={close}>Close</button></div></>}
+          {phase === "error" && <><p className="form-error" role="alert">{error}</p>{failureContextRef.current?.operation === "signal_fetch" && !relaySettings?.signal_mailbox_url && relaySettings?.signal_mailbox_default_url && <section className="remote-consent"><p>The default mailbox exchanges encrypted connection details so you can connect using a code.</p><button className="button button--primary" disabled={relayBusy} onClick={() => void enableDefaultMailbox()}>{relayBusy ? "Saving…" : "Use default mailbox"}</button>{relayError && <p className="form-error" role="alert">{relayError}</p>}</section>}{windowsPlatform && <div className="direct-help__note" role="note"><strong>Windows firewall checklist</strong><ul>{webRTCWindowsChecklist(roleRef.current).map((item) => <li key={item}>{item}</li>)}</ul><p>Copy diagnostics to see whether any relay candidates or a selected candidate pair were present.</p></div>}<div className="dialog-actions"><button className="button button--secondary" onClick={() => void copyDiagnostics()}>{copied === "diagnostics" ? "Copied" : "Copy diagnostics"}</button>{relaySettings?.turn_broker_configured && !relaySettings.turn_broker_consent && <button className="button button--secondary" disabled={relayBusy} onClick={() => { void enableRelay().then(() => setPhase("choose")); }}>{relayBusy ? "Enabling…" : "Enable relay and retry"}</button>}{onFallback && <button className="button button--secondary" onClick={() => { close(); onFallback(); }}>Use invitation instead</button>}<button className="button button--secondary" onClick={() => setPhase("choose")}>Try again</button><button className="button button--primary" onClick={close}>Close</button></div></>}
         </div>
       </section>
     </div>

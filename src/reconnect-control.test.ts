@@ -17,6 +17,7 @@ import {
   sendReconnectCapabilities,
   storeReconnectCapabilities,
   maintainReconnectCapabilities,
+  resendReconnectCapabilities,
   CAPABILITY_REFRESH_MS,
 } from "./reconnect-control";
 
@@ -39,6 +40,48 @@ afterEach(() => {
 });
 
 describe("reconnect capability exchange", () => {
+  it("binds existing manual peers by verified destination before sharing upgraded capabilities", async () => {
+    const control = controlChannel();
+    const session = { peerDestination: "verified-peer", control, controlPurpose: "onboarding" };
+    mocks.getWebRTCSession.mockReturnValue(session);
+    mocks.serviceCommand.mockResolvedValue({ local_capabilities: "encrypted-upgrade" });
+    maintainReconnectCapabilities([{ contact_id: "other", destination_hash: "other-peer" }]);
+    expect(control.send).not.toHaveBeenCalled();
+    maintainReconnectCapabilities([{ contact_id: "known", destination_hash: "verified-peer" }]);
+    await vi.waitFor(() => expect(control.send).toHaveBeenCalledWith(JSON.stringify({ type: "connection_capabilities", document: "encrypted-upgrade" })));
+    expect(session).toHaveProperty("contactId", "known");
+    expect(mocks.serviceCommand).toHaveBeenCalledWith("reconnect_capabilities_get", { contact_id: "known" });
+  });
+
+  it("answers a manual peer's resend request even for unchanged capabilities and rate limits duplicates", async () => {
+    const control = controlChannel();
+    const session = { contactId: "known", peerDestination: "peer", control, controlPurpose: "onboarding" };
+    mocks.getWebRTCSession.mockReturnValue(session);
+    mocks.serviceCommand.mockResolvedValue({ local_capabilities: "same-document" });
+    maintainReconnectCapabilities();
+    await vi.waitFor(() => expect(control.send).toHaveBeenCalledTimes(1));
+    await resendReconnectCapabilities(session as never);
+    await resendReconnectCapabilities(session as never);
+    expect(control.send).toHaveBeenCalledTimes(2);
+    expect(control.onmessage).toBeNull();
+  });
+
+  it("resolves an unbound request only against the authenticated peer and ignores retired lookups", async () => {
+    const control = controlChannel();
+    const session = { peerDestination: "peer", control, controlPurpose: "onboarding" };
+    mocks.getWebRTCSession.mockReturnValue(session);
+    let resolve!: (value: unknown) => void;
+    mocks.serviceCommand.mockReturnValue(new Promise((done) => { resolve = done; }));
+    const pending = resendReconnectCapabilities(session as never);
+    await resendReconnectCapabilities(session as never);
+    expect(mocks.serviceCommand).toHaveBeenCalledTimes(1);
+    mocks.getWebRTCSession.mockReturnValue(null);
+    resolve({ profiles: [{ contact_id: "known", destination_hash: "peer" }] });
+    await pending;
+    expect(session).not.toHaveProperty("contactId");
+    expect(control.send).not.toHaveBeenCalled();
+  });
+
   it("does nothing when there is no live control channel", () => {
     expect(sendReconnectCapabilities("signed")).toBe(false);
     mocks.getWebRTCSession.mockReturnValue({ control: controlChannel("closing") });

@@ -19,7 +19,7 @@ import uuid
 import pytest
 
 
-def _webrtc_peer(root: str, commands: Any, replies: Any, events: Any) -> None:
+def _webrtc_peer(root: str, commands: Any, replies: Any, events: Any, vault_key: bytes) -> None:
     import RNS
 
     from mesh_chat.reticulum_config import NetworkSettings
@@ -28,7 +28,7 @@ def _webrtc_peer(root: str, commands: Any, replies: Any, events: Any) -> None:
 
     service = None
     try:
-        store = VaultStore(Path(root), os.urandom(32), allow_unprotected_for_tests=True)
+        store = VaultStore(Path(root), vault_key, allow_unprotected_for_tests=True)
         store.put(
             "settings", "network",
             NetworkSettings(nearby_discovery=False, lan_fallback=False).to_dict(),
@@ -101,13 +101,15 @@ def _webrtc_peer(root: str, commands: Any, replies: Any, events: Any) -> None:
 class WebRTCPeers:
     def __init__(self, root: Path) -> None:
         context = multiprocessing.get_context("spawn")
+        self.root = root
+        self.vault_keys = [os.urandom(32) for _ in range(2)]
         self.commands = [context.Queue() for _ in range(2)]
         self.replies = [context.Queue() for _ in range(2)]
         self.events = [context.Queue() for _ in range(2)]
         self.processes = [
             context.Process(
                 target=_webrtc_peer,
-                args=(str(root / name), self.commands[i], self.replies[i], self.events[i]),
+                args=(str(root / name), self.commands[i], self.replies[i], self.events[i], self.vault_keys[i]),
             )
             for i, name in enumerate(("Alex", "Blair"))
         ]
@@ -124,6 +126,32 @@ class WebRTCPeers:
         for process in self.processes:
             process.start()
         return [self.response(i) for i in range(2)]
+
+    def restart_service(self, index: int, *, abrupt: bool = False) -> None:
+        """Restart one real service while the emulated DataChannel stays open."""
+        bridges, self.bridges = self.bridges, []
+        process = self.processes[index]
+        if abrupt:
+            process.terminate()
+        else:
+            self.commands[index].put(("close", {}))
+        process.join(8)
+        assert not process.is_alive()
+        context = multiprocessing.get_context("spawn")
+        for queues in (self.commands, self.replies, self.events):
+            queues[index].close()
+            queues[index].cancel_join_thread()
+            queues[index] = context.Queue()
+        process = context.Process(target=_webrtc_peer, args=(
+            str(self.root / ("Alex", "Blair")[index]), self.commands[index],
+            self.replies[index], self.events[index], self.vault_keys[index],
+        ))
+        self.processes[index] = process
+        process.start()
+        self.response(index)
+        restored = self.command(index, "webrtc_attach", bridge_id=bridges[index]["bridge_id"])
+        assert restored == bridges[index]
+        self.bridges = bridges
 
     def relay(self) -> None:
         if len(self.bridges) != 2:
@@ -209,7 +237,11 @@ class WebRTCPeers:
 
 
 @pytest.mark.integration
-def test_real_webrtc_bridge_learns_routes_and_delivers_messages_with_receipts(tmp_path: Path) -> None:
+@pytest.mark.parametrize("abrupt_restart,pending_messages", [(False, False), (True, False), (True, True)],
+                         ids=["clean-restart", "unexpected-exit", "unexpected-exit-pending-messages"])
+def test_real_webrtc_bridge_learns_routes_and_delivers_messages_with_receipts(
+    tmp_path: Path, abrupt_restart: bool, pending_messages: bool
+) -> None:
     peers = WebRTCPeers(tmp_path)
     try:
         profiles = peers.start()
@@ -252,8 +284,8 @@ def test_real_webrtc_bridge_learns_routes_and_delivers_messages_with_receipts(tm
                 and row["state"] == "delivered"
             ), None)
 
-        def exchange(label: str) -> None:
-            for sender in range(2):
+        def exchange(label: str, senders=(0, 1)) -> None:
+            for sender in senders:
                 text = f"{label}: WebRTC packet delivery from {profiles[sender]['display_name']}"
                 sent = peers.command(sender, "send_message", contact_id=contacts[sender]["id"], text=text)
                 received = peers.wait("recipient plaintext", lambda: message(1 - sender, sent["id"], "inbound"))
@@ -274,6 +306,28 @@ def test_real_webrtc_bridge_learns_routes_and_delivers_messages_with_receipts(tm
                 peers.wait("the UI delivery-status event", delivered_event)
 
         exchange("Initial connection")
+        # Commit messages on both devices, but stop forwarding before either
+        # can deliver them. A crash must not strand this durable outbox work.
+        interrupted_messages = []
+        if pending_messages:
+            bridges, peers.bridges = peers.bridges, []
+            interrupted_messages = [
+                peers.command(index, "send_message", contact_id=contacts[index]["id"],
+                              text=f"Message interrupted by service restart from peer {index}")
+                for index in range(2)
+            ]
+            peers.bridges = bridges
+        peers.restart_service(0, abrupt=abrupt_restart)
+        peers.wait("routes after a service restart on the same DataChannel", routes_ready, timeout=15)
+        for sender, interrupted in enumerate(interrupted_messages):
+            received = peers.wait("interrupted message after service restart",
+                                  lambda: message(1 - sender, interrupted["id"], "inbound"))
+            delivered = peers.wait("interrupted message receipt after service restart",
+                                   lambda: message(sender, interrupted["id"], "outbound"))
+            assert received["text"] == delivered["text"] == interrupted["text"]
+        # The surviving peer must recover without first receiving a message
+        # from the restarted service (which could replace its cached link).
+        exchange("After service restart without a new offer", senders=(1, 0))
         for index in range(2):
             state = peers.call(index, "transport_state", destination=profiles[1 - index]["destination_hash"])
             assert state["live_link_count"] > 0

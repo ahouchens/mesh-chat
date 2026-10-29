@@ -34,6 +34,26 @@ it("does not export arbitrary host exit strings or invalid numeric values", () =
   } });
 });
 
+it("exports bounded crash evidence after restart while removing messages, paths and arbitrary fields", () => {
+  const failure = { stage: "read_command", category: "command_queue_full", last_command: "webrtc_packet",
+    pending_commands: 8, queue_capacity: 8, message: "secret-message", frames: [
+      { module: "direct_native", line: 172, path: "secret-path", locals: "secret-key" },
+      { module: "secret-module", line: -1 },
+    ] };
+  const text = diagnosticReport({}, {}, false, { running: true, last_unexpected_exit: {
+    reason: "terminated", exit_code: 3, signal: null, recorded_at: 1793238400,
+    uptime_ms: 6000, pending_requests: 10, stderr_bytes: 900, unrecognized_stderr_lines: 1,
+    from_previous_app_run: true, stderr: "secret-raw", failures: Array(30).fill(failure),
+  } });
+  expect(text).not.toContain("secret");
+  const exit = JSON.parse(text).desktop_service.last_unexpected_exit;
+  expect(exit.from_previous_app_run).toBe(true);
+  expect(exit.uptime_ms).toBe(6000);
+  expect(exit.failures).toHaveLength(8);
+  expect(exit.failures[0]).toMatchObject({ category: "command_queue_full", pending_commands: 8, queue_capacity: 8 });
+  expect(exit.failures[0].frames).toEqual([{ module: "direct_native", line: 172 }, { module: "unavailable", line: null }]);
+});
+
 it("copies a bounded allowlisted log without seeded credentials or addresses", () => {
   const secret = "private-key-MESHWORKSPACE-192.0.2.1";
   const text = diagnosticReport({ platform: secret, build_commit: secret }, { format_version:1,

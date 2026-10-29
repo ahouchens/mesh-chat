@@ -7,7 +7,7 @@ import { clearPairingResume } from "./pairing-resume";
 
 export interface ServiceEvent {
   type: "event";
-  event: "state_changed" | "message_status" | "workspace_changed" | "webrtc_packet" | "webrtc_control" | "webrtc_control_open" | "webrtc_native_open" | "webrtc_native_state";
+  event: "state_changed" | "service_error" | "message_status" | "workspace_changed" | "webrtc_packet" | "webrtc_control" | "webrtc_control_open" | "webrtc_native_open" | "webrtc_native_state";
   message_id?: string;
   state?: string;
   workspace_id?: string;

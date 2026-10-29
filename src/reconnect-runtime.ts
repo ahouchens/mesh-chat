@@ -159,7 +159,7 @@ export function createReconnectDeps(
         }
       }
       await Promise.all([...nativeSessions.values()].map(({ peer }) => peer.refreshHealth()));
-      maintainReconnectCapabilities();
+      maintainReconnectCapabilities(payload.profiles);
       return payload;
     },
     start: (contactId) =>
@@ -274,7 +274,13 @@ export function createReconnectDeps(
         const channel = await concrete.open();
         check(channel);
         bridge = await attachWebRTCBridge(channel, {
-          isCurrent,
+          isCurrent: () => {
+            // After negotiation finishes, the coordinator retires its attempt.
+            // Bridge supervision belongs to the registered transport instead.
+            const registered = getWebRTCSessionByKey(profile.id);
+            return registered ? registered.pc === concrete.pc && registered.bridge === bridge : isCurrent();
+          },
+          peerDestination: () => profile.destination_hash,
           onClosed: (bridgeId) => removeWebRTCSession(profile.id, bridgeId),
         });
         check(channel);
