@@ -132,7 +132,9 @@ class WebRTCPeers:
         bridges, self.bridges = self.bridges, []
         process = self.processes[index]
         if abrupt:
-            process.terminate()
+            # SIGTERM invokes Reticulum's shutdown handler on Unix and may
+            # block on queued events. Model an actual crash, without cleanup.
+            process.kill()
         else:
             self.commands[index].put(("close", {}))
         process.join(8)
@@ -231,6 +233,10 @@ class WebRTCPeers:
             if process.is_alive():
                 process.terminate()
                 process.join(3)
+            if process.is_alive():
+                process.kill()
+                process.join(3)
+            assert not process.is_alive(), "WebRTC test peer survived cleanup"
         for channel in self.commands + self.replies + self.events:
             channel.close()
             channel.cancel_join_thread()
