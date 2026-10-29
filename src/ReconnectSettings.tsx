@@ -45,6 +45,8 @@ function setupHints(profile: ReconnectProfile | null): string[] {
       case "local_capabilities_missing":
       case "peer_capabilities_missing":
         return "Reconnect settings have not been exchanged yet. Keep the contact connected to finish setup.";
+      case "encrypted_capabilities_required":
+        return "Update both devices, then keep an authenticated connection open to exchange encrypted reconnect settings. If no path remains, pair once again.";
       case "peer_capabilities_expired":
       case "local_capabilities_expired":
         return "The reconnect settings expired. They need to be refreshed while the contact is connected.";

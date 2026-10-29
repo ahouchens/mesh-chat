@@ -47,3 +47,4 @@ plugins/*/android/*.iml
 .DS_Store
 Thumbs.db
 .codex-remote-attachments/
+**/.wrangler/

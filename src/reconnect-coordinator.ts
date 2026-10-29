@@ -172,6 +172,9 @@ export function reconnectStatusLabel(entry: ReconnectEntry | undefined): string 
 export function reconnectStatusDetail(entry: ReconnectEntry | undefined): string {
   if (!entry) return "";
   if (entry.state === "manual_required") {
+    if (entry.detail.includes("encrypted_capabilities_required")) {
+      return "Update both devices and exchange encrypted reconnect settings over an existing connection, or pair once again.";
+    }
     if (entry.detail === "mailbox_not_configured") {
       return "No signaling mailbox is configured on this device. Configure one or exchange a fresh link.";
     }
@@ -590,7 +593,7 @@ export class ReconnectCoordinator {
           if (reason instanceof ReconnectCancelled || POLL_TERMINAL_ERRORS.includes(errorCode(reason))) throw reason;
         }
         if (this.clock() >= deadline) return null;
-        await this.attemptSleep(1000, attempt.controller.signal);
+        await this.attemptSleep(MAILBOX_POLL_MS, attempt.controller.signal);
         check();
       } while (this.clock() < deadline);
       return null;

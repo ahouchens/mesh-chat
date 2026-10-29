@@ -1,5 +1,14 @@
 # Verification and release gates
 
+## Android signalling mailbox
+
+See [Android signalling mailbox tests](docs/ANDROID_SIGNAL_MAILBOX_TESTS.md) for
+coverage, emulator/CI commands and physical-device qualification limits.
+Local Android 15 emulator validation passed all five mailbox invocations and
+three Chromium/native interoperability tests. Native ICE gathering now completes
+for full-SDP exchange, and reconnect waits retain separate bounded budgets after
+slow native negotiation. The 145 related service tests passed as well.
+
 ## Workspace channels after joining an updated workspace — 0.9.61
 
 A join invitation pins the current workspace manifest, while the original

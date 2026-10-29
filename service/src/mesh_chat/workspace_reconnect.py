@@ -75,7 +75,7 @@ def create_workspace_reconnect_capability(
 ) -> str:
     current = int(time.time()) if now is None else int(now)
     checked = verify_connection_capabilities(capability, now=current)
-    if checked.persistent:
+    if checked.persistent and checked.version != 3:
         raise ValidationError("Workspace reconnect requires bounded v1 capabilities")
     unsigned = {
         "v": WORKSPACE_RECONNECT_VERSION,
@@ -137,7 +137,7 @@ def verify_workspace_reconnect_capability(
     workspace_id = _workspace_id(value["workspace_id"])
     manifest_digest = _digest(value["manifest_digest"])
     capability = verify_connection_capabilities(value["capability"], now=current)
-    if capability.persistent:
+    if capability.persistent and capability.version != 3:
         raise ValidationError("Workspace reconnect requires bounded v1 capabilities")
     issued_at = value["issued_at"]
     expires_at = value["expires_at"]
@@ -147,11 +147,11 @@ def verify_workspace_reconnect_capability(
         or not isinstance(issued_at, int)
         or not isinstance(expires_at, int)
         or issued_at > current + 300
-        or expires_at <= issued_at
+        or (expires_at <= issued_at and not capability.persistent)
         or expires_at != capability.expires_at
     ):
         raise ValidationError("Workspace reconnect dates are invalid")
-    if expires_at < current:
+    if not capability.persistent and expires_at < current:
         raise InvitationExpired("Workspace reconnect capability has expired")
     public_key = _unb64(value["signer_public_key"], "Workspace reconnect public key")
     if len(public_key) != RNS.Identity.KEYSIZE // 8:

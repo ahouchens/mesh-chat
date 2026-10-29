@@ -2,7 +2,7 @@
 
 **Server-free, end-to-end encrypted messaging for small groups — built directly on Reticulum and LXMF.**
 
-Mesh Chat is a desktop and mobile messenger with no required account service, signaling service, key directory, hosted relay, or always-on machine. Each installation creates its own Reticulum identity; a message is an ordinary LXMF message addressed to another person's device. The application adds the parts a messenger needs - explicit consent, signed invitations, group and workspace authority, an encrypted local history, and honest delivery evidence. Optional I2P, TURN, and signaling-mailbox infrastructure can be enabled explicitly; none is an authority, message store, or trust decision.
+Mesh Chat is a desktop and mobile messenger with no required account service, signaling service, key directory, hosted relay, or always-on machine. Each installation creates its own Reticulum identity; a message is an ordinary LXMF message addressed to another person's device. The application adds the parts a messenger needs - explicit consent, signed invitations, group and workspace authority, an encrypted local history, and honest delivery evidence. I2P and TURN are opt-in; the optional signaling mailbox has a built-in default that can be replaced or disabled; none is an authority, message store, or trust decision.
 
 The design accepts real trade-offs. Delivery depends on peers being reachable, history lives only on the devices that received it, and no operator can recover a lost identity. For a small trusted team, that is the point.
 
@@ -27,8 +27,8 @@ In short, it solves **“how do a few people message and coordinate privately wi
 | **First contact usually needs STUN, TURN, or a rendezvous service** | **Direct Internet invitations.** A temporary listener on the inviter's device asks their router for a mapping, then signs the resulting endpoint and credential into the invitation. | PCP -> UPnP IGD -> NAT-PMP on the participant's router. No rendezvous, STUN, TURN, or Mesh Chat service is contacted. |
 | **No public endpoint and no directly reachable access point** | **I2P relay invitations.** A signed `MESHI2P1:` / `MESHI2P1W:` envelope carries one `*.b32.i2p` Reticulum access point; the joiner must consent before traffic is relayed. | Each side runs an I2P router with SAM. The access point relays encrypted Reticulum/LXMF traffic; no public IP or port forward is needed on either participant. |
 | **One network path is not enough** | **Explicit fallbacks.** Nearby discovery, signed direct TCP, an operator-run access point, an email/reverse handshake, WebRTC over direct ICE or TURN, and an experimental QUIC underlay. | Each path is a visible choice, never a silent downgrade. See [Reaching another device](#reaching-another-device). |
-| **Manual offer/answer copy/paste for WebRTC** | **Optional signaling mailbox.** A signed request/offer/answer rendezvous with rotating pair tokens, role checks, and per-token/per-IP rate limits. | The mailbox holds only transient signed envelopes for ten minutes; it cannot approve contacts or read plaintext. QR/copy still works without it. |
-| **Restarting both apps usually means another manual exchange** | **Automatic reconnect with reciprocal consent.** A signed capability carries a rotating mailbox token; the app renegotiates a fresh WebRTC transport while both apps are open. | The mailbox holds the signed envelope, including its ephemeral SDP, only for ten minutes; Mesh Chat never reuses it locally. Contact approval and workspace authority are not touched. |
+| **Manual offer/answer copy/paste for WebRTC** | **Optional signaling mailbox.** An encrypted request/offer/answer rendezvous with independent access tokens and encryption secrets, and room/IP rate limits. | The mailbox holds only transient encrypted envelopes for ten minutes; it cannot approve contacts or read plaintext. QR/copy still works without it. |
+| **Restarting both apps usually means another manual exchange** | **Automatic reconnect with reciprocal consent.** A signed capability carries a rotating mailbox token; the app renegotiates a fresh WebRTC transport while both apps are open. | The mailbox holds encrypted signaling for ten minutes; peers generate fresh transport credentials after outages. Contact approval and workspace authority are not touched. |
 | **Voice and video usually need a call server** | **1:1 WebRTC calls.** Audio and video use the same direct/TURN policy; signed call documents travel over the existing authenticated contact path. | Media is peer-to-peer DTLS; there is no recording, group call, PSTN bridge, or media store. A consented TURN relay sees IPs and timing, not chat or media plaintext. |
 | **Alerts usually require a push provider** | **Local mobile notifications.** Live inbound direct, group, and workspace messages can raise a local notification with an opaque ID, hidden-preview option, and open-time reauthorization. | No push service, token registry, or cloud scheduler. The native plugin raises notifications locally; presenting one never changes delivery or read state. |
 | **Cloud chat means cloud-held history and metadata** | **Local-only privacy.** Encrypted vault, sealed local search, no telemetry, analytics, crash upload, CDN, or remote artwork fetch. | Search and history stay on the device; there is no hosted index to query. |
@@ -55,10 +55,10 @@ The application is four cooperating layers plus the network below them. Reticulu
 
 1. **React renderer** - the conversation list, chats, groups, workspaces, threads, search, and settings. It holds UI state, drafts, and the reconnect coordinator that owns every `RTCPeerConnection`. It never receives a private key, the vault key, a filesystem path, or a socket, and it never approves a contact or changes workspace authority.
 2. **Tauri 2 shell (Rust)** - the only component allowed to start and stop the messaging service. It retrieves or creates a 32-byte vault key in the operating system's credential store, supplies the app-private profile path, validates every renderer command against a named allowlist and a size limit, and applies a strict content security policy.
-3. **`mesh-chat-service` (Python 3.11+)** - the security boundary. It parses and verifies every signed document, owns contact/group/workspace consent, commits state to the vault, runs the outbox and receipt jobs, and hands messages to LXMF only after the local transaction is durable. It also stores per-contact and per-workspace reconnect consent and signed capabilities, admission grants and v2 delegated manifests, workspace call signaling, and the durable replay cache, and publishes or fetches transient signed signaling envelopes with a pair token. It speaks a framed stdin/stdout protocol; there is no localhost HTTP or WebSocket control server.
-4. **Reticulum 1.5.5 + LXMF 1.2.0** - the pinned reference stack. Reticulum supplies identities, destinations, paths, Links, and transport; LXMF supplies message serialization plus direct and propagated delivery. Mesh Chat adds no custom cipher, group key, or routing envelope. An optional Reticulum `I2PInterface` can carry the same LXMF traffic over I2P when a local `i2pd` router and an access point are explicitly configured. An optional **community relay** (TURN plus a Reticulum TCP access point) can carry encrypted packets when direct Internet paths fail, and an optional **signaling mailbox** can exchange signed WebRTC rendezvous documents; neither is an authority and neither stores messages.
+3. **`mesh-chat-service` (Python 3.11+)** - the security boundary. It parses and verifies every signed document, owns contact/group/workspace consent, commits state to the vault, runs the outbox and receipt jobs, and hands messages to LXMF only after the local transaction is durable. It also stores per-contact and per-workspace reconnect consent and signed capabilities, admission grants and v2 delegated manifests, workspace call signaling, and the durable replay cache, and encrypts and publishes or fetches signaling envelopes with an independent access token. It speaks a framed stdin/stdout protocol; there is no localhost HTTP or WebSocket control server.
+4. **Reticulum 1.5.5 + LXMF 1.2.0** - the pinned reference stack. Reticulum supplies identities, destinations, paths, Links, and transport; LXMF supplies message serialization plus direct and propagated delivery. Mesh Chat adds no custom cipher, group key, or routing envelope. An optional Reticulum `I2PInterface` can carry the same LXMF traffic over I2P when a local `i2pd` router and an access point are explicitly configured. An optional **community relay** (TURN plus a Reticulum TCP access point) can carry encrypted packets when direct Internet paths fail, and an optional **signaling mailbox** can exchange encrypted, signed WebRTC rendezvous documents; neither is an authority and neither stores messages.
 
-Automatic reconnect deliberately crosses all four layers. The renderer owns the fresh transport, the service owns consent, signatures, and replay state, and the optional mailbox carries only transient signed envelopes. No layer can substitute for another: a valid signature is not authorization, and the mailbox operator cannot approve a contact.
+Automatic reconnect deliberately crosses all four layers. The renderer owns the fresh transport, the service owns consent, signatures, and replay state, and the optional mailbox carries only transient encrypted envelopes. No layer can substitute for another: a valid signature is not authorization, and the mailbox operator cannot approve a contact.
 
 Underneath them, one **protected profile** holds everything at rest: the sealed vault, Reticulum path/ratchet state, and the LXMF message store. The service verifies OS-level encryption for that directory (and enables NTFS EFS on Windows when needed) and refuses to start if it cannot confirm it — FileVault, fscrypt / dm-crypt / LUKS, or an app-private Android/iOS container.
 
@@ -126,27 +126,33 @@ and return a signed answer.
 An optional Cloudflare Worker removes that copy/paste for both onboarding and
 automatic reconnect:
 
-- One Durable Object per session, a 10-minute TTL, and a 48 KiB cap per signed
-  envelope. It stores no messages, contact graph, or history.
-- Reconnect documents are a signed `request`, `offer`, and `answer`. They bind
-  sender, recipient, device, attempt, session, SDP fingerprint, expiry, and
-  signature.
-- Reconnect requires a pair capability token, sent as `X-Mesh-Token`. The Worker
-  stores only its SHA-256 hash, pins it on first authenticated write, supports
-  holder-authorized rotation, and rejects mismatches. The tokenless manual
-  onboarding path remains compatible.
-- Per-token and per-client-IP rate limits bound abuse. Role and document-type
-  matching prevents placing an answer in the offer slot.
-- The mailbox cannot approve a contact, workspace member, or device, and never
-  sees plaintext. A mailbox URL is configured in **Settings → Advanced → WebRTC calls**;
-  without one the app says **Manual reconnect required** instead of looping.
+- One Durable Object per session, three independently expiring ten-minute slots,
+  and limits of 48 KiB decrypted document / 68 KiB encrypted wire envelope.
+- Clients sign request, offer, and answer documents, then encrypt them before
+  upload. Identity, device, attempt, session, SDP, expiry, and signature stay
+  inside ciphertext. Peers decrypt and validate all authorization and bindings.
+- Every read and write requires an independent `X-Mesh-Token` capability. The
+  Worker pins its SHA-256 hash on first write. Rotation creates a new room,
+  token, and encryption secret through authenticated capability exchange.
+- Room and edge IP budgets bound requests. Tokenless onboarding and legacy
+  plaintext signaling are rejected; encrypted pairing codes bootstrap onboarding.
+- The host sees network metadata and ciphertext sizes, but cannot decrypt
+  signaling or chat. It cannot approve contacts or workspace members.
+- Configure the mailbox in **Settings → Advanced → WebRTC calls**. Saved custom
+  and disabled choices are preserved. Rebuilt clients default to
+  [https://mesh-chat-signal.webtechalex.workers.dev](https://mesh-chat-signal.webtechalex.workers.dev) for fresh or unset settings.
+  See the [validation record](deploy/cloudflare-signal/VALIDATION.md) for hosted
+  checks and remaining physical-device qualification.
+
+See the [Cloudflare self-hosting instructions](deploy/cloudflare-signal/SELF_HOSTING.md)
+and [encrypted mailbox specification](docs/SIGNAL_MAILBOX_SPEC.md).
 
 The same signed capability exchange is what enables automatic reconnect:
 capabilities are shared when an invitation is accepted and approved, or over
 the authenticated control channel while connected. New personal contacts default
 to reconnecting when both apps are open and unlocked, with quiet retries when a
 peer is offline. Existing opt-outs, direct-IP permission, and relay consent are
-preserved. Personal v2 authorization survives long offline periods; reconnect
+preserved. Personal and workspace v3 authorization survives long offline periods; reconnect
 offers and mailbox documents remain short-lived. Older clients need a live
 exchange with the updated app to adopt durable authorization.
 A capability arriving before its contact record is held for a bounded time and
@@ -201,9 +207,9 @@ capabilities, Mesh Chat can renegotiate a **fresh** WebRTC transport when both
 apps are opened again. There is no manual offer/answer copy/paste and no
 background daemon.
 
-- Both people must explicitly enable **Reconnect automatically** for that
-  contact. Existing contacts default to off, and contact approval alone is not
-  consent to reconnect.
+- Both people must have **Reconnect automatically** enabled for that contact.
+  New personal contacts default to enabled; saved opt-outs are preserved.
+  Workspace reconnect has separate, off-by-default consent.
 - A signed `ConnectionCapabilities` document carries a rotating mailbox pair
   token. The Cloudflare signaling Worker stores only its SHA-256 hash and
   requires it for every reconnect read and write.

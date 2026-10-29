@@ -44,7 +44,7 @@ const choice = (value: unknown, allowed: Set<string>) => typeof value === "strin
 const boolean = (value: unknown) => typeof value === "boolean" ? value : null;
 const pendingMessageStates = ["waiting_for_keys", "queued", "sending", "stored_for_delivery", "received_by_endpoint"];
 const reconnectReasons = ["local_capabilities_missing", "peer_capabilities_missing", "peer_capabilities_expired",
-  "local_capabilities_expired", "consent_missing", "peer_consent_missing", "relay_required", "mailbox_not_configured", "workspace_peer_inactive"];
+  "local_capabilities_expired", "consent_missing", "peer_consent_missing", "relay_required", "mailbox_not_configured", "workspace_peer_inactive", "encrypted_capabilities_required"];
 const reconnectStates = ["idle", "waiting_for_peer", "probing", "offer_pending", "answer_pending", "connecting",
   "connected", "retry_wait", "peer_offline", "manual_required", "stopped", unavailable];
 

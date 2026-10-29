@@ -18,8 +18,8 @@ NATIVE_CHANNELS = [
     {"label": "mesh-reticulum", "binary": True, "ordered": True},
     {"label": "meshchat-reconnect", "binary": False, "ordered": True},
 ]
-MAX_ATTEMPT_SECONDS = 45.0
-POLL_SECONDS = 1.0
+MAX_PHASE_WAIT_SECONDS = 45.0
+POLL_SECONDS = 5.0
 BACKOFF_SECONDS = (1, 2, 5, 15, 30, 60)
 BACKGROUND_STATES = {"background", "background_available", "suspended"}
 DISCONNECTED_GRACE_SECONDS = 10.0
@@ -35,6 +35,8 @@ class BackgroundReconnectSupervisor:
         self._attempt_sessions: dict[str, str] = {}
         self._workers: dict[str, threading.Thread] = {}
         self._retry_at: dict[str, float] = {}
+        self._requests: dict[str, dict[str, Any]] = {}
+        self._completed_requests: dict[str, str] = {}
         self._last_scheduled: dict[str, float] = {}
         self._sessions_lock = threading.RLock()
         self._disconnected_since: dict[str, float] = {}
@@ -252,16 +254,26 @@ class BackgroundReconnectSupervisor:
         session_id = f"background-{attempt_id[:20]}"
         with self._sessions_lock:
             self._attempt_sessions[profile_id] = session_id
-        deadline = time.monotonic() + MAX_ATTEMPT_SECONDS
+        # Native offer/answer creation can each spend 20 seconds gathering ICE.
+        # Each network wait gets its own bounded budget after the preceding
+        # step completes; otherwise valid answers arrive after a shared expiry.
         if preferred:
-            request = self._step(profile_id, service.reconnect_request_create, contact_id, attempt_id)
+            # A peer may still be answering the previous mailbox request when
+            # our polling window ends. Rotating on every retry can keep both
+            # peers permanently one attempt apart after a restart.
+            request = self._requests.get(profile_id)
+            if request is None or request["expires_at"] <= time.time():
+                request = self._step(profile_id, service.reconnect_request_create, contact_id, attempt_id)
+                self._requests[profile_id] = request
+            attempt_id = request["attempt_id"]
             self._step(profile_id, service.reconnect_publish, profile_id, request["document"], "request")
             def verify_offer(document):
                 offer = service.verify_reconnect_offer(document, profile_id)
                 if offer.get("attempt_id") != attempt_id:
                     raise IdentityMismatch("Offer belongs to an earlier request")
                 return offer
-            offer_document, offer = self._fetch(profile_id, "offer", deadline, verify_offer)
+            offer_document, offer = self._fetch(profile_id, "offer",
+                time.monotonic() + MAX_PHASE_WAIT_SECONDS, verify_offer)
             native = self._step(profile_id, service.native_webrtc_accept,
                 session_id,
                 offer["sdp"],
@@ -276,9 +288,16 @@ class BackgroundReconnectSupervisor:
                 native["fingerprint"],
             )
             self._step(profile_id, service.reconnect_publish, profile_id, answer["document"], "answer")
+            self._requests.pop(profile_id, None)
         else:
-            request_document, _ = self._fetch(profile_id, "request", deadline,
-                lambda document: service.verify_reconnect_request(document, profile_id))
+            def verify_request(document):
+                request = service.verify_reconnect_request(document, profile_id)
+                if document == self._completed_requests.get(profile_id):
+                    raise IdentityMismatch("Request belongs to an established connection")
+                return request
+            request_document, _ = self._fetch(profile_id, "request",
+                time.monotonic() + MAX_PHASE_WAIT_SECONDS,
+                verify_request)
             native = self._step(profile_id, service.native_webrtc_offer,
                 session_id,
                 ice,
@@ -292,11 +311,17 @@ class BackgroundReconnectSupervisor:
                 native["fingerprint"],
             )
             self._step(profile_id, service.reconnect_publish, profile_id, offer["document"], "offer")
-            _, answer = self._fetch(profile_id, "answer", deadline,
+            _, answer = self._fetch(profile_id, "answer",
+                time.monotonic() + MAX_PHASE_WAIT_SECONDS,
                 lambda document: service.verify_reconnect_answer(document, offer["document"], profile_id))
             self._step(profile_id, service.native_webrtc_apply_answer, session_id, answer["sdp"])
-        self._wait_attached(profile_id, session_id, deadline)
+        self._wait_attached(profile_id, session_id, time.monotonic() + MAX_PHASE_WAIT_SECONDS)
         self._current_profile(profile_id)
+        if not preferred:
+            # The mailbox retains the last request after a successful exchange.
+            # After a disconnect, wait for the peer's new request instead of
+            # publishing an offer for a connection it has already retired.
+            self._completed_requests[profile_id] = request_document
         with self._sessions_lock:
             self._attempt_sessions.pop(profile_id, None)
         return session_id

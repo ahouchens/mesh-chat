@@ -12,6 +12,8 @@ describe("pairing resume", () => {
     const value = loadPairingResume();
     expect(value?.code).toBe("a".repeat(24));
     expect(value?.role).toBe("offer");
+    expect(localStorage.getItem("meshchat.pairing.resume")).toBeNull();
+    expect(loadPairingResume(value!.savedAt + 11 * 60 * 1000)).toBeNull();
   });
 
   it("drops expired or malformed entries", () => {

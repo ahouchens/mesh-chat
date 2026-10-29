@@ -72,9 +72,17 @@ def test_signal_commands_require_configured_mailbox(monkeypatch) -> None:
         lambda base, session, role, **kwargs: calls.append(("fetch", base, role)) or {"ok": True},
     )
 
-    document = json.dumps({"session_id": "a" * 24})
-    assert service._execute("signal_publish", {"document": document, "role": "offer"}) == {"ok": True}
-    assert service._execute("signal_fetch", {"session_id": "a" * 24, "role": "answer"}) == {"ok": True}
+    import RNS
+    from mesh_chat.webrtc_onboarding import create_onboarding_offer
+    from test_reconnect_service import SDP, FINGERPRINT
+    identity = RNS.Identity()
+    service._require_profile = lambda: {"destination_hash": RNS.Destination.hash(identity, "lxmf", "delivery").hex()}
+    document = create_onboarding_offer(identity, session_id="a" * 24, sdp=SDP, dtls_fingerprint=FINGERPRINT)
+    published = service._execute("signal_publish", {"document": document, "role": "offer"})
+    assert published["ok"] is True
+    assert published["session_id"].startswith("MESHPAIR2.")
+    fetched = service._execute("signal_fetch", {"session_id": published["session_id"], "role": "answer"})
+    assert fetched["ok"] is True
     assert calls == [
         ("publish", "https://signal.example.workers.dev", "offer"),
         ("fetch", "https://signal.example.workers.dev", "answer"),

@@ -8,7 +8,8 @@ from typing import Any
 
 import RNS
 
-from .call_settings import validate_broker_url
+from .call_settings import validate_mailbox_url
+from .signal_crypto import validate_secret
 from .errors import IdentityMismatch, ValidationError
 from .invitations import canonical_bytes
 from .webrtc_onboarding import _onboarding_sdp
@@ -25,6 +26,7 @@ from .webrtc_signaling import (
 
 CAPABILITIES_VERSION = 1
 DURABLE_CAPABILITIES_VERSION = 2
+ENCRYPTED_CAPABILITIES_VERSION = 3
 CAPABILITY_LIFETIME = "until_revoked"
 MAX_CAPABILITY_BYTES = 16 * 1024
 MAX_CLOCK_SKEW_SECONDS = 300
@@ -47,6 +49,7 @@ class VerifiedConnectionCapabilities:
     transports: tuple[str, ...]
     mailbox_url: str | None
     mailbox_pair_token: str | None
+    mailbox_secret: str | None
     mailbox_expires_at: int | None
     auto_reconnect: bool
     allow_direct_ip_disclosure: bool
@@ -68,13 +71,15 @@ def create_connection_capabilities(
     relay_consent_scope: str = "contact",
     mailbox_url: str | None = None,
     mailbox_pair_token: str | None = None,
+    mailbox_secret: str | None = None,
     mailbox_expires_at: int | None = None,
     expires_at: int | None = None,
     persistent: bool = False,
+    encrypted: bool = False,
     now: int | None = None,
 ) -> str:
     created = _now(now)
-    if not isinstance(persistent, bool):
+    if not isinstance(persistent, bool) or not isinstance(encrypted, bool):
         raise ValidationError("Capability lifetime is invalid")
     if persistent and expires_at is not None and (type(expires_at) is not int or expires_at != 0):
         raise ValidationError("Durable capability expiry must be zero")
@@ -84,13 +89,21 @@ def create_connection_capabilities(
     normalized = _transports(transports)
     if not isinstance(relay_consent_scope, str) or relay_consent_scope not in RELAY_SCOPES:
         raise ValidationError("Relay consent scope is invalid")
-    if persistent and relay_consent_scope == "workspace":
+    if persistent and relay_consent_scope == "workspace" and not encrypted:
         raise ValidationError("Durable capabilities are only for personal contacts")
     if not isinstance(auto_reconnect, bool) or not isinstance(allow_direct_ip_disclosure, bool):
         raise ValidationError("Connection consent must be boolean")
     mailbox = _mailbox(mailbox_url, mailbox_pair_token, mailbox_expires_at, created, persistent=persistent)
+    if encrypted and mailbox is not None:
+        mailbox.update(protocol=2, secret=validate_secret(mailbox_secret))
+        if mailbox_secret == mailbox_pair_token:
+            raise ValidationError("Signaling secret must be independent of the access token")
+    elif mailbox_secret is not None:
+        raise ValidationError("Signaling secret requires encrypted capabilities")
+    if encrypted and not persistent:
+        raise ValidationError("Encrypted capabilities must be durable")
     document: dict[str, Any] = {
-        "v": DURABLE_CAPABILITIES_VERSION if persistent else CAPABILITIES_VERSION,
+        "v": ENCRYPTED_CAPABILITIES_VERSION if encrypted else DURABLE_CAPABILITIES_VERSION if persistent else CAPABILITIES_VERSION,
         "type": "connection_capabilities",
         "peer_destination": peer_destination,
         "device_id": device_id,
@@ -115,7 +128,8 @@ def verify_connection_capabilities(
     now: int | None = None,
 ) -> VerifiedConnectionCapabilities:
     value = _capability_document(raw)
-    persistent = value["v"] == DURABLE_CAPABILITIES_VERSION
+    persistent = value["v"] in {DURABLE_CAPABILITIES_VERSION, ENCRYPTED_CAPABILITIES_VERSION}
+    encrypted = value["v"] == ENCRYPTED_CAPABILITIES_VERSION
     peer = _destination(value["peer_destination"])
     device = _device_id(value["device_id"])
     transports = _transports(value["transports"])
@@ -127,18 +141,25 @@ def verify_connection_capabilities(
     scope = value["relay_consent_scope"]
     if not isinstance(scope, str) or scope not in RELAY_SCOPES:
         raise ValidationError("Relay consent scope is invalid")
-    if persistent and scope == "workspace":
+    if persistent and scope == "workspace" and not encrypted:
         raise ValidationError("Durable capabilities are only for personal contacts")
     mailbox = value.get("mailbox")
-    mailbox_url = mailbox_token = None
+    mailbox_url = mailbox_token = mailbox_secret = None
     mailbox_expiry = None
     if mailbox is not None:
-        if not isinstance(mailbox, dict) or set(mailbox) != {"url", "pair_token", "expires_at"}:
+        fields = {"url", "pair_token", "expires_at"} | ({"protocol", "secret"} if encrypted else set())
+        if not isinstance(mailbox, dict) or set(mailbox) != fields:
             raise ValidationError("Mailbox capability is invalid")
-        mailbox_url = validate_broker_url(mailbox.get("url"))
+        if encrypted:
+            if type(mailbox["protocol"]) is not int or mailbox["protocol"] != 2:
+                raise ValidationError("Encrypted mailbox protocol is unsupported")
+            mailbox_secret = validate_secret(mailbox["secret"])
+        mailbox_url = validate_mailbox_url(mailbox.get("url"))
         if mailbox_url is None:
             raise ValidationError("Mailbox capability is invalid")
         mailbox_token = _pair_token(mailbox.get("pair_token"))
+        if encrypted and (len(mailbox_token) < 32 or mailbox_secret == mailbox_token):
+            raise ValidationError("Encrypted mailbox capability is invalid")
         mailbox_expiry = _mailbox_expiry(mailbox.get("expires_at"), value["issued_at"], persistent=persistent)
     public_key = _b64decode(value["signer_public_key"])
     if len(public_key) != RNS.Identity.KEYSIZE // 8:
@@ -160,6 +181,7 @@ def verify_connection_capabilities(
         transports=transports,
         mailbox_url=mailbox_url,
         mailbox_pair_token=mailbox_token,
+        mailbox_secret=mailbox_secret,
         mailbox_expires_at=mailbox_expiry,
         auto_reconnect=auto,
         allow_direct_ip_disclosure=disclose,
@@ -180,7 +202,7 @@ def _capability_document(raw: str) -> dict[str, Any]:
     except Exception as exc:
         raise ValidationError("Connection capability is invalid") from exc
     if (not isinstance(value, dict) or type(value.get("v")) is not int
-        or value["v"] not in {CAPABILITIES_VERSION, DURABLE_CAPABILITIES_VERSION}
+        or value["v"] not in {CAPABILITIES_VERSION, DURABLE_CAPABILITIES_VERSION, ENCRYPTED_CAPABILITIES_VERSION}
         or value.get("type") != "connection_capabilities"):
         raise ValidationError("Connection capability version is unsupported")
     expected = {
@@ -188,7 +210,7 @@ def _capability_document(raw: str) -> dict[str, Any]:
         "auto_reconnect", "allow_direct_ip_disclosure", "relay_consent_scope",
         "mailbox", "issued_at", "expires_at", "signer_public_key", "signature",
     }
-    if value["v"] == DURABLE_CAPABILITIES_VERSION:
+    if value["v"] in {DURABLE_CAPABILITIES_VERSION, ENCRYPTED_CAPABILITIES_VERSION}:
         expected.add("lifetime")
         if value.get("lifetime") != CAPABILITY_LIFETIME:
             raise ValidationError("Capability lifetime is invalid")
@@ -534,7 +556,7 @@ def _capability_expiry_value(value: dict[str, Any], now: int | None) -> None:
         raise ValidationError("Capability issue time is invalid")
     if not isinstance(expiry, int) or isinstance(expiry, bool):
         raise ValidationError("Capability expiry is invalid")
-    if value["v"] == DURABLE_CAPABILITIES_VERSION:
+    if value["v"] in {DURABLE_CAPABILITIES_VERSION, ENCRYPTED_CAPABILITIES_VERSION}:
         if expiry != 0:
             raise ValidationError("Durable capability expiry must be zero")
         return
@@ -586,7 +608,7 @@ def _mailbox(
     if url is None or token is None or expires_at is None:
         raise ValidationError("Mailbox capability requires URL, token, and expiry")
     return {
-        "url": validate_broker_url(url),
+        "url": validate_mailbox_url(url),
         "pair_token": _pair_token(token),
         "expires_at": _mailbox_expiry(expires_at, now, persistent=persistent),
     }

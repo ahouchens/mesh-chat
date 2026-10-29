@@ -311,9 +311,12 @@ def test_reconnect_summary_reports_readiness_and_consent_without_tokens_or_mutat
         "mailbox_pair_token": secret, "mailbox_expires_at": 1999}
     service.store.put("reconnect_profile", "expired", expired)
     service.store.put("reconnect_profile", "ready", {**expired, "state": "idle",
-        "local_capabilities_expires_at": 3000, "remote_capabilities_expires_at": 3000,
+        "local_capabilities_expires_at": 0, "remote_capabilities_expires_at": 0,
+        "local_capabilities_version": 3, "remote_capabilities_version": 3,
+        "local_capabilities_persistent": True, "remote_capabilities_persistent": True,
+        "mailbox_secret": secret,
         "auto_reconnect": True, "remote_auto_reconnect": True,
-        "allow_direct_ip_disclosure": True, "mailbox_expires_at": 3000})
+        "allow_direct_ip_disclosure": True, "mailbox_expires_at": 0})
     before = dict(service.store.rows)
     current = diagnostics.reconnect_state(service)
     assert current["profiles"] == 2

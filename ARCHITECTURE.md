@@ -158,7 +158,7 @@ Device A                                          Optional rendezvous           
 │  reconnect coordinator      │                  │  Durable Object / pair   │              │  reconnect coordinator      │
 │  RTCPeerConnection          │                  │  SHA-256 token hash      │              │  RTCPeerConnection          │
 │         │ invoke()          │                  │  10-min TTL / 48 KiB     │              │         │ invoke()          │
-│ Tauri shell                 │                  │  per-token/IP limits     │              │ Tauri shell                 │
+│ Tauri shell                 │                  │  room/IP limits          │              │ Tauri shell                 │
 │         │ stdin/stdout      │  signed docs     │  roles: request/offer/   │  signed docs │         │ stdin/stdout      │
 │ Python service              │  + X-Mesh-Token  │          answer          │  + token     │ Python service              │
 │  consent/capabilities/replay├─────────────────>│  no plaintext / trust    │<─────────────┤  consent/capabilities/replay│
@@ -173,11 +173,12 @@ Device A                                          Optional rendezvous           
 - The **Python service** owns per-contact consent, signed capabilities,
   signature verification, replay state, and mailbox HTTP. It never owns a peer
   connection.
-- The **optional mailbox** owns only transient signed envelopes. It cannot
+- The **optional mailbox** owns only transient encrypted envelopes. It cannot
   approve anything, enumerate contacts from public destination hashes, or read
   plaintext.
-- The **Tauri shell and vault** are unchanged: the mailbox URL and tokens live in
-  the sealed service store, and the renderer never receives a token.
+- The **Tauri shell and vault** are unchanged: reconnect mailbox URLs, access tokens, and encryption secrets live in
+  the sealed service store. Initial pairing codes remain in renderer memory
+  only while needed for transfer; reconnect secrets are service-owned.
 
 This split is deliberate. A Python supervisor cannot keep a WebView peer
 connection alive after the renderer exits, and a renderer cannot be trusted with
@@ -188,9 +189,11 @@ open and unlocked; on lock or quit the coordinator is torn down.
 
 Each device signs a `connection_capabilities` document for one contact. It binds
 the sender, recipient, device ID, transports, optional mailbox URL and pair
-token, its own auto-reconnect and direct-IP-disclosure consent, relay scope, and
-an expiry (at most seven days). Existing contacts default to **auto-reconnect
-off**, and contact approval is not consent to reconnect.
+token and independent encryption secret, its own auto-reconnect and direct-IP
+disclosure consent, and relay scope. Version 3 personal and workspace capabilities
+remain valid until revoked, subject to current authorization. New personal
+contacts default to reconnect enabled; saved opt-outs are preserved. Workspace
+reconnect requires separate consent.
 
 Capabilities are attached to an invitation when the peer destination is already
 known. Otherwise they are exchanged when the invitation is accepted or the owner
@@ -201,7 +204,7 @@ LXMF request) is held as a signed, expiring, peer-bound document and promoted
 only after a contact exists and is approved. Holding never grants trust.
 
 The pair token is a rotating rendezvous capability, not a public identity. A
-mailbox change or a consent change rotates it. Direct IP disclosure is a
+mailbox change or consent change rotates the room, token, and encryption secret. Direct IP disclosure is a
 separate flag: without it, the coordinator requests a relay-only ICE policy when
 a consented relay is available; with no relay it reports that reconnect is not
 ready instead of leaking host candidates.
@@ -242,18 +245,22 @@ is sealed in the vault.
 
 ### Mailbox authentication and abuse limits
 
-- Roles are `request`, `offer`, and `answer`; each accepts only its document
-  type. A reconnect document is rejected without a token.
-- The Worker stores the SHA-256 hash of the pair token, pinned on the first
-  authenticated write. Every later read and write must present it. A rotation is
-  accepted only from the current token holder and replaces the hash.
-- Sessions expire after ten minutes and documents are capped at 48 KiB. The
-  alarm deletes expired documents and counters.
-- Per-token and per-client-IP write/read budgets are enforced per minute.
-- Tokenless sessions remain readable and writable for the manual onboarding
-  offer/answer path. A room that has accepted a token cannot be read without it.
-- The mailbox stores no message, contact graph, workspace record, or long-term
-  presence history. Its operators see signed envelopes, source IPs, and timing.
+- Roles are `request`, `offer`, and `answer`; clients sign, encrypt, and verify
+  document types and bindings. The Worker only accepts versioned ciphertext.
+- Every read and write requires the pair token. The Worker stores its SHA-256
+  hash, pinned on first write. A new capability rotates room, token, and secret.
+- Each of three slots expires independently after ten minutes. Documents are
+  bounded at 48 KiB decrypted / 68 KiB wire. Alarms clean expired state.
+- Room limits and edge IP budgets bound reads/writes. Reads never extend TTL.
+  Empty reads and invalid tokens create no persistent counter state.
+- Encrypted onboarding uses a short-lived capability code. Tokenless and legacy
+  plaintext paths are rejected; there is no downgrade fallback.
+- The mailbox stores no messages or identities in plaintext. Operators see
+  source IPs, room activity, timing, and ciphertext size. Provider recovery
+  history may outlive application TTL.
+
+The normative wire protocol, limits, crypto test vector, and release gates are
+in [SIGNAL_MAILBOX_SPEC.md](docs/SIGNAL_MAILBOX_SPEC.md).
 
 ### State, retry, and failure handling
 
@@ -262,7 +269,8 @@ The coordinator reports `waiting_for_peer`, `probing`, `offer_pending`,
 `manual_required`, and `stopped`. It runs at most two concurrent attempts,
 backs off at 1, 2, 5, 15, 30, and 60 seconds with jitter, and stops on
 cancellation, consent removal, a blocked or deleted contact, capability
-rejection, or a bounded attempt budget. No modal or contact-approval prompt is
+rejection, or an explicit stop. Exhausted attempt batches continue with backoff
+while a peer remains offline and authorization is still valid. No modal or contact-approval prompt is
 shown.
 
 A transport failure never mutates contact, workspace, or membership state. A
@@ -307,9 +315,10 @@ and replay keys. Reconnect never writes SDP, ICE credentials, or DTLS keys to
 the vault or logs. Call signaling records store the negotiated SDP and ICE
 candidates in the vault by default, controlled by
 `store_call_signaling`; when disabled they stay in service memory only and are
-never sent to the mailbox or logs. The mailbox necessarily holds the signed
-offer/answer envelope, including the ephemeral SDP it carries, for its
-ten-minute TTL; that is signaling state, not chat state, and it is never reused.
+never sent to the mailbox or logs. The mailbox holds only encrypted
+offer/answer envelopes during their ten-minute API TTL; it cannot decrypt SDP.
+Fresh attempts use fresh transport credentials. Initial pairing codes stay in
+process memory, never browser local storage.
 Broker-issued TURN credentials are kept in service memory only; a manually
 configured TURN credential is sealed in call settings.
 

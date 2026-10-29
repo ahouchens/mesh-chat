@@ -20096,15 +20096,28 @@ class WorkspaceServiceMixin:
             else False,
             "relay_consent_scope": "workspace",
             "profiles": public,
-            "ready_count": sum(
-                1
-                for profile in profiles
-                if profile.get("auto_reconnect")
-                and profile.get("remote_auto_reconnect")
-                and self._profile_mailbox(profile)["session"] is not None
-            ),
+            "ready_count": sum(1 for profile in public if profile["effective"]["ready"]),
             "peer_count": len(profiles),
         }
+
+    def _queue_workspace_reconnect_capability(self, profile: dict[str, Any]) -> None:
+        """Refresh existing consent after protocol/URL changes via encrypted LXMF."""
+        contact = self._workspace_reconnect_contact(profile["contact_id"])
+        workspace = self._require_workspace(contact["workspace_id"])
+        manifest = self._workspace_current_manifest(workspace)
+        device = next(device for member in manifest.members
+                      if member.member_id == contact["peer_member_id"]
+                      for device in member.devices if device.device_id == contact["peer_device_id"])
+        wrapper = create_workspace_reconnect_capability(
+            self._call_identity(), workspace_id=workspace["id"],
+            manifest_digest=workspace["manifest_hash"], capability=profile["local_capabilities"])
+        delivery = self._workspace_delivery_record(
+            workspace_id=workspace["id"], recipient_member_id=contact["peer_member_id"],
+            recipient_device=device, kind="workspace_reconnect_capability", document=wrapper, priority=0)
+        profile["capability_delivery_pending"] = False
+        self.store.put_many([("reconnect_profile", profile["id"], profile),
+                             ("workspace_delivery", delivery["id"], delivery),
+                             *self._due_records(add=[delivery])])
 
     def workspace_reconnect_consent_set(
         self,

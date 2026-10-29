@@ -33,6 +33,7 @@ from .models import TrustState
 from .reconnect import (
     MAX_CAPABILITY_SECONDS,
     DURABLE_CAPABILITIES_VERSION,
+    ENCRYPTED_CAPABILITIES_VERSION,
     MAX_CLOCK_SKEW_SECONDS,
     _destination,
     create_connection_capabilities,
@@ -47,6 +48,7 @@ from .reconnect import (
 )
 from .signal_mailbox import fetch as fetch_signal
 from .signal_mailbox import publish as publish_signal
+from .signal_crypto import new_secret
 from .webrtc_signaling import _b64decode, _destination_for_public_key
 
 PROFILE_KIND = "reconnect_profile"
@@ -106,11 +108,9 @@ def _text(value: Any, label: str, *, limit: int = 200) -> str:
 
 def _capability_persistent(profile: dict[str, Any], side: str) -> bool:
     return bool(
-        profile.get("scope_kind") != "workspace"
-        and not str(profile.get("contact_id", "")).startswith("workspace:")
-        and profile.get(f"{side}_capabilities")
+        profile.get(f"{side}_capabilities")
         and profile.get(f"{side}_capabilities_persistent") is True
-        and profile.get(f"{side}_capabilities_version") == DURABLE_CAPABILITIES_VERSION
+        and profile.get(f"{side}_capabilities_version") in {DURABLE_CAPABILITIES_VERSION, ENCRYPTED_CAPABILITIES_VERSION}
         and profile.get(f"{side}_capabilities_expires_at") == 0
     )
 
@@ -248,28 +248,34 @@ class ReconnectServiceMixin:
 
     # ---------------------------------------------------------------- mailbox
 
-    @staticmethod
-    def _profile_mailbox(profile: dict[str, Any]) -> dict[str, Any]:
+    def _profile_mailbox(self, profile: dict[str, Any]) -> dict[str, Any]:
         now = _now()
+        configured = getattr(self._call_settings, "signal_mailbox_url", None)
         local_ok = bool(
             profile.get("mailbox_url")
+            and profile.get("mailbox_url") == configured
             and profile.get("mailbox_pair_token")
+            and profile.get("mailbox_secret")
             and (_capability_persistent(profile, "local") and profile.get("mailbox_expires_at") == 0
                  or int(profile.get("mailbox_expires_at") or 0) > now)
         )
         remote_ok = bool(
             profile.get("remote_mailbox_url")
+            and profile.get("remote_mailbox_url") == configured
             and profile.get("remote_mailbox_pair_token")
+            and profile.get("remote_mailbox_secret")
             and (_capability_persistent(profile, "remote") and profile.get("remote_mailbox_expires_at") == 0
                  or int(profile.get("remote_mailbox_expires_at") or 0) > now)
         )
         local = {
             "url": profile.get("mailbox_url"),
             "token": profile.get("mailbox_pair_token"),
+            "secret": profile.get("mailbox_secret"),
         }
         remote = {
             "url": profile.get("remote_mailbox_url"),
             "token": profile.get("remote_mailbox_pair_token"),
+            "secret": profile.get("remote_mailbox_secret"),
         }
         local_device = str(profile.get("local_device_id") or "")
         remote_device = str(profile.get("remote_device_id") or "")
@@ -290,6 +296,7 @@ class ReconnectServiceMixin:
                     "preferred": preferred,
                     "url": candidate["url"],
                     "token": candidate["token"],
+                    "secret": candidate["secret"],
                     "session": reconnect_session_id(candidate["token"]),
                     "source": "local" if candidate is local else "remote",
                 }
@@ -298,6 +305,7 @@ class ReconnectServiceMixin:
             "preferred": preferred,
             "url": None,
             "token": None,
+            "secret": None,
             "session": None,
             "source": None,
         }
@@ -352,6 +360,8 @@ class ReconnectServiceMixin:
             reasons.append("relay_required")
         if not mailbox["configured"]:
             reasons.append("mailbox_not_configured")
+        if any(profile.get(f"{side}_capabilities") and profile.get(f"{side}_capabilities_version") != ENCRYPTED_CAPABILITIES_VERSION for side in ("local", "remote")):
+            reasons.append("encrypted_capabilities_required")
         if not workspace_authorized:
             reasons.append("workspace_peer_inactive")
         return {
@@ -428,6 +438,16 @@ class ReconnectServiceMixin:
         profile = self.store.get("profile", "local") or {}
         profiles = []
         for item in self._reconnect_profiles_raw():
+            if item.get("scope_kind") == "workspace":
+                try:
+                    contact = self._reconnect_contact(item["contact_id"])
+                    refreshed = self._reconnect_ensure_local_capabilities(item, contact)
+                    if refreshed or item.get("capability_delivery_pending"):
+                        self._queue_workspace_reconnect_capability(item)
+                except Exception:
+                    # Inactive membership never gets a new capability. A live
+                    # authenticated control channel can also exchange updates.
+                    pass
             public = self._reconnect_profile_public(item)
             native_session = getattr(self, "native_reconnect_session", lambda _: None)(item["id"])
             if native_session:
@@ -578,6 +598,7 @@ class ReconnectServiceMixin:
             or profile.get("mailbox_url")
             != getattr(self._call_settings, "signal_mailbox_url", None)
             or not _capability_active(profile, "local")
+            or profile.get("local_capabilities_version") != ENCRYPTED_CAPABILITIES_VERSION
             or (not contact["id"].startswith("workspace:") and not _capability_persistent(profile, "local"))
         )
         if changed or rotate_token or stale:
@@ -630,12 +651,15 @@ class ReconnectServiceMixin:
         identity = self._call_identity()
         mailbox_url = getattr(self._call_settings, "signal_mailbox_url", None)
         token = profile.get("mailbox_pair_token")
+        secret = profile.get("mailbox_secret")
         if (
             rotate
             or not token
+            or not secret
             or profile.get("mailbox_url") != mailbox_url
         ):
             token = secrets.token_urlsafe(32) if mailbox_url else None
+            secret = new_secret() if mailbox_url else None
         # Capabilities can be rotated more than once within one second. Keep
         # their signed issue times ordered so a delayed document cannot undo
         # a newer token or consent change, including after a restart.
@@ -643,7 +667,7 @@ class ReconnectServiceMixin:
         now = max(current, int(profile.get("local_capabilities_issued_at") or 0) + 1)
         if now > current + MAX_CLOCK_SKEW_SECONDS:
             raise ValidationError("Connection capability changes are too frequent")
-        persistent = profile.get("scope_kind") != "workspace" and not contact["id"].startswith("workspace:")
+        persistent = True
         expires_at = 0 if persistent else now + MAX_CAPABILITY_SECONDS
         mailbox_expires_at = (
             (0 if persistent else min(expires_at - 60, now + 30 * 24 * 60 * 60)) if mailbox_url else None
@@ -660,9 +684,11 @@ class ReconnectServiceMixin:
             relay_consent_scope=profile.get("relay_consent_scope", "contact"),
             mailbox_url=mailbox_url,
             mailbox_pair_token=token,
+            mailbox_secret=secret,
             mailbox_expires_at=mailbox_expires_at,
             expires_at=expires_at,
             persistent=persistent,
+            encrypted=True,
             now=now,
         )
         verified = verify_connection_capabilities(serialized, now=now)
@@ -674,6 +700,7 @@ class ReconnectServiceMixin:
         profile["transports"] = list(verified.transports)
         profile["mailbox_url"] = verified.mailbox_url
         profile["mailbox_pair_token"] = verified.mailbox_pair_token
+        profile["mailbox_secret"] = verified.mailbox_secret
         profile["mailbox_expires_at"] = verified.mailbox_expires_at or 0
         profile["local_device_id"] = verified.device_id
 
@@ -804,6 +831,7 @@ class ReconnectServiceMixin:
         profile["remote_transports"] = list(verified.transports)
         profile["remote_mailbox_url"] = verified.mailbox_url
         profile["remote_mailbox_pair_token"] = verified.mailbox_pair_token
+        profile["remote_mailbox_secret"] = verified.mailbox_secret
         profile["remote_mailbox_expires_at"] = verified.mailbox_expires_at or 0
         if int(profile.get("reciprocal_since") or 0) == 0 and (
             profile.get("auto_reconnect") and verified.auto_reconnect
@@ -844,8 +872,7 @@ class ReconnectServiceMixin:
     def reconnect_capabilities_get(self, contact_id: Any) -> dict[str, Any]:
         contact = self._reconnect_contact(contact_id)
         profile = self._reconnect_profile_for_contact(contact["id"])
-        if not contact["id"].startswith("workspace:"):
-            self._reconnect_ensure_local_capabilities(profile, contact)
+        self._reconnect_ensure_local_capabilities(profile, contact)
         return {
             "profile": self._reconnect_profile_public(profile),
             "local_capabilities": profile.get("local_capabilities"),
@@ -862,9 +889,12 @@ class ReconnectServiceMixin:
         configured_mailbox = getattr(self._call_settings, "signal_mailbox_url", None)
         if (profile.get("local_capabilities")
             and _capability_persistent(profile, "local")
+            and profile.get("local_capabilities_version") == ENCRYPTED_CAPABILITIES_VERSION
             and profile.get("mailbox_url") == configured_mailbox):
             return False
         self._reconnect_issue_local_capabilities(profile, contact, rotate=False)
+        if profile.get("scope_kind") == "workspace":
+            profile["capability_delivery_pending"] = True
         profile["updated_at"] = now
         self.store.put(PROFILE_KIND, profile["id"], profile)
         return True
@@ -1028,6 +1058,8 @@ class ReconnectServiceMixin:
             )
         if not _capability_active(profile, "local") or not _capability_active(profile, "remote"):
             raise ContactNotApproved("Reconnect capabilities are missing or expired")
+        if any(profile.get(f"{side}_capabilities_version") != ENCRYPTED_CAPABILITIES_VERSION for side in ("local", "remote")):
+            raise ValidationError("Exchange encrypted reconnect capabilities with the updated peer first")
         if self._profile_mailbox(profile)["session"] is None:
             raise ValidationError("Signaling mailbox is not configured")
         return profile
@@ -1285,6 +1317,7 @@ class ReconnectServiceMixin:
             document,
             role,
             token=mailbox["token"],
+            secret=mailbox["secret"],
             session=mailbox["session"],
         )
         return {
@@ -1304,6 +1337,7 @@ class ReconnectServiceMixin:
             mailbox["session"],
             role,
             token=mailbox["token"],
+            secret=mailbox["secret"],
             pending=True,
         )
         return {

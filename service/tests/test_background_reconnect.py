@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 import threading
+import time
 
 import pytest
 
@@ -38,7 +39,7 @@ class Service:
     def reconnect_request_create(self, contact_id: str, attempt_id: str) -> dict[str, Any]:
         self.calls.append("request")
         self.attempt_id = attempt_id
-        return {"document": "request-document"}
+        return {"document": "request-document", "attempt_id": attempt_id, "expires_at": time.time() + 3600}
 
     def reconnect_fetch(self, profile_id: str, role: str) -> dict[str, Any] | None:
         if role == "offer":
@@ -132,6 +133,87 @@ def test_non_preferred_side_offers_with_native_transport() -> None:
     assert session_id.startswith("background-")
     assert service.calls == ["native_offer", "offer", "native_apply"]
     assert service.published == [("profile-1", "offer-document", "offer")]
+
+
+def test_timeout_reuses_request_so_a_delayed_peer_can_catch_up(monkeypatch):
+    service = Service(True)
+    supervisor = BackgroundReconnectSupervisor(service)
+    fetch = supervisor._fetch
+    def timeout(*args):
+        raise TimeoutError("Peer is still answering the previous request")
+    monkeypatch.setattr(supervisor, "_fetch", timeout)
+    with pytest.raises(TimeoutError):
+        supervisor._attempt(service.profile)
+    delayed_attempt = service.attempt_id
+    monkeypatch.setattr(supervisor, "_fetch", fetch)
+    monkeypatch.setattr(service, "verify_reconnect_offer", lambda *_: {
+        "sdp": "delayed-offer", "attempt_id": delayed_attempt})
+    supervisor._attempt(service.profile)
+    assert service.calls.count("request") == 1
+    assert "native_accept" in service.calls
+    assert not supervisor._requests
+
+
+def test_expired_background_request_is_replaced():
+    service = Service(True)
+    supervisor = BackgroundReconnectSupervisor(service)
+    supervisor._requests["profile-1"] = {"document": "expired", "attempt_id": "old", "expires_at": 0}
+    supervisor._attempt(service.profile)
+    assert service.calls.count("request") == 1
+    assert all(document != "expired" for _, document, _ in service.published)
+
+
+def test_recovery_ignores_request_for_the_connection_that_already_succeeded(monkeypatch):
+    service = Service(False)
+    supervisor = BackgroundReconnectSupervisor(service)
+    supervisor._attempt(service.profile)
+    fetch = service.reconnect_fetch
+    requests = iter(["request-document", "fresh-request-document"])
+    offered = []
+    create = service.reconnect_offer_create
+
+    def mailbox(profile_id, role):
+        if role == "request":
+            return {"document": next(requests)}
+        return fetch(profile_id, role)
+
+    def offer(contact_id, document, *args):
+        offered.append(document)
+        return create(contact_id, document, *args)
+
+    monkeypatch.setattr(service, "reconnect_fetch", mailbox)
+    monkeypatch.setattr(service, "reconnect_offer_create", offer)
+    monkeypatch.setattr(supervisor._stop, "wait", lambda _: None)
+    supervisor._attempt(service.profile)
+    assert offered == ["fresh-request-document"]
+
+
+@pytest.mark.parametrize("preferred", [True, False])
+def test_slow_native_gathering_does_not_consume_the_next_protocol_wait(monkeypatch, preferred):
+    service = Service(preferred)
+    supervisor = BackgroundReconnectSupervisor(service)
+    now = [0.0]
+    monkeypatch.setattr("mesh_chat.background_reconnect.time.monotonic", lambda: now[0])
+    monkeypatch.setattr(supervisor._stop, "wait", lambda delay: now.__setitem__(0, now[0] + delay))
+    fetch = service.reconnect_fetch
+
+    def delayed_document(profile_id, role):
+        ready_at = 75 if role == "answer" else 30
+        return fetch(profile_id, role) if now[0] >= ready_at else None
+
+    monkeypatch.setattr(service, "reconnect_fetch", delayed_document)
+    method = "native_webrtc_accept" if preferred else "native_webrtc_offer"
+    create = getattr(service, method)
+
+    def gather(*args, **kwargs):
+        now[0] += 20
+        return create(*args, **kwargs)
+
+    monkeypatch.setattr(service, method, gather)
+    monkeypatch.setattr(service, "native_webrtc_stats", lambda _: {
+        "attached": now[0] >= 80, "ice_connection_state": "connected"})
+    assert supervisor._attempt(service.profile).startswith("background-")
+    assert now[0] == 80
 
 
 def test_stop_closes_native_sessions_instead_of_leaking_them() -> None:

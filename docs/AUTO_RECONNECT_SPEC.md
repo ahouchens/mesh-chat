@@ -1,5 +1,13 @@
 # Automatic reconnect and signaling capabilities
 
+Mailbox transport and capability lifetimes below are superseded by
+[Default encrypted signaling mailbox](SIGNAL_MAILBOX_SPEC.md). The checkout now
+implements encrypted v2 mailbox traffic and durable v3 personal/workspace
+capabilities; production deployment and the packaged public default await release
+qualification. Earlier signed-only/tokenless/bounded-workspace descriptions in
+this document describe the legacy protocol. See the dedicated
+[Cloudflare self-hosting guide](../deploy/cloudflare-signal/SELF_HOSTING.md).
+
 Status: the current personal-contact behavior restores eligible connections quietly
 when the app opens or resumes. New personal profiles default to automatic reconnect;
 explicit opt-outs and ambiguous disabled settings from older versions are preserved.
@@ -223,7 +231,7 @@ fresh peer connection after signaling succeeds.
 ## 9. Mailbox requirements
 
 The original KV mailbox was a pairing prototype. The shipped Worker now uses one
-Durable Object per session and implements the requirements below (see §18); this
+Durable Object per session and implements the requirements below (see Â§18); this
 section records the design rationale.
 
 Required for reconnect:
@@ -295,25 +303,25 @@ Do not reconnect every approved contact.
 
 Automated:
 
-1. both peers restart, one opens first, second later → connected;
-2. both restart simultaneously → exactly one offer, no glare;
-3. preferred initiator offline → responder takes over after timeout;
-4. only one peer has a mailbox → explicit manual-required state;
-5. mailbox KV lag/duplicate delivery → idempotent handling;
-6. replay across restart → rejected;
-7. clock skew and expired documents → bounded grace;
-8. blocked/revoked peer request → rejected before PC creation;
-9. relay consent expired → prompt or direct-only attempt;
+1. both peers restart, one opens first, second later â†’ connected;
+2. both restart simultaneously â†’ exactly one offer, no glare;
+3. preferred initiator offline â†’ responder takes over after timeout;
+4. only one peer has a mailbox â†’ explicit manual-required state;
+5. mailbox KV lag/duplicate delivery â†’ idempotent handling;
+6. replay across restart â†’ rejected;
+7. clock skew and expired documents â†’ bounded grace;
+8. blocked/revoked peer request â†’ rejected before PC creation;
+9. relay consent expired â†’ prompt or direct-only attempt;
 10. mailbox token rotation and URL change;
 11. user disables auto-reconnect mid-attempt;
-12. app killed during offer/answer → no stale session accepted;
-13. network switch Wi-Fi ↔ cellular → reconnect with backoff;
-14. Reticulum path missing then appearing → delayed success;
+12. app killed during offer/answer â†’ no stale session accepted;
+13. network switch Wi-Fi â†” cellular â†’ reconnect with backoff;
+14. Reticulum path missing then appearing â†’ delayed success;
 15. multiple devices for one contact;
 16. workspace membership revoked while offline;
 17. spam flood against mailbox capability;
 18. battery/backoff and attempt cap;
-19. no signaling path at all → manual state.
+19. no signaling path at all â†’ manual state.
 
 Manual/device:
 
@@ -325,7 +333,7 @@ Manual/device:
 
 ## 15. Phases and current status
 
-### Phase A — capabilities and consent (implemented)
+### Phase A â€” capabilities and consent (implemented)
 
 - signed `ConnectionCapabilities` creation and verification;
 - transport list, mailbox capability, consent flags, scope, and expiry;
@@ -339,7 +347,7 @@ personal profiles default to on; a consent or mailbox change issues a new signed
 document and rotates the token. A capability that arrives before its contact
 record is held, then promoted only after approval.
 
-### Phase B — reconnect protocol and supervisor (implemented over the mailbox)
+### Phase B â€” reconnect protocol and supervisor (implemented over the mailbox)
 
 - signed `webrtc_reconnect_request`, `webrtc_reconnect_offer`, and
   `webrtc_reconnect_answer`;
@@ -357,7 +365,7 @@ Open limitations:
 - no initiator takeover when the preferred device is offline;
 - no physical network-switch, NAT/TURN, or multi-device qualification.
 
-### Phase C — mailbox reconnect (implemented)
+### Phase C â€” mailbox reconnect (implemented)
 
 - Durable Object per session, pair tokens hashed at rest, rotation, request/
   offer/answer roles, ten-minute TTL, 48 KiB cap, and per-token/per-IP limits;
@@ -366,7 +374,7 @@ Open limitations:
 
 Presence is not offered.
 
-### Phase D — lifecycle (not implemented, by design)
+### Phase D â€” lifecycle (not implemented, by design)
 
 - desktop tray policy;
 - Android foreground service;
@@ -376,7 +384,7 @@ Presence is not offered.
 
 Reconnect runs only while the app is open and unlocked.
 
-### Phase E — UX and cleanup (implemented)
+### Phase E â€” UX and cleanup (implemented)
 
 - per-contact status, consent toggles, retry/stop/forget, and explicit
   manual-required messaging;
