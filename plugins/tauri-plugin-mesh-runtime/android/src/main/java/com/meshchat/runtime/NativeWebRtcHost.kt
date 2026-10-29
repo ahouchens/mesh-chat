@@ -12,6 +12,7 @@ import org.webrtc.DataChannel
 import org.webrtc.IceCandidate
 import org.webrtc.MediaConstraints
 import org.webrtc.MediaStream
+import org.webrtc.NetworkMonitor
 import org.webrtc.PeerConnection
 import org.webrtc.PeerConnectionFactory
 import org.webrtc.RtpReceiver
@@ -545,20 +546,39 @@ object NativeWebRtcHost {
         // gathering completes without candidates. Such SDP cannot bootstrap
         // our non-trickle exchange. Recreate the peer after a short bounded
         // delay, keeping its ICE policy (including relay-only) unchanged.
-        val retryUntil = System.nanoTime() + TimeUnit.SECONDS.toNanos(2)
-        repeat(3) { attempt ->
-            val result = create()
-            val value = JSONObject(result)
-            if (!value.optBoolean("ok") || value.optString("sdp").lineSequence().any { it.startsWith("a=candidate:") }) {
-                return result
+        val monitor = try {
+            ensureInitialized()
+            NetworkMonitor.getInstance().also {
+                it.startMonitoring(requireNotNull(NativeWebRtcContext.get()), "")
             }
-            close(sessionId)
-            // Do not multiply the full gathering timeout when an unavailable
-            // TURN server or network genuinely has no usable candidates.
-            if (System.nanoTime() >= retryUntil) return error("native_webrtc_no_candidates")
-            if (attempt < 2) Thread.sleep(500)
+        } catch (_: Throwable) {
+            return error("native_webrtc_network_monitor_failed")
         }
-        return error("native_webrtc_no_candidates")
+        try {
+            val retryUntil = System.nanoTime() + TimeUnit.SECONDS.toNanos(2)
+            repeat(3) { attempt ->
+                val result = create()
+                val value = JSONObject(result)
+                if (!value.optBoolean("ok") || value.optString("sdp").lineSequence().any { it.startsWith("a=candidate:") }) {
+                    return result
+                }
+                close(sessionId)
+                // Do not multiply the full gathering timeout when an unavailable
+                // TURN server or network genuinely has no usable candidates.
+                if (System.nanoTime() >= retryUntil) return error("native_webrtc_no_candidates")
+                if (attempt < 2) Thread.sleep(500)
+            }
+            return error("native_webrtc_no_candidates")
+        } catch (_: InterruptedException) {
+            close(sessionId)
+            Thread.currentThread().interrupt()
+            return error("native_webrtc_session_closed")
+        } finally {
+            // Retain the monitor while replacing an empty peer, or closing the
+            // last native observer resets network discovery on every retry.
+            // Successful peers retain their own reference after this is freed.
+            monitor.stopMonitoring()
+        }
     }
 
     private fun parseChannels(raw: String): List<ChannelSpec> {
