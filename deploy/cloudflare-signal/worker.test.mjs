@@ -98,8 +98,14 @@ test("strict room budgets stay bounded under arbitrary wrong tokens", async () =
 test("concurrent first writes cannot claim the room with different tokens", async () => {
   const target = room();
   const results = await Promise.all([call(target, "offer", "PUT"), call(target, "answer", "PUT", { token: OTHER })]);
-  assert.deepEqual(results.map(x => x.status), [201, 401]);
-  assert.equal(Object.keys(target.storage.map.get("room").documents).length, 1);
+  // Hashing/upload completion may reorder simultaneous claims. Either writer
+  // may win, but only that token and its document may become the room owner.
+  assert.deepEqual(results.map(x => x.status).sort(), [201, 401]);
+  const firstWon = results[0].status === 201;
+  const role = firstWon ? "offer" : "answer";
+  assert.deepEqual(Object.keys(target.storage.map.get("room").documents), [role]);
+  assert.equal((await call(target, role, "GET", { token: firstWon ? TOKEN : OTHER })).status, 200);
+  assert.equal((await call(target, role, "GET", { token: firstWon ? OTHER : TOKEN })).status, 401);
 });
 
 test("individual expiry is cleaned while other roles are active, reads never extend it", async () => {

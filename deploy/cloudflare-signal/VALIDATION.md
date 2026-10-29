@@ -4,8 +4,9 @@ The global Worker is live at
 [mesh-chat-signal.webtechalex.workers.dev](https://mesh-chat-signal.webtechalex.workers.dev/health).
 Its base URL is embedded in `service/src/mesh_chat/deployment_defaults.py` and
 verified in the rebuilt Windows service without environment overrides. Existing
-custom/disabled settings are preserved. Updated desktop/mobile installers have
-not been distributed; physical-device release qualification remains pending.
+custom/disabled settings are preserved. Installer distribution is tracked by the
+[0.9.64 release](https://github.com/ahouchens/mesh-chat/releases/tag/v0.9.64);
+physical-device release qualification remains pending.
 
 ## Production deployment
 
@@ -101,8 +102,11 @@ See [coverage and run instructions](../../docs/ANDROID_SIGNAL_MAILBOX_TESTS.md).
   periods, token rotation, revocation, mailbox outages, and bidirectional message
   delivery with receipts. Desktop/mobile crypto compatibility alone does not
   prove this device matrix.
-- Build and distribute updated desktop/mobile installers after qualification.
-  The rebuilt Windows service already verifies the embedded default and
-  custom/disabled choices; installed apps are not modified by Worker deployment.
+- The 0.9.64 installer pipeline verifies and publishes Windows and Android
+  packages with the embedded default. All five mailbox invocations and all nine
+  existing Android interoperability/background tests passed in CI after fixing
+  stale completed requests and empty ICE descriptions during network startup.
+  Physical qualification above remains separate from these automated results;
+  installed apps are not modified by Worker deployment.
 
 The full requirements remain in [the spec](../../docs/SIGNAL_MAILBOX_SPEC.md).

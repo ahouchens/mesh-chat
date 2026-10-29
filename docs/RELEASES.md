@@ -36,8 +36,10 @@ This does not preserve a live connection while a device is offline.
 The new Android instrumentation tests passed on an API 35 emulator: persisted
 default/custom/disabled settings across process restarts, encrypted mailbox
 exchange, and personal/workspace recovery after connection loss and lifecycle
-changes. All three native WebRTC/Chromium interoperability checks also passed.
-The focused service regression suite passed 145 tests. Physical two-device,
+changes. All nine native WebRTC/Chromium, media, and background-service checks
+also passed in CI. The full service suite passed 1,371 tests (50 skips), the
+frontend passed 480 tests, and the focused recovery suite passed 146 tests.
+Physical two-device,
 cellular, Doze, and end-to-end message receipt qualification remain pending;
 see [Android mailbox tests](ANDROID_SIGNAL_MAILBOX_TESTS.md).
 
