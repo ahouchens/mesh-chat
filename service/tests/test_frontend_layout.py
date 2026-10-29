@@ -143,7 +143,7 @@ def test_desktop_close_exits_and_second_launch_restores_main_window() -> None:
     assert 'std::process::exit(0);' not in source
 
 
-def test_workspace_history_dialog_exposes_honest_accessible_states() -> None:
+def test_workspace_history_settings_expose_honest_accessible_states() -> None:
     source = APP.read_text(encoding="utf-8")
     for command in (
         "get_workspace_history_status",
@@ -160,7 +160,7 @@ def test_workspace_history_dialog_exposes_honest_accessible_states() -> None:
         "Peer-limited or peer-pruned coverage",
         "Authorization changed",
         "Fork-suspended",
-        "Complete within known signed heads",
+        "Up to date with known history",
     ):
         assert state in source
     assert 'aria-live="polite"' in source
