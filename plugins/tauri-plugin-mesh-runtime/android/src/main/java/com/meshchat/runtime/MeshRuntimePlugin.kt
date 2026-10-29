@@ -94,6 +94,9 @@ interface InvitationDocumentHost {
     fun readInvitationDocument(uri: Uri): InvitationDocumentResult
 }
 
+@InvokeArg
+class ExternalLinkArgs { var url: String = "" }
+
 @TauriPlugin(
     permissions = [
         Permission(strings = [Manifest.permission.POST_NOTIFICATIONS], alias = "postNotification"),
@@ -876,6 +879,23 @@ class MeshRuntimePlugin(private val activity: Activity) : Plugin(activity) {
             resolve(invoke, successful(capability()))
         } catch (error: Throwable) {
             reject(invoke, "open_notification_settings", error)
+        }
+    }
+
+    @Command
+    fun openExternalLink(invoke: Invoke) {
+        val raw = invoke.parseArgs(ExternalLinkArgs::class.java).url
+        val uri = Uri.parse(raw)
+        if (raw.length > 4096 || raw.any { it.code < 32 } ||
+            uri.scheme !in listOf("https", "http") || uri.host.isNullOrBlank() || uri.userInfo != null) {
+            invoke.reject("invalid_url")
+            return
+        }
+        activity.runOnUiThread {
+            try {
+                activity.startActivity(Intent(Intent.ACTION_VIEW, uri).addCategory(Intent.CATEGORY_BROWSABLE))
+                resolve(invoke, successful(JSONObject().put("opened", true)))
+            } catch (error: Throwable) { reject(invoke, "open_external_link", error) }
         }
     }
 

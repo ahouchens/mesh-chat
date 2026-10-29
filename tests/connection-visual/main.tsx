@@ -3,11 +3,13 @@ import { createRoot } from "react-dom/client";
 import { DirectConnectionSetup } from "../../src/DirectConnectionSetup";
 import { ContactRequests } from "../../src/ContactRequests";
 import "../../src/styles.css";
+import { LinkPreviewDemo } from "./LinkPreviewDemo";
+import { WorkspaceSettingsDemo } from "./WorkspaceSettingsDemo";
 
 // CI-only presentation fixture. Production components and styles, synthetic
 // service state. This does not establish connectivity or test native lifecycle.
 const inbox = new URLSearchParams(location.search).has("contact-requests");
-createRoot(document.getElementById("root")!).render(inbox ?
+createRoot(document.getElementById("root")!).render(new URLSearchParams(location.search).has("workspace-settings") ? <WorkspaceSettingsDemo /> : new URLSearchParams(location.search).has("links") ? <LinkPreviewDemo /> : inbox ?
   <div className="dialog-backdrop"><section className="dialog" role="dialog" aria-label="Contact requests">
     <div className="dialog__header"><h2>Contact requests</h2></div>
     <ContactRequests invitations={[{

@@ -21,6 +21,11 @@ pub struct ThemeRequest {
 }
 
 #[derive(Debug, Serialize)]
+pub struct ExternalLinkRequest {
+    pub url: String,
+}
+
+#[derive(Debug, Serialize)]
 pub struct DirectExchangeRequest {
     pub json: String,
 }

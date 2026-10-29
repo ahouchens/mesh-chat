@@ -70,6 +70,7 @@ import {
 } from "./api";
 import { contactConnectionLabel, deliveryLabel, workspaceJoinStatus } from "./status";
 import { EmojiGlyph } from "./EmojiGlyph";
+import { MessageContent } from "./MessageContent";
 import { WorkspaceMessageMenu } from "./WorkspaceMessageMenu";
 import { ConnectionDiagnostics } from "./ConnectionDiagnostics";
 import { ContactRequests } from "./ContactRequests";
@@ -166,6 +167,7 @@ import type {
 } from "./types";
 import "./styles.css";
 import "./settings-page.css";
+import { WorkspaceSettingsPage, WorkspaceSettingsPanel, type WorkspaceSettingsSection } from "./WorkspaceSettingsPage";
 
 type OnboardingMode = "home" | "start" | "join";
 type OnboardingWorkspaceContext =
@@ -3350,7 +3352,7 @@ function Conversation({ contact, messages, draft, sendError, sending, detailsOpe
         {messages.length === 0 && <div className="empty-thread"><LockKeyhole size={30} /><p>No messages yet.</p><span>You can write now. If there is no route, your message stays saved.</span></div>}
         {messages.map((message) => (
           <article key={message.id} className={`message message--${message.direction}`}>
-            <p>{message.text}</p>
+            <MessageContent text={message.text} />
             <footer>
               <time dateTime={machineTime(message.created_at)}>{formatTime(message.created_at)}</time>
               {message.direction === "outbound" && <span className={`delivery delivery--${message.state}`}>{message.state === "delivered" && <Check size={13} />}{deliveryLabel[message.state]}</span>}
@@ -3536,7 +3538,7 @@ function GroupConversation({
         ) : (
           <article key={message.id} className={`message message--${message.direction} group-message`}>
             {message.direction === "inbound" && <strong className="group-message__sender">{message.sender_display_name}</strong>}
-            <p>{message.text}</p>
+            <MessageContent text={message.text} />
             <footer>
               <time dateTime={machineTime(message.created_at)}>{formatTime(message.created_at)}</time>
               {message.direction === "outbound" && (
@@ -4042,7 +4044,7 @@ function WorkspaceInviteDialog({ workspace, existingInvitations, remoteProfiles,
   </div></Dialog>;
 }
 
-function WorkspaceDevicesDialog({ workspace, transitions, busy, error, onClose, onCreate, onDecide, onRemove, onReadSync }: { workspace: Workspace; transitions: WorkspaceDeviceTransition[]; busy: boolean; error: string; onClose: () => void; onCreate: () => Promise<WorkspaceDeviceLinkFormats | null>; onDecide: (transition: WorkspaceDeviceTransition, approve: boolean) => void; onRemove: (deviceId: string) => void; onReadSync: (enabled: boolean) => void }) {
+export function WorkspaceDevicesSettingsContent({ workspace, transitions, busy, error, onCreate, onDecide, onRemove, onReadSync }: { workspace: Workspace; transitions: WorkspaceDeviceTransition[]; busy: boolean; error: string; onCreate: () => Promise<WorkspaceDeviceLinkFormats | null>; onDecide: (transition: WorkspaceDeviceTransition, approve: boolean) => void; onRemove: (deviceId: string) => void; onReadSync: (enabled: boolean) => void }) {
   const [link, setLink] = useState<WorkspaceDeviceLinkFormats | null>(null);
   const [copied, setCopied] = useState(false);
   const localMember = workspace.members.find((member) => member.id === workspace.local_member_id);
@@ -4052,7 +4054,7 @@ function WorkspaceDevicesDialog({ workspace, transitions, busy, error, onClose, 
     const created = await onCreate();
     if (created) { setLink(created); setCopied(false); }
   };
-  return <Dialog title={`Linked devices · ${workspace.name}`} onClose={onClose}><div className="form-stack">
+  return <WorkspaceSettingsPanel><div className="form-stack">
     <p className="muted">Each device has its own private identity. Workspace events fan out to every admitted device; delivery details remain visible per person and device.</p>
     <section className="workspace-name-requests"><h3>Your admitted devices · {devices.length}/3</h3>{devices.map((device, index) => <div className="workspace-invitation-row" key={device.id}><span><strong>{device.id === workspace.local_device_id ? "This device" : `Device ${index + 1}`}</strong><small>{device.fingerprint}{device.id === workspace.authority_device_id ? " · workspace authority" : ""}</small></span>{device.id !== workspace.local_device_id && <Button variant="danger" disabled={busy || device.id === workspace.authority_device_id} title={device.id === workspace.authority_device_id ? "Rotate workspace authority before removing this device" : undefined} onClick={() => onRemove(device.id)}>Remove</Button>}</div>)}</section>
     {link ? <section className="workspace-name-requests"><h3>One-time device link</h3><p>Open Mesh Chat on the new device, choose Join workspace, and paste this link before {formatExpiry(link.expires_at)}.</p><textarea readOnly value={link.text} aria-label="Workspace device link" rows={5} /><Button variant="secondary" onClick={async () => { await navigator.clipboard.writeText(link.text); setCopied(true); }}>{copied ? <Check size={17} /> : <Copy size={17} />}{copied ? "Copied" : "Copy device link"}</Button></section> : <Button disabled={busy || workspace.state !== "active" || devices.length >= 3} onClick={() => void create()}>{devices.length >= 3 ? "Three-device limit reached" : "Link another device"}</Button>}
@@ -4060,7 +4062,7 @@ function WorkspaceDevicesDialog({ workspace, transitions, busy, error, onClose, 
     {workspace.local_role === "owner" && pending.length > 0 && <section className="workspace-name-requests" aria-live="polite"><h3>Owner review</h3>{pending.map((transition) => <div className="workspace-invitation-row" key={transition.id}><span><strong>{transition.transition_kind === "link" ? "Admit a new device" : "Remove a linked device"}</strong><small>{transition.fingerprint || "Signed device request"} · effective access is unchanged until approval</small></span><span><Button disabled={busy} onClick={() => onDecide(transition, true)}>Approve</Button><Button variant="ghost" disabled={busy} onClick={() => onDecide(transition, false)}>Decline</Button></span></div>)}</section>}
     {transitions.some((item) => item.state === "waiting_for_approval") && <p className="workspace-directory-status" role="status">A signed device change is waiting for the workspace owner. Existing effective access is unchanged.</p>}
     {error && <p className="form-error" role="alert">{error}</p>}
-  </div></Dialog>;
+  </div></WorkspaceSettingsPanel>;
 }
 
 function workspaceAdminRequestLabel(request: WorkspaceAdminRequest): string {
@@ -4088,7 +4090,7 @@ function workspaceAdminRequestStateLabel(request: WorkspaceAdminRequest): string
   return labels[request.state];
 }
 
-function WorkspacePeopleDialog({ workspace, requests, adminRequests, busy, error, onClose, onRequestName, onDecideName, onRemove, onChangeRole, onInvitationPolicy, onSubmitAdminRequest, onDecideAdminRequest, onCancelAdminRequest, onDismissAdminRequest, onMessage }: { workspace: Workspace; requests: WorkspaceDisplayNameRequest[]; adminRequests: WorkspaceAdminRequest[]; busy: boolean; error: string; onClose: () => void; onRequestName: (displayName: string) => void; onDecideName: (requestId: string, approve: boolean) => void; onRemove: (memberId: string) => void; onChangeRole: (memberId: string, role: "admin" | "member") => void; onInvitationPolicy: (policy: "owner_only" | "owner_and_admins" | "all_members_request") => void; onSubmitAdminRequest: (kind: "invitation" | "member_removal" | "role_change", targetMemberId?: string, requestedRole?: "admin" | "member") => void; onDecideAdminRequest: (requestId: string, approve: boolean) => void; onCancelAdminRequest: (requestId: string) => void; onDismissAdminRequest: (requestId: string) => void; onMessage: (memberId: string) => void }) {
+export function WorkspacePeopleSettingsContent({ workspace, requests, adminRequests, busy, error, onRequestName, onDecideName, onRemove, onChangeRole, onInvitationPolicy, onSubmitAdminRequest, onDecideAdminRequest, onCancelAdminRequest, onDismissAdminRequest, onMessage }: { workspace: Workspace; requests: WorkspaceDisplayNameRequest[]; adminRequests: WorkspaceAdminRequest[]; busy: boolean; error: string; onRequestName: (displayName: string) => void; onDecideName: (requestId: string, approve: boolean) => void; onRemove: (memberId: string) => void; onChangeRole: (memberId: string, role: "admin" | "member") => void; onInvitationPolicy: (policy: "owner_only" | "owner_and_admins" | "all_members_request") => void; onSubmitAdminRequest: (kind: "invitation" | "member_removal" | "role_change", targetMemberId?: string, requestedRole?: "admin" | "member") => void; onDecideAdminRequest: (requestId: string, approve: boolean) => void; onCancelAdminRequest: (requestId: string) => void; onDismissAdminRequest: (requestId: string) => void; onMessage: (memberId: string) => void }) {
   const local = workspace.members.find((member) => member.id === workspace.local_member_id);
   const [displayName, setDisplayName] = useState(local?.display_name ?? "");
   const [invitationPolicy, setInvitationPolicy] = useState(workspace.policies.invitation_requests);
@@ -4101,7 +4103,7 @@ function WorkspacePeopleDialog({ workspace, requests, adminRequests, busy, error
     removalRef.current?.scrollIntoView?.({ block: "nearest" });
   }, [confirmRemoval]);
   useEffect(() => {
-    if (!error) return;
+    if (!error || actionErrorRef.current?.closest("[hidden]")) return;
     actionErrorRef.current?.focus();
     actionErrorRef.current?.scrollIntoView?.({ block: "nearest" });
   }, [error]);
@@ -4128,9 +4130,9 @@ function WorkspacePeopleDialog({ workspace, requests, adminRequests, busy, error
     || (workspace.local_role === "admin" && workspace.policies.invitation_requests === "owner_and_admins");
   const incoming = adminRequests.filter((request) => request.direction === "incoming" && request.state === "pending");
   const visibleRequests = adminRequests.filter((request) => request.direction === "outgoing" || request.state !== "pending");
-  return <Dialog title={`People and administration · ${workspace.name}`} onClose={onClose}><div className="form-stack">
+  return <WorkspaceSettingsPanel><div className="form-stack">
     {error && <p className="form-error" role="alert" tabIndex={-1} ref={actionErrorRef}>{error}</p>}
-    <p className="workspace-directory-status" role="status"><ShieldCheck size={16} /><span>Your effective role is <strong>{workspace.local_role === "admin" ? "administrator" : workspace.local_role}</strong>. Requested changes below do not alter effective access until the owner authority publishes a manifest.</span></p>
+    <p className="workspace-directory-status" role="status"><ShieldCheck size={16} /><span>Your effective role is <strong>{workspace.local_role === "admin" ? "administrator" : workspace.local_role}</strong>. Changes take effect after the owner approves and publishes them.</span></p>
     <div className="workspace-people">{workspace.members.map((member) => {
       const activeTarget = workspace.state === "active" && member.id !== workspace.local_member_id && member.status === "active";
       return <div className="workspace-member-entry" key={member.id}><div className="workspace-person"><Avatar name={member.display_name} small /><span><strong>{member.display_name}{member.id === workspace.local_member_id ? " (you)" : ""}</strong><small>{member.role === "admin" ? "administrator" : member.role} · {member.status} · {member.short_id}</small></span><span className="workspace-person__actions">
@@ -4162,7 +4164,7 @@ function WorkspacePeopleDialog({ workspace, requests, adminRequests, busy, error
     {workspace.local_role === "owner" && incoming.length > 0 && <section className="workspace-name-requests" aria-live="polite"><h3>Owner review · {incoming.length}</h3>{incoming.map((request) => <div className="workspace-invitation-row" key={request.id}><span><strong>{request.requester_display_name}</strong> requests: {workspaceAdminRequestLabel(request)}<small>Effective state is unchanged. Confirm against the current member role before approving.</small></span><span><Button disabled={busy} onClick={() => onDecideAdminRequest(request.id, true)}>Approve</Button><Button variant="ghost" disabled={busy} onClick={() => onDecideAdminRequest(request.id, false)}>Decline</Button></span></div>)}</section>}
     {visibleRequests.length > 0 && <section className="workspace-name-requests" aria-live="polite"><h3>Administrative request history</h3>{visibleRequests.map((request) => <div className="workspace-invitation-row" key={request.id}><span><strong>{workspaceAdminRequestLabel(request)}</strong><small>{workspaceAdminRequestStateLabel(request)}</small>{request.invitation && <textarea readOnly aria-label="Approved invitation" rows={3} value={request.invitation.text} />}</span><span>{request.state === "pending" && request.direction === "outgoing" && <Button variant="ghost" disabled={busy} onClick={() => onCancelAdminRequest(request.id)}>Cancel if not sent</Button>}{request.state !== "pending" && <Button variant="ghost" disabled={busy} onClick={() => onDismissAdminRequest(request.id)}>Dismiss</Button>}</span></div>)}</section>}
     {workspace.local_role === "owner" && requests.length > 0 && <div className="workspace-name-requests"><h3>Display-name requests</h3>{requests.map((request) => <div className="workspace-invitation-row" key={request.id}><span>{workspace.members.find((member) => member.id === request.member_id)?.display_name ?? "Member"} → <strong>{request.display_name}</strong></span><span><Button disabled={busy} onClick={() => onDecideName(request.id, true)}>Approve</Button><Button variant="ghost" disabled={busy} onClick={() => onDecideName(request.id, false)}>Decline</Button></span></div>)}</div>}
-  </div></Dialog>;
+  </div></WorkspaceSettingsPanel>;
 }
 
 function WorkspaceAuthorityPanel({ workspace, transitions, busy, onOffer, onAccept, onFinalize, onReportLoss }: { workspace: Workspace; transitions: WorkspaceAuthorityTransition[]; busy: boolean; onOffer: (kind: "same_owner_rotation" | "ownership_transfer", memberId: string, deviceId: string, outgoingRole: "admin" | "member" | null) => void; onAccept: (transitionId: string) => void; onFinalize: (transitionId: string) => void; onReportLoss: () => void }) {
@@ -4197,11 +4199,11 @@ function WorkspaceAuthorityPanel({ workspace, transitions, busy, onOffer, onAcce
   </section>;
 }
 
-function WorkspaceAuthorityDialog({ workspace, transitions, busy, error, onClose, onOffer, onAccept, onFinalize, onReportLoss }: { workspace: Workspace; transitions: WorkspaceAuthorityTransition[]; busy: boolean; error: string; onClose: () => void; onOffer: (kind: "same_owner_rotation" | "ownership_transfer", memberId: string, deviceId: string, outgoingRole: "admin" | "member" | null) => void; onAccept: (transitionId: string) => void; onFinalize: (transitionId: string) => void; onReportLoss: () => void }) {
-  return <Dialog title={`Authority continuity · ${workspace.name}`} onClose={onClose}><div className="form-stack"><WorkspaceAuthorityPanel workspace={workspace} transitions={transitions} busy={busy} onOffer={onOffer} onAccept={onAccept} onFinalize={onFinalize} onReportLoss={onReportLoss} />{error && <p className="form-error" role="alert">{error}</p>}</div></Dialog>;
+export function WorkspaceAuthoritySettingsContent({ workspace, transitions, busy, error, onOffer, onAccept, onFinalize, onReportLoss }: { workspace: Workspace; transitions: WorkspaceAuthorityTransition[]; busy: boolean; error: string; onOffer: (kind: "same_owner_rotation" | "ownership_transfer", memberId: string, deviceId: string, outgoingRole: "admin" | "member" | null) => void; onAccept: (transitionId: string) => void; onFinalize: (transitionId: string) => void; onReportLoss: () => void }) {
+  return <WorkspaceSettingsPanel><div className="form-stack"><WorkspaceAuthorityPanel workspace={workspace} transitions={transitions} busy={busy} onOffer={onOffer} onAccept={onAccept} onFinalize={onFinalize} onReportLoss={onReportLoss} />{error && <p className="form-error" role="alert">{error}</p>}</div></WorkspaceSettingsPanel>;
 }
 
-function WorkspaceAccessDialog({ workspace, onClose, onSaved }: { workspace: Workspace; onClose: () => void; onSaved: () => Promise<void> }) {
+export function WorkspaceAccessSettingsContent({ workspace, onSaved }: { workspace: Workspace; onSaved: () => Promise<void> }) {
   const [profiles, setProfiles] = useState<RemoteProfile[]>([]);
   const [profileId, setProfileId] = useState("");
   const [created, setCreated] = useState<WorkspaceAccessRecommendation | null>(null);
@@ -4283,14 +4285,14 @@ function WorkspaceAccessDialog({ workspace, onClose, onSaved }: { workspace: Wor
       await onSaved();
     } catch (reason) { setError(errorMessage(reason)); } finally { setBusy(false); }
   };
-  return <Dialog title={`Workspace access point · ${workspace.name}`} onClose={onClose}><div className="form-stack">
+  return <WorkspaceSettingsPanel><div className="form-stack">
     <p className="muted">An access point is a shared, consented transport. It can make workspace member devices reachable through one operator, but it does not grant membership or authority. The operator sees connection metadata, not message contents.</p>
     {received.length > 0 && <section className="workspace-name-request"><h3>Received for this workspace</h3><p className="muted">These recommendations were delivered by the current owner authority. A stale one must be resent after the next manifest.</p>{received.map((item) => <div className="workspace-invitation-row" key={item.id}><span><strong>{item.profile_label}</strong><small>{item.endpoint_count} endpoint{item.endpoint_count === 1 ? "" : "s"} · expires {formatExpiry(item.expires_at)}{item.stale ? " · stale" : ""}</small></span><span><Button variant="secondary" disabled={busy || item.stale} onClick={() => void reviewReceived(item.id)}>Review</Button></span></div>)}{receivedPreview && receivedId && <div className="workspace-access-preview"><p><strong>{receivedPreview.profile_label}</strong> · {receivedPreview.endpoint_count} endpoint{receivedPreview.endpoint_count === 1 ? "" : "s"} · expires {formatExpiry(receivedPreview.expires_at)}</p><p className="muted">{receivedPreview.profile.privacy_disclosure}</p><label className="checkbox-line"><input type="checkbox" checked={receivedConsent} onChange={(event) => setReceivedConsent(event.target.checked)} /> I consent to attach this access point to {workspace.name}. I understand the operator can observe connection metadata.</label><Button disabled={busy || !receivedConsent} onClick={() => void applyReceived()}>Attach access point</Button></div>}</section>}
     {owner && <section className="workspace-name-request"><h3>Share an approved access point</h3>{profiles.length === 0 ? <p className="muted">No approved remote profiles are available. Approve one under Settings → Remote connections first.</p> : <><label>Access point<select value={profileId} onChange={(event) => { setProfileId(event.target.value); setCreated(null); }}>{profiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.label} · {profile.endpoint_count} endpoint{profile.endpoint_count === 1 ? "" : "s"}</option>)}</select></label><Button variant="secondary" disabled={busy || !profileId} onClick={() => void create()}>{busy ? "Preparing…" : "Create recommendation"}</Button></>}{created && <><label>Complete recommendation<textarea readOnly rows={4} value={created.text} aria-label="Workspace access recommendation" onFocus={(event) => event.currentTarget.select()} /></label><p className="muted">Expires {formatExpiry(created.expires_at)}. Send the entire value; anyone with it still needs to consent.</p><Button variant="ghost" onClick={() => void navigator.clipboard.writeText(created.text).then(() => setNotice("Recommendation copied.")).catch(() => setError("Could not copy."))}>Copy recommendation</Button><Button variant="secondary" disabled={busy} onClick={() => void send()}>{busy ? "Sending…" : "Send to workspace members"}</Button></>}</section>}
     <section className="workspace-name-request"><h3>Apply a recommendation</h3><p className="muted">Verify the current owner authority and preview the access-point disclosure before attaching it to this device.</p><label>Recommendation<textarea rows={4} value={recommendation} onChange={(event) => { setRecommendation(event.target.value); setPreview(null); setConsent(false); }} placeholder="MESHACCESS1:…" spellCheck={false} /></label><Button variant="secondary" disabled={busy || !recommendation.trim()} onClick={() => void check()}>{busy ? "Checking…" : "Preview"}</Button>{preview && <div className="workspace-access-preview"><p><strong>{preview.profile_label}</strong> · {preview.endpoint_count} endpoint{preview.endpoint_count === 1 ? "" : "s"} · expires {formatExpiry(preview.expires_at)}</p><p className="muted">{preview.profile.privacy_disclosure}</p><label className="checkbox-line"><input type="checkbox" checked={consent} onChange={(event) => setConsent(event.target.checked)} /> I consent to attach this access point to {workspace.name}. I understand the operator can observe connection metadata.</label><Button disabled={busy || !consent} onClick={() => void apply()}>Attach access point</Button></div>}</section>
     {notice && <p className="direct-host-status" role="status">{notice}</p>}
     {error && <p className="form-error" role="alert">{error}</p>}
-  </div></Dialog>;
+  </div></WorkspaceSettingsPanel>;
 }
 
 function WorkspaceReconnectSettings({ workspace, coordinator }: { workspace: Workspace; coordinator: ReconnectCoordinator | null }) {
@@ -4394,7 +4396,7 @@ function WorkspaceAdmissionGrants({ workspace }: { workspace: Workspace }) {
   </section>;
 }
 
-function WorkspaceSettingsDialog({ workspace, conversation, networkSettings, busy, error, onClose, onOpenAccess, reconnect, onUpdateMetadata, onUpdatePolicies, onSetNotificationPreference, onApprovePropagationNode, onCloseWorkspace, onLeave, onRemove }: { workspace: Workspace; conversation: WorkspaceChannel | WorkspaceDirect | null; networkSettings: NetworkSettings; busy: boolean; error: string; onClose: () => void; onOpenAccess: () => void; reconnect: ReconnectCoordinator | null; onUpdateMetadata: (name: string, description: string) => void; onUpdatePolicies: (channelCreation: "all_members" | "owner_and_admins", posting: "all_members" | "owner_and_admins") => void; onSetNotificationPreference: (conversationId: string | null, mode: WorkspaceNotificationPreference) => void; onApprovePropagationNode: (node: string) => void; onCloseWorkspace: () => void; onLeave: () => void; onRemove: (confirmation: string) => void }) {
+export function WorkspaceGeneralSettingsContent({ view = "general", workspace, conversation, networkSettings, busy, error, onOpenAccess, reconnect, onUpdateMetadata, onUpdatePolicies, onSetNotificationPreference, onApprovePropagationNode, onCloseWorkspace, onLeave, onRemove }: { view?: "general" | "connections"; workspace: Workspace; conversation: WorkspaceChannel | WorkspaceDirect | null; networkSettings: NetworkSettings; busy: boolean; error: string; onOpenAccess: () => void; reconnect: ReconnectCoordinator | null; onUpdateMetadata: (name: string, description: string) => void; onUpdatePolicies: (channelCreation: "all_members" | "owner_and_admins", posting: "all_members" | "owner_and_admins") => void; onSetNotificationPreference: (conversationId: string | null, mode: WorkspaceNotificationPreference) => void; onApprovePropagationNode: (node: string) => void; onCloseWorkspace: () => void; onLeave: () => void; onRemove: (confirmation: string) => void }) {
   const [confirmingClose, setConfirmingClose] = useState(false);
   const [confirmingRemove, setConfirmingRemove] = useState(false);
   const [forkCopied, setForkCopied] = useState(false);
@@ -4408,7 +4410,7 @@ function WorkspaceSettingsDialog({ workspace, conversation, networkSettings, bus
   const failedJoin = workspaceJoinStatus(workspace)?.terminal === true;
   const terminal = failedJoin || ["left", "removed", "device_removed", "closed", "forked"].includes(workspace.state);
   const active = workspace.state === "active";
-  return <Dialog title="Workspace settings" onClose={onClose}><div className="form-stack workspace-settings">{active && <DirectRecovery key={workspace.id} workspaceId={workspace.id} />}{active && (workspace.local_role === "owner" || workspace.local_role === "admin") && <WorkspaceAdmissionGrants key={`grants-${workspace.id}`} workspace={workspace} />}{active && <Button variant="secondary" onClick={onOpenAccess}>Workspace access point…</Button>}{active && <WorkspaceReconnectSettings workspace={workspace} coordinator={reconnect} />}<div><h3>{workspace.name}</h3><p>{workspace.description || "No description"}</p><span className={`workspace-state workspace-state--${workspace.state}`}>{workspaceStateLabel(workspace)}</span></div>{active && workspace.local_role === "owner" && <form className="form-stack" onSubmit={(event) => { event.preventDefault(); onUpdateMetadata(name, description); }}><label>Workspace name<input value={name} maxLength={64} onChange={(event) => setName(event.target.value)} /></label><label>Description<textarea value={description} maxLength={280} rows={3} onChange={(event) => setDescription(event.target.value)} /></label><Button disabled={busy || (name.trim() === workspace.name && description.trim() === workspace.description)}>Publish metadata update</Button></form>}{active && workspace.local_role === "owner" && <form className="form-stack" onSubmit={(event) => { event.preventDefault(); onUpdatePolicies(channelCreation, posting); }}><h3>Public-channel policies</h3><label>Who can create channels<select value={channelCreation} onChange={(event) => setChannelCreation(event.target.value as typeof channelCreation)}><option value="all_members">All members</option><option value="owner_and_admins">Owner and administrators</option></select></label><label>Who can post<select value={posting} onChange={(event) => setPosting(event.target.value as typeof posting)}><option value="all_members">All members</option><option value="owner_and_admins">Owner and administrators</option></select></label><Button disabled={busy || (channelCreation === workspace.policies.channel_creation && posting === workspace.policies.posting)}>Publish policy update</Button></form>}<section className="notification-settings" aria-labelledby="workspace-notification-heading"><h3 id="workspace-notification-heading"><Bell size={18} /> Notification preference</h3><label>For this workspace<select value={workspace.notification_preference ?? "all"} disabled={!active || busy} onChange={(event) => onSetNotificationPreference(null, event.target.value as WorkspaceNotificationPreference)}><option value="all">All messages</option><option value="mentions_only">Mentions only</option><option value="muted">Muted</option></select></label>{conversation && <label>For {"name" in conversation ? `#${conversation.display_name || conversation.name}` : conversation.peer_display_name}<select value={conversation.notification_preference ?? workspace.notification_preference ?? "all"} disabled={!active || busy} onChange={(event) => onSetNotificationPreference(conversation.id, event.target.value as WorkspaceNotificationPreference)}><option value="all">All messages</option><option value="mentions_only">Mentions only</option><option value="muted">Muted</option></select></label>}<p className="muted">Structured mentions can notify in an unsubscribed public channel unless mentions are muted. Replies follow the selected conversation preference. Notifications never mark a message read.</p></section><dl className="security-list"><div><dt>Retention preference</dt><dd>{workspace.retention_days === null ? "Indefinite" : `${workspace.retention_days} days`}</dd></div></dl><p className="muted">This cooperative preference does not guarantee remote deletion. A member device may retain plaintext it already received.</p>{active && <div className="propagation-consent"><h3>Offline delivery node</h3><p className="muted">A workspace may recommend a Reticulum propagation node, but joining never enables it. Approve its 32-character address explicitly on this device.</p><label>Propagation-node address<input value={propagationNode} spellCheck={false} maxLength={32} onChange={(event) => setPropagationNode(event.target.value.toLowerCase())} /></label><label className="checkbox-line"><input type="checkbox" checked={propagationConsent} onChange={(event) => setPropagationConsent(event.target.checked)} /> I approve this node for encrypted store-and-forward delivery.</label><Button variant="secondary" disabled={busy || !propagationConsent || !/^[0-9a-f]{32}$/.test(propagationNode) || networkSettings.approved_propagation_nodes.includes(propagationNode)} onClick={() => onApprovePropagationNode(propagationNode)}>Approve node</Button></div>}{workspace.state === "forked" && <section className="form-stack" aria-labelledby="workspace-fork-title"><h3 id="workspace-fork-title">Signed-history conflict</h3><p className="form-error" role="alert">Workspace activity is paused. Mesh Chat will not choose between conflicting signed histories.</p><dl className="security-list"><div><dt>Conflict</dt><dd>{workspace.security_error ?? "manifest_fork"}</dd></div><div><dt>Local signed head</dt><dd><code>{workspace.manifest_hash}</code></dd></div></dl><p className="muted">Compare the signed heads with the other owner/admin devices before removing local data. Removing this workspace does not repair other devices or delete their history.</p><div className="dialog-actions"><Button variant="secondary" onClick={() => void navigator.clipboard.writeText(JSON.stringify({ workspace_id: workspace.id, name: workspace.name, state: workspace.state, security_error: workspace.security_error ?? "manifest_fork", manifest_hash: workspace.manifest_hash }, null, 2)).then(() => setForkCopied(true)).catch(() => setForkCopied(false))}>{forkCopied ? "Conflict details copied" : "Copy conflict details"}</Button></div></section>}{workspace.state === "incomplete_sync" && <p className="form-error" role="alert">Some signed controls or events are missing. Messaging stays paused while Mesh Chat retains the history it can validate.</p>}{error && <p className="form-error" role="alert">{error}</p>}{active && workspace.local_role === "owner" && <div className="danger-zone"><h3>Close workspace</h3><p>This signs a terminal manifest. No later joins or messages are accepted.</p>{confirmingClose ? <><p role="alert"><strong>Close {workspace.name} permanently?</strong> Cached history remains until each member removes it locally.</p><div className="dialog-actions"><Button variant="ghost" disabled={busy} onClick={() => setConfirmingClose(false)}>Cancel</Button><Button variant="danger" disabled={busy} onClick={onCloseWorkspace}>Confirm close workspace</Button></div></> : <Button variant="danger" disabled={busy} onClick={() => setConfirmingClose(true)}>Close workspace…</Button>}</div>}{active && workspace.local_role !== "owner" && <div className="danger-zone"><h3>Leave workspace</h3><p>Your signed request waits for the owner to publish the membership change.</p><Button variant="danger" disabled={busy} onClick={onLeave}>Leave workspace</Button></div>}{terminal && <div className="danger-zone"><h3>Remove local workspace data</h3><p>This permanently erases this device’s encrypted workspace records. Re-entry needs a new invitation.</p>{confirmingRemove ? <><label>Type the workspace name to confirm<input value={confirmation} onChange={(event) => setConfirmation(event.target.value)} aria-label="Workspace removal confirmation" /></label><Button variant="danger" disabled={busy || confirmation !== workspace.name} onClick={() => onRemove(workspace.id)}>Remove local data</Button></> : <Button variant="danger" onClick={() => setConfirmingRemove(true)}>Remove local data…</Button>}</div>}</div></Dialog>;
+  return <WorkspaceSettingsPanel><div className="form-stack workspace-settings">{view === "connections" && <>{!active && <p className="muted">Connection settings are available while this workspace is active.</p>}{active && <DirectRecovery key={workspace.id} workspaceId={workspace.id} />}{active && (workspace.local_role === "owner" || workspace.local_role === "admin") && <WorkspaceAdmissionGrants key={`grants-${workspace.id}`} workspace={workspace} />}{active && <Button variant="secondary" onClick={onOpenAccess}>Workspace access point…</Button>}{active && <WorkspaceReconnectSettings workspace={workspace} coordinator={reconnect} />}{active && <div className="propagation-consent"><h3>Offline delivery node</h3><p className="muted">A workspace may recommend a Reticulum propagation node, but joining never enables it. Approve its 32-character address explicitly on this device.</p><label>Propagation-node address<input value={propagationNode} spellCheck={false} maxLength={32} onChange={(event) => setPropagationNode(event.target.value.toLowerCase())} /></label><label className="checkbox-line"><input type="checkbox" checked={propagationConsent} onChange={(event) => setPropagationConsent(event.target.checked)} /> I approve this node for encrypted store-and-forward delivery.</label><Button variant="secondary" disabled={busy || !propagationConsent || !/^[0-9a-f]{32}$/.test(propagationNode) || networkSettings.approved_propagation_nodes.includes(propagationNode)} onClick={() => onApprovePropagationNode(propagationNode)}>Approve node</Button></div>}{error && <p className="form-error" role="alert">{error}</p>}</>}{view === "general" && <><div><h3>{workspace.name}</h3><p>{workspace.description || "No description"}</p><span className={`workspace-state workspace-state--${workspace.state}`}>{workspaceStateLabel(workspace)}</span></div>{active && workspace.local_role === "owner" && <form className="form-stack" onSubmit={(event) => { event.preventDefault(); onUpdateMetadata(name, description); }}><label>Workspace name<input value={name} maxLength={64} onChange={(event) => setName(event.target.value)} /></label><label>Description<textarea value={description} maxLength={280} rows={3} onChange={(event) => setDescription(event.target.value)} /></label><Button disabled={busy || (name.trim() === workspace.name && description.trim() === workspace.description)}>Save workspace details</Button></form>}{active && workspace.local_role === "owner" && <form className="form-stack" onSubmit={(event) => { event.preventDefault(); onUpdatePolicies(channelCreation, posting); }}><h3>Public-channel policies</h3><label>Who can create channels<select value={channelCreation} onChange={(event) => setChannelCreation(event.target.value as typeof channelCreation)}><option value="all_members">All members</option><option value="owner_and_admins">Owner and administrators</option></select></label><label>Who can post<select value={posting} onChange={(event) => setPosting(event.target.value as typeof posting)}><option value="all_members">All members</option><option value="owner_and_admins">Owner and administrators</option></select></label><Button disabled={busy || (channelCreation === workspace.policies.channel_creation && posting === workspace.policies.posting)}>Save permissions</Button></form>}<section className="notification-settings" aria-labelledby="workspace-notification-heading"><h3 id="workspace-notification-heading"><Bell size={18} /> Notification preference</h3><label>For this workspace<select value={workspace.notification_preference ?? "all"} disabled={!active || busy} onChange={(event) => onSetNotificationPreference(null, event.target.value as WorkspaceNotificationPreference)}><option value="all">All messages</option><option value="mentions_only">Mentions only</option><option value="muted">Muted</option></select></label>{conversation && <label>For {"name" in conversation ? `#${conversation.display_name || conversation.name}` : conversation.peer_display_name}<select value={conversation.notification_preference ?? workspace.notification_preference ?? "all"} disabled={!active || busy} onChange={(event) => onSetNotificationPreference(conversation.id, event.target.value as WorkspaceNotificationPreference)}><option value="all">All messages</option><option value="mentions_only">Mentions only</option><option value="muted">Muted</option></select></label>}<p className="muted">Structured mentions can notify in an unsubscribed public channel unless mentions are muted. Replies follow the selected conversation preference. Notifications never mark a message read.</p></section>{workspace.state === "forked" && <section className="form-stack" aria-labelledby="workspace-fork-title"><h3 id="workspace-fork-title">Signed-history conflict</h3><p className="form-error" role="alert">Workspace activity is paused. Mesh Chat will not choose between conflicting signed histories.</p><dl className="security-list"><div><dt>Conflict</dt><dd>{workspace.security_error ?? "manifest_fork"}</dd></div><div><dt>Local signed head</dt><dd><code>{workspace.manifest_hash}</code></dd></div></dl><p className="muted">Compare the signed heads with the other owner/admin devices before removing local data. Removing this workspace does not repair other devices or delete their history.</p><div className="dialog-actions"><Button variant="secondary" onClick={() => void navigator.clipboard.writeText(JSON.stringify({ workspace_id: workspace.id, name: workspace.name, state: workspace.state, security_error: workspace.security_error ?? "manifest_fork", manifest_hash: workspace.manifest_hash }, null, 2)).then(() => setForkCopied(true)).catch(() => setForkCopied(false))}>{forkCopied ? "Conflict details copied" : "Copy conflict details"}</Button></div></section>}{workspace.state === "incomplete_sync" && <p className="form-error" role="alert">Some signed controls or events are missing. Messaging stays paused while Mesh Chat retains the history it can validate.</p>}{error && <p className="form-error" role="alert">{error}</p>}{active && workspace.local_role === "owner" && <div className="danger-zone"><h3>Close workspace</h3><p>This signs a terminal manifest. No later joins or messages are accepted.</p>{confirmingClose ? <><p role="alert"><strong>Close {workspace.name} permanently?</strong> Cached history remains until each member removes it locally.</p><div className="dialog-actions"><Button variant="ghost" disabled={busy} onClick={() => setConfirmingClose(false)}>Cancel</Button><Button variant="danger" disabled={busy} onClick={onCloseWorkspace}>Confirm close workspace</Button></div></> : <Button variant="danger" disabled={busy} onClick={() => setConfirmingClose(true)}>Close workspace…</Button>}</div>}{active && workspace.local_role !== "owner" && <div className="danger-zone"><h3>Leave workspace</h3><p>Your signed request waits for the owner to publish the membership change.</p><Button variant="danger" disabled={busy} onClick={onLeave}>Leave workspace</Button></div>}{terminal && <div className="danger-zone"><h3>Remove local workspace data</h3><p>This permanently erases this device’s encrypted workspace records. Re-entry needs a new invitation.</p>{confirmingRemove ? <><label>Type the workspace name to confirm<input value={confirmation} onChange={(event) => setConfirmation(event.target.value)} aria-label="Workspace removal confirmation" /></label><Button variant="danger" disabled={busy || confirmation !== workspace.name} onClick={() => onRemove(workspace.id)}>Remove local data</Button></> : <Button variant="danger" onClick={() => setConfirmingRemove(true)}>Remove local data…</Button>}</div>}</>}</div></WorkspaceSettingsPanel>;
 }
 
 function workspaceHistoryStateLabel(status: WorkspaceHistoryStatus["status"]): string {
@@ -4420,7 +4422,7 @@ function workspaceHistoryStateLabel(status: WorkspaceHistoryStatus["status"]): s
     paused_offline: "Paused while offline",
     missing_prerequisites: "Missing prerequisite controls",
     peer_limited: "Peer-limited or peer-pruned coverage",
-    complete_known: "Complete within known signed heads",
+    complete_known: "Up to date with known history",
     cancelled: "Catch-up cancelled locally",
     dismissed: "Catch-up dismissed locally",
     authorization_changed: "Authorization changed",
@@ -4430,7 +4432,7 @@ function workspaceHistoryStateLabel(status: WorkspaceHistoryStatus["status"]): s
   })[status];
 }
 
-function WorkspaceRetentionDialog({ workspace, conversationId, conversationName, busy, error, onClose, onUpdate, onPrune }: { workspace: Workspace; conversationId?: string; conversationName?: string; busy: boolean; error: string; onClose: () => void; onUpdate: (retentionDays: 30 | 90 | 365 | null) => void; onPrune: () => Promise<WorkspaceRetentionPruneResult | null> }) {
+export function WorkspaceHistorySettingsContent({ workspace, conversationId, conversationName, busy, error, onUpdate, onPrune }: { workspace: Workspace; conversationId?: string; conversationName?: string; busy: boolean; error: string; onUpdate: (retentionDays: 30 | 90 | 365 | null) => void; onPrune: () => Promise<WorkspaceRetentionPruneResult | null> }) {
   const [retention, setRetention] = useState<"30" | "90" | "365" | "indefinite">(workspace.retention_days === null ? "indefinite" : String(workspace.retention_days) as "30" | "90" | "365");
   const [result, setResult] = useState<WorkspaceRetentionPruneResult | null>(null);
   const [history, setHistory] = useState<WorkspaceHistoryStatus | null>(null);
@@ -4455,7 +4457,7 @@ function WorkspaceRetentionDialog({ workspace, conversationId, conversationName,
     } catch (reason) { setHistoryError(errorMessage(reason)); }
     finally { setHistoryBusy(false); }
   };
-  return <Dialog title="History & retention" onClose={onClose}><div className="form-stack workspace-history-view"><div><h3>Retained local history</h3><p>{workspace.retention_days === null ? "Indefinite retention" : `${workspace.retention_days}-day retention`}</p></div>{conversationId && <section className="workspace-history-sync" aria-labelledby="workspace-history-sync-title"><h3 id="workspace-history-sync-title">Synchronize {conversationName ?? "this conversation"}</h3>{history ? <><div className="workspace-directory-status" role="status" aria-live="polite"><RefreshCw size={16} /><span><strong>{workspaceHistoryStateLabel(history.status)}</strong>{history.job ? ` · ${history.job.recovered_events} events in ${history.job.verified_pages} verified pages` : ""}</span></div><p className="muted">{history.notice}</p><div className="dialog-actions">{!["requesting", "verifying", "waiting_peer", "paused_offline"].includes(history.status) && <Button disabled={historyBusy || !history.eligible} onClick={() => void changeHistory("start_workspace_history")}>Request available history</Button>}{["requesting", "verifying", "waiting_peer", "paused_offline"].includes(history.status) && <Button variant="ghost" disabled={historyBusy} onClick={() => void changeHistory("cancel_workspace_history")}>Cancel local job</Button>}<Button variant="secondary" disabled={historyBusy} onClick={() => void loadHistory()}>Refresh status</Button></div></> : <div className="workspace-directory-status" role="status"><span className="spinner" /> Checking known coverage…</div>}{historyError && <p className="form-error" role="alert">{historyError}</p>}</section>}{owner && <form className="form-stack" onSubmit={(event) => { event.preventDefault(); onUpdate(selected); }}><label>Cooperative retention<select value={retention} onChange={(event) => setRetention(event.target.value as typeof retention)}><option value="30">30 days</option><option value="90">90 days (default)</option><option value="365">365 days</option><option value="indefinite">Indefinite</option></select></label><Button disabled={busy || selected === workspace.retention_days}>Publish signed retention update</Button></form>}<p className="muted">This is a cooperative preference for encrypted history on each member device. It cannot remotely delete plaintext, exports, or backups another device already holds.</p><div className="workspace-directory-status" role="status">Pruning is bounded and restart-safe. It preserves signed high-water marks, retained floors, permanent gaps, controls still referenced by retained events, and the independent seven-day live-delivery window.</div><Button variant="secondary" disabled={busy || workspace.retention_days === null} onClick={() => void onPrune().then(setResult)}>{workspace.retention_days === null ? "Pruning disabled for indefinite retention" : workspace.retention_pruning_state === "running" ? "Continue local pruning" : "Prune local history now"}</Button>{result && <p role="status">{result.status === "complete" ? `Pruning complete · ${result.pruned} canonical events removed.` : `${result.pruned} events removed · ${result.scanned} checked. Continue to process the next bounded batch.`}</p>}{workspace.retention_pruning_state === "restart_required" && <p className="form-error" role="alert">The interrupted pruning cursor was invalidated. Start a fresh bounded pruning pass.</p>}{workspace.state !== "active" && <p className="muted">This retained archive is read-only. It remains only until local retention pruning or confirmed local erasure.</p>}{error && <p className="form-error" role="alert">{error}</p>}</div></Dialog>;
+  return <WorkspaceSettingsPanel><div className="form-stack workspace-history-view"><div><h3>Retained local history</h3><p>{workspace.retention_days === null ? "Indefinite retention" : `${workspace.retention_days}-day retention`}</p></div>{!conversationId && <p className="muted">Open a channel or direct conversation first to check its available history here.</p>}{conversationId && <section className="workspace-history-sync" aria-labelledby="workspace-history-sync-title"><h3 id="workspace-history-sync-title">Synchronize {conversationName ?? "this conversation"}</h3>{history ? <><div className="workspace-directory-status" role="status" aria-live="polite"><RefreshCw size={16} /><span><strong>{workspaceHistoryStateLabel(history.status)}</strong>{history.job ? ` · ${history.job.recovered_events} events in ${history.job.verified_pages} verified pages` : ""}</span></div><p className="muted">{history.notice}</p><div className="dialog-actions">{!["requesting", "verifying", "waiting_peer", "paused_offline"].includes(history.status) && <Button disabled={historyBusy || !history.eligible} onClick={() => void changeHistory("start_workspace_history")}>Request available history</Button>}{["requesting", "verifying", "waiting_peer", "paused_offline"].includes(history.status) && <Button variant="ghost" disabled={historyBusy} onClick={() => void changeHistory("cancel_workspace_history")}>Cancel local job</Button>}<Button variant="secondary" disabled={historyBusy} onClick={() => void loadHistory()}>Refresh status</Button></div></> : <div className="workspace-directory-status" role="status"><span className="spinner" /> Checking known coverage…</div>}{historyError && <p className="form-error" role="alert">{historyError}</p>}</section>}{owner && <form className="form-stack" onSubmit={(event) => { event.preventDefault(); onUpdate(selected); }}><label>Keep local history for<select value={retention} onChange={(event) => setRetention(event.target.value as typeof retention)}><option value="30">30 days</option><option value="90">90 days (default)</option><option value="365">365 days</option><option value="indefinite">Indefinite</option></select></label><Button disabled={busy || selected === workspace.retention_days}>Save retention preference</Button></form>}<p className="muted">This is a cooperative preference for encrypted history on each member device. It cannot remotely delete plaintext, exports, or backups another device already holds.</p><div className="workspace-directory-status" role="status">Remove messages older than the retention preference from this device. Other members keep their own copies. If interrupted, you can safely continue later.</div><Button variant="secondary" disabled={busy || workspace.retention_days === null} onClick={() => void onPrune().then(setResult)}>{workspace.retention_days === null ? "Pruning disabled for indefinite retention" : workspace.retention_pruning_state === "running" ? "Continue local pruning" : "Prune local history now"}</Button>{result && <p role="status">{result.status === "complete" ? `Pruning complete · ${result.pruned} canonical events removed.` : `${result.pruned} events removed · ${result.scanned} checked. Continue to process the next bounded batch.`}</p>}{workspace.retention_pruning_state === "restart_required" && <p className="form-error" role="alert">The interrupted pruning cursor was invalidated. Start a fresh bounded pruning pass.</p>}{workspace.state !== "active" && <p className="muted">This retained archive is read-only. It remains only until local retention pruning or confirmed local erasure.</p>}{error && <p className="form-error" role="alert">{error}</p>}</div></WorkspaceSettingsPanel>;
 }
 
 function CreateWorkspaceChannelDialog({ workspace, busy, error, onClose, onCreate }: { workspace: Workspace; busy: boolean; error: string; onClose: () => void; onCreate: (name: string, topic: string, visibility: "public" | "private", memberIds: string[]) => void }) {
@@ -4604,7 +4606,7 @@ function WorkspaceMessageCard({
             <textarea autoFocus value={editText} maxLength={16 * 1024} aria-label="Edit workspace message" onChange={(event) => setEditText(event.target.value)} />
             <span><Button variant="ghost" onClick={() => { setEditing(false); setEditText(message.text); setEditMentionMemberIds(eligibleWorkspaceMentionMemberIds(workspace, allowedMentionMemberIds, message.mention_member_ids ?? [])); }}>Cancel</Button><Button disabled={!editText.trim()} onClick={() => { onEdit(editText, eligibleWorkspaceMentionMemberIds(workspace, allowedMentionMemberIds, editMentionMemberIds)); setEditing(false); }}>Save</Button></span>
           </div>
-        ) : <p>{message.text}</p>}
+        ) : <MessageContent text={message.text} />}
         {(message.mutation_conflict || message.mutation_frozen) && <p className="workspace-message__security" role="status">{message.mutation_frozen ? "Security warning: this message is frozen after conflicting mutations from one device." : "Concurrent author changes were resolved deterministically. A later edit can resolve the conflict."}</p>}
         {!message.deleted && <footer className="workspace-message__actions">
           {message.thread_root == null && onOpenThread && <button type="button" onClick={onOpenThread}><MessageCircleMore size={13} /> Thread{(message.reply_count ?? 0) > 0 ? ` · ${message.reply_count}` : ""}{(message.thread_unread_count ?? 0) > 0 ? ` · ${message.thread_unread_count} new` : ""}</button>}
@@ -5094,13 +5096,10 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
   const [contactRequestsOpen, setContactRequestsOpen] = useState(false);
   const [invitationBusy, setInvitationBusy] = useState<string | null>(null);
   const [invitationError, setInvitationError] = useState("");
-  const [workspacePeopleOpen, setWorkspacePeopleOpen] = useState(false);
-  const [workspaceAuthorityOpen, setWorkspaceAuthorityOpen] = useState(false);
-  const [workspaceDevicesOpen, setWorkspaceDevicesOpen] = useState(false);
-  const [workspaceSettingsOpen, setWorkspaceSettingsOpen] = useState(false);
-  const [workspaceAccessOpen, setWorkspaceAccessOpen] = useState(false);
+  const [workspaceSettingsSection, setWorkspaceSettingsSection] = useState<WorkspaceSettingsSection | null>(null);
+  const workspaceSettingsBackRef = useRef<(() => void) | null>(null);
+  const registerWorkspaceSettingsBack = useCallback((handler: (() => void) | null) => { workspaceSettingsBackRef.current = handler; }, []);
   const [resumeWorkspaceId, setResumeWorkspaceId] = useState<string | undefined>();
-  const [workspaceRetentionOpen, setWorkspaceRetentionOpen] = useState(false);
   const [workspaceBrowseOpen, setWorkspaceBrowseOpen] = useState(false);
   const [workspaceCreateChannelOpen, setWorkspaceCreateChannelOpen] = useState(false);
   const [workspaceManageChannelOpen, setWorkspaceManageChannelOpen] = useState(false);
@@ -5164,6 +5163,7 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
   const [contactsOpen, setContactsOpen] = useState(false);
   const [contactsInitialId, setContactsInitialId] = useState<string | null>(null);
   const [settings, setSettings] = useState(false);
+  useEffect(() => { if (settings) setWorkspaceSettingsSection(null); }, [settings]);
   const settingsBackHandlerRef = useRef<(() => void) | null>(null);
   const registerSettingsBackHandler = useCallback((handler: (() => void) | null) => {
     settingsBackHandlerRef.current = handler;
@@ -5174,9 +5174,9 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
     // Leave the conversation mounted so opening Settings preserves its draft,
     // pagination and scroll position, while excluding covered controls.
     for (const element of [sidebarRef.current, mainPaneRef.current]) {
-      if (element) element.inert = settings;
+      if (element) element.inert = settings || workspaceSettingsSection !== null;
     }
-  }, [settings]);
+  }, [settings, workspaceSettingsSection]);
   const [help, setHelp] = useState<{ code: string; action: string | null } | null>(null);
   const [dismissedRequests, setDismissedRequests] = useState<string[]>([]);
   const [dismissedGroupInvitations, setDismissedGroupInvitations] = useState<string[]>([]);
@@ -5357,7 +5357,7 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
     setWorkspaceThreadRootId(null);
     setWorkspaceThreadPage(null);
     setWorkspaceManageChannelOpen(false);
-    setWorkspaceRetentionOpen(false);
+    setWorkspaceSettingsSection(null);
   }, [activeSpaceId]);
 
   useEffect(() => {
@@ -6353,7 +6353,7 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
       setWorkspaceThreadsOpen(false);
       setWorkspaceSearchOpen(false);
       setWorkspaceThreadRootId(null);
-      setWorkspacePeopleOpen(false);
+      setWorkspaceSettingsSection(null);
       setMobileSidebarOpen(false);
       await refresh(true);
     } catch (reason) { setWorkspaceActionError(errorMessage(reason)); }
@@ -6423,7 +6423,7 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
     setWorkspaceSearchOpen(false);
     setWorkspaceSearchError("");
     if (result.kind === "person" && result.member_id) {
-      if (result.member_id === selectedWorkspace?.local_member_id) setWorkspacePeopleOpen(true);
+      if (result.member_id === selectedWorkspace?.local_member_id) setWorkspaceSettingsSection("people");
       else void openWorkspaceDirect(result.member_id);
       return;
     }
@@ -6524,7 +6524,7 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
     try {
       await serviceCommand(command, { operation_id: newOperationId(), workspace_id: selectedWorkspace.id, ...(confirmation ? { confirmation } : {}) });
       const removed = command === "remove_workspace_data";
-      if (removed) { setActiveSpaceId("personal"); setWorkspaceSettingsOpen(false); }
+      if (removed) { setActiveSpaceId("personal"); setWorkspaceSettingsSection(null); }
       await refresh(true);
     } catch (reason) { setWorkspaceActionError(errorMessage(reason)); }
     finally { setWorkspaceActionBusy(false); }
@@ -6585,28 +6585,8 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
       setWorkspaceBrowseOpen(false);
       return;
     }
-    if (workspaceRetentionOpen) {
-      setWorkspaceRetentionOpen(false);
-      return;
-    }
-    if (workspaceSettingsOpen) {
-      setWorkspaceSettingsOpen(false);
-      return;
-    }
-    if (workspaceAccessOpen) {
-      setWorkspaceAccessOpen(false);
-      return;
-    }
-    if (workspaceDevicesOpen) {
-      setWorkspaceDevicesOpen(false);
-      return;
-    }
-    if (workspaceAuthorityOpen) {
-      setWorkspaceAuthorityOpen(false);
-      return;
-    }
-    if (workspacePeopleOpen) {
-      setWorkspacePeopleOpen(false);
+    if (workspaceSettingsSection) {
+      workspaceSettingsBackRef.current?.();
       return;
     }
     if (contactRequestsOpen) {
@@ -6695,7 +6675,7 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
       return;
     }
     if (selection) selectConversation(null);
-  }, [activeSpaceId, closeReactionPicker, contactRequestsOpen, contactsOpen, conversationDetailsOpen, createWorkspaceOpen, deleteBusy, deleteTarget, foregroundGroupInvitation, foregroundWorkspaceJoinRequest, help, incomingRequest, inviteWorkspaceOpen, joinWorkspaceOpen, mobileSidebarOpen, newChat, newGroup, onInvitationHandled, reactionTarget, selectedWorkspace, selection, settings, workspaceAccessOpen, workspaceAuthorityOpen, workspaceBrowseOpen, workspaceCreateChannelOpen, workspaceDevicesOpen, workspaceHeaderMenuOpen, workspaceManageChannelOpen, workspaceMentionsOpen, workspacePeopleOpen, workspaceRetentionOpen, workspaceSearchOpen, workspaceSettingsOpen, workspaceThreadRootId, workspaceThreadsOpen]);
+  }, [workspaceSettingsSection, activeSpaceId, closeReactionPicker, contactRequestsOpen, contactsOpen, conversationDetailsOpen, createWorkspaceOpen, deleteBusy, deleteTarget, foregroundGroupInvitation, foregroundWorkspaceJoinRequest, help, incomingRequest, inviteWorkspaceOpen, joinWorkspaceOpen, mobileSidebarOpen, newChat, newGroup, onInvitationHandled, reactionTarget, selectedWorkspace, selection, settings, workspaceBrowseOpen, workspaceCreateChannelOpen, workspaceHeaderMenuOpen, workspaceManageChannelOpen, workspaceMentionsOpen, workspaceSearchOpen, workspaceThreadRootId, workspaceThreadsOpen]);
 
   const mobileBackHandlerRef = useRef(handleMobileBack);
   // Keep the single native listener pointed at the newest committed render.
@@ -6720,11 +6700,7 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
       || workspaceManageChannelOpen
       || workspaceCreateChannelOpen
       || workspaceBrowseOpen
-      || workspaceRetentionOpen
-      || workspaceSettingsOpen
-      || workspaceDevicesOpen
-      || workspaceAuthorityOpen
-      || workspacePeopleOpen
+      || workspaceSettingsSection
       || inviteWorkspaceOpen
       || pendingJoinsOpen
       || contactRequestsOpen
@@ -6774,8 +6750,8 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
   };
 
   return (
-    <main className={`app-shell ${mobileSidebarOpen || !(selectedWorkspace || selectedContact || selectedGroup) ? "app-shell--list" : "app-shell--thread"} ${settings ? "app-shell--settings" : ""}`}>
-      <aside ref={sidebarRef} className="sidebar" aria-hidden={settings ? true : undefined}>
+    <main className={`app-shell ${mobileSidebarOpen || !(selectedWorkspace || selectedContact || selectedGroup) ? "app-shell--list" : "app-shell--thread"} ${settings || workspaceSettingsSection ? "app-shell--settings" : ""}`}>
+      <aside ref={sidebarRef} className="sidebar" aria-hidden={settings || workspaceSettingsSection ? true : undefined}>
         <header className="sidebar__top"><Brand /><div><button className="icon-button" onClick={() => { setContactsInitialId(null); setContactsOpen(true); }} aria-label="Contacts" title="Contacts"><BookUser size={19} /></button><button className="icon-button" onClick={() => void onLock()} aria-label="Lock Mesh Chat" title="Lock Mesh Chat"><LockKeyhole size={18} /></button><button className="icon-button" onClick={() => setSettings(true)} aria-label="Settings" title="Settings"><Settings size={19} /></button></div></header>
         {workspacesEnabled && <WorkspaceSwitcher workspaces={workspaces} activeId={activeSpaceId} onSelect={(id) => { setActiveSpaceId(id); setMobileSidebarOpen(true); setWorkspaceError(""); setWorkspaceActionError(""); }} onCreate={() => setCreateWorkspaceOpen(true)} onJoin={() => { setJoinWorkspaceValue(""); setJoinWorkspaceOpen(true); }} />}
         {activeSpaceId === "personal" ? <>
@@ -6821,17 +6797,14 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
             {selectedWorkspaceDirects.map((direct) => { const current = !workspaceSearchOpen && !workspaceMentionsOpen && !workspaceThreadsOpen && !workspaceThreadRootId && selectedWorkspaceDirect?.id === direct.id; return <button key={direct.id} className={`contact-row workspace-channel-row ${current ? "contact-row--selected" : ""}`} aria-current={current ? "page" : undefined} onClick={() => { setWorkspaceSearchOpen(false); setWorkspaceMentionsOpen(false); setWorkspaceThreadsOpen(false); setWorkspaceThreadRootId(null); setWorkspaceSelectedDirectId(direct.id); setWorkspaceSelectedChannelId(null); setMobileSidebarOpen(false); }}><Avatar name={direct.peer_display_name} small /><span className="contact-row__content"><span><strong>{direct.peer_display_name}</strong>{direct.unread_count > 0 && <b className="unread-badge">{direct.unread_count}</b>}</span><span className="contact-row__preview">{direct.state === "read_only" ? "Former member · read-only" : `Workspace DM · ${direct.peer_short_id}`}</span></span></button>; })}
             {selectedWorkspaceDirects.length === 0 && <p className="workspace-direct-empty">Start a private workspace chat from People.</p>}
             <p className="workspace-nav__label">Workspace</p>
-            <button className="workspace-nav-action" onClick={() => setWorkspacePeopleOpen(true)} aria-label={`People and administration${selectedWorkspace.pending_owner_review_count ? `, ${selectedWorkspace.pending_owner_review_count} requests waiting` : ""}`}><Users size={17} />People <span>{selectedWorkspace.pending_owner_review_count || selectedWorkspace.members.filter((member) => member.status === "active").length}</span></button>
-            <button className="workspace-nav-action" onClick={() => setWorkspaceAuthorityOpen(true)} aria-label="Authority continuity"><ShieldCheck size={17} />Authority <span>{workspaceAuthorityTransitions.filter((item) => item.workspace_id === selectedWorkspace.id && !["applied", "expired", "stale", "superseded", "cancelled"].includes(item.state)).length || ""}</span></button>
-            <button className="workspace-nav-action" onClick={() => setWorkspaceDevicesOpen(true)} aria-label="Linked devices"><Building2 size={17} />Devices <span>{workspaceDeviceTransitions.filter((item) => item.workspace_id === selectedWorkspace.id && item.state === "pending").length || (selectedWorkspace.members.find((item) => item.id === selectedWorkspace.local_member_id)?.devices?.length ?? 1)}</span></button>
+            <button className="workspace-nav-action" onClick={() => setWorkspaceSettingsSection("people")} aria-label={`People and administration${selectedWorkspace.pending_owner_review_count ? `, ${selectedWorkspace.pending_owner_review_count} requests waiting` : ""}`}><Users size={17} />People <span>{selectedWorkspace.pending_owner_review_count || selectedWorkspace.members.filter((member) => member.status === "active").length}</span></button>
             {selectedWorkspace.local_role === "owner" && selectedWorkspace.state === "active" && selectedWorkspace.members.filter((member) => member.status === "active").length < 8 && <button className="workspace-nav-action" onClick={() => setInviteWorkspaceOpen(true)}><UserRoundPlus size={17} />Invite people</button>}
-            <button className="workspace-nav-action" onClick={() => setWorkspaceRetentionOpen(true)}><Clock3 size={17} />History &amp; retention</button>
-            <button className="workspace-nav-action" onClick={() => setWorkspaceSettingsOpen(true)}><Settings size={17} />Workspace settings</button>
+            <button className="workspace-nav-action" onClick={() => setWorkspaceSettingsSection("general")}><Settings size={17} />Workspace settings</button>
           </nav>
         </> : null}
         <footer className="sidebar__footer" title={networkAvailable ? "The local network service is running. This does not confirm that another device is reachable." : undefined}><span className={`network-dot ${networkAvailable ? "network-dot--on" : ""}`} />{networkAvailable ? "Network service active" : "Networking unavailable"}</footer>
       </aside>
-      <div ref={mainPaneRef} className="main-pane" aria-hidden={settings ? true : undefined}>
+      <div ref={mainPaneRef} className="main-pane" aria-hidden={settings || workspaceSettingsSection ? true : undefined}>
         {snapshot.service_error && (
           <div className="service-warning" role="alert">
             <WifiOff size={18} />
@@ -6883,7 +6856,7 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
             onChanged={async () => { await refresh(true); }}
           />
         )}
-        {selectedWorkspace?.state === "active" && selectedWorkspace.local_role === "owner" && <div className="workspace-setup-wrap"><WorkspaceSetupChecklist key={selectedWorkspace.id} workspace={selectedWorkspace} channelCount={selectedWorkspaceChannels.length} activeMemberCount={selectedWorkspace.members.filter((member) => member.status === "active").length} onInvite={() => setInviteWorkspaceOpen(true)} onCreateChannel={() => setWorkspaceCreateChannelOpen(true)} onConnectivity={() => setWorkspacePeopleOpen(true)} /></div>}
+        {selectedWorkspace?.state === "active" && selectedWorkspace.local_role === "owner" && <div className="workspace-setup-wrap"><WorkspaceSetupChecklist key={selectedWorkspace.id} workspace={selectedWorkspace} channelCount={selectedWorkspaceChannels.length} activeMemberCount={selectedWorkspace.members.filter((member) => member.status === "active").length} onInvite={() => setInviteWorkspaceOpen(true)} onCreateChannel={() => setWorkspaceCreateChannelOpen(true)} onConnectivity={() => setWorkspaceSettingsSection("people")} /></div>}
         {selectedWorkspace ? (workspaceSearchOpen ? (
           <WorkspaceSearchView
             workspace={selectedWorkspace}
@@ -6957,7 +6930,7 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
             onSetReaction={(eventId, emoji, active) => void setWorkspaceReaction(eventId, emoji, active)}
             onBack={() => setMobileSidebarOpen(true)}
             onHideConversation={() => void hideWorkspaceDirect()}
-            onPeople={() => setWorkspacePeopleOpen(true)}
+            onPeople={() => setWorkspaceSettingsSection("people")}
             onCall={() => {
               if (!selectedWorkspaceDirect.peer_device_id) {
                 setWorkspaceError("This workspace member has no active device for a call.");
@@ -6997,8 +6970,8 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
             onCloseReactionPicker={closeReactionPicker}
             onSetReaction={(eventId, emoji, active) => void setWorkspaceReaction(eventId, emoji, active)}
             onBack={() => setMobileSidebarOpen(true)}
-            onPeople={() => setWorkspacePeopleOpen(true)}
-            onSettings={() => setWorkspaceSettingsOpen(true)}
+            onPeople={() => setWorkspaceSettingsSection("people")}
+            onSettings={() => setWorkspaceSettingsSection("general")}
             onInvite={() => setInviteWorkspaceOpen(true)}
             onManage={() => setWorkspaceManageChannelOpen(true)}
             onToggleMentionMute={() => void runWorkspaceChannelAction("set_workspace_channel_mentions_muted", { channel_id: selectedWorkspaceChannel.id, muted: !selectedWorkspaceChannel.mentions_muted })}
@@ -7015,10 +6988,10 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
                 {!selectedWorkspaceJoinStatus.terminal && <small>#general appears only after the owner receives, validates, and approves the request.</small>}
               </div>
             ) : <p>{workspaceStateLabel(selectedWorkspace)}. Keep Mesh Chat open so signed membership and channel controls can arrive.</p>}
-            {selectedWorkspace.state === "active" && selectedWorkspace.local_role === "owner" && <WorkspaceSetupChecklist workspace={selectedWorkspace} channelCount={selectedWorkspaceChannels.length} activeMemberCount={selectedWorkspace.members.filter((member) => member.status === "active").length} onInvite={() => setInviteWorkspaceOpen(true)} onCreateChannel={() => setWorkspaceCreateChannelOpen(true)} onConnectivity={() => setWorkspacePeopleOpen(true)} />}
+            {selectedWorkspace.state === "active" && selectedWorkspace.local_role === "owner" && <WorkspaceSetupChecklist workspace={selectedWorkspace} channelCount={selectedWorkspaceChannels.length} activeMemberCount={selectedWorkspace.members.filter((member) => member.status === "active").length} onInvite={() => setInviteWorkspaceOpen(true)} onCreateChannel={() => setWorkspaceCreateChannelOpen(true)} onConnectivity={() => setWorkspaceSettingsSection("people")} />}
             {selectedWorkspaceJoinStatus?.terminal
-              ? <Button variant="secondary" onClick={() => setWorkspaceSettingsOpen(true)}><Settings size={18} /> Open Workspace settings</Button>
-              : <Button variant="secondary" onClick={() => setWorkspacePeopleOpen(true)}><Users size={18} /> People</Button>}
+              ? <Button variant="secondary" onClick={() => setWorkspaceSettingsSection("general")}><Settings size={18} /> Open Workspace settings</Button>
+              : <Button variant="secondary" onClick={() => setWorkspaceSettingsSection("people")}><Users size={18} /> People</Button>}
           </section>
         )) : selectedContact ? (
           <Conversation
@@ -7084,13 +7057,20 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
       {selectedWorkspace && workspaceCreateChannelOpen && <CreateWorkspaceChannelDialog workspace={selectedWorkspace} busy={workspaceActionBusy} error={workspaceActionError} onClose={() => setWorkspaceCreateChannelOpen(false)} onCreate={(name, topic, visibility, memberIds) => void runWorkspaceChannelAction("create_workspace_channel", { name, topic, visibility, member_ids: memberIds })} />}
       {selectedWorkspace && selectedWorkspaceChannel && workspaceManageChannelOpen && <ManageWorkspaceChannelDialog workspace={selectedWorkspace} channel={selectedWorkspaceChannel} transfers={workspaceChannelTransfers.filter((item) => item.workspace_id === selectedWorkspace.id)} busy={workspaceActionBusy} error={workspaceActionError} onClose={() => setWorkspaceManageChannelOpen(false)} onUpdate={(name, topic, archived) => void runWorkspaceChannelAction("update_workspace_channel", { channel_id: selectedWorkspaceChannel.id, name, topic, archived })} onMembers={(memberIds) => void runWorkspaceChannelAction("update_workspace_private_channel_members", { channel_id: selectedWorkspaceChannel.id, member_ids: memberIds })} onLeave={() => void runWorkspaceChannelAction("leave_workspace_private_channel", { channel_id: selectedWorkspaceChannel.id })} onOfferTransfer={(successorMemberId) => void runWorkspaceChannelAction("offer_workspace_channel_transfer", { channel_id: selectedWorkspaceChannel.id, successor_member_id: successorMemberId })} onAcceptTransfer={(transferId) => void runWorkspaceChannelAction("accept_workspace_channel_transfer", { transfer_id: transferId })} onRecover={() => void runWorkspaceChannelAction("recover_workspace_channel", { channel_id: selectedWorkspaceChannel.id })} />}
       {selectedWorkspace && inviteWorkspaceOpen && <WorkspaceInviteDialog workspace={selectedWorkspace} existingInvitations={workspaceInvitations.filter((invitation) => invitation.workspace_id === selectedWorkspace.id)} remoteProfiles={snapshot.remote_profiles ?? []} contacts={snapshot.contacts ?? []} webrtcActive={webrtcSessionActive} onOpenWebRTC={() => { setInviteWorkspaceOpen(false); setWebRtcOnboardingOpen(true); }} onClose={() => setInviteWorkspaceOpen(false)} />}
-      {selectedWorkspace && workspacePeopleOpen && <WorkspacePeopleDialog
+      {selectedWorkspace && workspaceSettingsSection && <div className={`settings-page-slot workspace-settings-slot ${hasForegroundRequest ? "dialog-suspended" : ""}`} aria-hidden={hasForegroundRequest ? true : undefined}>
+        <WorkspaceSettingsPage key={selectedWorkspace.id} name={selectedWorkspace.name} role={selectedWorkspace.local_role}
+          section={workspaceSettingsSection} busy={workspaceActionBusy} pendingRequests={selectedWorkspace.pending_owner_review_count}
+          pendingDevices={workspaceDeviceTransitions.filter(item => item.workspace_id === selectedWorkspace.id && item.state === "pending").length}
+          pendingAuthority={workspaceAuthorityTransitions.filter(item => item.workspace_id === selectedWorkspace.id && !["applied", "expired", "stale", "superseded", "cancelled"].includes(item.state)).length}
+          onSelect={setWorkspaceSettingsSection} onClose={() => setWorkspaceSettingsSection(null)} onBackHandlerChange={registerWorkspaceSettingsBack}
+          panels={{
+          people: (<WorkspacePeopleSettingsContent
         workspace={selectedWorkspace}
         requests={workspaceDisplayNameRequests.filter((request) => request.workspace_id === selectedWorkspace.id)}
         adminRequests={workspaceAdminRequests.filter((request) => request.workspace_id === selectedWorkspace.id)}
         busy={workspaceActionBusy}
         error={workspaceActionError}
-        onClose={() => setWorkspacePeopleOpen(false)}
+
         onRequestName={(displayName) => void runWorkspaceAdministration("request_workspace_display_name", { display_name: displayName })}
         onDecideName={(requestId, approve) => void runWorkspaceAdministration("decide_workspace_display_name", { request_id: requestId, approve })}
         onRemove={(memberId) => void runWorkspaceAdministration("remove_workspace_member", { member_id: memberId })}
@@ -7101,12 +7081,15 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
         onCancelAdminRequest={(requestId) => void runWorkspaceAdministration("cancel_workspace_admin_request", { request_id: requestId })}
         onDismissAdminRequest={(requestId) => void runWorkspaceAdministration("dismiss_workspace_admin_request", { request_id: requestId })}
         onMessage={(memberId) => void openWorkspaceDirect(memberId)}
-      />}
-      {selectedWorkspace && workspaceAuthorityOpen && <WorkspaceAuthorityDialog workspace={selectedWorkspace} transitions={workspaceAuthorityTransitions.filter((item) => item.workspace_id === selectedWorkspace.id)} busy={workspaceActionBusy} error={workspaceActionError} onClose={() => setWorkspaceAuthorityOpen(false)} onOffer={(transitionKind, successorMemberId, successorDeviceId, outgoingOwnerRole) => void runWorkspaceAdministration("offer_workspace_authority_transition", { transition_kind: transitionKind, successor_member_id: successorMemberId, successor_device_id: successorDeviceId, outgoing_owner_role: outgoingOwnerRole })} onAccept={(transitionId) => void runWorkspaceAdministration("accept_workspace_authority_transition", { transition_id: transitionId })} onFinalize={(transitionId) => void runWorkspaceAdministration("finalize_workspace_authority_transition", { transition_id: transitionId })} onReportLoss={() => void runWorkspaceAdministration("report_workspace_authority_loss", {})} />}
-      {selectedWorkspace && workspaceDevicesOpen && <WorkspaceDevicesDialog workspace={selectedWorkspace} transitions={workspaceDeviceTransitions.filter((item) => item.workspace_id === selectedWorkspace.id)} busy={workspaceActionBusy} error={workspaceActionError} onClose={() => setWorkspaceDevicesOpen(false)} onCreate={createWorkspaceDeviceLink} onDecide={(transition, approve) => void runWorkspaceAdministration(transition.transition_kind === "link" ? (approve ? "approve_workspace_device_link" : "decline_workspace_device_link") : (approve ? "approve_workspace_device_removal" : "decline_workspace_device_removal"), transition.transition_kind === "link" ? { link_id: transition.id } : { removal_id: transition.id })} onRemove={(deviceId) => void runWorkspaceAdministration("request_workspace_device_removal", { target_device_id: deviceId })} onReadSync={(enabled) => void runWorkspaceAdministration("set_workspace_read_hint_sync", { enabled })} />}
-      {selectedWorkspace && workspaceSettingsOpen && <WorkspaceSettingsDialog workspace={selectedWorkspace} conversation={selectedWorkspaceConversation} networkSettings={snapshot.settings} busy={workspaceActionBusy} error={workspaceActionError} onClose={() => setWorkspaceSettingsOpen(false)} onOpenAccess={() => setWorkspaceAccessOpen(true)} reconnect={reconnectCoordinator} onUpdateMetadata={(name, description) => void runWorkspaceAdministration("update_workspace_metadata", { name, description })} onUpdatePolicies={(channelCreation, posting) => void runWorkspaceAdministration("update_workspace_policies", { channel_creation: channelCreation, posting })} onSetNotificationPreference={(conversationId, mode) => void runWorkspaceNotificationPreference(conversationId, mode)} onApprovePropagationNode={(node) => void approveWorkspacePropagationNode(node)} onCloseWorkspace={() => void runWorkspaceLifecycle("close_workspace")} onLeave={() => void runWorkspaceLifecycle("leave_workspace")} onRemove={(confirmation) => void runWorkspaceLifecycle("remove_workspace_data", confirmation)} />}
-      {selectedWorkspace && workspaceAccessOpen && <WorkspaceAccessDialog workspace={selectedWorkspace} onClose={() => setWorkspaceAccessOpen(false)} onSaved={async () => { await refresh(true); }} />}
-      {selectedWorkspace && workspaceRetentionOpen && <WorkspaceRetentionDialog workspace={selectedWorkspace} conversationId={selectedWorkspaceConversation?.id} conversationName={selectedWorkspaceDirect?.peer_display_name ?? selectedWorkspaceChannel?.display_name ?? selectedWorkspaceChannel?.name} busy={workspaceActionBusy} error={workspaceActionError} onClose={() => setWorkspaceRetentionOpen(false)} onUpdate={(retentionDays) => void runWorkspaceAdministration("update_workspace_retention", { retention_days: retentionDays })} onPrune={pruneWorkspaceHistory} />}
+      />),
+          authority: (<WorkspaceAuthoritySettingsContent workspace={selectedWorkspace} transitions={workspaceAuthorityTransitions.filter((item) => item.workspace_id === selectedWorkspace.id)} busy={workspaceActionBusy} error={workspaceActionError}  onOffer={(transitionKind, successorMemberId, successorDeviceId, outgoingOwnerRole) => void runWorkspaceAdministration("offer_workspace_authority_transition", { transition_kind: transitionKind, successor_member_id: successorMemberId, successor_device_id: successorDeviceId, outgoing_owner_role: outgoingOwnerRole })} onAccept={(transitionId) => void runWorkspaceAdministration("accept_workspace_authority_transition", { transition_id: transitionId })} onFinalize={(transitionId) => void runWorkspaceAdministration("finalize_workspace_authority_transition", { transition_id: transitionId })} onReportLoss={() => void runWorkspaceAdministration("report_workspace_authority_loss", {})} />),
+          devices: (<WorkspaceDevicesSettingsContent workspace={selectedWorkspace} transitions={workspaceDeviceTransitions.filter((item) => item.workspace_id === selectedWorkspace.id)} busy={workspaceActionBusy} error={workspaceActionError}  onCreate={createWorkspaceDeviceLink} onDecide={(transition, approve) => void runWorkspaceAdministration(transition.transition_kind === "link" ? (approve ? "approve_workspace_device_link" : "decline_workspace_device_link") : (approve ? "approve_workspace_device_removal" : "decline_workspace_device_removal"), transition.transition_kind === "link" ? { link_id: transition.id } : { removal_id: transition.id })} onRemove={(deviceId) => void runWorkspaceAdministration("request_workspace_device_removal", { target_device_id: deviceId })} onReadSync={(enabled) => void runWorkspaceAdministration("set_workspace_read_hint_sync", { enabled })} />),
+          general: (<WorkspaceGeneralSettingsContent workspace={selectedWorkspace} conversation={selectedWorkspaceConversation} networkSettings={snapshot.settings} busy={workspaceActionBusy} error={workspaceActionError}  onOpenAccess={() => setWorkspaceSettingsSection("access")} reconnect={reconnectCoordinator} onUpdateMetadata={(name, description) => void runWorkspaceAdministration("update_workspace_metadata", { name, description })} onUpdatePolicies={(channelCreation, posting) => void runWorkspaceAdministration("update_workspace_policies", { channel_creation: channelCreation, posting })} onSetNotificationPreference={(conversationId, mode) => void runWorkspaceNotificationPreference(conversationId, mode)} onApprovePropagationNode={(node) => void approveWorkspacePropagationNode(node)} onCloseWorkspace={() => void runWorkspaceLifecycle("close_workspace")} onLeave={() => void runWorkspaceLifecycle("leave_workspace")} onRemove={(confirmation) => void runWorkspaceLifecycle("remove_workspace_data", confirmation)} />),
+          connections: (<WorkspaceGeneralSettingsContent view="connections" workspace={selectedWorkspace} conversation={selectedWorkspaceConversation} networkSettings={snapshot.settings} busy={workspaceActionBusy} error={workspaceActionError}  onOpenAccess={() => setWorkspaceSettingsSection("access")} reconnect={reconnectCoordinator} onUpdateMetadata={(name, description) => void runWorkspaceAdministration("update_workspace_metadata", { name, description })} onUpdatePolicies={(channelCreation, posting) => void runWorkspaceAdministration("update_workspace_policies", { channel_creation: channelCreation, posting })} onSetNotificationPreference={(conversationId, mode) => void runWorkspaceNotificationPreference(conversationId, mode)} onApprovePropagationNode={(node) => void approveWorkspacePropagationNode(node)} onCloseWorkspace={() => void runWorkspaceLifecycle("close_workspace")} onLeave={() => void runWorkspaceLifecycle("leave_workspace")} onRemove={(confirmation) => void runWorkspaceLifecycle("remove_workspace_data", confirmation)} />),
+          access: (<WorkspaceAccessSettingsContent workspace={selectedWorkspace}  onSaved={async () => { await refresh(true); }} />),
+          history: (<WorkspaceHistorySettingsContent workspace={selectedWorkspace} conversationId={selectedWorkspaceConversation?.id} conversationName={selectedWorkspaceDirect?.peer_display_name ?? selectedWorkspaceChannel?.display_name ?? selectedWorkspaceChannel?.name} busy={workspaceActionBusy} error={workspaceActionError}  onUpdate={(retentionDays) => void runWorkspaceAdministration("update_workspace_retention", { retention_days: retentionDays })} onPrune={pruneWorkspaceHistory} />),
+          }} />
+      </div>}
       {connectEntryOpen && <ConnectEntryDialog onClose={() => setConnectEntryOpen(false)} onInvite={() => { setNewChatStartTab("invite"); setNewChatTransport("direct_tcp"); setConnectEntryOpen(false); setNewChat(true); }} onJoin={() => { setNewChatStartTab("join"); setConnectEntryOpen(false); setNewChat(true); }} onWebRTC={() => { setConnectEntryOpen(false); setWebRtcOnboardingOpen(true); }} onTransport={(kind) => { setNewChatStartTab("invite"); setNewChatTransport(kind); setConnectEntryOpen(false); setNewChat(true); }} onResume={() => { setConnectEntryOpen(false); setResumePairingOpen(true); }} resumeCode={resumePairingCode} />}
       {webrtcOnboardingOpen && <WebRTCOnboardingDialog initialPairingCode={initialPairingCode || (resumePairingOpen ? resumePairingCode : "")} onClose={() => { setWebRtcOnboardingOpen(false); setResumePairingOpen(false); onPairingHandled?.(); }} onConnected={(path) => { setWebRtcSessionActive(true); setWebRtcSessionCount(getWebRTCSessionCount()); setWebrtcPath(path); }} onFallback={() => { setNewChatStartTab("invite"); setNewChat(true); }} onChanged={async () => { await refresh(true); }} workspaces={(snapshot.workspaces ?? []).map((workspace) => ({ id: workspace.id, name: workspace.name }))} />}
       {newChat && <div className={hasForegroundRequest ? "dialog-suspended" : ""} aria-hidden={hasForegroundRequest ? true : undefined}><NewChatDialog initialInvitation={initialInvitation} initialTab={newChatStartTab} initialConnection={newChatTransport} remoteProfiles={snapshot.remote_profiles ?? []} onClose={() => { setNewChat(false); onInvitationHandled(); }} onChanged={async () => { await refresh(true); }} onWorkspaceInvitation={(value) => { setNewChat(false); setJoinWorkspaceValue(value); setJoinWorkspaceOpen(true); }} /></div>}

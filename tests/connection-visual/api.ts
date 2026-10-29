@@ -1,7 +1,12 @@
+export * from "../../src/api";
 const phase = new URLSearchParams(location.search).get("phase") ?? "waiting_for_ready";
 const state = { setup_id:"synthetic-setup", workspace_id:"synthetic-workspace", state:phase,
   expires_at: phase === "refresh_required" ? 0 : Math.floor(Date.now()/1000)+240, candidate_count:0 };
 export async function serviceCommand(command: string) {
+  if (command === "get_workspace_history_status") return { status: "complete_known", eligible: true, job: null, notice: "History is up to date with the known signed history of this conversation." };
+  if (command === "workspace_connectivity") return { summary: { active_devices: 3, reachable_devices: 3, attention_devices: 0, pending_deliveries: 0, stored_deliveries: 0 }, members: [] };
+  if (command === "list_workspace_access_recommendations") return { recommendations: [] };
+  if (command === "list_remote_profiles") return { profiles: [] };
   if (command === "resume_direct_setup") return { ...state, ...(phase === "waiting_for_ready" ? { text:"mesh-direct:synthetic-layout-fixture" } : {}) };
   if (command === "check_direct_setup") return { ...state,
     readiness: phase === "waiting_for_ready" ? "no_local_address" : phase === "existing_routes_only" ? "both_no_address" : phase,

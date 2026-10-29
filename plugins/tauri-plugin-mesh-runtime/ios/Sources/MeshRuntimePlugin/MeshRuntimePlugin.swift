@@ -10,6 +10,8 @@ final class InitializeArgs: Decodable {
     let displayName: String?
 }
 
+final class ExternalLinkArgs: Decodable { let url: String }
+
 final class CommandArgs: Decodable {
     let command: String
     let payload: [String: JSONValue]
@@ -375,6 +377,23 @@ final class MeshRuntimePlugin: Plugin, UNUserNotificationCenterDelegate {
             }
             UIApplication.shared.open(url) { _ in
                 self.notificationCapability(invoke)
+            }
+        }
+    }
+
+    @objc func openExternalLink(_ invoke: Invoke) throws {
+        let args = try invoke.parseArgs(ExternalLinkArgs.self)
+        guard args.url.count <= 4096,
+              args.url.rangeOfCharacter(from: .controlCharacters) == nil,
+              let url = URL(string: args.url), ["http", "https"].contains(url.scheme ?? ""),
+              url.host != nil, url.user == nil, url.password == nil else {
+            invoke.reject("invalid_url")
+            return
+        }
+        DispatchQueue.main.async {
+            UIApplication.shared.open(url) { opened in
+                if opened { invoke.resolve(["json": "{\"ok\":true,\"result\":{\"opened\":true}}"] ) }
+                else { invoke.reject("browser_unavailable") }
             }
         }
     }
