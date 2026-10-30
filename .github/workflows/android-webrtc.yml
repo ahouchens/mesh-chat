@@ -11,6 +11,7 @@ on:
       - 'scripts/build_android.py'
       - 'scripts/test_android_webrtc.sh'
       - 'scripts/test_android_signaling.sh'
+      - 'scripts/test_android_qualification.sh'
       - 'deploy/cloudflare-signal/**'
       - 'scripts/verify_android_webrtc.py'
       - 'package.json'
@@ -86,9 +87,7 @@ jobs:
           arch: x86_64
           target: google_apis
           disable-animations: true
-          script: |
-            bash scripts/test_android_webrtc.sh
-            bash scripts/test_android_signaling.sh
+          script: bash scripts/test_android_qualification.sh
       - uses: actions/upload-artifact@v4
         if: always()
         with:
