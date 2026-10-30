@@ -92,6 +92,15 @@ reservations and protected key lifetime; the UI reports `adapter_quarantined`
 until a new runtime is started. These bounds do not qualify all other legacy
 queues or constitute a packaged saturation result.
 
+Android's 16-session capacity includes pending creation and physical disposal.
+Duplicate native IDs cannot replace an existing peer. Empty-candidate gathering
+fallback retains its original reservation, waits for the exact old peer to be
+disposed, and cannot restart after cancellation. Native observers capture their
+session instance rather than resolving an ID that may have been reused. A
+failed physical disposal retains capacity and reports adapter overflow. JVM
+concurrency tests cover these reservation rules; Android instrumentation also
+checks duplicate creation and cancellation during real ICE gathering.
+
 Compatibility wrappers owned by this branch: `background_reconnect.py`, the
 renderer coordinator/runtime, and renderer bridge repair remain until M2
 adoption and parity checks pass. Removing them before desktop and manual-pairing

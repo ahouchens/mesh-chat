@@ -10,3 +10,4 @@
 -keep class com.meshchat.runtime.NativeWebRtcInteropTest** { *; }
 -keep class com.meshchat.runtime.SignalMailboxAndroidTest** { *; }
 -keep class com.meshchat.runtime.NativeCallbackQueueTest** { *; }
+-keep class com.meshchat.runtime.NativeSessionReservationsTest** { *; }

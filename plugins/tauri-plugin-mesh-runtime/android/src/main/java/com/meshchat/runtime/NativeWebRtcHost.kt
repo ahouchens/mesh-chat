@@ -49,20 +49,22 @@ object NativeWebRtcHost {
     )
 
     private class Session(
-        val pc: PeerConnection,
-        val role: String,
-        val id: String,
+        val lease: NativeSessionReservations.Lease,
     ) {
+        val id get() = lease.id
+        lateinit var pc: PeerConnection
         val channels = ConcurrentHashMap<String, DataChannel>()
         @Volatile var expectedChannels: Set<String> = emptySet()
         @Volatile var gathering: CountDownLatch? = null
         @Volatile var closed = false
+        val disposed = CountDownLatch(1)
         val receivedPackets = AtomicLong()
         val receivedControls = AtomicLong()
         val callbacks = NativeCallbackQueue({ notifyPython("overflow", id, "") })
     }
 
     private val sessions = ConcurrentHashMap<String, Session>()
+    private val reservations = NativeSessionReservations(MAX_SESSIONS)
     private val mainHandler = Handler(Looper.getMainLooper())
     @Volatile private var factory: PeerConnectionFactory? = null
     @Volatile private var initialized = false
@@ -104,27 +106,28 @@ object NativeWebRtcHost {
 
     @JvmStatic
     fun createOffer(sessionId: String, iceJson: String, channelsJson: String): String {
-        return retryEmptyDescription(sessionId) { createOfferAttempt(sessionId, iceJson, channelsJson) }
+        return createReserved(sessionId) { lease ->
+            retryEmptyDescription(lease) { createOfferAttempt(lease, iceJson, channelsJson) }
+        }
     }
 
-    private fun createOfferAttempt(sessionId: String, iceJson: String, channelsJson: String): String {
+    private fun createOfferAttempt(lease: NativeSessionReservations.Lease, iceJson: String, channelsJson: String): String {
+        val sessionId = lease.id
         return try {
             val factory = requireFactory()
-            if (sessions.size >= MAX_SESSIONS) return error("native_webrtc_session_limit")
             val specs = parseChannels(channelsJson)
             if (specs.none { it.label == "mesh-reticulum" && it.binary }) {
                 return error("native_webrtc_missing_data_channel")
             }
-            val pc = createPeerConnection(factory, iceJson, sessionId, "offer")
-            val session = Session(pc, "offer", sessionId)
-            sessions[sessionId] = session
+            val session = allocateSession(factory, iceJson, lease)
+            val pc = session.pc
             synchronized(session) {
                 for (spec in specs) {
                     val channel = pc.createDataChannel(spec.label, dataChannelInit(spec))
                         ?: throw IllegalStateException("native_webrtc_channel_failed")
-                    registerChannel(sessionId, session, spec.label, channel)
+                    registerChannel(session, spec.label, channel)
                 }
-                val offer = createLocalOffer(sessionId, session)
+                val offer = createLocalOffer(session)
                 val description = offer.description
                 check(!session.closed) { "native_webrtc_session_closed" }
                 check(description.isNotBlank()) { "native_webrtc_offer_empty" }
@@ -144,28 +147,29 @@ object NativeWebRtcHost {
         iceJson: String,
         expectedChannelsJson: String,
     ): String {
-        return retryEmptyDescription(sessionId) {
-            acceptOfferAttempt(sessionId, offerSdp, iceJson, expectedChannelsJson)
+        return createReserved(sessionId) { lease ->
+            retryEmptyDescription(lease) {
+                acceptOfferAttempt(lease, offerSdp, iceJson, expectedChannelsJson)
+            }
         }
     }
 
     private fun acceptOfferAttempt(
-        sessionId: String,
+        lease: NativeSessionReservations.Lease,
         offerSdp: String,
         iceJson: String,
         expectedChannelsJson: String,
     ): String {
+        val sessionId = lease.id
         return try {
             val factory = requireFactory()
-            if (sessions.size >= MAX_SESSIONS) return error("native_webrtc_session_limit")
             val specs = parseChannels(expectedChannelsJson)
             if (specs.none { it.label == "mesh-reticulum" && it.binary }) {
                 return error("native_webrtc_missing_data_channel")
             }
             val expected = specs.map { it.label }.toSet()
-            val pc = createPeerConnection(factory, iceJson, sessionId, "answer")
-            val session = Session(pc, "answer", sessionId)
-            sessions[sessionId] = session
+            val session = allocateSession(factory, iceJson, lease)
+            val pc = session.pc
             session.expectedChannels = expected
             synchronized(session) {
                 awaitSetRemote(pc, SessionDescription(SessionDescription.Type.OFFER, offerSdp))
@@ -205,7 +209,7 @@ object NativeWebRtcHost {
             val session = sessions[sessionId] ?: return error("native_webrtc_session_missing")
             synchronized(session) {
                 check(!session.closed) { "native_webrtc_session_closed" }
-                val offer = createLocalOffer(sessionId, session)
+                val offer = createLocalOffer(session)
                 success(offer.description ?: "")
             }
         } catch (error: Throwable) {
@@ -249,7 +253,14 @@ object NativeWebRtcHost {
 
     @JvmStatic
     fun close(sessionId: String) {
-        val session = sessions.remove(sessionId) ?: return
+        reservations.cancel(sessionId) ?: return
+        val session = sessions[sessionId]
+        if (session != null) retireSession(session)
+        notifyPython("closed", sessionId, "")
+    }
+
+    private fun retireSession(session: Session) {
+        sessions.remove(session.id, session)
         session.closed = true
         // Retire routing immediately. Disposal may wait for an in-flight SDP
         // operation, so it must never block Android's UI/Service thread.
@@ -262,15 +273,22 @@ object NativeWebRtcHost {
             }
             session.channels.clear()
             try { session.pc.close() } catch (_: Throwable) { }
-            try { session.pc.dispose() } catch (_: Throwable) { }
+            // A failed disposal retains capacity; starting more peers would
+            // hide an unbounded native leak behind an empty routing map.
+            try {
+                session.pc.dispose()
+                reservations.disposed(session.lease)
+                session.disposed.countDown()
+            } catch (_: Throwable) {
+                notifyPython("overflow", session.id, "")
+            }
           }
         }
-        notifyPython("closed", sessionId, "")
     }
 
     @JvmStatic
     fun closeAll() {
-        for (sessionId in sessions.keys.toList()) close(sessionId)
+        for (sessionId in reservations.ids()) close(sessionId)
     }
 
     @JvmStatic
@@ -292,8 +310,7 @@ object NativeWebRtcHost {
     private fun createPeerConnection(
         factory: PeerConnectionFactory,
         iceJson: String,
-        sessionId: String,
-        role: String,
+        session: Session,
     ): PeerConnection {
         val ice = JSONObject(iceJson)
         val configuration = PeerConnection.RTCConfiguration(iceServers(ice))
@@ -310,8 +327,55 @@ object NativeWebRtcHost {
         } else {
             PeerConnection.IceTransportsType.ALL
         }
-        return factory.createPeerConnection(configuration, observer(sessionId, role))
+        return factory.createPeerConnection(configuration, observer(session))
             ?: throw IllegalStateException("native_webrtc_peer_failed")
+    }
+
+    private fun createReserved(sessionId: String, create: (NativeSessionReservations.Lease) -> String): String {
+        val lease = reservations.reserve(sessionId) ?: return error("native_webrtc_session_limit")
+        try {
+            val result = create(lease)
+            if (!JSONObject(result).optBoolean("ok")) {
+                close(sessionId)
+                return result
+            }
+            if (!reservations.active(lease)) return error("native_webrtc_session_closed")
+            return result
+        } catch (_: Throwable) {
+            close(sessionId)
+            return error("native_webrtc_creation_failed")
+        } finally {
+            reservations.finishCreation(lease)
+        }
+    }
+
+    private fun allocateSession(
+        factory: PeerConnectionFactory,
+        iceJson: String,
+        lease: NativeSessionReservations.Lease,
+    ): Session {
+        check(reservations.beginAllocation(lease)) { "native_webrtc_session_closed" }
+        val session = Session(lease)
+        try {
+            session.pc = createPeerConnection(factory, iceJson, session)
+        } catch (failure: Throwable) {
+            reservations.disposed(lease)
+            session.callbacks.close { }
+            throw failure
+        }
+        sessions[lease.id] = session
+        if (!reservations.active(lease)) {
+            retireSession(session)
+            throw IllegalStateException("native_webrtc_session_closed")
+        }
+        return session
+    }
+
+    private fun isCurrent(session: Session): Boolean =
+        !session.closed && sessions[session.id] === session && reservations.active(session.lease)
+
+    private fun notifyCurrent(session: Session, event: String, data: String) {
+        if (isCurrent(session)) notifyPython(event, session.id, data)
     }
 
     private fun iceServers(ice: JSONObject): List<PeerConnection.IceServer> {
@@ -332,22 +396,22 @@ object NativeWebRtcHost {
         return servers
     }
 
-    private fun observer(sessionId: String, role: String): PeerConnection.Observer =
+    private fun observer(session: Session): PeerConnection.Observer =
         object : PeerConnection.Observer {
             override fun onSignalingChange(state: PeerConnection.SignalingState) {
-                notifyPython("signaling", sessionId, state.name.lowercase())
+                notifyCurrent(session, "signaling", state.name.lowercase())
             }
 
             override fun onIceConnectionChange(state: PeerConnection.IceConnectionState) {
-                notifyPython("ice", sessionId, state.name.lowercase())
+                notifyCurrent(session, "ice", state.name.lowercase())
             }
 
             override fun onIceConnectionReceivingChange(receiving: Boolean) = Unit
 
             override fun onIceGatheringChange(state: PeerConnection.IceGatheringState) {
-                notifyPython("gathering", sessionId, state.name.lowercase())
+                notifyCurrent(session, "gathering", state.name.lowercase())
                 if (state == PeerConnection.IceGatheringState.COMPLETE) {
-                    sessions[sessionId]?.gathering?.countDown()
+                    session.gathering?.countDown()
                 }
             }
 
@@ -360,7 +424,7 @@ object NativeWebRtcHost {
             override fun onRemoveStream(stream: MediaStream) = Unit
 
             override fun onDataChannel(channel: DataChannel) {
-                val session = sessions[sessionId] ?: run {
+                if (!isCurrent(session)) {
                     disposeUnusedChannel(channel)
                     return
                 }
@@ -370,7 +434,7 @@ object NativeWebRtcHost {
                         disposeUnusedChannel(channel)
                         return@enqueueChannelEvent
                     }
-                    registerChannel(sessionId, session, label, channel)
+                    registerChannel(session, label, channel)
                 }
             }
 
@@ -380,7 +444,6 @@ object NativeWebRtcHost {
         }
 
     private fun registerChannel(
-        sessionId: String,
         session: Session,
         label: String,
         channel: DataChannel,
@@ -399,15 +462,15 @@ object NativeWebRtcHost {
                 enqueueChannelEvent(session) {
                     if (session.channels[label] !== channel) return@enqueueChannelEvent
                     val state = channel.state()
-                    notifyPython("channel", sessionId, "$label:${state.name.lowercase()}")
+                    notifyCurrent(session, "channel", "$label:${state.name.lowercase()}")
                     if (label == "mesh-reticulum" && state == DataChannel.State.OPEN) {
-                        notifyPython("open", sessionId, label)
+                        notifyCurrent(session, "open", label)
                     }
                 }
             }
 
             override fun onMessage(buffer: DataChannel.Buffer) {
-                if (session.closed) return
+                if (!isCurrent(session)) return
                 val data = buffer.data
                 val limit = if (label == "mesh-reticulum") MESSAGE_LIMIT else CONTROL_LIMIT
                 if (!data.hasRemaining() || data.remaining() > limit) return
@@ -416,20 +479,20 @@ object NativeWebRtcHost {
                 val encoded = Base64.encodeToString(bytes, Base64.NO_WRAP)
                 if (label == "mesh-reticulum") {
                     session.receivedPackets.incrementAndGet()
-                    notifyPython("message", sessionId, encoded)
+                    notifyCurrent(session, "message", encoded)
                 } else {
                     session.receivedControls.incrementAndGet()
-                    notifyPython("control", sessionId, "$label:$encoded")
+                    notifyCurrent(session, "control", "$label:$encoded")
                 }
             }
         })
         if (channel.state() == DataChannel.State.OPEN) {
-            notifyPython("channel", sessionId, "$label:open")
-            if (label == "mesh-reticulum") notifyPython("open", sessionId, label)
+            notifyCurrent(session, "channel", "$label:open")
+            if (label == "mesh-reticulum") notifyCurrent(session, "open", label)
         }
     }
 
-    private fun createLocalOffer(sessionId: String, session: Session): SessionDescription {
+    private fun createLocalOffer(session: Session): SessionDescription {
         val pc = session.pc
         val constraints = MediaConstraints()
         val offer = awaitSdp { observer -> pc.createOffer(observer, constraints) }
@@ -444,10 +507,10 @@ object NativeWebRtcHost {
     }
 
     private fun enqueueChannelEvent(session: Session, discarded: () -> Unit = {}, block: () -> Unit) {
-        if (session.closed) { discarded(); return }
+        if (!isCurrent(session)) { discarded(); return }
         session.callbacks.submit(discarded) {
             synchronized(session) {
-                if (!session.closed) block() else discarded()
+                if (isCurrent(session)) block() else discarded()
             }
         }
     }
@@ -532,7 +595,7 @@ object NativeWebRtcHost {
         latch.await(GATHER_TIMEOUT_SECONDS, TimeUnit.SECONDS)
     }
 
-    private fun retryEmptyDescription(sessionId: String, create: () -> String): String {
+    private fun retryEmptyDescription(lease: NativeSessionReservations.Lease, create: () -> String): String {
         // Android's network monitor can still be initializing when one-shot
         // gathering completes without candidates. Such SDP cannot bootstrap
         // our non-trickle exchange. Recreate the peer after a short bounded
@@ -548,12 +611,19 @@ object NativeWebRtcHost {
         try {
             val retryUntil = System.nanoTime() + TimeUnit.SECONDS.toNanos(2)
             repeat(3) { attempt ->
+                if (!reservations.active(lease)) return error("native_webrtc_session_closed")
                 val result = create()
                 val value = JSONObject(result)
                 if (!value.optBoolean("ok") || value.optString("sdp").lineSequence().any { it.startsWith("a=candidate:") }) {
                     return result
                 }
-                close(sessionId)
+                val session = sessions[lease.id] ?: return error("native_webrtc_session_closed")
+                retireSession(session)
+                // The same reservation is retained across this bounded
+                // gathering fallback. Cancellation cannot resurrect it.
+                if (!session.disposed.await(2, TimeUnit.SECONDS)) {
+                    return error("native_webrtc_disposal_timeout")
+                }
                 // Do not multiply the full gathering timeout when an unavailable
                 // TURN server or network genuinely has no usable candidates.
                 if (System.nanoTime() >= retryUntil) return error("native_webrtc_no_candidates")
@@ -561,7 +631,7 @@ object NativeWebRtcHost {
             }
             return error("native_webrtc_no_candidates")
         } catch (_: InterruptedException) {
-            close(sessionId)
+            close(lease.id)
             Thread.currentThread().interrupt()
             return error("native_webrtc_session_closed")
         } finally {

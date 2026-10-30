@@ -11,3 +11,4 @@
 
 # Directly exercised by the saturation instrumentation in this test host.
 -keep class com.meshchat.runtime.NativeCallbackQueue { *; }
+-keep class com.meshchat.runtime.NativeSessionReservations** { *; }

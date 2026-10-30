@@ -238,11 +238,16 @@ class NativeWebRtcInteropTest {
             val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10)
             while (!sessions.containsKey(id) && System.nanoTime() < deadline) Thread.sleep(10)
             assertTrue("Native cancellation test did not create a session", sessions.containsKey(id))
+            val original = sessions[id]
+            val duplicate = JSONObject(NativeWebRtcHost.createOffer(id, ice.toString(), channels.toString()))
+            assertFalse("Duplicate creation replaced a live native resource", duplicate.optBoolean("ok"))
+            assertSame(original, sessions[id])
             val started = System.nanoTime()
             instrumentation.runOnMainSync { NativeWebRtcHost.close(id) }
             assertTrue("Closing during ICE gathering blocked the Android main thread",
                 System.nanoTime() - started < TimeUnit.SECONDS.toNanos(1))
-            pending.get(35, TimeUnit.SECONDS)
+            assertFalse("Cancelled creation reported success",
+                JSONObject(pending.get(35, TimeUnit.SECONDS)).optBoolean("ok"))
             assertFalse(JSONObject(NativeWebRtcHost.stats(id)).optBoolean("ok"))
         } finally {
             NativeWebRtcHost.close(id)
