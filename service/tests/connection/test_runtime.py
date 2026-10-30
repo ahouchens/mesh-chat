@@ -3,7 +3,7 @@ from time import monotonic
 
 import pytest
 
-from mesh_chat.connection.model import Bridge, Execution, Health, Phase, Result
+from mesh_chat.connection.model import Bridge, Execution, Health, Phase, Resource, Result, Retire
 from mesh_chat.connection.runtime import ConnectionRuntime
 
 
@@ -227,3 +227,143 @@ def test_recovery_admission_observes_fences_before_an_actor_exists():
         owner.begin_authority_change(("workspace", "w"))
         assert not owner.permits_recovery(profile)
     finally: owner.stop()
+
+
+@pytest.mark.parametrize("termination", ["quarantine", "shutdown"])
+@pytest.mark.parametrize("target", [None, "c"])
+@pytest.mark.parametrize("discovered", [False, True])
+def test_start_cannot_restore_authority_in_a_terminal_runtime(termination, target, discovered):
+    owner, profile = runtime()
+    try:
+        if discovered:
+            owner.synchronize()
+        if termination == "quarantine":
+            owner.quarantine()
+        else:
+            assert owner.stop()
+        profile["active"] = False
+        owner.activate = lambda _: pytest.fail("Terminal runtime cannot activate stored intent")
+        owner.committed_start(target)
+        assert not owner.permits_recovery(profile)
+        owner.synchronize()
+        assert owner.snapshots()["p"]["desired"] == "stopped"
+        assert not owner.permits_carrier("p", Resource("native", "old-carrier"))
+        assert owner.runner.idle
+    finally:
+        owner.stop()
+
+
+def test_quarantine_survives_failed_cleanup_and_retries_exact_resource_on_schedule():
+    clock, attempts, work = [0.0], [], []
+    resource = Resource("native-epoch", "failed-disposal")
+
+    class FailingDisposal(Executor):
+        def execute(self, operation, cancellation):
+            work.append(operation)
+            return super().execute(operation, cancellation)
+
+        def retire(self, value):
+            attempts.append(value)
+            if len(attempts) == 1:
+                raise OSError("disposal unavailable")
+
+    owner = ConnectionRuntime("epoch", lambda *_: FailingDisposal(),
+        profiles=lambda: pytest.fail("Quarantine must not rediscover or activate profiles"),
+        execution=lambda: Execution.AVAILABLE, activate=lambda _: None, now=lambda: clock[0])
+    try:
+        owner.quarantine()
+        owner.step()
+        assert owner.runner.submit(Retire(resource))
+        deadline = monotonic() + 2
+        while not owner.runner.idle and monotonic() < deadline:
+            owner.step()
+            Event().wait(.001)
+        assert owner.runner.idle
+        assert owner._failure == "adapter_quarantined"
+        assert attempts == [resource]
+        owner.committed_start()
+        owner.step()
+        assert attempts == [resource]
+        clock[0] = owner.owner.policy.poll_interval
+        owner.step()
+        deadline = monotonic() + 2
+        while not owner.runner.idle and monotonic() < deadline:
+            owner.step()
+            Event().wait(.001)
+        assert owner.runner.idle and attempts == [resource, resource]
+        assert owner._failure == "adapter_quarantined" and not work
+        assert owner.stop()
+    finally:
+        owner.stop()
+        owner.wait()
+
+
+def test_late_allocation_after_a_stall_is_retired_without_restarting_the_adapter():
+    from dataclasses import replace
+
+    clock = [monotonic()]
+    entered, release = Event(), Event()
+    allocations, retired = [], []
+    _, profile = runtime()
+
+    class StalledAllocation(Executor):
+        def execute(self, work, cancellation):
+            if work.phase in {Phase.GATHER_OFFER, Phase.GATHER_ANSWER}:
+                allocations.append(work)
+                entered.set()
+                if not release.wait(3):
+                    raise TimeoutError("Test did not release allocation")
+            return replace(super().execute(work, cancellation), now=clock[0])
+
+        def retire(self, resource):
+            retired.append(resource)
+
+    owner = ConnectionRuntime("epoch", lambda *_: StalledAllocation(),
+        profiles=lambda: {"profiles": [profile]}, execution=lambda: Execution.AVAILABLE,
+        activate=lambda _: None, now=lambda: clock[0])
+    try:
+        deadline = monotonic() + 2
+        while not entered.is_set() and monotonic() < deadline:
+            owner.step()
+            Event().wait(.001)
+        assert entered.is_set()
+        work = allocations[0]
+        clock[0] = work.deadline + owner.owner.policy.disconnect_grace
+        owner.step()
+        assert owner._failure == "adapter_quarantined"
+        assert owner.runner.active == 1  # A deadline is not proof the native call stopped.
+        owner.committed_start("c")
+        assert not owner.permits_recovery(profile)
+        release.set()
+        deadline = monotonic() + 2
+        while (not owner.runner.idle or not retired) and monotonic() < deadline:
+            owner.step()
+            Event().wait(.001)
+        assert retired and all(resource == work.resource for resource in retired)
+        assert owner.runner.idle
+        owner.committed_start()
+        clock[0] += 3600
+        owner.step()
+        assert allocations == [work]
+        assert not owner.permits_carrier("p", work.resource)
+        assert not owner.snapshots()["p"]["messaging_ready"]
+        assert owner.snapshots()["p"]["runtime_failure"] == "adapter_quarantined"
+    finally:
+        release.set()
+        owner.stop()
+        owner.wait()
+
+
+@pytest.mark.parametrize("termination", ["quarantine", "shutdown"])
+def test_terminal_runtime_does_not_begin_startup_reconciliation(termination):
+    owner = ConnectionRuntime("epoch", lambda *_: Executor(),
+        profiles=lambda: pytest.fail("Terminal runtime cannot scan"),
+        execution=lambda: Execution.AVAILABLE, activate=lambda _: None,
+        prepare=lambda: pytest.fail("Terminal runtime cannot reconcile native inventory"))
+    try:
+        if termination == "quarantine": owner.quarantine()
+        else: owner.stop()
+        owner.step()
+        assert owner.runner.idle
+    finally:
+        owner.stop()

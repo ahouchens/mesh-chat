@@ -42,6 +42,7 @@ class ConnectionRuntime:
         self._thread = None
         self._retry_cleanup_at = 0
         self._failure = None
+        self._quarantined = False
         self._prepare = prepare
         self.executor = executor_factory(self.owner.is_current, self.profile)
         self.runner = BoundedEffectRunner(self.executor, policy, now=now)
@@ -61,7 +62,8 @@ class ConnectionRuntime:
 
     def _is_fenced(self, key, profile):
         identifiers = self._authority_identifiers(key, profile)
-        return (key in self._veto or bool(identifiers & self._contact_fences)
+        return (self._quarantined or self._stop.is_set()
+                or key in self._veto or bool(identifiers & self._contact_fences)
                 or bool(identifiers & self._authority_changes.keys())
                 or (self._all_fenced and not identifiers & self._resumed))
 
@@ -126,6 +128,8 @@ class ConnectionRuntime:
 
     def committed_start(self, contact_id=None):
         with self._lock:
+            if self._quarantined or self._stop.is_set():
+                return
             self._context_revision += 1
             if contact_id is None:
                 self._all_fenced = False
@@ -195,7 +199,7 @@ class ConnectionRuntime:
             if isinstance(event, CleanupResult):
                 if not event.succeeded:
                     self._cleanup_failed.add(event.resource)
-                    self._failure = "cleanup_failed"
+                    self._record_failure("cleanup_failed")
                 else:
                     self._cleanup_failed.discard(event.resource)
                     self.owner.resource_released(event.resource)
@@ -218,7 +222,7 @@ class ConnectionRuntime:
             raise CapacityExceeded("Connection effects are backpressured")
 
     def step(self):
-        if self._prepare is not None:
+        if self._prepare is not None and not self._quarantined and not self._stop.is_set():
             prepare, self._prepare = self._prepare, None
             try:
                 prepare()
@@ -227,23 +231,33 @@ class ConnectionRuntime:
         self._completions()
         if self.runner.stalled():
             self.quarantine()
-        if self._failure == "adapter_quarantined":
+        now = self.now()
+        self._retry_retirements(now)
+        if self._quarantined or self._stop.is_set():
             self.fence()
             self._effects()
             return
         self.synchronize()
-        now = self.now()
+        self.owner.tick(self.now(), jitter=self._random())
+        self._effects()
+
+    def _retry_retirements(self, now):
         if now >= self._retry_cleanup_at:
             self._retry_cleanup_at = now + self.owner.policy.poll_interval
             for resource in self._cleanup_failed:
                 self._pending[Retire(resource)] = None
-        self.owner.tick(now, jitter=self._random())
-        self._effects()
+
+    def _record_failure(self, failure):
+        with self._lock:
+            if not self._quarantined:
+                self._failure = failure
 
     def quarantine(self):
         """Private host fault: only a new runtime may restore adapter authority."""
-        self._failure = "adapter_quarantined"
-        self.fence()
+        with self._lock:
+            self._quarantined = True
+            self._failure = "adapter_quarantined"
+            self.fence()
 
     def snapshots(self):
         now = self.now()
@@ -262,7 +276,7 @@ class ConnectionRuntime:
                 self.step()
             except Exception:
                 # A failed authority refresh cannot leave old permission live.
-                self._failure = "runtime_fault"
+                self._record_failure("runtime_fault")
                 self.fence()
                 self._effects()
             self._stop.wait(0.25)

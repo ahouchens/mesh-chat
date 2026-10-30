@@ -154,6 +154,20 @@ reservations and protected key lifetime; the UI reports `adapter_quarantined`
 until a new runtime is started. These bounds do not qualify all other legacy
 queues or constitute a packaged saturation result.
 
+Adapter quarantine is now a terminal runtime fence, separate from persisted user
+intent and diagnostic failures. Neither a contact Start nor Start-all can release
+it, including before the first actor scan. Shutdown has the same permanent
+admission boundary. Terminal runtimes cannot activate profiles, admit recovered
+carriers or begin startup inventory reconciliation. A later cleanup failure or
+driver exception cannot replace the quarantine classification. Exact-resource
+disposal still retries on the existing bounded schedule while quarantine is in
+effect; cancellation retains the allocation reservation until its completion is
+consumed. A late allocation is retired and cannot regain a messaging lease.
+Only a new runtime can re-evaluate stored intent and current authority. These
+in-process fault regressions cover the lifecycle requirements in section 9 and
+INV13; they do not constitute packaged adapter saturation evidence or remove any
+remaining legacy-policy wrapper.
+
 Shared native carriers retain early encrypted packets while bridge attachment is
 pending or RNS registration is being repaired. A separate private buffer admits
 at most 16 physical allocations, 16 packets and 16 KiB per allocation, with a
