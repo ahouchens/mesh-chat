@@ -52,11 +52,16 @@ with sync_playwright() as playwright:
             page.route("https://platform.twitter.com/**", lambda route: route.fulfill(
                 content_type="text/html", body="<html><body>Provider frame fixture</body></html>"))
             page.goto("http://127.0.0.1:1421/?links")
-            page.get_by_role("button", name="Load video", exact=True).wait_for()
+            page.get_by_role("button", name="Load preview", exact=True).first.wait_for()
             assert not outside_requests, outside_requests
             assert page.locator("iframe").count() == 0
-            page.get_by_role("button", name="Load video", exact=True).click()
-            page.get_by_role("button", name="Load post", exact=True).click()
+            page.get_by_role("button", name="Load preview", exact=True).first.click()
+            page.get_by_role("button", name="Load preview", exact=True).first.click()
+            page.get_by_text("A short animated film — preview fixture", exact=True).wait_for()
+            assert page.locator("iframe").count() == 0
+            assert not outside_requests, outside_requests
+            page.get_by_role("button", name="Try playing here", exact=True).click()
+            page.get_by_role("button", name="Try interactive post", exact=True).click()
             assert page.locator("iframe").count() == 2
             overflow = page.evaluate("""() => [...document.querySelectorAll('.message-content, .link-preview, .link-preview button, .link-preview iframe')]
               .filter(e => {const r=e.getBoundingClientRect();return r.width && (r.left < -1 || r.right > innerWidth+1 || e.scrollWidth > e.clientWidth+2);})
