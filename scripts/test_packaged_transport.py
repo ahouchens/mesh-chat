@@ -30,6 +30,53 @@ class ScenarioFailure(RuntimeError):
                 value = result.get(field)
                 if isinstance(value, str) and len(value) <= 64 and value.isidentifier():
                     self.diagnostics[field] = value
+            if "process_exits" in result:
+                self.diagnostics["process_exits"] = process_exits(result["process_exits"])
+
+
+def _items(value, limit):
+    return value[:limit] if isinstance(value, list) else []
+
+
+def _integer(value, minimum=0, maximum=9_007_199_254_740_991):
+    return value if type(value) is int and minimum <= value <= maximum else None
+
+
+def _choice(value, choices):
+    return value if isinstance(value, str) and value in choices else "unknown"
+
+
+def _failure(value):
+    frames = []
+    for frame in _items(value.get("frames"), 8):
+        if not isinstance(frame, dict): continue
+        module = _choice(frame.get("module"), {"__main__", "ipc", "direct_native", "service", "vault",
+                                               "network", "webrtc_interface", "reconnect_service"})
+        line = _integer(frame.get("line"), maximum=1_000_000)
+        if module != "unknown" and line is not None: frames.append({"module": module, "line": line})
+    return {"stage": _choice(value.get("stage"), {"read_initial", "initialize", "read_command", "dispatch",
+                                                 "write_response", "shutdown", "thread"}),
+            "category": _choice(value.get("category"), {"command_queue_full", "validation_error", "broken_pipe",
+                "end_of_stream", "out_of_memory", "os_error", "value_error", "runtime_error", "unexpected_error"}),
+            "frames": frames}
+
+
+def process_exits(values):
+    """Select content-free diagnostics again at the artifact boundary."""
+    result = []
+    for value in _items(values, 2):
+        if not isinstance(value, dict) or _integer(value.get("slot"), maximum=1) is None: continue
+        result.append({"slot": value["slot"],
+            "reason": _choice(value.get("reason"), {"terminated", "protocol_error", "process_event_error", "event_stream_closed", "transport_admission"}),
+            "transport_error": _choice(value.get("transport_error"), {"transport_lock_failed", "transport_host_unavailable",
+                "transport_retired", "invalid_transport_frame", "invalid_transport_epoch", "transport_epoch_changed",
+                "invalid_transport_sequence", "transport_replay", "invalid_transport_operation", "transport_epoch_reused",
+                "transport_generation_exhausted", "transport_capacity"}),
+            "exit_code": _integer(value.get("exit_code"), -2147483648, 4294967295),
+            "stderr_bytes": _integer(value.get("stderr_bytes")),
+            "unrecognized_stderr_lines": _integer(value.get("unrecognized_stderr_lines")),
+            "failures": [_failure(item) for item in _items(value.get("failures"), 8) if isinstance(item, dict)]})
+    return result
 
 
 def verify_report(record, source, tree):

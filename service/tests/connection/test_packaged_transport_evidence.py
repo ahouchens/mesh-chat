@@ -69,3 +69,41 @@ def test_host_failure_or_stale_executable_cannot_produce_evidence(fault):
     if fault == "duplicate": lines *= 2
     process = SimpleNamespace(returncode=1 if fault == "exit" else 0, stdout="\n".join(lines))
     with pytest.raises(RuntimeError): gate["host_result"](process, "a" * 40)
+
+
+def test_failure_report_keeps_bounded_process_classification_without_raw_content():
+    error = gate["ScenarioFailure"]({"phase": "restart", "error_type": "service_stopped",
+        "process_exits": [{"slot": 0, "reason": "terminated", "exit_code": 3,
+            "stderr_bytes": 80, "unrecognized_stderr_lines": 1,
+            "failures": [{"stage": "initialize", "category": "runtime_error",
+                "frames": [{"module": "service", "line": 512, "locals": "secret"}],
+                "message": "secret"}], "stderr": "secret"}]})
+    assert error.diagnostics["process_exits"] == [{"slot": 0, "reason": "terminated", "exit_code": 3,
+        "stderr_bytes": 80, "unrecognized_stderr_lines": 1, "transport_error": "unknown",
+        "failures": [{"stage": "initialize", "category": "runtime_error",
+                      "frames": [{"module": "service", "line": 512}]}]}]
+    assert "secret" not in json.dumps(error.diagnostics)
+
+
+def test_failure_report_rejects_unbounded_or_unrecognized_process_fields():
+    error = gate["ScenarioFailure"]({"process_exits": [None, {"slot": True},
+        {"slot": 0, "reason": "secret", "exit_code": True, "stderr_bytes": -1,
+         "failures": [{"stage": "secret", "category": "secret",
+             "frames": [{"module": "secret", "line": 1}]}]}] * 20})
+    assert error.diagnostics["process_exits"] == []
+
+
+def test_process_diagnostics_bound_records_frames_numbers_and_transport_codes():
+    value = {"slot": 1, "reason": "transport_admission", "transport_error": "transport_replay",
+             "exit_code": 2 ** 64, "stderr_bytes": True, "unrecognized_stderr_lines": -1,
+             "failures": [{"stage": "secret", "category": "secret",
+                 "frames": [{"module": "ipc", "line": 30}] * 20}] * 20}
+    result = gate["process_exits"]([value] * 20)
+    assert len(result) == 2
+    assert result[0]["reason"] == "transport_admission"
+    assert result[0]["transport_error"] == "transport_replay"
+    assert all(result[0][key] is None for key in ("exit_code", "stderr_bytes", "unrecognized_stderr_lines"))
+    assert len(result[0]["failures"]) == len(result[0]["failures"][0]["frames"]) == 8
+    assert result[0]["failures"][0]["stage"] == result[0]["failures"][0]["category"] == "unknown"
+    value["transport_error"] = "secret"
+    assert gate["process_exits"]([value])[0]["transport_error"] == "unknown"

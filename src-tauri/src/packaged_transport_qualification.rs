@@ -18,6 +18,7 @@ struct Fixture {
     binary: String,
     controller: Arc<Mutex<Option<CommandChild>>>,
     operations: Arc<Mutex<[BTreeMap<String, u64>; 2]>>,
+    exits: Arc<Mutex<[Option<Value>; 2]>>,
 }
 
 #[tauri::command]
@@ -72,37 +73,60 @@ fn launch(app: &AppHandle, fixture: &Fixture, index: usize) -> Result<Value, Str
     *current = Some(pid);
     drop(current);
     desktop_transport::register(app, &state, pid)?;
+    fixture.exits.lock().map_err(|_| "fixture_lock")?[index] = None;
+    let exits = fixture.exits.clone();
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
         let native = direct_native::NativeHost::default();
         let mut buffer = Vec::new();
+        let mut stderr = crate::service_diagnostics::Capture::default();
+        let mut reason = "event_stream_closed";
+        let mut exit_code = None;
+        let mut transport_error = None;
         while let Some(event) = events.recv().await {
             match event {
                 CommandEvent::Stdout(bytes) => {
                     buffer.extend(bytes);
                     if crate::consume_frames(&mut buffer, |value| {
-                        crate::handle_sidecar_value(&app, &state, &native, pid, value);
+                        if transport_error.is_none() {
+                            transport_error = crate::route_sidecar_value(&app, &state, &native, pid, value).err();
+                        }
                     })
                     .is_err()
                     {
+                        reason = "protocol_error";
+                        break;
+                    }
+                    if transport_error.is_some() {
+                        reason = "transport_admission";
                         break;
                     }
                 }
-                CommandEvent::Terminated(_) => {
-                    if let Some(retired) =
-                        crate::detach_service_with_transport(&state, Some(pid), true)
-                    {
-                        retired.dispose(false);
-                    }
-                    native.close();
-                    return;
+                CommandEvent::Stderr(bytes) => stderr.push(&bytes),
+                CommandEvent::Terminated(exit) => {
+                    reason = "terminated";
+                    exit_code = exit.code;
+                    break;
                 }
-                CommandEvent::Error(_) => break,
+                CommandEvent::Error(_) => { reason = "process_event_error"; break; }
                 _ => {}
             }
         }
+        let mut evidence = stderr.finish();
+        evidence["slot"] = json!(index);
+        evidence["reason"] = json!(reason);
+        evidence["exit_code"] = json!(exit_code);
+        evidence["transport_error"] = json!(transport_error);
+        // Publish before detachment wakes a failed pending initialization.
+        exits.lock().unwrap()[index] = Some(evidence);
         native.close();
-        crate::retire_service_process(&state, Some(pid));
+        if reason == "terminated" {
+            if let Some(retired) = crate::detach_service_with_transport(&state, Some(pid), true) {
+                retired.dispose(false);
+            }
+        } else {
+            crate::retire_service_process(&state, Some(pid));
+        }
     });
     Ok(json!({"started":true}))
 }
@@ -179,6 +203,7 @@ pub fn run(arguments: &[String]) -> i32 {
         binary: arguments[2].clone(),
         controller: Default::default(),
         operations: Default::default(),
+        exits: Default::default(),
     };
     let setup = fixture.clone();
     let python = arguments[0].clone();
@@ -221,7 +246,8 @@ pub fn run(arguments: &[String]) -> i32 {
                                     println!("{}", json!({"v":1,"source_commit":env!("MESH_BUILD_COMMIT"),
                                         "evidence_level":level,
                                         "result":{"ok":passed,"checks":value["checks"],"counts":value["counts"],
-                                            "phase":value["phase"],"error_type":value["error_type"]}}));
+                                            "phase":value["phase"],"error_type":value["error_type"],
+                                            "process_exits":setup.exits.lock().unwrap().iter().flatten().cloned().collect::<Vec<_>>()}}));
                                     app.exit(if passed {0} else {1});
                                     return;
                                 }

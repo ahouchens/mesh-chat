@@ -211,11 +211,21 @@ fn handle_sidecar_value(
     pid: u32,
     value: Value,
 ) {
+    if route_sidecar_value(app, state, native, pid, value).is_err() {
+        retire_service_process(state, Some(pid));
+    }
+}
+
+#[cfg(desktop)]
+fn route_sidecar_value(
+    app: &AppHandle,
+    state: &ServiceState,
+    native: &direct_native::NativeHost,
+    pid: u32,
+    value: Value,
+) -> Result<(), String> {
     if value.get("type").and_then(Value::as_str) == Some("desktop_transport") {
-        if desktop_transport::admit(state, pid, value).is_err() {
-            retire_service_process(state, Some(pid));
-        }
-        return;
+        return desktop_transport::admit(state, pid, value);
     }
     if value.get("type").and_then(Value::as_str) == Some("direct_native") {
         let response = native.handle(value);
@@ -223,13 +233,13 @@ fn handle_sidecar_value(
             if let Ok(mut child) = state.child.lock() {
                 if let Some(child) = child.as_mut().filter(|child| child.pid() == pid) {
                     if child.write(&frame).is_ok() {
-                        return;
+                        return Ok(());
                     }
                 }
             }
         }
         native.close();
-        return;
+        return Ok(());
     }
     if value.get("type").and_then(Value::as_str) == Some("response") {
         if let Some(id) = value.get("id").and_then(Value::as_str) {
@@ -258,6 +268,7 @@ fn handle_sidecar_value(
     } else if value.get("type").and_then(Value::as_str) == Some("event") {
         let _ = app.emit("mesh-chat://service-event", value);
     }
+    Ok(())
 }
 
 #[cfg(desktop)]
