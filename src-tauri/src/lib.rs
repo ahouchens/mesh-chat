@@ -211,7 +211,7 @@ fn handle_sidecar_value(
 ) {
     if value.get("type").and_then(Value::as_str) == Some("desktop_transport") {
         if desktop_transport::admit(state, pid, value).is_err() {
-            retire_service_child(state);
+            retire_service_process(state, Some(pid));
         }
         return;
     }
@@ -343,11 +343,6 @@ fn record_unexpected_service_exit(
     }
 }
 
-#[cfg(desktop)]
-fn take_sidecar_pid(state: &ServiceState) -> Option<u32> {
-    state.sidecar_pid.lock().ok().and_then(|mut pid| pid.take())
-}
-
 #[cfg(windows)]
 fn terminate_windows_process_tree(pid: u32) {
     // Use the operating-system binary directly, without cmd.exe, and target
@@ -394,38 +389,76 @@ fn terminate_windows_process_tree(pid: u32) {
 }
 
 #[cfg(desktop)]
-fn retire_service_child(state: &ServiceState) {
-    desktop_transport::retire(state, None, false);
-    if let Ok(mut native) = state.direct_native.lock() {
-        if let Some(native) = native.take() {
+struct DetachedService {
+    pid: u32,
+    child: Option<CommandChild>,
+    native: Option<direct_native::NativeHost>,
+    transport: Option<desktop_transport::RegisteredHost>,
+}
+
+#[cfg(desktop)]
+impl DetachedService {
+    fn dispose(self, terminate: bool) {
+        if let Some(host) = self.transport {
+            host.close();
+        }
+        if let Some(native) = self.native {
             native.close();
         }
+        if terminate {
+            #[cfg(windows)]
+            terminate_windows_process_tree(self.pid);
+            if let Some(child) = self.child {
+                let _ = child.kill();
+            }
+        }
     }
-    // PID tracking is deliberately independent from the stdin writer mutex.
-    // A blocked writer must not prevent the host from retiring the exact
-    // sidecar process tree during shutdown.
-    let pid = take_sidecar_pid(state);
-    #[cfg(windows)]
-    if let Some(pid) = pid {
-        terminate_windows_process_tree(pid);
-    }
-    #[cfg(not(windows))]
-    let _ = pid;
+}
 
-    // Never let a synchronous pipe writer turn the retirement deadline into
-    // another hang. Windows has already received an exact PID-tree kill; on
-    // other desktops this remains a best-effort direct-child kill fallback.
+#[cfg(desktop)]
+fn detach_service(state: &ServiceState, expected_pid: Option<u32>) -> Option<DetachedService> {
+    // This guard also protects publication in spawn_service. Detach everything
+    // before permitting a replacement, then dispose only the captured resources.
+    // Never wait for the stdin writer while holding the lifecycle guard.
+    let mut current = state.sidecar_pid.lock().ok()?;
+    let pid = (*current).filter(|pid| expected_pid.is_none_or(|expected| *pid == expected))?;
+    current.take();
+    let transport = desktop_transport::detach(state, Some(pid));
+    let native = state.direct_native.lock().ok().and_then(|mut host| host.take());
     let child = state
         .child
         .try_lock()
         .ok()
-        .and_then(|mut child| child.take());
-    if let Some(child) = child {
-        // This is the process-handle fallback on non-Windows desktops and also
-        // covers a Windows host where taskkill could not be started.
-        let _ = child.kill();
-    }
+        .and_then(|mut child| {
+            if child.as_ref().is_some_and(|child| child.pid() == pid) { child.take() }
+            else { None }
+        });
     fail_all_pending(state, "service_stopped");
+    Some(DetachedService { pid, child, native, transport })
+}
+
+#[cfg(desktop)]
+fn retire_service_process(state: &ServiceState, expected_pid: Option<u32>) {
+    if let Some(retired) = detach_service(state, expected_pid) {
+        let pid = retired.pid;
+        retired.dispose(true);
+        // A writer may have held the child handle during detachment. Reap only
+        // that handle after process termination releases its pipe; never hold up
+        // the shutdown deadline or take a replacement's handle.
+        let child = state.child.clone();
+        std::thread::spawn(move || {
+            if let Ok(mut child) = child.lock() {
+                if child.as_ref().is_some_and(|child| child.pid() == pid) {
+                    child.take();
+                }
+            }
+        });
+    }
+}
+
+#[cfg(desktop)]
+fn retire_service_child(state: &ServiceState) {
+    retire_service_process(state, None);
 }
 
 #[cfg(desktop)]
@@ -485,23 +518,20 @@ fn spawn_service(app: &AppHandle, state: &ServiceState) -> Result<(), String> {
         .map_err(|_| "service_start_failed".to_string())?;
     let sidecar_pid = child.pid();
     let native = direct_native::NativeHost::default();
-    if let Ok(mut current) = state.direct_native.lock() {
-        if let Some(old) = current.replace(native.clone()) {
-            old.close();
-        }
-    }
-    *state
-        .child
-        .lock()
-        .map_err(|_| "service_lock_failed".to_string())? = Some(child);
-    *state
-        .sidecar_pid
-        .lock()
-        .map_err(|_| "service_lock_failed".to_string())? = Some(sidecar_pid);
+    // Acquire the potentially busy writer before the lifecycle guard. Retirement
+    // uses try_lock for this handle and can always reach the exact PID-tree kill.
+    let mut writer = state.child.lock().map_err(|_| "service_lock_failed".to_string())?;
+    let mut process = state.sidecar_pid.lock().map_err(|_| "service_lock_failed".to_string())?;
+    let previous_native = state.direct_native.lock().ok().and_then(|mut current| current.replace(native.clone()));
+    *writer = Some(child);
+    *process = Some(sidecar_pid);
+    drop(process);
+    drop(writer);
+    if let Some(old) = previous_native { old.close(); }
 
     #[cfg(all(windows, feature = "experimental-shared-webview"))]
     if let Err(error) = desktop_transport::register(app, state, sidecar_pid) {
-        retire_service_child(state);
+        retire_service_process(state, Some(sidecar_pid));
         return Err(error);
     }
 
@@ -533,7 +563,7 @@ fn spawn_service(app: &AppHandle, state: &ServiceState) -> Result<(), String> {
                             .is_some_and(|pid| *pid == Some(sidecar_pid));
                         if is_current {
                             record_unexpected_service_exit(&app_handle, &event_state, "protocol_error", None, None, stderr.finish(), started.elapsed().as_millis() as u64);
-                            retire_service_child(&event_state);
+                            retire_service_process(&event_state, Some(sidecar_pid));
                             let _ = app_handle.emit(
                                 "mesh-chat://service-event",
                                 json!({"type":"event", "event":"service_error"}),
@@ -552,7 +582,7 @@ fn spawn_service(app: &AppHandle, state: &ServiceState) -> Result<(), String> {
                         .unwrap_or(false);
                     if is_current {
                         record_unexpected_service_exit(&app_handle, &event_state, "process_event_error", None, None, stderr.finish(), started.elapsed().as_millis() as u64);
-                        retire_service_child(&event_state);
+                        retire_service_process(&event_state, Some(sidecar_pid));
                         let _ = app_handle.emit(
                             "mesh-chat://service-event",
                             json!({"type":"event", "event":"service_error"}),
@@ -561,27 +591,9 @@ fn spawn_service(app: &AppHandle, state: &ServiceState) -> Result<(), String> {
                     break;
                 }
                 CommandEvent::Terminated(exit) => {
-                    let is_current = event_state
-                        .sidecar_pid
-                        .lock()
-                        .ok()
-                        .map(|mut current| {
-                            if *current == Some(sidecar_pid) {
-                                current.take();
-                                true
-                            } else {
-                                false
-                            }
-                        })
-                        .unwrap_or(false);
-                    if is_current {
+                    if let Some(retired) = detach_service(&event_state, Some(sidecar_pid)) {
+                        retired.dispose(false);
                         record_unexpected_service_exit(&app_handle, &event_state, "terminated", exit.code, exit.signal, stderr.finish(), started.elapsed().as_millis() as u64);
-                        fail_all_pending(&event_state, "service_stopped");
-                        if let Ok(mut child) = event_state.child.lock() {
-                            if child.as_ref().map(CommandChild::pid) == Some(sidecar_pid) {
-                                child.take();
-                            }
-                        }
                         let _ = app_handle.emit(
                             "mesh-chat://service-event",
                             json!({"type":"event", "event":"service_error"}),
@@ -1897,13 +1909,53 @@ mod tests {
     }
 
     #[test]
-    fn sidecar_pid_tracking_does_not_depend_on_the_writer_mutex() {
+    fn stale_process_retirement_preserves_the_replacement_and_its_requests() {
         let state = ServiceState::default();
-        *state.sidecar_pid.lock().unwrap() = Some(4_242);
-        let guard = state.child.lock().unwrap();
-        assert_eq!(take_sidecar_pid(&state), Some(4_242));
-        assert_eq!(take_sidecar_pid(&state), None);
-        drop(guard);
+        *state.sidecar_pid.lock().unwrap() = Some(200);
+        *state.direct_native.lock().unwrap() = Some(direct_native::NativeHost::default());
+        let (sender, mut receiver) = oneshot::channel();
+        state.pending.lock().unwrap().insert("replacement".into(), sender);
+
+        assert!(detach_service(&state, Some(100)).is_none());
+
+        assert_eq!(*state.sidecar_pid.lock().unwrap(), Some(200));
+        assert!(state.direct_native.lock().unwrap().is_some());
+        assert!(matches!(receiver.try_recv(), Err(oneshot::error::TryRecvError::Empty)));
+    }
+
+    #[test]
+    fn exact_process_detachment_wakes_requests_even_when_the_writer_is_blocked() {
+        let state = ServiceState::default();
+        *state.sidecar_pid.lock().unwrap() = Some(100);
+        let (sender, mut receiver) = oneshot::channel();
+        state.pending.lock().unwrap().insert("old".into(), sender);
+        let writer = state.child.lock().unwrap();
+
+        let retired = detach_service(&state, Some(100)).unwrap();
+
+        assert_eq!(retired.pid, 100);
+        assert_eq!(*state.sidecar_pid.lock().unwrap(), None);
+        assert_eq!(receiver.try_recv().unwrap(), Err("service_stopped".into()));
+        assert!(detach_service(&state, Some(100)).is_none());
+        drop(writer);
+    }
+
+    #[test]
+    fn delayed_disposal_cannot_close_a_replacement_host_or_cancel_its_requests() {
+        let state = ServiceState::default();
+        *state.sidecar_pid.lock().unwrap() = Some(100);
+        *state.direct_native.lock().unwrap() = Some(direct_native::NativeHost::default());
+        let retired = detach_service(&state, Some(100)).unwrap();
+        *state.sidecar_pid.lock().unwrap() = Some(200);
+        *state.direct_native.lock().unwrap() = Some(direct_native::NativeHost::default());
+        let (sender, mut receiver) = oneshot::channel();
+        state.pending.lock().unwrap().insert("replacement".into(), sender);
+
+        retired.dispose(false);
+
+        assert_eq!(*state.sidecar_pid.lock().unwrap(), Some(200));
+        assert!(state.direct_native.lock().unwrap().is_some());
+        assert!(matches!(receiver.try_recv(), Err(oneshot::error::TryRecvError::Empty)));
     }
 
     #[test]

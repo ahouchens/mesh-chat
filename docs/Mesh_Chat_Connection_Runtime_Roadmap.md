@@ -256,6 +256,14 @@ lifecycle and packet budgets separate. Lost windows or stalled IPC quarantine th
 Python adapter. Service exit currently disposes that window and its carriers;
 surviving-carrier restart adoption remains required before M2 promotion.
 
+Windows process retirement now captures the originating PID and detaches its
+transport host, native host and pending requests before a replacement is
+published. Delayed cleanup cannot retire the replacement. The lifecycle guard
+does not wait for a blocked stdin writer; exact process termination and deferred
+handle cleanup remain available. Regression tests cover stale retirement,
+delayed disposal and blocked writers. This fixes host cleanup isolation; it does
+not implement surviving-carrier adoption.
+
 The experimental Windows host supplies a read-only UI routing hint before the
 application loads. Manual pairing then uses the existing service transport
 commands rather than allocating a second renderer peer. This hint is not a host

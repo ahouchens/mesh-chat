@@ -8,6 +8,14 @@ pub struct RegisteredHost {
     window: Option<WebviewWindow>,
 }
 
+impl RegisteredHost {
+    pub fn close(self) {
+        if let Some(window) = self.window {
+            let _ = window.close();
+        }
+    }
+}
+
 #[cfg(feature = "transport-qualification")]
 pub fn diagnostics(state: &ServiceState) -> Value {
     state
@@ -37,17 +45,28 @@ fn trusted_location(url: &tauri::Url) -> bool {
 }
 
 pub fn register(app: &AppHandle, state: &ServiceState, pid: u32) -> Result<(), String> {
-    retire(state, None, false);
     let label = format!("mesh-transport-{}", uuid::Uuid::new_v4().simple());
     let token = uuid::Uuid::new_v4().simple().to_string();
     let bootstrap = serde_json::json!({"token": token}).to_string();
-    *state
+    let process = state
+        .sidecar_pid
+        .lock()
+        .map_err(|_| "transport_lock_failed")?;
+    if *process != Some(pid) {
+        return Err("transport_retired".into());
+    }
+    let previous = state
         .desktop_transport
         .lock()
-        .map_err(|_| "transport_lock_failed")? = Some(RegisteredHost {
-        binding: Binding::new(pid, label.clone(), token),
-        window: None,
-    });
+        .map_err(|_| "transport_lock_failed")?
+        .replace(RegisteredHost {
+            binding: Binding::new(pid, label.clone(), token),
+            window: None,
+        });
+    drop(process);
+    if let Some(previous) = previous {
+        previous.close();
+    }
     let result = WebviewWindowBuilder::new(app, &label, WebviewUrl::App("transport-host.html".into()))
         .visible(false).focused(false).skip_taskbar(true)
         .on_navigation(trusted_location)
@@ -148,8 +167,8 @@ fn send_to_process(state: &ServiceState, pid: u32, value: &Value) -> Result<(), 
         .map_err(|_| ())
 }
 
-pub fn retire(state: &ServiceState, pid: Option<u32>, notify: bool) {
-    let host = state.desktop_transport.lock().ok().and_then(|mut current| {
+pub fn detach(state: &ServiceState, pid: Option<u32>) -> Option<RegisteredHost> {
+    state.desktop_transport.lock().ok().and_then(|mut current| {
         if current
             .as_ref()
             .is_some_and(|host| pid.is_none_or(|pid| host.binding.pid() == pid))
@@ -158,7 +177,11 @@ pub fn retire(state: &ServiceState, pid: Option<u32>, notify: bool) {
         } else {
             None
         }
-    });
+    })
+}
+
+pub fn retire(state: &ServiceState, pid: Option<u32>, notify: bool) {
+    let host = detach(state, pid);
     if let Some(host) = host {
         if let Some(window) = host.window {
             let _ = window.close();
