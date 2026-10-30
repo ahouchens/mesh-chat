@@ -479,13 +479,15 @@ class MeshChatService(
     }
 
     def __init__(self, store: VaultStore, profile_dir: Path, emit: EventCallback, *, direct_native=None,
-                 connection_policy="legacy"):
+                 connection_policy="legacy", native_webrtc_host=None):
         if connection_policy not in {"legacy", "shared-native"}:
             raise ValueError("Unsupported connection policy")
-        if connection_policy == "shared-native":
+        self._native_host = native_webrtc_host
+        if connection_policy == "shared-native" or native_webrtc_host is not None:
             # Private composition option, never a renderer command. Qualification
             # must explicitly select a native host before this becomes default.
-            self._native_webrtc_host()
+            from .native_webrtc_host import require_host
+            self._native_host = require_host(self._native_webrtc_host())
         self._connection_policy = connection_policy
         self._connection_runtime = None
         from .link_previews import LinkPreviews
@@ -2214,21 +2216,12 @@ class MeshChatService(
         )
 
     # ------------------------------------------------- native WebRTC host
-    _native_webrtc_host_class = None
     _native_answer_exchange_timeout = 120.0
 
-    @classmethod
-    def _native_webrtc_host(cls):
-        if cls._native_webrtc_host_class is None:
-            try:
-                from java import jclass
-
-                cls._native_webrtc_host_class = jclass(
-                    "com.meshchat.runtime.NativeWebRtcHost"
-                )
-            except Exception as exc:
-                raise NativeUnavailable("Native WebRTC is unavailable") from exc
-        return cls._native_webrtc_host_class
+    def _native_webrtc_host(self):
+        from .native_webrtc_host import android_host
+        host = getattr(self, "_native_host", None)
+        return android_host() if host is None else host
 
     def webrtc_attach_native(self, session_id: str) -> dict[str, Any]:
         with self._dispatch_lock:

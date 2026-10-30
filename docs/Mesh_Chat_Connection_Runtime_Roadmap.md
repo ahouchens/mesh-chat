@@ -69,6 +69,13 @@ requires a native host and selects exactly one policy owner for that service.
 It is not exposed as a renderer command or a live toggle. Default construction
 continues to select `legacy`. Starting the experimental composition does not
 promise Windows native support: an unavailable native host fails explicitly.
+The private constructor can receive a host object from trusted composition;
+required transport methods are checked before service workers start. Android
+class loading is isolated in the host adapter and remains the default binding.
+No JSON command selects or replaces this object. Constructor-level regressions
+exercise explicit and Android-default binding, missing capabilities, idle startup
+without a profile, and exclusive shared ownership. A test host is not evidence
+of a production Windows transport.
 
 The new runtime uses existing signed request/offer/answer and consent methods;
 it does not alter peer wire formats, mailbox choices, vault schema, or receipts.
