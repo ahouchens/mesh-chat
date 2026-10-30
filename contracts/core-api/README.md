@@ -59,6 +59,49 @@ submit platform facts, native events, internal resource IDs or delivery receipts
 Permission names in the manifest are separate grants; `read` does not imply
 `send`, `approve`, `connect`, or runtime ownership.
 
+## Experimental stream framing
+
+The private `bind_service_stream` factory wraps a host-authenticated session in
+`FramedSession`. It is absent from the application command dispatcher. This adapter
+is not an authentication mechanism, a socket listener or a public bootstrap API.
+The host supplies private binary streams, authenticates their owning application,
+and enforces access controls, I/O deadlines and connection/worker limits. A local
+socket or an arbitrary caller-provided identity is not sufficient authority.
+
+A frame is one UTF-8 JSON value followed by LF; CRLF is also accepted. Each frame,
+including its delimiter, is at most 4,194,304 bytes. Requests are compact single-line
+JSON; literal line breaks inside a string must be escaped. Responses use ASCII-safe
+JSON escaping and one LF delimiter. No byte-order mark is accepted. The request
+must still match its operation schema; a JSON array is not a batch of commands.
+
+Before dispatch, the codec rejects duplicate object members at any depth, including
+names made identical by Unicode escapes. It rejects invalid UTF-8, unpaired escaped
+surrogates, non-finite numbers and integer literals outside the portable signed
+range from -9,007,199,254,740,991 through 9,007,199,254,740,991. Requests may nest at
+most 16 objects/arrays and contain at most 1,024 structural tokens (`{ } [ ] : ,`
+outside strings). The structural check precedes JSON object allocation. Quoted
+brackets, commas and escaped quotes do not consume this budget. Frame, depth and
+structural-token limits are included in capability negotiation.
+
+Malformed encoding or framing produces one bounded `invalid_request` response with
+null correlation and permanently detaches the session. The adapter stops reading
+that stream; it never drains untrusted trailing bytes to find another command.
+A well-formed JSON request with a semantic error receives the facade's normal typed
+response and can be corrected on the same session. An invalid or oversized server
+response produces a selected `internal` error and detaches without exporting raw
+exception text. Hosts close the underlying streams when serving ends.
+
+The stream driver reads at most the frame budget plus one overflow-detection byte,
+executes one request, and writes and flushes its complete response before reading
+another. It retains no response queue and performs no domain retries. Short writes
+are completed without repeating the command. EOF, partial frames, read errors and
+write/flush errors detach the session. Blocking stream I/O occurs outside the
+service dispatch lock. A caller losing a mutation response must reconnect through
+its trusted host and resolve the unknown outcome with the original idempotency key;
+closing the stream does not undo a committed message or stop the app-owned runtime.
+This framing has component and in-memory stream evidence only. OS-authenticated
+Windows/Android endpoints and packaged consumer interoperability remain unfinished.
+
 ## Request and outcome rules
 
 Requests use `request-v1.schema.json`. Unknown request properties and operations

@@ -553,6 +553,17 @@ history, scan messages, persist retention changes, inspect native peers or alter
 lifecycle policy. Contract, scope, revocation, malformed-result and no-effects
 regressions qualify the component only; host authentication remains unfinished.
 
+A private framed-session adapter now drives the facade over host-supplied binary
+streams. Strict single-line UTF-8 JSON decoding rejects duplicate members, invalid
+Unicode/numbers and oversized/deep/over-complex requests before dispatch. It reads
+one bounded frame and completes one response before another request; short writes
+do not reexecute commands. Malformed frames and stream errors detach the session.
+Read/write waits occur outside the service dispatch lock. Lost enqueue replies are
+resolved with the same durable key on a new authenticated session. The adapter adds
+no listener, bootstrap authority, peer retry policy or runtime ownership. Its tests
+use component/in-memory streams; authenticated OS endpoints, SDK packaging and
+independent consumers remain required.
+
 From the repository root:
 
 ```powershell

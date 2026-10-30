@@ -15,6 +15,7 @@ from typing import Protocol
 
 from .views import acceptance_view, acknowledgment_view, connection_view, event_view, message_view, peer_view
 from .errors import ApiFailure
+from .limits import MAX_FRAME_BYTES, MAX_REQUEST_JSON_DEPTH, MAX_REQUEST_JSON_TOKENS
 from .diagnostics import Diagnostics, MAX_DIAGNOSTICS, MAX_DIAGNOSTIC_BYTES
 from .diagnostic_views import diagnostics_view
 from .requests import (
@@ -143,7 +144,8 @@ class CoreSession:
         return self._observe(grant, profile, operation, params)
 
     def _capabilities(self, profiles):
-        limits = {"frame_bytes": 4194304, "profiles": MAX_PROFILES,
+        limits = {"frame_bytes": MAX_FRAME_BYTES, "request_json_depth": MAX_REQUEST_JSON_DEPTH,
+                  "request_json_structural_tokens": MAX_REQUEST_JSON_TOKENS, "profiles": MAX_PROFILES,
                   "connections_per_profile": MAX_CONNECTIONS}
         if self._messages is not None:
             limits.update(peers_per_profile=MAX_PEERS, text_utf8_bytes=16384,

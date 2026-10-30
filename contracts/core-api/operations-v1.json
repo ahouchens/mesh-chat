@@ -163,6 +163,8 @@
   ],
   "limits": {
     "frame_bytes": 4194304,
+    "request_json_depth": 16,
+    "request_json_structural_tokens": 1024,
     "text_utf8_bytes": 16384,
     "peers_per_profile": 256,
     "idempotency_seconds": 604800,

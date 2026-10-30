@@ -8,6 +8,7 @@ from .session import ApiFailure, CoreSession, ProfileObservation
 from .service_messages import ServiceMessages
 from .service_recovery import ServiceRecovery
 from .service_diagnostics import ServiceDiagnostics
+from .wire import FramedSession
 
 
 class ServiceObservations:
@@ -38,3 +39,8 @@ def bind_service_session(service, authenticated_grant):
         return CoreSession(current_grant, ServiceObservations(service), handle_key=handle_key,
                            transaction=service._dispatch_lock, messages=messages, recovery=recovery,
                            diagnostics=ServiceDiagnostics(service, messages))
+
+
+def bind_service_stream(service, authenticated_grant):
+    """Private host binding; raw frames can never select the grant callback."""
+    return FramedSession(bind_service_session(service, authenticated_grant))
