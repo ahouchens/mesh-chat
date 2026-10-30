@@ -4,7 +4,7 @@ These are experimental contracts, not a supported integration release. A protect
 facade component implements capabilities, profile queries, connection observations,
 peer queries, durable text enqueue, scoped message snapshots and retained change
 replay with durable consumer progress for messages enqueued by the same caller,
-and bounded current-policy diagnostics.
+bounded enumeration of received inbound text, and bounded current-policy diagnostics.
 Host authentication, remaining
 mutations/event streams, SDKs and independent consumer
 qualification remain required before M5. `operations-v1.json` deliberately lists
@@ -175,17 +175,54 @@ notifications with stable caller-scoped event/message IDs. A changed event inclu
 the committed delivery state; it cannot turn endpoint evidence into application
 delivery. Polling the same cursor may redeliver the same IDs. Consumers deduplicate
 notifications and query retained messages when they need text. Local history
-deletion produces a removal event without retaining duplicate text. Public recovery
+deletion produces a removal event without retaining duplicate text. Public replay
 currently covers only the caller's own facade-enqueued outbound text messages;
-incoming messages, other message kinds and connection event streams are still
-required for M5.
+other message kinds and connection event streams are still required for M5.
+
+## Received messages
+
+`message.received` pages the inbound chat messages an authorized profile already
+accepted, oldest first. Its result contract is `received-result-v1.schema.json`.
+A received message carries a caller-scoped opaque `message` handle, the `peer`
+handle of its contact, the retained text, the committed delivery state and
+`created_at`. It never returns an internal message or contact identifier, a native
+message hash, conversation markers or signaling material. This is a read of
+already-committed domain records: it performs no transport work, sends no receipt
+and cannot promote one.
+
+The service maintains a content-free index of inbound chat messages as a second
+transaction-local projection. It commits in the same vault transaction as the
+visible message and its receipt, so a reader never sees a message without its
+position or a position without its message. The index retains only the message
+identity, contact identity and creation time; text, receipts and native metadata
+stay in the authoritative record and are read from it. Outbound messages, receipts
+and every non-chat kind are not indexed, so this surface cannot enumerate another
+direction or domain records. Deleting a message removes its index entry in the same
+transaction.
+
+Pagination uses an opaque cursor bound to caller, profile, purpose and the current
+contact-authority view. Start with a null cursor and follow `next_cursor` while
+`more` is true. Each page reflects the committed state of its messages; a message
+whose state changed moves nowhere in the index. Revoking or blocking a contact, or
+removing a profile, invalidates the cursor and returns `resync_required`; hidden
+messages are omitted rather than partially reported. Cursors expire with the seven
+day replay window, cannot be exchanged with snapshot or replay cursors, and cannot
+be used by another caller. At most 128 indexes are scanned per request, and the
+whole encoded page stays within one MiB.
+
+This closes only inbound text enumeration for the private facade component.
+Incoming-message events, other message kinds, connection intent commands,
+authenticated host bindings and packaged consumers remain unfinished.
 
 The service installs the domain journal before startup recovery and workers. Every
 message mutation path uses one transaction-local storage projection, so the message
 and its change record commit or roll back together, including batch writes and
-history deletion. Native-only metadata and unchanged public message fields do not
-advance the stream. The vault depends on an injected projection port; it contains
-no message or receipt policy. Domain delivery logic remains authoritative.
+history deletion. A source namespace may carry several independent projections; each
+observes the same committed changes, sees no sibling's derived records, and any
+failure aborts the whole transaction. Native-only metadata and unchanged public
+message fields do not advance the stream. The vault depends on an injected
+projection port; it contains no message or receipt policy. Domain delivery logic
+remains authoritative.
 
 The encrypted journal retains at most 2,048 changes per vault. Replay is limited
 to seven days and available retained records. Opaque cursors use the existing vault
@@ -254,7 +291,7 @@ failures are `adapter_quarantined` and `cleanup_failed`; other string values bec
 `unknown`. Observations retain their runtime epoch and sequence, and cannot promote
 transport readiness to a message receipt.
 
-The required `limit` is 1–256. Results are selected in opaque handle order with
+The required `limit` is 1â€“256. Results are selected in opaque handle order with
 `total_connections` and explicit `truncated` metadata when the requested limit is
 smaller than the bounded snapshot. There is no history cursor or pagination promise:
 queries observe current policy, and callers needing all entries request 256. More

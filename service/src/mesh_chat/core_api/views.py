@@ -95,6 +95,16 @@ def message_view(profile, handle, recipient, value):
             "created_at": _timestamp(value.created_at)}
 
 
+def received_view(profile, handle, peer, value):
+    if any(not isinstance(item, str) or re.fullmatch(r"[A-Za-z0-9_-]{16,128}", item) is None
+           for item in (handle, peer)):
+        raise ValueError("Invalid received message handle")
+    validate_chat_text(value.text)
+    return {"profile": profile, "message": handle, "peer": peer, "kind": "text",
+            "text": value.text, "state": DeliveryState(value.state).value,
+            "created_at": _timestamp(value.created_at)}
+
+
 def peer_view(profile, handle, value):
     if (not isinstance(value.display_name, str) or not 1 <= len(value.display_name) <= 80
             or not isinstance(value.destination, str) or re.fullmatch(r"[a-f0-9]{32}", value.destination) is None):

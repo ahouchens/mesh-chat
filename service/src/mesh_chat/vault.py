@@ -31,6 +31,7 @@ INVALID_FILE_ATTRIBUTES = 0xFFFFFFFF
 SCHEMA_VERSION = 1
 COMMAND_CACHE_MAX_ROWS = 512
 COMMAND_CACHE_MAX_AGE_SECONDS = 8 * 24 * 60 * 60
+MAX_PROJECTIONS = 4
 REDACTED_COMMAND_RESPONSE = {
     "ok": False,
     "error": {
@@ -306,7 +307,7 @@ class VaultStore:
             self._token_type = None
             self._cipher = AESGCM(key)
         self._lock = threading.RLock()
-        self._projections: dict[str, ProjectRecords] = {}
+        self._projections: dict[str, list[ProjectRecords]] = {}
         try:
             self._db = sqlite3.connect(
                 self.profile_dir / "mesh-chat.vault",
@@ -486,14 +487,18 @@ class VaultStore:
     def register_projection(self, kind: str, project: ProjectRecords) -> None:
         """Bind a trusted domain projection before service workers start.
 
-        Runs in the source transaction, with before/final values. Projectors may
+        A source namespace may carry several independent projections. Each runs in
+        the source transaction, with before/final values, and sees the same source
+        changes; none sees another projection's derived records. Projectors may
         read the vault but must not mutate it or perform external I/O. Failure
         aborts the transaction. Derived records cannot replace source namespaces.
         """
         with self._lock:
-            if not isinstance(kind, str) or not kind or not callable(project) or kind in self._projections:
+            bound = self._projections.get(kind, ()) if isinstance(kind, str) else ()
+            if (not isinstance(kind, str) or not kind or not callable(project)
+                    or project in bound or len(bound) >= MAX_PROJECTIONS):
                 raise ValidationError("Record projection binding is invalid")
-            self._projections[kind] = project
+            self._projections.setdefault(kind, []).append(project)
 
     def _write_records_locked(self, records, deletions=()) -> None:
         values, removed = self._project_records(records, deletions)
@@ -511,23 +516,24 @@ class VaultStore:
         final = {key: None for key in removed}
         final.update({(kind, identifier): value for kind, identifier, value in values})
         reserved = set(final)
-        for kind, project in self._projections.items():
+        for kind, projectors in self._projections.items():
             identifiers = [identifier for namespace, identifier in final if namespace == kind]
             if not identifiers:
                 continue
-            changes = (RecordChange(identifier, self.get(kind, identifier), final[(kind, identifier)])
-                       for identifier in identifiers)
-            projection = project(changes)
-            if not isinstance(projection, Projection):
-                raise ValidationError("Invalid record projection result")
-            keys = [(namespace, identifier) for namespace, identifier, _ in projection.records]
-            keys.extend(projection.deletions)
-            if (len(keys) > 8192 or len(set(keys)) != len(keys)
-                    or any(key[0] in self._projections or key in reserved for key in keys)):
-                raise ValidationError("Record projection overlaps another mutation")
-            reserved.update(keys)
-            values.extend(projection.records)
-            removed.extend(projection.deletions)
+            for project in projectors:
+                changes = [RecordChange(identifier, self.get(kind, identifier), final[(kind, identifier)])
+                           for identifier in identifiers]
+                projection = project(changes)
+                if not isinstance(projection, Projection):
+                    raise ValidationError("Invalid record projection result")
+                keys = [(namespace, identifier) for namespace, identifier, _ in projection.records]
+                keys.extend(projection.deletions)
+                if (len(keys) > 8192 or len(set(keys)) != len(keys)
+                        or any(key[0] in self._projections or key in reserved for key in keys)):
+                    raise ValidationError("Record projection overlaps another mutation")
+                reserved.update(keys)
+                values.extend(projection.records)
+                removed.extend(projection.deletions)
         return values, removed
 
     def put_and_delete(

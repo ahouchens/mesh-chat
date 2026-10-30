@@ -36,9 +36,10 @@ def bind_service_session(service, authenticated_grant):
         handle_key = bytes.fromhex(service.store.opaque_id("core-api-handle-key", "v1"))
         messages = ServiceMessages(service)
         recovery = ServiceRecovery(service, messages) if hasattr(service, "_message_journal") else None
+        received = recovery if hasattr(service, "_received_messages") else None
         return CoreSession(current_grant, ServiceObservations(service), handle_key=handle_key,
                            transaction=service._dispatch_lock, messages=messages, recovery=recovery,
-                           diagnostics=ServiceDiagnostics(service, messages))
+                           diagnostics=ServiceDiagnostics(service, messages), received=received)
 
 
 def bind_service_stream(service, authenticated_grant):

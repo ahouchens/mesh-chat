@@ -3,10 +3,14 @@
 import json
 
 from ..message_journal import JournalGap
-from ..models import TrustState
+from ..models import DeliveryState, TrustState
+from ..received_messages import KIND as RECEIVED_KIND
 from .errors import ApiFailure
 from .messages import MAX_PEERS
-from .recovery import EventPage, ListedMessage, MAX_BATCH, MAX_BATCH_BYTES, MessageEvent, MessagePage
+from .recovery import (
+    EventPage, ListedMessage, MAX_BATCH, MAX_BATCH_BYTES, MessageEvent, MessagePage,
+    ReceivedMessage, ReceivedObservation, ReceivedPage,
+)
 from .service_messages import storage_errors
 from .service_cursors import ServiceCursors
 from .service_consumer_progress import ServiceConsumerProgress
@@ -66,6 +70,36 @@ class ServiceRecovery:
     def acknowledge(self, scope, cursor, key):
         with storage_errors(), self._store.read_snapshot():
             return self._progress.acknowledge(scope, self._authority(scope), cursor, key)
+
+    def received(self, scope, cursor, limit):
+        with storage_errors(), self._store.read_snapshot():
+            authority = self._authority(scope)
+            position = "" if cursor is None else self._cursors.open(scope, authority, cursor, "received")["k"]
+            rows = self._store.items(RECEIVED_KIND, after=position or None, limit=MAX_BATCH + 1)
+            result, consumed, byte_count = [], 0, 0
+            for key, index in rows[:MAX_BATCH]:
+                record = self._store.get("message", index["message_id"])
+                visible = (record is not None and record.get("direction") == "inbound"
+                           and self._readable(index["contact_id"]))
+                if len(result) == limit:
+                    break
+                if visible:
+                    size = len(json.dumps(record["text"], ensure_ascii=True)) + 512
+                    if byte_count + size > MAX_BATCH_BYTES - 4096:
+                        break
+                position, consumed = key, consumed + 1
+                if not visible:
+                    continue
+                result.append(ReceivedMessage(
+                    self._messages._identifier("core-api-received:v1", scope.caller, scope.profile,
+                                               index["message_id"]),
+                    ReceivedObservation(index["contact_id"], record["text"],
+                                        DeliveryState(record["state"]).value, float(record["created_at"]))))
+                byte_count += size
+            more = consumed < len(rows)
+            return ReceivedPage(tuple(result),
+                                self._cursors.create(scope, authority, "received", self._journal.head(), position)
+                                if more else None, more)
 
     def poll(self, scope, cursor, limit):
         with storage_errors(), self._store.read_snapshot():

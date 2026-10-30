@@ -9,6 +9,15 @@ from ..message_journal import RETENTION_SECONDS
 from .errors import ApiFailure
 
 
+# A cursor position means something different per reader, so each purpose owns
+# its accepted form instead of one loose pattern covering every reader.
+POSITION_FORMS = {
+    "snapshot": re.compile(r"(?:[a-f0-9]{64})?"),
+    "events": re.compile(r""),
+    "received": re.compile(r"(?:[0-9a-f]{16}-[A-Za-z0-9_-]{1,256})?"),
+}
+
+
 class ServiceCursors:
     def __init__(self, store, journal, identifier):
         self._store = store
@@ -41,11 +50,11 @@ class ServiceCursors:
             raise ApiFailure("resync_required")
         if value["p"] != purpose:
             raise ApiFailure("invalid_request")
-        expiry = value["x"]
+        expiry, position = value["x"], value["k"]
+        form = POSITION_FORMS.get(purpose)
         if (type(expiry) not in {int, float} or not math.isfinite(expiry) or expiry < 0
                 or type(value["h"]) is not int or not 0 <= value["h"] <= self._journal.head()
-                or not isinstance(value["k"], str)
-                or (value["k"] != "" and (purpose != "snapshot" or re.fullmatch(r"[a-f0-9]{64}", value["k"]) is None))):
+                or not isinstance(position, str) or form is None or form.fullmatch(position) is None):
             raise ApiFailure("resync_required")
 
     @staticmethod

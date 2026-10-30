@@ -12,6 +12,7 @@ from .diagnostics import MAX_DIAGNOSTICS
 OPERATIONS = ("runtime.capabilities", "profile.query", "connection.snapshot")
 MESSAGE_OPERATIONS = ("peer.query", "message.enqueue", "message.query")
 RECOVERY_OPERATIONS = ("message.list", "events.poll", "events.ack")
+RECEIVED_OPERATIONS = ("message.received",)
 DIAGNOSTIC_OPERATIONS = ("diagnostics.query",)
 REQUEST_ID = re.compile(r"[A-Za-z0-9._:-]{1,80}\Z")
 HANDLE = re.compile(r"[A-Za-z0-9_-]{16,128}\Z")
@@ -44,6 +45,8 @@ def parse_request(value, operations):
     if operation == "diagnostics.query":
         return operation, _diagnostic_params(value["params"])
     if operation in RECOVERY_OPERATIONS:
+        return operation, _recovery_params(value["params"])
+    if operation in RECEIVED_OPERATIONS:
         return operation, _recovery_params(value["params"])
     fields = {"runtime.capabilities": set(), "profile.query": {"profile"},
               "connection.snapshot": {"profile", "connection"},

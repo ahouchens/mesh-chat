@@ -4,7 +4,7 @@
   "api_major": 1,
   "api_minor": 0,
   "implemented_operations": [],
-  "experimental_component_operations": ["runtime.capabilities", "profile.query", "connection.snapshot", "peer.query", "message.enqueue", "message.query", "message.list", "events.poll", "events.ack", "diagnostics.query"],
+  "experimental_component_operations": ["runtime.capabilities", "profile.query", "connection.snapshot", "peer.query", "message.enqueue", "message.query", "message.list", "events.poll", "events.ack", "message.received", "diagnostics.query"],
   "operations": [
     {
       "operation": "runtime.capabilities",
@@ -140,6 +140,13 @@
       "idempotency": "query"
     },
     {
+      "operation": "message.received",
+      "permission": "read",
+      "scope": "profile",
+      "mutation": false,
+      "idempotency": "query"
+    },
+    {
       "operation": "events.poll",
       "permission": "read",
       "scope": "profile",
@@ -179,6 +186,8 @@
     "acknowledgment_seconds": 604800,
     "acknowledgment_keys_per_caller_profile": 4096,
     "acknowledgment_keys_per_vault": 65536,
+    "received_scan_count": 128,
+    "received_batch_bytes": 1048576,
     "diagnostic_count": 256,
     "diagnostic_bytes": 262144
   }

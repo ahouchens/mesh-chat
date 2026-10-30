@@ -427,11 +427,20 @@ def run_manual_native_adoption(automatic=True):
         assert service._connection_runtime is owner and owner._failure is None
         assert service._background_reconnect_supervisor is None
         states = owner.owner.snapshots()
-        assert len(states) == 1 and states[0].carrier.resource.resource_id == local_physical
+        observed = [(state.key.profile_id, state.key.remote_device, state.desired.value,
+                     None if state.carrier is None else state.carrier.resource.resource_id)
+                    for state in states]
+        carried = [(state, state.carrier.resource.resource_id) for state in states if state.carrier is not None]
+        # Trusted startup registers this profile before its signed remote device is
+        # known, so one bounded stopped tombstone for the earlier key is expected.
+        # Only the exact adopted allocation may be carried, by exactly one actor.
+        assert [resource for _, resource in carried] == [local_physical], observed
+        assert all(state.desired.value == "stopped" for state in states if state.carrier is None), observed
+        adopted_state = carried[0][0]
         if not automatic:
             profile = service._reconnect_profile(profile_id)
             assert not profile["auto_reconnect"] and not profile["remote_auto_reconnect"]
-            assert not states[0].authority.signaling_available
+            assert not adopted_state.authority.signaling_available
         assert service._execute("native_webrtc_close", {"session_id": local_id}) == {"state": "managed"}
         before = {s: native.stats(s).get("received_packets", 0) for s in (local_physical, remote_id)}
         assert native.send(local_physical) and native.send(remote_id)

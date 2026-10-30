@@ -91,3 +91,50 @@ def test_projection_sees_final_batch_state_and_cannot_replace_source(store):
     with pytest.raises(ValidationError):
         store.put_many([("source", "one", {"version": 3}), ("attack", "one", {})])
     assert store.get("source", "one") == {"version": 2}
+
+
+def test_independent_projections_each_observe_one_committed_change(store):
+    from mesh_chat.record_projection import Projection
+    first, second = [], []
+    store.register_projection("source", lambda changes: first.extend(changes) or Projection(
+        tuple(("first", change.identifier, {"v": 1}) for change in changes)))
+    store.register_projection("source", lambda changes: second.extend(changes) or Projection(
+        tuple(("second", change.identifier, {"v": 2}) for change in changes)))
+    store.put("source", "one", {"version": 1})
+    store.delete("source", "one")
+    assert [(change.before, change.after) for change in first] == [
+        (None, {"version": 1}), ({"version": 1}, None)]
+    assert [(change.before, change.after) for change in second] == [
+        (None, {"version": 1}), ({"version": 1}, None)]
+    assert store.get("first", "one") == {"v": 1} and store.get("second", "one") == {"v": 2}
+
+
+def test_one_failing_projection_rolls_back_every_sibling(store):
+    from mesh_chat.record_projection import Projection
+    from mesh_chat.errors import ValidationError
+    store.register_projection("source", lambda changes: Projection(
+        tuple(("first", change.identifier, {"v": 1}) for change in changes)))
+    store.put("source", "one", {"version": 1})
+    def fail(_):
+        raise StorageUnavailable("second projection failed")
+    store.register_projection("source", fail)
+    with pytest.raises(StorageUnavailable):
+        store.put("source", "one", {"version": 2})
+    assert store.get("source", "one") == {"version": 1}
+    assert store.get("first", "one") == {"v": 1}
+    with pytest.raises(ValidationError):
+        store.register_projection("source", store._projections["source"][0])
+
+
+def test_duplicate_and_excess_projection_bindings_are_rejected(store):
+    from mesh_chat.record_projection import Projection
+    from mesh_chat.errors import ValidationError
+    from mesh_chat.vault import MAX_PROJECTIONS
+    project = lambda changes: Projection(())
+    store.register_projection("source", project)
+    with pytest.raises(ValidationError):
+        store.register_projection("source", project)
+    for index in range(MAX_PROJECTIONS - 1):
+        store.register_projection("source", (lambda value: lambda changes: Projection(()))(index))
+    with pytest.raises(ValidationError):
+        store.register_projection("source", lambda changes: Projection(()))

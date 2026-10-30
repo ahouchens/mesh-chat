@@ -681,3 +681,133 @@ collection failures, missing suites, skipped cases, stale reports, duplicate
 results and partial execution fail the gate. The inventory is retained beside
 the report and evidence JSON. These are policy tests, not native transport, cryptographic,
 application-receipt, real-clock, or packaged interoperability evidence.
+
+## Received-message visibility
+
+The private facade could enumerate only the messages a caller had enqueued, so a
+consumer could not read an authorized conversation. That gap blocked external
+integration independently of host authentication. The service now maintains a
+second transaction-local projection over the message namespace: an ordered,
+content-free index of inbound chat messages. The index stores the message identity,
+its contact and its creation time; text and delivery state stay in the
+authoritative message record and are read from it. Outbound messages, receipts and
+every other message kind are excluded, so the surface cannot enumerate another
+direction or unrelated domain records. Deleting a message removes its index entry
+in the same transaction, and a projection failure aborts the message commit rather
+than leaving an unlistable message.
+
+`message.received` pages that index oldest first, after capability negotiation and
+the `read` grant, and reuses the profile-scope and contact-authority checks of the
+recovery adapter. Each item returns caller-scoped opaque message and peer handles,
+the retained text, the committed delivery state and `created_at`. Cursors are bound
+to caller, profile, purpose and the current contact-authority signature; they
+survive ordinary service restart, expire with the seven-day replay window, cannot
+be exchanged with snapshot or replay cursors, and return `resync_required` after
+contact revocation rather than silently skipping a hidden message. A request scans
+at most 128 index entries, returns at most the requested 1-128 items, and keeps the
+encoded page within one MiB. The vault now accepts several independent projections
+per source namespace; each observes the same committed changes, sees no sibling's
+derived records, and any failure rolls back the whole transaction.
+
+Evidence: 13 in-process regressions cover atomic commit and rollback, content-free
+index records, chronological pagination without duplicates, direction and kind
+filtering, contact-authority hiding and resync, caller-scoped handles and cursors,
+cursor-purpose confusion, state changes, deletion, bounds, request validation and
+service restart. Four further vault regressions cover multiple projections, one
+failing sibling rolling back the batch, duplicate binding rejection and the binding
+cap. The full connection directory passed locally (850 tests), the strict model
+type check passed, and the contract vectors and schemas were updated. This closes
+inbound text enumeration for the private component only. Incoming-message events,
+other message kinds, connection intent commands, authenticated host bindings, SDKs
+and independent consumers remain open.
+
+## Qualification status at this revision
+
+The run for `14b79f3` (`41118651018`) reported a real failure, not an infrastructure
+one: the Android emulator job failed both manual-adoption scenarios
+(`sharedRuntimeAdoptsVerifiedManualNativeCarrierWithoutMailbox` and
+`sharedRuntimeAdoptsManualCarrierWithAutomaticReconnectDisabled`) with a bare
+`AssertionError` at the fixture assertion that the shared owner holds exactly one
+state whose carrier resource is the exact adopted allocation. The previous complete
+Android matrix predates `469c727`, which moved shared-owner construction to trusted
+startup; the intervening runs were canceled before Android executed, so this failure
+had not been observed. An in-process reproduction explains it: trusted startup
+registers the profile while its signed remote device is still unknown, and when the
+capabilities bind that device the reconciler registers the new connection key and
+retires the old one. `ConnectionSupervisor.retire` intentionally keeps a bounded
+stopped tombstone so a late completion cannot recreate the actor (specification
+section 3.1), so two states now exist where the fixture began from one. The fixture
+assertion counted states instead of checking ownership; it now requires exactly one
+carrier, that the carrier is the exact adopted physical allocation, and that every
+other state is a stopped tombstone, and it reports the observed keys and carriers on
+failure. A new in-process regression pins that behaviour: one live actor for the
+current key, one stopped tombstone, no duplicated actor on repeated reconciliation,
+and no carrier on the tombstone. Production policy is unchanged. The emulator rerun
+that would confirm the corrected assertion had not executed when this entry was
+written. Policy, verification,
+Windows packaged checks, layout, Android compilation and the final policy gate passed
+on the same run; the Direct Fabric jobs were still executing when this entry was
+written.
+
+## Remaining work checklist
+
+Reconciled against the specification's invariant list, SC01-SC26 and definition of
+done. A checked item has executing evidence at the named level and never implies a
+higher evidence level.
+
+M2 - shared policy
+
+- [x] One policy owner for the experimental Android composition, including startup
+      construction, quarantine fencing and stale-scope rejection.
+- [x] Manual native carrier adoption with signed control, exact resource identity
+      and bridge repair (in-process and emulator component evidence).
+- [ ] Windows-Android packaged interoperability (no shared runner topology).
+- [ ] Full Android application onboarding/approval/carrier transfer through the
+      application path; the isolated worker and the native contact-scope transport
+      are component evidence only.
+- [ ] Workspace pairing and non-default manual pairing modes in the shared
+      composition.
+- [ ] Cancellation at every handshake phase, plus partition/restart/revocation and
+      resource-disposal parity across both platforms.
+- [ ] Removal of migrated legacy loops and promotion of the shared owner. Neither is
+      permitted before the gates above pass.
+
+M3 - qualification
+
+- [x] Deterministic inventory-bound policy evidence and a required final gate.
+- [ ] Uniform per-suite scenario/count/artifact manifest for every required suite.
+- [ ] Exact release-artifact aggregation and cross-suite compatibility validation.
+- [ ] Narrower dependency selection after the architectural isolation is itself
+      tested. Conservative selection remains in force.
+
+M4 - headless messaging
+
+- [x] Android native transport and the private Windows WebView2 host with packaged
+      crash, pairing and receipt scenarios.
+- [ ] Production native Windows DataChannel adapter to replace the WebView2
+      dependency.
+- [ ] Packaged fault matrix, real-clock budgets and the 100-iteration receipt soak
+      on those exact headless transports.
+
+M5 - supported reusable core
+
+- [x] Private facade with scoped capabilities, durable enqueue/idempotency, message
+      snapshots, replay cursors, acknowledgments, diagnostics, bounded framing and
+      received-text enumeration.
+- [ ] Authenticated Windows and Android host bindings; the facade remains a private
+      component until they exist.
+- [ ] Remaining durable commands/events (connection intent, pairing/approval,
+      incoming-message events) and their idempotency/retention semantics.
+- [ ] Versioned TypeScript/Kotlin SDKs, production CLI and the supported
+      compatibility matrix.
+- [ ] Mesh Chat messaging routed through the supported facade.
+- [ ] Independent Windows and Android consumers built only from distribution
+      artifacts and documentation.
+
+Release and physical
+
+- [ ] INV20 enforcement for exact source/artifact evidence (M3).
+- [ ] Physical Windows/Android checklist: Wi-Fi/cellular switching, screen-off/Doze,
+      real process death, Stop/lock and end-to-end receipts. Unavailable in the
+      current environment (emulation and GitHub CI only); emulator results must not
+      be relabeled as physical evidence.

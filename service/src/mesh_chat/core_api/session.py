@@ -13,13 +13,16 @@ import re
 from threading import RLock
 from typing import Protocol
 
-from .views import acceptance_view, acknowledgment_view, connection_view, event_view, message_view, peer_view
+from .views import (
+    acceptance_view, acknowledgment_view, connection_view, event_view, message_view, peer_view, received_view,
+)
 from .errors import ApiFailure
 from .limits import MAX_FRAME_BYTES, MAX_REQUEST_JSON_DEPTH, MAX_REQUEST_JSON_TOKENS
 from .diagnostics import Diagnostics, MAX_DIAGNOSTICS, MAX_DIAGNOSTIC_BYTES
 from .diagnostic_views import diagnostics_view
 from .requests import (
-    CURSOR, DIAGNOSTIC_OPERATIONS, MESSAGE_OPERATIONS, OPERATIONS, RECOVERY_OPERATIONS, REQUEST_ID, parse_request,
+    CURSOR, DIAGNOSTIC_OPERATIONS, MESSAGE_OPERATIONS, OPERATIONS, RECEIVED_OPERATIONS,
+    RECOVERY_OPERATIONS, REQUEST_ID, parse_request,
 )
 from .messages import (
     IDEMPOTENCY_SECONDS, MAX_CALLER_ENQUEUES, MAX_PEERS, MAX_VAULT_ENQUEUES,
@@ -27,7 +30,7 @@ from .messages import (
 )
 from .recovery import (
     MAX_BATCH, MAX_BATCH_BYTES, MAX_CALLER_ACKNOWLEDGMENTS, MAX_CURSOR_BYTES,
-    MAX_VAULT_ACKNOWLEDGMENTS, Recovery,
+    MAX_VAULT_ACKNOWLEDGMENTS, ReceivedLog, Recovery,
 )
 from ..message_journal import MAX_EVENTS, RETENTION_SECONDS
 
@@ -64,7 +67,7 @@ class Observations(Protocol):
 class CoreSession:
     def __init__(self, authorize, observations: Observations, *, handle_key: bytes, transaction=None,
                  messages: Messages | None = None, recovery: Recovery | None = None,
-                 diagnostics: Diagnostics | None = None):
+                 diagnostics: Diagnostics | None = None, received: ReceivedLog | None = None):
         if not isinstance(handle_key, bytes) or not 32 <= len(handle_key) <= 64:
             raise ValueError("A protected handle key is required")
         self._authorize = authorize
@@ -72,8 +75,10 @@ class CoreSession:
         self._messages = messages
         self._recovery = recovery
         self._diagnostics = diagnostics
+        self._received = received
         self._operations = (OPERATIONS + (MESSAGE_OPERATIONS if messages is not None else ())
                             + (RECOVERY_OPERATIONS if recovery is not None else ())
+                            + (RECEIVED_OPERATIONS if received is not None else ())
                             + (DIAGNOSTIC_OPERATIONS if diagnostics is not None else ()))
         self._handle_key = handle_key
         self._transaction = transaction if transaction is not None else nullcontext()
@@ -91,7 +96,7 @@ class CoreSession:
                 grant = self._grant()
                 operation, params = parse_request(value, self._operations)
                 permission = {"message.enqueue": "send", "message.query": "read", "message.list": "read",
-                              "events.poll": "read", "events.ack": "read",
+                              "message.received": "read", "events.poll": "read", "events.ack": "read",
                               "diagnostics.query": "diagnose"}.get(operation, "observe")
                 if permission not in grant.permissions:
                     raise ApiFailure("forbidden")
@@ -139,6 +144,8 @@ class CoreSession:
                                     lambda internal: self._handle(grant, "connection", profile, internal))
         if operation in MESSAGE_OPERATIONS:
             return self._message(grant, profile, operation, params, key)
+        if operation in RECEIVED_OPERATIONS:
+            return self._received_messages(grant, profile, params)
         if operation in RECOVERY_OPERATIONS:
             return self._recover(grant, profile, operation, params, key)
         return self._observe(grant, profile, operation, params)
@@ -159,6 +166,8 @@ class CoreSession:
                           acknowledgment_seconds=RETENTION_SECONDS,
                           acknowledgment_keys_per_caller_profile=MAX_CALLER_ACKNOWLEDGMENTS,
                           acknowledgment_keys_per_vault=MAX_VAULT_ACKNOWLEDGMENTS)
+        if self._received is not None:
+            limits.update(received_scan_count=MAX_BATCH, received_batch_bytes=MAX_BATCH_BYTES)
         if self._diagnostics is not None:
             limits.update(diagnostic_count=MAX_DIAGNOSTICS, diagnostic_bytes=MAX_DIAGNOSTIC_BYTES)
         return {"api_major": 1, "api_minor": 0, "stability": "experimental",
@@ -226,6 +235,20 @@ class CoreSession:
                     self._handle(grant, "peer", profile, item.value.recipient), item.value) for item in page.messages]
         return self._bounded_recovery({"profile": params["profile"], "messages": messages,
                                        "next_cursor": page.next_cursor, "events_cursor": page.events_cursor})
+
+    def _received_messages(self, grant, profile, params):
+        page = self._received.received(MessageScope(grant.caller, profile), params["cursor"], params["limit"])
+        if type(page.more) is not bool or len(page.messages) > params["limit"]:
+            raise ApiFailure("internal")
+        if page.next_cursor is not None:
+            self._validate_recovery_cursor(page.next_cursor)
+        elif page.more:
+            raise ApiFailure("internal")
+        messages = [received_view(params["profile"], item.handle,
+                                  self._handle(grant, "peer", profile, item.value.contact),
+                                  item.value) for item in page.messages]
+        return self._bounded_recovery({"profile": params["profile"], "messages": messages,
+                                       "next_cursor": page.next_cursor, "more": page.more})
 
     @staticmethod
     def _validate_recovery_cursor(value):

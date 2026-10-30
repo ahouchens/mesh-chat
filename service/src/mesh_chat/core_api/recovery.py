@@ -49,7 +49,34 @@ class Acknowledgment:
     expires_at: float
 
 
+@dataclass(frozen=True)
+class ReceivedObservation:
+    contact: str
+    text: str
+    state: str
+    created_at: float
+
+
+@dataclass(frozen=True)
+class ReceivedMessage:
+    handle: str
+    value: ReceivedObservation
+
+
+@dataclass(frozen=True)
+class ReceivedPage:
+    messages: tuple[ReceivedMessage, ...]
+    next_cursor: str | None
+    more: bool
+
+
 class Recovery(Protocol):
     def snapshot(self, scope: MessageScope, cursor: str | None, limit: int) -> MessagePage: ...
     def poll(self, scope: MessageScope, cursor: str | None, limit: int) -> EventPage: ...
     def acknowledge(self, scope: MessageScope, cursor: str, key: str) -> Acknowledgment: ...
+
+
+class ReceivedLog(Protocol):
+    """Chronological read of received messages, separate from replay cursors."""
+
+    def received(self, scope: MessageScope, cursor: str | None, limit: int) -> ReceivedPage: ...

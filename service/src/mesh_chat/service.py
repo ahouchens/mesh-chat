@@ -498,6 +498,8 @@ class MeshChatService(
         self.store = store
         from .message_journal import MessageJournal
         self._message_journal = MessageJournal(store)
+        from .received_messages import ReceivedMessages
+        self._received_messages = ReceivedMessages(store)
         self._carrier_journal = None
         if connection_policy == "shared-native" and callable(getattr(self._native_host, "inventory", None)):
             from .carrier_journal import CarrierJournal

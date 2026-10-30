@@ -3,7 +3,9 @@ from time import monotonic
 
 import pytest
 
-from mesh_chat.connection.model import Bridge, Execution, Health, Phase, Resource, Result, Retire
+from mesh_chat.connection.model import (
+    Bridge, Desired, Execution, Health, Phase, Resource, Result, Retire,
+)
 from mesh_chat.connection.runtime import ConnectionRuntime
 
 
@@ -367,3 +369,43 @@ def test_terminal_runtime_does_not_begin_startup_reconciliation(termination):
         assert owner.runner.idle
     finally:
         owner.stop()
+
+
+def test_remote_device_becoming_known_retires_the_unknown_device_actor():
+    profile = {"id": "p", "local_device_id": "local", "remote_device_id": None,
+               "contact_id": "c", "active": True, "auto_reconnect": True,
+               "peer_auto_reconnect": True, "effective": {"ready": True, "preferred": True},
+               "manual_carrier_authorized": True}
+    owner = ConnectionRuntime("epoch", lambda *_: Executor(),
+        profiles=lambda: {"profiles": [profile]}, execution=lambda: Execution.AVAILABLE,
+        activate=lambda _: None)
+    try:
+        owner.synchronize()
+        assert [(state.key.remote_device, state.desired) for state in owner.owner.snapshots()] == [
+            (None, Desired.ENABLED)]
+        profile["remote_device_id"] = "remote"
+        owner.synchronize()
+        states = {state.key.remote_device: state for state in owner.owner.snapshots()}
+        # The earlier key keeps a bounded retirement record so a late completion
+        # cannot recreate it; it holds no carrier and accepts no new work.
+        assert set(states) == {None, "remote"}
+        assert states[None].desired is Desired.STOPPED
+        assert states["remote"].desired is Desired.ENABLED
+        assert all(state.carrier is None for state in states.values())
+    finally:
+        owner.stop()
+        owner.wait()
+
+
+def test_repeated_reconciliation_registers_one_actor_per_connection_key():
+    owner, profile = runtime()
+    try:
+        for _ in range(3):
+            owner.synchronize()
+        states = owner.owner.snapshots()
+        assert len(states) == 1 and states[0].key.remote_device == "remote"
+        assert owner.snapshots()["p"]["desired"] == "enabled"
+    finally:
+        owner.stop()
+        owner.wait()
+

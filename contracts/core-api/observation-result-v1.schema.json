@@ -19,8 +19,8 @@
       "required": ["api_major", "api_minor", "stability", "operations", "profiles", "limits"],
       "properties": {
         "api_major": {"const": 1}, "api_minor": {"const": 0}, "stability": {"const": "experimental"},
-        "operations": {"type": "array", "uniqueItems": true, "minItems": 3, "maxItems": 10,
-          "items": {"enum": ["runtime.capabilities", "profile.query", "connection.snapshot", "peer.query", "message.enqueue", "message.query", "message.list", "events.poll", "events.ack", "diagnostics.query"]}},
+        "operations": {"type": "array", "uniqueItems": true, "minItems": 3, "maxItems": 11,
+          "items": {"enum": ["runtime.capabilities", "profile.query", "connection.snapshot", "peer.query", "message.enqueue", "message.query", "message.list", "events.poll", "events.ack", "message.received", "diagnostics.query"]}},
         "profiles": {"$ref": "#/$defs/handles"},
         "limits": {"type": "object", "additionalProperties": false,
           "required": ["frame_bytes", "request_json_depth", "request_json_structural_tokens", "profiles", "connections_per_profile"],
@@ -34,12 +34,15 @@
             "acknowledgment_seconds": {"const": 604800},
             "acknowledgment_keys_per_caller_profile": {"const": 4096},
             "acknowledgment_keys_per_vault": {"const": 65536},
+            "received_scan_count": {"const": 128}, "received_batch_bytes": {"const": 1048576},
             "diagnostic_count": {"const": 256}, "diagnostic_bytes": {"const": 262144}}}
       },
       "allOf": [{"if": {"properties": {"operations": {"contains": {"const": "message.enqueue"}}}},
         "then": {"properties": {"limits": {"required": ["peers_per_profile", "text_utf8_bytes", "idempotency_seconds", "enqueue_keys_per_caller_profile", "enqueue_keys_per_vault"]}}}},
         {"if": {"properties": {"operations": {"contains": {"const": "events.poll"}}}},
          "then": {"properties": {"limits": {"required": ["event_batch_count", "event_batch_bytes", "event_retention_count", "event_retention_seconds", "recovery_scan_count", "cursor_bytes", "acknowledgment_seconds", "acknowledgment_keys_per_caller_profile", "acknowledgment_keys_per_vault"]}}}},
+        {"if": {"properties": {"operations": {"contains": {"const": "message.received"}}}},
+         "then": {"properties": {"limits": {"required": ["received_scan_count", "received_batch_bytes"]}}}},
         {"if": {"properties": {"operations": {"contains": {"const": "diagnostics.query"}}}},
          "then": {"properties": {"limits": {"required": ["diagnostic_count", "diagnostic_bytes"]}}}}]
     },

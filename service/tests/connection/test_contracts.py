@@ -78,6 +78,7 @@ def test_each_designed_operation_has_an_executable_request_vector_and_permission
         "connection.retry": {"connection": handle}, "connection.snapshot": {"connection": handle},
         "message.enqueue": {"recipient": handle, "kind": "text", "text": "Hello"},
         "message.query": {"message": handle}, "message.list": {"cursor": None, "limit": 128},
+        "message.received": {"cursor": None, "limit": 128},
         "events.poll": {"cursor": None, "limit": 128}, "events.ack": {"cursor": handle},
         "diagnostics.query": {"limit": 256},
     }
