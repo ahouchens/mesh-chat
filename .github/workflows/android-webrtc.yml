@@ -12,6 +12,7 @@ on:
       - 'scripts/test_android_webrtc.sh'
       - 'scripts/test_android_signaling.sh'
       - 'scripts/test_android_qualification.sh'
+      - 'scripts/build_desktop_transport_fixture.mjs'
       - 'deploy/cloudflare-signal/**'
       - 'scripts/verify_android_webrtc.py'
       - 'package.json'
@@ -78,7 +79,9 @@ jobs:
         run: python scripts/verify_android_webrtc.py plugins/tauri-plugin-mesh-runtime/android/webrtc-smoke/build/outputs/apk/release/webrtc-smoke-release.apk
       - name: Build WebRTC instrumentation APK
         working-directory: src-tauri/gen/android
-        run: ./gradlew :webrtc-smoke:assembleReleaseAndroidTest -PmeshWebRtcSmoke=true -PmeshRuntimeAbis=x86_64 --no-configuration-cache
+        run: |
+          node ../../../scripts/build_desktop_transport_fixture.mjs
+          ./gradlew :webrtc-smoke:assembleReleaseAndroidTest -PmeshWebRtcSmoke=true -PmeshRuntimeAbis=x86_64 --no-configuration-cache
       - name: Test Chromium interop and Android signalling mailbox recovery
         timeout-minutes: 35
         uses: reactivecircus/android-emulator-runner@v2

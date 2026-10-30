@@ -210,6 +210,19 @@ wrapper. Blocked, missing and unapproved contacts now report
 `contact_not_approved` in the existing reason-list field, consumed by reconnect
 settings and both diagnostic filters. No signed document version changes.
 
+The transitional desktop transport component now owns bounded browser allocations,
+SDP operations, exact callback fencing and packet/control admission. It preserves
+the supplied ICE policy and has no negotiation signatures, authority decisions or
+peer retry timers. Failed lifecycle admission or disposal quarantines the host;
+bulk overflow is counted separately. Its production module is bundled into the
+Android instrumentation APK to exercise both offer roles against native WebRTC.
+Unit tests cover cancellation, deadlines, resource/operation limits, error
+redaction and disposal failure. The instrumentation source compiles locally;
+actual Chromium/JNI execution is a separate CI gate. This is component evidence,
+not Windows WebView2 qualification: private host registration, inherited IPC and
+service-restart adoption are not yet connected to this component. Existing
+renderer compatibility paths remain active until those parity gates pass.
+
 ## Local validation
 
 Private observation contracts live in `contracts/connection/`; experimental

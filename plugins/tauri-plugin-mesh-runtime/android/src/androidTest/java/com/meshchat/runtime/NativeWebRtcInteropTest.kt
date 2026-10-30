@@ -66,6 +66,8 @@ class NativeWebRtcInteropTest {
     @Test(timeout = 180_000) fun chromiumOfferSurvivesEarlyIceFailureDuringManualAnswerExchange() =
         exchange(nativeOffers = false, earlyIceFailure = true)
     @Test(timeout = 180_000) fun nativeOfferCanConnectToChromiumWithReconnectControl() = exchange(nativeOffers = true)
+    @Test(timeout = 180_000) fun productionDesktopTransportOffersToNative() = exchange(nativeOffers = false, desktopTransport = true)
+    @Test(timeout = 180_000) fun productionDesktopTransportAnswersNative() = exchange(nativeOffers = true, desktopTransport = true)
     @Test(timeout = 180_000) fun repeatedChromiumMediaCallsPreserveNativeMessaging() =
         exchange(nativeOffers = false, repeatedMedia = true)
     @Test(timeout = 180_000) fun repeatedChromiumMediaCallsPreserveNativeOfferedMessaging() =
@@ -255,7 +257,49 @@ class NativeWebRtcInteropTest {
         }
     }
 
-    private fun exchange(nativeOffers: Boolean, earlyIceFailure: Boolean = false, repeatedMedia: Boolean = false) {
+    private fun desktopTransportDocument(control: String): String {
+        val bundle = instrumentation.context.assets.open("desktop-transport.js").bufferedReader().use { it.readText() }
+        return """
+            <script>$bundle</script>
+            <script>
+            const report = (kind, value) => TestResults.result(kind, String(value));
+            const decode = text => Uint8Array.from(atob(text), character => character.charCodeAt(0));
+            const states = {};
+            const host = new MeshDesktopTransport.DesktopTransport(event => {
+              if (event.event === 'message') report('mesh-reticulum', Array.from(decode(event.data)).join(','));
+              if (event.event === 'control') {
+                const separator = event.data.indexOf(':');
+                report(event.data.slice(0, separator), new TextDecoder().decode(decode(event.data.slice(separator + 1))));
+              }
+              if (event.event === 'channel') {
+                const [label, state] = event.data.split(':'); states[label] = state;
+              }
+              return true;
+            });
+            const options = {resource:'instrumented-browser-peer', ice:{iceServers:[], iceTransportPolicy:'all'},
+              channels:[{label:'mesh-reticulum',binary:true,ordered:true},{label:'$control',binary:false,ordered:true}]};
+            window.offer = async () => report('sdp', (await host.createOffer(options)).sdp);
+            window.answer = async sdp => report('sdp', (await host.acceptOffer(options, sdp)).sdp);
+            window.finish = sdp => host.applyAnswer(options.resource, sdp);
+            window.probe = async () => {
+              const deadline = Date.now() + 20000;
+              while (host.inspect(options.resource)?.data_channel_state !== 'open' || states['$control'] !== 'open') {
+                if (Date.now() > deadline) throw new Error('Production browser transport did not open');
+                await new Promise(resolve => setTimeout(resolve, 50));
+              }
+              if (!host.send(options.resource, new Uint8Array([9,8,7])) || !host.sendControl(options.resource, '$control', 'probe')) {
+                throw new Error('Production browser transport refused traffic');
+              }
+              report('sent', 'yes');
+            };
+            window.pc = {close: () => host.closeAll()};
+            report('ready', 'yes');
+            </script>
+        """.trimIndent()
+    }
+
+    private fun exchange(nativeOffers: Boolean, earlyIceFailure: Boolean = false, repeatedMedia: Boolean = false,
+                         desktopTransport: Boolean = false) {
         val id = "interop-${UUID.randomUUID()}"
         val control = if (nativeOffers) "meshchat-reconnect" else "mesh-onboarding"
         val results = BrowserResults()
@@ -299,7 +343,7 @@ class NativeWebRtcInteropTest {
                 browser.settings.javaScriptEnabled = true
                 if (repeatedMedia) browser.settings.mediaPlaybackRequiresUserGesture = false
                 browser.addJavascriptInterface(results, "TestResults")
-                browser.loadDataWithBaseURL("https://meshchat.invalid/", """
+                browser.loadDataWithBaseURL("https://meshchat.invalid/", if (desktopTransport) desktopTransportDocument(control) else """
                     <script>
                     const channels = {};
                     const report = (k,v) => TestResults.result(k, String(v));
