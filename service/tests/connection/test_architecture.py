@@ -53,3 +53,31 @@ def test_native_adapter_and_policy_cannot_import_the_concrete_service():
                 assert node.module not in {"service", "mesh_chat.service"}, path
                 if node.module in {None, "mesh_chat"}:
                     assert all(alias.name != "service" for alias in node.names), path
+
+
+def test_received_message_index_is_pure_and_has_no_ambient_io():
+    allowed = {"errors", "models", "record_projection"}
+    forbidden_calls = {"open", "print", "sleep", "monotonic", "time", "random",
+                       "uuid4", "Thread", "socket", "exec", "eval", "__import__"}
+    tree = ast.parse((ROOT.parent / "received_messages.py").read_text(encoding="utf-8"))
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            assert all(alias.name in allowed for alias in node.names)
+        elif isinstance(node, ast.ImportFrom):
+            assert node.module in allowed, node.module
+        elif isinstance(node, ast.Call):
+            function = node.func
+            called = function.id if isinstance(function, ast.Name) else getattr(function, "attr", "")
+            assert called not in forbidden_calls, called
+
+
+def test_application_facade_cannot_import_policy_native_or_workspace_services():
+    forbidden = {"service", "workspace_service", "native_webrtc_service",
+                 "native_webrtc_control", "reducer", "connection"}
+    for path in (ROOT.parent / "core_api").glob("*.py"):
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+            if isinstance(node, ast.Import):
+                assert all(alias.name not in forbidden for alias in node.names), path
+            elif isinstance(node, ast.ImportFrom):
+                assert node.module not in forbidden, (path, node.module)
+                assert not (node.module or "").startswith("mesh_chat"), (path, node.module)
