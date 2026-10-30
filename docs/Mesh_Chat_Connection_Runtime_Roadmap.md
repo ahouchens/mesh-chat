@@ -403,7 +403,9 @@ may run. Main-profile chat, workspace traffic and application receipts cannot
 cross it. The existing durable outbox retains all retry decisions.
 
 The parent revalidates exact resource, signed peer, current execution and contact
-authority before each exchange and independently verifies inbound LXMF signatures.
+authority before each exchange, outbound packet and completion event, and
+independently verifies inbound LXMF signatures. Shutdown during a host send
+discards the remaining packets and events in that worker batch.
 Lock, shutdown, expiry, cancellation and revocation stop the scope. Endpoint
 status cannot claim an application receipt. Adoption waits for contact-handshake
 completion and current authorization, and retires the isolated scope before
@@ -413,11 +415,13 @@ never approves a contact.
 The separate `windows_packaged_webview2_explicit_pairing` scenario starts with no
 contacts, receives an invitation without granting authority, explicitly accepts
 it, receives the signed contact request, explicitly approves, and verifies both
-approved states. Both sides then opt into direct-IP messaging and establish a
-fresh authorized carrier for bidirectional messages and authenticated receipts.
-It does not yet qualify continuous transfer of that initial pending carrier,
-workspace pairing, pairing cancellation/restart faults or Android bootstrap
-integration. Its report is required separately from the pre-approved crash test,
+approved states without granting direct-IP messaging. Both sides then opt into
+direct-IP messaging and transfer the initial pending carrier to the authorized
+messaging owner for bidirectional messages and authenticated receipts. Private
+host operation counts on both sides must show no replacement negotiation or
+closure during that transfer. It does not yet qualify workspace pairing,
+pairing cancellation/restart faults or Android bootstrap integration.
+Its report is required separately from the pre-approved crash test,
 with a distinct run identity and the same tested binaries.
 
 `connection-qualification.yml` is the common PR, main-branch and merge-queue

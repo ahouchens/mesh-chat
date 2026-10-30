@@ -30,6 +30,14 @@ def test_pairing_and_preapproved_recovery_are_distinct_qualification_levels():
     with pytest.raises(ValueError): gate["verify_pairing_report"](record(), "a" * 40, "b" * 40)
 
 
+def test_pairing_requires_continuous_transfer_evidence():
+    value = {**record(), "evidence_level": gate["PAIRING_LEVEL"],
+             "checks": ["explicit_pairing_without_preapproved_contacts", "paired_bidirectional_authenticated_receipts"],
+             "counts": dict(gate["PAIRING_COUNTS"])}
+    with pytest.raises(ValueError):
+        gate["verify_pairing_report"](value, "a" * 40, "b" * 40)
+
+
 @pytest.mark.parametrize("fault", ["source", "tree", "version", "passed", "level", "missing", "duplicate",
                                   "count", "boolean_count", "digest", "build", "run", "duration", "extra"])
 def test_incomplete_or_unbound_execution_is_not_qualification(fault):

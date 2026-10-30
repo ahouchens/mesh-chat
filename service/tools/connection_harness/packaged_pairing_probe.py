@@ -38,16 +38,28 @@ def exercise(controller, directory):
         controller.wait(lambda: all(any(contact["trust"] == "approved" for contact in controller.call(slot, "snapshot")["contacts"])
             for slot in range(2)))
         controller.checks.append("explicit_pairing_without_preapproved_contacts")
+        if any(controller.call(slot, "reconnect_path_status", contact_id=fixture[2])["ready"]
+                for slot, fixture in enumerate(fixtures)):
+            raise AssertionError("Pairing granted direct-IP messaging without consent")
+        negotiations = [controller.action(slot, "counts") for slot in range(2)]
+        if (negotiations[0].get("createOffer") != 1 or negotiations[0].get("applyAnswer") != 1
+                or negotiations[1].get("acceptOffer") != 1):
+            raise AssertionError("Host did not observe the pairing negotiation")
         # Both people separately opt into direct-IP messaging after approval.
-        # Replacing the limited onboarding scope preserves that consent boundary.
-        for slot, session in enumerate(("manual-peer-zero", "manual-peer-one")):
-            controller.call(slot, "native_webrtc_close", session_id=session)
-        connect(controller, fixtures)
+        for slot, (_, _, contact_id) in enumerate(fixtures):
+            controller.call(slot, "reconnect_consent_set", contact_id=contact_id,
+                auto_reconnect=False, allow_direct_ip_disclosure=True)
         controller.phase = "approved_messaging"
         ready(controller, fixtures)
         exchange_message(controller, fixtures, 0)
         exchange_message(controller, fixtures, 1)
         controller.checks.append("paired_bidirectional_authenticated_receipts")
+        for slot in range(2):
+            counts = controller.action(slot, "counts")
+            for operation in ("createOffer", "acceptOffer", "applyAnswer", "close"):
+                if counts.get(operation, 0) != negotiations[slot].get(operation, 0):
+                    raise AssertionError("Pairing replaced its initial carrier")
+        controller.checks.append("continuous_pairing_carrier_transfer")
         for slot in range(2): controller.call(slot, "shutdown")
     finally:
         for slot in range(2): controller.action(slot, "stop")

@@ -92,6 +92,8 @@ class PendingContactCarrier:
             raise
 
     def _event(self, event):
+        if not self.current():
+            return
         service = self.service
         if event.get("kind") == "inbound":
             packed = base64.b64decode(event["packed"], validate=True)
@@ -138,11 +140,12 @@ class PendingContactCarrier:
             if not self.current(): return False
             self.ready = result["recipient_ready"]
             for encoded in result["packets"]:
+                if not self.current(): return False
                 if not isinstance(encoded, str) or not 2 <= len(encoded) <= 1032:
                     raise ValidationError("Contact bootstrap packet is invalid")
                 self.service._native_webrtc_host().send(self.physical, bytes.fromhex(encoded))
             for event in result["events"]: self._event(event)
-        return True
+        return self.current()
 
     def _run(self):
         try:

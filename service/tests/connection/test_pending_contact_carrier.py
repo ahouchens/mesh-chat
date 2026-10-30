@@ -70,6 +70,36 @@ def test_shutdown_never_reopens_vault_authority(carrier):
     assert not value.current()
 
 
+def test_shutdown_during_packet_send_stops_remaining_packets_and_events(carrier):
+    value, service, _ = carrier
+    service._dispatch_lock = threading.RLock()
+    sent = []
+
+    def send(physical, packet):
+        sent.append((physical, packet))
+        service._shutdown.set()
+
+    service._native_webrtc_host = lambda: SimpleNamespace(send=send)
+    service._on_native_status_locked = lambda *_: pytest.fail("Status applied after shutdown")
+    value._sent["control"] = "contact_accept"
+    value._worker = SimpleNamespace(request=lambda *_args, **_kwargs: {
+        "packets": ["01", "02"], "recipient_ready": True,
+        "events": [{"kind": "status", "logical_id": "control", "state": "received_by_endpoint", "native_id": "x"}],
+    })
+    assert value._exchange() is False
+    assert sent == [("physical", b"\x01")]
+    assert not value.transfer_ready
+
+
+def test_shutdown_discards_a_completed_control_event(carrier):
+    value, service, _ = carrier
+    value._sent["control"] = "contact_accept"
+    service._shutdown.set()
+    service._on_native_status_locked = lambda *_: pytest.fail("Status applied after shutdown")
+    value._event({"kind": "status", "logical_id": "control", "state": "received_by_endpoint", "native_id": "x"})
+    assert not value.transfer_ready
+
+
 def test_execution_denial_stops_pending_contact_transport(carrier):
     value, service, _ = carrier
     service._workspace_lifecycle_state = lambda: {"state": "suspended"}
