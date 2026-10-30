@@ -292,7 +292,8 @@ def test_unreadable_interface_status_is_unknown_and_keeps_outbox_evidence():
     assert "private-network-details" not in json.dumps(report)
 
 
-def test_reconnect_summary_reports_readiness_and_consent_without_tokens_or_mutations(monkeypatch):
+@pytest.mark.parametrize("trust", ["approved", "blocked", None])
+def test_reconnect_summary_reports_readiness_and_consent_without_tokens_or_mutations(monkeypatch, trust):
     from mesh_chat.reconnect_service import ReconnectServiceMixin
     from mesh_chat import reconnect_service
     monkeypatch.setattr(reconnect_service, "_now", lambda: 2000)
@@ -301,6 +302,8 @@ def test_reconnect_summary_reports_readiness_and_consent_without_tokens_or_mutat
         pass
     service = Service()
     service.store = Store()
+    if trust is not None:
+        service.store.put("contact", secret, {"trust": trust, "display_name": secret})
     service._call_settings = SimpleNamespace(signal_mailbox_url=secret, turn_url=None,
         turn_broker_url=None, turn_broker_consent=False)
     expired = {"id": secret, "contact_id": secret, "state": secret,
@@ -320,7 +323,8 @@ def test_reconnect_summary_reports_readiness_and_consent_without_tokens_or_mutat
     before = dict(service.store.rows)
     current = diagnostics.reconnect_state(service)
     assert current["profiles"] == 2
-    assert current["profiles_ready"] == 1
+    assert current["profiles_ready"] == (1 if trust == "approved" else 0)
+    assert current["reasons"].get("contact_not_approved", 0) == (0 if trust == "approved" else 2)
     assert current["profiles_with_mailbox"] == 1
     assert current["mailbox_configured"] is True
     assert current["local_consent"] == current["peer_consent"] == 1

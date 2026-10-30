@@ -638,7 +638,7 @@ def test_delayed_adopted_cleanup_cannot_close_reused_logical_session():
     assert "same-session" in service._native_webrtc_live
 
 
-@pytest.mark.parametrize("fault", ["missing", "offline", "unregistered", "network_absent", "equal_replacement"])
+@pytest.mark.parametrize("fault", ["missing", "offline", "unregistered", "network_absent", "equal_replacement", "retiring"])
 def test_native_inspection_rejects_stale_bridge_registration(fault, monkeypatch):
     from types import SimpleNamespace
     service, _ = runtime()
@@ -654,6 +654,7 @@ def test_native_inspection_rejects_stale_bridge_registration(fault, monkeypatch)
     if fault == "unregistered": RNS.Transport.interfaces.clear()
     if fault == "network_absent": service.network = None
     if fault == "equal_replacement": RNS.Transport.interfaces[:] = [SimpleNamespace(online=True)]
+    if fault == "retiring": service._native_webrtc_live.discard("live-carrier")
     assert not service.native_webrtc_stats("live-carrier")["attached"]
     received = []
     service.webrtc_packet = lambda *_: received.append(True)

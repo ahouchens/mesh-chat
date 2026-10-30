@@ -15,6 +15,7 @@ REQUIRED_SUITES = (
     "service/tests/test_native_webrtc_events.py",
     "service/tests/test_reconnect_scope.py",
     "service/tests/test_reconnect_service.py",
+    "service/tests/test_connection_diagnostics.py",
 )
 
 
