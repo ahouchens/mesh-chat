@@ -110,7 +110,7 @@ def test_desktop_close_exits_and_second_launch_restores_main_window() -> None:
     assert 'tauri::async_runtime::spawn(async move {' in source
     deadline = re.search(
         r"std::thread::spawn\(move \|\| \{"
-        r".*?std::thread::sleep\(Duration::from_secs\(2\)\);"
+        r"\s*std::thread::sleep\(Duration::from_secs\(2\)\);"
         r".*?retire_service_child\(&deadline_state\);"
         r".*?deadline_app\.exit\(0\);"
         r".*?\}\);",
@@ -122,7 +122,7 @@ def test_desktop_close_exits_and_second_launch_restores_main_window() -> None:
     assert 'let _ = request(' in source
     assert '.child\n        .try_lock()' in source
     assert 'sidecar_pid: Arc<Mutex<Option<u32>>>' in source
-    assert 'terminate_windows_process_tree(pid);' in source
+    assert 'terminate_windows_process_tree(self.pid);' in source
     assert '.join("taskkill.exe")' in source
     assert '.arg("/PID")' in source
     assert '.arg("/T")' in source
