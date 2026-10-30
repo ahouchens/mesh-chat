@@ -854,6 +854,24 @@ private import. It is not wired into CI, no package is published, no Kotlin
 client or production CLI exists, and no independent consumer uses it. It does
 not qualify M5.
 
+## Experimental Python client and CLI
+
+`core_api/client.py` is a strict synchronous client for the same frames: it
+negotiates capabilities, checks the response version and correlation, raises a
+typed error carrying the stable code and retry hint, and treats malformed or
+truncated responses as protocol failures. `core_api/cli.py` exposes
+`capabilities`, `profile`, `received`, `events`, `enqueue`, `ack` and
+`diagnostics` over a host-owned Windows pipe, prints selected JSON and exits
+non-zero on a typed failure without raising. `core_api/pipe_client.py` is the
+minimal blocking Windows transport; it never listens and never starts a runtime.
+
+Ten portable tests cover negotiation, typed failures, malformed and misrouted
+responses, helper parameters and idempotency keys, CLI output and error mapping,
+and command rejection. One Windows test runs the CLI against the real endpoint
+through its pipe. This is not a packaged console script: there is no installed
+entry point, no versioned distribution, no Android transport and no support
+matrix.
+
 ## Remaining work checklist
 
 Reconciled against the specification's invariant list, SC01-SC26 and definition of
@@ -913,6 +931,8 @@ M5 - supported reusable core
       their idempotency/retention semantics.
 - [x] Experimental TypeScript client over the frame contract (component only; no
       packaging, CI conformance, Kotlin client or consumer).
+- [x] Experimental Python client and Windows CLI over the host pipe (component
+      only; no packaged console entry point).
 - [ ] Versioned TypeScript/Kotlin SDKs, production CLI and the supported
       compatibility matrix.
 - [ ] Mesh Chat messaging routed through the supported facade.

@@ -6,6 +6,7 @@ on the Linux runners. It is executed on Windows before a push.
 
 import ctypes
 from ctypes import wintypes
+import io
 import json
 import os
 import time
@@ -236,3 +237,22 @@ def test_client_budget_is_bounded():
         with pytest.raises(ValueError):
             PipeEndpoint(pipe_name(), allowed_images=(current_image(),),
                          caller="mesh-chat-desktop", permissions=("observe",), max_clients=value)
+
+def test_cli_queries_the_endpoint_over_the_host_pipe(service):
+    from mesh_chat.core_api.cli import run
+
+    name = pipe_name()
+    server = endpoint(name)
+    server.start(service)
+    try:
+        client = connect(name)
+        out, err = io.StringIO(), io.StringIO()
+        try:
+            assert run(["--pipe", name, "capabilities"], client, out, err) == 0
+        finally:
+            client.close()
+        result = json.loads(out.getvalue())
+        assert "message.received" in result["operations"]
+        assert err.getvalue() == ""
+    finally:
+        server.close()
