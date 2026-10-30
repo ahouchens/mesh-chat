@@ -264,6 +264,14 @@ handle cleanup remain available. Regression tests cover stale retirement,
 delayed disposal and blocked writers. This fixes host cleanup isolation; it does
 not implement surviving-carrier adoption.
 
+The native WebRTC application adapter is now separated from the main service
+class in `native_webrtc_service.py`. Its 26 allocation, callback, bridge and
+retirement methods retain their existing behavior and command signatures.
+It composes the existing signed control mixin and depends on the native host,
+Reticulum interface and current owner lease. It does not import the concrete
+service or move lifecycle decisions out of the reducer. Legacy compatibility
+paths remain until the same M2 parity gates pass.
+
 The experimental Windows host supplies a read-only UI routing hint before the
 application loads. Manual pairing then uses the existing service transport
 commands rather than allocating a second renderer peer. This hint is not a host

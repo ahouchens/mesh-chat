@@ -497,7 +497,7 @@ def test_failed_native_close_keeps_exact_handle_for_retry_without_allowing_reuse
 
 def test_old_bridge_send_cannot_reach_a_reused_public_session(monkeypatch):
     from types import SimpleNamespace
-    from mesh_chat import service as service_module
+    from mesh_chat import native_webrtc_service as adapter_module
     service, host = runtime()
     senders, sent = [], []
     class Interface:
@@ -508,7 +508,7 @@ def test_old_bridge_send_cannot_reach_a_reused_public_session(monkeypatch):
             senders.append(send)
         def detach(self):
             pass
-    monkeypatch.setattr(service_module, "WebRTCInterface", Interface)
+    monkeypatch.setattr(adapter_module, "WebRTCInterface", Interface)
     monkeypatch.setattr(RNS.Transport, "interfaces", [])
     service.network = SimpleNamespace(reticulum=SimpleNamespace(
         _add_interface=lambda interface, **_: RNS.Transport.interfaces.append(interface)), reannounce=lambda: None)
@@ -527,7 +527,7 @@ def test_old_bridge_send_cannot_reach_a_reused_public_session(monkeypatch):
 @pytest.fixture
 def startup_bridge(monkeypatch):
     from types import SimpleNamespace
-    from mesh_chat import service as service_module
+    from mesh_chat import native_webrtc_service as adapter_module
     service, host = runtime()
     received, announcements = [], []
     class Interface:
@@ -541,7 +541,7 @@ def startup_bridge(monkeypatch):
             if packet == b"bad":
                 raise ValueError("Malformed packet")
             received.append(packet)
-    monkeypatch.setattr(service_module, "WebRTCInterface", Interface)
+    monkeypatch.setattr(adapter_module, "WebRTCInterface", Interface)
     monkeypatch.setattr(RNS.Transport, "interfaces", [])
     service.network = SimpleNamespace(reticulum=SimpleNamespace(
         _add_interface=lambda interface, **_: RNS.Transport.interfaces.append(interface)),
@@ -664,7 +664,7 @@ def test_native_inspection_rejects_stale_bridge_registration(fault, monkeypatch)
 
 def test_native_bridge_repair_keeps_the_carrier_but_fences_old_interface_sends(monkeypatch):
     from types import SimpleNamespace
-    from mesh_chat import service as service_module
+    from mesh_chat import native_webrtc_service as adapter_module
     service, host = runtime()
     senders, sent = [], []
     class Interface:
@@ -675,7 +675,7 @@ def test_native_bridge_repair_keeps_the_carrier_but_fences_old_interface_sends(m
             senders.append(send)
         def detach(self):
             self.online = False
-    monkeypatch.setattr(service_module, "WebRTCInterface", Interface)
+    monkeypatch.setattr(adapter_module, "WebRTCInterface", Interface)
     monkeypatch.setattr(RNS.Transport, "interfaces", [])
     service.network = SimpleNamespace(reticulum=SimpleNamespace(
         _add_interface=lambda interface, **_: RNS.Transport.interfaces.append(interface)), reannounce=lambda: None)

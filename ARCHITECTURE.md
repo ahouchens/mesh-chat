@@ -13,6 +13,12 @@ the [experimental application API design](contracts/core-api/README.md). Public
 schemas describe proposed requests; they do not grant caller authority or expose
 the existing private transport commands.
 
+The private `native_webrtc_service.py` adapter groups native allocation,
+callback ingress, exact-resource retirement and Reticulum bridge routing.
+`MeshChatService` composes it with signed control and domain capabilities;
+connection policy remains in the reducer/supervisor. The adapter retains the
+legacy compatibility behavior until shared-policy parity is qualified.
+
 ![Mesh Chat architecture: renderer, Tauri shell, Python service, Reticulum/LXMF with optional I2P, protected profile, and network paths](docs/architecture/overview.png)
 
 ## Durable connectivity implementation boundary

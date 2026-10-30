@@ -38,3 +38,17 @@ def test_workspace_writes_cannot_bypass_the_connection_authority_boundary():
             target = node.func.value
             assert not (isinstance(target, ast.Attribute) and target.attr == "store"
                         and isinstance(target.value, ast.Name) and target.value.id == "self"), node.lineno
+
+
+def test_native_adapter_and_policy_cannot_import_the_concrete_service():
+    paths = [ROOT.parent / "native_webrtc_service.py", *ROOT.rglob("*.py")]
+    for path in paths:
+        if path.name == "composition.py":
+            continue
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+            if isinstance(node, ast.Import):
+                assert all(alias.name != "mesh_chat.service" for alias in node.names), path
+            elif isinstance(node, ast.ImportFrom):
+                assert node.module not in {"service", "mesh_chat.service"}, path
+                if node.module in {None, "mesh_chat"}:
+                    assert all(alias.name != "service" for alias in node.names), path
