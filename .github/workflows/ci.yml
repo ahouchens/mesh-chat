@@ -99,6 +99,9 @@ jobs:
       - name: Qualify initialized packaged service shutdown and process recovery
         run: python scripts/test_packaged_lifecycle.py --expected-source "${{ github.sha }}"
       - run: cargo test --locked --manifest-path src-tauri/Cargo.toml --lib
+      - name: Qualify the private core API pipe endpoint
+        run: python -m pytest service/tests/test_core_pipe_windows.py -q
+
       - name: Check experimental shared WebView host
         run: cargo test --locked --manifest-path src-tauri/Cargo.toml --lib --features experimental-shared-webview
       - name: Build isolated WebView2 qualification executable
