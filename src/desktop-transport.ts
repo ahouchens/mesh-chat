@@ -290,6 +290,7 @@ export class DesktopTransport {
   }
 
   private bounded<T>(allocation: Allocation, operation: () => Promise<T>): Promise<T> {
+    if (allocation.operations > 0) return Promise.reject(new Error("transport_resource_busy"));
     if (this.pendingOperations >= 16) return Promise.reject(new Error("transport_capacity"));
     this.pendingOperations++;
     allocation.operations++;

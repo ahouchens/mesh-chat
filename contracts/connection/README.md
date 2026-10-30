@@ -76,7 +76,12 @@ epochs cannot retire the current channel.
 Frames are limited to 256 KiB, with stricter SDP/control/packet bounds at the
 adapter. There are at most 16 outstanding requests and one private writer.
 Requests expire after 30 seconds, including time waiting on a blocked writer;
-browser operations have a 25-second deadline. Unknown outcomes quarantine the
+browser operations have a 25-second deadline. Conflicting SDP operations on one
+browser peer are rejected before
+native dispatch while its current operation is pending; they are not queued or
+retried by the adapter. Independent peers share the 16-operation limit. Exact
+close/reset can interrupt pending work, and a rejected conflict cannot retire
+the active allocation. The private error reply remains redacted. Unknown outcomes quarantine the
 channel and enqueue reset after any in-flight write. Pending waiters fail,
 old replies cannot revive them, and further admission is denied. Reset is not
 proof of native disposal when the pipe is broken: the containing platform host

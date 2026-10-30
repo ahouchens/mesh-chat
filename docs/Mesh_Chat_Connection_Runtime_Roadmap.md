@@ -267,6 +267,11 @@ and both Android Chromium offer roles cover this port. This is a prerequisite,
 not restart adoption: service exit still disposes the transport window. Protected
 binding persistence, durable invalidation and trusted rebinding remain open.
 
+Conflicting browser SDP operations now have one admitted operation per peer.
+Overlap is rejected before native dispatch without retiring the active resource;
+different peers retain the shared bounded operation budget. Exact retirement can
+still interrupt gathering or answer application. No adapter retry queue is added.
+
 Windows process retirement now captures the originating PID and detaches its
 transport host, native host and pending requests before a replacement is
 published. Delayed cleanup cannot retire the replacement. The lifecycle guard

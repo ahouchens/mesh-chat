@@ -110,9 +110,9 @@ it("rejects an observation if an answer operation overlaps its hash calculation"
 it("uses the existing native-operation budget for inventory work", async () => {
   vi.stubGlobal("crypto", webcrypto);
   const { host, peers } = fixture();
-  await host.createOffer(options);
-  peers[0].setRemoteDescription = () => new Promise<void>(() => {});
-  const pending = Array.from({ length: 16 }, () => host.applyAnswer(options.resource, sdp));
+  await Promise.all(Array.from({ length: 16 }, (_, index) => host.createOffer({ ...options, resource: `physical-${index}` })));
+  for (const peer of peers) peer.setRemoteDescription = () => new Promise<void>(() => {});
+  const pending = peers.map((_, index) => host.applyAnswer(`physical-${index}`, sdp));
   const rejected = pending.map(operation => expect(operation).rejects.toThrow("transport_retired"));
   await expect(host.inventory()).rejects.toThrow("transport_capacity");
   host.closeAll();
@@ -241,21 +241,40 @@ it("redacts peer construction failures before reserving a resource", async () =>
   expect(host.inspect(options.resource)).toBeNull();
 });
 
-it("bounds answer work and cancels all pending operations on retirement", async () => {
+it("rejects conflicting answer work without queuing or retiring the current operation", async () => {
   vi.useFakeTimers();
   const { host, peers } = fixture();
   await host.createOffer(options);
   peers[0].setRemoteDescription = vi.fn(() => new Promise<void>(() => {}));
-  const pending = Array.from({ length: 16 }, () => host.applyAnswer(options.resource, sdp));
-  const rejected = pending.map(operation => expect(operation).rejects.toThrow("transport_retired"));
+  const pending = host.applyAnswer(options.resource, sdp);
+  const rejected = expect(pending).rejects.toThrow("transport_retired");
   await vi.advanceTimersByTimeAsync(0);
-  await expect(host.applyAnswer(options.resource, sdp)).rejects.toThrow("transport_capacity");
-  expect(peers[0].setRemoteDescription).toHaveBeenCalledTimes(16);
+  await expect(host.applyAnswer(options.resource, sdp)).rejects.toThrow("transport_resource_busy");
+  expect(peers[0].setRemoteDescription).toHaveBeenCalledTimes(1);
+  expect(host.inspect(options.resource)).not.toBeNull();
   host.close(options.resource);
-  await Promise.all(rejected);
+  await rejected;
   expect(vi.getTimerCount()).toBe(0);
   await host.createOffer({ ...options, resource: "replacement" });
   host.closeAll();
+});
+
+it("rejects answer application during gathering and admits it after completion", async () => {
+  vi.useFakeTimers();
+  const { host, peers } = fixture();
+  const gathering = host.createOffer(options);
+  peers[0].iceGatheringState = "gathering";
+  const remote = vi.spyOn(peers[0], "setRemoteDescription");
+  await vi.advanceTimersByTimeAsync(0);
+  await expect(host.applyAnswer(options.resource, sdp)).rejects.toThrow("transport_resource_busy");
+  expect(remote).not.toHaveBeenCalled();
+  peers[0].iceGatheringState = "complete";
+  peers[0].dispatchEvent(new Event("icegatheringstatechange"));
+  await gathering;
+  await host.applyAnswer(options.resource, sdp);
+  expect(remote).toHaveBeenCalledTimes(1);
+  host.closeAll();
+  expect(vi.getTimerCount()).toBe(0);
 });
 
 it("accepts only negotiated channel purposes on the answering peer", async () => {
