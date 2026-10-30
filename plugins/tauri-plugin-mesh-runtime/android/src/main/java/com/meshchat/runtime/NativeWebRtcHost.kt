@@ -22,8 +22,6 @@ import java.nio.ByteBuffer
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
-import java.util.concurrent.Executors
-import java.util.concurrent.RejectedExecutionException
 import java.util.concurrent.atomic.AtomicReference
 import java.util.concurrent.atomic.AtomicLong
 
@@ -53,6 +51,7 @@ object NativeWebRtcHost {
     private class Session(
         val pc: PeerConnection,
         val role: String,
+        val id: String,
     ) {
         val channels = ConcurrentHashMap<String, DataChannel>()
         @Volatile var expectedChannels: Set<String> = emptySet()
@@ -60,9 +59,7 @@ object NativeWebRtcHost {
         @Volatile var closed = false
         val receivedPackets = AtomicLong()
         val receivedControls = AtomicLong()
-        val callbacks = Executors.newSingleThreadExecutor { runnable ->
-            Thread(runnable, "mesh-webrtc-channel-events").apply { isDaemon = true }
-        }
+        val callbacks = NativeCallbackQueue({ notifyPython("overflow", id, "") })
     }
 
     private val sessions = ConcurrentHashMap<String, Session>()
@@ -119,7 +116,7 @@ object NativeWebRtcHost {
                 return error("native_webrtc_missing_data_channel")
             }
             val pc = createPeerConnection(factory, iceJson, sessionId, "offer")
-            val session = Session(pc, "offer")
+            val session = Session(pc, "offer", sessionId)
             sessions[sessionId] = session
             synchronized(session) {
                 for (spec in specs) {
@@ -167,7 +164,7 @@ object NativeWebRtcHost {
             }
             val expected = specs.map { it.label }.toSet()
             val pc = createPeerConnection(factory, iceJson, sessionId, "answer")
-            val session = Session(pc, "answer")
+            val session = Session(pc, "answer", sessionId)
             sessions[sessionId] = session
             session.expectedChannels = expected
             synchronized(session) {
@@ -256,7 +253,7 @@ object NativeWebRtcHost {
         session.closed = true
         // Retire routing immediately. Disposal may wait for an in-flight SDP
         // operation, so it must never block Android's UI/Service thread.
-        session.callbacks.execute {
+        session.callbacks.close {
           synchronized(session) {
             for (channel in session.channels.values) {
                 // Fence callbacks before disposing their native pointer.
@@ -268,7 +265,6 @@ object NativeWebRtcHost {
             try { session.pc.dispose() } catch (_: Throwable) { }
           }
         }
-        session.callbacks.shutdown()
         notifyPython("closed", sessionId, "")
     }
 
@@ -449,15 +445,10 @@ object NativeWebRtcHost {
 
     private fun enqueueChannelEvent(session: Session, discarded: () -> Unit = {}, block: () -> Unit) {
         if (session.closed) { discarded(); return }
-        try {
-            session.callbacks.execute {
-                synchronized(session) {
-                    if (!session.closed) block() else discarded()
-                }
+        session.callbacks.submit(discarded) {
+            synchronized(session) {
+                if (!session.closed) block() else discarded()
             }
-        } catch (_: RejectedExecutionException) {
-            // Closing owns disposal; queued state callbacks have no JNI work.
-            discarded()
         }
     }
 

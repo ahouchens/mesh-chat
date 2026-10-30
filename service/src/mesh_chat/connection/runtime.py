@@ -156,6 +156,12 @@ class ConnectionRuntime:
 
     def step(self):
         self._completions()
+        if self.runner.stalled():
+            self.quarantine()
+        if self._failure == "adapter_quarantined":
+            self.fence()
+            self._effects()
+            return
         self.synchronize()
         now = self.now()
         if now >= self._retry_cleanup_at:
@@ -165,9 +171,15 @@ class ConnectionRuntime:
         self.owner.tick(now, jitter=self._random())
         self._effects()
 
+    def quarantine(self):
+        """Private host fault: only a new runtime may restore adapter authority."""
+        self._failure = "adapter_quarantined"
+        self.fence()
+
     def snapshots(self):
         now = self.now()
-        return {state.key.profile_id: snapshot(state, now) for state in self.owner.snapshots()}
+        return {state.key.profile_id: {**snapshot(state, now), "runtime_failure": self._failure}
+                for state in self.owner.snapshots()}
 
     def start(self):
         if self._thread is not None:

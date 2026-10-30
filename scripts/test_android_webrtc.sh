@@ -17,18 +17,23 @@ timeout 15s adb shell pm grant "$app_id" android.permission.POST_NOTIFICATIONS
 result=0
 # RNS, CPython and WebView are process-wide runtimes. Each direction starts
 # with a fresh instrumentation process, just as a fresh app launch does.
-for method in chromiumOfferCanBeAcceptedThroughTheRealPythonBridge chromiumOfferSurvivesEarlyIceFailureDuringManualAnswerExchange nativeOfferCanConnectToChromiumWithReconnectControl repeatedChromiumMediaCallsPreserveNativeMessaging repeatedChromiumMediaCallsPreserveNativeOfferedMessaging backgroundRuntimeCanInitializeNativeWebRtc backgroundDefaultResumesAfterUnlockAndPreservesAnExplicitOffChoice queuedAvailabilityStartHonorsStopWithoutCrashingOrOpeningTheRuntime optedInServiceRestoresAndKeepsNativeTrafficWhileActivityIsStopped; do
+run_test() {
+  local method="$1" test_class="${2:-NativeWebRtcInteropTest}"
   timeout 15s adb shell am force-stop "$app_id"
   # Run the already-built APKs directly so a Gradle/UTP hang cannot conceal
   # instrumentation output or prevent the next scenario from running.
   if ! timeout --signal=INT --kill-after=10s 240s adb shell am instrument -w -r \
-      -e class "com.meshchat.runtime.NativeWebRtcInteropTest#$method" \
+      -e class "com.meshchat.runtime.$test_class#$method" \
       "$app_id.test/androidx.test.runner.AndroidJUnitRunner" | tee "$report_dir/$method.txt"; then
     result=1
   fi
   # `am instrument` can exit zero for failed tests or an aborted process.
   # Require one actual passing test, not merely a successful ADB invocation.
   if ! grep -Fq 'OK (1 test)' "$report_dir/$method.txt"; then result=1; fi
+}
+run_test saturatedMetadataQueueStillAdmitsExactDisposal NativeCallbackQueueTest
+for method in chromiumOfferCanBeAcceptedThroughTheRealPythonBridge chromiumOfferSurvivesEarlyIceFailureDuringManualAnswerExchange nativeOfferCanConnectToChromiumWithReconnectControl repeatedChromiumMediaCallsPreserveNativeMessaging repeatedChromiumMediaCallsPreserveNativeOfferedMessaging backgroundRuntimeCanInitializeNativeWebRtc backgroundDefaultResumesAfterUnlockAndPreservesAnExplicitOffChoice queuedAvailabilityStartHonorsStopWithoutCrashingOrOpeningTheRuntime optedInServiceRestoresAndKeepsNativeTrafficWhileActivityIsStopped; do
+  run_test "$method"
 done
 timeout 15s adb shell am force-stop "$app_id" || true
 exit "$result"

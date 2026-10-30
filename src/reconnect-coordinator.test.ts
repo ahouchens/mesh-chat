@@ -255,6 +255,17 @@ describe("automatic reconnect coordinator", () => {
     expect(probe.peers).toHaveLength(0);
   });
 
+  it("shows service quarantine without starting a replacement policy", async () => {
+    const probe = harness({ profiles: [profile({ policy_owner: "service", connection: {
+      runtime_epoch: "epoch", sequence: 2, desired: "stopped", messaging_ready: false,
+      reason: "ineligible", runtime_failure: "adapter_quarantined", retry_in: 0,
+    } })] });
+    await probe.coordinator.start();
+    await probe.coordinator.refresh();
+    expect(probe.coordinator.snapshot().entries["profile-1"].detail).toBe("adapter_quarantined");
+    expect(probe.peers).toHaveLength(0);
+  });
+
   it("preferred device publishes a request and accepts the peer's answer", async () => {
     let attempt = "";
     const mailbox = new Map<string, string>();

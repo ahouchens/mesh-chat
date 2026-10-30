@@ -34,6 +34,7 @@ export interface ReconnectProfile {
     desired: "enabled" | "stopped";
     messaging_ready: boolean;
     reason: string;
+    runtime_failure?: string | null;
     retry_in: number;
   } | null;
   native_session_id?: string;
@@ -525,7 +526,7 @@ export class ReconnectCoordinator {
         next[profile.id].state = connection?.desired === "stopped" ? "stopped"
           : connection?.messaging_ready ? "connected"
           : connection?.retry_in ? "retry_wait" : "connecting";
-        next[profile.id].detail = connection?.reason ?? "Waiting for service connection state";
+        next[profile.id].detail = connection?.runtime_failure ?? connection?.reason ?? "Waiting for service connection state";
         next[profile.id].nextAttemptAt = connection?.retry_in ? this.now() + connection.retry_in : null;
       }
       if (this.stoppedContacts.has(profile.contact_id) || this.stoppedProfiles.has(profile.id)) {

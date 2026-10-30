@@ -36,6 +36,8 @@ jobs:
           python -m pytest service/tests/connection
           service/tests/test_background_reconnect.py
           service/tests/test_native_webrtc_runtime.py
+          service/tests/test_native_event_inbox.py
+          service/tests/test_native_webrtc_events.py
           service/tests/test_reconnect_scope.py
           --junitxml=dist/reports/connection-policy.xml
       - name: Validate actual required execution

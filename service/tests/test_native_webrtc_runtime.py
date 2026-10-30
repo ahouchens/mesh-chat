@@ -114,6 +114,19 @@ def test_shared_native_callbacks_observe_but_do_not_attach_or_close():
     assert host.closed == ["runtime-session"]
 
 
+def test_callback_overflow_quarantines_shared_owner_and_closes_manual_carriers():
+    from types import SimpleNamespace
+    service, host = runtime()
+    service._connection_policy = "shared-native"
+    service.native_webrtc_offer("runtime-session", ICE, [], "profile-1", runtime_owned=True)
+    service.native_webrtc_offer("manual-session", ICE, [])
+    quarantined = []
+    service._connection_runtime = SimpleNamespace(quarantine=lambda: quarantined.append(True))
+    service._handle_native_webrtc_event("overflow", "", "")
+    assert quarantined == [True]
+    assert host.closed == ["manual-session"]
+
+
 def test_native_capabilities_exchange_and_consent_updates_without_a_renderer():
     import base64
     service, host = runtime()

@@ -24,7 +24,9 @@ class BoundedEffectRunner:
         self._closed = False
         self._workers = {}
         self._work_bytes = {}
+        self._deadlines = {}
         self._cleanup = {}
+        self._cleanup_deadlines = {}
         # Completed work retains a reservation until the owner consumes it.
         self._completed = Queue(maxsize=policy.max_workers + policy.max_effects)
 
@@ -37,6 +39,15 @@ class BoundedEffectRunner:
     def idle(self):
         with self._lock:
             return not self._workers and not self._cleanup
+
+    def stalled(self):
+        """A deadline never frees a reservation for an uncooperative call."""
+        with self._lock:
+            now = self._now()
+            return (any(thread.is_alive() and now >= self._deadlines[operation]
+                        for operation, (_, thread) in self._workers.items())
+                    or any(thread.is_alive() and now >= self._cleanup_deadlines[resource]
+                           for resource, thread in self._cleanup.items()))
 
     def submit(self, effect):
         with self._lock:
@@ -51,6 +62,7 @@ class BoundedEffectRunner:
                 thread = Thread(target=self._retire, args=(effect.resource,),
                                 name="mesh-connection-retire", daemon=True)
                 self._cleanup[effect.resource] = thread
+                self._cleanup_deadlines[effect.resource] = self._now() + self._policy.phase_timeout
                 thread.start()
                 return True
             if not isinstance(effect, Work):
@@ -66,6 +78,7 @@ class BoundedEffectRunner:
                             name="mesh-connection-effect", daemon=True)
             self._workers[effect.operation] = (cancelled, thread)
             self._work_bytes[effect.operation] = size
+            self._deadlines[effect.operation] = effect.deadline + self._policy.disconnect_grace
             thread.start()
             return True
 
@@ -95,9 +108,11 @@ class BoundedEffectRunner:
         with self._lock:
             if isinstance(result, CleanupResult):
                 self._cleanup.pop(result.resource, None)
+                self._cleanup_deadlines.pop(result.resource, None)
             else:
                 self._workers.pop(result.operation, None)
                 self._work_bytes.pop(result.operation, None)
+                self._deadlines.pop(result.operation, None)
         return result
 
     def close(self, timeout=2.0):

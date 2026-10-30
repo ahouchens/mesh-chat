@@ -554,7 +554,8 @@ class MeshChatService(
 
         self._retry_thread = threading.Thread(target=self._retry_loop, daemon=True)
         self._retry_thread.start()
-        self._native_webrtc_events: queue.Queue[tuple[str, str, str] | None] = queue.Queue()
+        from .native_webrtc_events import NativeEventInbox
+        self._native_webrtc_events = NativeEventInbox()
         self._native_webrtc_event_thread = threading.Thread(
             target=self._native_webrtc_event_loop,
             daemon=True,
@@ -2322,6 +2323,14 @@ class MeshChatService(
         self, event: str, session_id: str, data: str = ""
     ) -> None:
         with self._dispatch_lock:
+            if event == "overflow":
+                runtime = getattr(self, "_connection_runtime", None)
+                if runtime is not None:
+                    runtime.quarantine()
+                for current in tuple(self._native_webrtc_live):
+                    if runtime is None or not self._shared_native_session(current):
+                        self.native_webrtc_close(current)
+                return
             managed = self._shared_native_session(session_id)
             if event == "ice" or event in {"open", "closed"}:
                 connection_diagnostics.record(self, "transport_state", {

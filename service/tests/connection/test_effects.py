@@ -88,3 +88,24 @@ def test_work_byte_budget_rejects_before_execution():
         assert runner.idle
     finally:
         assert runner.close()
+
+
+def test_stalled_work_is_reported_without_freeing_its_reservation():
+    port = BlockingPort()
+    now = [0]
+    policy = Policy(max_workers=1)
+    runner = BoundedEffectRunner(port, policy, now=lambda: now[0])
+    operation = work()
+    try:
+        assert runner.submit(operation)
+        assert port.entered.wait(2)
+        now[0] = operation.deadline + policy.disconnect_grace
+        assert runner.stalled()
+        assert runner.active == 1
+        assert not runner.close(0)
+        port.release.set()
+        runner.next_completion(timeout=2)
+        assert not runner.stalled()
+    finally:
+        port.release.set()
+        runner.close()
