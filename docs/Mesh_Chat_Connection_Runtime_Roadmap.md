@@ -163,7 +163,15 @@ From `service/`:
 ```powershell
 ..\.venv\Scripts\python.exe -m mypy --config-file mypy-connection.ini
 ..\.venv\Scripts\python.exe -m tools.connection_harness simulate --scenario stale_completion --seed 42
+..\.venv\Scripts\python.exe -m tools.connection_harness simulate --scenario fault_sequence --seed 48 --output trace.json
+..\.venv\Scripts\python.exe -m tools.connection_harness replay --trace trace.json
 ```
+
+Saved traces include their schema version, policy constants and an implementation
+digest. Replay rejects incompatible code, malformed actions and incomplete resource
+cleanup; it executes the saved actions through the production supervisor and oracle.
+Reproducing an older trace requires its matching source revision. This CLI is a
+qualification tool, not a shipping private-event injection endpoint.
 
 The simulator runs the production reducer/supervisor with virtual time. Its
 resource oracle and Hypothesis state machine exercise 1,000 sequences of up to

@@ -1,6 +1,9 @@
 """Virtual-time execution of the production supervisor, with an ownership oracle."""
 
 from dataclasses import asdict
+from hashlib import sha256
+import json
+from pathlib import Path
 from random import Random
 
 from mesh_chat.connection.model import (
@@ -8,6 +11,61 @@ from mesh_chat.connection.model import (
     Desired, Failed, Failure, Health, Phase, Resource, Result, Retire, Work,
 )
 from mesh_chat.connection.supervisor import ConnectionSupervisor
+
+
+def implementation_digest():
+    root = Path(__file__).resolve().parents[2] / "src" / "mesh_chat" / "connection"
+    digest = sha256()
+    for name in ("model.py", "reducer.py", "supervisor.py"):
+        digest.update(name.encode())
+        digest.update((root / name).read_text(encoding="utf-8").encode())
+    digest.update(Path(__file__).read_text(encoding="utf-8").encode())
+    return digest.hexdigest()
+
+
+def replay(report):
+    """Replay a bounded qualification trace; never a shipping event endpoint."""
+    sim = Simulation()
+    if not isinstance(report, dict):
+        raise ValueError("Trace report must be an object")
+    # Canonicalize in-memory tuples and persisted JSON arrays in one place.
+    policy = json.loads(json.dumps(asdict(sim.owner.policy)))
+    if (report.get("trace_version") != 1 or report.get("contract_version") != 1
+            or report.get("implementation_digest") != implementation_digest()
+            or json.loads(json.dumps(report.get("policy"))) != policy):
+        raise ValueError("Trace requires matching schema, policy and implementation")
+    trace = report.get("trace")
+    if not isinstance(trace, list) or not 1 <= len(trace) <= 10000:
+        raise ValueError("Trace is empty or exceeds the action budget")
+    for action in trace:
+        _replay_action(sim, action)
+    sim.assert_safe()
+    if sim.allocated or sim.pending:
+        raise ValueError("Trace did not finish resource cleanup")
+    return {**report, "cleanup": "passed", "replayed": True}
+
+
+def _replay_action(sim, action):
+    if not isinstance(action, dict):
+        raise ValueError("Invalid trace action")
+    kind = action.get("type")
+    if kind == "advance" and set(action) == {"type", "seconds"}:
+        seconds = action["seconds"]
+        if type(seconds) not in {int, float} or not 0 <= seconds <= 3600:
+            raise ValueError("Invalid virtual clock advance")
+        sim.advance(seconds)
+    elif kind in {"intent", "network"}:
+        field = "enabled" if kind == "intent" else "available"
+        if set(action) != {"type", field} or type(action[field]) is not bool:
+            raise ValueError("Invalid context action")
+        getattr(sim, kind)(action[field])
+    elif kind == "complete" and set(action) == {"type", "index", "fail", "duplicate", "adopt"}:
+        if (type(action["index"]) is not int or not 0 <= action["index"] < len(sim.pending)
+                or any(type(action[field]) is not bool for field in ("fail", "duplicate", "adopt"))):
+            raise ValueError("Invalid completion action")
+        sim.complete(action["index"], action["fail"], action["duplicate"], action["adopt"])
+    else:
+        raise ValueError("Unknown or malformed trace action")
 
 
 class Simulation:
@@ -142,4 +200,5 @@ def scenario(name, seed=42, steps=100):
     sim.close()
     return {"scenario": name, "seed": seed, "evidence": "simulated",
             "policy": asdict(sim.owner.policy), "trace": sim.trace,
-            "cleanup": "passed", "contract_version": 1}
+            "cleanup": "passed", "contract_version": 1, "trace_version": 1,
+            "implementation_digest": implementation_digest()}
