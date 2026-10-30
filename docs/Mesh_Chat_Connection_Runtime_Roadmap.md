@@ -496,6 +496,12 @@ negative controls are in-process evidence; this extended packaged sequence is
 qualified only when the matching CI artifacts execute it successfully.
 Workspace pairing, cancellation at other handshake phases and Android bootstrap
 integration remain unqualified.
+The `00628a0` CI run failed the pre-approved Windows crash/restart scenario during
+transport admission with `transport_host_unavailable`; no Python startup failure
+was captured. The packaged harness now retains up to eight host fault outcomes
+per peer, distinguishing a WebView-reported fault from a pipe failure, with only
+allowlisted codes and a boolean flag in failure artifacts. This improves diagnosis
+of the recurring restart failure; it does not establish a root cause or fix.
 Its report is required separately from the pre-approved crash test,
 with a distinct run identity and the same tested binaries.
 
@@ -534,12 +540,22 @@ uniform scenario/count/artifact evidence across every suite and exact release
 artifact aggregation remain outstanding.
 
 Android qualification now uses one required inventory for its 16 optimized native
-WebRTC cases and nine signaling/runtime cases. The contact-bootstrap case checks
+WebRTC cases and ten signaling/runtime cases. The buffered contact-bootstrap case checks
 the private service manifest and exchanges signed contact requests and accepts
 through the real Android Binder/Python worker while RNS is already active in the
 calling interpreter. It rejects ordinary chat, retires the worker and checks
 process cleanup. Packets are routed by the test; this is isolated worker evidence,
 not Android first-time pairing over JNI or application-receipt qualification.
+The additional native contact-bootstrap case runs the same signed request/accept
+and ordinary-chat rejection through two real JNI DataChannels and the private
+Binder worker. Its instrumentation-only callback capture has bounded queues and
+packet sizes, fails on native errors or overflow, requires native receive counts
+in both directions, retires both native handles and restores the callback on
+exit. It cannot intercept a running application. The required report inventory
+includes this case; the previous 25-case report cannot satisfy the updated gate.
+This tests native contact-scope transport, not main-service approval, carrier
+transfer, Windows-to-Android pairing or application receipts. Desktop harness
+tests and isolated-worker checks do not substitute for its emulator execution.
 Each invocation writes a fresh
 run marker into its instrumentation log. Evidence requires exactly the expected
 class/method, one started and successful test, no skip/failure status, and the

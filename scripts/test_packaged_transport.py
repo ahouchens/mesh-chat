@@ -33,6 +33,8 @@ class ScenarioFailure(RuntimeError):
                     self.diagnostics[field] = value
             if "process_exits" in result:
                 self.diagnostics["process_exits"] = process_exits(result["process_exits"])
+            if "transport_faults" in result:
+                self.diagnostics["transport_faults"] = transport_faults(result["transport_faults"])
 
 
 def _items(value, limit):
@@ -77,6 +79,17 @@ def process_exits(values):
             "stderr_bytes": _integer(value.get("stderr_bytes")),
             "unrecognized_stderr_lines": _integer(value.get("unrecognized_stderr_lines")),
             "failures": [_failure(item) for item in _items(value.get("failures"), 8) if isinstance(item, dict)]})
+    return result
+
+
+def transport_faults(values):
+    result = []
+    for value in _items(values, 16):
+        if not isinstance(value, dict) or _integer(value.get("slot"), maximum=1) is None:
+            continue
+        result.append({"slot": value["slot"],
+            "error": _choice(value.get("error"), {"transport_quarantined", "transport_pipe_failed", "transport_lock_failed"}),
+            "reported_fault": value.get("reported_fault") if type(value.get("reported_fault")) is bool else None})
     return result
 
 

@@ -19,6 +19,7 @@ struct Fixture {
     controller: Arc<Mutex<Option<CommandChild>>>,
     operations: Arc<Mutex<[BTreeMap<String, u64>; 2]>>,
     exits: Arc<Mutex<[Option<Value>; 2]>>,
+    transport_faults: Arc<Mutex<[Vec<Value>; 2]>>,
 }
 
 #[tauri::command]
@@ -40,6 +41,13 @@ async fn desktop_transport_exchange(
                 continue
             }
             result => {
+                if let Err(error) = &result {
+                    let mut faults = state.transport_faults.lock().map_err(|_| "fixture_lock")?;
+                    if faults[index].len() == 8 {
+                        faults[index].remove(0);
+                    }
+                    faults[index].push(json!({"slot":index,"error":error,"reported_fault":fault}));
+                }
                 if let Ok(requests) = &result {
                     let mut counts = state.operations.lock().map_err(|_| "fixture_lock")?;
                     for request in requests {
@@ -204,6 +212,7 @@ pub fn run(arguments: &[String]) -> i32 {
         controller: Default::default(),
         operations: Default::default(),
         exits: Default::default(),
+        transport_faults: Default::default(),
     };
     let setup = fixture.clone();
     let python = arguments[0].clone();
@@ -247,7 +256,8 @@ pub fn run(arguments: &[String]) -> i32 {
                                         "evidence_level":level,
                                         "result":{"ok":passed,"checks":value["checks"],"counts":value["counts"],
                                             "phase":value["phase"],"error_type":value["error_type"],
-                                            "process_exits":setup.exits.lock().unwrap().iter().flatten().cloned().collect::<Vec<_>>()}}));
+                                            "process_exits":setup.exits.lock().unwrap().iter().flatten().cloned().collect::<Vec<_>>(),
+                                            "transport_faults":setup.transport_faults.lock().unwrap().iter().flatten().cloned().collect::<Vec<_>>()}}));
                                     app.exit(if passed {0} else {1});
                                     return;
                                 }

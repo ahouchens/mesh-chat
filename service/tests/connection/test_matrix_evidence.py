@@ -71,11 +71,23 @@ def test_gate_revalidates_policy_inventory_and_both_platform_component_reports(t
     source, tree, _ = fixture(tmp_path)
     result = matrix.collect(tmp_path, source, tree, ["policy", "verification", "android"])
     assert result["policy_tests_executed"] == 1
-    assert result["android_tests_executed"] == 25
+    assert result["android_tests_executed"] == 26
     assert set(result["windows_transport_checks"]) == CHECKS
     assert set(result["report_sha256"]) == {"policy", "windows_transport", "windows_packaged_lifecycle",
                                           "windows_packaged_transport", "windows_packaged_pairing", "android"}
     assert result["windows_packaged_lifecycle_checks"] == list(PACKAGED_CHECKS)
+
+
+def test_previous_android_inventory_without_native_contact_bootstrap_cannot_pass(tmp_path):
+    source, tree, record = fixture(tmp_path)
+    signaling = next(suite for suite in record["suites"] if suite["suite"] == "signaling")
+    signaling["scenarios"] = [case for case in signaling["scenarios"]
+        if "contactBootstrapUsesNativeDataChannelsAndIsolatedProcess" not in case["scenario_id"]]
+    for name in ("tests_collected", "tests_executed", "tests_passed"):
+        signaling[name] -= 1
+    (tmp_path / "android/android-qualification.json").write_text(json.dumps(record))
+    with pytest.raises(ValueError):
+        matrix.collect(tmp_path, source, tree, ["policy", "verification", "android"])
 
 
 @pytest.mark.parametrize("fault", ["source", "tree", "skip", "missing_case", "missing_apk", "cleanup", "run", "version"])

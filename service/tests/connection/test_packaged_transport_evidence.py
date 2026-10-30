@@ -118,3 +118,25 @@ def test_process_diagnostics_bound_records_frames_numbers_and_transport_codes():
     assert result[0]["failures"][0]["stage"] == result[0]["failures"][0]["category"] == "unknown"
     value["transport_error"] = "secret"
     assert gate["process_exits"]([value])[0]["transport_error"] == "unknown"
+
+
+def test_failure_report_preserves_bounded_host_fault_origin_without_frame_content():
+    error = gate["ScenarioFailure"]({"transport_faults": [
+        {"slot": 0, "error": "transport_quarantined", "reported_fault": True,
+         "frames": [{"token": "secret"}], "window": "secret"},
+        {"slot": 1, "error": "transport_pipe_failed", "reported_fault": False},
+        {"slot": 0, "error": "secret", "reported_fault": "secret"},
+    ] * 20})
+    values = error.diagnostics["transport_faults"]
+    assert len(values) == 16
+    assert values[:3] == [
+        {"slot": 0, "error": "transport_quarantined", "reported_fault": True},
+        {"slot": 1, "error": "transport_pipe_failed", "reported_fault": False},
+        {"slot": 0, "error": "unknown", "reported_fault": None},
+    ]
+    assert "secret" not in json.dumps(error.diagnostics)
+
+
+def test_host_fault_report_rejects_invalid_peer_slots():
+    error = gate["ScenarioFailure"]({"transport_faults": [None, {"slot": True}, {"slot": 2}]})
+    assert error.diagnostics["transport_faults"] == []

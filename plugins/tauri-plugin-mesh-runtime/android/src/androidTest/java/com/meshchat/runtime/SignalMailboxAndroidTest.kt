@@ -124,7 +124,12 @@ class SignalMailboxAndroidTest {
     }
 
     @Test(timeout = 120_000)
-    fun contactBootstrapUsesIsolatedProcessAndRejectsOrdinaryChat() {
+    fun contactBootstrapUsesIsolatedProcessAndRejectsOrdinaryChat() = contactBootstrap(false)
+
+    @Test(timeout = 240_000)
+    fun contactBootstrapUsesNativeDataChannelsAndIsolatedProcess() = contactBootstrap(true)
+
+    private fun contactBootstrap(native: Boolean) {
         val info = context.packageManager.getServiceInfo(ComponentName(context, BootstrapService::class.java), 0)
         assertFalse("Bootstrap service must remain private", info.exported)
         assertEquals(context.packageName + ":mesh_bootstrap", info.processName)
@@ -134,7 +139,13 @@ class SignalMailboxAndroidTest {
         val source = instrumentation.context.assets.open("contact_bootstrap_fixture.py")
             .bufferedReader().use { it.readText() }
         py.builtins.callAttr("exec", source, module.get("__dict__"))
-        assertEquals("True", module.callAttr("run", context.cacheDir.absolutePath).toString())
+        if (native) NativeWebRtcHost.initialize(context)
+        try {
+            assertEquals("True", module.callAttr(if (native) "run_native" else "run",
+                context.cacheDir.absolutePath).toString())
+        } finally {
+            if (native) NativeWebRtcHost.closeAll()
+        }
         val manager = context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
         val deadline = android.os.SystemClock.elapsedRealtime() + 5_000
         fun alive() = manager.runningAppProcesses.orEmpty().any { it.processName == info.processName }

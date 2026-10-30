@@ -52,11 +52,12 @@ def test_stale_wrong_skipped_crashed_or_duplicate_instrumentation_is_rejected(ou
 
 def test_scenario_inventory_names_are_unique_and_both_offer_roles_are_mandatory():
     cases = list(gate.cases("webrtc")) + list(gate.cases("signaling"))
-    assert len(cases) == len({case["id"] for case in cases}) == 25
+    assert len(cases) == len({case["id"] for case in cases}) == 26
     assert {case["method"] for case in cases} >= {
         "productionDesktopTransportOffersToNative", "productionDesktopTransportAnswersNative",
         "sharedRuntimeOwnsNativeRecoveryAcrossLifecycle",
         "contactBootstrapUsesIsolatedProcessAndRejectsOrdinaryChat",
+        "contactBootstrapUsesNativeDataChannelsAndIsolatedProcess",
     }
 
 
