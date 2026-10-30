@@ -256,6 +256,17 @@ lifecycle and packet budgets separate. Lost windows or stalled IPC quarantine th
 Python adapter. Service exit currently disposes that window and its carriers;
 surviving-carrier restart adoption remains required before M2 promotion.
 
+The experimental Windows host supplies a read-only UI routing hint before the
+application loads. Manual pairing then uses the existing service transport
+commands rather than allocating a second renderer peer. This hint is not a host
+capability: private IPC still requires the registered window and process binding.
+Pairing observes DataChannel openness independently from bridge attachment, so a
+pending invitation can be reviewed without a premature transport timeout. The
+dialog reports a connected path; service authority still controls packet leases
+and messaging attachment. Component regressions cover both Android and Windows
+routing with an open channel and no bridge. Full Windows pairing and restart
+parity remain qualification requirements.
+
 The separate `transport-qualification` executable exercises the real Windows
 WebView2 host, production Python pipe binding, both offer roles, bidirectional
 packets/control and exact retirement without opening a vault. Windows CI requires

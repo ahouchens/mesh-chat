@@ -1719,6 +1719,10 @@ pub fn run() {
     let instance_state = state.clone();
 
     let builder = tauri::Builder::default();
+    #[cfg(all(windows, feature = "experimental-shared-webview"))]
+    let builder = builder.append_invoke_initialization_script(
+        "Object.defineProperty(window, '__MESH_SERVICE_TRANSPORT__', {value:true});",
+    );
     #[cfg(target_os = "android")]
     let builder = builder.manage(mobile_direct::MobileDirect::default());
     #[cfg(desktop)]
