@@ -156,11 +156,7 @@ pub fn exchange(
             .lock()
             .map_err(|_| "transport_lock_failed")?;
         let host = registered.as_mut().ok_or("transport_retired")?;
-        let pid = match *process {
-            Some(pid) => pid,
-            None if host.binding.suspended() => host.binding.pid(),
-            None => return Err("transport_retired".into()),
-        };
+        let pid = host.binding.poll_process(*process).map_err(str::to_owned)?;
         (
             pid,
             host.binding.exchange(pid, window.label(), token, frames),

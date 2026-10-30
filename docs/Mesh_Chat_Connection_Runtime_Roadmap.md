@@ -502,6 +502,15 @@ was captured. The packaged harness now retains up to eight host fault outcomes
 per peer, distinguishing a WebView-reported fault from a pipe failure, with only
 allowlisted codes and a boolean flag in failure artifacts. This improves diagnosis
 of the recurring restart failure; it does not establish a root cause or fix.
+Broker regressions now reproduce a process-publication race: the new process ID
+is visible before trusted host rebinding, so a retained window could be rejected
+as an unauthorized caller while still suspended. Poll routing now keeps the
+suspended binding's process identity until explicit rebinding. Suspended polls
+discard old replies and cannot admit replacement-service work; window/capability
+checks and fresh-epoch admission remain enforced. Both new regressions failed
+with the previous routing and pass with the fix. This establishes the broker
+race and its local correction, not resolution of the recurring packaged failure;
+fresh packaged crash/restart and pairing evidence is still required.
 Its report is required separately from the pre-approved crash test,
 with a distinct run identity and the same tested binaries.
 

@@ -49,6 +49,16 @@ impl Binding {
         self.suspended && !self.awaiting_bind && !self.retired
     }
 
+    pub fn poll_process(&self, current: Option<u32>) -> Result<u32, &'static str> {
+        // Process publication precedes trusted rebinding. While suspended, a
+        // retained window can drain controls but cannot deliver service replies.
+        if self.suspended() {
+            Ok(self.pid)
+        } else {
+            current.ok_or("transport_retired")
+        }
+    }
+
     pub fn suspend(&mut self, pid: u32) -> Result<(), &'static str> {
         if pid != self.pid || self.retired || self.suspended || !self.controls.is_empty() {
             return Err("transport_handoff_unavailable");
@@ -356,6 +366,79 @@ mod tests {
         host.rebind(43).unwrap();
         assert!(host.rebind(44).is_err());
         assert!(host.suspend(43).is_err());
+    }
+
+    #[test]
+    fn suspended_poll_during_process_publication_cannot_retire_or_bind_the_host() {
+        let mut host = binding();
+        host.admit(42, request(1, "inspect")).unwrap();
+        exchange(&mut host, vec![]);
+        host.suspend(42).unwrap();
+        // The replacement PID is visible, but trusted registration has not run.
+        let pid = host.poll_process(Some(43)).unwrap();
+        let (replies, controls) = host
+            .exchange(pid, "private-window", "private-token", vec![response(1)])
+            .unwrap();
+        assert!(replies.is_empty());
+        assert_eq!(controls.len(), 1);
+        assert_eq!(controls[0]["action"], "suspend");
+        assert_eq!(host.pid(), 42);
+        assert!(host.admit(43, request(2, "inventory")).is_err());
+        assert!(host
+            .exchange(pid, "private-window", "private-token", vec![response(1)])
+            .unwrap()
+            .0
+            .is_empty());
+
+        host.rebind(43).unwrap();
+        let mut next = request(1, "inventory");
+        next["epoch"] = json!("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
+        host.admit(43, next.clone()).unwrap();
+        let pid = host.poll_process(Some(43)).unwrap();
+        let (replies, commands) = host
+            .exchange(pid, "private-window", "private-token", vec![response(1)])
+            .unwrap();
+        assert!(replies.is_empty());
+        assert_eq!(commands.len(), 2);
+        assert_eq!(commands[0]["action"], "bind");
+        assert_eq!(commands[1], next);
+        let mut fresh = response(1);
+        fresh["epoch"] = next["epoch"].clone();
+        assert_eq!(
+            host.exchange(pid, "private-window", "private-token", vec![fresh.clone()])
+                .unwrap()
+                .0,
+            vec![fresh]
+        );
+    }
+
+    #[test]
+    fn publication_gap_does_not_relax_window_capability_or_active_process_checks() {
+        let mut host = binding();
+        assert!(host.poll_process(None).is_err());
+        let pid = host.poll_process(Some(43)).unwrap();
+        assert!(host
+            .exchange(pid, "private-window", "private-token", vec![])
+            .is_err());
+        host.suspend(42).unwrap();
+        let pid = host.poll_process(Some(43)).unwrap();
+        for (label, token) in [
+            ("other-window", "private-token"),
+            ("private-window", "forged"),
+        ] {
+            assert_eq!(
+                host.exchange(pid, label, token, vec![]).unwrap_err(),
+                "transport_caller_denied"
+            );
+        }
+        assert_eq!(host.poll_process(None).unwrap(), 42);
+        assert_eq!(
+            host.exchange(pid, "private-window", "private-token", vec![])
+                .unwrap()
+                .1
+                .len(),
+            1
+        );
     }
 
     #[test]
