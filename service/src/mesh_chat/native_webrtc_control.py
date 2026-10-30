@@ -68,6 +68,9 @@ class NativeWebRTCControlMixin:
                     description["answer_wait_until"],
                     time.monotonic() + max(0, offer.expires_at - time.time()),
                 )
+        with self._dispatch_lock:
+            from .native_onboarding_bootstrap import begin
+            begin(self, session_id, offer if description.get("remote_offer") is not None else answer)
         return {"peer_destination": peer}
 
     def claim_native_reconnect_carrier(self, profile_id, local_device_id, remote_device_id):
@@ -84,6 +87,8 @@ class NativeWebRTCControlMixin:
             if profile_id in self._native_webrtc_profile_sessions:
                 return None
             if session_id is not None:
+                from .native_onboarding_bootstrap import retire
+                retire(self, session_id)
                 self._native_webrtc_profile_sessions[profile_id] = session_id
                 self._native_webrtc_descriptions[session_id].pop("answer_wait_until", None)
             return session_id
@@ -109,6 +114,9 @@ class NativeWebRTCControlMixin:
                 or reasons - automatic_only):
             raise ContactNotApproved("Manual carrier authority is unavailable")
         for session_id, peer in self._native_webrtc_peers.items():
+            pending = getattr(self, "_pending_contact_carriers", {}).get(session_id)
+            if pending is not None and (not pending.transfer_ready or not pending.current()):
+                continue
             description = self._native_webrtc_descriptions.get(session_id, {})
             actual_remote = description.get("remote_offer") or description.get("remote_answer")
             from .carrier_recovery import recovered_binding

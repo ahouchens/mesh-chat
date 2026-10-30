@@ -996,3 +996,27 @@ def test_failed_durable_stop_also_retires_manual_carriers_awaiting_adoption():
     assert host.closed == ["manual-carrier"]
     assert not service._native_webrtc_live
     assert service.profile["active"]  # No claim that Stop was durable.
+
+
+@pytest.mark.parametrize("ready,current", [(False, True), (True, False)])
+def test_manual_adoption_waits_for_a_completed_current_contact_handshake(ready, current):
+    from types import SimpleNamespace
+    service, _, _ = adoptable_manual_carrier()
+    service._pending_contact_carriers = {"manual-carrier": SimpleNamespace(
+        transfer_ready=ready, current=lambda: current)}
+    assert not service.native_manual_carrier_authorized("profile-1")
+    assert service.claim_native_reconnect_carrier("profile-1", "local", "remote") is None
+
+
+def test_manual_transfer_closes_pending_scope_before_granting_messaging_ownership():
+    from types import SimpleNamespace
+    service, _, _ = adoptable_manual_carrier()
+    closed = []
+    def close():
+        assert "manual-carrier" not in service._pending_contact_carriers
+        assert "profile-1" not in service._native_webrtc_profile_sessions
+        closed.append(True)
+    service._pending_contact_carriers = {"manual-carrier": SimpleNamespace(
+        transfer_ready=True, current=lambda: True, close=close)}
+    assert service.claim_native_reconnect_carrier("profile-1", "local", "remote") == "manual-carrier"
+    assert closed == [True]

@@ -14,6 +14,7 @@ from connection_test_inventory import REQUIRED_SUITES
 from test_desktop_transport import CHECKS
 from test_packaged_lifecycle import CHECKS as PACKAGED_CHECKS, COUNTS as PACKAGED_COUNTS, LEVEL as PACKAGED_LEVEL
 from test_packaged_transport import CHECKS as TRANSPORT_CHECKS, COUNTS as TRANSPORT_COUNTS, LEVEL as TRANSPORT_LEVEL
+from test_packaged_transport import PAIRING_CHECKS, PAIRING_COUNTS, PAIRING_LEVEL
 
 
 def fixture(directory):
@@ -52,11 +53,15 @@ def fixture(directory):
             "duration_seconds": 1, "scenarios": [{"scenario_id": case["id"], "passed": True,
                 "report_sha256": "b" * 64} for case in cases]})
     transport = {**packaged, "evidence_level": TRANSPORT_LEVEL, "checks": list(TRANSPORT_CHECKS),
-                 "counts": dict(TRANSPORT_COUNTS), "native_binary_sha256": desktop["native_binary_sha256"]}
+                 "counts": dict(TRANSPORT_COUNTS), "run_id": "b" * 32,
+                 "native_binary_sha256": desktop["native_binary_sha256"]}
+    pairing = {**transport, "evidence_level": PAIRING_LEVEL, "checks": list(PAIRING_CHECKS),
+               "counts": dict(PAIRING_COUNTS), "run_id": "a" * 32}
     for path, value in (("policy/connection-policy.json", policy),
                         ("desktop/desktop-transport.json", desktop),
                         ("desktop/packaged-lifecycle.json", packaged),
                         ("desktop/packaged-transport.json", transport),
+                        ("desktop/packaged-pairing.json", pairing),
                         ("android/android-qualification.json", android)):
         (directory / path).write_text(json.dumps(value))
     return source, tree, android
@@ -68,7 +73,8 @@ def test_gate_revalidates_policy_inventory_and_both_platform_component_reports(t
     assert result["policy_tests_executed"] == 1
     assert result["android_tests_executed"] == 24
     assert set(result["windows_transport_checks"]) == CHECKS
-    assert set(result["report_sha256"]) == {"policy", "windows_transport", "windows_packaged_lifecycle", "windows_packaged_transport", "android"}
+    assert set(result["report_sha256"]) == {"policy", "windows_transport", "windows_packaged_lifecycle",
+                                          "windows_packaged_transport", "windows_packaged_pairing", "android"}
     assert result["windows_packaged_lifecycle_checks"] == list(PACKAGED_CHECKS)
 
 
@@ -139,7 +145,23 @@ def test_selected_direct_requires_complete_execution_from_both_platforms(tmp_pat
     result = matrix.collect(tmp_path, source, tree, ["direct"])
     assert set(result["direct"]) == {"Linux", "Windows"}
     assert all(value["tests_executed"] == 3 for value in result["direct"].values())
-    assert len(result["report_sha256"]) == 10
+    assert len(result["report_sha256"]) == 11
+
+
+@pytest.mark.parametrize("fault", ["missing", "preapproved", "different_binary", "missing_receipt", "reused_run"])
+def test_first_time_pairing_cannot_be_replaced_by_preapproved_execution(tmp_path, fault):
+    source, tree, _ = fixture(tmp_path)
+    path = tmp_path / "desktop/packaged-pairing.json"
+    value = json.loads(path.read_text())
+    if fault == "missing": path.unlink()
+    else:
+        if fault == "preapproved": value = json.loads((tmp_path / "desktop/packaged-transport.json").read_text())
+        elif fault == "different_binary": value["sidecar_sha256"] = "9" * 64
+        elif fault == "missing_receipt": value["counts"]["authenticated_receipts"] = 1
+        else: value["run_id"] = "b" * 32
+        path.write_text(json.dumps(value))
+    with pytest.raises((ValueError, FileNotFoundError)):
+        matrix.collect(tmp_path, source, tree, [])
 
 
 @pytest.mark.parametrize("fault", ["missing", "sidecar", "host", "build", "receipts"])

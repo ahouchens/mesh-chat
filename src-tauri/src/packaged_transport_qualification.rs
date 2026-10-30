@@ -215,8 +215,11 @@ pub fn run(arguments: &[String]) -> i32 {
                             for value in messages {
                                 if value["action"] == "finish" {
                                     let passed = value["ok"] == true;
+                                    let level = if value["scenario"] == "explicit_pairing" {
+                                        "windows_packaged_webview2_explicit_pairing"
+                                    } else { "windows_packaged_webview2_preapproved_peers" };
                                     println!("{}", json!({"v":1,"source_commit":env!("MESH_BUILD_COMMIT"),
-                                        "evidence_level":"windows_packaged_webview2_preapproved_peers",
+                                        "evidence_level":level,
                                         "result":{"ok":passed,"checks":value["checks"],"counts":value["counts"],
                                             "phase":value["phase"],"error_type":value["error_type"]}}));
                                     app.exit(if passed {0} else {1});

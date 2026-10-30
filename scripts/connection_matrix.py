@@ -12,7 +12,7 @@ from connection_evidence import evidence as policy_evidence
 from direct_qualification import SUITES as DIRECT_SUITES, read_suite as direct_suite
 from test_desktop_transport import PYTHON_SOURCES, verified_report as desktop_evidence
 from test_packaged_lifecycle import verify_report as packaged_evidence
-from test_packaged_transport import verify_report as packaged_transport_evidence
+from test_packaged_transport import verify_report as packaged_transport_evidence, verify_pairing_report
 
 
 def read(path):
@@ -88,17 +88,23 @@ def collect(directory: Path, source: str, tree: str, required):
     packaged = packaged_evidence(read(packaged_path), source, tree)
     transport_path = directory / "desktop/packaged-transport.json"
     transport = packaged_transport_evidence(read(transport_path), source, tree)
-    if (transport["sidecar_sha256"] != packaged["sidecar_sha256"]
-            or transport["build_input_sha256"] != packaged["build_input_sha256"]
-            or transport["native_binary_sha256"] != desktop["native_binary_sha256"]):
+    pairing_path = directory / "desktop/packaged-pairing.json"
+    pairing = verify_pairing_report(read(pairing_path), source, tree)
+    if any(record["sidecar_sha256"] != packaged["sidecar_sha256"]
+            or record["build_input_sha256"] != packaged["build_input_sha256"]
+            or record["native_binary_sha256"] != desktop["native_binary_sha256"] for record in (transport, pairing)):
         raise ValueError("Windows scenarios did not execute the same frozen service and native host")
+    if len({record["run_id"] for record in (packaged, transport, pairing)}) != 3:
+        raise ValueError("Packaged scenarios require separate execution identities")
     reports = {"policy": policy_path, "windows_transport": desktop_path,
-               "windows_packaged_lifecycle": packaged_path, "windows_packaged_transport": transport_path}
+               "windows_packaged_lifecycle": packaged_path, "windows_packaged_transport": transport_path,
+               "windows_packaged_pairing": pairing_path}
     summary = {"policy_tests_executed": policy["tests_executed"],
                "windows_transport_checks": desktop["result"]["checks"],
                "windows_native_sha256": desktop["native_binary_sha256"],
                "windows_packaged_lifecycle_checks": packaged["checks"],
                "windows_packaged_transport_checks": transport["checks"],
+               "windows_packaged_pairing_checks": pairing["checks"],
                "windows_sidecar_sha256": packaged["sidecar_sha256"]}
     if "android" in required:
         android_path = directory / "android/android-qualification.json"

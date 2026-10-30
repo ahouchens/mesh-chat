@@ -246,7 +246,10 @@ class NativeWebRTCServiceMixin(NativeWebRTCControlMixin):
                 if session_id not in self._native_webrtc_live:
                     return
                 if getattr(self, "_connection_policy", "legacy") == "shared-native":
-                    # Pending onboarding retains its control channel only.
+                    self._native_webrtc_descriptions.get(session_id, {})["packet_open"] = True
+                    pending = getattr(self, "_pending_contact_carriers", {}).get(session_id)
+                    if pending is not None: pending.opened()
+                    # Pending onboarding uses only its isolated contact-control scope.
                     # The reducer admits messaging after verified discovery or CHECKING.
                     return
                 self._native_webrtc_descriptions.get(session_id, {}).pop("answer_wait_until", None)
@@ -271,6 +274,9 @@ class NativeWebRTCServiceMixin(NativeWebRTCControlMixin):
                         pass
                 elif managed:
                     self._retain_native_startup_packet(session_id, data)
+                else:
+                    pending = getattr(self, "_pending_contact_carriers", {}).get(session_id)
+                    if pending is not None: pending.receive(data)
             elif event == "control":
                 if session_id not in self._native_webrtc_live or len(data) > 90_000:
                     return
@@ -295,6 +301,8 @@ class NativeWebRTCServiceMixin(NativeWebRTCControlMixin):
                         }
                     )
             elif event == "closed":
+                from .native_onboarding_bootstrap import retire
+                retire(self, session_id)
                 physical = self._native_resources.physical(session_id)
                 self._native_resources.confirm_closed(session_id, physical)
                 try:
@@ -584,6 +592,8 @@ class NativeWebRTCServiceMixin(NativeWebRTCControlMixin):
             was_live = session_id in self._native_webrtc_live
             self._native_webrtc_live.discard(session_id)
             self._native_startup_packets.discard(physical)
+        from .native_onboarding_bootstrap import retire
+        retire(self, session_id)
         if was_live:
             connection_diagnostics.record(self, "transport_state", {
                 "setup_id": session_id, "state": "closed", "command": "native_webrtc_close", "component": "bridge",

@@ -22,6 +22,14 @@ def test_complete_packaged_transport_evidence():
     assert gate["verify_report"](value, "a" * 40, "b" * 40) == value
 
 
+def test_pairing_and_preapproved_recovery_are_distinct_qualification_levels():
+    value = {**record(), "evidence_level": gate["PAIRING_LEVEL"], "checks": list(gate["PAIRING_CHECKS"]),
+             "counts": dict(gate["PAIRING_COUNTS"])}
+    assert gate["verify_pairing_report"](value, "a" * 40, "b" * 40) == value
+    with pytest.raises(ValueError): gate["verify_report"](value, "a" * 40, "b" * 40)
+    with pytest.raises(ValueError): gate["verify_pairing_report"](record(), "a" * 40, "b" * 40)
+
+
 @pytest.mark.parametrize("fault", ["source", "tree", "version", "passed", "level", "missing", "duplicate",
                                   "count", "boolean_count", "digest", "build", "run", "duration", "extra"])
 def test_incomplete_or_unbound_execution_is_not_qualification(fault):

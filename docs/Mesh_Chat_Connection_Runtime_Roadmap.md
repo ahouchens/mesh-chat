@@ -52,7 +52,7 @@ identity. Monotonic deadlines never enter persistent storage.
 | --- | --- | --- |
 | M0 baseline | Spec and diagram imported; baseline regression corpus passes | Record platform timing baselines in CI |
 | M1 policy/contract foundation | Immutable model, pure phase reducer, fair supervisor, bounded effects, native domain adapters, simulator, strict model checks, executing snapshot schema and initial public request/error design contracts | Complete public result/event schemas and facade design; extend adversarial corpus to all invariant classes |
-| M2 shared policy | Experimental `shared-native` service composition, renderer fencing, consented native manual-carrier adoption and private Windows transport registration implemented | Windows host qualification and restart adoption, remaining manual-pairing modes, full native authority conformance, bridge-restart regression, removal of migrated legacy loops |
+| M2 shared policy | Experimental service composition, renderer fencing, native manual-carrier adoption, isolated contact onboarding and private Windows transport registration/rebinding | Remaining manual-pairing modes, Windows/Android interoperability, full native authority conformance, broader restart/fault cases and removal of migrated legacy loops |
 | M3 qualification gates | Deterministic inventory/evidence gate; shared conservative workflow selector and final execution gate | Narrower dependency selection after isolation is qualified; complete cross-suite evidence and exact-artifact release aggregation |
 | M4 headless messaging | Existing Android native transport reused | Production native Windows DataChannel adapter, packaged fault matrix and receipt soak |
 | M5 supported consumers | Not implemented | Public authenticated facade, durable idempotency/event cursors, packaged SDKs/CLI, independent Windows and Android consumers and compatibility matrix |
@@ -98,8 +98,9 @@ signed onboarding SDP against the actual applied remote description, and signed
 capabilities received on that carrier. The reducer then requires fresh native
 inspection, bridge attachment and path readiness. Mailbox configuration is not
 required to retain this established carrier. Pending onboarding in the shared
-composition keeps its control channel but cannot attach a messaging bridge
-before ownership transfer. UI close/detach commands cannot
+composition keeps its control channel and a limited isolated contact-handshake
+scope; it cannot attach the main messaging bridge before ownership transfer.
+UI close/detach commands cannot
 retire it after transfer; explicit Stop still does. Failed durable Stop also
 retires verified manual peers awaiting transfer while retaining the memory fence.
 Native attachment evidence requires the exact online interface to remain in the
@@ -388,11 +389,36 @@ Its evidence level is `windows_packaged_webview2_preapproved_peers`. Windows CI
 requires all three checks, three process starts, two forced exits and three
 authenticated receipts. The aggregate gate requires the same frozen binary/build
 inputs as the lifecycle suite and the same native host as the component suite.
-This closes that narrow packaged Windows recovery gap. First-time contact approval,
-Windows-to-Android packaged interoperability, independent public consumers and
-release qualification remain open. In particular, shared-mode first-time pairing
-still needs qualification of consent/control exchange while the messaging bridge
-is withheld; signed capabilities alone must never grant contact approval.
+This closes that narrow packaged Windows recovery gap. Windows-to-Android packaged
+interoperability, independent public consumers and release qualification remain open.
+
+Shared first-time contact onboarding now uses an isolated RNS interpreter with
+one exact peer and only the existing signed LXMF contact request/accept/decline
+payloads. The workspace bootstrap mechanism is extracted from its workspace
+scope; workspace scope behavior and peer formats are preserved. The new private
+`initialize_contact` worker operation is absent from public service commands.
+The worker has no alternate interfaces or routing, a five-minute/signed-expiry
+ceiling and bounded packet/control queues. Only one pending scope per service
+may run. Main-profile chat, workspace traffic and application receipts cannot
+cross it. The existing durable outbox retains all retry decisions.
+
+The parent revalidates exact resource, signed peer, current execution and contact
+authority before each exchange and independently verifies inbound LXMF signatures.
+Lock, shutdown, expiry, cancellation and revocation stop the scope. Endpoint
+status cannot claim an application receipt. Adoption waits for contact-handshake
+completion and current authorization, and retires the isolated scope before
+granting the main messaging owner its carrier. Capability/control JSON alone
+never approves a contact.
+
+The separate `windows_packaged_webview2_explicit_pairing` scenario starts with no
+contacts, receives an invitation without granting authority, explicitly accepts
+it, receives the signed contact request, explicitly approves, and verifies both
+approved states. Both sides then opt into direct-IP messaging and establish a
+fresh authorized carrier for bidirectional messages and authenticated receipts.
+It does not yet qualify continuous transfer of that initial pending carrier,
+workspace pairing, pairing cancellation/restart faults or Android bootstrap
+integration. Its report is required separately from the pre-approved crash test,
+with a distinct run identity and the same tested binaries.
 
 `connection-qualification.yml` is the common PR, main-branch and merge-queue
 entry point. It invokes the existing policy, verification/Windows, Android,

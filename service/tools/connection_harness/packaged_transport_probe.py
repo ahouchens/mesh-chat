@@ -5,6 +5,7 @@ ordinary service commands through the production host. No alternate network
 route is configured. Keys, SDP, identities and message contents stay local.
 """
 import base64
+from contextlib import contextmanager
 import os
 from pathlib import Path
 import sys
@@ -55,6 +56,29 @@ class Controller:
             sleep(.2)
 
 
+def cleanup_directory(directory, *, clock=monotonic, pause=sleep):
+    deadline = clock() + 8
+    while True:
+        try:
+            directory.cleanup()
+            return
+        except PermissionError:
+            # Windows releases exited-process file handles asynchronously.
+            # This retries only fixture cleanup; scenario failures are never retried.
+            if clock() >= deadline: raise
+            pause(.1)
+
+
+@contextmanager
+def fixture_directory(controller, prefix):
+    directory = TemporaryDirectory(prefix=prefix)
+    try:
+        yield Path(directory.name)
+    finally:
+        if sys.exc_info()[0] is None: controller.phase = "cleanup"
+        cleanup_directory(directory)
+
+
 def seed_profiles(directory):
     identities = [RNS.Identity(), RNS.Identity()]
     profiles = []
@@ -94,8 +118,8 @@ def start(controller, slot, fixture):
         parent_pid=int(sys.argv[1]))
 
 
-def connect(controller, fixtures):
-    for slot, (_, _, contact_id) in enumerate(fixtures):
+def connect(controller, fixtures, *, configure_contacts=True):
+    for slot, (_, _, contact_id) in enumerate(fixtures if configure_contacts else []):
         controller.call(slot, "reconnect_consent_set", contact_id=contact_id,
             auto_reconnect=False, allow_direct_ip_disclosure=True)
         controller.wait(lambda: any(profile.get("connection") is not None
@@ -108,11 +132,15 @@ def connect(controller, fixtures):
     signed_offer = controller.call(0, "webrtc_onboarding_offer", sdp=offer["sdp"], dtls_fingerprint=offer["fingerprint"])
     controller.phase = "answer"
     answer = controller.call(1, "native_webrtc_accept", session_id="manual-peer-one", offer_sdp=offer["sdp"], ice=ice, channels=channels)
+    controller.phase = "sign_answer"
     signed_answer = controller.call(1, "webrtc_onboarding_answer", offer_document=signed_offer["document"],
         sdp=answer["sdp"], dtls_fingerprint=answer["fingerprint"])
+    controller.phase = "bind_answerer"
     controller.call(1, "native_webrtc_bind_onboarding", session_id="manual-peer-one", offer_document=signed_offer["document"])
+    controller.phase = "bind_offerer"
     controller.call(0, "native_webrtc_bind_onboarding", session_id="manual-peer-zero",
         offer_document=signed_offer["document"], answer_document=signed_answer["document"])
+    controller.phase = "apply_answer"
     controller.call(0, "native_webrtc_apply_answer", session_id="manual-peer-zero", answer_sdp=answer["sdp"])
 
 
@@ -162,6 +190,7 @@ def exercise(controller, directory):
             raise AssertionError("Host did not observe the initial negotiation")
         controller.phase = "crash"
         controller.action(0, "crash")
+        controller.phase = "initial_checkpoint"
         bindings = stopped_bindings(fixtures[0])
         controller.phase = "restart"
         start(controller, 0, fixtures[0])
@@ -177,9 +206,11 @@ def exercise(controller, directory):
             if current.get(operation, 0) != counts.get(operation, 0):
                 raise AssertionError("Recovery negotiated a replacement carrier")
         controller.action(0, "crash")
+        controller.phase = "recovered_checkpoint"
         if stopped_bindings(fixtures[0]) != bindings:
             raise AssertionError("Recovery replaced the physical binding")
         controller.checks.append("exact_carrier_reuse")
+        controller.phase = "shutdown"
         controller.call(1, "shutdown")
     finally:
         for slot in range(2):
@@ -189,8 +220,8 @@ def exercise(controller, directory):
 def main():
     controller = Controller()
     try:
-        with TemporaryDirectory(prefix="mesh-packaged-transport-") as directory:
-            exercise(controller, Path(directory))
+        with fixture_directory(controller, "mesh-packaged-transport-") as directory:
+            exercise(controller, directory)
         result = {"ok": True, "checks": controller.checks}
     except Exception as error:
         result = {"ok": False, "checks": controller.checks, "phase": controller.phase,

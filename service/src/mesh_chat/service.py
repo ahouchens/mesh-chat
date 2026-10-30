@@ -2650,6 +2650,9 @@ class MeshChatService(
         ):
             self._apply_contact_hints(contact)
         try:
+            for pending in list(getattr(self, "_pending_contact_carriers", {}).values()):
+                if pending.send(contact, message):
+                    return
             destination = bytes.fromhex(contact["destination_hash"])
             prefer_signed_route = getattr(self.network, "prefer_signed_route", None)
             if callable(prefer_signed_route):
@@ -5546,6 +5549,10 @@ class MeshChatService(
                 return
             self._close_started = True
         self._shutdown.set()
+        self._closing_contact_carriers = tuple(getattr(self, "_pending_contact_carriers", {}).values())
+        for carrier in self._closing_contact_carriers:
+            carrier.close()
+        contact_carriers_stopped = all(carrier.wait(timeout=0.1) for carrier in self._closing_contact_carriers)
         connection_runtime = getattr(self, "_connection_runtime", None)
         connection_stopped = connection_runtime is None or connection_runtime.stop(timeout=0.5)
         getattr(self, "_signal_pairing_contexts", {}).clear()
@@ -5618,7 +5625,7 @@ class MeshChatService(
         # callback or retry. If the bounded foreground shutdown expires, a
         # daemon finalizer waits for that worker and closes the vault exactly
         # once without delaying desktop's sidecar deadline.
-        workers_stopped = (connection_stopped and self._direct_recovery.wait(timeout=0.1)
+        workers_stopped = (contact_carriers_stopped and connection_stopped and self._direct_recovery.wait(timeout=0.1)
                            and packets_stopped and callbacks_stopped and not self._retry_thread.is_alive())
         if not workers_stopped:
             finalizer = threading.Thread(
@@ -5636,6 +5643,8 @@ class MeshChatService(
         """Close the vault after bounded shutdown had to leave a worker active."""
 
         try:
+            for carrier in getattr(self, "_closing_contact_carriers", ()):
+                carrier.wait()
             self._direct_packets.wait()
             connection_runtime = getattr(self, "_connection_runtime", None)
             if connection_runtime is not None:

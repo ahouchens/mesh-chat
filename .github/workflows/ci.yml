@@ -102,6 +102,8 @@ jobs:
         run: python scripts/test_desktop_transport.py --expected-source "${{ github.sha }}"
       - name: Qualify frozen peers and receipts across a service crash
         run: python scripts/test_packaged_transport.py --expected-source "${{ github.sha }}"
+      - name: Qualify explicit first-time approval and paired messaging
+        run: python scripts/test_packaged_transport.py --pairing --expected-source "${{ github.sha }}"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -110,4 +112,5 @@ jobs:
             dist/reports/desktop-transport.json
             dist/reports/packaged-lifecycle.json
             dist/reports/packaged-transport.json
+            dist/reports/packaged-pairing.json
           if-no-files-found: error
