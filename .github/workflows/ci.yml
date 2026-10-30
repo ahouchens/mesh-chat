@@ -100,6 +100,8 @@ jobs:
         run: cargo build --locked --manifest-path src-tauri/Cargo.toml --bin mesh-transport-qualification --features transport-qualification
       - name: Exercise real WebView2 through the private host pipe
         run: python scripts/test_desktop_transport.py --expected-source "${{ github.sha }}"
+      - name: Qualify frozen peers and receipts across a service crash
+        run: python scripts/test_packaged_transport.py --expected-source "${{ github.sha }}"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -107,4 +109,5 @@ jobs:
           path: |
             dist/reports/desktop-transport.json
             dist/reports/packaged-lifecycle.json
+            dist/reports/packaged-transport.json
           if-no-files-found: error

@@ -13,6 +13,8 @@ mod desktop_transport_broker;
 #[cfg(all(windows, feature = "transport-qualification"))]
 mod desktop_transport_qualification;
 #[cfg(all(windows, feature = "transport-qualification"))]
+mod packaged_transport_qualification;
+#[cfg(all(windows, feature = "transport-qualification"))]
 pub use desktop_transport_qualification::run as run_desktop_transport_qualification;
 #[cfg(desktop)]
 mod service_diagnostics;

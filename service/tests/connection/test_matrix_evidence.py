@@ -13,6 +13,7 @@ from direct_qualification import LEVEL, SUITES as DIRECT_SUITES
 from connection_test_inventory import REQUIRED_SUITES
 from test_desktop_transport import CHECKS
 from test_packaged_lifecycle import CHECKS as PACKAGED_CHECKS, COUNTS as PACKAGED_COUNTS, LEVEL as PACKAGED_LEVEL
+from test_packaged_transport import CHECKS as TRANSPORT_CHECKS, COUNTS as TRANSPORT_COUNTS, LEVEL as TRANSPORT_LEVEL
 
 
 def fixture(directory):
@@ -50,9 +51,12 @@ def fixture(directory):
             "tests_executed": len(cases), "tests_passed": len(cases), "tests_failed": 0, "tests_skipped": 0,
             "duration_seconds": 1, "scenarios": [{"scenario_id": case["id"], "passed": True,
                 "report_sha256": "b" * 64} for case in cases]})
+    transport = {**packaged, "evidence_level": TRANSPORT_LEVEL, "checks": list(TRANSPORT_CHECKS),
+                 "counts": dict(TRANSPORT_COUNTS), "native_binary_sha256": desktop["native_binary_sha256"]}
     for path, value in (("policy/connection-policy.json", policy),
                         ("desktop/desktop-transport.json", desktop),
                         ("desktop/packaged-lifecycle.json", packaged),
+                        ("desktop/packaged-transport.json", transport),
                         ("android/android-qualification.json", android)):
         (directory / path).write_text(json.dumps(value))
     return source, tree, android
@@ -64,7 +68,7 @@ def test_gate_revalidates_policy_inventory_and_both_platform_component_reports(t
     assert result["policy_tests_executed"] == 1
     assert result["android_tests_executed"] == 24
     assert set(result["windows_transport_checks"]) == CHECKS
-    assert set(result["report_sha256"]) == {"policy", "windows_transport", "windows_packaged_lifecycle", "android"}
+    assert set(result["report_sha256"]) == {"policy", "windows_transport", "windows_packaged_lifecycle", "windows_packaged_transport", "android"}
     assert result["windows_packaged_lifecycle_checks"] == list(PACKAGED_CHECKS)
 
 
@@ -135,7 +139,23 @@ def test_selected_direct_requires_complete_execution_from_both_platforms(tmp_pat
     result = matrix.collect(tmp_path, source, tree, ["direct"])
     assert set(result["direct"]) == {"Linux", "Windows"}
     assert all(value["tests_executed"] == 3 for value in result["direct"].values())
-    assert len(result["report_sha256"]) == 9
+    assert len(result["report_sha256"]) == 10
+
+
+@pytest.mark.parametrize("fault", ["missing", "sidecar", "host", "build", "receipts"])
+def test_packaged_transport_must_execute_against_the_same_artifacts(tmp_path, fault):
+    source, tree, _ = fixture(tmp_path)
+    path = tmp_path / "desktop/packaged-transport.json"
+    value = json.loads(path.read_text())
+    if fault == "missing": path.unlink()
+    else:
+        if fault == "sidecar": value["sidecar_sha256"] = "9" * 64
+        elif fault == "host": value["native_binary_sha256"] = "9" * 64
+        elif fault == "build": value["build_input_sha256"] = "9" * 64
+        else: value["counts"]["authenticated_receipts"] = 0
+        path.write_text(json.dumps(value))
+    with pytest.raises((ValueError, FileNotFoundError)):
+        matrix.collect(tmp_path, source, tree, [])
 
 
 @pytest.mark.parametrize("fault", ["missing", "wrong_source", "partial", "stale_binary"])

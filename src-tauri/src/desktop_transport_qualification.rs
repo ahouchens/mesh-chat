@@ -9,6 +9,9 @@ use tauri_plugin_shell::{process::CommandEvent, ShellExt};
 
 pub fn run() -> i32 {
     let arguments: Vec<_> = std::env::args().skip(1).collect();
+    if arguments.len() == 4 && arguments[0] == "--packaged" {
+        return crate::packaged_transport_qualification::run(&arguments[1..]);
+    }
     if arguments.len() != 2 {
         return 2;
     }

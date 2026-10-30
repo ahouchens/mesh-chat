@@ -371,7 +371,28 @@ inventory, and its only other supported action is reset. Its evidence level is
 carriers, bridge readiness, message delivery or receipts. The gate verifies a
 clean source revision, the packaging input fingerprint, tested binary digest,
 execution counts and source tree. Missing, partial or stale reports fail the
-aggregate gate. Combined packaged carrier/message recovery remains open.
+aggregate gate.
+
+The combined Windows scenario now runs two frozen services through production
+private WebView2 hosts with isolated, pre-approved encrypted fixture profiles.
+LAN discovery, TCP and other alternate routes are disabled. Ordinary service
+commands exchange signed onboarding descriptions and durable messages; both peers
+must receive authenticated receipts. After killing one service process tree,
+the replacement opens the same protected profile, reclaims the same physical
+carrier binding and delivers another message with a receipt. Host operation
+counts must prove that recovery performed no new offer/answer negotiation. A
+second forced exit permits journal comparison without bypassing the profile lock.
+The original delivered message must remain present exactly once.
+
+Its evidence level is `windows_packaged_webview2_preapproved_peers`. Windows CI
+requires all three checks, three process starts, two forced exits and three
+authenticated receipts. The aggregate gate requires the same frozen binary/build
+inputs as the lifecycle suite and the same native host as the component suite.
+This closes that narrow packaged Windows recovery gap. First-time contact approval,
+Windows-to-Android packaged interoperability, independent public consumers and
+release qualification remain open. In particular, shared-mode first-time pairing
+still needs qualification of consent/control exchange while the messaging bridge
+is withheld; signed capabilities alone must never grant contact approval.
 
 `connection-qualification.yml` is the common PR, main-branch and merge-queue
 entry point. It invokes the existing policy, verification/Windows, Android,

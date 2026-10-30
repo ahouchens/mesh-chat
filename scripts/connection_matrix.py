@@ -12,6 +12,7 @@ from connection_evidence import evidence as policy_evidence
 from direct_qualification import SUITES as DIRECT_SUITES, read_suite as direct_suite
 from test_desktop_transport import PYTHON_SOURCES, verified_report as desktop_evidence
 from test_packaged_lifecycle import verify_report as packaged_evidence
+from test_packaged_transport import verify_report as packaged_transport_evidence
 
 
 def read(path):
@@ -85,11 +86,19 @@ def collect(directory: Path, source: str, tree: str, required):
         raise ValueError("Windows source component digest inventory is incomplete")
     packaged_path = directory / "desktop/packaged-lifecycle.json"
     packaged = packaged_evidence(read(packaged_path), source, tree)
-    reports = {"policy": policy_path, "windows_transport": desktop_path, "windows_packaged_lifecycle": packaged_path}
+    transport_path = directory / "desktop/packaged-transport.json"
+    transport = packaged_transport_evidence(read(transport_path), source, tree)
+    if (transport["sidecar_sha256"] != packaged["sidecar_sha256"]
+            or transport["build_input_sha256"] != packaged["build_input_sha256"]
+            or transport["native_binary_sha256"] != desktop["native_binary_sha256"]):
+        raise ValueError("Windows scenarios did not execute the same frozen service and native host")
+    reports = {"policy": policy_path, "windows_transport": desktop_path,
+               "windows_packaged_lifecycle": packaged_path, "windows_packaged_transport": transport_path}
     summary = {"policy_tests_executed": policy["tests_executed"],
                "windows_transport_checks": desktop["result"]["checks"],
                "windows_native_sha256": desktop["native_binary_sha256"],
                "windows_packaged_lifecycle_checks": packaged["checks"],
+               "windows_packaged_transport_checks": transport["checks"],
                "windows_sidecar_sha256": packaged["sidecar_sha256"]}
     if "android" in required:
         android_path = directory / "android/android-qualification.json"
