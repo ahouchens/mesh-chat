@@ -51,31 +51,38 @@ class ConnectionRuntime:
                 return {"state": "stopped"}
             return dict(self._profile_values[key])
 
-    def _is_fenced(self, key, profile):
+    @staticmethod
+    def _authority_identifiers(key, profile):
         identifiers = {key.profile_id, profile.get("contact_id")}
+        if key.scope == "workspace" and profile.get("workspace_id"):
+            identifiers.add(("workspace", profile["workspace_id"]))
+        return identifiers
+
+    def _is_fenced(self, key, profile):
+        identifiers = self._authority_identifiers(key, profile)
         return (key in self._veto or bool(identifiers & self._contact_fences)
                 or bool(identifiers & self._authority_changes.keys())
                 or (self._all_fenced and not identifiers & self._resumed))
 
-    def begin_authority_change(self, contact_id):
+    def begin_authority_change(self, authority_id):
         """Deny effects and packets before a protected authority write can fail."""
         with self._lock:
-            if (contact_id not in self._authority_changes
+            if (authority_id not in self._authority_changes
                     and len(self._authority_changes) >= self.owner.policy.max_actors):
                 self.quarantine()
                 raise CapacityExceeded("Pending authority changes exceed the actor budget")
             self._context_revision += 1
             token = self._context_revision
-            self._authority_changes[contact_id] = token
+            self._authority_changes[authority_id] = token
             for key, profile in self._profile_values.items():
-                if contact_id in {profile.get("contact_id"), key.profile_id}:
+                if authority_id in self._authority_identifiers(key, profile):
                     self.owner.dispatch(key, ContextChanged(self.now(), desired=Desired.STOPPED))
             return token
 
-    def commit_authority_change(self, contact_id, token):
+    def commit_authority_change(self, authority_id, token):
         with self._lock:
-            if self._authority_changes.get(contact_id) == token:
-                del self._authority_changes[contact_id]
+            if self._authority_changes.get(authority_id) == token:
+                del self._authority_changes[authority_id]
                 self._context_revision += 1
 
     def permits_carrier(self, profile_id, resource):

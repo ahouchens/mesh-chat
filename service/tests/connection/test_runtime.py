@@ -30,8 +30,11 @@ def runtime():
     return owner, profile
 
 
-def test_driver_executes_phases_and_fences_failed_persistent_stop():
+@pytest.mark.parametrize("revocation", ["stop", "workspace"])
+def test_driver_executes_phases_and_fences_failed_persistent_authority_write(revocation):
     owner, profile = runtime()
+    if revocation == "workspace":
+        profile.update(scope_kind="workspace", workspace_id="w")
     try:
         deadline = monotonic() + 3
         while monotonic() < deadline:
@@ -43,7 +46,10 @@ def test_driver_executes_phases_and_fences_failed_persistent_stop():
         carrier = owner.owner.snapshots()[0].carrier.resource
         assert owner.permits_carrier("p", carrier)
         # The store still reports enabled, as if a Stop transaction failed.
-        owner.fence("c")
+        if revocation == "workspace":
+            owner.begin_authority_change(("workspace", "w"))
+        else:
+            owner.fence("c")
         assert not owner.permits_carrier("p", carrier)
         owner.step()
         assert owner.snapshots()["p"]["desired"] == "stopped"
@@ -118,6 +124,33 @@ def test_runtime_projection_sequence_advances_on_observations():
         before = owner.snapshots()["p"]["sequence"]
         owner.fence("c")
         assert owner.snapshots()["p"]["sequence"] > before
+    finally:
+        owner.stop()
+
+
+def test_workspace_authority_fence_covers_all_devices_without_crossing_scopes():
+    owner, personal = runtime()
+    workspace = {**personal, "id": "workspace-peer", "contact_id": "workspace:w:member:device",
+                 "scope_kind": "workspace", "workspace_id": "w"}
+    second = {**workspace, "id": "workspace-second-device", "remote_device_id": "second"}
+    other = {**workspace, "id": "other-workspace", "workspace_id": "other"}
+    owner.profiles = lambda: {"profiles": [personal, workspace, second, other]}
+    try:
+        # A failed authority write can precede the first discovery of its peers.
+        token = owner.begin_authority_change(("workspace", "w"))
+        owner.synchronize()
+        snapshots = owner.snapshots()
+        assert snapshots["workspace-peer"]["desired"] == "stopped"
+        assert snapshots["workspace-second-device"]["desired"] == "stopped"
+        assert snapshots["p"]["desired"] == snapshots["other-workspace"]["desired"] == "enabled"
+        owner.committed_start()
+        owner.synchronize()
+        assert owner.snapshots()["workspace-peer"]["desired"] == "stopped"
+        owner.commit_authority_change(("workspace", "w"), token)
+        owner.synchronize()
+        assert owner.snapshots()["workspace-peer"]["desired"] == "enabled"
+        owner.begin_authority_change(("workspace", "w"))
+        assert owner.snapshots()["workspace-peer"]["desired"] == "stopped"
     finally:
         owner.stop()
 

@@ -210,6 +210,20 @@ wrapper. Blocked, missing and unapproved contacts now report
 `contact_not_approved` in the existing reason-list field, consumed by reconnect
 settings and both diagnostic filters. No signed document version changes.
 
+Workspace domain writes now pass through a narrow application persistence
+adapter. A change to the workspace's active state, pinned manifest/genesis,
+local identity or authorization generation fences every connection in that
+workspace before the existing vault transaction. The private scope key is a
+typed workspace tuple, so it cannot collide with a contact/profile identifier.
+The same rule covers verified incoming manifests, member/device revocation,
+leaving, closure, fork quarantine and deletion. Failed writes keep the denial;
+cached operation results and unrelated unread/status updates cannot clear it.
+The vault still owns atomic persistence and durable replay and does not import
+connection policy. Only a matching successful authority commit releases the
+fence for a fresh domain scan. Domain transaction tests and an architecture
+guard prevent workspace writes from bypassing this boundary. The full workspace
+suite is included in the required connection evidence inventory.
+
 The transitional desktop transport component now owns bounded browser allocations,
 SDP operations, exact callback fencing and packet/control admission. It preserves
 the supplied ICE policy and has no negotiation signatures, authority decisions or

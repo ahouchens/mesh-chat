@@ -475,12 +475,12 @@ class ReconnectServiceMixin:
     # ----------------------------------------------------------------- consent
 
     @contextmanager
-    def _connection_authority_update(self, contact_id, changed=True):
+    def _connection_authority_update(self, authority_id, changed=True):
         runtime = getattr(self, "_connection_runtime", None) if changed else None
-        token = runtime.begin_authority_change(contact_id) if runtime is not None else None
+        token = runtime.begin_authority_change(authority_id) if runtime is not None else None
         yield
         if runtime is not None:
-            runtime.commit_authority_change(contact_id, token)
+            runtime.commit_authority_change(authority_id, token)
 
     def _reconnect_contact(self, contact_id: Any) -> dict[str, Any]:
         contact_id = _text(contact_id, "Contact ID")

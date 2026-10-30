@@ -28,3 +28,13 @@ def test_supervisor_cannot_import_concrete_service_or_adapters():
         if isinstance(node, ast.ImportFrom):
             assert node.module not in {"service", "adapters", "composition", "runtime"}
             assert not (node.module or "").startswith(("RNS", "LXMF", "java"))
+
+
+def test_workspace_writes_cannot_bypass_the_connection_authority_boundary():
+    tree = ast.parse((ROOT.parent / "workspace_service.py").read_text(encoding="utf-8"))
+    writes = {"put", "put_many", "put_and_delete", "commit_operation", "delete"}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr in writes:
+            target = node.func.value
+            assert not (isinstance(target, ast.Attribute) and target.attr == "store"
+                        and isinstance(target.value, ast.Name) and target.value.id == "self"), node.lineno

@@ -35,6 +35,14 @@ that carrier. It cannot authorize new signaling, set automatic reconnect consent
 or survive carrier loss. It is absent from public profile responses and the
 snapshot schema. The change is private and does not change either wire version.
 
+Workspace transactions additionally use an in-process authority identifier
+`("workspace", workspace_id)`. Its producer is the workspace persistence adapter;
+its consumer is the connection runtime. It covers every device/profile in that
+workspace, including profiles first discovered after a failed write. This is not
+a JSON command or native event. Existing contact/profile identifiers and explicit
+Stop fences remain independent. A successful matching transaction permits a new
+domain scan; it does not itself grant a carrier lease.
+
 ## Experimental desktop transport frames v1
 
 `DesktopTransportHost` produces inherited-pipe `desktop_transport` requests;
