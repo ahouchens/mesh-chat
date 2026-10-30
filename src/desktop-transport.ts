@@ -1,5 +1,5 @@
 /** Private WebView transport operations. No signaling, authority or peer retry policy. */
-import { fingerprint } from "./webrtc-peer";
+import { fingerprint } from "./webrtc-sdp";
 
 export interface TransportEvent { event: string; resource: string; data: string }
 export interface ChannelPurpose { label: string; binary: boolean; ordered: boolean }

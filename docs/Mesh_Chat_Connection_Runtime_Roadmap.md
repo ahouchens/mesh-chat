@@ -218,8 +218,13 @@ bulk overflow is counted separately. Its production module is bundled into the
 Android instrumentation APK to exercise both offer roles against native WebRTC.
 Unit tests cover cancellation, deadlines, resource/operation limits, error
 redaction and disposal failure. The instrumentation source compiles locally;
-actual Chromium/JNI execution is a separate CI gate. This is component evidence,
-not Windows WebView2 qualification: private host registration, inherited IPC and
+actual Chromium/JNI execution is a separate CI gate. A private inherited-pipe
+binding and browser protocol now translate the existing native method contract,
+fence process epochs and monotonic requests, bound admission, and quarantine
+unknown outcomes without waiting for a blocked writer. Pipe tests exercise
+reordered replies and callbacks while ordinary dispatch waits. The browser
+protocol is included in both emulator offer roles. This is component evidence,
+not Windows WebView2 qualification: trusted platform registration and
 service-restart adoption are not yet connected to this component. Existing
 renderer compatibility paths remain active until those parity gates pass.
 

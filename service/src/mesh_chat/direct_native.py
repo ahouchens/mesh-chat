@@ -130,11 +130,12 @@ class NativeChannel:
 
 class NativeFrameReader:
     """Read inherited frames while a dispatch worker waits for native results."""
-    def __init__(self, stream, channel):
+    def __init__(self, stream, channel, *, desktop_transport=None):
         self._requests = queue.Queue(maxsize=8)
         self._error = None
         self._stopped = threading.Event()
         self._channel = channel
+        self._desktop_transport = desktop_transport
         self._thread = threading.Thread(target=self._run, args=(stream,), daemon=True,
                                         name="mesh-chat-private-reader")
         self._thread.start()
@@ -146,6 +147,10 @@ class NativeFrameReader:
                 value = read_frame(stream)
                 if value.get("type") == "direct_native_reply":
                     self._channel.receive(value)
+                elif value.get("type") in {"desktop_transport_reply", "desktop_transport_event"}:
+                    if self._desktop_transport is None:
+                        raise ValidationError("Desktop transport host is not registered")
+                    self._desktop_transport.receive(value)
                 else:
                     # Never block the sole reader behind renderer work: overflow
                     # closes the channel and wakes a dispatch waiting on native.
@@ -153,6 +158,8 @@ class NativeFrameReader:
         except Exception as exc:
             self._error = exc
             self._channel.close()
+            if self._desktop_transport is not None:
+                self._desktop_transport.shutdown()
 
     def read(self):
         while True:
@@ -166,3 +173,5 @@ class NativeFrameReader:
     def close(self):
         self._stopped.set()
         self._channel.close()
+        if self._desktop_transport is not None:
+            self._desktop_transport.shutdown()

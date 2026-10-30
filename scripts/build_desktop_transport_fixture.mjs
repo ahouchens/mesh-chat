@@ -13,7 +13,7 @@ await build({
     target: "es2022",
     minify: false,
     lib: {
-      entry: resolve(root, "src/desktop-transport.ts"),
+      entry: resolve(root, "src/desktop-transport-protocol.ts"),
       name: "MeshDesktopTransport",
       formats: ["iife"],
       fileName: () => "desktop-transport.js",

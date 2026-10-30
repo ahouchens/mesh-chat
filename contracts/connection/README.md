@@ -34,3 +34,40 @@ The runtime and effect executor consume it only for adoption and maintenance of
 that carrier. It cannot authorize new signaling, set automatic reconnect consent,
 or survive carrier loss. It is absent from public profile responses and the
 snapshot schema. The change is private and does not change either wire version.
+
+## Experimental desktop transport frames v1
+
+`DesktopTransportHost` produces inherited-pipe `desktop_transport` requests;
+`DesktopTransportProtocol` consumes them in the trusted browser adapter.
+Every request has exactly `v`, `type`, `epoch`, `id` and `request`. The epoch is
+a fresh 32-character lowercase hexadecimal service identity. IDs are increasing
+positive decimal strings, bounded to unsigned 64-bit values. The browser rejects
+old epochs and non-increasing IDs before executing any operation. This is an
+internal contract version, independent of snapshots and signed peer documents.
+
+Operations are `createOffer(options)`, `acceptOffer(options, offer)`,
+`applyAnswer(resource, answer)`, `inspect(resource)`, `send(resource, packet)`,
+`sendControl(resource, label, text)`, `close(resource)` and `reset`. Options contain
+only `resource`, `ice` and `channels`. Resources name exact physical allocations;
+packet values are canonical base64 for 1–1,064 bytes. The Python binding accepts
+the bridge's native bytes and performs that encoding. No operation selects a
+contact, changes consent, signs documents or supplies public caller authority.
+
+Replies contain exactly `v`, `type: desktop_transport_reply`, `epoch`, `id`,
+`ok` and `result`. Errors have `ok: false` and `result: null`; browser error text
+is not propagated. Observation frames contain exactly `v`,
+`type: desktop_transport_event`, `epoch`, `event`, `resource` and `data` and enter
+the existing bounded native callback inbox. The sole pipe reader routes these
+frames independently of ordinary dispatch and rejects unregistered transport
+frames. Application commands cannot register this private receiver.
+
+Frames are limited to 256 KiB, with stricter SDP/control/packet bounds at the
+adapter. There are at most 16 outstanding requests and one private writer.
+Requests expire after 30 seconds, including time waiting on a blocked writer;
+browser operations have a 25-second deadline. Unknown outcomes quarantine the
+channel and enqueue reset after any in-flight write. Pending waiters fail,
+old replies cannot revive them, and further admission is denied. Reset is not
+proof of native disposal when the pipe is broken: the containing platform host
+must independently retire lost bindings. Trusted Windows registration and
+surviving-carrier adoption remain required before this path can replace the
+renderer compatibility runtime.

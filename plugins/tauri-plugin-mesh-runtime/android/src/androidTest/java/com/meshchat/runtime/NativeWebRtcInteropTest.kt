@@ -278,21 +278,30 @@ class NativeWebRtcInteropTest {
             });
             const options = {resource:'instrumented-browser-peer', ice:{iceServers:[], iceTransportPolicy:'all'},
               channels:[{label:'mesh-reticulum',binary:true,ordered:true},{label:'$control',binary:false,ordered:true}]};
-            window.offer = async () => report('sdp', (await host.createOffer(options)).sdp);
-            window.answer = async sdp => report('sdp', (await host.acceptOffer(options, sdp)).sdp);
-            window.finish = sdp => host.applyAnswer(options.resource, sdp);
+            const epoch = 'a'.repeat(32);
+            const protocol = new MeshDesktopTransport.DesktopTransportProtocol(epoch, host);
+            let sequence = 0;
+            const perform = async request => {
+              const reply = await protocol.handle({v:1,type:'desktop_transport',epoch,id:String(++sequence),request});
+              if (!reply.ok) throw new Error('Production desktop protocol rejected operation');
+              return reply.result;
+            };
+            window.offer = async () => report('sdp', (await perform({op:'createOffer',options})).sdp);
+            window.answer = async sdp => report('sdp', (await perform({op:'acceptOffer',options,offer:sdp})).sdp);
+            window.finish = sdp => perform({op:'applyAnswer',resource:options.resource,answer:sdp});
             window.probe = async () => {
               const deadline = Date.now() + 20000;
               while (host.inspect(options.resource)?.data_channel_state !== 'open' || states['$control'] !== 'open') {
                 if (Date.now() > deadline) throw new Error('Production browser transport did not open');
                 await new Promise(resolve => setTimeout(resolve, 50));
               }
-              if (!host.send(options.resource, new Uint8Array([9,8,7])) || !host.sendControl(options.resource, '$control', 'probe')) {
+              if (!await perform({op:'send',resource:options.resource,packet:'CQgH'}) ||
+                  !await perform({op:'sendControl',resource:options.resource,label:'$control',text:'probe'})) {
                 throw new Error('Production browser transport refused traffic');
               }
               report('sent', 'yes');
             };
-            window.pc = {close: () => host.closeAll()};
+            window.pc = {close: () => perform({op:'reset'})};
             report('ready', 'yes');
             </script>
         """.trimIndent()
