@@ -709,11 +709,22 @@ encoded page within one MiB. The vault now accepts several independent projectio
 per source namespace; each observes the same committed changes, sees no sibling's
 derived records, and any failure rolls back the whole transaction.
 
-Evidence: 13 in-process regressions cover atomic commit and rollback, content-free
+Replay extends to those messages: a journal record now carries the message
+direction, so `events.poll` emits `message.changed` and `message.removed` events
+for inbound text with the same opaque handle `message.received` returns. Events
+select the direction explicitly; records written before the field existed are
+treated as the caller's outbound stream, which is the only stream they could have
+belonged to. Authority changes still invalidate the cursor instead of skipping a
+now-hidden message, and the snapshot watermark closes the inbound query/subscribe
+race.
+
+Evidence: 18 in-process regressions cover atomic commit and rollback, content-free
 index records, chronological pagination without duplicates, direction and kind
 filtering, contact-authority hiding and resync, caller-scoped handles and cursors,
-cursor-purpose confusion, state changes, deletion, bounds, request validation and
-service restart. Four further vault regressions cover multiple projections, one
+cursor-purpose confusion, state changes, deletion, bounds, request validation,
+service restart, inbound replay for changes and removal, hidden changes after
+blocking, the watermark handshake and outbound direction. Journal tests pin the
+stored direction, including its removal with the message. Four further vault regressions cover multiple projections, one
 failing sibling rolling back the batch, duplicate binding rejection and the binding
 cap. The full connection directory passed locally (850 tests), the strict model
 type check passed, and the contract vectors and schemas were updated. This closes
@@ -796,8 +807,8 @@ M5 - supported reusable core
       received-text enumeration.
 - [ ] Authenticated Windows and Android host bindings; the facade remains a private
       component until they exist.
-- [ ] Remaining durable commands/events (connection intent, pairing/approval,
-      incoming-message events) and their idempotency/retention semantics.
+- [ ] Remaining durable commands/events (connection intent, pairing/approval) and
+      their idempotency/retention semantics.
 - [ ] Versioned TypeScript/Kotlin SDKs, production CLI and the supported
       compatibility matrix.
 - [ ] Mesh Chat messaging routed through the supported facade.

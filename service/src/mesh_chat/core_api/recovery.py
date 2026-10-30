@@ -33,6 +33,7 @@ class MessageEvent:
     type: str
     state: str | None
     timestamp: float
+    direction: str = "outbound"
 
 
 @dataclass(frozen=True)

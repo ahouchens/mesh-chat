@@ -115,12 +115,23 @@ class ServiceRecovery:
             for change in changes:
                 handle = self._messages._identifier("core-api-message:v1", scope.caller, scope.profile, change["message_id"])
                 index = self._store.get("api_message", handle)
-                if self._owned(index, scope) and self._readable(change["contact_id"]):
+                direction = change.get("direction")
+                if not direction:
+                    # Records written before the journal carried direction belong
+                    # to this caller's own outbound enqueue stream.
+                    direction = "outbound"
+                visible = self._readable(change["contact_id"]) and (
+                    (direction == "inbound") or self._owned(index, scope))
+                if visible:
                     if len(result) == limit:
                         break
+                    if direction == "inbound":
+                        handle = self._messages._identifier("core-api-received:v1", scope.caller, scope.profile,
+                                                           change["message_id"])
                     identifier = self._messages._identifier("core-api-event:v1", scope.caller, scope.profile,
                                                           self._journal.generation, change["sequence"])
-                    result.append(MessageEvent(identifier, handle, change["type"], change["state"], change["timestamp"]))
+                    result.append(MessageEvent(identifier, handle, change["type"], change["state"],
+                                               change["timestamp"], direction))
                 position = change["sequence"]
             return EventPage(tuple(result), self._cursors.create(scope, authority, "events", position),
                              position < self._journal.head())

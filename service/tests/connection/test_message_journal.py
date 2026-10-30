@@ -30,6 +30,15 @@ def test_journal_records_message_updates_and_removal_without_text(journal):
     assert "secret text" not in str(store.list("message_event"))
 
 
+def test_journal_records_direction_for_changed_and_removed_messages(journal):
+    store, events = journal
+    store.put("message", "in", chat("in", direction="inbound", state="delivered"))
+    store.delete("message", "in")
+    assert [event["direction"] for event in events.read(0, 2)] == ["inbound", "inbound"]
+    store.put("message", "odd", chat("odd", direction="sideways"))
+    assert events.read(2, 1)[0]["direction"] is None
+
+
 def test_only_public_chat_changes_advance_the_stream(journal):
     store, events = journal
     store.put("message", "one", chat())

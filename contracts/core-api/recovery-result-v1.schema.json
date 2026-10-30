@@ -197,7 +197,8 @@
         "message",
         "type",
         "state",
-        "timestamp"
+        "timestamp",
+        "direction"
       ],
       "properties": {
         "id": {
@@ -205,6 +206,12 @@
         },
         "message": {
           "$ref": "#/$defs/handle"
+        },
+        "direction": {
+          "enum": [
+            "inbound",
+            "outbound"
+          ]
         },
         "type": {
           "enum": [

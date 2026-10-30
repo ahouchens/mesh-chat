@@ -202,3 +202,77 @@ def test_failed_projection_write_aborts_the_message_commit(host, monkeypatch):
     assert service.store.get("message", "message-0001") is None
     assert service.store.list("received_message") == []
     assert page(session, profile)["messages"] == []
+
+
+def poll(session, profile, cursor, limit=128):
+    return session.request(request("events.poll", profile=profile, cursor=cursor, limit=limit))
+
+
+def watermark(session, profile):
+    reply = session.request(request("message.list", profile=profile, cursor=None, limit=128))
+    assert reply["ok"], reply
+    return reply["result"]["events_cursor"]
+
+
+def test_inbound_changes_replay_against_the_received_handle(host):
+    service = host()
+    session, _, profile, _ = client(service)
+    cursor = watermark(session, profile)
+    inbound(service, "message-0001", "Hello")
+    first = poll(session, profile, cursor)
+    assert first["ok"], first
+    event = first["result"]["events"][0]
+    assert (event["direction"], event["type"], event["state"]) == ("inbound", "message.changed", "delivered")
+    assert event["message"] == page(session, profile)["messages"][0]["message"]
+    record = service.store.get("message", "message-0001")
+    service.store.put("message", "message-0001", {**record, "state": "expired"})
+    second = poll(session, profile, first["result"]["next_cursor"])
+    assert [(item["direction"], item["state"]) for item in second["result"]["events"]] == [("inbound", "expired")]
+    schema = json.loads((CONTRACTS / "recovery-result-v1.schema.json").read_text())
+    Draft202012Validator(schema).validate(first)
+
+
+def test_inbound_removal_replays_without_a_state(host):
+    service = host()
+    session, _, profile, _ = client(service)
+    cursor = watermark(session, profile)
+    inbound(service, "message-0001", "Hello")
+    service.store.delete("message", "message-0001")
+    events = poll(session, profile, cursor)["result"]["events"]
+    assert [(item["direction"], item["type"], item["state"]) for item in events] == [
+        ("inbound", "message.changed", "delivered"), ("inbound", "message.removed", None)]
+    assert events[0]["message"] == events[1]["message"]
+
+
+def test_blocked_contact_changes_are_not_replayed(host):
+    service = host()
+    session, _, profile, _ = client(service)
+    cursor = watermark(session, profile)
+    inbound(service, "message-0001", "Hello")
+    record = service.store.get("contact", CONTACT)
+    service.store.put("contact", CONTACT, {**record, "trust": "blocked"})
+    # A changed authority view invalidates the old cursor instead of silently
+    # skipping the hidden changes.
+    assert poll(session, profile, cursor)["error"]["code"] == "resync_required"
+    assert poll(session, profile, watermark(session, profile))["result"]["events"] == []
+
+
+def test_snapshot_watermark_closes_the_inbound_query_subscribe_race(host):
+    service = host()
+    session, _, profile, _ = client(service)
+    cursor = watermark(session, profile)
+    inbound(service, "message-0001", "Arrived after the snapshot")
+    assert [item["text"] for item in page(session, profile)["messages"]] == ["Arrived after the snapshot"]
+    events = poll(session, profile, cursor)["result"]["events"]
+    assert [item["direction"] for item in events] == ["inbound"]
+
+
+def test_outbound_replay_reports_outbound_direction(host):
+    service = host()
+    session, _, profile, peer = client(service)
+    from test_core_messages import enqueue
+    cursor = watermark(session, profile)
+    accepted = enqueue(session, profile, peer)
+    events = poll(session, profile, cursor)["result"]["events"]
+    assert [(item["direction"], item["message"], item["state"]) for item in events] == [
+        ("outbound", accepted["result"]["message"], "queued")]

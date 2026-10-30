@@ -117,8 +117,9 @@ def event_view(value):
     if (value.type not in {"message.changed", "message.removed"}
             or any(not isinstance(handle, str) or re.fullmatch(r"[A-Za-z0-9_-]{16,128}", handle) is None
                    for handle in (value.identifier, value.message))
+            or value.direction not in {"inbound", "outbound"}
             or (value.type == "message.removed" and value.state is not None)):
         raise ValueError("Invalid message event")
     state = DeliveryState(value.state).value if value.type == "message.changed" else None
     return {"id": value.identifier, "message": value.message, "type": value.type,
-            "state": state, "timestamp": _timestamp(value.timestamp)}
+            "state": state, "timestamp": _timestamp(value.timestamp), "direction": value.direction}

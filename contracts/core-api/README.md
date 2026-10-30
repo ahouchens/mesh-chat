@@ -175,9 +175,11 @@ notifications with stable caller-scoped event/message IDs. A changed event inclu
 the committed delivery state; it cannot turn endpoint evidence into application
 delivery. Polling the same cursor may redeliver the same IDs. Consumers deduplicate
 notifications and query retained messages when they need text. Local history
-deletion produces a removal event without retaining duplicate text. Public replay
-currently covers only the caller's own facade-enqueued outbound text messages;
-other message kinds and connection event streams are still required for M5.
+deletion produces a removal event without retaining duplicate text. Public replay covers the caller's own facade-enqueued outbound text messages and
+the inbound chat messages of currently approved contacts; each event states its
+direction, and an inbound event's handle is the same opaque handle that
+`message.received` returns. Other message kinds and connection event streams are
+still required for M5.
 
 ## Received messages
 
@@ -210,9 +212,9 @@ day replay window, cannot be exchanged with snapshot or replay cursors, and cann
 be used by another caller. At most 128 indexes are scanned per request, and the
 whole encoded page stays within one MiB.
 
-This closes only inbound text enumeration for the private facade component.
-Incoming-message events, other message kinds, connection intent commands,
-authenticated host bindings and packaged consumers remain unfinished.
+This closes inbound text enumeration and its replay for the private facade
+component. Other message kinds, connection intent commands, authenticated host
+bindings and packaged consumers remain unfinished.
 
 The service installs the domain journal before startup recovery and workers. Every
 message mutation path uses one transaction-local storage projection, so the message

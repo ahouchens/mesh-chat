@@ -61,6 +61,7 @@ class MessageJournal:
             writes[self._slot(head)] = {
                 "sequence": head, "message_id": change.identifier, "contact_id": contact,
                 "type": "message.changed" if after is not None else "message.removed",
+                "direction": source.get("direction") if source.get("direction") in {"inbound", "outbound"} else None,
                 "state": source.get("state") if after is not None and source.get("state") in DELIVERY_STATES else None,
                 "timestamp": self._clock(),
             }
