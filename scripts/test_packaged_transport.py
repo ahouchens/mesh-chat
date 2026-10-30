@@ -16,9 +16,10 @@ LEVEL = "windows_packaged_webview2_preapproved_peers"
 CHECKS = ("bidirectional_authenticated_receipts", "durable_messages_and_receipts_after_crash", "exact_carrier_reuse")
 COUNTS = {"processes_started": 3, "forced_exits": 2, "authenticated_receipts": 3}
 PAIRING_LEVEL = "windows_packaged_webview2_explicit_pairing"
-PAIRING_CHECKS = ("explicit_pairing_without_preapproved_contacts", "paired_bidirectional_authenticated_receipts",
+PAIRING_CHECKS = ("cancelled_pairing_retires_native_sessions", "pending_invitation_survives_restart_without_approval",
+                  "explicit_pairing_without_preapproved_contacts", "paired_bidirectional_authenticated_receipts",
                   "continuous_pairing_carrier_transfer")
-PAIRING_COUNTS = {"processes_started": 2, "forced_exits": 0, "authenticated_receipts": 2}
+PAIRING_COUNTS = {"processes_started": 3, "forced_exits": 1, "authenticated_receipts": 2}
 
 
 class ScenarioFailure(RuntimeError):

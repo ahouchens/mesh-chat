@@ -38,6 +38,17 @@ def test_pairing_requires_continuous_transfer_evidence():
         gate["verify_pairing_report"](value, "a" * 40, "b" * 40)
 
 
+def test_pairing_requires_cancellation_and_unapproved_restart_evidence():
+    required = {"cancelled_pairing_retires_native_sessions", "pending_invitation_survives_restart_without_approval"}
+    assert required <= set(gate["PAIRING_CHECKS"])
+    assert gate["PAIRING_COUNTS"] == {"processes_started": 3, "forced_exits": 1, "authenticated_receipts": 2}
+    for missing in required:
+        value = {**record(), "evidence_level": gate["PAIRING_LEVEL"],
+                 "checks": [check for check in gate["PAIRING_CHECKS"] if check != missing],
+                 "counts": dict(gate["PAIRING_COUNTS"])}
+        with pytest.raises(ValueError): gate["verify_pairing_report"](value, "a" * 40, "b" * 40)
+
+
 @pytest.mark.parametrize("fault", ["source", "tree", "version", "passed", "level", "missing", "duplicate",
                                   "count", "boolean_count", "digest", "build", "run", "duration", "extra"])
 def test_incomplete_or_unbound_execution_is_not_qualification(fault):

@@ -32,21 +32,36 @@ class Controller:
         self.error_code = None
         self.counts = {"processes_started": 0, "forced_exits": 0, "authenticated_receipts": 0}
 
-    def action(self, slot, action, **arguments):
+    def _response(self, slot, action, **arguments):
         request_id = uuid4().hex
         self.writer.write({"id": request_id, "slot": slot, "action": action, **arguments})
         response = read_frame(sys.stdin.buffer)
-        if response.get("id") != request_id or response.get("ok") is not True:
-            code = response.get("error")
-            if isinstance(code, str) and len(code) <= 64 and code.isidentifier():
-                self.error_code = code
-            raise RuntimeError("Host command failed")
+        if (not isinstance(response, dict) or response.get("id") != request_id
+                or type(response.get("ok")) is not bool):
+            raise RuntimeError("Host response is invalid")
+        return response
+
+    def _failed(self, response):
+        code = response.get("error")
+        if isinstance(code, str) and len(code) <= 64 and code.isidentifier():
+            self.error_code = code
+        raise RuntimeError("Host command failed")
+
+    def action(self, slot, action, **arguments):
+        response = self._response(slot, action, **arguments)
+        if not response["ok"]:
+            self._failed(response)
         if action == "start": self.counts["processes_started"] += 1
         if action == "crash": self.counts["forced_exits"] += 1
         return response["result"]
 
     def call(self, slot, command, **payload):
         return self.action(slot, "call", command=command, payload=payload)
+
+    def reject(self, slot, command, expected_error, **payload):
+        response = self._response(slot, "call", command=command, payload=payload)
+        if response["ok"] or response.get("error") != expected_error:
+            self._failed(response)
 
     def wait(self, predicate, seconds=30):
         deadline = monotonic() + seconds

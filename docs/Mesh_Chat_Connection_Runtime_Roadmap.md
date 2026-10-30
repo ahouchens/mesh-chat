@@ -457,8 +457,20 @@ one side from transferring while the other's initial consent update is pending.
 Relay-only carriers do not require direct-IP consent.
 Private
 host operation counts on both sides must show no replacement negotiation or
-closure during that transfer. It does not yet qualify workspace pairing,
-pairing cancellation/restart faults or Android bootstrap integration.
+closure during that transfer.
+The required packaged scenario now also closes both unapproved native sessions
+after receipt of the invitation, checks that inspection/control on their retired
+IDs fail with the expected service error, and confirms that the host executed
+native disposal. It crashes and restarts the receiving service, verifies the same
+pending invitation survives without contact approval or messages, then reuses the
+logical session names for a fresh signed exchange. Only a subsequent explicit
+acceptance and approval may enable messaging. Its report requires both fault
+checks, three process starts, one forced exit and two authenticated receipts;
+an older success-path-only report cannot satisfy the gate. Controller and scenario
+negative controls are in-process evidence; this extended packaged sequence is
+qualified only when the matching CI artifacts execute it successfully.
+Workspace pairing, cancellation at other handshake phases and Android bootstrap
+integration remain unqualified.
 Its report is required separately from the pre-approved crash test,
 with a distinct run identity and the same tested binaries.
 

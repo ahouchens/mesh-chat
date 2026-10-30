@@ -6,6 +6,46 @@ from packaged_transport_probe import Controller, seed_profiles, start, connect, 
 from mesh_chat.vault import VaultStore
 
 
+def unapproved_invitation(controller, invitation_id):
+    snapshots = [controller.call(slot, "snapshot") for slot in range(2)]
+    if any(snapshot["contacts"] or snapshot["messages"] for snapshot in snapshots):
+        raise AssertionError("Unapproved pairing created contact or message authority")
+    invitations = snapshots[1]["contact_invitations"]
+    if (len(invitations) != 1 or invitations[0]["id"] != invitation_id
+            or invitations[0]["state"] != "pending" or invitations[0]["expired"]):
+        raise AssertionError("Pending invitation was lost or changed without approval")
+
+
+def retired_sessions(controller):
+    for slot, session in enumerate(("manual-peer-zero", "manual-peer-one")):
+        controller.reject(slot, "native_webrtc_stats", "native_unavailable", session_id=session)
+        controller.reject(slot, "native_webrtc_control", "native_unavailable", session_id=session,
+                          label="mesh-onboarding", text='{"type":"connection_capabilities_request"}')
+
+
+def cancel_and_restart(controller, fixtures, invitation_id):
+    controller.phase = "cancel_unapproved_pairing"
+    for slot, session in enumerate(("manual-peer-zero", "manual-peer-one")):
+        if controller.call(slot, "native_webrtc_close", session_id=session) != {"state": "closed"}:
+            raise AssertionError("Unapproved carrier was not released")
+    retired_sessions(controller)
+    unapproved_invitation(controller, invitation_id)
+    for slot in range(2):
+        if controller.action(slot, "counts").get("close", 0) < 1:
+            raise AssertionError("Host did not execute native disposal")
+    controller.checks.append("cancelled_pairing_retires_native_sessions")
+
+    controller.phase = "restart_unapproved_pairing"
+    controller.action(1, "crash")
+    start(controller, 1, fixtures[1])
+    retired_sessions(controller)
+    unapproved_invitation(controller, invitation_id)
+    controller.checks.append("pending_invitation_survives_restart_without_approval")
+    sleep(1)  # Replacement service completes its private inventory before allocation.
+    connect(controller, fixtures, configure_contacts=False)
+    unapproved_invitation(controller, invitation_id)
+
+
 def exercise(controller, directory):
     fixtures = seed_profiles(directory)
     for path, key, contact in fixtures:
@@ -23,11 +63,10 @@ def exercise(controller, directory):
         controller.wait(lambda: controller.call(0, "native_webrtc_control", session_id="manual-peer-zero",
             label="mesh-onboarding", text=json.dumps({"type": "contact_invitation", "document": invitation["file"]}))["accepted"])
         controller.wait(lambda: len(controller.call(1, "snapshot")["contact_invitations"]) == 1)
-        # Receipt of a signed invitation alone must create no approved contact.
-        if controller.call(0, "snapshot")["contacts"] or controller.call(1, "snapshot")["contacts"]:
-            raise AssertionError("An invitation silently created contact authority")
-        controller.phase = "explicit_acceptance"
         received = controller.call(1, "snapshot")["contact_invitations"][0]
+        unapproved_invitation(controller, received["id"])
+        cancel_and_restart(controller, fixtures, received["id"])
+        controller.phase = "explicit_acceptance"
         accepted = controller.call(1, "decide_contact_invitation", invitation_id=received["id"], accept=True)
         if accepted["trust"] != "awaiting_consent":
             raise AssertionError("Acceptance silently granted remote approval")
@@ -42,8 +81,8 @@ def exercise(controller, directory):
                 for slot, fixture in enumerate(fixtures)):
             raise AssertionError("Pairing granted direct-IP messaging without consent")
         negotiations = [controller.action(slot, "counts") for slot in range(2)]
-        if (negotiations[0].get("createOffer") != 1 or negotiations[0].get("applyAnswer") != 1
-                or negotiations[1].get("acceptOffer") != 1):
+        if (negotiations[0].get("createOffer") != 2 or negotiations[0].get("applyAnswer") != 2
+                or negotiations[1].get("acceptOffer") != 2):
             raise AssertionError("Host did not observe the pairing negotiation")
         # Both people separately opt into direct-IP messaging after approval.
         for slot, (_, _, contact_id) in enumerate(fixtures):
