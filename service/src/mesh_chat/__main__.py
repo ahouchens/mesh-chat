@@ -21,6 +21,7 @@ from .connectivity import (
 from .errors import MeshChatError, ValidationError, WORKSPACE_ALREADY_KNOWN_REASONS, WorkspaceAlreadyKnown
 from .direct_native import NativeChannel, NativeFrameReader
 from .ipc import FrameWriter, IPC_VERSION, read_frame
+from .inherited_input import interruptible_input
 from .service import MeshChatService
 from .vault import VaultStore
 from .crash_diagnostics import report_failure
@@ -277,7 +278,7 @@ def main() -> int:
     if sys.argv[1:] == ["--direct-bootstrap"]:
         from .direct_bootstrap_worker import main as bootstrap_main
         return bootstrap_main(os.environ.get("MESH_CHAT_BOOTSTRAP_DIRECTORY"))
-    reader = sys.stdin.buffer
+    reader = interruptible_input(sys.stdin.buffer)
     writer = FrameWriter(sys.stdout.buffer)
     service: MeshChatService | None = None
     desktop_transport = None

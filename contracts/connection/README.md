@@ -180,3 +180,10 @@ checkpointing and confirming a new owner lease. Authority and resource identity
 are checked again before bridge attachment. Hosts exposing recovery inventory
 must also provide activation and quarantine capabilities. This mechanism grants
 no consent and does not alter signed peer documents or public API versions.
+
+Private inherited IPC retains its existing length-prefixed frames and budgets.
+The service wraps the inherited pipe before reading initialization, so buffered
+read-ahead cannot hide subsequent native replies. Shutdown cancels empty or
+partial reads and joins the sole reader without waiting for parent EOF. The
+platform adapter borrows the descriptor and leaves ownership with the caller.
+This process-lifecycle mechanism adds no public request or connection policy.

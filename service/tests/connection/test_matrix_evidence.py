@@ -12,6 +12,7 @@ from connection_evidence import execution_evidence
 from direct_qualification import LEVEL, SUITES as DIRECT_SUITES
 from connection_test_inventory import REQUIRED_SUITES
 from test_desktop_transport import CHECKS
+from test_packaged_lifecycle import CHECKS as PACKAGED_CHECKS, COUNTS as PACKAGED_COUNTS, LEVEL as PACKAGED_LEVEL
 
 
 def fixture(directory):
@@ -35,6 +36,10 @@ def fixture(directory):
                "result": {"ok": True, "checks": sorted(CHECKS)},
                "native_binary_sha256": "c" * 64, "python_sources_sha256": {
                    str(path.relative_to(matrix.ROOT)).replace("\\", "/"): "d" * 64 for path in matrix.PYTHON_SOURCES}}
+    packaged = {"v": 1, "passed": True, "source_commit": source, "source_tree": tree,
+                "evidence_level": PACKAGED_LEVEL, "run_id": "c" * 32, "sidecar_sha256": "d" * 64,
+                "build_input_sha256": "e" * 64, "checks": list(PACKAGED_CHECKS),
+                "counts": dict(PACKAGED_COUNTS), "duration_seconds": 1.0}
     android = {"v": 1, "passed": True, "source_commit": source, "source_tree": tree,
                "evidence_level": "android_emulator_optimized_native_and_python_components",
                "artifacts": {str(path.relative_to(matrix.ROOT)).replace("\\", "/"): "e" * 64 for path in matrix.APKS},
@@ -47,6 +52,7 @@ def fixture(directory):
                 "report_sha256": "b" * 64} for case in cases]})
     for path, value in (("policy/connection-policy.json", policy),
                         ("desktop/desktop-transport.json", desktop),
+                        ("desktop/packaged-lifecycle.json", packaged),
                         ("android/android-qualification.json", android)):
         (directory / path).write_text(json.dumps(value))
     return source, tree, android
@@ -58,7 +64,8 @@ def test_gate_revalidates_policy_inventory_and_both_platform_component_reports(t
     assert result["policy_tests_executed"] == 1
     assert result["android_tests_executed"] == 24
     assert set(result["windows_transport_checks"]) == CHECKS
-    assert set(result["report_sha256"]) == {"policy", "windows_transport", "android"}
+    assert set(result["report_sha256"]) == {"policy", "windows_transport", "windows_packaged_lifecycle", "android"}
+    assert result["windows_packaged_lifecycle_checks"] == list(PACKAGED_CHECKS)
 
 
 @pytest.mark.parametrize("fault", ["source", "tree", "skip", "missing_case", "missing_apk", "cleanup", "run", "version"])
@@ -128,7 +135,22 @@ def test_selected_direct_requires_complete_execution_from_both_platforms(tmp_pat
     result = matrix.collect(tmp_path, source, tree, ["direct"])
     assert set(result["direct"]) == {"Linux", "Windows"}
     assert all(value["tests_executed"] == 3 for value in result["direct"].values())
-    assert len(result["report_sha256"]) == 8
+    assert len(result["report_sha256"]) == 9
+
+
+@pytest.mark.parametrize("fault", ["missing", "wrong_source", "partial", "stale_binary"])
+def test_windows_job_summary_cannot_hide_missing_or_incompatible_packaged_execution(tmp_path, fault):
+    source, tree, _ = fixture(tmp_path)
+    path = tmp_path / "desktop/packaged-lifecycle.json"
+    value = json.loads(path.read_text())
+    if fault == "missing": path.unlink()
+    else:
+        if fault == "wrong_source": value["source_commit"] = "f" * 40
+        elif fault == "partial": value["counts"]["clean_shutdowns"] = 2
+        else: value["passed"] = False
+        path.write_text(json.dumps(value))
+    with pytest.raises((ValueError, FileNotFoundError)):
+        matrix.collect(tmp_path, source, tree, [])
 
 
 @pytest.mark.parametrize("fault", ["missing_platform", "wrong_platform", "different_dispatcher", "skip", "wrong_suite"])

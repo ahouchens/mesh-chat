@@ -352,6 +352,27 @@ and its report command are test tooling, absent from normal shipping builds.
 
 ## Local validation
 
+Initialized packaged-service qualification exposed a shutdown crash hidden by
+the earlier startup/EOF smoke test: the private reader could remain blocked on
+buffered stdin while Python finalized. The inherited input adapter now uses
+cancellable, single-reader pipe reads from the first frame onward, and private
+reader shutdown joins the worker within a bounded deadline. It borrows the file
+descriptor; it never closes a parent's writer or bypasses framing limits.
+Regression cases cover partial headers/bodies, EOF, queued initialization frames
+and actual process exit while the parent retains its writer.
+
+Windows CI now requires an exact-build packaged lifecycle report in addition to
+the real WebView2 report. It initializes protected profiles in default/shared
+mode, verifies clean shutdown, force-terminates a shared-mode process tree, and
+reopens the encrypted profile with the same identity and committed preference.
+Private service epochs must change. The adapter fixture reports an empty
+inventory, and its only other supported action is reset. Its evidence level is
+`windows_packaged_service_lifecycle_empty_adapter`; it does not qualify surviving
+carriers, bridge readiness, message delivery or receipts. The gate verifies a
+clean source revision, the packaging input fingerprint, tested binary digest,
+execution counts and source tree. Missing, partial or stale reports fail the
+aggregate gate. Combined packaged carrier/message recovery remains open.
+
 `connection-qualification.yml` is the common PR, main-branch and merge-queue
 entry point. It invokes the existing policy, verification/Windows, Android,
 Direct Fabric and layout workflows; each remains manually runnable. Code,
