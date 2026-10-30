@@ -4,11 +4,11 @@ Kept free of ctypes so its rules can be checked on every platform and cannot
 silently drift away from the Windows binding.
 """
 
-import os
 import re
 
 
 PIPE_NAME = re.compile(r"\\\\.\\pipe\\mesh-chat-[a-z0-9][a-z0-9._-]{0,63}\Z")
+WINDOWS_IMAGE = re.compile(r"(?:[A-Za-z]:\\|\\\\[^\\]+\\)[^\x00-\x1f]*\Z")
 MAX_IMAGES = 16
 MAX_IMAGE_LENGTH = 1024
 
@@ -27,10 +27,10 @@ def allowed_images(values):
     images = []
     for value in values:
         if (not isinstance(value, str) or not 1 <= len(value) <= MAX_IMAGE_LENGTH
-                or "\x00" in value or not os.path.isabs(value)):
-            raise ValueError("Core API pipe image must be an absolute path")
+                or WINDOWS_IMAGE.fullmatch(value) is None):
+            raise ValueError("Core API pipe image must be a Windows absolute path")
         images.append(value)
-    if len({os.path.normcase(image) for image in images}) != len(images):
+    if len({image.lower() for image in images}) != len(images):
         raise ValueError("Core API pipe image allowlist contains duplicates")
     return tuple(images)
 
@@ -39,4 +39,4 @@ def image_allowed(observed, images):
     """A client image must exactly match an allowlisted path, ignoring case."""
     if not isinstance(observed, str) or not observed:
         return False
-    return os.path.normcase(observed) in {os.path.normcase(image) for image in images}
+    return observed.lower() in {image.lower() for image in images}

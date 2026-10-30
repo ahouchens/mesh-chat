@@ -13,12 +13,12 @@ import uuid
 
 import pytest
 
+if os.name != "nt":
+    pytest.skip("Windows named pipes are required", allow_module_level=True)
+
 from mesh_chat.core_api.pipe_endpoint import PipeEndpoint
 from mesh_chat.service import MeshChatService
 from mesh_chat.vault import VaultStore
-
-
-pytestmark = pytest.mark.skipif(os.name != "nt", reason="Windows named pipes are required")
 
 GENERIC_READ = 0x80000000
 GENERIC_WRITE = 0x40000000
