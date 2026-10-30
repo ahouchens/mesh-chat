@@ -44,6 +44,11 @@ jobs:
       - name: Install Python dependencies
         run: python -m pip install --disable-pip-version-check -r service/requirements-dev.lock
 
+      - name: Build and test the experimental core client
+        run: |
+          node node_modules/typescript/bin/tsc -p sdk/typescript
+          node --test "sdk/typescript/dist/**/*.test.js"
+
       - name: Validate and test
         run: python scripts/release.py verify
 
