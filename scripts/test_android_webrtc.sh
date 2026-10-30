@@ -35,7 +35,7 @@ run_test() {
   if ! grep -Fq 'OK (1 test)' "$report_dir/$method.txt"; then result=1; fi
 }
 while IFS=$'\t' read -r method test_class phase; do
-  run_test "$method" "$test_class"
+  run_test "$method" "$test_class" </dev/null
 done < "$report_dir/cases.tsv"
 timeout 15s adb shell am force-stop "$app_id" || true
 exit "$result"
