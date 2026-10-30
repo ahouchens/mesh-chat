@@ -99,6 +99,10 @@ Native attachment evidence requires the exact online interface to remain in the
 current RNS registry with a running network. Missing, detached or unregistered
 bridges are repaired on the same carrier. Stale interface callbacks cannot send
 through its replacement, and packets are not fed into an unregistered interface.
+Shared bridge attachment and packet forwarding additionally require the owner's
+current exact-resource lease. Stop revokes that lease synchronously, including
+before a failed durable write or delayed native disposal. This read-only lease
+check uses a profile index and does not run policy transitions for packet traffic.
 Manual carriers can be adopted when automatic reconnect is disabled locally or
 by the peer. The composition derives this limited authority from the actual
 signed, live carrier; it is absent from public commands and profile responses.

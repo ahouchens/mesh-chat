@@ -9,7 +9,7 @@ from time import monotonic
 
 from .effects import BoundedEffectRunner, CleanupResult
 from .model import (
-    ConnectionState, ContextChanged, Desired, Failed,
+    ConnectionState, ContextChanged, Desired, Execution, Failed,
     Failure, Policy, Retire, Work,
 )
 from .projection import snapshot
@@ -28,6 +28,7 @@ class ConnectionRuntime:
         self._random = SystemRandom().random
         self._lock = RLock()
         self._profile_values = {}
+        self._profile_keys = {}
         self._signatures = {}
         self._veto = set()
         self._contact_fences = set()
@@ -52,6 +53,20 @@ class ConnectionRuntime:
         identifiers = {key.profile_id, profile.get("contact_id")}
         return (key in self._veto or bool(identifiers & self._contact_fences)
                 or (self._all_fenced and not identifiers & self._resumed))
+
+    def permits_carrier(self, profile_id, resource):
+        """Private bridge lease check; packet traffic does not run the reducer."""
+        with self._lock:
+            if self._stop.is_set():
+                return False
+            for key in self._profile_keys.get(profile_id, ()):
+                profile = self._profile_values[key]
+                state = self.owner.snapshot(key)
+                if (not self._is_fenced(key, profile) and state.carrier is not None
+                        and state.carrier.resource == resource and state.authority.authorized
+                        and state.desired is Desired.ENABLED and state.execution is Execution.AVAILABLE):
+                    return True
+            return False
 
     def fence(self, contact_id=None):
         """Immediately deny work, before the caller attempts a durable Stop."""
@@ -104,9 +119,11 @@ class ConnectionRuntime:
         now = self.now()
         with self._lock:
             seen = set()
+            profile_keys = {}
             for profile in values:
                 key = connection_key(profile)
                 seen.add(key)
+                profile_keys.setdefault(key.profile_id, []).append(key)
                 signature = authority_signature(profile)
                 previous = self._signatures.get(key)
                 revision = 1 if previous is None else previous[1] + (previous[0] != signature)
@@ -124,6 +141,7 @@ class ConnectionRuntime:
                 self._veto.add(key)
                 self.owner.retire(key, now)
                 del self._profile_values[key]
+            self._profile_keys = profile_keys
 
     def _completions(self):
         while True:

@@ -2233,6 +2233,8 @@ class MeshChatService(
         if (getattr(self, "_connection_policy", "legacy") == "shared-native"
                 and not self._shared_native_session(session_id)):
             raise ContactNotApproved("Native messaging carrier has not been adopted")
+        if not self._native_carrier_authorized(session_id):
+            raise ContactNotApproved("Native messaging carrier authority is unavailable")
         if self.network is None:
             raise NetworkUnavailable("Reticulum is not running for a WebRTC bridge")
         existing = self._native_webrtc_sessions.get(session_id)
@@ -2296,7 +2298,20 @@ class MeshChatService(
         bridge_id = self._native_webrtc_sessions.get(session_id)
         interface = self._webrtc_bridges.get(bridge_id)
         return bool(getattr(self, "network", None) is not None and interface is not None
-                    and interface.online and any(current is interface for current in RNS.Transport.interfaces))
+                    and interface.online and any(current is interface for current in RNS.Transport.interfaces)
+                    and self._native_carrier_authorized(session_id))
+
+    def _native_carrier_authorized(self, session_id: str) -> bool:
+        if getattr(self, "_connection_policy", "legacy") != "shared-native":
+            return True
+        runtime = getattr(self, "_connection_runtime", None)
+        if runtime is None:
+            return False
+        with self._native_webrtc_lock:
+            profile_id = next((profile for profile, current in self._native_webrtc_profile_sessions.items()
+                               if current == session_id), None)
+        from .connection.model import Resource
+        return profile_id is not None and runtime.permits_carrier(profile_id, Resource("native", session_id))
 
     def webrtc_detach_native(self, session_id: str) -> dict[str, Any]:
         bridge_id = self._native_webrtc_sessions.pop(session_id, None)

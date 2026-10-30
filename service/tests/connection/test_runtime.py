@@ -40,8 +40,11 @@ def test_driver_executes_phases_and_fences_failed_persistent_stop():
                 break
             Event().wait(0.005)
         assert owner.snapshots()["p"]["messaging_ready"]
+        carrier = owner.owner.snapshots()[0].carrier.resource
+        assert owner.permits_carrier("p", carrier)
         # The store still reports enabled, as if a Stop transaction failed.
         owner.fence("c")
+        assert not owner.permits_carrier("p", carrier)
         owner.step()
         assert owner.snapshots()["p"]["desired"] == "stopped"
         assert not owner.snapshots()["p"]["messaging_ready"]

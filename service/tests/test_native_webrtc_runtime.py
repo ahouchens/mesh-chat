@@ -575,6 +575,17 @@ def test_native_bridge_repair_keeps_the_carrier_but_fences_old_interface_sends(m
     senders[1](b"current-interface")
     assert sent == [(host.raw_created[0], b"current-interface")]
     assert len(host.raw_created) == 1 and not host.raw_closed
+    # Cleanup may still be pending when the owner revokes its bridge lease.
+    permitted = [True]
+    service._connection_policy = "shared-native"
+    service._native_webrtc_profile_sessions["profile-1"] = "live-carrier"
+    service._connection_runtime = SimpleNamespace(permits_carrier=lambda *_: permitted[0])
+    received = []
+    service.webrtc_packet = lambda *_: received.append(True)
+    permitted[0] = False
+    senders[1](b"after-stop")
+    native_event(service, "message", "live-carrier", "AQI=")
+    assert len(sent) == 1 and not received and not host.raw_closed
 
 
 @pytest.mark.parametrize("operation", ["answer", "inspect"])
@@ -794,6 +805,10 @@ def test_production_composition_adopts_manual_carrier_without_mailbox_or_new_pee
             assert owner.runner.idle
             assert len(host.created) == 1
         owner.fence("contact-1")
+        # An attach which passed its earlier executor check cannot use a
+        # failed-persistence Stop window to install a bridge afterward.
+        with pytest.raises(ContactNotApproved, match="authority|not been adopted"):
+            MeshChatService.webrtc_attach_native(service, "manual-carrier")
         owner.step()
         assert not owner.snapshots()["profile-1"]["messaging_ready"]
     finally:
