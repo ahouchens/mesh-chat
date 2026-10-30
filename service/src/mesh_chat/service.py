@@ -2236,18 +2236,22 @@ class MeshChatService(
         if self.network is None:
             raise NetworkUnavailable("Reticulum is not running for a WebRTC bridge")
         existing = self._native_webrtc_sessions.get(session_id)
-        if existing is not None and existing in self._webrtc_bridges:
+        if self._native_bridge_attached(session_id):
             return {
                 "bridge_id": existing,
                 "max_packet": WebRTCInterface.HW_MTU,
                 "state": "online",
             }
+        if existing is not None:
+            self.webrtc_detach_native(session_id)
         bridge_id = _new_id()
         physical = self._native_resources.require(session_id)
 
         def send(data: bytes) -> None:
             if (session_id not in self._native_webrtc_live
-                    or not self._native_resources.current(session_id, physical)):
+                    or not self._native_resources.current(session_id, physical)
+                    or self._native_webrtc_sessions.get(session_id) != bridge_id
+                    or not self._native_bridge_attached(session_id)):
                 return
             try:
                 self._native_webrtc_host().send(physical, data)
@@ -2287,6 +2291,12 @@ class MeshChatService(
             "max_packet": WebRTCInterface.HW_MTU,
             "state": "online",
         }
+
+    def _native_bridge_attached(self, session_id: str) -> bool:
+        bridge_id = self._native_webrtc_sessions.get(session_id)
+        interface = self._webrtc_bridges.get(bridge_id)
+        return bool(getattr(self, "network", None) is not None and interface is not None
+                    and interface.online and any(current is interface for current in RNS.Transport.interfaces))
 
     def webrtc_detach_native(self, session_id: str) -> dict[str, Any]:
         bridge_id = self._native_webrtc_sessions.pop(session_id, None)
@@ -2383,7 +2393,7 @@ class MeshChatService(
                 )
             elif event == "message":
                 bridge_id = self._native_webrtc_sessions.get(session_id)
-                if bridge_id is not None:
+                if bridge_id is not None and self._native_bridge_attached(session_id):
                     try:
                         self.webrtc_packet(bridge_id, data)
                     except Exception:
@@ -2715,7 +2725,7 @@ class MeshChatService(
         stats = result.get("result", {})
         if isinstance(stats, dict):
             stats["attached"] = (
-                session_id in self._native_webrtc_sessions
+                self._native_bridge_attached(session_id)
                 and stats.get("data_channel_state") == "open"
                 and stats.get("ice_connection_state") not in {"failed", "closed"}
             )
@@ -5815,6 +5825,10 @@ class MeshChatService(
             return self.open_notification_target(body["notification_id"])
         if command == "reconcile_mobile_lifecycle":
             _payload(value, allowed=set())
+            if getattr(self, "_connection_policy", "legacy") == "shared-native":
+                # A renderer visibility event cannot assert an OS execution
+                # fact. The native lifecycle binding already reports resume.
+                return self.background_availability_status()
             return self.mobile_lifecycle_transition(
                 "foreground", "renderer_recovery"
             )

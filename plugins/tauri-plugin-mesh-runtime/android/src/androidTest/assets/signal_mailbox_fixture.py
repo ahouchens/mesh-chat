@@ -387,6 +387,18 @@ def run_manual_native_adoption(automatic=True):
                    "Restored bridge did not regain path readiness", 10)
         assert service._native_resources.require(local_id) == local_physical
         assert native.send(local_physical) and native.send(remote_id)
+        # Simulate lost RNS registration while the service's bridge map and
+        # actual JNI carrier survive. Stale metadata must not report readiness.
+        with service._dispatch_lock:
+            stale_bridge = service._native_webrtc_sessions[local_id]
+            interface = service._webrtc_bridges[stale_bridge]
+            RNS.Transport.interfaces.remove(interface)
+            assert not service.native_webrtc_stats(local_id)["attached"]
+        wait_until(lambda: service._native_webrtc_sessions.get(local_id) not in (None, stale_bridge),
+                   "Shared owner retained an unregistered bridge", 15)
+        wait_until(lambda: owner.snapshots()[profile_id]["messaging_ready"],
+                   "Re-registered bridge did not regain path readiness", 10)
+        assert service._native_resources.require(local_id) == local_physical
         service.reconnect_stop(contact_id)
         wait_until(lambda: local_id not in service._native_webrtc_live,
                    "Stop did not retire the adopted native carrier", 10)

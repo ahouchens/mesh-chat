@@ -334,12 +334,15 @@ def test_native_fingerprint_can_sign_a_document_verified_by_the_real_parser(answ
 
 
 @pytest.mark.parametrize("state", ["failed", "closed"])
-def test_native_stats_and_events_stop_claiming_a_failed_bridge_is_attached(state):
+def test_native_stats_and_events_stop_claiming_a_failed_bridge_is_attached(state, monkeypatch):
+    from types import SimpleNamespace
     service, host = runtime()
     service._native_webrtc_live.add("native-session")
     service._native_resources.reserve("native-session")
     service._native_webrtc_sessions["native-session"] = "bridge"
-    service._webrtc_bridges["bridge"] = object()
+    service.network = object()
+    service._webrtc_bridges["bridge"] = SimpleNamespace(online=True)
+    monkeypatch.setattr(RNS.Transport, "interfaces", [service._webrtc_bridges["bridge"]])
     assert service.native_webrtc_stats("native-session")["attached"]
     host.state["ice_connection_state"] = state
     assert not service.native_webrtc_stats("native-session")["attached"]
@@ -499,6 +502,7 @@ def test_old_bridge_send_cannot_reach_a_reused_public_session(monkeypatch):
         HW_MTU = 500
         MODE_POINT_TO_POINT = 1
         def __init__(self, transport, send, **_):
+            self.online = True
             senders.append(send)
         def detach(self):
             pass
@@ -516,6 +520,61 @@ def test_old_bridge_send_cannot_reach_a_reused_public_session(monkeypatch):
     senders[0](b"stale")
     senders[1](b"current")
     assert sent == [(host.raw_created[-1], b"current")]
+
+
+@pytest.mark.parametrize("fault", ["missing", "offline", "unregistered", "network_absent", "equal_replacement"])
+def test_native_inspection_rejects_stale_bridge_registration(fault, monkeypatch):
+    from types import SimpleNamespace
+    service, _ = runtime()
+    service.native_webrtc_offer("live-carrier", ICE, [])
+    service.network = object()
+    interface = SimpleNamespace(online=True)
+    service._native_webrtc_sessions["live-carrier"] = "bridge"
+    service._webrtc_bridges["bridge"] = interface
+    monkeypatch.setattr(RNS.Transport, "interfaces", [interface])
+    assert service.native_webrtc_stats("live-carrier")["attached"]
+    if fault == "missing": service._webrtc_bridges.clear()
+    if fault == "offline": interface.online = False
+    if fault == "unregistered": RNS.Transport.interfaces.clear()
+    if fault == "network_absent": service.network = None
+    if fault == "equal_replacement": RNS.Transport.interfaces[:] = [SimpleNamespace(online=True)]
+    assert not service.native_webrtc_stats("live-carrier")["attached"]
+    received = []
+    service.webrtc_packet = lambda *_: received.append(True)
+    native_event(service, "message", "live-carrier", "AQI=")
+    assert not received
+
+
+def test_native_bridge_repair_keeps_the_carrier_but_fences_old_interface_sends(monkeypatch):
+    from types import SimpleNamespace
+    from mesh_chat import service as service_module
+    service, host = runtime()
+    senders, sent = [], []
+    class Interface:
+        HW_MTU = 500
+        MODE_POINT_TO_POINT = 1
+        def __init__(self, transport, send, **_):
+            self.online = True
+            senders.append(send)
+        def detach(self):
+            self.online = False
+    monkeypatch.setattr(service_module, "WebRTCInterface", Interface)
+    monkeypatch.setattr(RNS.Transport, "interfaces", [])
+    service.network = SimpleNamespace(reticulum=SimpleNamespace(
+        _add_interface=lambda interface, **_: RNS.Transport.interfaces.append(interface)), reannounce=lambda: None)
+    service._webrtc_announce_later = lambda *_: None
+    host.send = lambda physical, data: sent.append((physical, data))
+    service.native_webrtc_offer("live-carrier", ICE, [])
+    first = service.webrtc_attach_native("live-carrier")["bridge_id"]
+    RNS.Transport.interfaces.clear()
+    assert not service.native_webrtc_stats("live-carrier")["attached"]
+    replacement = service.webrtc_attach_native("live-carrier")["bridge_id"]
+    assert replacement != first
+    assert service.native_webrtc_stats("live-carrier")["attached"]
+    senders[0](b"stale-interface")
+    senders[1](b"current-interface")
+    assert sent == [(host.raw_created[0], b"current-interface")]
+    assert len(host.raw_created) == 1 and not host.raw_closed
 
 
 @pytest.mark.parametrize("operation", ["answer", "inspect"])
@@ -611,6 +670,14 @@ def test_renderer_cannot_write_shared_runtime_status_or_send_control_on_adopted_
     assert not host.controls
     # Protected signed-capability exchange still uses the private method.
     assert service.native_webrtc_control("manual-carrier", "mesh-onboarding", "{}") == {"accepted": True}
+
+
+def test_renderer_visibility_reconciliation_cannot_grant_shared_execution_availability():
+    service, _ = runtime()
+    service._connection_policy = "shared-native"
+    service.background_availability_status = lambda: {"state": "suspended"}
+    service.mobile_lifecycle_transition = lambda *_: pytest.fail("Renderer cannot assert native lifecycle facts")
+    assert service._execute("reconcile_mobile_lifecycle", {}) == {"state": "suspended"}
 
 
 def test_shared_manual_open_cannot_attach_messaging_before_adoption():

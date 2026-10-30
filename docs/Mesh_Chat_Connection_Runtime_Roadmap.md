@@ -95,6 +95,10 @@ composition keeps its control channel but cannot attach a messaging bridge
 before ownership transfer. UI close/detach commands cannot
 retire it after transfer; explicit Stop still does. Failed durable Stop also
 retires verified manual peers awaiting transfer while retaining the memory fence.
+Native attachment evidence requires the exact online interface to remain in the
+current RNS registry with a running network. Missing, detached or unregistered
+bridges are repaired on the same carrier. Stale interface callbacks cannot send
+through its replacement, and packets are not fed into an unregistered interface.
 Manual carriers can be adopted when automatic reconnect is disabled locally or
 by the peer. The composition derives this limited authority from the actual
 signed, live carrier; it is absent from public commands and profile responses.
