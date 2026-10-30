@@ -117,6 +117,14 @@ def test_shared_policy_cannot_bypass_background_execution_denial():
     assert host.created == []
 
 
+def test_native_allocation_cannot_race_startup_inventory_reconciliation():
+    service, host = runtime()
+    service._carrier_recovery_pending = True
+    with pytest.raises(NativeUnavailable, match="recovery is pending"):
+        service.native_webrtc_offer("manual-session", ICE, [])
+    assert not host.created and not service._native_webrtc_live
+
+
 def test_shared_native_callbacks_observe_but_do_not_attach_or_close():
     service, host = runtime()
     service._connection_policy = "shared-native"

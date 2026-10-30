@@ -109,5 +109,15 @@ class CarrierJournal:
     def invalidate(self, authority=None):
         self._remove(lambda record: record.matches_authority(authority))
 
+    def reconcile(self, retained, expected_revision):
+        records = [asdict(binding) for binding in retained]
+        def change(value):
+            if value["revision"] != expected_revision or any(record not in value["bindings"] for record in records):
+                raise ContactNotApproved("Carrier recovery authority changed")
+            if len({record["resource"] for record in records}) != len(records):
+                raise ContactNotApproved("Carrier recovery selection is ambiguous")
+            return {**value, "revision": uuid4().hex, "bindings": records}
+        self._update(change)
+
     def retire(self, resource):
         self._remove(lambda record: record.resource == resource)

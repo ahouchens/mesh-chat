@@ -19,7 +19,7 @@ from .supervisor import CapacityExceeded, ConnectionSupervisor
 
 class ConnectionRuntime:
     def __init__(self, runtime_epoch, executor_factory, *, profiles, execution,
-                 activate, policy=Policy(), now=monotonic):
+                 activate, policy=Policy(), now=monotonic, prepare=None):
         self.owner = ConnectionSupervisor(runtime_epoch, policy)
         self.profiles = profiles
         self.execution = execution
@@ -42,6 +42,7 @@ class ConnectionRuntime:
         self._thread = None
         self._retry_cleanup_at = 0
         self._failure = None
+        self._prepare = prepare
         self.executor = executor_factory(self.owner.is_current, self.profile)
         self.runner = BoundedEffectRunner(self.executor, policy, now=now)
 
@@ -98,6 +99,11 @@ class ConnectionRuntime:
                         and state.desired is Desired.ENABLED and state.execution is Execution.AVAILABLE):
                     return True
             return False
+
+    def permits_recovery(self, profile):
+        """Private startup admission; this does not grant a carrier lease."""
+        with self._lock:
+            return not self._stop.is_set() and not self._is_fenced(connection_key(profile), profile)
 
     def fence(self, contact_id=None):
         """Immediately deny work, before the caller attempts a durable Stop."""
@@ -212,6 +218,12 @@ class ConnectionRuntime:
             raise CapacityExceeded("Connection effects are backpressured")
 
     def step(self):
+        if self._prepare is not None:
+            prepare, self._prepare = self._prepare, None
+            try:
+                prepare()
+            except Exception:
+                self.quarantine()
         self._completions()
         if self.runner.stalled():
             self.quarantine()

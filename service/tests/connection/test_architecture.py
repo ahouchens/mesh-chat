@@ -41,7 +41,8 @@ def test_workspace_writes_cannot_bypass_the_connection_authority_boundary():
 
 
 def test_native_adapter_and_policy_cannot_import_the_concrete_service():
-    paths = [ROOT.parent / "native_webrtc_service.py", *ROOT.rglob("*.py")]
+    paths = [*(ROOT.parent / name for name in ("native_webrtc_service.py", "native_carrier_checkpoint.py",
+                                              "carrier_recovery.py", "carrier_journal.py")), *ROOT.rglob("*.py")]
     for path in paths:
         if path.name == "composition.py":
             continue

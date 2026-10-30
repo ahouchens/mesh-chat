@@ -111,6 +111,8 @@ class NativeWebRTCControlMixin:
         for session_id, peer in self._native_webrtc_peers.items():
             description = self._native_webrtc_descriptions.get(session_id, {})
             actual_remote = description.get("remote_offer") or description.get("remote_answer")
+            from .carrier_recovery import recovered_binding
+            recovered = recovered_binding(self, session_id, profile, contact)
             other_owner = any(current == session_id and owner != profile["id"]
                               for owner, current in self._native_webrtc_profile_sessions.items())
             if (session_id not in self._native_webrtc_live
@@ -118,8 +120,8 @@ class NativeWebRTCControlMixin:
                     or peer != contact["destination_hash"]
                     or self._native_webrtc_controls.get(session_id, {}).get("profile_id") != profile["id"]
                     or self._native_webrtc_controls.get(session_id, {}).get("profile_binding") != profile_binding(profile)
-                    or not actual_remote
-                    or description.get("bound_remote_sdp") != normalized_sdp(actual_remote)
+                    or (recovered is None and (not actual_remote
+                        or description.get("bound_remote_sdp") != normalized_sdp(actual_remote)))
                     or (not profile.get("allow_direct_ip_disclosure")
                         and description.get("ice_policy") != "relay")):
                 continue

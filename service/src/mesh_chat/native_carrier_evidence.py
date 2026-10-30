@@ -21,6 +21,17 @@ def description_hash(sdp):
     return sha256("\n".join(normalized_sdp(sdp)).encode("utf-8")).hexdigest()
 
 
+def matches_binding(binding, epoch, resource):
+    return bool(resource is not None and epoch == binding.adapter_epoch
+                and resource["resource"] == binding.resource and not resource["pending"]
+                and resource["data_channel_state"] == "open" and resource["signaling_state"] == "stable"
+                and resource["ice_connection_state"] in {"connected", "completed"}
+                and resource["ice_policy"] == binding.ice_policy and resource["local_type"] == binding.local_type
+                and resource["remote_type"] == ("answer" if binding.local_type == "offer" else "offer")
+                and resource["local_sdp_sha256"] == binding.local_hash
+                and resource["remote_sdp_sha256"] == binding.remote_hash)
+
+
 def _hex(value, length):
     return isinstance(value, str) and re.fullmatch(r"[a-f0-9]{" + str(length) + r"}", value) is not None
 

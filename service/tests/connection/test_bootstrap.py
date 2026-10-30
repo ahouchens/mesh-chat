@@ -21,7 +21,8 @@ def test_shared_constructor_binds_private_host(tmp_path, monkeypatch, binding):
     from mesh_chat import native_webrtc_host
     native = host()
     if binding == "explicit_inventory":
-        native.inventory = lambda: pytest.fail("An empty profile cannot checkpoint a carrier")
+        native.inventory = lambda: {"v": 1, "adapter_epoch": "a" * 32, "resources": []}
+        native.shutdown = lambda: pytest.fail("An empty valid inventory must not quarantine its host")
     loaded = []
     def load_android():
         loaded.append(True)
@@ -56,4 +57,11 @@ def test_missing_host_capability_fails_before_service_initialization(missing):
     native = host()
     delattr(native, missing)
     with pytest.raises(NativeUnavailable, match="capabilities"):
+        MeshChatService(None, None, None, connection_policy="shared-native", native_webrtc_host=native)
+
+
+def test_inventory_capability_requires_a_private_quarantine_mechanism():
+    native = host()
+    native.inventory = lambda: {}
+    with pytest.raises(NativeUnavailable, match="quarantine"):
         MeshChatService(None, None, None, connection_policy="shared-native", native_webrtc_host=native)

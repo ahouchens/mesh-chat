@@ -1,6 +1,7 @@
 """Bound logical UI handles to private, non-reused native resource identities."""
 
 from threading import RLock
+import re
 from uuid import uuid4
 
 from .errors import NativeUnavailable
@@ -29,6 +30,15 @@ class NativeResourceRegistry:
     def physical(self, logical):
         with self._lock:
             return self._logical.get(logical)
+
+    def restore(self, logical, physical):
+        """Private startup registration after protected binding reconciliation."""
+        with self._lock:
+            if (logical in self._logical or physical in self._physical or len(self._logical) >= self._limit
+                    or not isinstance(physical, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", physical)):
+                raise NativeUnavailable("Native resource restoration unavailable")
+            self._logical[logical] = physical
+            self._physical[physical] = logical
 
     def require(self, logical):
         physical = self.physical(logical)

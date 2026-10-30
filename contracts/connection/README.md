@@ -130,8 +130,8 @@ carrier adoption can be enabled.
 ### Protected carrier checkpoint v1
 
 The private desktop service adapter writes `native_carrier_recovery/current`
-through the vault's atomic sealed-record update. Its only current consumers are
-the checkpoint and invalidation paths; there is no adoption reader or public
+through the vault's atomic sealed-record update. Its private consumers are the
+checkpoint, invalidation and startup reconciliation paths; there is no public
 command. Up to 16 entries bind exact physical resources and adapter epochs to
 profile/contact/workspace IDs, local/remote device IDs, peer destination, privacy
 policy, SDP roles and description hashes. It stores neither SDP/credentials nor
@@ -147,4 +147,15 @@ inventory collection happens outside the dispatch lock; current lease, binding,
 host identity and revision are rechecked before persistence. The authenticated
 host pins its adapter epoch, so a checkpoint from a new host discards obsolete
 incarnation records. This bookkeeping does not authorize service rebinding or
-extend signed capabilities and is not a replacement for startup reconciliation.
+extend signed capabilities.
+
+The composition root runs one startup reconciliation before actor/profile work.
+Native allocation stays closed during this pass. Current journal membership,
+domain authority and owner fences are checked around native orphan retirement;
+only exact, unambiguous bindings may be registered under fresh logical handles.
+No profile is required to retire an orphan. Restored descriptions contain only
+the protected hashes and privacy binding, and the normal supervisor must still
+claim the carrier and authorize a new bridge. Native callbacks remain tied to
+the original physical resource. Storage/adapter failures quarantine startup,
+while ordinary rejected candidates are retired. Trusted platform rebinding and
+actual service-restart qualification remain separate requirements.

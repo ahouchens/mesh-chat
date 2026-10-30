@@ -65,8 +65,17 @@ def native_runtime(service):
                     ice=service.call_ice_servers, path=service.reconnect_path_status,
                     current=current, now=monotonic, wall_time=time)
 
-    return ConnectionRuntime(uuid4().hex, factory, profiles=profiles, execution=execution,
-                             activate=activate)
+    def prepare():
+        from ..carrier_recovery import reconcile_carriers
+        reconcile_carriers(service, lambda profile: execution() is Execution.AVAILABLE
+                           and runtime.permits_recovery(profile))
+        with service._dispatch_lock:
+            service._carrier_recovery_pending = False
+
+    runtime = ConnectionRuntime(uuid4().hex, factory, profiles=profiles, execution=execution,
+                                activate=activate,
+                                prepare=prepare if getattr(service, "_carrier_recovery_pending", False) else None)
+    return runtime
 
 
 def _claim_carrier(service, key):

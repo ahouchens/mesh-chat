@@ -402,6 +402,8 @@ class NativeWebRTCServiceMixin(NativeWebRTCControlMixin):
         with self._dispatch_lock:
             if self._shutdown.is_set():
                 raise NativeUnavailable("Native WebRTC is shutting down")
+            if getattr(self, "_carrier_recovery_pending", False):
+                raise NativeUnavailable("Native carrier recovery is pending")
             if profile_id is not None:
                 shared = getattr(self, "_connection_policy", "legacy") == "shared-native"
                 if shared != runtime_owned:
@@ -440,6 +442,7 @@ class NativeWebRTCServiceMixin(NativeWebRTCControlMixin):
             self._native_webrtc_descriptions.pop(session_id, None)
             self._native_webrtc_peers.pop(session_id, None)
             self._native_webrtc_controls.pop(session_id, None)
+            getattr(self, "_native_recovered_bindings", {}).pop(session_id, None)
             for profile_id, current in list(self._native_webrtc_profile_sessions.items()):
                 if current == session_id:
                     del self._native_webrtc_profile_sessions[profile_id]

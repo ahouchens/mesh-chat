@@ -27,3 +27,14 @@ def test_reservations_are_bounded_and_cannot_replace_live_native_handles():
     assert registry.resolve("one") is None
     assert registry.release("one", first)
     assert registry.reserve("two") != first
+def test_private_restore_preserves_exact_resources_and_capacity():
+    registry = NativeResourceRegistry(limit=2)
+    registry.restore("restored", "native-previous-1")
+    assert registry.resolve("native-previous-1") == "restored"
+    with pytest.raises(NativeUnavailable): registry.restore("other", "native-previous-1")
+    with pytest.raises(NativeUnavailable): registry.restore("restored", "native-previous-2")
+    registry.reserve("new")
+    with pytest.raises(NativeUnavailable): registry.restore("overflow", "native-previous-3")
+    registry.release("restored", "native-previous-1")
+    registry.restore("replacement", "native-previous-2")
+    assert registry.resolve("native-previous-1") is None

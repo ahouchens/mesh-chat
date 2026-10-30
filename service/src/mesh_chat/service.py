@@ -486,6 +486,9 @@ class MeshChatService(
             # must explicitly select a native host before this becomes default.
             from .native_webrtc_host import require_host
             self._native_host = require_host(self._native_webrtc_host())
+            if (callable(getattr(self._native_host, "inventory", None))
+                    and not callable(getattr(self._native_host, "shutdown", None))):
+                raise NativeUnavailable("Recoverable native host lacks quarantine capability")
         self._connection_policy = connection_policy
         self._connection_runtime = None
         from .link_previews import LinkPreviews
@@ -495,6 +498,7 @@ class MeshChatService(
         if connection_policy == "shared-native" and callable(getattr(self._native_host, "inventory", None)):
             from .carrier_journal import CarrierJournal
             self._carrier_journal = CarrierJournal(store)
+        self._carrier_recovery_pending = self._carrier_journal is not None
         self.profile_dir = profile_dir
         self.emit = emit
         self._direct_native = direct_native
@@ -544,6 +548,7 @@ class MeshChatService(
         self._native_webrtc_descriptions: dict[str, dict] = {}
         self._native_webrtc_peers: dict[str, str] = {}
         self._native_webrtc_controls: dict[str, dict] = {}
+        self._native_recovered_bindings = {}
         self._background_reconnect_supervisor = None
         identity_record = store.get("identity", "local")
         profile_record = store.get("profile", "local")

@@ -286,10 +286,19 @@ removes its exact checkpoint. Write failures cannot claim durable success or
 prevent attempted native disposal. New private adapter incarnations discard
 obsolete host records on checkpoint. Failed checkpoint retirement retains the
 exact registry reservation for cleanup retry even after the native peer closes.
-These are controlled component tests and
-vault-reopen tests, not service-crash recovery evidence. No reader adopts these
-records yet; trusted rebind, orphan reconciliation and restart/receipt tests
-remain required, and service exit still destroys its transport window.
+Startup now reconciles that protected journal against the private inventory
+before profile scanning or native allocation. It rechecks current scope, peer,
+device, intent, expiry and privacy authority, retires unmatched or ambiguous
+resources even when no profile remains, and registers survivors under fresh
+logical handles. Current journal membership is checked again after orphan
+cleanup, preserving unrelated survivors while rejecting Stop/revocation races.
+Recovered evidence contains no SDP and cannot bypass a new supervisor lease or
+bridge/path readiness checks. Failure quarantines startup admission. Controlled
+tests run this preparation and adoption through the production supervisor,
+including manual carriers with automatic reconnect disabled. These component
+and vault-reopen tests are not service-crash recovery evidence: trusted host
+rebind and restart/receipt tests remain required, and service exit still destroys
+its transport window.
 
 Windows process retirement now captures the originating PID and detaches its
 transport host, native host and pending requests before a replacement is

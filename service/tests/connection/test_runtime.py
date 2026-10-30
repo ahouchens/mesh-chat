@@ -187,3 +187,43 @@ def test_removed_profile_requires_explicit_restart_and_preserves_operation_gener
         assert owner.owner.snapshots()[0].generation > before
     finally:
         owner.stop()
+def test_private_preparation_runs_once_before_any_profile_or_effect():
+    calls = []
+    owner = ConnectionRuntime("epoch", lambda *_: Executor(),
+        profiles=lambda: calls.append("profiles") or {"profiles": []},
+        execution=lambda: Execution.AVAILABLE, activate=lambda _: None,
+        prepare=lambda: calls.append("prepare"))
+    try:
+        owner.step()
+        owner.step()
+        assert calls == ["prepare", "profiles", "profiles"]
+    finally: owner.stop()
+
+
+def test_failed_private_preparation_quarantines_without_admitting_work():
+    calls = []
+    def fail():
+        calls.append("prepare")
+        raise OSError("private failure")
+    owner = ConnectionRuntime("epoch", lambda *_: Executor(),
+        profiles=lambda: pytest.fail("Failed recovery cannot scan or negotiate"),
+        execution=lambda: Execution.AVAILABLE, activate=lambda _: None, prepare=fail)
+    try:
+        owner.step()
+        owner.step()
+        assert owner._failure == "adapter_quarantined"
+        assert calls == ["prepare"] and owner.runner.idle
+    finally: owner.stop()
+
+
+def test_recovery_admission_observes_fences_before_an_actor_exists():
+    owner, profile = runtime()
+    try:
+        assert owner.permits_recovery(profile)
+        owner.fence("c")
+        assert not owner.permits_recovery(profile)
+        owner.committed_start("c")
+        profile.update(scope_kind="workspace", workspace_id="w")
+        owner.begin_authority_change(("workspace", "w"))
+        assert not owner.permits_recovery(profile)
+    finally: owner.stop()
