@@ -84,6 +84,21 @@ cannot allow the current runtime to restart that profile. Shutdown retains keys
 until native effects and cleanup have finished; late allocation is retired by
 exact handle.
 
+Connection Start/Stop now delegates to one domain intent component, separate
+from signed signaling and retry policy. Each operation commits its selected
+profile intents as one sealed batch; a global Stop includes the global status in
+that transaction. Profile preparation and legacy preference migration precede
+Start's intent batch. No resume notification happens before a successful commit,
+and Start without reciprocal consent cannot clear a Stop fence. Start-all resumes
+only the contacts whose Start intent was committed, preserving failed-Stop fences
+on excluded manual peers. Automatic activation cannot release explicit fences.
+Stop still fences before storage access and independently invalidates surviving
+carrier checkpoints before attempting the intent batch. A failed batch retains
+those safety effects but reports persistence failure; it does not claim durable
+Stop. Legacy native disposal runs after the complete batch and attempts every
+target even if one close fails. These compatibility methods still exist; they are
+not public facade mutations and do not add a second retry owner.
+
 Native callbacks for service-owned profiles report transport facts; the reducer
 alone admits attachment and retirement. Periodic native/channel/route inspection
 uses the same bounded effect runner, with a poll-interval deadline. Failed or

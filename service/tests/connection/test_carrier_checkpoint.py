@@ -178,12 +178,12 @@ def test_stop_invalidates_recovery_before_reporting_durable_intent(carrier, monk
     service.retire_unmanaged_native_connections = lambda _: None
     service._changed = lambda: None
     service.reconnect_status = lambda: {}
-    original_put = service.store.put
-    def write(kind, identity, value):
+    original_put = service.store.put_many
+    def write(records):
         assert not service._carrier_journal.bindings()
         if failed_write: raise OSError("intent write failed")
-        original_put(kind, identity, value)
-    monkeypatch.setattr(service.store, "put", write)
+        original_put(records)
+    monkeypatch.setattr(service.store, "put_many", write)
     if failed_write:
         with pytest.raises(OSError): ReconnectServiceMixin.reconnect_stop(service, "contact")
         assert service.store.get("reconnect_profile", "profile") is None

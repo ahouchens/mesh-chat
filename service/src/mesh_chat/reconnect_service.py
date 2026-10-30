@@ -31,6 +31,7 @@ from .errors import (
     ValidationError,
 )
 from .models import TrustState
+from .reconnect_intent import ReconnectIntents
 from .reconnect import (
     MAX_CAPABILITY_SECONDS,
     DURABLE_CAPABILITIES_VERSION,
@@ -1010,75 +1011,13 @@ class ReconnectServiceMixin:
         }
 
     def reconnect_start(self, contact_id: Any = None, *, automatic: bool = False) -> dict[str, Any]:
-        targets = (
-            [self._reconnect_contact(contact_id)]
-            if contact_id is not None
-            else [
-                contact
-                for contact in self.store.list("contact")
-                if contact.get("trust") in CONNECTED_TRUST
-            ]
-        )
-        changed = False
-        for contact in targets:
-            profile = self._reconnect_profile_for_contact(contact["id"])
-            if automatic and profile.get("state") == "stopped":
-                continue
-            if profile.get("auto_reconnect") and profile.get("remote_auto_reconnect"):
-                profile["active"] = True
-                profile["state"] = "waiting_for_peer"
-                profile["last_error"] = ""
-                profile["updated_at"] = _now()
-                self.store.put(PROFILE_KIND, profile["id"], profile)
-                changed = True
-        if changed:
-            self._changed()
-        runtime = getattr(self, "_connection_runtime", None)
-        if runtime is not None and not automatic:
-            runtime.committed_start(contact_id)
+        ReconnectIntents(self, _now).start(contact_id, automatic=automatic)
         return self.reconnect_status()
 
     def reconnect_stop(self, contact_id: Any = None) -> dict[str, Any]:
-        runtime = getattr(self, "_connection_runtime", None)
-        if runtime is not None:
-            runtime.fence(contact_id)
         if contact_id is not None:
-            profile_id = _text(contact_id, "Reconnect profile ID")
-            profiles = [
-                profile
-                for profile in self._reconnect_profiles_raw()
-                if profile.get("contact_id") == profile_id
-                or profile.get("id") == profile_id
-            ]
-        else:
-            profiles = self._reconnect_profiles_raw()
-        if runtime is not None:
-            self.retire_unmanaged_native_connections({profile["id"] for profile in profiles})
-        journal = getattr(self, "_carrier_journal", None)
-        if journal is not None:
-            journal.invalidate(contact_id)
-        for profile in profiles:
-            profile["active"] = False
-            profile["state"] = "stopped"
-            profile["updated_at"] = _now()
-            self.store.put(PROFILE_KIND, profile["id"], profile)
-            close_native = getattr(self, "close_native_reconnect_session", None)
-            if close_native is not None and runtime is None:
-                close_native(profile["id"])
-        if contact_id is None:
-            # A per-contact stop must not claim the whole supervisor is stopped.
-            self.store.put(
-                STATE_KIND,
-                "current",
-                {
-                    "v": PROFILE_VERSION,
-                    "state": "stopped",
-                    "detail": "",
-                    "attempt_id": "",
-                    "updated_at": _now(),
-                },
-            )
-        self._changed()
+            contact_id = _text(contact_id, "Reconnect profile ID")
+        ReconnectIntents(self, _now).stop(contact_id)
         return self.reconnect_status()
 
     # --------------------------------------------------------------- documents
