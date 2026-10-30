@@ -1,0 +1,170 @@
+{
+  "v": 1,
+  "status": "experimental_design",
+  "api_major": 1,
+  "api_minor": 0,
+  "implemented_operations": [],
+  "operations": [
+    {
+      "operation": "runtime.capabilities",
+      "permission": "observe",
+      "scope": "runtime",
+      "mutation": false,
+      "idempotency": "query"
+    },
+    {
+      "operation": "runtime.stop",
+      "permission": "runtime_owner",
+      "scope": "runtime",
+      "mutation": true,
+      "idempotency": "caller_profile_operation_key"
+    },
+    {
+      "operation": "profile.create",
+      "permission": "profile_owner",
+      "scope": "runtime",
+      "mutation": true,
+      "idempotency": "caller_profile_operation_key"
+    },
+    {
+      "operation": "profile.select",
+      "permission": "profile_owner",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "caller_profile_operation_key"
+    },
+    {
+      "operation": "profile.unlock",
+      "permission": "profile_owner",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "caller_profile_operation_key"
+    },
+    {
+      "operation": "profile.lock",
+      "permission": "profile_owner",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "caller_profile_operation_key"
+    },
+    {
+      "operation": "profile.query",
+      "permission": "observe",
+      "scope": "profile",
+      "mutation": false,
+      "idempotency": "query"
+    },
+    {
+      "operation": "peer.pairing_create",
+      "permission": "pair",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "caller_profile_operation_key"
+    },
+    {
+      "operation": "peer.pairing_accept",
+      "permission": "pair",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "caller_profile_operation_key"
+    },
+    {
+      "operation": "peer.query",
+      "permission": "observe",
+      "scope": "profile",
+      "mutation": false,
+      "idempotency": "query"
+    },
+    {
+      "operation": "peer.approve",
+      "permission": "approve",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "caller_profile_operation_key"
+    },
+    {
+      "operation": "peer.revoke",
+      "permission": "approve",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "caller_profile_operation_key"
+    },
+    {
+      "operation": "connection.start",
+      "permission": "connect",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "caller_profile_operation_key"
+    },
+    {
+      "operation": "connection.stop",
+      "permission": "connect",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "caller_profile_operation_key"
+    },
+    {
+      "operation": "connection.retry",
+      "permission": "connect",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "caller_profile_operation_key"
+    },
+    {
+      "operation": "connection.snapshot",
+      "permission": "observe",
+      "scope": "profile",
+      "mutation": false,
+      "idempotency": "query"
+    },
+    {
+      "operation": "message.enqueue",
+      "permission": "send",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "caller_profile_operation_key"
+    },
+    {
+      "operation": "message.query",
+      "permission": "read",
+      "scope": "profile",
+      "mutation": false,
+      "idempotency": "query"
+    },
+    {
+      "operation": "message.list",
+      "permission": "read",
+      "scope": "profile",
+      "mutation": false,
+      "idempotency": "query"
+    },
+    {
+      "operation": "events.poll",
+      "permission": "read",
+      "scope": "profile",
+      "mutation": false,
+      "idempotency": "query"
+    },
+    {
+      "operation": "events.ack",
+      "permission": "read",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "caller_profile_operation_key"
+    },
+    {
+      "operation": "diagnostics.query",
+      "permission": "diagnose",
+      "scope": "profile",
+      "mutation": false,
+      "idempotency": "query"
+    }
+  ],
+  "limits": {
+    "frame_bytes": 4194304,
+    "text_utf8_bytes": 16384,
+    "event_batch_count": 128,
+    "event_batch_bytes": 1048576,
+    "diagnostic_count": 256
+  }
+}

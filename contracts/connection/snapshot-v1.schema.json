@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:mesh-chat:connection:snapshot:1",
+  "title": "Experimental connection observation v1",
+  "description": "Redacted observation. Never proves application receipt or grants transport authority.",
+  "type": "object",
+  "required": ["v", "runtime_epoch", "sequence", "profile_id", "desired", "execution", "negotiation", "carrier", "bridge", "messaging_ready", "reason", "retry_in", "evidence_age"],
+  "properties": {
+    "v": {"const": 1},
+    "runtime_epoch": {"type": "string", "minLength": 1, "maxLength": 64},
+    "sequence": {"type": "integer", "minimum": 0},
+    "profile_id": {"type": "string", "minLength": 1, "maxLength": 256},
+    "desired": {"enum": ["enabled", "stopped"]},
+    "execution": {"enum": ["available", "paused", "locked", "shutting_down"]},
+    "negotiation": {"enum": ["idle", "discover", "request", "wait_request", "wait_offer", "gather_offer", "gather_answer", "publish_offer", "publish_answer", "wait_answer", "apply_answer", "checking", "attach", "path", "inspect"]},
+    "carrier": {"enum": ["absent", "open", "suspect", "closing"]},
+    "bridge": {"enum": ["detached", "attaching", "path_pending", "ready", "restoring"]},
+    "messaging_ready": {"type": "boolean"},
+    "reason": {"type": "string", "pattern": "^[a-z][a-z_]{0,63}$"},
+    "retry_in": {"type": "number", "minimum": 0},
+    "evidence_age": {"type": ["number", "null"], "minimum": 0}
+  },
+  "additionalProperties": false,
+  "allOf": [{
+    "if": {"properties": {"messaging_ready": {"const": true}}},
+    "then": {"properties": {
+      "desired": {"const": "enabled"}, "execution": {"const": "available"},
+      "carrier": {"const": "open"}, "bridge": {"const": "ready"},
+      "evidence_age": {"type": "number"}
+    }}
+  }]
+}

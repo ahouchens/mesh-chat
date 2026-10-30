@@ -51,7 +51,7 @@ identity. Monotonic deadlines never enter persistent storage.
 | Milestone | Implementation status | Required remaining evidence/work |
 | --- | --- | --- |
 | M0 baseline | Spec and diagram imported; baseline regression corpus passes | Record platform timing baselines in CI |
-| M1 policy/contract foundation | Immutable model, pure phase reducer, fair supervisor, bounded effects, native domain adapters, simulator and strict model checks implemented | Complete contract versioning and public facade design; extend adversarial corpus to all invariant classes |
+| M1 policy/contract foundation | Immutable model, pure phase reducer, fair supervisor, bounded effects, native domain adapters, simulator, strict model checks, executing snapshot schema and initial public request/error design contracts | Complete public result/event schemas and facade design; extend adversarial corpus to all invariant classes |
 | M2 shared policy | Experimental `shared-native` service composition, renderer fencing and consented native manual-carrier adoption implemented | Trusted desktop registration/adoption, remaining manual-pairing modes, full native authority conformance, bridge-restart regression, removal of migrated legacy loops |
 | M3 qualification gates | Dedicated deterministic evidence gate with required collection inventory and run-bound result matching | Full dependency-aware selection and exact-artifact release aggregation |
 | M4 headless messaging | Existing Android native transport reused | Production native Windows DataChannel adapter, packaged fault matrix and receipt soak |
@@ -143,6 +143,14 @@ Rollback uses a complete service stop and cleanup before selecting legacy in a
 new runtime; live switching and dual supervision are unsupported.
 
 ## Local validation
+
+Private observation contracts live in `contracts/connection/`; experimental
+application request/error contracts and the permission inventory live separately
+in `contracts/core-api/`. JSON Schema tests validate real policy projections and
+reject private fields and incompatible public requests. Public schemas are design
+artifacts, not shipping facade capabilities: the operation inventory advertises
+none as implemented. JSON Schema validation is a development-only dependency and
+does not replace trusted caller authentication or domain authorization.
 
 From the repository root:
 

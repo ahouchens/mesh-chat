@@ -8,6 +8,11 @@ the experimental service-owned policy and its qualification boundaries. The
 [Mesh Chat Core diagram](docs/architecture/mesh-chat-core.png) shows the target
 architecture; it is not a claim that M2–M5 are complete.
 
+[Private connection contracts](contracts/connection/README.md) are separate from
+the [experimental application API design](contracts/core-api/README.md). Public
+schemas describe proposed requests; they do not grant caller authority or expose
+the existing private transport commands.
+
 ![Mesh Chat architecture: renderer, Tauri shell, Python service, Reticulum/LXMF with optional I2P, protected profile, and network paths](docs/architecture/overview.png)
 
 ## Durable connectivity implementation boundary
