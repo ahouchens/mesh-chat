@@ -76,6 +76,13 @@ jobs:
           target: google_apis
           disable-animations: true
           script: bash scripts/test_android_qualification.sh
+      - name: Retain required run-bound Android evidence
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: android-qualification-${{ github.sha }}
+          path: dist/reports/android-qualification.json
+          if-no-files-found: error
       - uses: actions/upload-artifact@v4
         if: always()
         with:

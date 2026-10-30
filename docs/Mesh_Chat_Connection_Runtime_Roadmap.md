@@ -305,6 +305,17 @@ execution checks. The workflow result manifest is not a release qualification:
 uniform scenario/count/artifact evidence across every suite and exact release
 artifact aggregation remain outstanding.
 
+Android qualification now uses one required inventory for its 16 optimized native
+WebRTC cases and eight signaling/runtime cases. Each invocation writes a fresh
+run marker into its instrumentation log. Evidence requires exactly the expected
+class/method, one started and successful test, no skip/failure status, and the
+same source/tree and optimized host/instrumentation APK digests recorded before
+execution. The reporter verifies emulator identity and that the isolated test
+app's processes stopped. Missing or stale logs, changed APKs and cleanup failure
+fail the job. Its evidence level is
+`android_emulator_optimized_native_and_python_components`; these test-host APKs
+are not proof of physical-device or independently packaged consumer acceptance.
+
 Private observation contracts live in `contracts/connection/`; experimental
 application request/error contracts and the permission inventory live separately
 in `contracts/core-api/`. JSON Schema tests validate real policy projections and
