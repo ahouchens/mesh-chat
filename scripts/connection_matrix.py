@@ -28,6 +28,46 @@ def hashes(values):
         raise ValueError("Component artifact digests are incomplete")
 
 
+COUNT_FIELDS = {"collected": "tests_collected", "executed": "tests_executed",
+                "passed": "tests_passed", "failed": "tests_failed", "skipped": "tests_skipped"}
+
+
+def counts(record):
+    values = {name: record.get(field) for name, field in COUNT_FIELDS.items()}
+    if any(type(value) is not int or value < 0 for value in values.values()):
+        raise ValueError("Component test counts are incomplete")
+    return values
+
+
+def suite_record(name, level, source, tree, *, report, tests=None, checks=None,
+          artifacts=None, cleanup="not_applicable"):
+    """One uniform record per required component, whatever its native shape."""
+    if checks is not None and (type(checks) is not int or checks <= 0):
+        raise ValueError("Component check inventory is incomplete")
+    if tests is not None and (set(tests) != set(COUNT_FIELDS)
+                              or any(type(value) is not int or value < 0 for value in tests.values())
+                              or tests["failed"] or tests["skipped"]):
+        raise ValueError("Required component evidence cannot skip or fail cases")
+    digests = dict(artifacts or {})
+    if any(not isinstance(value, str) or re.fullmatch(r"[a-f0-9]{64}", value) is None
+           for value in digests.values()):
+        raise ValueError("Component artifact digests are incomplete")
+    return {"suite": name, "evidence_level": level, "source_commit": source, "source_tree": tree,
+            "tests": tests, "checks": checks, "artifacts": digests, "cleanup": cleanup,
+            "report": report}
+
+
+def unique_manifest(records, reports):
+    """Attach report digests and reject duplicate or unbound component identities."""
+    names = [record["suite"] for record in records]
+    if len(set(names)) != len(names):
+        raise ValueError("Component suite identities are duplicated")
+    digests = {name: hashlib.sha256(path.read_bytes()).hexdigest() for name, path in reports.items()}
+    for record in records:
+        record["report_sha256"] = digests[record.pop("report")]
+    return records
+
+
 def android_evidence(record, source, tree):
     if (type(record.get("v")) is not int or record["v"] != 1 or record.get("passed") is not True
             or record.get("source_commit") != source or record.get("source_tree") != tree
@@ -112,6 +152,7 @@ def collect(directory: Path, source: str, tree: str, required):
         reports["android"] = android_path
         summary["android_tests_executed"] = sum(suite["tests_executed"] for suite in android["suites"])
         summary["android_artifacts"] = android["artifacts"]
+    direct_records = {}
     if "direct" in required:
         direct = {}
         for platform, host in (("Linux", "posix"), ("Windows", "nt")):
@@ -126,8 +167,41 @@ def collect(directory: Path, source: str, tree: str, required):
             if (len({record["qualification_run"] for record in records.values()}) != len(DIRECT_SUITES)
                     or records["recovery"]["artifacts"] != records["setup"]["artifacts"]):
                 raise ValueError("Direct scenarios did not use distinct runs and the same shipping dispatcher")
+            direct_records[platform] = list(records.values())
             direct[platform] = {"tests_executed": sum(record["tests_executed"] for record in records.values()),
                                 "artifacts": {**records["recovery"]["artifacts"], **records["fabric"]["artifacts"]}}
         summary["direct"] = direct
-    return {**summary, "report_sha256": {
+    suites = [
+        suite_record("policy", policy["evidence_level"], source, tree, report="policy",
+              tests=counts(policy)),
+        suite_record("windows_transport", desktop["evidence_level"], source, tree,
+              report="windows_transport", checks=len(desktop["result"]["checks"]),
+              artifacts={"native_binary": desktop["native_binary_sha256"]},
+              cleanup="covered_by_checks"),
+        suite_record("windows_packaged_lifecycle", packaged["evidence_level"], source, tree,
+              report="windows_packaged_lifecycle", checks=len(packaged["checks"]),
+              artifacts={"sidecar": packaged["sidecar_sha256"]}, cleanup="covered_by_checks"),
+        suite_record("windows_packaged_transport", transport["evidence_level"], source, tree,
+              report="windows_packaged_transport", checks=len(transport["checks"]),
+              artifacts={"sidecar": transport["sidecar_sha256"],
+                         "native_binary": transport["native_binary_sha256"]},
+              cleanup="covered_by_checks"),
+        suite_record("windows_packaged_pairing", pairing["evidence_level"], source, tree,
+              report="windows_packaged_pairing", checks=len(pairing["checks"]),
+              artifacts={"sidecar": pairing["sidecar_sha256"]}, cleanup="covered_by_checks"),
+    ]
+    if "android" in required:
+        for record in android["suites"]:
+            suites.append(suite_record("android_" + record["suite"], android["evidence_level"], source, tree,
+                                report="android", tests=counts(record),
+                                artifacts=android["artifacts"],
+                                cleanup=android["platform"]["test_host_cleanup"]))
+    if "direct" in required:
+        for platform in ("Linux", "Windows"):
+            for record in direct_records[platform]:
+                suites.append(suite_record("direct_" + platform + "_" + record["suite"], record["evidence_level"],
+                                    source, tree, report="direct_" + platform + "_" + record["suite"],
+                                    tests=counts(record), artifacts=record["artifacts"],
+                                    cleanup="covered_by_checks"))
+    return {**summary, "suites": unique_manifest(suites, reports), "report_sha256": {
         name: hashlib.sha256(path.read_bytes()).hexdigest() for name, path in reports.items()}}

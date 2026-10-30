@@ -737,6 +737,34 @@ inbound text enumeration for the private component only. Incoming-message events
 other message kinds, connection intent commands, authenticated host bindings, SDKs
 and independent consumers remain open.
 
+## Uniform qualification and release evidence
+
+The final gate manifest now carries a uniform `suites` array in addition to the
+component summary. Every required component contributes one record with the same
+keys: source commit and tree, evidence level, executed test counts or check count,
+artifact digests, cleanup outcome and the report digest. A suite record with a
+failed or skipped case, a non-positive check count, a missing or malformed digest,
+or a duplicate identity fails the gate instead of being summarized away. The
+records keep their component labels; they do not promote emulator, packaged or
+native packet-count evidence to another level.
+
+`scripts/release_qualification.py` implements the exact-artifact step that
+publication needs. It accepts the gate manifest, the source commit and tree, the
+semantic release version and exactly three artifacts (NSIS installer, MSI and the
+signed Android APK), verifies each file's name binds the version, refuses empty or
+oversized files, and records size and SHA-256 for each. It rejects a manifest that
+did not pass, belongs to another source or tree, skipped a required job, omitted a
+required component, contains failed or skipped counts or reports an unsupported
+public API contract version. Its output binds the exact binaries to the qualified
+source, API contract, internal contract and the component records, and states its
+scope rather than implying release or physical qualification.
+
+Its thirteen tests cover the accepted path and every refusal: wrong source, wrong
+tree, unpassed manifest, failed required job, skipped case, missing component,
+missing, empty or version-mismatched artifact, incomplete inventory and unsupported
+API major. Publication wiring is still required: the release workflow does not yet
+run this step, so INV20 is not enforced for a real publication.
+
 ## Qualification status at this revision
 
 The run for `14b79f3` (`41118651018`) reported a real failure, not an infrastructure
@@ -791,8 +819,10 @@ M2 - shared policy
 M3 - qualification
 
 - [x] Deterministic inventory-bound policy evidence and a required final gate.
-- [ ] Uniform per-suite scenario/count/artifact manifest for every required suite.
-- [ ] Exact release-artifact aggregation and cross-suite compatibility validation.
+- [x] Uniform per-suite scenario/count/artifact manifest for every required suite.
+- [ ] Exact release-artifact aggregation wired into publication, and cross-suite
+      compatibility validation; the aggregator and its refusal tests exist, but no
+      release run executes them.
 - [ ] Narrower dependency selection after the architectural isolation is itself
       tested. Conservative selection remains in force.
 

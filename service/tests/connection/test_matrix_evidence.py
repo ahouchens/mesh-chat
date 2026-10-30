@@ -230,3 +230,55 @@ def test_direct_component_gate_rejects_incomplete_or_inconsistent_native_runs(tm
         path.write_text(json.dumps(record))
     with pytest.raises((ValueError, FileNotFoundError)):
         matrix.collect(tmp_path, source, tree, ["direct"])
+
+
+def test_suite_manifest_is_uniform_across_every_required_component(tmp_path):
+    source, tree, _ = fixture(tmp_path)
+    direct_reports(tmp_path, source, tree)
+    result = matrix.collect(tmp_path, source, tree, ["policy", "verification", "android", "direct"])
+    records = result["suites"]
+    keys = {"suite", "evidence_level", "source_commit", "source_tree",
+            "tests", "checks", "artifacts", "cleanup", "report_sha256"}
+    assert all(set(record) == keys for record in records)
+    assert [record["suite"] for record in records] == [
+        "policy", "windows_transport", "windows_packaged_lifecycle",
+        "windows_packaged_transport", "windows_packaged_pairing",
+        "android_webrtc", "android_signaling",
+        *("direct_Linux_" + name for name in DIRECT_SUITES),
+        *("direct_Windows_" + name for name in DIRECT_SUITES)]
+    policy = records[0]
+    assert policy["tests"] == {"collected": 1, "executed": 1, "passed": 1, "failed": 0, "skipped": 0}
+    assert policy["checks"] is None and policy["cleanup"] == "not_applicable"
+    android = [record for record in records if record["suite"].startswith("android_")]
+    assert [record["tests"]["collected"] for record in android] == [
+        len(matrix.cases("webrtc")), len(matrix.cases("signaling"))]
+    assert all(record["cleanup"] == "passed" for record in android)
+    direct = [record for record in records if record["suite"].startswith("direct_")]
+    assert all(record["tests"]["executed"] == 1 and record["checks"] is None for record in direct)
+    assert all(record["report_sha256"] for record in records)
+    assert all(record["source_commit"] == source and record["source_tree"] == tree for record in records)
+    windows = next(record for record in records if record["suite"] == "windows_transport")
+    assert windows["checks"] == len(CHECKS) and windows["artifacts"]
+
+
+def test_suite_record_rejects_failed_skipped_or_unbounded_counts():
+    source, tree = "a" * 40, "b" * 40
+    for tests in ({"collected": 1, "executed": 1, "passed": 0, "failed": 1, "skipped": 0},
+                  {"collected": 1, "executed": 1, "passed": 0, "failed": 0, "skipped": 1},
+                  {"collected": 1, "executed": 1, "passed": 1, "failed": 0, "skipped": 0, "extra": 0}):
+        with pytest.raises(ValueError):
+            matrix.suite_record("policy", "level", source, tree, report="policy", tests=tests)
+    with pytest.raises(ValueError):
+        matrix.suite_record("policy", "level", source, tree, report="policy", checks=0)
+    with pytest.raises(ValueError):
+        matrix.suite_record("policy", "level", source, tree, report="policy",
+                            artifacts={"native": "not-a-digest"})
+
+
+def test_manifest_rejects_duplicate_component_identities(tmp_path):
+    source, tree, _ = fixture(tmp_path)
+    report = tmp_path / "policy/connection-policy.json"
+    records = [matrix.suite_record("policy", "level", source, tree, report="policy"),
+               matrix.suite_record("policy", "level", source, tree, report="policy")]
+    with pytest.raises(ValueError):
+        matrix.unique_manifest(records, {"policy": report})
