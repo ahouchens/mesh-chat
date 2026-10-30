@@ -573,6 +573,46 @@ def test_private_claim_transfers_a_verified_manual_carrier_and_fences_ui_teardow
     assert host.closed == ["manual-carrier"]
 
 
+@pytest.mark.parametrize("command", ["reconnect_request_create", "reconnect_offer_create", "reconnect_answer_create",
+    "reconnect_publish", "reconnect_fetch", "reconnect_replay_check", "verify_reconnect_request",
+    "verify_reconnect_offer", "verify_reconnect_answer", "webrtc_attach", "webrtc_packet"])
+def test_shared_owner_ports_are_fenced_before_persistent_command_cache(command):
+    from types import SimpleNamespace
+    service, _ = runtime()
+    service._connection_policy = "shared-native"
+    service.store = SimpleNamespace(command_response=lambda _: pytest.fail("Owner check must precede cached results"))
+    with pytest.raises(NativeUnavailable, match="owned by the service"):
+        service.dispatch({"v": 1, "id": "previous-process-command", "command": command, "payload": {}})
+
+
+@pytest.mark.parametrize("command,payload", [("native_webrtc_stats", {"session_id": "manual-carrier"}),
+    ("native_webrtc_close", {"session_id": "manual-carrier"})])
+def test_shared_transport_observations_never_replay_an_obsolete_persisted_success(command, payload):
+    service, _, _ = adoptable_manual_carrier()
+    service.claim_native_reconnect_carrier("profile-1", "local", "remote")
+    service.store.command_response = lambda _: pytest.fail("Native results cannot come from persistent cache")
+    service.store.remember_command = lambda *_: pytest.fail("Native observations cannot be cached as durable outcomes")
+    result, stop = service.dispatch({"v": 1, "id": "old-request", "command": command, "payload": payload})
+    assert result["ok"] and not stop
+    if command == "native_webrtc_close":
+        assert result["result"] == {"state": "managed"}
+    else:
+        assert result["result"]["session_id"] == "manual-carrier"
+
+
+def test_renderer_cannot_write_shared_runtime_status_or_send_control_on_adopted_carrier():
+    service, host, _ = adoptable_manual_carrier()
+    service.claim_native_reconnect_carrier("profile-1", "local", "remote")
+    with pytest.raises(NativeUnavailable):
+        service._execute("reconnect_status", {"state": "online"})
+    with pytest.raises(NativeUnavailable):
+        service._execute("native_webrtc_control", {"session_id": "manual-carrier",
+            "label": "mesh-onboarding", "text": "{}"})
+    assert not host.controls
+    # Protected signed-capability exchange still uses the private method.
+    assert service.native_webrtc_control("manual-carrier", "mesh-onboarding", "{}") == {"accepted": True}
+
+
 def test_shared_manual_open_cannot_attach_messaging_before_adoption():
     service, _, _ = adoptable_manual_carrier()
     native_event(service, "open", "manual-carrier", "mesh-reticulum")

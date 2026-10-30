@@ -4036,6 +4036,17 @@ class MeshChatService(
         )
         return value
 
+    def _check_connection_command_owner(self, command, payload):
+        if getattr(self, "_connection_policy", "legacy") != "shared-native":
+            return
+        from .connection.commands import owner_only
+        if owner_only(command, payload):
+            raise NativeUnavailable("Connection operation is owned by the service")
+        if (command in {"native_webrtc_apply_answer", "native_webrtc_control"}
+                and isinstance(payload, dict) and isinstance(payload.get("session_id"), str)
+                and self._shared_native_session(payload["session_id"])):
+            raise NativeUnavailable("Native reconnect is owned by the service")
+
     def dispatch(self, request: dict[str, Any]) -> tuple[dict[str, Any], bool]:
         with self._dispatch_lock:
             if request.get("v") != 1:
@@ -4049,7 +4060,11 @@ class MeshChatService(
                 or command not in self.COMMANDS
             ):
                 raise ValidationError("Command envelope is invalid")
+            self._check_connection_command_owner(command, request.get("payload", {}))
             cache_response = command not in self.UNCACHED_COMMANDS
+            if getattr(self, "_connection_policy", "legacy") == "shared-native":
+                from .connection.commands import TRANSIENT_OPERATIONS
+                cache_response = cache_response and command not in TRANSIENT_OPERATIONS
             if cache_response:
                 cached = self.store.command_response(command_id)
                 if cached is not None:
@@ -4061,6 +4076,7 @@ class MeshChatService(
             return response, command == "shutdown"
 
     def _execute(self, command: str, value: Any) -> Any:
+        self._check_connection_command_owner(command, value)
         if command == "link_preview":
             body = _payload(value, allowed={"provider", "identifier"}, required={"provider", "identifier"})
             return self._link_previews.get(body["provider"], body["identifier"])

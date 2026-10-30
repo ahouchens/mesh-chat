@@ -147,6 +147,13 @@ Compatibility wrappers owned by this branch: `background_reconnect.py`, the
 renderer coordinator/runtime, and renderer bridge repair remain until M2
 adoption and parity checks pass. Removing them before desktop and manual-pairing
 adoption is implemented would break the surviving-carrier recovery guarantee.
+In the shared composition the ordinary dispatcher rejects legacy negotiation,
+signaling, raw renderer bridge/packet operations and status writes before reading
+the persistent command cache. Managed control/answer injection is also rejected.
+Private effect/domain methods remain available to the owner. Ephemeral native
+results and signed onboarding verification are not replayed from a previous
+process's persistent command cache. Start/Stop and durable user operations retain
+their existing command semantics. The default legacy dispatch is unchanged.
 Rollback uses a complete service stop and cleanup before selecting legacy in a
 new runtime; live switching and dual supervision are unsupported.
 
