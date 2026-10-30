@@ -44,6 +44,13 @@ class NativeWebRTCServiceMixin(NativeWebRTCControlMixin):
             from .native_carrier_checkpoint import checkpoint_carrier
             checkpoint_carrier(self, session_id, journal)
         with self._dispatch_lock:
+            self._require_native_bridge_authority(session_id)
+            if not self._native_resources.current(session_id, physical):
+                raise NativeUnavailable("Carrier attachment resource changed")
+            recovered = session_id in getattr(self, "_native_recovered_bindings", {})
+        if recovered:
+            self._native_webrtc_host().activate(physical)
+        with self._dispatch_lock:
             if not self._native_resources.current(session_id, physical):
                 raise NativeUnavailable("Carrier attachment resource changed")
             return self._attach_native_bridge(session_id)

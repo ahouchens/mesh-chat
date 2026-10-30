@@ -25,6 +25,12 @@ class Frames {
     }
     return remaining;
   }
+  clear() {
+    const frames = this.values.map(value => value.frame);
+    this.values = [];
+    this.bytes = 0;
+    return frames;
+  }
 }
 
 /** One private IPC pump. Its timer moves frames; it never schedules peer retries. */
@@ -38,6 +44,8 @@ export class DesktopTransportPump {
   private stopped = false;
   private polling = false;
   private pending = 0;
+  private suspended = false;
+  private generation = 0n;
 
   constructor(private readonly exchange: Exchange,
               driver = (emit: (event: TransportEvent) => boolean) => new DesktopTransport(emit)) {
@@ -46,6 +54,10 @@ export class DesktopTransportPump {
 
   private observe(event: TransportEvent) {
     if (this.stopped || !this.epoch) return false;
+    if (this.suspended) {
+      if (event.event !== "message" && event.event !== "closed") this.driver.close(event.resource);
+      return true;
+    }
     const frame = { v: 1, type: "desktop_transport_event", epoch: this.epoch, ...event };
     if (event.event === "message") return this.packets.push(frame);
     if (this.critical.push(frame)) return true;
@@ -64,17 +76,20 @@ export class DesktopTransportPump {
     try {
       const requests = await this.boundedExchange(outgoing);
       if (this.stopped) return;
-      if (!Array.isArray(requests) || requests.length > 16 || size(requests) > 4 * 1024 * 1024 + 17) {
+      if (!Array.isArray(requests) || requests.length > 18 || size(requests) > 4 * 1024 * 1024 + 1024) {
         throw new Error("invalid_transport_batch");
       }
-      for (const request of requests) this.execute(request);
+      for (const request of requests) {
+        if ((request as Frame | null)?.type === "desktop_transport_binding") this.bind(request, outgoing);
+        else this.execute(request);
+      }
     } catch {
       this.stop();
     } finally { this.polling = false; }
   }
 
   private execute(request: unknown) {
-    if (this.stopped || this.pending >= 16) { this.stop(); return; }
+    if (this.stopped || this.suspended || this.pending >= 16) { this.stop(); return; }
     if (!this.protocol) {
       const epoch = (request as Frame | null)?.epoch;
       if (typeof epoch !== "string") throw new Error("invalid_transport_epoch");
@@ -82,9 +97,48 @@ export class DesktopTransportPump {
       this.epoch = epoch;
     }
     this.pending++;
+    const generation = this.generation;
     void this.protocol.handle(request).then(reply => {
-      if (!this.stopped && !this.replies.push(reply)) this.stop();
-    }, () => this.stop()).finally(() => { this.pending--; });
+      if (!this.stopped && generation === this.generation && !this.replies.push(reply)) this.stop();
+    }, () => { if (generation === this.generation) this.stop(); }).finally(() => {
+      if (generation === this.generation) this.pending--;
+    });
+  }
+
+  private bind(value: unknown, outgoing: Frame[]) {
+    if (this.stopped) return;
+    const frame = value as Frame;
+    if (Object.keys(frame).sort().join(",") !== "action,epoch,generation,type,v" || frame.v !== 1 ||
+        typeof frame.generation !== "string" || !/^[1-9][0-9]{0,19}$/.test(frame.generation)) {
+      throw new Error("invalid_transport_binding");
+    }
+    const generation = BigInt(frame.generation);
+    if (generation <= this.generation || generation > 18446744073709551615n) throw new Error("stale_transport_binding");
+    if (frame.action === "suspend" && !this.suspended && frame.epoch === this.epoch) {
+      this.suspended = true;
+      this.generation = generation;
+      this.pending = 0;
+      this.driver.suspend();
+      this.replies.clear();
+      this.packets.clear();
+      const critical = [...outgoing, ...this.critical.clear()];
+      for (const event of critical) {
+        if (event.type === "desktop_transport_event" && event.event !== "message" && typeof event.resource === "string") {
+          this.driver.close(event.resource);
+        }
+      }
+      return;
+    }
+    if (frame.action === "bind" && this.suspended && typeof frame.epoch === "string" &&
+        /^[0-9a-f]{32}$/.test(frame.epoch) && frame.epoch !== this.epoch) {
+      this.protocol = new DesktopTransportProtocol(frame.epoch, this.driver);
+      this.epoch = frame.epoch;
+      this.generation = generation;
+      this.driver.resume();
+      this.suspended = false;
+      return;
+    }
+    throw new Error("invalid_transport_binding_transition");
   }
 
   private async boundedExchange(frames: Frame[]) {

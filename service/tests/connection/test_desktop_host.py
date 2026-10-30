@@ -61,6 +61,20 @@ def test_a_transient_inventory_failure_does_not_retire_healthy_carriers():
         host.shutdown()
 
 
+def test_private_activation_waits_for_the_exact_resource_reply():
+    host, outgoing, _ = fixture()
+    try:
+        with ThreadPoolExecutor() as pool:
+            pending = pool.submit(host.activate, "native-survivor")
+            request = outgoing.get(timeout=1)
+            assert request["request"] == {"op": "activate", "resource": "native-survivor"}
+            assert not pending.done()
+            host.receive(reply(request, None))
+            assert pending.result() is None
+    finally:
+        host.shutdown()
+
+
 def test_private_inventory_rejects_identity_claims_and_fences_the_channel():
     host, outgoing, events = fixture()
     with ThreadPoolExecutor() as pool:

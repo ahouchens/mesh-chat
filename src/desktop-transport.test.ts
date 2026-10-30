@@ -48,6 +48,61 @@ function fixture(sink: (event: TransportEvent) => boolean = () => true) {
 
 afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
 
+it("suspends carrier traffic while preserving established native identity for trusted rebind", async () => {
+  vi.stubGlobal("crypto", webcrypto);
+  const events: TransportEvent[] = [];
+  const { host, peers } = fixture(event => { events.push(event); return true; });
+  await host.createOffer(options);
+  await host.applyAnswer(options.resource, sdp);
+  const before = await host.inventory();
+  host.suspend();
+  expect(host.send(options.resource, new Uint8Array([1]))).toBe(false);
+  expect(host.sendControl(options.resource, "meshchat-reconnect", "control")).toBe(false);
+  await expect(host.createOffer({ ...options, resource: "new" })).rejects.toThrow("suspended");
+  await expect(host.applyAnswer(options.resource, sdp)).rejects.toThrow("suspended");
+  const count = events.length;
+  peers[0].channels[0].dispatchEvent(new MessageEvent("message", { data: new Uint8Array([1]).buffer }));
+  expect(events).toHaveLength(count);
+  host.resume();
+  const after = await host.inventory();
+  expect(after.adapter_epoch).toBe(before.adapter_epoch);
+  expect(after.resources).toEqual(before.resources);
+  expect(host.send(options.resource, new Uint8Array([1]))).toBe(false);
+  host.activate(options.resource);
+  expect(host.send(options.resource, new Uint8Array([1]))).toBe(true);
+  host.closeAll();
+});
+
+it("retires unfinished work on suspension and fences late completion", async () => {
+  const { host, peers } = fixture();
+  const pending = host.createOffer(options);
+  let finish!: (description: { type: string; sdp: string }) => void;
+  peers[0].createOffer.mockImplementation(() => new Promise(resolve => { finish = resolve; }));
+  await Promise.resolve();
+  const rejected = expect(pending).rejects.toThrow("retired");
+  host.suspend();
+  await rejected;
+  host.resume();
+  await host.createOffer(options);
+  finish({ type: "offer", sdp });
+  await Promise.resolve();
+  expect(peers[0].localDescription).toBeNull();
+  expect(host.inspect(options.resource)).not.toBeNull();
+  host.closeAll();
+});
+
+it.each(["control", "lifecycle"])("retires a suspended carrier when %s evidence could be lost", async kind => {
+  const { host, peers } = fixture();
+  await host.createOffer(options);
+  await host.applyAnswer(options.resource, sdp);
+  host.suspend();
+  host.resume(); // A new service binding alone cannot reactivate a carrier.
+  if (kind === "control") peers[0].channels[1].dispatchEvent(new MessageEvent("message", { data: "revoked" }));
+  else peers[0].dispatchEvent(new Event("iceconnectionstatechange"));
+  host.resume();
+  expect(host.inspect(options.resource)).toBeNull();
+});
+
 it("observes exact live descriptions without returning SDP or ICE credentials", async () => {
   vi.stubGlobal("crypto", webcrypto);
   const { host } = fixture();

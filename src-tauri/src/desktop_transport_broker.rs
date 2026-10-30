@@ -12,6 +12,11 @@ pub struct Binding {
     pending: HashSet<String>,
     retired: bool,
     polls: u64,
+    suspended: bool,
+    awaiting_bind: bool,
+    previous_epoch: Option<String>,
+    generation: u64,
+    controls: VecDeque<Value>,
 }
 
 impl Binding {
@@ -26,11 +31,51 @@ impl Binding {
             pending: HashSet::new(),
             retired: false,
             polls: 0,
+            suspended: false,
+            awaiting_bind: false,
+            previous_epoch: None,
+            generation: 0,
+            controls: VecDeque::new(),
         }
     }
 
     pub fn pid(&self) -> u32 {
         self.pid
+    }
+    pub fn label(&self) -> &str {
+        &self.label
+    }
+    pub fn suspended(&self) -> bool {
+        self.suspended && !self.awaiting_bind && !self.retired
+    }
+
+    pub fn suspend(&mut self, pid: u32) -> Result<(), &'static str> {
+        if pid != self.pid || self.retired || self.suspended || !self.controls.is_empty() {
+            return Err("transport_handoff_unavailable");
+        }
+        self.generation = self
+            .generation
+            .checked_add(1)
+            .ok_or("transport_generation_exhausted")?;
+        self.controls
+            .push_back(serde_json::json!({"v":1,"type":"desktop_transport_binding",
+            "generation":self.generation.to_string(),"action":"suspend","epoch":self.epoch}));
+        self.previous_epoch = self.epoch.clone();
+        self.suspended = true;
+        self.requests.clear();
+        self.pending.clear();
+        Ok(())
+    }
+
+    pub fn rebind(&mut self, pid: u32) -> Result<(), &'static str> {
+        if !self.suspended() {
+            return Err("transport_handoff_unavailable");
+        }
+        self.pid = pid;
+        self.epoch = None;
+        self.sequence = 0;
+        self.awaiting_bind = true;
+        Ok(())
     }
     #[cfg(feature = "transport-qualification")]
     pub fn diagnostics(&self) -> Value {
@@ -46,7 +91,7 @@ impl Binding {
     }
 
     pub fn admit(&mut self, pid: u32, frame: Value) -> Result<(), &'static str> {
-        if pid != self.pid || self.retired {
+        if pid != self.pid || self.retired || (self.suspended && !self.awaiting_bind) {
             return Err("transport_retired");
         }
         if !fields(&frame, &["v", "type", "epoch", "id", "request"])
@@ -88,12 +133,27 @@ impl Binding {
                 | "applyAnswer"
                 | "inspect"
                 | "inventory"
+                | "activate"
                 | "send"
                 | "sendControl"
                 | "close"
                 | "reset"
         ) {
             return Err("invalid_transport_operation");
+        }
+        if self.awaiting_bind {
+            if self.previous_epoch.as_deref() == Some(epoch) {
+                return Err("transport_epoch_reused");
+            }
+            self.generation = self
+                .generation
+                .checked_add(1)
+                .ok_or("transport_generation_exhausted")?;
+            self.controls
+                .push_back(serde_json::json!({"v":1,"type":"desktop_transport_binding",
+                "generation":self.generation.to_string(),"action":"bind","epoch":epoch}));
+            self.awaiting_bind = false;
+            self.suspended = false;
         }
         if operation == "reset" {
             if !fields(&frame["request"], &["op"]) {
@@ -126,6 +186,13 @@ impl Binding {
         self.polls = self.polls.saturating_add(1);
         if incoming.len() > 64 || !bounded(&incoming, 2 * 1024 * 1024) {
             return Err("transport_frame_budget");
+        }
+        // The private window has not received the new binding yet. Its old
+        // observations cannot be attributed to the replacement process.
+        if self.suspended || !self.controls.is_empty() {
+            let mut outgoing: Vec<Value> = self.controls.drain(..).collect();
+            outgoing.extend(self.requests.drain(..));
+            return Ok((Vec::new(), outgoing));
         }
         for frame in &incoming {
             self.validate_reply(frame)?;
@@ -236,6 +303,68 @@ mod tests {
         let mut reply = response(1);
         reply["result"] = json!({"v":1,"adapter_epoch":EPOCH,"resources":[]});
         assert_eq!(exchange(&mut host, vec![reply.clone()]).0, vec![reply]);
+    }
+
+    #[test]
+    fn handoff_discards_old_frames_and_binds_a_fresh_service_epoch_before_requests() {
+        let mut host = binding();
+        host.admit(42, request(1, "inspect")).unwrap();
+        exchange(&mut host, vec![]);
+        host.suspend(42).unwrap();
+        assert!(host.admit(42, request(2, "activate")).is_err());
+        host.rebind(43).unwrap();
+        assert!(host.admit(43, request(1, "inventory")).is_err());
+        let mut next = request(1, "inventory");
+        next["epoch"] = json!("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
+        host.admit(43, next.clone()).unwrap();
+        assert!(host.admit(42, request(2, "close")).is_err());
+        let (replies, commands) = host
+            .exchange(43, "private-window", "private-token", vec![response(1)])
+            .unwrap();
+        assert!(replies.is_empty());
+        assert_eq!(
+            commands,
+            vec![
+                json!({"v":1,"type":"desktop_transport_binding","generation":"1","action":"suspend","epoch":EPOCH}),
+                json!({"v":1,"type":"desktop_transport_binding","generation":"2","action":"bind","epoch":next["epoch"]}),
+                next.clone()
+            ]
+        );
+        assert!(host
+            .exchange(43, "private-window", "private-token", vec![response(1)])
+            .is_err());
+        let mut reply = response(1);
+        reply["epoch"] = next["epoch"].clone();
+        assert_eq!(
+            host.exchange(43, "private-window", "private-token", vec![reply.clone()])
+                .unwrap()
+                .0,
+            vec![reply]
+        );
+    }
+
+    #[test]
+    fn suspended_window_can_poll_but_handoff_cannot_accumulate_unbounded_controls() {
+        let mut host = binding();
+        assert!(host.suspend(99).is_err());
+        host.suspend(42).unwrap();
+        assert!(host.suspend(42).is_err());
+        let commands = exchange(&mut host, vec![]).1;
+        assert_eq!(commands.len(), 1);
+        assert!(commands[0]["epoch"].is_null());
+        assert!(exchange(&mut host, vec![response(1)]).0.is_empty());
+        host.rebind(43).unwrap();
+        assert!(host.rebind(44).is_err());
+        assert!(host.suspend(43).is_err());
+    }
+
+    #[test]
+    fn inherited_requests_cannot_supply_platform_binding_controls() {
+        let mut host = binding();
+        for op in ["suspend", "bind", "resume"] {
+            assert!(host.admit(42, request(1, op)).is_err());
+        }
+        host.admit(42, request(1, "activate")).unwrap();
     }
 
     #[test]

@@ -9,7 +9,8 @@ const request = (id = 1) => ({ v: 1, type: "desktop_transport", epoch, id: Strin
 } });
 
 function fixture(exchange = vi.fn(async (_frames: Record<string, unknown>[], _fault: boolean): Promise<unknown[]> => [])) {
-  const driver = { createOffer: vi.fn(async () => ({ sdp: "sdp", fingerprint: "bound" })), closeAll: vi.fn() };
+  const driver = { createOffer: vi.fn(async () => ({ sdp: "sdp", fingerprint: "bound" })), closeAll: vi.fn(),
+    close: vi.fn(), suspend: vi.fn(), resume: vi.fn() };
   let emit!: (event: TransportEvent) => boolean;
   const pump = new DesktopTransportPump(exchange, sink => {
     emit = sink;
@@ -20,6 +21,60 @@ function fixture(exchange = vi.fn(async (_frames: Record<string, unknown>[], _fa
 
 async function settled() { for (let index = 0; index < 5; index++) await Promise.resolve(); }
 afterEach(() => vi.useRealTimers());
+
+const binding = (generation: string, action: string, boundEpoch: string | null) =>
+  ({ v: 1, type: "desktop_transport_binding", generation, action, epoch: boundEpoch });
+
+it("rebinds only through trusted host controls and discards obsolete completions", async () => {
+  const { pump, driver, exchange } = fixture();
+  let finish!: (value: { sdp: string; fingerprint: string }) => void;
+  driver.createOffer.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+  exchange.mockResolvedValueOnce([request()]);
+  await pump.step();
+  const nextEpoch = "b".repeat(32);
+  exchange.mockResolvedValueOnce([binding("1", "suspend", epoch), binding("2", "bind", nextEpoch),
+    { ...request(), epoch: nextEpoch }]);
+  await pump.step();
+  finish({ sdp: "obsolete", fingerprint: "old" });
+  await settled();
+  await pump.step();
+  expect(exchange.mock.calls[2][0]).toEqual([
+    { v: 1, type: "desktop_transport_reply", epoch: nextEpoch, id: "1", ok: true, result: { sdp: "sdp", fingerprint: "bound" } },
+  ]);
+  expect(driver.suspend).toHaveBeenCalledOnce();
+  expect(driver.resume).toHaveBeenCalledOnce();
+  expect(driver.closeAll).not.toHaveBeenCalled();
+  pump.stop();
+});
+
+it("retires resources whose undelivered critical events cross the binding boundary", async () => {
+  const { pump, driver, exchange, emit } = fixture();
+  exchange.mockResolvedValueOnce([request()]);
+  await pump.step();
+  await settled();
+  emit({ event: "control", resource: "native-1", data: "revocation" });
+  exchange.mockResolvedValueOnce([binding("1", "suspend", epoch)]);
+  await pump.step();
+  expect(driver.close.mock.calls).toEqual([["native-1"]]);
+  pump.stop();
+});
+
+it.each([
+  [binding("1", "bind", "b".repeat(32))],
+  [binding("1", "suspend", epoch), binding("1", "bind", "b".repeat(32))],
+  [binding("1", "suspend", epoch), binding("2", "bind", epoch)],
+  [{ ...binding("1", "suspend", epoch), authority: true }],
+  [binding("1", "suspend", epoch), request(2)],
+].map(controls => ({ controls })))("quarantines invalid or reordered host controls: %j", async ({ controls }) => {
+  const { pump, driver, exchange } = fixture();
+  exchange.mockResolvedValueOnce([request()]);
+  await pump.step();
+  await settled();
+  exchange.mockResolvedValueOnce(controls);
+  await pump.step();
+  expect(driver.closeAll).toHaveBeenCalledOnce();
+  expect(driver.createOffer).toHaveBeenCalledOnce();
+});
 
 it("routes private requests and keeps lifecycle admission independent of bulk packets", async () => {
   const { pump, driver, exchange, emit } = fixture();

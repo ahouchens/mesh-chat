@@ -57,7 +57,7 @@ Operations are `createOffer(options)`, `acceptOffer(options, offer)`,
 `applyAnswer(resource, answer)`, `inspect(resource)`, `inventory()`, `send(resource, packet)`,
 `sendControl(resource, label, text)`, `close(resource)` and `reset`. Options contain
 only `resource`, `ice` and `channels`. Resources name exact physical allocations;
-packet values are canonical base64 for 1–1,064 bytes. The Python binding accepts
+packet values are canonical base64 for 1â€“1,064 bytes. The Python binding accepts
 the bridge's native bytes and performs that encoding. No operation selects a
 contact, changes consent, signs documents or supplies public caller authority.
 
@@ -159,3 +159,24 @@ claim the carrier and authorize a new bridge. Native callbacks remain tied to
 the original physical resource. Storage/adapter failures quarantine startup,
 while ordinary rejected candidates are retired. Trusted platform rebinding and
 actual service-restart qualification remain separate requirements.
+
+
+### Trusted desktop binding controls v1
+
+The co-versioned Rust host produces `desktop_transport_binding` controls only on
+the authenticated private window exchange. The browser pump consumes exactly
+`v`, `type`, `generation`, `action` and `epoch`; canonical positive u64 generations
+increase, `suspend` names the current epoch (or null before first binding), and
+`bind` requires suspension and a fresh 32-character lowercase hex service epoch.
+The inherited Python request path and public commands cannot inject these
+controls. At most two controls precede the existing 16-request budget. An
+unfinished handoff cannot accumulate another generation of work.
+
+Suspension cancels unfinished peer operations and holds established carriers.
+Critical observations crossing suspension retire their exact resource; bulk
+packets and obsolete replies are discarded. Rebinding leaves each survivor held.
+The protected Python adapter alone requests private `activate(resource)` after
+checkpointing and confirming a new owner lease. Authority and resource identity
+are checked again before bridge attachment. Hosts exposing recovery inventory
+must also provide activation and quarantine capabilities. This mechanism grants
+no consent and does not alter signed peer documents or public API versions.

@@ -22,6 +22,7 @@ def test_shared_constructor_binds_private_host(tmp_path, monkeypatch, binding):
     native = host()
     if binding == "explicit_inventory":
         native.inventory = lambda: {"v": 1, "adapter_epoch": "a" * 32, "resources": []}
+        native.activate = lambda _: pytest.fail("An empty inventory cannot activate a carrier")
         native.shutdown = lambda: pytest.fail("An empty valid inventory must not quarantine its host")
     loaded = []
     def load_android():

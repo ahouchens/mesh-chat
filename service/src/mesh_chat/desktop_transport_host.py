@@ -92,6 +92,9 @@ class DesktopTransportHost:
     def close(self, resource):
         self._request("close", resource=resource)
 
+    def activate(self, resource):
+        self._request("activate", resource=resource)
+
     @staticmethod
     def _options(resource, ice, channels):
         try:

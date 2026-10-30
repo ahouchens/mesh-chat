@@ -45,6 +45,8 @@ def recovery(tmp_path):
         inventory = dict(v=1, adapter_epoch=binding.adapter_epoch, resources=[observation])
         closed, faults = [], []
         service._native_host = SimpleNamespace(inventory=lambda: deepcopy(inventory), close=closed.append, shutdown=lambda: faults.append(True))
+        service.activated = []
+        service._native_host.activate = service.activated.append
         yield service, binding, inventory, closed, faults
 
 
@@ -59,11 +61,13 @@ def test_reconciled_resource_still_requires_supervisor_adoption_and_a_fresh_leas
     assert service._native_webrtc_descriptions[session] == {"ice_policy": "relay"}
     service._connection_runtime = SimpleNamespace(permits_carrier=lambda *_: False)
     with pytest.raises(ContactNotApproved): service.webrtc_attach_native(session)
+    assert not service.activated
     service._connection_runtime.permits_carrier = lambda *_: True
     attached = []
     service._attach_native_bridge = attached.append
     service.webrtc_attach_native(session)
     assert attached == [session]
+    assert service.activated == [binding.resource]
     assert service._carrier_journal.bindings() == (binding,)
     assert not closed and not faults
 
@@ -86,6 +90,20 @@ def test_invalid_survivor_is_retired_without_regaining_authority(recovery, fault
     reconcile_carriers(service, lambda _: fault != "fenced")
     assert closed == [binding.resource] and not faults
     assert not service._native_webrtc_live and not service._carrier_journal.bindings()
+
+
+def test_activation_rechecks_authority_before_bridge_attachment(recovery):
+    service, binding, _, _, _ = recovery
+    reconcile_carriers(service, lambda _: True)
+    session = service.claim_native_reconnect_carrier("profile", "local", "remote")
+    service._connection_runtime = SimpleNamespace(permits_carrier=lambda *_: True)
+    def activate(resource):
+        assert resource == binding.resource
+        assert not service._dispatch_lock._is_owned()
+        service._connection_runtime.permits_carrier = lambda *_: False
+    service._native_host.activate = activate
+    with pytest.raises(ContactNotApproved): service.webrtc_attach_native(session)
+    assert not service._native_webrtc_sessions
 
 
 def test_orphans_are_retired_even_without_any_saved_profile(recovery):
@@ -174,6 +192,7 @@ def test_production_runtime_prepares_and_adopts_survivor_without_negotiating(rec
         assert not service._carrier_recovery_pending
         assert runtime.owner.snapshots()[0].carrier.resource.resource_id == binding.resource
         assert len(attached) == 1 and not closed and not faults
+        assert service.activated == [binding.resource]
     finally:
         runtime.stop()
         runtime.wait()

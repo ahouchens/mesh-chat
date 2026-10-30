@@ -23,6 +23,7 @@ type Allocation = {
   icePolicy: RTCIceTransportPolicy;
   operations: number;
   revision: number;
+  held: boolean;
 };
 
 const PURPOSES = new Set(["mesh-reticulum", "meshchat-reconnect", "mesh-onboarding"]);
@@ -37,6 +38,7 @@ const encoded = (value: Uint8Array) => btoa(Array.from(value, byte => String.fro
 export class DesktopTransport {
   private readonly allocations = new Map<string, Allocation>();
   private quarantined = false;
+  private suspended = false;
   private pendingOperations = 0;
   private readonly adapterEpoch = adapterEpoch();
 
@@ -55,6 +57,7 @@ export class DesktopTransport {
   }
 
   async applyAnswer(resource: string, answer: string): Promise<void> {
+    if (this.suspended) throw new Error("transport_suspended");
     const allocation = this.require(resource);
     if (!answer || bytes(answer).length > CONTROL_LIMIT) throw new Error("invalid_sdp");
     await this.bounded(allocation, () => allocation.pc.setRemoteDescription({ type: "answer", sdp: answer }));
@@ -140,14 +143,47 @@ export class DesktopTransport {
     }
   }
 
+  suspend(): void {
+    if (this.quarantined) throw new Error("transport_quarantined");
+    if (this.suspended) return;
+    this.suspended = true;
+    for (const allocation of [...this.allocations.values()]) {
+      allocation.revision++;
+      allocation.held = true;
+      if (allocation.creating || allocation.operations > 0 || allocation.pc.signalingState !== "stable" ||
+          !["connected", "completed"].includes(allocation.pc.iceConnectionState) ||
+          allocation.channels.get("mesh-reticulum")?.readyState !== "open" ||
+          !allocation.pc.localDescription || !allocation.pc.remoteDescription) this.close(allocation.resource);
+    }
+  }
+
+  resume(): void {
+    if (this.quarantined) throw new Error("transport_quarantined");
+    if (!this.suspended) return;
+    for (const allocation of this.allocations.values()) allocation.revision++;
+    this.suspended = false;
+  }
+
+  activate(resource: string): void {
+    if (this.suspended) throw new Error("transport_suspended");
+    const allocation = this.require(resource);
+    if (allocation.operations || allocation.creating || allocation.pc.signalingState !== "stable" ||
+        !["connected", "completed"].includes(allocation.pc.iceConnectionState) ||
+        allocation.channels.get("mesh-reticulum")?.readyState !== "open") throw new Error("transport_not_ready");
+    allocation.held = false;
+    allocation.revision++;
+  }
+
   private async create(options: CreateTransport, offer?: string) {
     this.validate(options);
     if (this.quarantined) throw new Error("transport_quarantined");
+    if (this.suspended) throw new Error("transport_suspended");
     if (this.allocations.has(options.resource) || this.allocations.size >= 16) throw new Error("transport_capacity");
     const allocation: Allocation = {
       resource: options.resource, pc: this.openPeer(options.ice), purposes: new Set(options.channels.map(channel => channel.label)),
       channels: new Map(), abort: new AbortController(), creating: true, closed: false, disposalFailed: false, packetDrops: 0,
       icePolicy: options.ice.iceTransportPolicy!, operations: 0, revision: 0,
+      held: false,
     };
     this.allocations.set(options.resource, allocation);
     this.observe(allocation);
@@ -211,6 +247,11 @@ export class DesktopTransport {
   }
 
   private bindChannel(allocation: Allocation, channel: RTCDataChannel) {
+    if (this.suspended || allocation.held) {
+      channel.close();
+      if (this.current(allocation)) this.close(allocation.resource);
+      return;
+    }
     if (!this.current(allocation) || !allocation.purposes.has(channel.label) || allocation.channels.has(channel.label) ||
         !channel.ordered || channel.maxRetransmits !== null || channel.maxPacketLifeTime !== null) {
       channel.close();
@@ -244,6 +285,11 @@ export class DesktopTransport {
   }
 
   private deliver(allocation: Allocation, event: string, data: string, bulk: boolean) {
+    if (this.suspended || allocation.held) {
+      if (bulk) allocation.packetDrops++;
+      else if (this.current(allocation)) this.close(allocation.resource);
+      return;
+    }
     let accepted = false;
     try { accepted = this.emit({ event, resource: allocation.resource, data }); } catch { /* Admission failure is handled below. */ }
     if (!accepted) {
@@ -259,9 +305,10 @@ export class DesktopTransport {
   }
 
   private sendChannel(resource: string, label: string, value: string | Uint8Array, length: number) {
+    if (this.suspended) return false;
     const allocation = this.allocations.get(resource);
     const channel = allocation?.channels.get(label);
-    if (!allocation || !this.current(allocation) || channel?.readyState !== "open" ||
+    if (!allocation || allocation.held || !this.current(allocation) || channel?.readyState !== "open" ||
         channel.bufferedAmount + length > BUFFER_LIMIT) return false;
     try {
       if (typeof value === "string") channel.send(value);

@@ -110,6 +110,9 @@ export class DesktopTransportProtocol {
       case "inventory":
         fields(request, ["op"]);
         return this.driver.inventory();
+      case "activate":
+        fields(request, ["op", "resource"]);
+        return this.driver.activate(resource(request.resource));
       case "close":
         fields(request, ["op", "resource"]);
         return this.driver.close(resource(request.resource));

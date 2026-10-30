@@ -391,6 +391,7 @@ fn terminate_windows_process_tree(pid: u32) {
 #[cfg(desktop)]
 struct DetachedService {
     pid: u32,
+    process_present: bool,
     child: Option<CommandChild>,
     native: Option<direct_native::NativeHost>,
     transport: Option<desktop_transport::RegisteredHost>,
@@ -405,7 +406,7 @@ impl DetachedService {
         if let Some(native) = self.native {
             native.close();
         }
-        if terminate {
+        if terminate && self.process_present {
             #[cfg(windows)]
             terminate_windows_process_tree(self.pid);
             if let Some(child) = self.child {
@@ -417,13 +418,29 @@ impl DetachedService {
 
 #[cfg(desktop)]
 fn detach_service(state: &ServiceState, expected_pid: Option<u32>) -> Option<DetachedService> {
+    detach_service_with_transport(state, expected_pid, false)
+}
+
+#[cfg(desktop)]
+fn detach_service_with_transport(state: &ServiceState, expected_pid: Option<u32>, preserve_transport: bool) -> Option<DetachedService> {
     // This guard also protects publication in spawn_service. Detach everything
     // before permitting a replacement, then dispose only the captured resources.
     // Never wait for the stdin writer while holding the lifecycle guard.
     let mut current = state.sidecar_pid.lock().ok()?;
-    let pid = (*current).filter(|pid| expected_pid.is_none_or(|expected| *pid == expected))?;
+    let pid = match (*current).filter(|pid| expected_pid.is_none_or(|expected| *pid == expected)) {
+        Some(pid) => pid,
+        None if current.is_none() && expected_pid.is_none() => {
+            // Explicit lock/exit must also dispose a host retained after a crash.
+            // Never terminate a recycled OS PID belonging to that dead service.
+            let transport = desktop_transport::detach(state, None)?;
+            return Some(DetachedService { pid: transport.pid(), process_present: false,
+                child: None, native: None, transport: Some(transport) });
+        }
+        None => return None,
+    };
     current.take();
-    let transport = desktop_transport::detach(state, Some(pid));
+    let transport = if preserve_transport && desktop_transport::suspend(state, pid) { None }
+                    else { desktop_transport::detach(state, Some(pid)) };
     let native = state.direct_native.lock().ok().and_then(|mut host| host.take());
     let child = state
         .child
@@ -434,14 +451,16 @@ fn detach_service(state: &ServiceState, expected_pid: Option<u32>) -> Option<Det
             else { None }
         });
     fail_all_pending(state, "service_stopped");
-    Some(DetachedService { pid, child, native, transport })
+    Some(DetachedService { pid, process_present: true, child, native, transport })
 }
 
 #[cfg(desktop)]
 fn retire_service_process(state: &ServiceState, expected_pid: Option<u32>) {
     if let Some(retired) = detach_service(state, expected_pid) {
         let pid = retired.pid;
+        let process_present = retired.process_present;
         retired.dispose(true);
+        if !process_present { return; }
         // A writer may have held the child handle during detachment. Reap only
         // that handle after process termination releases its pipe; never hold up
         // the shutdown deadline or take a replacement's handle.
@@ -591,7 +610,7 @@ fn spawn_service(app: &AppHandle, state: &ServiceState) -> Result<(), String> {
                     break;
                 }
                 CommandEvent::Terminated(exit) => {
-                    if let Some(retired) = detach_service(&event_state, Some(sidecar_pid)) {
+                    if let Some(retired) = detach_service_with_transport(&event_state, Some(sidecar_pid), true) {
                         retired.dispose(false);
                         record_unexpected_service_exit(&app_handle, &event_state, "terminated", exit.code, exit.signal, stderr.finish(), started.elapsed().as_millis() as u64);
                         let _ = app_handle.emit(
@@ -599,7 +618,8 @@ fn spawn_service(app: &AppHandle, state: &ServiceState) -> Result<(), String> {
                             json!({"type":"event", "event":"service_error"}),
                         );
                     }
-                    break;
+                    native.close();
+                    return;
                 }
                 _ => {}
             }

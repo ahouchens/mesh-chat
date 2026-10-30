@@ -25,7 +25,7 @@ pub fn run() -> i32 {
         .invoke_handler(tauri::generate_handler![crate::desktop_transport_exchange])
         .setup(move |app| {
             let (mut events, child) = app.shell().command(&arguments[0]).arg(&arguments[1]).set_raw_out(true).spawn()?;
-            let pid = child.pid();
+            let mut pid = child.pid();
             *setup_state.child.lock().unwrap() = Some(child);
             *setup_state.sidecar_pid.lock().unwrap() = Some(pid);
             desktop_transport::register(app.handle(), &setup_state, pid).map_err(std::io::Error::other)?;
@@ -41,6 +41,8 @@ pub fn run() -> i32 {
                 let native = direct_native::NativeHost::default();
                 let mut buffer = Vec::new();
                 let mut reported = false;
+                let mut checkpoint = None;
+                let mut restarted = false;
                 while let Some(event) = events.recv().await {
                     match event {
                         CommandEvent::Stdout(bytes) => {
@@ -48,14 +50,33 @@ pub fn run() -> i32 {
                             if consume_frames(&mut buffer, |mut value| {
                                 if value["type"] == "desktop_transport_qualification" {
                                     reported = true;
-                                    let passed = value["ok"] == true;
+                                    let passed = value["ok"] == true && restarted;
+                                    value["ok"] = json!(passed);
                                     value["host"] = desktop_transport::diagnostics(&setup_state);
                                     println!("{}", json!({"v":1, "source_commit":env!("MESH_BUILD_COMMIT"),
                                         "evidence_level":"windows_webview2_private_host_component", "result":value}));
                                     app.exit(if passed { 0 } else { 1 });
+                                } else if value["type"] == "desktop_transport_handoff" && !restarted && checkpoint.is_none() {
+                                    checkpoint = Some(value["inventory"].clone());
                                 } else { handle_sidecar_value(&app, &setup_state, &native, pid, value); }
                             }).is_err() { app.exit(2); break; }
                             if reported { break; }
+                        }
+                        CommandEvent::Terminated(_) if checkpoint.is_some() && !restarted => {
+                            let Some(retired) = crate::detach_service_with_transport(&setup_state, Some(pid), true) else {
+                                app.exit(2); break;
+                            };
+                            retired.dispose(false);
+                            let replacement = app.shell().command(&arguments[0]).arg(&arguments[1])
+                                .arg(checkpoint.take().unwrap().to_string()).set_raw_out(true).spawn();
+                            let Ok((next_events, child)) = replacement else { app.exit(2); break; };
+                            pid = child.pid();
+                            *setup_state.child.lock().unwrap() = Some(child);
+                            *setup_state.sidecar_pid.lock().unwrap() = Some(pid);
+                            if desktop_transport::register(&app, &setup_state, pid).is_err() { app.exit(2); break; }
+                            buffer.clear();
+                            events = next_events;
+                            restarted = true;
                         }
                         CommandEvent::Terminated(_) | CommandEvent::Error(_) => { app.exit(2); break; }
                         _ => {}

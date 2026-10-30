@@ -14,6 +14,7 @@ function fixture() {
     applyAnswer: vi.fn(async () => {}), inspect: vi.fn(() => ({ data_channel_state: "open" })),
     send: vi.fn(() => true), sendControl: vi.fn(() => false), close: vi.fn(), closeAll: vi.fn(),
     inventory: vi.fn(async () => ({ v: 1, adapter_epoch: "b".repeat(32), resources: [] })),
+    activate: vi.fn(),
   };
   return { driver, protocol: new DesktopTransportProtocol(epoch, driver as unknown as DesktopTransport) };
 }
@@ -36,6 +37,15 @@ it("allows only the parameter-free private inventory operation", async () => {
     result: { v: 1, adapter_epoch: "b".repeat(32), resources: [] } });
   expect(await protocol.handle(request("2", { op: "inventory", peer_destination: "claimed" }))).toMatchObject({ ok: false });
   expect(driver.inventory).toHaveBeenCalledOnce();
+});
+
+it("admits exact-resource activation but never platform suspension or claimed authority", async () => {
+  const { driver, protocol } = fixture();
+  expect(await protocol.handle(request("1", { op: "activate", resource: "native-one" }))).toMatchObject({ ok: true });
+  expect(await protocol.handle(request("2", { op: "activate", resource: "native-one", authenticated: true }))).toMatchObject({ ok: false });
+  expect(await protocol.handle(request("3", { op: "suspend" }))).toMatchObject({ ok: false });
+  expect(await protocol.handle(request("4", { op: "resume" }))).toMatchObject({ ok: false });
+  expect(driver.activate.mock.calls).toEqual([["native-one"]]);
 });
 
 it("rejects stale epochs and monotonic request replays before invoking the adapter", async () => {

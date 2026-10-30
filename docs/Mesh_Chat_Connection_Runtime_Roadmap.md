@@ -253,8 +253,9 @@ the exact window label, fixed local document and service PID; JSON cannot choose
 these identities. The broker bounds pending work, validates whole reply batches
 before consuming them and reserves reset admission. A bounded browser pump keeps
 lifecycle and packet budgets separate. Lost windows or stalled IPC quarantine the
-Python adapter. Service exit currently disposes that window and its carriers;
-surviving-carrier restart adoption remains required before M2 promotion.
+Python adapter. Unexpected service exit now suspends eligible carriers in that
+window; explicit shutdown and host faults dispose it. Full surviving-carrier
+restart adoption remains required before M2 promotion.
 
 The private desktop host now exposes a bounded carrier inventory for recovery
 reconciliation. It reports a stable adapter epoch, exact physical resources,
@@ -264,9 +265,9 @@ changes during hashing. The Python binding validates the complete inventory and
 fences a changed adapter epoch; ordinary snapshot races remain retryable.
 Cross-language digest vectors, stale-resource tests, real WebView2 observations
 and both Android Chromium offer roles cover this port. This is a prerequisite,
-not restart adoption: service exit still disposes the transport window. Protected
-binding checkpoints and invalidation now use the encrypted vault as described
-below; trusted rebinding and actual restart adoption remain open.
+not full restart adoption. Protected binding checkpoints and invalidation use
+the encrypted vault as described below; packaged restart and receipt evidence
+remain open.
 
 Conflicting browser SDP operations now have one admitted operation per peer.
 Overlap is rejected before native dispatch without retiring the active resource;
@@ -296,9 +297,8 @@ Recovered evidence contains no SDP and cannot bypass a new supervisor lease or
 bridge/path readiness checks. Failure quarantines startup admission. Controlled
 tests run this preparation and adoption through the production supervisor,
 including manual carriers with automatic reconnect disabled. These component
-and vault-reopen tests are not service-crash recovery evidence: trusted host
-rebind and restart/receipt tests remain required, and service exit still destroys
-its transport window.
+and vault-reopen tests do not qualify packaged service-crash recovery: the
+combined vault, supervisor, RNS/LXMF and receipt restart test remains required.
 
 Windows process retirement now captures the originating PID and detaches its
 transport host, native host and pending requests before a replacement is
@@ -306,7 +306,19 @@ published. Delayed cleanup cannot retire the replacement. The lifecycle guard
 does not wait for a blocked stdin writer; exact process termination and deferred
 handle cleanup remain available. Regression tests cover stale retirement,
 delayed disposal and blocked writers. This fixes host cleanup isolation; it does
-not implement surviving-carrier adoption.
+not by itself qualify surviving-carrier adoption.
+
+The private Rust host now suspends the browser pump after an unexpected process
+exit and rebinds that same window to a replacement process with a fresh service
+epoch. Bounded generation controls precede new requests; obsolete completions,
+queued packets and old-process observations cannot cross the boundary. Only
+stable connected peers without unfinished operations survive. Each stays held
+until the service checkpoints its evidence and activates the exact resource under
+a fresh supervisor lease. Control or lifecycle changes while held retire the peer;
+bulk packets are dropped. Explicit lock/exit also closes a retained host when no
+service PID remains, without terminating a recycled OS PID. Window destruction
+uses window identity across process rebinding. No retry policy moves into this
+mechanism, and the experimental selector remains unpromoted.
 
 The native WebRTC application adapter is now separated from the main service
 class in `native_webrtc_service.py`. Its 26 allocation, callback, bridge and
@@ -329,10 +341,12 @@ parity remain qualification requirements.
 
 The separate `transport-qualification` executable exercises the real Windows
 WebView2 host, production Python pipe binding, both offer roles, bidirectional
-packets/control and exact retirement without opening a vault. Windows CI requires
+packets/control, actual Python process replacement, retained adapter/resource
+identity, held traffic before activation, and exact retirement without opening
+a vault. Windows CI requires
 this result and records the source revision and binary/source hashes. Its evidence
 level is `windows_webview2_private_host_component`: it does not qualify packaged
-application messaging, LXMF receipts, restart adoption or headless Windows native
+application messaging, LXMF receipts, supervisor restart adoption or headless Windows native
 transport. Missing execution or missing checks fail qualification. The executable
 and its report command are test tooling, absent from normal shipping builds.
 

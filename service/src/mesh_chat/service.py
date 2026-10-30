@@ -487,8 +487,9 @@ class MeshChatService(
             from .native_webrtc_host import require_host
             self._native_host = require_host(self._native_webrtc_host())
             if (callable(getattr(self._native_host, "inventory", None))
-                    and not callable(getattr(self._native_host, "shutdown", None))):
-                raise NativeUnavailable("Recoverable native host lacks quarantine capability")
+                    and not all(callable(getattr(self._native_host, name, None))
+                                for name in ("shutdown", "activate"))):
+                raise NativeUnavailable("Recoverable native host lacks quarantine or activation capability")
         self._connection_policy = connection_policy
         self._connection_runtime = None
         from .link_previews import LinkPreviews
