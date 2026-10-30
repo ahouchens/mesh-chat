@@ -190,6 +190,19 @@ their existing command semantics. The default legacy dispatch is unchanged.
 Rollback uses a complete service stop and cleanup before selecting legacy in a
 new runtime; live switching and dual supervision are unsupported.
 
+Local consent/token changes, verified peer capability writes (including workspace
+capabilities), and contact block/unblock/delete writes use a bounded private
+authority transaction fence. Effects and packet leases are denied before the
+write; only its matching successful commit permits a fresh domain scan. An old
+scan cannot restore authority after a concurrent mutation. Failed writes keep
+the in-memory denial until that authority change is successfully retried; they
+do not claim a durable preference change. Explicit Stop fences remain independent.
+The shared consent path no longer invokes native close directly: exact cleanup
+is owned by the supervisor. Default legacy behavior retains its compatibility
+wrapper. Blocked, missing and unapproved contacts now report
+`contact_not_approved` in the existing reason-list field, consumed by reconnect
+settings and both diagnostic filters. No signed document version changes.
+
 ## Local validation
 
 Private observation contracts live in `contracts/connection/`; experimental

@@ -68,6 +68,49 @@ def test_explicit_stopped_profile_is_not_automatically_activated():
         owner.stop()
 
 
+def test_authority_write_fences_until_matching_commit_without_overriding_stop():
+    owner, profile = runtime()
+    try:
+        owner.synchronize()
+        first = owner.begin_authority_change("c")
+        owner.synchronize()
+        assert owner.snapshots()["p"]["desired"] == "stopped"
+        second = owner.begin_authority_change("c")
+        owner.commit_authority_change("c", first)
+        owner.synchronize()
+        assert owner.snapshots()["p"]["desired"] == "stopped"
+        owner.commit_authority_change("c", second)
+        owner.synchronize()
+        assert owner.snapshots()["p"]["desired"] == "enabled"
+        token = owner.begin_authority_change("c")
+        owner.fence("c")
+        owner.commit_authority_change("c", token)
+        owner.synchronize()
+        assert owner.snapshots()["p"]["desired"] == "stopped"
+    finally:
+        owner.stop()
+
+
+def test_scan_started_before_authority_commit_cannot_restore_stale_permission():
+    owner, profile = runtime()
+    try:
+        owner.synchronize()
+        def old_scan():
+            stale = {**profile}
+            token = owner.begin_authority_change("c")
+            profile["effective"] = {"ready": False, "reasons": ["contact_blocked"]}
+            owner.commit_authority_change("c", token)
+            return {"profiles": [stale]}
+        owner.profiles = old_scan
+        owner.synchronize()
+        assert owner.snapshots()["p"]["desired"] == "stopped"
+        owner.profiles = lambda: {"profiles": [profile]}
+        owner.synchronize()
+        assert not owner.owner.snapshots()[0].authority.authorized
+    finally:
+        owner.stop()
+
+
 def test_runtime_projection_sequence_advances_on_observations():
     owner, _ = runtime()
     try:

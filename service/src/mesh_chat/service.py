@@ -1567,7 +1567,8 @@ class MeshChatService(
             contact["trust_before_block"] = contact["trust"]
             contact["trust"] = TrustState.BLOCKED.value
             contact["updated_at"] = time.time()
-            self.store.put("contact", contact_id, contact)
+            with self._connection_authority_update(contact_id):
+                self.store.put("contact", contact_id, contact)
             self._changed()
         return contact
 
@@ -1587,7 +1588,8 @@ class MeshChatService(
         contact["trust"] = previous
         contact.pop("trust_before_block", None)
         contact["updated_at"] = time.time()
-        self.store.put("contact", contact_id, contact)
+        with self._connection_authority_update(contact_id):
+            self.store.put("contact", contact_id, contact)
         if previous == TrustState.AWAITING_CONSENT.value:
             self._ensure_contact_request(contact)
         elif previous in {TrustState.APPROVED.value, TrustState.VERIFIED.value}:
@@ -1666,7 +1668,8 @@ class MeshChatService(
             ]
         )
         deletions.extend(self._reaction_deletions("direct", contact_id))
-        self.store.put_and_delete(writes, deletions, redact_command_cache=True)
+        with self._connection_authority_update(contact_id):
+            self.store.put_and_delete(writes, deletions, redact_command_cache=True)
         self.release_remote_scope("contact", contact_id)
         self.release_participant_scope("contact", contact_id)
         self._release_callback_hosts("contact", contact_id)

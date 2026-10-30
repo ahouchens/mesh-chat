@@ -20304,7 +20304,8 @@ class WorkspaceServiceMixin:
         profile["peer_display_name"] = member.display_name
         profile["peer_destination"] = device.destination_hash.hex()
         profile["updated_at"] = time.time()
-        self.store.put("reconnect_profile", profile["id"], profile)
+        with self._connection_authority_update(profile["id"]):
+            self.store.put("reconnect_profile", profile["id"], profile)
         self._workspace_changed(
             workspace["id"], resource_kind="reconnect_capability"
         )

@@ -34,6 +34,8 @@ class ConnectionRuntime:
         self._contact_fences = set()
         self._all_fenced = False
         self._resumed = set()
+        self._context_revision = 0
+        self._authority_changes = {}
         self._pending = OrderedDict()
         self._cleanup_failed = set()
         self._stop = Event()
@@ -52,7 +54,29 @@ class ConnectionRuntime:
     def _is_fenced(self, key, profile):
         identifiers = {key.profile_id, profile.get("contact_id")}
         return (key in self._veto or bool(identifiers & self._contact_fences)
+                or bool(identifiers & self._authority_changes.keys())
                 or (self._all_fenced and not identifiers & self._resumed))
+
+    def begin_authority_change(self, contact_id):
+        """Deny effects and packets before a protected authority write can fail."""
+        with self._lock:
+            if (contact_id not in self._authority_changes
+                    and len(self._authority_changes) >= self.owner.policy.max_actors):
+                self.quarantine()
+                raise CapacityExceeded("Pending authority changes exceed the actor budget")
+            self._context_revision += 1
+            token = self._context_revision
+            self._authority_changes[contact_id] = token
+            for key, profile in self._profile_values.items():
+                if contact_id in {profile.get("contact_id"), key.profile_id}:
+                    self.owner.dispatch(key, ContextChanged(self.now(), desired=Desired.STOPPED))
+            return token
+
+    def commit_authority_change(self, contact_id, token):
+        with self._lock:
+            if self._authority_changes.get(contact_id) == token:
+                del self._authority_changes[contact_id]
+                self._context_revision += 1
 
     def permits_carrier(self, profile_id, resource):
         """Private bridge lease check; packet traffic does not run the reducer."""
@@ -71,6 +95,7 @@ class ConnectionRuntime:
     def fence(self, contact_id=None):
         """Immediately deny work, before the caller attempts a durable Stop."""
         with self._lock:
+            self._context_revision += 1
             if contact_id is None:
                 self._all_fenced = True
                 self._resumed.clear()
@@ -88,6 +113,7 @@ class ConnectionRuntime:
 
     def committed_start(self, contact_id=None):
         with self._lock:
+            self._context_revision += 1
             if contact_id is None:
                 self._all_fenced = False
                 self._contact_fences.clear()
@@ -103,6 +129,8 @@ class ConnectionRuntime:
                     self._veto.discard(key)
 
     def synchronize(self):
+        with self._lock:
+            context_revision = self._context_revision
         payload = self.profiles()
         execution = self.execution()
         values = payload.get("profiles", ())
@@ -118,6 +146,8 @@ class ConnectionRuntime:
                     self.activate(profile["contact_id"])
         now = self.now()
         with self._lock:
+            if context_revision != self._context_revision:
+                return
             seen = set()
             profile_keys = {}
             for profile in values:
