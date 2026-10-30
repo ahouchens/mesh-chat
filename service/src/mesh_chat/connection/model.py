@@ -63,6 +63,13 @@ class ConnectionKey:
     local_device: str
     remote_device: str | None
 
+    def __post_init__(self) -> None:
+        values = (self.scope, self.profile_id, self.local_device)
+        if any(not value or len(value.encode("utf-8")) > 256 for value in values):
+            raise ValueError("Connection identity is empty or oversized")
+        if self.remote_device is not None and len(self.remote_device.encode("utf-8")) > 256:
+            raise ValueError("Remote device identity is oversized")
+
 
 @dataclass(frozen=True)
 class Authority:
@@ -77,6 +84,11 @@ class Resource:
     adapter_epoch: str
     resource_id: str
 
+    def __post_init__(self) -> None:
+        if any(not value or len(value.encode("utf-8")) > 128
+               for value in (self.adapter_epoch, self.resource_id)):
+            raise ValueError("Resource identity is empty or oversized")
+
 
 @dataclass(frozen=True)
 class Operation:
@@ -85,6 +97,10 @@ class Operation:
     generation: int
     policy_revision: int
     sequence: int
+
+    def __post_init__(self) -> None:
+        if not self.runtime_epoch or len(self.runtime_epoch.encode("utf-8")) > 64:
+            raise ValueError("Runtime epoch is empty or oversized")
 
 
 @dataclass(frozen=True)

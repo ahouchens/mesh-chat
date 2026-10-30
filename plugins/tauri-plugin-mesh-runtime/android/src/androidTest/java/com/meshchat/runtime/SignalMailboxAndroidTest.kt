@@ -137,4 +137,16 @@ class SignalMailboxAndroidTest {
             NativeWebRtcHost.closeAll()
         }
     }
+
+    @Test(timeout = 450_000)
+    fun sharedRuntimeOwnsNativeRecoveryAcrossLifecycle() {
+        python()
+        NativeWebRtcHost.initialize(context)
+        try {
+            val directory = context.filesDir.resolve("mailbox-ci/${UUID.randomUUID()}").absolutePath
+            assertEquals("True", fixture().callAttr("run_shared_runtime_native", directory, workerUrl()).toString())
+        } finally {
+            NativeWebRtcHost.closeAll()
+        }
+    }
 }

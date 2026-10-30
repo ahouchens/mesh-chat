@@ -217,6 +217,92 @@ class ObservedSupervisor(BackgroundReconnectSupervisor):
             raise
 
 
+def run_shared_runtime_native(root, url):
+    """Production shared policy with real signing/Worker/JNI, synthetic path.
+
+    This is native adapter conformance, not Reticulum/application-receipt proof.
+    The two fixture peers do not initialize process-global Reticulum runtimes.
+    """
+    from mesh_chat.connection.adapters.reconnect import NativePort, ReconnectExecutor, SignalingPort
+    from mesh_chat.connection.model import Execution
+    from mesh_chat.connection.runtime import ConnectionRuntime
+
+    native = Native()
+    peers, runtimes = [], []
+    with WorkerTransport(url) as transport:
+        try:
+            peers.extend(Peer(Path(root) / str(i), secrets.token_bytes(32),
+                              f"shared-{i}-{uuid.uuid4().hex}", native) for i in range(2))
+            contacts = [p.seed_relationship(peers[1-i], None) for i, p in enumerate(peers)]
+            caps = [p.reconnect_consent_set(contacts[i], True, True)["capabilities"]
+                    for i, p in enumerate(peers)]
+            for i, peer in enumerate(peers):
+                peer.reconnect_capabilities_store(caps[1-i])
+                peer.reconnect_start(contacts[i])
+
+            def runtime(peer):
+                def factory(current, profile):
+                    signaling = SignalingPort(peer.reconnect_request_create, peer.reconnect_offer_create,
+                        peer.reconnect_answer_create, peer.verify_reconnect_request,
+                        peer.verify_reconnect_offer, peer.verify_reconnect_answer,
+                        peer.reconnect_publish, peer.reconnect_fetch)
+                    port = NativePort(peer.native_webrtc_offer, peer.native_webrtc_accept,
+                        peer.native_webrtc_apply_answer, peer.native_webrtc_stats,
+                        lambda _: {}, peer.native_webrtc_close)
+                    return ReconnectExecutor(signaling, port, profile=profile, ice=peer.call_ice_servers,
+                        path=lambda _: {"has_path": True, "ready": True}, current=current,
+                        now=time.monotonic, wall_time=time.time)
+                return ConnectionRuntime(uuid.uuid4().hex, factory, profiles=peer.reconnect_profiles,
+                    execution=lambda: Execution.AVAILABLE, stats=peer.native_webrtc_stats,
+                    activate=peer.reconnect_start)
+
+            runtimes.extend(runtime(peer) for peer in peers)
+            for owner in runtimes:
+                owner.start()
+
+            def sessions():
+                return [state.carrier.resource.resource_id for owner in runtimes
+                        for state in owner.owner.snapshots() if state.carrier]
+
+            def connected():
+                values = sessions()
+                return len(values) == 2 and all(native.stats(s).get("attached") for s in values)
+
+            def traffic():
+                values = sessions()
+                before = [native.stats(s).get("received_packets", 0) for s in values]
+                assert all(native.send(s) for s in values)
+                wait_until(lambda: all(native.stats(s).get("received_packets", 0) > before[i]
+                                      for i, s in enumerate(values)), "Shared-runtime native traffic missing", 10)
+
+            wait_until(connected, "Shared-runtime native negotiation failed")
+            traffic()
+            original = set(sessions())
+            # Lifecycle transitions do not replace a healthy service-owned carrier.
+            for peer in peers:
+                peer.lifecycle = "foreground"
+            time.sleep(1)
+            assert original == set(sessions())
+            traffic()
+            # Native carrier loss is recovered by the same owner in foreground.
+            for session in original:
+                native.close(session)
+            wait_until(lambda: connected() and original.isdisjoint(sessions()),
+                       "Shared owner did not recover in foreground")
+            traffic()
+            last = sessions()
+            for owner in runtimes:
+                owner.stop()
+                owner.wait()
+            assert all(not native.stats(s).get("attached") for s in last)
+            return True
+        finally:
+            for owner in runtimes:
+                owner.stop()
+                owner.wait()
+            for peer in peers:
+                peer.store.close()
+
 def run_recovery(root, url, workspace=False, native=None, platform="android"):
     native = native or Native()
     workspace_id = str(uuid.uuid4()) if workspace else None

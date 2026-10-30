@@ -23,6 +23,7 @@ class BoundedEffectRunner:
         self._lock = RLock()
         self._closed = False
         self._workers = {}
+        self._work_bytes = {}
         self._cleanup = {}
         # Completed work retains a reservation until the owner consumes it.
         self._completed = Queue(maxsize=policy.max_workers + policy.max_effects)
@@ -57,10 +58,14 @@ class BoundedEffectRunner:
             if (self._closed or effect.operation in self._workers
                     or len(self._workers) >= self._policy.max_workers):
                 return False
+            size = len(repr(effect).encode("utf-8"))
+            if sum(self._work_bytes.values()) + size > self._policy.max_effect_bytes:
+                return False
             cancelled = Event()
             thread = Thread(target=self._execute, args=(effect, cancelled),
                             name="mesh-connection-effect", daemon=True)
             self._workers[effect.operation] = (cancelled, thread)
+            self._work_bytes[effect.operation] = size
             thread.start()
             return True
 
@@ -92,6 +97,7 @@ class BoundedEffectRunner:
                 self._cleanup.pop(result.resource, None)
             else:
                 self._workers.pop(result.operation, None)
+                self._work_bytes.pop(result.operation, None)
         return result
 
     def close(self, timeout=2.0):

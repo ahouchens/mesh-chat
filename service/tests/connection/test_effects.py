@@ -77,3 +77,14 @@ def test_shutdown_reports_live_work_instead_of_abandoning_it():
     port.release.set()
     assert runner.next_completion(timeout=2).allocated == operation.resource
     assert runner.close(timeout=2)
+
+
+def test_work_byte_budget_rejects_before_execution():
+    port = BlockingPort()
+    runner = BoundedEffectRunner(port, Policy(max_effect_bytes=1), now=lambda: 0)
+    try:
+        assert not runner.submit(work())
+        assert not port.entered.is_set()
+        assert runner.idle
+    finally:
+        assert runner.close()

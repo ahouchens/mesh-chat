@@ -5,6 +5,7 @@ Each mailbox operation polls once. The production reducer owns all waits.
 """
 
 from dataclasses import dataclass, field
+from hashlib import sha256
 from threading import RLock
 from typing import Any, Callable
 
@@ -148,7 +149,7 @@ class ReconnectExecutor:
         if not request or request["expires_at"] <= self.wall_time():
             if key not in self._requests and len(self._requests) >= self.max_profiles:
                 raise NativeUnavailable("Request capacity reached")
-            attempt = f"{work.operation.runtime_epoch}-{work.operation.generation}"
+            attempt = sha256(work.resource.resource_id.encode("utf-8")).hexdigest()
             request = call(self.signaling.request, exchange.profile["contact_id"], attempt)
             self._requests[key] = request
         exchange.request = request
