@@ -7,7 +7,7 @@ from threading import RLock
 from .diagnostics import Diagnostics
 from .model import (
     Cancel, ConnectionKey, ConnectionState, ContextChanged, Desired, Event,
-    Failed, Policy, Result, Retire, Work,
+    Failed, Failure, Policy, Resource, Result, Retire, Work,
 )
 from .reducer import transition
 
@@ -60,6 +60,10 @@ class ConnectionSupervisor:
                 if event.operation.key != key:
                     raise ValueError("Completion belongs to another connection")
                 self._running.pop(event.operation, None)
+                if event.allocated and self._owned_elsewhere(key, event.allocated):
+                    # A misrouted adapter result is not cleanup authority for
+                    # another actor, including its canceled but still-live work.
+                    event = Failed(event.operation, event.now, Failure.INTERNAL)
             result = transition(state, event)
             result = replace(result, state=replace(result.state, sequence=max(
                 state.sequence + 1, result.state.sequence)))
@@ -81,6 +85,16 @@ class ConnectionSupervisor:
             if len(self._control) > self.policy.max_actors * 4 + self.policy.max_workers:
                 raise CapacityExceeded("Connection cleanup must be drained")
             return result.state
+
+    def _owned_elsewhere(self, key: ConnectionKey, resource: Resource) -> bool:
+        for other, state in self._states.items():
+            if other != key and (
+                (state.carrier and state.carrier.resource == resource)
+                or (state.negotiation and state.negotiation.resource == resource)
+            ):
+                return True
+        return any(work.operation.key != key and work.resource == resource
+                   for work in self._running.values())
 
     def tick(self, now: float, jitter: float = 0):
         from .model import Tick

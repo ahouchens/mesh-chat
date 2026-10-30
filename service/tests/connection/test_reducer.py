@@ -5,7 +5,7 @@ import pytest
 from mesh_chat.connection.model import (
     Authority, Bridge, Carrier, ConnectionKey, ConnectionState, ContextChanged,
     Desired, Execution, Failed, Failure, Health, Observed, Phase, Policy,
-    Resource, Result, Step, Tick, Work,
+    Resource, Result, Retire, Step, Tick, Work,
 )
 from mesh_chat.connection.reducer import transition
 
@@ -239,3 +239,22 @@ def test_explicit_start_clears_configuration_block_without_bypassing_cooldown():
     started = transition(state, ContextChanged(1, desired=Desired.ENABLED)).state
     assert not started.blocked
     assert transition(started, Tick(2)).effects == ()
+
+
+@pytest.mark.parametrize("inspection", [False, True])
+@pytest.mark.parametrize("failure", [False, True])
+def test_unexpected_allocation_is_accounted_for_on_every_completion(inspection, failure):
+    original = Resource("adapter", "carrier")
+    carrier = Carrier(original, 1, Health.OPEN, Bridge.READY, 0) if inspection else None
+    state, work = begin(initial(carrier=carrier))
+    unexpected = Resource("adapter", "unexpected-allocation")
+    event = (Failed(work.operation, 1, Failure.TRANSIENT, allocated=unexpected) if failure
+             else Result(work.operation, 1, allocated=unexpected,
+                         observed_health=Health.OPEN, observed_bridge=Bridge.READY))
+    result = transition(state, event)
+    assert Retire(unexpected) in result.effects
+    assert result.state.blocked
+    assert result.state.negotiation is None
+    if inspection:
+        assert result.state.carrier.resource == original
+        assert result.state.carrier.health is Health.SUSPECT

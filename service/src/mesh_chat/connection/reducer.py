@@ -162,6 +162,9 @@ def _result(state: ConnectionState, event: Result | Failed) -> Transition:
         if event.allocated and event.allocated != step.resource:
             result = replace(result, effects=result.effects + (Retire(event.allocated),))
         return result
+    if event.allocated and event.allocated != step.resource:
+        result = _failure(state, event.now, "wrong_resource", blocked=True)
+        return replace(result, effects=result.effects + (Retire(event.allocated),))
     if isinstance(event, Failed):
         return _failure(state, event.now, event.failure.value,
                         event.failure in BLOCKING_FAILURES, event.retry_after, event.jitter)
@@ -171,9 +174,6 @@ def _result(state: ConnectionState, event: Result | Failed) -> Transition:
         state = replace(state, negotiation=None, inspect_at=event.now + state.policy.poll_interval)
         return _observed(state, Observed(step.resource, event.now,
                                         event.observed_health, event.observed_bridge))
-    if event.allocated and event.allocated != step.resource:
-        result = _failure(state, event.now, "wrong_resource", blocked=True)
-        return replace(result, effects=result.effects + (Retire(event.allocated),))
     if event.pending:
         if step.phase not in POLL_PHASES:
             return _failure(state, event.now, "invalid_pending", blocked=True)

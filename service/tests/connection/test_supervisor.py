@@ -3,8 +3,8 @@ from dataclasses import replace
 import pytest
 
 from mesh_chat.connection.model import (
-    Authority, ConnectionKey, ConnectionState, ContextChanged, Desired,
-    Policy, Result, Tick, Work,
+    Authority, Bridge, Carrier, ConnectionKey, ConnectionState, ContextChanged, Desired,
+    Failed, Failure, Health, Policy, Resource, Result, Retire, Tick, Work,
 )
 from mesh_chat.connection.supervisor import ConnectionSupervisor, CapacityExceeded
 
@@ -79,3 +79,35 @@ def test_private_state_snapshot_is_immutable():
     owner.register(state)
     with pytest.raises(AttributeError):
         owner.snapshot(state.key).desired = Desired.STOPPED
+
+
+@pytest.mark.parametrize("stale", [False, True])
+@pytest.mark.parametrize("failed", [False, True])
+@pytest.mark.parametrize("other_status", ["negotiating", "cancelled", "ready"])
+def test_misrouted_allocation_cannot_retire_another_profiles_resource(stale, failed, other_status):
+    owner = ConnectionSupervisor("epoch")
+    one, two = actor("one"), actor("two")
+    if other_status == "ready":
+        two = replace(two, carrier=Carrier(Resource("native", "ready-carrier"),
+                                          1, Health.OPEN, Bridge.READY, 0))
+    owner.register(one)
+    owner.register(two)
+    owner.tick(0)
+    first, second = owner.drain()
+    if other_status == "cancelled":
+        owner.retire(two.key, 1)
+    elif other_status == "ready":
+        owner.dispatch(two.key, Result(second.operation, 1,
+                       observed_health=Health.OPEN, observed_bridge=Bridge.READY))
+    owner.drain()
+    other_before = owner.snapshot(two.key)
+    if stale:
+        owner.retire(one.key, 1)
+        owner.drain()
+    event = (Failed(first.operation, 2, Failure.TRANSIENT, allocated=second.resource) if failed
+             else Result(first.operation, 2, allocated=second.resource))
+    owner.dispatch(one.key, event)
+    assert Retire(second.resource) not in owner.drain()
+    assert owner.snapshot(two.key) == other_before
+    if not stale:
+        assert owner.snapshot(one.key).blocked
