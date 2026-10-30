@@ -174,6 +174,17 @@ work. Late native allocations are retired by exact handle, late answer/control
 results cannot claim success, and pending-worker completions cannot update
 message status after admission closes. Serialized worker requests recheck
 admission after acquiring their lock, including activation and packet exchange.
+That recheck now uses the complete pending-scope admission rule: cancellation,
+signed/monotonic expiry, blocked identity, exact carrier ownership, scope removal
+and execution availability, as well as the terminal runtime fence. An expired
+scope cannot allocate an interpreter. Scope loss during allocation closes the
+new worker before identity-key access or initialization. The change implements
+the specification's limited onboarding scope and stale-work/revocation rules
+(sections on ownership, cancellation and admission); it adds no retry owner.
+Regression traces cover each denial after serialized waits, a real contended
+worker lock, startup expiry and allocation cleanup. They are in-process evidence;
+the existing isolated-worker exchange test also passes, while JNI and packaged
+onboarding still require their matching CI run.
 Existing native maintenance disposes
 unmanaged carriers; supervisor-owned carriers keep their existing cleanup owner.
 Explicit disposal and closed-resource callbacks remain available. These checks

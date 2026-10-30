@@ -136,6 +136,111 @@ def test_pending_request_rechecks_admission_after_waiting_for_worker(carrier, op
         assert not value._sent
 
 
+@pytest.mark.parametrize("operation", ["send", "exchange", "activate"])
+@pytest.mark.parametrize("change", ["cancelled", "expired", "blocked", "replacement", "scope", "paused"])
+def test_pending_worker_wait_cannot_outlive_its_contact_scope(carrier, operation, change):
+    from mesh_chat.errors import NativeUnavailable
+    value, service, contact = carrier
+    def revoke():
+        if change == "cancelled": value.close()
+        elif change == "expired": value.deadline = time.monotonic() - 1
+        elif change == "blocked": contact["trust"] = "blocked"
+        elif change == "replacement": service._native_resources.current = lambda *_: False
+        elif change == "scope": service._pending_contact_carriers.clear()
+        else:
+            service._workspace_lifecycle_state = lambda: {"state": "suspended"}
+            service._background_availability_enabled = lambda: False
+    class RevokeWhileWaiting:
+        def __enter__(self): revoke()
+        def __exit__(self, *_): pass
+    requested = []
+    value._worker_lock = RevokeWhileWaiting()
+    value._worker = SimpleNamespace(request=lambda *args, **kwargs: requested.append(args), close=lambda: None)
+    service._dispatch_lock = threading.RLock()
+    service.native_webrtc_close = lambda *_a, **_k: None
+    value.ready = True
+    if operation == "activate":
+        value.opened()
+        value._run()
+    else:
+        with pytest.raises(NativeUnavailable):
+            if operation == "exchange": value._exchange()
+            else:
+                value.send(contact, {"kind": "contact_request", "id": "control", "expires_at": int(time.time()) + 30})
+        assert not value._sent
+    assert requested == []
+
+
+def test_expired_scope_cannot_allocate_a_bootstrap_worker(carrier):
+    from mesh_chat.errors import NativeUnavailable
+    value, service, _ = carrier
+    value.deadline = time.monotonic() - 1
+    service._direct_bootstrap_factory = lambda: pytest.fail("Expired scope allocated a worker")
+    with pytest.raises(NativeUnavailable): value.start()
+    assert value._worker is None
+
+
+def test_cancelled_request_waiting_on_worker_does_not_read_authority_or_dispatch(carrier):
+    from mesh_chat.errors import NativeUnavailable
+    value, service, _ = carrier
+    waiting = threading.Event()
+    lock = threading.Lock()
+    class ObservedLock:
+        def __enter__(self):
+            waiting.set()
+            lock.acquire()
+        def __exit__(self, *_): lock.release()
+    value._worker_lock = ObservedLock()
+    requested, closed, failures = [], [], []
+    value._worker = SimpleNamespace(request=lambda *_a, **_k: requested.append(True),
+                                   close=lambda: closed.append(True))
+    def request():
+        try: value._request("exchange", packets=[])
+        except Exception as error: failures.append(error)
+    lock.acquire()
+    thread = threading.Thread(target=request, daemon=True)
+    thread.start()
+    try:
+        assert waiting.wait(2)
+        value.close()
+        service._contact_by_destination = lambda _: pytest.fail("Cancelled scope read vault authority")
+        assert closed == [True]
+    finally:
+        lock.release()
+        thread.join(2)
+    assert not thread.is_alive()
+    assert requested == []
+    assert len(failures) == 1 and isinstance(failures[0], NativeUnavailable)
+
+
+def test_scope_expiring_during_worker_allocation_closes_it_without_initializing(carrier):
+    import json
+    import RNS
+    from mesh_chat.errors import NativeUnavailable
+    from mesh_chat.invitations import _b64encode
+    import mesh_chat.native_onboarding_bootstrap as module
+    _, service, _ = carrier
+    service._identity = SimpleNamespace(get_private_key=lambda: pytest.fail("Expired scope accessed identity keys"))
+    service._connection_policy = "shared-native"
+    service.network = SimpleNamespace()
+    service._pending_contact_carriers.clear()
+    closed = []
+    allocated = []
+    def allocate():
+        value = service._pending_contact_carriers["session"]
+        value.deadline = time.monotonic() - 1
+        allocated.append(value)
+        return SimpleNamespace(request=lambda *_a, **_k: pytest.fail("Expired scope initialized its worker"),
+                               close=lambda: closed.append("closed"))
+    service._direct_bootstrap_factory = allocate
+    checked = SimpleNamespace(signer_destination="11" * 16, expires_at=int(time.time()) + 90,
+        serialized=json.dumps({"signer_public_key": _b64encode(RNS.Identity().get_public_key())}))
+    with pytest.raises(NativeUnavailable): module.begin(service, "session", checked)
+    assert closed == ["closed"]
+    assert not service._pending_contact_carriers
+    assert allocated[0]._thread is None
+
+
 def test_shutdown_during_packet_send_stops_remaining_packets_and_events(carrier):
     value, service, _ = carrier
     service._dispatch_lock = threading.RLock()

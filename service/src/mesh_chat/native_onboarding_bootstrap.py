@@ -50,11 +50,13 @@ class PendingContactCarrier:
 
     def start(self):
         service = self.service
+        self._require_current()
         factory = getattr(service, "_direct_bootstrap_factory",
             lambda: BootstrapProcess(directory=service.store.profile_dir))
         if factory is None:
             raise NativeUnavailable("Isolated contact bootstrap is unavailable")
         self._worker = factory()
+        self._require_current()
         self._request("initialize_contact", private_identity=service._identity.get_private_key().hex(),
             peer_identity=self.public_identity.hex(), expires_at=self.expires_at)
         self._thread = threading.Thread(target=self._run, name="mesh-contact-bootstrap", daemon=True)
@@ -65,8 +67,12 @@ class PendingContactCarrier:
 
     def _request(self, operation, **payload):
         with self._worker_lock:
-            self.service._require_native_work()
+            self._require_current()
             return self._worker.request(operation, **payload)
+
+    def _require_current(self):
+        if not self.current():
+            raise NativeUnavailable("Contact bootstrap scope is no longer current")
 
     def receive(self, encoded):
         if not self.current(): return
