@@ -303,7 +303,7 @@ def run_shared_runtime_native(root, url):
             for peer in peers:
                 peer.store.close()
 
-def run_manual_native_adoption():
+def run_manual_native_adoption(automatic=True):
     """Actual service/composition, signed control and JNI; synthetic path only.
 
     Approval is seeded. This proves ownership transfer and packet traffic,
@@ -346,11 +346,11 @@ def run_manual_native_adoption():
         native.invoke("applyAnswer", remote_id, answer["sdp"])
         wait_until(lambda: all(native.stats(s).get("attached") for s in (local_physical, remote_id)),
                    "Manual native channels did not open")
-        service.reconnect_consent_set(contact_id, True, True)
+        service.reconnect_consent_set(contact_id, automatic, True)
         capabilities = create_connection_capabilities(identity,
             peer_destination=service._require_profile()["destination_hash"],
             device_id="manual-" + uuid.uuid4().hex, transports=["webrtc"],
-            auto_reconnect=True, allow_direct_ip_disclosure=True,
+            auto_reconnect=automatic, allow_direct_ip_disclosure=True,
             persistent=True, encrypted=True)
         control = json.dumps({"type": "connection_capabilities", "document": capabilities})
         wait_until(lambda: bool(native.host.sendControl(remote_id, "mesh-onboarding", control)),
@@ -358,7 +358,8 @@ def run_manual_native_adoption():
         wait_until(lambda: service._native_webrtc_controls.get(local_id, {}).get("profile_id"),
                    "Signed native capabilities were not bound to a profile", 15)
         profile_id = service._native_webrtc_controls[local_id]["profile_id"]
-        service.reconnect_start(contact_id)
+        if automatic:
+            service.reconnect_start(contact_id)
         owner = service._connection_runtime = native_runtime(service)
         # Instrumentation supplies execution availability and path readiness;
         # authority, native discovery, inspection and attachment stay real.
@@ -369,11 +370,23 @@ def run_manual_native_adoption():
                    "Shared owner did not adopt the manual native carrier", 30)
         states = owner.owner.snapshots()
         assert len(states) == 1 and states[0].carrier.resource.resource_id == local_id
+        if not automatic:
+            profile = service._reconnect_profile(profile_id)
+            assert not profile["auto_reconnect"] and not profile["remote_auto_reconnect"]
+            assert not states[0].authority.signaling_available
         assert service._execute("native_webrtc_close", {"session_id": local_id}) == {"state": "managed"}
         before = {s: native.stats(s).get("received_packets", 0) for s in (local_physical, remote_id)}
         assert native.send(local_physical) and native.send(remote_id)
         wait_until(lambda: all(native.stats(s).get("received_packets", 0) > before[s]
                               for s in before), "Adopted native carrier did not pass traffic", 10)
+        first_bridge = service._native_webrtc_sessions[local_id]
+        service.webrtc_detach_native(local_id)
+        wait_until(lambda: service._native_webrtc_sessions.get(local_id) not in (None, first_bridge),
+                   "Shared owner did not restore the native bridge", 15)
+        wait_until(lambda: owner.snapshots()[profile_id]["messaging_ready"],
+                   "Restored bridge did not regain path readiness", 10)
+        assert service._native_resources.require(local_id) == local_physical
+        assert native.send(local_physical) and native.send(remote_id)
         service.reconnect_stop(contact_id)
         wait_until(lambda: local_id not in service._native_webrtc_live,
                    "Stop did not retire the adopted native carrier", 10)

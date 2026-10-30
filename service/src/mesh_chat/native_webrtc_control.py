@@ -18,6 +18,21 @@ def normalized_sdp(sdp):
     return tuple(line for line in sdp.splitlines() if line and line != "a=end-of-candidates")
 
 
+def profile_binding(profile):
+    return (profile.get("scope_kind", "contact"), profile.get("id"),
+            profile.get("local_device_id"), profile.get("remote_device_id"))
+
+
+def bind_control_profile(state, profile):
+    if not profile.get("id") or not profile.get("local_device_id") or not profile.get("remote_device_id"):
+        raise IdentityMismatch("Native control profile identity is incomplete")
+    binding = profile_binding(profile)
+    if state.get("profile_binding") not in (None, binding):
+        raise IdentityMismatch("Native control is already bound to another profile or device")
+    state["profile_id"] = profile["id"]
+    state["profile_binding"] = binding
+
+
 class NativeWebRTCControlMixin:
     def native_webrtc_bind_onboarding(self, session_id, offer_document, answer_document=None):
         offer = verify_onboarding_offer(offer_document)
@@ -64,34 +79,55 @@ class NativeWebRTCControlMixin:
             if getattr(self, "_connection_policy", "legacy") != "shared-native":
                 return None
             profile = self._reconnect_profile(profile_id)
-            contact = self._reconnect_contact(profile["contact_id"])
-            public = self._reconnect_profile_public(profile)
-            reasons = set(public["effective"].get("reasons") or ())
             if (profile.get("local_device_id") != local_device_id
                     or (profile.get("remote_device_id") or None) != remote_device_id
-                    or not remote_device_id or not profile.get("active")
-                    or profile.get("state") == "stopped"
-                    or reasons - {"mailbox_not_configured"}):
+                    or not remote_device_id):
                 raise ContactNotApproved("Carrier adoption authority is unavailable")
+            session_id = self._authorized_manual_native_carrier(profile)
             if profile_id in self._native_webrtc_profile_sessions:
                 return None
-            for session_id, peer in self._native_webrtc_peers.items():
-                description = self._native_webrtc_descriptions.get(session_id, {})
-                actual_remote = description.get("remote_offer") or description.get("remote_answer")
-                if (session_id not in self._native_webrtc_live
-                        or session_id in self._native_webrtc_creating
-                        or session_id in self._native_webrtc_profile_sessions.values()
-                        or peer != contact["destination_hash"]
-                        or self._native_webrtc_controls.get(session_id, {}).get("profile_id") != profile_id
-                        or not actual_remote
-                        or description.get("bound_remote_sdp") != normalized_sdp(actual_remote)
-                        or (not profile.get("allow_direct_ip_disclosure")
-                            and description.get("ice_policy") != "relay")):
-                    continue
+            if session_id is not None:
                 self._native_webrtc_profile_sessions[profile_id] = session_id
-                description.pop("answer_wait_until", None)
-                return session_id
-            return None
+                self._native_webrtc_descriptions[session_id].pop("answer_wait_until", None)
+            return session_id
+
+    def native_manual_carrier_authorized(self, profile_id):
+        """Private domain query; it grants no permission to negotiate a new peer."""
+        with self._dispatch_lock, self._native_webrtc_lock:
+            if getattr(self, "_connection_policy", "legacy") != "shared-native":
+                return False
+            try:
+                return self._authorized_manual_native_carrier(self._reconnect_profile(profile_id)) is not None
+            except (ContactNotApproved, ValidationError):
+                return False
+
+    def _authorized_manual_native_carrier(self, profile):
+        contact = self._reconnect_contact(profile["contact_id"])
+        public = self._reconnect_profile_public(profile)
+        reasons = set(public["effective"].get("reasons") or ())
+        # These preferences govern replacement negotiation, not a manually
+        # established, signed and currently authorized messaging carrier.
+        automatic_only = {"mailbox_not_configured", "consent_missing", "peer_consent_missing"}
+        if (profile.get("state") == "stopped" or not profile.get("remote_device_id")
+                or reasons - automatic_only):
+            raise ContactNotApproved("Manual carrier authority is unavailable")
+        for session_id, peer in self._native_webrtc_peers.items():
+            description = self._native_webrtc_descriptions.get(session_id, {})
+            actual_remote = description.get("remote_offer") or description.get("remote_answer")
+            other_owner = any(current == session_id and owner != profile["id"]
+                              for owner, current in self._native_webrtc_profile_sessions.items())
+            if (session_id not in self._native_webrtc_live
+                    or session_id in self._native_webrtc_creating or other_owner
+                    or peer != contact["destination_hash"]
+                    or self._native_webrtc_controls.get(session_id, {}).get("profile_id") != profile["id"]
+                    or self._native_webrtc_controls.get(session_id, {}).get("profile_binding") != profile_binding(profile)
+                    or not actual_remote
+                    or description.get("bound_remote_sdp") != normalized_sdp(actual_remote)
+                    or (not profile.get("allow_direct_ip_disclosure")
+                        and description.get("ice_policy") != "relay")):
+                continue
+            return session_id
+        return None
 
     def _native_control_contact(self, session_id):
         if session_id not in self._native_webrtc_live:
@@ -139,7 +175,7 @@ class NativeWebRTCControlMixin:
                                                            expected_peer_destination=peer)
                 profile = (stored or {}).get("profile") or {}
                 if label == "mesh-onboarding" and profile.get("id"):
-                    state["profile_id"] = profile["id"]
+                    bind_control_profile(state, profile)
                 state["last_received"] = document
         except Exception:
             # Malformed, stale, blocked and wrong-peer capabilities never grant
@@ -156,7 +192,9 @@ class NativeWebRTCControlMixin:
         if label == "mesh-onboarding" and state.get("last_received") and not state.get("profile_id"):
             stored = self.reconnect_capabilities_store(state["last_received"], expected_contact_id=contact_id,
                 expected_peer_destination=self._native_webrtc_peers.get(session_id))
-            state["profile_id"] = ((stored or {}).get("profile") or {}).get("id")
+            profile = (stored or {}).get("profile") or {}
+            if profile.get("id"):
+                bind_control_profile(state, profile)
         result = self.reconnect_capabilities_get(contact_id)
         document = result.get("local_capabilities")
         if isinstance(document, str) and document and len(document) <= MAX_CONTROL_LENGTH and document != state.get("last_sent"):

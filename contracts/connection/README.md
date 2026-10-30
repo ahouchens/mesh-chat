@@ -26,3 +26,11 @@ Cancellation does not release creation reservations. Cleanup resolves the exact
 allocated native resource, retains failed cleanup reservations, and cannot retire
 another profile's resource. JSON shaped like these values is never trusted
 evidence and is not accepted by the ordinary command dispatcher.
+
+The private composition also supplies a `manual_carrier_authorized` domain fact.
+The native service derives it from signed SDP, bound control profile and device
+identities, current relationship/privacy authority, and a live exact resource.
+The runtime and effect executor consume it only for adoption and maintenance of
+that carrier. It cannot authorize new signaling, set automatic reconnect consent,
+or survive carrier loss. It is absent from public profile responses and the
+snapshot schema. The change is private and does not change either wire version.

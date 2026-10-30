@@ -86,7 +86,7 @@ clear an explicit Stop, including one issued before the first profile scan.
 
 Before mailbox negotiation, a bounded private discovery effect can claim an
 existing native manual carrier. The protected service checks current approval,
-reciprocal reconnect consent, privacy policy, exact local/remote device profile,
+privacy policy, exact local/remote device profile,
 signed onboarding SDP against the actual applied remote description, and signed
 capabilities received on that carrier. The reducer then requires fresh native
 inspection, bridge attachment and path readiness. Mailbox configuration is not
@@ -95,8 +95,14 @@ composition keeps its control channel but cannot attach a messaging bridge
 before ownership transfer. UI close/detach commands cannot
 retire it after transfer; explicit Stop still does. Failed durable Stop also
 retires verified manual peers awaiting transfer while retaining the memory fence.
-Auto-reconnect-disabled manual sessions and desktop WebView carriers remain
-outside this adoption path.
+Manual carriers can be adopted when automatic reconnect is disabled locally or
+by the peer. The composition derives this limited authority from the actual
+signed, live carrier; it is absent from public commands and profile responses.
+Adoption does not change saved reconnect preferences, activate automatic intent,
+or allow signaling/new peer allocation. Losing that carrier ends this authority.
+Explicit Stop and failed durable Stop still fence it. Signed control cannot
+rebind a carrier to another scope or local/remote device. Desktop WebView carriers
+remain outside this adoption path.
 
 `DISCOVER` and `Adopted` extend the private in-process effect contract. Its
 producers are the native executor and simulator; its consumers are the reducer,
@@ -106,6 +112,8 @@ includes a production-service/composition adoption scenario with real signed
 control, JNI channels and packet traffic. It injects execution availability and
 path readiness, seeds approval, and cannot qualify invitation UI or LXMF receipts.
 Its passing emulator result must be recorded against the tested commit.
+An additional emulator scenario covers disabled automatic reconnect; its result
+is not claimed until that exact source passes CI.
 
 JNI ingress has separate lifecycle (512 events / 64 KiB) and data (256 events /
 2 MiB) budgets. Packet overflow records loss; lost lifecycle or consent control

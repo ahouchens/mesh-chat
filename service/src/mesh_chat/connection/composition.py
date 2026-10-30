@@ -13,7 +13,11 @@ from .runtime import ConnectionRuntime
 def native_runtime(service):
     def profiles():
         with service._dispatch_lock:
-            return service.reconnect_profiles()
+            payload = service.reconnect_profiles()
+            return {**payload, "profiles": [
+                {**profile, "manual_carrier_authorized": service.native_manual_carrier_authorized(profile["id"])}
+                for profile in payload["profiles"]
+            ]}
 
     def execution():
         if service._shutdown.is_set():

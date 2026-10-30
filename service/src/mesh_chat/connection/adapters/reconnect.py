@@ -14,7 +14,8 @@ from ...errors import (
     MailboxRateLimited, MailboxUnauthorized, NativeUnavailable,
     NetworkUnavailable, ReconnectReplayed, ValidationError,
 )
-from ..model import Adopted, Bridge, Failed, Failure, Health, Phase, Result, Resource, Work
+from ..model import Adopted, Bridge, Desired, Failed, Failure, Health, Phase, Result, Resource, Work
+from ..reconcile import authority, desired
 
 CHANNELS = (
     {"label": "mesh-reticulum", "binary": True, "ordered": True},
@@ -90,11 +91,10 @@ class ReconnectExecutor:
         if cancellation.is_set() or not self.current(work):
             raise ContactNotApproved("Connection operation was cancelled")
         profile = self.profile(work.operation.key)
-        reasons = set((profile.get("effective") or {}).get("reasons") or ())
-        ready = (profile.get("effective") or {}).get("ready")
+        permission = authority(profile, work.operation.policy_revision)
         signaling_required = work.phase not in {Phase.DISCOVER, Phase.CHECKING, Phase.ATTACH, Phase.PATH, Phase.INSPECT}
-        if (profile.get("state") == "stopped" or not profile.get("active")
-                or not (ready or (not signaling_required and reasons == {"mailbox_not_configured"}))):
+        if (desired(profile) is Desired.STOPPED or not permission.authorized
+                or (signaling_required and (not permission.signaling_available or not profile.get("active")))):
             raise ContactNotApproved("Connection authority is unavailable")
         return profile
 

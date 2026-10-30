@@ -18,6 +18,7 @@ def authority_signature(profile: dict) -> tuple:
         profile.get("auto_reconnect"), profile.get("peer_auto_reconnect"),
         profile.get("allow_direct_ip_disclosure"), profile.get("relay_consent_scope"),
         profile.get("trust"),
+        profile.get("manual_carrier_authorized", False),
         tuple(sorted(reason for reason in reasons if reason != "mailbox_not_configured")),
     )
 
@@ -25,11 +26,13 @@ def authority_signature(profile: dict) -> tuple:
 def authority(profile: dict, revision: int) -> Authority:
     effective = profile.get("effective") or {}
     reasons = set(effective.get("reasons") or ())
-    authorized = bool(effective.get("ready") or reasons == {"mailbox_not_configured"})
+    authorized = bool(profile.get("manual_carrier_authorized") or effective.get("ready")
+                      or reasons == {"mailbox_not_configured"})
     return Authority(revision, authorized, bool(effective.get("ready")),
                      bool(effective.get("preferred")))
 
 
 def desired(profile: dict) -> Desired:
-    return (Desired.ENABLED if profile.get("active") and profile.get("state") != "stopped"
+    enabled = profile.get("active") or profile.get("manual_carrier_authorized")
+    return (Desired.ENABLED if enabled and profile.get("state") != "stopped"
             else Desired.STOPPED)

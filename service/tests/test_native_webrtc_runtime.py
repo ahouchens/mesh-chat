@@ -548,7 +548,9 @@ def adoptable_manual_carrier():
     binding = service.native_webrtc_bind_onboarding("manual-carrier", offer)
     service.profile.update(local_device_id="local", remote_device_id="remote",
                            state="waiting_for_peer", allow_direct_ip_disclosure=True)
-    service._native_webrtc_controls["manual-carrier"] = {"profile_id": "profile-1"}
+    from mesh_chat.native_webrtc_control import bind_control_profile
+    service._native_webrtc_controls["manual-carrier"] = {}
+    bind_control_profile(service._native_webrtc_controls["manual-carrier"], service.profile)
     contact = {"id": "contact-1", "destination_hash": binding["peer_destination"], "trust": "approved"}
     service.store = SimpleNamespace(get=lambda kind, _id: contact if kind == "contact" else None)
     service._connection_policy = "shared-native"
@@ -579,24 +581,23 @@ def test_shared_manual_open_cannot_attach_messaging_before_adoption():
         service.webrtc_attach_native("manual-carrier")
 
 
-@pytest.mark.parametrize("fault", ["local_device", "remote_device", "stop", "inactive", "revoked", "consent"])
+@pytest.mark.parametrize("fault", ["local_device", "remote_device", "stop", "revoked", "expired"])
 def test_private_adoption_rechecks_authority_instead_of_trusting_cached_profiles(fault):
     service, host, contact = adoptable_manual_carrier()
     local, remote = "local", "remote"
     if fault == "local_device": local = "other"
     if fault == "remote_device": remote = "other"
     if fault == "stop": service.profile["state"] = "stopped"
-    if fault == "inactive": service.profile["active"] = False
     if fault == "revoked": contact["trust"] = "blocked"
-    if fault == "consent":
-        service._reconnect_profile_public = lambda _: {"effective": {"ready": False, "reasons": ["consent_missing"]}}
+    if fault == "expired":
+        service._reconnect_profile_public = lambda _: {"effective": {"ready": False, "reasons": ["peer_capabilities_expired"]}}
     with pytest.raises(ContactNotApproved):
         service.claim_native_reconnect_carrier("profile-1", local, remote)
     assert not service._native_webrtc_profile_sessions
     assert not host.closed
 
 
-@pytest.mark.parametrize("fault", ["peer", "profile", "binding", "sdp", "privacy", "creating", "closed"])
+@pytest.mark.parametrize("fault", ["peer", "profile", "binding", "sdp", "privacy", "creating", "closed", "local_device", "remote_device", "scope"])
 def test_manual_carrier_metadata_alone_is_not_adoption_evidence(fault):
     service, _, _ = adoptable_manual_carrier()
     if fault == "peer": service._native_webrtc_peers["manual-carrier"] = "wrong-peer"
@@ -606,7 +607,11 @@ def test_manual_carrier_metadata_alone_is_not_adoption_evidence(fault):
     if fault == "privacy": service.profile["allow_direct_ip_disclosure"] = False
     if fault == "creating": service._native_webrtc_creating.add("manual-carrier")
     if fault == "closed": service._native_webrtc_live.clear()
-    assert service.claim_native_reconnect_carrier("profile-1", "local", "remote") is None
+    if fault == "local_device": service.profile["local_device_id"] = "changed"
+    if fault == "remote_device": service.profile["remote_device_id"] = "changed"
+    if fault == "scope": service.profile["scope_kind"] = "workspace"
+    assert not service.native_manual_carrier_authorized("profile-1")
+    assert service.claim_native_reconnect_carrier("profile-1", service.profile["local_device_id"], service.profile["remote_device_id"]) is None
     assert not service._native_webrtc_profile_sessions
 
 
@@ -630,16 +635,27 @@ def test_signed_remote_answer_must_match_the_answer_applied_to_native(bind_first
         assert "manual-offerer" not in service._native_webrtc_peers
 
 
-def test_production_composition_adopts_manual_carrier_without_mailbox_or_new_peer():
+@pytest.mark.parametrize("disabled", [(), ("local",), ("remote",), ("local", "remote")])
+def test_production_composition_adopts_manual_carrier_without_mailbox_or_new_peer(disabled):
     from mesh_chat.connection.composition import native_runtime
     service, host, _ = adoptable_manual_carrier()
     public = {**service.profile, "auto_reconnect": True, "peer_auto_reconnect": True,
               "trust": "approved", "effective": {"ready": False, "preferred": True,
               "reasons": ["mailbox_not_configured"]}}
+    if disabled:
+        public["active"] = service.profile["active"] = False
+    for side, field, reason in (("local", "auto_reconnect", "consent_missing"),
+                                ("remote", "peer_auto_reconnect", "peer_consent_missing")):
+        if side in disabled:
+            public[field] = False
+            public["effective"]["reasons"].append(reason)
     service.reconnect_profiles = lambda: {"profiles": [public]}
     service._reconnect_profile_public = lambda _: public
     service._identity = object()
     service.call_ice_servers = lambda: pytest.fail("Adoption must not allocate ICE configuration")
+    service.reconnect_start = lambda *_args, **_kwargs: pytest.fail("Manual adoption cannot activate automatic reconnect")
+    service.reconnect_request_create = lambda *_: pytest.fail("Manual authority cannot negotiate replacement")
+    service.reconnect_fetch = lambda *_: pytest.fail("Manual authority cannot fetch signaling")
     service.reconnect_path_status = lambda _: {"has_path": True, "ready": True}
     def attach(session):
         service._native_webrtc_sessions[session] = "bridge"
@@ -657,6 +673,19 @@ def test_production_composition_adopts_manual_carrier_without_mailbox_or_new_pee
         assert owner.owner.snapshots()[0].carrier.resource.resource_id == "manual-carrier"
         assert len(host.created) == 1
         assert service._execute("native_webrtc_close", {"session_id": "manual-carrier"}) == {"state": "managed"}
+        assert "manual_carrier_authorized" not in public
+        if disabled:
+            assert not public["active"]
+            assert not owner.owner.snapshots()[0].authority.signaling_available
+            # Loss ends this session's authority. It cannot trigger signaling
+            # or allocate a replacement even after the retry deadline.
+            service.native_webrtc_close("manual-carrier")
+            owner.now = lambda: time.monotonic() + 120
+            for _ in range(5):
+                owner.step()
+            assert not owner.snapshots()["profile-1"]["messaging_ready"]
+            assert owner.runner.idle
+            assert len(host.created) == 1
         owner.fence("contact-1")
         owner.step()
         assert not owner.snapshots()["profile-1"]["messaging_ready"]
@@ -664,6 +693,16 @@ def test_production_composition_adopts_manual_carrier_without_mailbox_or_new_pee
         owner.stop()
         owner.wait()
     assert host.closed == ["manual-carrier"]
+
+
+@pytest.mark.parametrize("field", ["id", "scope_kind", "local_device_id", "remote_device_id"])
+def test_signed_control_cannot_rebind_a_manual_carrier_to_another_scope_or_device(field):
+    from mesh_chat.native_webrtc_control import bind_control_profile
+    service, _, _ = adoptable_manual_carrier()
+    control = service._native_webrtc_controls["manual-carrier"]
+    with pytest.raises(IdentityMismatch, match="already bound"):
+        bind_control_profile(control, {**service.profile, field: "changed"})
+    assert service.native_manual_carrier_authorized("profile-1")
 
 
 def test_failed_durable_stop_also_retires_manual_carriers_awaiting_adoption():

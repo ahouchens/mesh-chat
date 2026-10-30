@@ -193,3 +193,16 @@ def test_stop_during_adoption_returns_the_claimed_handle_for_exact_cleanup():
     event = executor.execute(work, Event())
     assert isinstance(event, Failed)
     assert event.allocated == resource
+
+
+@pytest.mark.parametrize("phase", [Phase.REQUEST, Phase.WAIT_REQUEST, Phase.GATHER_OFFER,
+    Phase.GATHER_ANSWER, Phase.PUBLISH_OFFER, Phase.PUBLISH_ANSWER, Phase.WAIT_ANSWER, Phase.APPLY_ANSWER])
+def test_manual_carrier_authority_cannot_execute_automatic_negotiation(phase):
+    domain = Domain(True)
+    domain.profile.update(active=False, manual_carrier_authorized=True)
+    domain.profile["effective"].update(ready=False, reasons=["consent_missing"])
+    work = transition(initial(), Tick(0)).effects[0]
+    event = domain.executor(initial()).execute(replace(work, phase=phase), Event())
+    assert isinstance(event, Failed)
+    assert event.failure.value == "revoked"
+    assert not domain.calls and domain.created == 0
