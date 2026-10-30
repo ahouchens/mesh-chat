@@ -187,7 +187,8 @@ class SignalMailboxAndroidTest {
         val key = Base64.encodeToString(ByteArray(32).also { SecureRandom().nextBytes(it) }, Base64.NO_WRAP)
         try {
             val directory = context.filesDir.resolve("manual-adoption-ci/${UUID.randomUUID()}").absolutePath
-            initialize(directory, key)
+            val initialized = JSONObject(fixture().callAttr("initialize_shared_native", directory, key).toString())
+            assertTrue("Android shared runtime initialization failed", initialized.optBoolean("ok"))
             assertEquals("True", fixture().callAttr("run_manual_native_adoption", automatic).toString())
         } finally {
             shutdown()

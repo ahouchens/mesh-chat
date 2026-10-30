@@ -77,6 +77,18 @@ exercise explicit and Android-default binding, missing capabilities, idle startu
 without a profile, and exclusive shared ownership. A test host is not evidence
 of a production Windows transport.
 
+Mobile initialization now accepts the experimental policy only as a trusted
+Python host argument, before constructing the service. JSON initialization still
+rejects policy and host selectors, default initialization remains legacy, and a
+second initialization cannot switch the running owner. Failed profile creation
+closes the unpublished service and its workers before releasing storage.
+Android's two manual-carrier adoption scenarios now use this bootstrap and the
+owner it starts, including the production execution-availability binding. They
+no longer mutate a legacy service's policy or install a replacement runtime.
+Remote path readiness remains synthetic and approval is seeded: these scenarios
+are native composition evidence, not first-time pairing or application-receipt
+qualification. Legacy wrappers remain until the other M2 gates pass.
+
 The new runtime uses existing signed request/offer/answer and consent methods;
 it does not alter peer wire formats, mailbox choices, vault schema, or receipts.
 Explicit Stop closes the in-memory gate before persistence. A failed write

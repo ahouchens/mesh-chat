@@ -119,11 +119,13 @@ def _emit(value: dict[str, Any]) -> None:
             service._mark_workspace_invalidation_overflow()
 
 
-def initialize(raw: str) -> str:
-    """Start the shared service from a native app-private directory."""
+def initialize(raw: str, *, connection_policy="legacy") -> str:
+    """Start from an app-private directory; policy is a trusted host option only."""
 
     global _service, _native_channel
     try:
+        if connection_policy not in {"legacy", "shared-native"}:
+            raise ValidationError("Mobile connection policy is invalid")
         request = _loads(raw)
         if set(request) - {"profile_dir", "vault_key", "display_name", "platform"}:
             raise ValidationError("Mobile initialization request is invalid")
@@ -148,6 +150,8 @@ def initialize(raw: str) -> str:
 
         with _service_lock:
             if _service is not None:
+                if _service._connection_policy != connection_policy:
+                    raise ValidationError("Mobile connection policy cannot change while running")
                 return _dumps({"ok": True, "result": _service.snapshot()})
             install_embedded_runtime_guards()
             profile_dir = Path(profile_value).resolve()
@@ -156,9 +160,11 @@ def initialize(raw: str) -> str:
                 vault_key,
                 native_mobile_protection=platform_value,
             )
+            service = None
             try:
                 channel = NativeChannel()
-                service = MeshChatService(store, profile_dir, _emit, direct_native=channel)
+                service = MeshChatService(store, profile_dir, _emit, direct_native=channel,
+                                          connection_policy=connection_policy)
                 if platform_value == "android":
                     from .direct_bootstrap_mobile import AndroidBootstrapProcess
                     service._direct_bootstrap_factory = AndroidBootstrapProcess
@@ -167,7 +173,10 @@ def initialize(raw: str) -> str:
                 if display_name is not None and service.store.get("profile", "local") is None:
                     service.create_profile(display_name)
             except Exception:
-                store.close()
+                if service is not None:
+                    service.close()
+                else:
+                    store.close()
                 raise
             _service = service
             _native_channel = channel

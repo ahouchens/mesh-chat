@@ -356,25 +356,35 @@ def verify_native_startup_retention(service, owner, native, local_id, remote_id)
         WebRTCInterface.process_incoming = original_incoming
 
 
+def initialize_shared_native(root, key):
+    from mesh_chat import mobile_bridge
+
+    return mobile_bridge.initialize(json.dumps({"profile_dir": root, "vault_key": key,
+        "display_name": "Synthetic Android mailbox", "platform": "android"}),
+        connection_policy="shared-native")
+
+
 def run_manual_native_adoption(automatic=True):
     """Actual service/composition, signed control and JNI; synthetic path only.
 
     Approval is seeded. This proves ownership transfer and packet traffic,
     not invitation UI, a remote Reticulum path or authenticated LXMF receipts.
-    The private selector is changed only at a quiescent test bootstrap.
+    The trusted mobile bootstrap constructs and starts the shared owner.
     """
     from mesh_chat import mobile_bridge
-    from mesh_chat.connection.composition import native_runtime
-    from mesh_chat.connection.model import Execution
     from mesh_chat.reconnect import create_connection_capabilities
     from mesh_chat.webrtc_onboarding import create_onboarding_offer
 
     service = mobile_bridge._service
     assert service is not None and service.network is not None
-    assert service._connection_runtime is None
+    assert service._connection_policy == "shared-native"
+    owner = service._connection_runtime
+    assert owner is not None and owner._thread.is_alive()
+    assert owner._failure is None
     assert service._background_reconnect_supervisor is None
     assert not service._native_webrtc_live
-    service._connection_policy = "shared-native"
+    # Only remote Reticulum path readiness is synthetic in this scenario.
+    owner.executor.path = lambda _: {"has_path": True, "ready": True}
     service._call_settings.signal_mailbox_url = None
     service._call_settings.turn_broker_url = None
     service._call_settings.stun_urls = []
@@ -388,7 +398,6 @@ def run_manual_native_adoption(automatic=True):
     ice = {"iceServers": [], "iceTransportPolicy": "all"}
     channels = [{"label": "mesh-reticulum", "binary": True, "ordered": True},
                 {"label": "mesh-onboarding", "binary": False, "ordered": True}]
-    owner = None
     try:
         offer = native.invoke("createOffer", remote_id, json.dumps(ice), json.dumps(channels))
         document = create_onboarding_offer(identity, session_id=uuid.uuid4().hex,
@@ -413,14 +422,10 @@ def run_manual_native_adoption(automatic=True):
         profile_id = service._native_webrtc_controls[local_id]["profile_id"]
         if automatic:
             service.reconnect_start(contact_id)
-        owner = service._connection_runtime = native_runtime(service)
-        # Instrumentation supplies execution availability and path readiness;
-        # authority, native discovery, inspection and attachment stay real.
-        owner.execution = lambda: Execution.AVAILABLE
-        owner.executor.path = lambda _: {"has_path": True, "ready": True}
-        owner.start()
         wait_until(lambda: owner.snapshots().get(profile_id, {}).get("messaging_ready"),
                    "Shared owner did not adopt the manual native carrier", 30)
+        assert service._connection_runtime is owner and owner._failure is None
+        assert service._background_reconnect_supervisor is None
         states = owner.owner.snapshots()
         assert len(states) == 1 and states[0].carrier.resource.resource_id == local_physical
         if not automatic:
