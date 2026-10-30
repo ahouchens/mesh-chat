@@ -95,3 +95,15 @@ jobs:
       - run: pnpm build
       - run: python scripts/build_sidecar.py
       - run: cargo test --locked --manifest-path src-tauri/Cargo.toml --lib
+      - name: Check experimental shared WebView host
+        run: cargo test --locked --manifest-path src-tauri/Cargo.toml --lib --features experimental-shared-webview
+      - name: Build isolated WebView2 qualification executable
+        run: cargo build --locked --manifest-path src-tauri/Cargo.toml --bin mesh-transport-qualification --features transport-qualification
+      - name: Exercise real WebView2 through the private host pipe
+        run: python scripts/test_desktop_transport.py --expected-source "${{ github.sha }}"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: desktop-transport-${{ github.sha }}
+          path: dist/reports/desktop-transport.json
+          if-no-files-found: error

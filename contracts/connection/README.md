@@ -59,7 +59,11 @@ is not propagated. Observation frames contain exactly `v`,
 `type: desktop_transport_event`, `epoch`, `event`, `resource` and `data` and enter
 the existing bounded native callback inbox. The sole pipe reader routes these
 frames independently of ordinary dispatch and rejects unregistered transport
-frames. Application commands cannot register this private receiver.
+frames. Application commands cannot register this private receiver. A trusted
+platform host can send the exact frame `{v: 1, type: desktop_transport_fault,
+epoch}` when its registered window is lost. The Python reader consumes this
+private fact, wakes pending requests and quarantines the adapter; old service
+epochs cannot retire the current channel.
 
 Frames are limited to 256 KiB, with stricter SDP/control/packet bounds at the
 adapter. There are at most 16 outstanding requests and one private writer.
@@ -68,6 +72,14 @@ browser operations have a 25-second deadline. Unknown outcomes quarantine the
 channel and enqueue reset after any in-flight write. Pending waiters fail,
 old replies cannot revive them, and further admission is denied. Reset is not
 proof of native disposal when the pipe is broken: the containing platform host
-must independently retire lost bindings. Trusted Windows registration and
-surviving-carrier adoption remain required before this path can replace the
-renderer compatibility runtime.
+must independently retire lost bindings. The experimental Windows broker binds
+the private command to an exact process PID, window label, fixed local URL and
+random capability. The Tauri-injected window identity is checked before queue
+access; failed caller authentication cannot drain or retire the legitimate host.
+Reply batches have a 64-frame / 2 MiB budget and are validated before pending
+requests are consumed. The browser pump has separate reply, lifecycle and packet
+queues and only one outstanding normal IPC poll. Lost lifecycle admission or a
+five-second stalled poll retires the host. These timers move private frames and
+do not implement peer retry policy. Windows qualification and surviving-carrier
+adoption remain required before this path can replace the renderer compatibility
+runtime.

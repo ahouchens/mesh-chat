@@ -147,6 +147,9 @@ class DesktopTransportHost:
         except ValidationError:
             self.shutdown()
             raise
+        if value["type"] == "desktop_transport_fault":
+            self.shutdown()
+            return True
         with self._condition:
             if self._closed:
                 return False
@@ -172,6 +175,8 @@ class DesktopTransportHost:
         if (not isinstance(value, dict) or type(value.get("v")) is not int or value["v"] != 1
                 or not isinstance(value.get("epoch"), str) or not re.fullmatch(r"[a-f0-9]{32}", value["epoch"])):
             raise ValidationError("Desktop transport version is invalid")
+        if value.get("type") == "desktop_transport_fault" and set(value) == {"v", "type", "epoch"}:
+            return
         if value.get("type") == "desktop_transport_reply":
             if (set(value) == {"v", "type", "epoch", "id", "ok", "result"}
                     and isinstance(value["id"], str) and len(value["id"]) <= 128

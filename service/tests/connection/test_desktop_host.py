@@ -171,7 +171,7 @@ def test_inherited_reader_routes_transport_while_dispatch_is_waiting():
             assert not reader._thread.is_alive()
 
 
-@pytest.mark.parametrize("kind", ["desktop_transport_reply", "desktop_transport_event"])
+@pytest.mark.parametrize("kind", ["desktop_transport_reply", "desktop_transport_event", "desktop_transport_fault"])
 def test_unregistered_transport_frames_cannot_fall_through_to_public_dispatch(kind):
     channel = NativeChannel()
     reader = NativeFrameReader(io.BytesIO(encode_frame({"type": kind})), channel)
@@ -179,3 +179,15 @@ def test_unregistered_transport_frames_cannot_fall_through_to_public_dispatch(ki
     with pytest.raises(ValidationError, match="not registered"):
         reader.read()
     assert channel.closed
+
+
+def test_lost_registered_window_quarantines_and_wakes_pending_work():
+    host, outgoing, events = fixture()
+    with ThreadPoolExecutor() as pool:
+        pending = pool.submit(host.stats, "native-one")
+        request = outgoing.get(timeout=1)
+        assert not host.receive({"v": 1, "type": "desktop_transport_fault", "epoch": "b" * 32})
+        assert host.receive({"v": 1, "type": "desktop_transport_fault", "epoch": request["epoch"]})
+        with pytest.raises(NativeUnavailable, match="closed"):
+            pending.result(timeout=1)
+    assert events == [("overflow", "", "")]

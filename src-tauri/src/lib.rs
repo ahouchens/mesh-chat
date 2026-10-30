@@ -7,6 +7,14 @@ use serde_json::json;
 use serde_json::Value;
 mod direct_native;
 #[cfg(desktop)]
+mod desktop_transport;
+#[cfg(desktop)]
+mod desktop_transport_broker;
+#[cfg(all(windows, feature = "transport-qualification"))]
+mod desktop_transport_qualification;
+#[cfg(all(windows, feature = "transport-qualification"))]
+pub use desktop_transport_qualification::run as run_desktop_transport_qualification;
+#[cfg(desktop)]
 mod service_diagnostics;
 #[cfg(target_os = "android")]
 mod mobile_direct;
@@ -121,6 +129,7 @@ fn renderer_payload_maximum(command: &str) -> usize {
 #[cfg(desktop)]
 #[derive(Clone, Default)]
 struct ServiceState {
+    desktop_transport: Arc<Mutex<Option<desktop_transport::RegisteredHost>>>,
     direct_native: Arc<Mutex<Option<direct_native::NativeHost>>>,
     child: Arc<Mutex<Option<CommandChild>>>,
     sidecar_pid: Arc<Mutex<Option<u32>>>,
@@ -200,6 +209,12 @@ fn handle_sidecar_value(
     pid: u32,
     value: Value,
 ) {
+    if value.get("type").and_then(Value::as_str) == Some("desktop_transport") {
+        if desktop_transport::admit(state, pid, value).is_err() {
+            retire_service_child(state);
+        }
+        return;
+    }
     if value.get("type").and_then(Value::as_str) == Some("direct_native") {
         let response = native.handle(value);
         if let Ok(frame) = frame(&response) {
@@ -251,6 +266,11 @@ fn consume_stdout(
     pid: u32,
     buffer: &mut Vec<u8>,
 ) -> Result<(), ()> {
+    consume_frames(buffer, |value| handle_sidecar_value(app, state, native, pid, value))
+}
+
+#[cfg(desktop)]
+fn consume_frames(buffer: &mut Vec<u8>, mut consume: impl FnMut(Value)) -> Result<(), ()> {
     loop {
         if buffer.len() < 4 {
             return Ok(());
@@ -265,7 +285,7 @@ fn consume_stdout(
         let body = buffer[4..4 + size].to_vec();
         buffer.drain(0..4 + size);
         let value: Value = serde_json::from_slice(&body).map_err(|_| ())?;
-        handle_sidecar_value(app, state, native, pid, value);
+        consume(value);
     }
 }
 
@@ -375,6 +395,7 @@ fn terminate_windows_process_tree(pid: u32) {
 
 #[cfg(desktop)]
 fn retire_service_child(state: &ServiceState) {
+    desktop_transport::retire(state, None, false);
     if let Ok(mut native) = state.direct_native.lock() {
         if let Some(native) = native.take() {
             native.close();
@@ -442,6 +463,8 @@ fn spawn_service(app: &AppHandle, state: &ServiceState) -> Result<(), String> {
         .map_err(|_| "service_binary_unavailable".to_string())?
         .set_raw_out(true);
     let mut command = command;
+    #[cfg(all(windows, feature = "experimental-shared-webview"))]
+    { command = command.args(["--shared-webview"]); }
     let i2pd = [
         "i2pd.exe",
         "vendor/i2pd.exe",
@@ -475,6 +498,12 @@ fn spawn_service(app: &AppHandle, state: &ServiceState) -> Result<(), String> {
         .sidecar_pid
         .lock()
         .map_err(|_| "service_lock_failed".to_string())? = Some(sidecar_pid);
+
+    #[cfg(all(windows, feature = "experimental-shared-webview"))]
+    if let Err(error) = desktop_transport::register(app, state, sidecar_pid) {
+        retire_service_child(state);
+        return Err(error);
+    }
 
     let app_handle = app.clone();
     let event_state = state.clone();
@@ -564,6 +593,7 @@ fn spawn_service(app: &AppHandle, state: &ServiceState) -> Result<(), String> {
             }
         }
         native.close();
+        desktop_transport::retire(&event_state, Some(sidecar_pid), false);
     });
     Ok(())
 }
@@ -1664,6 +1694,19 @@ fn app_build_info(app: AppHandle) -> serde_json::Value {
     info
 }
 
+#[cfg(desktop)]
+#[tauri::command]
+async fn desktop_transport_exchange(window: tauri::WebviewWindow, state: State<'_, ServiceState>,
+                                    token: String, frames: Vec<Value>, fault: bool) -> Result<Vec<Value>, String> {
+    desktop_transport::exchange(&window, &state, &token, frames, fault)
+}
+
+#[cfg(mobile)]
+#[tauri::command]
+fn desktop_transport_exchange() -> Result<Vec<Value>, String> {
+    Err("transport_host_unavailable".into())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     #[cfg(desktop)]
@@ -1741,6 +1784,7 @@ pub fn run() {
 
     builder
         .invoke_handler(tauri::generate_handler![
+            desktop_transport_exchange,
             initialize_service,
             service_command,
             lock_service,

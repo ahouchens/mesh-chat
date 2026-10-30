@@ -52,7 +52,7 @@ identity. Monotonic deadlines never enter persistent storage.
 | --- | --- | --- |
 | M0 baseline | Spec and diagram imported; baseline regression corpus passes | Record platform timing baselines in CI |
 | M1 policy/contract foundation | Immutable model, pure phase reducer, fair supervisor, bounded effects, native domain adapters, simulator, strict model checks, executing snapshot schema and initial public request/error design contracts | Complete public result/event schemas and facade design; extend adversarial corpus to all invariant classes |
-| M2 shared policy | Experimental `shared-native` service composition, renderer fencing and consented native manual-carrier adoption implemented | Trusted desktop registration/adoption, remaining manual-pairing modes, full native authority conformance, bridge-restart regression, removal of migrated legacy loops |
+| M2 shared policy | Experimental `shared-native` service composition, renderer fencing, consented native manual-carrier adoption and private Windows transport registration implemented | Windows host qualification and restart adoption, remaining manual-pairing modes, full native authority conformance, bridge-restart regression, removal of migrated legacy loops |
 | M3 qualification gates | Dedicated deterministic evidence gate with required collection inventory and run-bound result matching | Full dependency-aware selection and exact-artifact release aggregation |
 | M4 headless messaging | Existing Android native transport reused | Production native Windows DataChannel adapter, packaged fault matrix and receipt soak |
 | M5 supported consumers | Not implemented | Public authenticated facade, durable idempotency/event cursors, packaged SDKs/CLI, independent Windows and Android consumers and compatibility matrix |
@@ -223,15 +223,33 @@ binding and browser protocol now translate the existing native method contract,
 fence process epochs and monotonic requests, bound admission, and quarantine
 unknown outcomes without waiting for a blocked writer. Pipe tests exercise
 reordered replies and callbacks while ordinary dispatch waits. The browser
-protocol is included in both emulator offer roles. This is component evidence,
-not Windows WebView2 qualification: trusted platform registration and
-service-restart adoption are not yet connected to this component. Existing
+protocol is included in both emulator offer roles. Chromium/JNI instrumentation,
+standard CI, policy/layout gates and Direct Fabric tests passed for
+`7e3c1e5a7a00394119712bf146efecce56c326dc`. This is component evidence;
+service-restart adoption is not yet connected to this component. Existing
 renderer compatibility paths remain active until those parity gates pass.
 The service entry point can bind this channel at private process launch with
 `--shared-webview`; it selects the shared owner before workers start. JSON
 initialization rejects host/policy selectors. An executing inherited-pipe test
 covers replies and callbacks while dispatch waits, and shutdown wakes pending
-work. The shipping Tauri launcher does not select this experimental mode yet.
+work. The opt-in Windows Cargo feature `experimental-shared-webview` now selects
+this launch mode and registers a separate hidden transport window. Default builds
+still use the legacy composition. The trusted host binds a random capability to
+the exact window label, fixed local document and service PID; JSON cannot choose
+these identities. The broker bounds pending work, validates whole reply batches
+before consuming them and reserves reset admission. A bounded browser pump keeps
+lifecycle and packet budgets separate. Lost windows or stalled IPC quarantine the
+Python adapter. Service exit currently disposes that window and its carriers;
+surviving-carrier restart adoption remains required before M2 promotion.
+
+The separate `transport-qualification` executable exercises the real Windows
+WebView2 host, production Python pipe binding, both offer roles, bidirectional
+packets/control and exact retirement without opening a vault. Windows CI requires
+this result and records the source revision and binary/source hashes. Its evidence
+level is `windows_webview2_private_host_component`: it does not qualify packaged
+application messaging, LXMF receipts, restart adoption or headless Windows native
+transport. Missing execution or missing checks fail qualification. The executable
+and its report command are test tooling, absent from normal shipping builds.
 
 ## Local validation
 

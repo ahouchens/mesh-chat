@@ -147,7 +147,7 @@ class NativeFrameReader:
                 value = read_frame(stream)
                 if value.get("type") == "direct_native_reply":
                     self._channel.receive(value)
-                elif value.get("type") in {"desktop_transport_reply", "desktop_transport_event"}:
+                elif value.get("type") in {"desktop_transport_reply", "desktop_transport_event", "desktop_transport_fault"}:
                     if self._desktop_transport is None:
                         raise ValidationError("Desktop transport host is not registered")
                     self._desktop_transport.receive(value)
