@@ -49,9 +49,24 @@ def exercise(controller, directory):
         for slot, (_, _, contact_id) in enumerate(fixtures):
             controller.call(slot, "reconnect_consent_set", contact_id=contact_id,
                 auto_reconnect=False, allow_direct_ip_disclosure=True)
-        controller.phase = "approved_messaging"
-        ready(controller, fixtures)
+        controller.phase = "approved_path"
+        try:
+            ready(controller, fixtures)
+        except TimeoutError:
+            states = []
+            for slot in range(2):
+                profiles = controller.call(slot, "reconnect_profiles")["profiles"]
+                connection = profiles[0].get("connection") or {} if profiles else {}
+                carrier = connection.get("carrier", "absent")
+                bridge = connection.get("bridge", "detached")
+                if carrier not in {"absent", "open", "suspect", "closing"}: carrier = "unknown"
+                if bridge not in {"detached", "attaching", "path_pending", "ready", "restoring"}: bridge = "unknown"
+                states.append(f"p{slot}_{carrier}_{bridge}")
+            controller.error_code = "_".join(states)
+            raise
+        controller.phase = "receipt_from_inviter"
         exchange_message(controller, fixtures, 0)
+        controller.phase = "receipt_from_acceptor"
         exchange_message(controller, fixtures, 1)
         controller.checks.append("paired_bidirectional_authenticated_receipts")
         for slot in range(2):

@@ -1,6 +1,8 @@
 package com.meshchat.runtime
 
 import android.content.Context
+import android.content.ComponentName
+import android.app.ActivityManager
 import android.os.Process
 import android.util.Base64
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -119,6 +121,25 @@ class SignalMailboxAndroidTest {
     @Test(timeout = 45_000)
     fun packagedAndroidCryptoExchangesCiphertextWithWorker() {
         assertEquals("True", fixture().callAttr("encrypted_round_trip", workerUrl()).toString())
+    }
+
+    @Test(timeout = 120_000)
+    fun contactBootstrapUsesIsolatedProcessAndRejectsOrdinaryChat() {
+        val info = context.packageManager.getServiceInfo(ComponentName(context, BootstrapService::class.java), 0)
+        assertFalse("Bootstrap service must remain private", info.exported)
+        assertEquals(context.packageName + ":mesh_bootstrap", info.processName)
+        val py = python()
+        BootstrapClient.configure(context)
+        val module = py.getModule("types").callAttr("ModuleType", "android_contact_bootstrap_fixture")
+        val source = instrumentation.context.assets.open("contact_bootstrap_fixture.py")
+            .bufferedReader().use { it.readText() }
+        py.builtins.callAttr("exec", source, module.get("__dict__"))
+        assertEquals("True", module.callAttr("run", context.cacheDir.absolutePath).toString())
+        val manager = context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
+        val deadline = android.os.SystemClock.elapsedRealtime() + 5_000
+        fun alive() = manager.runningAppProcesses.orEmpty().any { it.processName == info.processName }
+        while (alive() && android.os.SystemClock.elapsedRealtime() < deadline) Thread.sleep(50)
+        assertFalse("Retired bootstrap process survived cleanup", alive())
     }
 
     @Test(timeout = 450_000)

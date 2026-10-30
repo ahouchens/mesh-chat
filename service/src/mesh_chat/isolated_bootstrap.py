@@ -40,6 +40,7 @@ class IsolatedBootstrapEngine:
         self.expires_at = expires_at
         self.deadline = time.monotonic()+max(0, expires_at-time.time())
         self.events = queue.Queue(maxsize=self.MAX_EVENTS)
+        self._pending_event = None
         self.session = object()
         self.network = self.interface = None
         self.closed = False
@@ -102,6 +103,14 @@ class IsolatedBootstrapEngine:
             raise ValidationError("Bootstrap packet batch is invalid")
         for packet in packets:
             self.interface.receive(self.session, packet)
+        # Completion can transfer the carrier and retire this interpreter. Take
+        # the event before draining packets: its already-generated delivery proof
+        # must leave the worker before the parent can act on that completion.
+        if self._pending_event is None:
+            try:
+                self._pending_event = self.events.get_nowait()
+            except queue.Empty:
+                pass
         outgoing = []
         for _ in range(32):
             packet = self.interface.take_outgoing(self.session)
@@ -111,11 +120,9 @@ class IsolatedBootstrapEngine:
         events = []
         # One maximal LXMF object plus a packet batch stays under Android's
         # Binder transaction limit after base64 encoding in the private worker.
-        for _ in range(1):
-            try:
-                events.append(self.events.get_nowait())
-            except queue.Empty:
-                break
+        if len(outgoing) < 32 and self._pending_event is not None:
+            events.append(self._pending_event)
+            self._pending_event = None
         return {"packets":outgoing, "events":events,
                 "recipient_ready":self.network.recipient_ready(self.peer)}
 
@@ -129,6 +136,7 @@ class IsolatedBootstrapEngine:
             if self.network is not None:
                 self.network.shutdown()
         finally:
+            self._pending_event = None
             while not self.events.empty():
                 try:
                     self.events.get_nowait()

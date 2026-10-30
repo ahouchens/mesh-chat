@@ -71,7 +71,7 @@ def test_gate_revalidates_policy_inventory_and_both_platform_component_reports(t
     source, tree, _ = fixture(tmp_path)
     result = matrix.collect(tmp_path, source, tree, ["policy", "verification", "android"])
     assert result["policy_tests_executed"] == 1
-    assert result["android_tests_executed"] == 24
+    assert result["android_tests_executed"] == 25
     assert set(result["windows_transport_checks"]) == CHECKS
     assert set(result["report_sha256"]) == {"policy", "windows_transport", "windows_packaged_lifecycle",
                                           "windows_packaged_transport", "windows_packaged_pairing", "android"}

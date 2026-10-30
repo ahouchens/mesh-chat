@@ -40,6 +40,7 @@ SIGNALING = (
     ("embeddedDefaultAndChoicesSurviveProcessRestart", "seed"),
     ("embeddedDefaultAndChoicesSurviveProcessRestart", "verify"),
     ("packagedAndroidCryptoExchangesCiphertextWithWorker", "none"),
+    ("contactBootstrapUsesIsolatedProcessAndRejectsOrdinaryChat", "none"),
     ("personalMailboxRecoversAfterLossRestartAndLifecycleChanges", "none"),
     ("workspaceMailboxRecoversAfterLossRestartAndLifecycleChanges", "none"),
     ("sharedRuntimeOwnsNativeRecoveryAcrossLifecycle", "none"),

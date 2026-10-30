@@ -406,6 +406,11 @@ The parent revalidates exact resource, signed peer, current execution and contac
 authority before each exchange, outbound packet and completion event, and
 independently verifies inbound LXMF signatures. Shutdown during a host send
 discards the remaining packets and events in that worker batch.
+Worker completion events are selected before draining outbound packets and remain
+held across full packet batches. This preserves delivery-proof ordering when a
+contact completion transfers the carrier and retires the isolated interpreter.
+Regressions cover a completion arriving during the drain and a proof beyond the
+32-packet response limit.
 Lock, shutdown, expiry, cancellation and revocation stop the scope. Endpoint
 status cannot claim an application receipt. Adoption waits for contact-handshake
 completion and current authorization, and retires the isolated scope before
@@ -459,7 +464,13 @@ uniform scenario/count/artifact evidence across every suite and exact release
 artifact aggregation remain outstanding.
 
 Android qualification now uses one required inventory for its 16 optimized native
-WebRTC cases and eight signaling/runtime cases. Each invocation writes a fresh
+WebRTC cases and nine signaling/runtime cases. The contact-bootstrap case checks
+the private service manifest and exchanges signed contact requests and accepts
+through the real Android Binder/Python worker while RNS is already active in the
+calling interpreter. It rejects ordinary chat, retires the worker and checks
+process cleanup. Packets are routed by the test; this is isolated worker evidence,
+not Android first-time pairing over JNI or application-receipt qualification.
+Each invocation writes a fresh
 run marker into its instrumentation log. Evidence requires exactly the expected
 class/method, one started and successful test, no skip/failure status, and the
 same source/tree and optimized host/instrumentation APK digests recorded before

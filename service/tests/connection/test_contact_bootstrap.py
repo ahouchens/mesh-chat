@@ -1,5 +1,9 @@
 """Real isolated RNS workers; transport/scope evidence, not contact approval."""
 import base64
+import os
+from pathlib import Path
+import subprocess
+import sys
 import time
 from uuid import uuid4
 
@@ -12,6 +16,22 @@ from mesh_chat.direct_bootstrap_process import BootstrapProcess
 from mesh_chat.errors import ValidationError
 from mesh_chat.invitations import create_invitation
 from mesh_chat.network import validate_unknown_source_signature
+
+
+def test_android_contact_fixture_finishes_with_real_isolated_desktop_worker(tmp_path):
+    root = Path(__file__).resolve().parents[3]
+    fixture = root / "plugins/tauri-plugin-mesh-runtime/android/src/androidTest/assets/contact_bootstrap_fixture.py"
+    marker = tmp_path / "completed"
+    code = """
+import pathlib, runpy, sys
+from mesh_chat.direct_bootstrap_process import BootstrapProcess
+assert runpy.run_path(sys.argv[1])["run"](sys.argv[2], lambda: BootstrapProcess(directory=sys.argv[2])) is True
+pathlib.Path(sys.argv[3]).write_text("completed")
+"""
+    completed = subprocess.run([sys.executable, "-c", code, str(fixture), str(tmp_path), str(marker)],
+        env={**os.environ, "PYTHONPATH": str(root / "service/src")}, capture_output=True, text=True, timeout=90)
+    assert completed.returncode == 0, completed.stderr
+    assert marker.read_text() == "completed"
 
 
 def test_isolated_contact_workers_keep_existing_signed_payloads_and_reject_chat(tmp_path):
