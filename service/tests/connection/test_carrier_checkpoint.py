@@ -26,6 +26,8 @@ def carrier(tmp_path):
         physical = service._native_resources.reserve("logical")
         service._native_webrtc_live = {"logical"}
         service._native_webrtc_creating = set()
+        service._native_webrtc_peers = {}
+        service._native_webrtc_controls = {}
         service._native_webrtc_profile_sessions = {"profile": "logical"}
         service._native_webrtc_descriptions = {"logical": {"local": "local-sdp", "remote_answer": "remote-sdp", "ice_policy": "relay"}}
         service._native_carrier_authorized = lambda _: True
@@ -127,18 +129,25 @@ def test_answering_role_checkpoints_its_exact_remote_offer(carrier):
 
 def test_failed_retirement_bookkeeping_still_closes_the_exact_native_resource(carrier, monkeypatch):
     service, inventory, _ = carrier
+    service.webrtc_attach_native("logical")
     physical = inventory["resources"][0]["resource"]
     closed, detached = [], []
     service._native_host.close = closed.append
     service._native_startup_packets = SimpleNamespace(discard=lambda _: None)
-    service._release_native_session = lambda _: None
     service.webrtc_detach_native = detached.append
     monkeypatch.setattr("mesh_chat.native_webrtc_service.connection_diagnostics.record", lambda *_: None)
     def fail(*_): raise OSError("retirement write failed")
+    original_retire = service._carrier_journal.retire
     monkeypatch.setattr(service._carrier_journal, "retire", fail)
     with pytest.raises(OSError): service.native_webrtc_close("logical")
     assert closed == [physical] and detached == ["logical"]
     assert not service._native_webrtc_live
+    assert service._native_resources.resolve(physical) == "logical"
+    assert service._carrier_journal.bindings()
+    monkeypatch.setattr(service._carrier_journal, "retire", original_retire)
+    service.native_webrtc_close("logical", expected_physical=physical)
+    assert not service._carrier_journal.bindings()
+    assert service._native_resources.resolve(physical) is None
 
 
 def test_native_closed_callback_removes_its_checkpoint_and_exact_reservation(carrier, monkeypatch):

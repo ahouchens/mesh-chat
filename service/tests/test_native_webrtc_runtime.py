@@ -871,9 +871,26 @@ def test_signed_remote_answer_must_match_the_answer_applied_to_native(bind_first
 
 
 @pytest.mark.parametrize("disabled", [(), ("local",), ("remote",), ("local", "remote")])
-def test_production_composition_adopts_manual_carrier_without_mailbox_or_new_peer(disabled):
+@pytest.mark.parametrize("checkpoint", [False, True])
+def test_production_composition_adopts_manual_carrier_without_mailbox_or_new_peer(disabled, checkpoint, tmp_path):
     from mesh_chat.connection.composition import native_runtime
-    service, host, _ = adoptable_manual_carrier()
+    service, host, contact = adoptable_manual_carrier()
+    vault = None
+    if checkpoint:
+        from mesh_chat.carrier_journal import CarrierJournal
+        from mesh_chat.native_carrier_evidence import description_hash
+        from mesh_chat.vault import VaultStore
+        vault = VaultStore(tmp_path, b"k" * 32, allow_unprotected_for_tests=True)
+        vault.put("contact", contact["id"], contact)
+        service.store = vault
+        service._carrier_journal = CarrierJournal(vault)
+        host.inventory = lambda: {"v": 1, "adapter_epoch": "a" * 32, "resources": [{
+            "resource": host.raw_created[0], "ice_policy": "all", "pending": False,
+            "ice_connection_state": "connected", "signaling_state": "stable", "data_channel_state": "open",
+            "channels": [{"label": "mesh-reticulum", "state": "open"}],
+            "local_type": "answer", "remote_type": "offer", "local_sdp_sha256": description_hash(SDP),
+            "remote_sdp_sha256": description_hash(SDP),
+        }]}
     public = {**service.profile, "auto_reconnect": True, "peer_auto_reconnect": True,
               "trust": "approved", "effective": {"ready": False, "preferred": True,
               "reasons": ["mailbox_not_configured"]}}
@@ -893,10 +910,14 @@ def test_production_composition_adopts_manual_carrier_without_mailbox_or_new_pee
     service.reconnect_fetch = lambda *_: pytest.fail("Manual authority cannot fetch signaling")
     service.reconnect_path_status = lambda _: {"has_path": True, "ready": True}
     def attach(session, *, expected_physical=None):
-        assert service._native_resources.current(session, expected_physical)
+        if expected_physical is not None:
+            assert service._native_resources.current(session, expected_physical)
         service._native_webrtc_sessions[session] = "bridge"
         return {"bridge_id": "bridge"}
-    service.webrtc_attach_native = attach
+    if checkpoint:
+        service._attach_native_bridge = attach
+    else:
+        service.webrtc_attach_native = attach
     owner = service._connection_runtime = native_runtime(service)
     try:
         deadline = time.monotonic() + 3
@@ -906,6 +927,10 @@ def test_production_composition_adopts_manual_carrier_without_mailbox_or_new_pee
                 break
             threading.Event().wait(0.005)
         assert owner.snapshots()["profile-1"]["messaging_ready"]
+        if checkpoint:
+            saved, = service._carrier_journal.bindings()
+            assert saved.peer_destination == contact["destination_hash"]
+            assert saved.resource == host.raw_created[0]
         assert owner.owner.snapshots()[0].carrier.resource.resource_id == host.raw_created[0]
         assert len(host.created) == 1
         assert service._execute("native_webrtc_close", {"session_id": "manual-carrier"}) == {"state": "managed"}
@@ -932,6 +957,9 @@ def test_production_composition_adopts_manual_carrier_without_mailbox_or_new_pee
     finally:
         owner.stop()
         owner.wait()
+        if vault is not None:
+            assert not service._carrier_journal.bindings()
+            vault.close()
     assert host.closed == ["manual-carrier"]
 
 

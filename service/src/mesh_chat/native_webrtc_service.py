@@ -294,8 +294,8 @@ class NativeWebRTCServiceMixin(NativeWebRTCControlMixin):
                     journal = getattr(self, "_carrier_journal", None)
                     if journal is not None and physical is not None:
                         journal.retire(physical)
-                finally:
                     self._release_native_session(session_id)
+                finally:
                     self.webrtc_detach_native(session_id)
                 self.emit(
                     {
@@ -578,19 +578,22 @@ class NativeWebRTCServiceMixin(NativeWebRTCControlMixin):
             connection_diagnostics.record(self, "transport_state", {
                 "setup_id": session_id, "state": "closed", "command": "native_webrtc_close", "component": "bridge",
             })
+        checkpoint_retired = physical is None
         try:
             if physical is not None:
                 try:
                     journal = getattr(self, "_carrier_journal", None)
                     if journal is not None:
                         journal.retire(physical)
+                    checkpoint_retired = True
                 finally:
                     self._native_webrtc_host().close(physical)
                     self._native_resources.confirm_closed(session_id, physical)
         finally:
             with self._dispatch_lock, self._native_webrtc_lock:
                 if self._native_resources.current(session_id, physical):
-                    self._release_native_session(session_id)
+                    if checkpoint_retired:
+                        self._release_native_session(session_id)
                     self.webrtc_detach_native(session_id)
         return {"state": "closed"}
 

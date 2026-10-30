@@ -284,7 +284,9 @@ write. A persisted revision rejects stale checkpoint completions even after
 permission is restored. Unrelated records remain intact; native retirement also
 removes its exact checkpoint. Write failures cannot claim durable success or
 prevent attempted native disposal. New private adapter incarnations discard
-obsolete host records on checkpoint. These are controlled component tests and
+obsolete host records on checkpoint. Failed checkpoint retirement retains the
+exact registry reservation for cleanup retry even after the native peer closes.
+These are controlled component tests and
 vault-reopen tests, not service-crash recovery evidence. No reader adopts these
 records yet; trusted rebind, orphan reconciliation and restart/receipt tests
 remain required, and service exit still destroys its transport window.
