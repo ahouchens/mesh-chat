@@ -164,7 +164,7 @@ disposal still retries on the existing bounded schedule while quarantine is in
 effect; cancellation retains the allocation reservation until its completion is
 consumed. A late allocation is retired and cannot regain a messaging lease.
 Only a new runtime can re-evaluate stored intent and current authority. These
-in-process fault regressions cover the lifecycle requirements in section 9 and
+in-process fault regressions cover the lifecycle requirements in section 5.3 and
 INV13; they do not constitute packaged adapter saturation evidence or remove any
 remaining legacy-policy wrapper.
 
