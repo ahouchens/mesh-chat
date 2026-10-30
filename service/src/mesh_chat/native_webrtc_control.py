@@ -130,8 +130,9 @@ class NativeWebRTCControlMixin:
                     or self._native_webrtc_controls.get(session_id, {}).get("profile_binding") != profile_binding(profile)
                     or (recovered is None and (not actual_remote
                         or description.get("bound_remote_sdp") != normalized_sdp(actual_remote)))
-                    or (not profile.get("allow_direct_ip_disclosure")
-                        and description.get("ice_policy") != "relay")):
+                    or (description.get("ice_policy") != "relay"
+                        and (not profile.get("allow_direct_ip_disclosure")
+                             or not profile.get("remote_allow_direct_ip_disclosure")))):
                 continue
             return session_id
         return None

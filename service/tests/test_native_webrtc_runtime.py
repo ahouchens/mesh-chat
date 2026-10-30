@@ -742,7 +742,8 @@ def adoptable_manual_carrier():
     service.native_webrtc_accept("manual-carrier", SDP, ICE, ONBOARDING_CHANNELS)
     binding = service.native_webrtc_bind_onboarding("manual-carrier", offer)
     service.profile.update(local_device_id="local", remote_device_id="remote",
-                           state="waiting_for_peer", allow_direct_ip_disclosure=True)
+                           state="waiting_for_peer", allow_direct_ip_disclosure=True,
+                           remote_allow_direct_ip_disclosure=True)
     from mesh_chat.native_webrtc_control import bind_control_profile
     service._native_webrtc_controls["manual-carrier"] = {}
     bind_control_profile(service._native_webrtc_controls["manual-carrier"], service.profile)
@@ -856,6 +857,25 @@ def test_manual_carrier_metadata_alone_is_not_adoption_evidence(fault):
     assert not service.native_manual_carrier_authorized("profile-1")
     assert service.claim_native_reconnect_carrier("profile-1", service.profile["local_device_id"], service.profile["remote_device_id"]) is None
     assert not service._native_webrtc_profile_sessions
+
+
+@pytest.mark.parametrize("remote_consent", [False, None])
+def test_direct_manual_transfer_waits_for_both_signed_privacy_preferences(remote_consent):
+    service, host, _ = adoptable_manual_carrier()
+    service.profile["remote_allow_direct_ip_disclosure"] = remote_consent
+    assert not service.native_manual_carrier_authorized("profile-1")
+    assert service.claim_native_reconnect_carrier("profile-1", "local", "remote") is None
+    assert not host.closed
+    service.profile["remote_allow_direct_ip_disclosure"] = True
+    assert service.claim_native_reconnect_carrier("profile-1", "local", "remote") == "manual-carrier"
+
+
+def test_relay_manual_transfer_does_not_require_direct_ip_consent():
+    service, _, _ = adoptable_manual_carrier()
+    service.profile["allow_direct_ip_disclosure"] = False
+    service.profile["remote_allow_direct_ip_disclosure"] = False
+    service._native_webrtc_descriptions["manual-carrier"]["ice_policy"] = "relay"
+    assert service.claim_native_reconnect_carrier("profile-1", "local", "remote") == "manual-carrier"
 
 
 @pytest.mark.parametrize("bind_first", [False, True])

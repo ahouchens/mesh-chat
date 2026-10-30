@@ -423,6 +423,10 @@ it, receives the signed contact request, explicitly approves, and verifies both
 approved states without granting direct-IP messaging. Both sides then opt into
 direct-IP messaging and transfer the initial pending carrier to the authorized
 messaging owner for bidirectional messages and authenticated receipts. Private
+non-relay adoption requires both current signed direct-IP permissions, preventing
+one side from transferring while the other's initial consent update is pending.
+Relay-only carriers do not require direct-IP consent.
+Private
 host operation counts on both sides must show no replacement negotiation or
 closure during that transfer. It does not yet qualify workspace pairing,
 pairing cancellation/restart faults or Android bootstrap integration.
