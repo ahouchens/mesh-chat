@@ -55,13 +55,18 @@ class PendingContactCarrier:
         if factory is None:
             raise NativeUnavailable("Isolated contact bootstrap is unavailable")
         self._worker = factory()
-        self._worker.request("initialize_contact", private_identity=service._identity.get_private_key().hex(),
+        self._request("initialize_contact", private_identity=service._identity.get_private_key().hex(),
             peer_identity=self.public_identity.hex(), expires_at=self.expires_at)
         self._thread = threading.Thread(target=self._run, name="mesh-contact-bootstrap", daemon=True)
         self._thread.start()
 
     def opened(self):
         self._open.set()
+
+    def _request(self, operation, **payload):
+        with self._worker_lock:
+            self.service._require_native_work()
+            return self._worker.request(operation, **payload)
 
     def receive(self, encoded):
         if not self.current(): return
@@ -83,9 +88,8 @@ class PendingContactCarrier:
             raise NativeUnavailable("Contact bootstrap control budget exhausted")
         self._sent[message["id"]] = message["kind"]
         try:
-            with self._worker_lock:
-                native_id = self._worker.request("send", kind=message["kind"], logical_id=message["id"],
-                    document=message.get("invitation") or "", expires_at=int(message["expires_at"]))
+            native_id = self._request("send", kind=message["kind"], logical_id=message["id"],
+                document=message.get("invitation") or "", expires_at=int(message["expires_at"]))
             if not self.current():
                 self._sent.pop(message["id"], None)
                 return False
@@ -133,8 +137,7 @@ class PendingContactCarrier:
         with self.service._dispatch_lock:
             if not self.current(): return False
             packets = [self._packets.popleft() for _ in range(min(32, len(self._packets)))]
-        with self._worker_lock:
-            result = self._worker.request("exchange", packets=packets)
+        result = self._request("exchange", packets=packets)
         if (not isinstance(result, dict) or set(result) != {"packets", "events", "recipient_ready"}
                 or not isinstance(result["packets"], list) or len(result["packets"]) > 32
                 or not isinstance(result["events"], list) or len(result["events"]) > 1
@@ -158,7 +161,7 @@ class PendingContactCarrier:
                     if not self.current(): return
             with self.service._dispatch_lock:
                 if not self.current(): return
-            with self._worker_lock: self._worker.request("activate")
+            self._request("activate")
             while not self._stop.is_set() and self._exchange(): self._stop.wait(.025)
         except Exception:
             pass

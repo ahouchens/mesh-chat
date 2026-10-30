@@ -108,6 +108,34 @@ def test_terminal_owner_prevents_pending_worker_activation(carrier):
     assert not service._pending_contact_carriers
 
 
+@pytest.mark.parametrize("operation", ["send", "exchange", "activate"])
+def test_pending_request_rechecks_admission_after_waiting_for_worker(carrier, operation):
+    from mesh_chat.errors import NativeUnavailable
+    value, service, contact = carrier
+    class QuarantineWhileWaiting:
+        def __enter__(self):
+            service._native_work_allowed = lambda: False
+        def __exit__(self, *_):
+            pass
+    value._worker_lock = QuarantineWhileWaiting()
+    value._worker = SimpleNamespace(request=lambda *_a, **_k: pytest.fail("Request started after quarantine"),
+                                    close=lambda: None)
+    service._dispatch_lock = threading.RLock()
+    service.native_webrtc_close = lambda *_a, **_k: None
+    value.ready = True
+    if operation == "activate":
+        value.opened()
+        value._run()
+        assert not service._pending_contact_carriers
+    else:
+        with pytest.raises(NativeUnavailable):
+            if operation == "exchange":
+                value._exchange()
+            else:
+                value.send(contact, {"kind": "contact_request", "id": "control", "expires_at": int(time.time()) + 30})
+        assert not value._sent
+
+
 def test_shutdown_during_packet_send_stops_remaining_packets_and_events(carrier):
     value, service, _ = carrier
     service._dispatch_lock = threading.RLock()

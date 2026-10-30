@@ -15,11 +15,15 @@ from mesh_chat.vault import VaultStore
 
 
 @pytest.fixture
-def inbox(tmp_path):
+def inbox(tmp_path, monkeypatch):
+    from mesh_chat.direct_recovery import DirectRecovery
+    # Drive workers synchronously without pretending the service is shut down.
+    monkeypatch.setattr(MeshChatService, "_retry_loop", lambda _: None)
+    monkeypatch.setattr(MeshChatService, "_native_webrtc_event_loop", lambda _: None)
+    monkeypatch.setattr(DirectRecovery, "_run", lambda _: None)
     key = os.urandom(32)
     store = VaultStore(tmp_path, key, allow_unprotected_for_tests=True)
     service = MeshChatService(store, tmp_path, lambda _event: None)
-    service._shutdown.set()  # Drive this test synchronously, without network I/O.
     identity = RNS.Identity()
     service._identity = identity
     store.put("profile", "local", {

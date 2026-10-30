@@ -172,7 +172,9 @@ binding, control delivery and pending contact interpreters before a connection
 profile exists. A missing, quarantined or stopped shared owner cannot admit this
 work. Late native allocations are retired by exact handle, late answer/control
 results cannot claim success, and pending-worker completions cannot update
-message status after admission closes. Existing native maintenance disposes
+message status after admission closes. Serialized worker requests recheck
+admission after acquiring their lock, including activation and packet exchange.
+Existing native maintenance disposes
 unmanaged carriers; supervisor-owned carriers keep their existing cleanup owner.
 Explicit disposal and closed-resource callbacks remain available. These checks
 extend the shared policy fence without promoting it or removing legacy wrappers.
