@@ -167,12 +167,12 @@ def test_poll_without_a_snapshot_cannot_silently_skip_history(host):
 
 
 def test_expired_cursor_requires_a_new_snapshot(host, monkeypatch):
-    from mesh_chat.core_api import service_recovery
+    from mesh_chat.core_api import service_cursors
     service = host()
     session, _, profile, _ = client(service)
     cursor = snapshot(session, profile)["result"]["events_cursor"]
-    future = service_recovery.time.time() + 8 * 86400
-    monkeypatch.setattr(service_recovery.time, "time", lambda: future)
+    future = service_cursors.time.time() + 8 * 86400
+    monkeypatch.setattr(service_cursors.time, "time", lambda: future)
     assert poll(session, profile, cursor)["error"]["code"] == "resync_required"
     assert snapshot(session, profile)["ok"]
 

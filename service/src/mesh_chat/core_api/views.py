@@ -6,6 +6,7 @@ import re
 from ..chat_text import validate_chat_text
 from ..models import DeliveryState, TrustState
 from .messages import IDEMPOTENCY_SECONDS
+from ..message_journal import RETENTION_SECONDS
 
 
 ENUMS = {
@@ -71,6 +72,17 @@ def acceptance_view(profile, value):
         raise ValueError("Invalid idempotency retention")
     return {"profile": profile, "message": value.message, "accepted": True,
             "accepted_at": accepted, "idempotency_expires_at": expires}
+
+
+def acknowledgment_view(profile, value):
+    if not isinstance(value.checkpoint, str) or re.fullmatch(r"[A-Za-z0-9_-]{16,128}", value.checkpoint) is None:
+        raise ValueError("Invalid checkpoint handle")
+    accepted = _timestamp(value.acknowledged_at)
+    expires = _timestamp(value.expires_at)
+    if expires != accepted + RETENTION_SECONDS:
+        raise ValueError("Invalid checkpoint retention")
+    return {"profile": profile, "checkpoint": value.checkpoint, "acknowledged": True,
+            "acknowledged_at": accepted, "expires_at": expires}
 
 
 def message_view(profile, handle, recipient, value):

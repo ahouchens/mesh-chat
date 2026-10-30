@@ -516,9 +516,17 @@ concurrent changes during pagination require an explicit resynchronization.
 Caller/profile/purpose-bound encrypted cursors survive ordinary service restart,
 and expiry, overwritten records and changed contact authority fail explicitly.
 Queries scan at most 128 entries plus index lookahead and bound encoded responses
-to one MiB. This is component evidence only. Incoming-message access, consumer
-acknowledgments, authenticated host bindings and mixed-version cursor compatibility
-remain unfinished; old journal-unaware binaries cannot claim replay compatibility.
+to one MiB. Consumer acknowledgments now atomically commit a caller/profile
+checkpoint, idempotency receipt and bounded quota. Null-cursor polling resumes the
+last confirmed position across service restart. Lost-reply replay is stable even
+when newer progress exists; new acknowledgments cannot rewind it. Polling never
+advances progress or renews its seven-day lifetime. Retention gaps, expiry and
+changed authority require an explicit fresh snapshot. Acknowledgments cannot
+change peer delivery state. Request validation is separated from session authority,
+and cursor encoding is separated from durable progress and snapshot/replay adapters.
+This is component evidence only. Incoming-message access, authenticated host
+bindings, long-term key storage and mixed-version cursor compatibility remain
+unfinished; old journal-unaware binaries cannot claim replay compatibility.
 
 From the repository root:
 

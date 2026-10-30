@@ -3,7 +3,8 @@
 These are experimental contracts, not a supported integration release. A protected
 facade component implements capabilities, profile queries, connection observations,
 peer queries, durable text enqueue, scoped message snapshots and retained change
-replay for messages enqueued by the same caller. Host authentication, remaining
+replay with durable consumer progress for messages enqueued by the same caller.
+Host authentication, remaining
 mutations/event streams, SDKs and independent consumer
 qualification remain required before M5. `operations-v1.json` deliberately lists
 no host-accessible implemented operations; its separate component list records
@@ -132,8 +133,8 @@ delivery. Polling the same cursor may redeliver the same IDs. Consumers deduplic
 notifications and query retained messages when they need text. Local history
 deletion produces a removal event without retaining duplicate text. Public recovery
 currently covers only the caller's own facade-enqueued outbound text messages;
-incoming messages, other message kinds, connection event streams and durable
-consumer acknowledgment are still required for M5.
+incoming messages, other message kinds and connection event streams are still
+required for M5.
 
 The service installs the domain journal before startup recovery and workers. Every
 message mutation path uses one transaction-local storage projection, so the message
@@ -146,9 +147,42 @@ The encrypted journal retains at most 2,048 changes per vault. Replay is limited
 to seven days and available retained records. Opaque cursors use the existing vault
 record cipher, are bound to caller/profile and purpose, and survive ordinary service
 restart. They expire seven days after issuance. Retention overflow, expiry or changed
-authority returns `resync_required`; a null poll cursor also requires a snapshot
-instead of silently skipping history. Old binaries without the journal and stream
+authority returns `resync_required`. A null poll cursor resumes the last durable
+acknowledgment for the current caller/profile; without a valid retained checkpoint,
+it requires a fresh snapshot. Old binaries without the journal and stream
 format migrations are not qualified cursor-compatible runtimes.
+
+After durably applying a completed snapshot or event page in its own application
+state, a consumer sends `events.ack` with the final `events_cursor` or replay
+`next_cursor` and an idempotency key. A partial snapshot cursor is not an event
+position and cannot be acknowledged. Acceptance atomically commits the encrypted
+caller/profile checkpoint, receipt and quota. The result selects `checkpoint`,
+`acknowledged_at` and `expires_at`, with `acknowledged: true`. This records consumer
+progress only; it writes no message, outbox or peer receipt. Polling is read-only:
+it neither advances nor renews confirmed progress. Multiple sessions of one caller
+share one checkpoint per profile, so independently progressing applications need
+distinct trusted caller identities.
+
+Acknowledgment identity uses the logical stream generation, authority and position,
+not randomized cursor bytes. A reissued cursor for the same position resolves the
+same key. A conflicting position with that key returns `idempotency_conflict`;
+a new key for a position behind the current checkpoint returns `conflict`. Replaying
+an older successful key returns its original acceptance without rewinding progress.
+Current grants, profile availability, stream generation and contact authority are
+rechecked even on an idempotent replay.
+
+Checkpoints and successful acknowledgment receipts expire seven days after commit.
+An original key may resolve a lost reply after its input token expires or its history
+is overwritten, while the receipt remains live. That result proves the past write;
+it does not promise the checkpoint is still resumable. A new write needs a live
+cursor and retained history. `events.poll` with a null cursor reports
+`resync_required` on an expired, revoked or overwritten checkpoint; a complete fresh
+snapshot and a new acknowledgment repair that gap. After receipt expiry the old
+key returns `idempotency_expired`, never a new acceptance. Tombstones are retained
+for the vault lifetime, with separate acknowledgment quotas of 4,096 keys per
+caller/profile and 65,536 per vault. Capacity returns `resource_exhausted` for new
+keys without evicting existing ones. These quotas are experimental and remain
+subject to the long-term storage-policy work before M5.
 
 Each request scans at most 128 query indexes or journal entries (plus one index
 lookahead), returns at most the requested 1–128 items, and stays within one MiB

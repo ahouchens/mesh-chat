@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "urn:mesh-chat:core-api:recovery-result:1",
-  "title": "Experimental snapshot and replay results v1",
+  "title": "Experimental snapshot, replay and acknowledgment results v1",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -28,6 +28,9 @@
         },
         {
           "$ref": "#/$defs/replay"
+        },
+        {
+          "$ref": "#/$defs/acknowledgment"
         }
       ]
     }
@@ -259,6 +262,34 @@
           }
         }
       ]
+    },
+    "acknowledgment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "profile",
+        "checkpoint",
+        "acknowledged",
+        "acknowledged_at",
+        "expires_at"
+      ],
+      "properties": {
+        "profile": {
+          "$ref": "#/$defs/handle"
+        },
+        "checkpoint": {
+          "$ref": "#/$defs/handle"
+        },
+        "acknowledged": {
+          "const": true
+        },
+        "acknowledged_at": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "expires_at": {
+          "$ref": "#/$defs/timestamp"
+        }
+      }
     }
   }
 }

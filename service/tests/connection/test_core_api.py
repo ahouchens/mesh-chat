@@ -126,6 +126,21 @@ def test_no_permission_does_not_advertise_observation_operations_or_profiles():
     assert observations.calls == []
 
 
+@pytest.mark.parametrize("operation", ["runtime.stop", "profile.create", "events.ack", "message.enqueue"])
+def test_unbound_mutations_return_unsupported_without_domain_work(operation):
+    client, _, observations = session()
+    value = request(operation)
+    value["idempotency_key"] = "mutation-key-0001"
+    assert client.request(value)["error"]["code"] == "unsupported_operation"
+    assert not observations.calls
+
+
+@pytest.mark.parametrize("operation", [[], {}, None, 1])
+def test_malformed_operation_values_are_stable_protocol_errors(operation):
+    client, _, _ = session()
+    assert client.request(request(operation))["error"]["code"] == "unsupported_operation"
+
+
 def test_connection_handles_cannot_cross_profiles_even_for_the_same_caller():
     client, _, _ = session(profiles=("first-profile", "second-profile"))
     profiles = client.request(request("runtime.capabilities"))["result"]["profiles"]

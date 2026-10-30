@@ -1,16 +1,15 @@
 """Private storage adapter for consistent snapshots and retained message changes."""
 
 import json
-import math
-import time
 
-from ..errors import StorageUnavailable, ValidationError
-from ..message_journal import JournalGap, RETENTION_SECONDS
+from ..message_journal import JournalGap
 from ..models import TrustState
 from .errors import ApiFailure
 from .messages import MAX_PEERS
 from .recovery import EventPage, ListedMessage, MAX_BATCH, MAX_BATCH_BYTES, MessageEvent, MessagePage
 from .service_messages import storage_errors
+from .service_cursors import ServiceCursors
+from .service_consumer_progress import ServiceConsumerProgress
 
 
 class ServiceRecovery:
@@ -18,6 +17,8 @@ class ServiceRecovery:
         self._store = service.store
         self._journal = service._message_journal
         self._messages = messages
+        self._cursors = ServiceCursors(self._store, self._journal, messages._identifier)
+        self._progress = ServiceConsumerProgress(self._store, self._journal, self._cursors, messages._identifier)
 
     def _authority(self, scope):
         self._messages._profile(scope.profile)
@@ -26,32 +27,6 @@ class ServiceRecovery:
             raise ApiFailure("resource_exhausted")
         authority = [(identifier, value.get("trust"), value.get("destination_hash")) for identifier, value in contacts]
         return self._messages._identifier("core-api-read-authority:v1", authority)
-
-    def _scope_key(self, scope):
-        return self._messages._identifier("core-api-recovery:v1", scope.caller, scope.profile)
-
-    def _cursor(self, scope, authority, purpose, head, position=""):
-        return self._store.seal_private_cursor(self._scope_key(scope), {
-            "v": 1, "g": self._journal.generation, "a": authority, "p": purpose,
-            "h": head, "k": position, "x": time.time() + RETENTION_SECONDS,
-        })
-
-    def _open(self, scope, authority, cursor, purpose):
-        try:
-            value = self._store.open_private_cursor(self._scope_key(scope), cursor)
-        except ValidationError as error:
-            raise ApiFailure("invalid_request") from error
-        except StorageUnavailable as error:
-            raise ApiFailure("forbidden") from error
-        if value.get("v") != 1 or value.get("g") != self._journal.generation or value.get("a") != authority:
-            raise ApiFailure("resync_required")
-        if value.get("p") != purpose:
-            raise ApiFailure("invalid_request")
-        expiry = value.get("x")
-        if (type(expiry) not in {int, float} or not math.isfinite(expiry) or expiry <= time.time()
-                or type(value.get("h")) is not int or not 0 <= value["h"] <= self._journal.head()):
-            raise ApiFailure("resync_required")
-        return value
 
     @staticmethod
     def _owned(index, scope):
@@ -66,7 +41,7 @@ class ServiceRecovery:
             authority = self._authority(scope)
             head, position = self._journal.head(), ""
             if cursor is not None:
-                previous = self._open(scope, authority, cursor, "snapshot")
+                previous = self._cursors.open(scope, authority, cursor, "snapshot")
                 if previous["h"] != head:
                     raise ApiFailure("resync_required")
                 position = previous["k"]
@@ -85,15 +60,18 @@ class ServiceRecovery:
                 position, consumed = handle, consumed + 1
             more = consumed < len(rows)
             return MessagePage(tuple(result),
-                self._cursor(scope, authority, "snapshot", head, position) if more else None,
-                None if more else self._cursor(scope, authority, "events", head))
+                self._cursors.create(scope, authority, "snapshot", head, position) if more else None,
+                None if more else self._cursors.create(scope, authority, "events", head))
+
+    def acknowledge(self, scope, cursor, key):
+        with storage_errors(), self._store.read_snapshot():
+            return self._progress.acknowledge(scope, self._authority(scope), cursor, key)
 
     def poll(self, scope, cursor, limit):
         with storage_errors(), self._store.read_snapshot():
             authority = self._authority(scope)
-            if cursor is None:
-                raise ApiFailure("resync_required")
-            previous = self._open(scope, authority, cursor, "events")
+            previous = (self._progress.resume(scope, authority) if cursor is None
+                        else self._cursors.open(scope, authority, cursor, "events"))
             position = previous["h"]
             try:
                 changes = self._journal.read(position, MAX_BATCH)
@@ -110,5 +88,5 @@ class ServiceRecovery:
                                                           self._journal.generation, change["sequence"])
                     result.append(MessageEvent(identifier, handle, change["type"], change["state"], change["timestamp"]))
                 position = change["sequence"]
-            return EventPage(tuple(result), self._cursor(scope, authority, "events", position),
+            return EventPage(tuple(result), self._cursors.create(scope, authority, "events", position),
                              position < self._journal.head())

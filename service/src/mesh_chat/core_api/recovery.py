@@ -9,6 +9,8 @@ from .messages import MessageObservation, MessageScope
 MAX_BATCH = 128
 MAX_BATCH_BYTES = 1048576
 MAX_CURSOR_BYTES = 1024
+MAX_CALLER_ACKNOWLEDGMENTS = 4096
+MAX_VAULT_ACKNOWLEDGMENTS = 65536
 
 
 @dataclass(frozen=True)
@@ -40,6 +42,14 @@ class EventPage:
     more: bool
 
 
+@dataclass(frozen=True)
+class Acknowledgment:
+    checkpoint: str
+    acknowledged_at: float
+    expires_at: float
+
+
 class Recovery(Protocol):
     def snapshot(self, scope: MessageScope, cursor: str | None, limit: int) -> MessagePage: ...
     def poll(self, scope: MessageScope, cursor: str | None, limit: int) -> EventPage: ...
+    def acknowledge(self, scope: MessageScope, cursor: str, key: str) -> Acknowledgment: ...

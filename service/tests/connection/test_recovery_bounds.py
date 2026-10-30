@@ -3,7 +3,8 @@ from types import SimpleNamespace
 import pytest
 
 from mesh_chat.core_api.messages import MessageObservation
-from mesh_chat.core_api.recovery import EventPage, ListedMessage, MessagePage
+from mesh_chat.core_api.recovery import Acknowledgment, EventPage, ListedMessage, MessagePage
+from test_core_acknowledgments import acknowledge
 from test_core_messages import host, client
 from test_core_replay import snapshot, poll
 
@@ -27,3 +28,16 @@ def test_facade_rejects_malformed_replay_metadata(host, page):
     session, _, profile, _ = client(host())
     session._recovery = SimpleNamespace(poll=lambda *_: page)
     assert poll(session, profile, "x" * 64)["error"]["code"] == "internal"
+
+
+@pytest.mark.parametrize("result", [
+    Acknowledgment("raw-checkpoint", 0, 604800),
+    Acknowledgment("x" * 129, 0, 604800),
+    Acknowledgment("x" * 64, float("nan"), 604800),
+    Acknowledgment("x" * 64, True, 604801),
+    Acknowledgment("x" * 64, 0, 604801),
+])
+def test_facade_rejects_malformed_acknowledgment_port_results(host, result):
+    session, _, profile, _ = client(host())
+    session._recovery = SimpleNamespace(acknowledge=lambda *_: result)
+    assert acknowledge(session, profile, "x" * 64)["error"]["code"] == "internal"
