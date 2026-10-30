@@ -20,7 +20,13 @@ from mesh_chat.ipc import FrameWriter, read_frame
 
 
 def run(*args):
-    return subprocess.run(args, check=True, capture_output=True, text=True).stdout
+    return subprocess.run(args, check=True, capture_output=True, text=True, timeout=10).stdout
+
+
+class TrialFailure(AssertionError):
+    def __init__(self, evidence):
+        self.evidence = evidence
+        super().__init__(evidence["failure_reason"])
 
 
 class Native:
@@ -111,6 +117,20 @@ class Topology:
         lines = self.cmd("r" + side, "iptables", "-L", "FORWARD", "-nvx").splitlines()[2:]
         return [int(line.split()[0]) for line in lines if line.strip()]
 
+    def diagnostics(self):
+        result = {}
+        for side in ("ra", "rb"):
+            result[side] = {}
+            for name, command in (("rules", ("iptables-save", "-c")),
+                                  ("udp_mappings", ("conntrack", "-L", "-p", "udp", "-o", "extended"))):
+                try:
+                    result[side][name] = self.cmd(side, *command)[-16384:]
+                except subprocess.CalledProcessError as error:
+                    result[side][name] = "unavailable: " + error.stderr[-512:]
+                except subprocess.TimeoutExpired:
+                    result[side][name] = "unavailable: diagnostic command timed out"
+        return result
+
     def block_udp(self, side):
         self.cmd("r" + side, "iptables", "-t", "raw", "-I", "PREROUTING", "1",
                  "-i", self.prefix + "2" + side, "-p", "udp", "-j", "DROP")
@@ -141,9 +161,11 @@ def trial(binary, coordinated, blocked="", destination_dependent=False):
                 local=("01" if i == 0 else "02") * 16, remote=("02" if i == 0 else "01") * 16,
                 candidates=candidates if i == 0 or coordinated else [], client=i == 0, remaining_ms=10000)
         connected = False
+        observations, states = [], []
         deadline = time.monotonic() + 11
         while time.monotonic() < deadline:
-            states = [host.channel.request("poll", id=p["id"])["state"] for host, p in zip(hosts, prepared)]
+            observations = [host.channel.request("poll", id=p["id"]) for host, p in zip(hosts, prepared)]
+            states = [observation["state"] for observation in observations]
             if states == [1, 1]:
                 connected = True
                 break
@@ -164,22 +186,48 @@ def trial(binary, coordinated, blocked="", destination_dependent=False):
                     time.sleep(.02)
         counts = [topology.counts(side) for side in "ab"]
         expected = coordinated and not blocked and not destination_dependent
-        assert connected == expected, ("unexpected topology result", coordinated, blocked, connected, counts)
-        if expected:
-            assert len(delivered) == 2
-            assert all(row[0] > 0 and row[1] > 0 for row in counts)
-        elif not coordinated:
-            assert counts[0][0] > 0 and counts[1][0] == 0
-        return {"profile":"destination-dependent mapping with stale destination-specific tuple" if destination_dependent else "endpoint-independent mapping, outbound-dependent UDP filtering",
+        result = {"profile":"destination-dependent mapping with stale destination-specific tuple" if destination_dependent else "endpoint-independent mapping, outbound-dependent UDP filtering",
                 "coordinated_checks":coordinated, "connected":connected,
                 "udp_blocked_sides":len(blocked), "expected_connection":bool(expected),
                 "bidirectional_packets":len(delivered), "router_forward_counters":counts,
                 "elapsed_seconds":round(time.monotonic()-started, 3),
-                "candidate_source":"test-only tuple for a different destination" if destination_dependent else "test-only NAT ground truth", "retained_native_ports":True}
+                "candidate_source":"test-only tuple for a different destination" if destination_dependent else "test-only NAT ground truth", "retained_native_ports":True,
+                "native_ports": [p["port"] for p in prepared], "native_states": states,
+                "native_statistics": [value.get("statistics", {}) for value in observations]}
+        reason = None
+        if connected != expected:
+            reason = "unexpected_topology_result"
+        elif expected and len(delivered) != 2:
+            reason = "missing_bidirectional_packets"
+        elif expected and not all(row[0] > 0 and row[1] > 0 for row in counts):
+            reason = "missing_router_forwarding"
+        elif not coordinated and not (counts[0][0] > 0 and counts[1][0] == 0):
+            reason = "invalid_uncoordinated_control"
+        result["passed"] = reason is None
+        if reason is not None:
+            result.update(failure_reason=reason, router_diagnostics=topology.diagnostics())
+            raise TrialFailure(result)
+        return result
     finally:
         for host in hosts:
             host.close()
         topology.close()
+
+
+def run_trials(binary, report, scenarios):
+    results = []
+    for enabled, blocked, destination_dependent in scenarios:
+        try:
+            results.append(trial(binary, enabled, blocked, destination_dependent))
+        except TrialFailure as error:
+            results.append(error.evidence)
+            raise
+        finally:
+            # A failed trial and its router state are evidence too. Never lose
+            # them while unwinding namespaces or hide failure behind a retry.
+            report.write_text(json.dumps({"schema":1, "trials":results,
+                "expected_trial_count":len(scenarios), "physical_evidence":False, "discovery_evidence":False,
+                "tcp_fallback_evidence":False}, indent=2) + "\n")
 
 
 def main():
@@ -189,17 +237,9 @@ def main():
     args = parser.parse_args()
     if os.name != "posix" or os.geteuid() != 0 or os.environ.get("GITHUB_ACTIONS") != "true":
         raise SystemExit("Run only in the isolated GitHub Linux qualification job")
-    results = []
     scenarios = [(False,"",False), (True,"",False), (True,"",False), (True,"",False),
                  (True,"a",False), (True,"ab",False), (True,"",True)]
-    for enabled, blocked, destination_dependent in scenarios:
-        try:
-            results.append(trial(str(Path(args.binary).resolve()), enabled, blocked, destination_dependent))
-        finally:
-            # Preserve completed controls even if a subsequent trial fails.
-            Path(args.report).write_text(json.dumps({"schema":1, "trials":results,
-                "expected_trial_count":len(scenarios), "physical_evidence":False, "discovery_evidence":False,
-                "tcp_fallback_evidence":False}, indent=2) + "\n")
+    run_trials(str(Path(args.binary).resolve()), Path(args.report), scenarios)
 
 
 if __name__ == "__main__":

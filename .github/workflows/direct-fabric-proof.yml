@@ -19,6 +19,8 @@ on:
       - 'service/pyproject.toml'
       - 'service/tools/direct_binding_proof.py'
       - 'service/tools/direct_fabric_harness.py'
+      - 'service/tools/direct_nat_harness.py'
+      - 'service/tests/test_direct_nat_evidence.py'
       - 'service/tests/test_direct_binding.py'
       - 'service/tests/test_direct_relationship.py'
       - 'service/tests/test_direct_recovery*.py'
@@ -72,7 +74,7 @@ jobs:
         if: runner.os == 'Linux'
         shell: bash
         run: |
-          sudo apt-get install -y iproute2 iptables
+          sudo apt-get install -y iproute2 iptables conntrack
           sudo --preserve-env=GITHUB_ACTIONS "$(command -v python)" service/tools/direct_nat_harness.py --binary "$PWD/experiments/direct-app-host/target/debug/mesh-direct-app-host-proof" --report direct-nat-evidence.json
       - name: Retain NAT evidence and negative control
         if: runner.os == 'Linux' && always()
