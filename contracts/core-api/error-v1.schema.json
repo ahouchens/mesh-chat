@@ -14,7 +14,7 @@
       "required": ["code", "retry_after_ms"],
       "additionalProperties": false,
       "properties": {
-        "code": {"enum": ["invalid_request", "incompatible_version", "unauthenticated", "forbidden", "not_found", "locked", "conflict", "idempotency_conflict", "idempotency_expired", "resync_required", "resource_exhausted", "rate_limited", "unavailable", "internal"]},
+        "code": {"enum": ["invalid_request", "incompatible_version", "negotiation_required", "unsupported_operation", "unauthenticated", "forbidden", "not_found", "locked", "conflict", "idempotency_conflict", "idempotency_expired", "resync_required", "resource_exhausted", "rate_limited", "unavailable", "internal"]},
         "retry_after_ms": {"type": ["integer", "null"], "minimum": 0, "maximum": 3600000}
       }
     }

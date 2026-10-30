@@ -1,0 +1,51 @@
+"""Explicitly selected public observations; domain dictionaries never escape."""
+
+import math
+
+
+ENUMS = {
+    "desired": {"enabled", "stopped"},
+    "execution": {"available", "paused", "locked", "shutting_down"},
+    "negotiation": {"idle", "discover", "request", "wait_request", "wait_offer", "gather_offer",
+                    "gather_answer", "publish_offer", "publish_answer", "wait_answer", "apply_answer",
+                    "checking", "attach", "path", "inspect"},
+    "carrier": {"absent", "open", "suspect", "closing"},
+    "bridge": {"detached", "attaching", "path_pending", "ready", "restoring"},
+}
+REASONS = ENUMS["negotiation"] | {
+    "unknown", "ineligible", "ready", "pending", "health_unknown", "bridge_retry_wait", "blocked",
+    "retry_wait", "network_unavailable", "signaling_unavailable", "carrier_lost", "phase_timeout",
+    "transient", "rate_limited", "configuration", "invalid_document", "revoked", "unsupported", "internal",
+    "invalid_adoption", "wrong_resource", "missing_observation", "invalid_pending", "unverified_resource",
+    "missing_carrier", "context_changed", "observed", "poll_wait", "idle",
+}
+
+
+def connection_view(value):
+    selected = {}
+    for field, choices in ENUMS.items():
+        if value.get(field) not in choices:
+            raise ValueError("Invalid internal observation")
+        selected[field] = value[field]
+    epoch, sequence = value.get("runtime_epoch"), value.get("sequence")
+    if (not isinstance(epoch, str) or not 1 <= len(epoch) <= 64
+            or type(sequence) is not int or not 0 <= sequence <= 9007199254740991):
+        raise ValueError("Invalid observation cursor")
+    selected.update(runtime_epoch=epoch, sequence=sequence)
+    for field in ("retry_in", "evidence_age"):
+        number = value.get(field)
+        if field == "evidence_age" and number is None:
+            selected[field] = None
+            continue
+        if type(number) not in {int, float} or not math.isfinite(number) or number < 0:
+            raise ValueError("Invalid observation time")
+        selected[field] = number
+    ready = value.get("messaging_ready")
+    if type(ready) is not bool or (ready and not (
+            selected["desired"] == "enabled" and selected["execution"] == "available"
+            and selected["carrier"] == "open" and selected["bridge"] == "ready"
+            and selected["evidence_age"] is not None)):
+        raise ValueError("Invalid readiness observation")
+    selected["messaging_ready"] = ready
+    selected["reason"] = value["reason"] if value.get("reason") in REASONS else "unknown"
+    return selected

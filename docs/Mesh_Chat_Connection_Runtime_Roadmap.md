@@ -156,8 +156,13 @@ Private observation contracts live in `contracts/connection/`; experimental
 application request/error contracts and the permission inventory live separately
 in `contracts/core-api/`. JSON Schema tests validate real policy projections and
 reject private fields and incompatible public requests. Public schemas are design
-artifacts, not shipping facade capabilities: the operation inventory advertises
-none as implemented. JSON Schema validation is a development-only dependency and
+artifacts, not shipping host capabilities: the operation inventory advertises
+none as host-accessible. A private read-only facade component now negotiates
+capabilities and returns caller-scoped profile/connection observations. Current
+grants are checked under the service dispatch lock and handles are bound to caller
+and profile. It has no public bootstrap, native/event injection or mutation path.
+OS-authenticated host bindings, durable mutations/events and consumers remain
+required. JSON Schema validation is a development-only dependency and
 does not replace trusted caller authentication or domain authorization.
 
 From the repository root:

@@ -4,6 +4,7 @@
   "api_major": 1,
   "api_minor": 0,
   "implemented_operations": [],
+  "experimental_component_operations": ["runtime.capabilities", "profile.query", "connection.snapshot"],
   "operations": [
     {
       "operation": "runtime.capabilities",

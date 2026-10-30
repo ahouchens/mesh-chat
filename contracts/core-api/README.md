@@ -1,9 +1,11 @@
 # Experimental Core API v1 design
 
-These are M1 design contracts, not a supported integration release. The facade,
-host authentication, complete result/event schemas, SDKs and independent consumer
+These are experimental contracts, not a supported integration release. A protected
+read-only facade component implements capabilities, profile queries and connection
+observations. Host authentication, mutation/event support, SDKs and independent consumer
 qualification remain required before M5. `operations-v1.json` deliberately lists
-no implemented operations. A schema-valid request is not authorization and must
+no host-accessible implemented operations; its separate component list records
+the tested internal facade subset. A schema-valid request is not authorization and must
 not be passed to the existing broad application command dispatcher.
 
 The initial scope includes profile/identity ownership, explicit pairing and
@@ -20,7 +22,23 @@ profile scopes; none of those facts come from request JSON. Windows bootstrap
 must bind a private IPC endpoint to the owning process/user with OS access
 controls. Android bootstrap must bind the runtime to its owning application and
 non-exported service. Localhost reachability is insufficient. Neither binding is
-implemented by these schema files.
+implemented by these schema files. The `core_api.composition.bind_service_session`
+factory is private bootstrap code, absent from the renderer command table. It
+accepts a host-bound grant callback, holds the service dispatch lock through
+authorization and observation, and rechecks current grants on every request.
+This component does not itself authenticate a Windows or Android IPC peer.
+
+Within the component, each session negotiates through `runtime.capabilities`.
+Other operations before negotiation return `negotiation_required`; unimplemented
+operations return `unsupported_operation`. Revoked caller identity invalidates
+the session permanently. Permission or profile-scope revocation denies access
+before domain reads. Caller/profile-bound HMAC handles expose no internal IDs and
+remain stable for the same caller and vault. A new vault changes their namespace.
+Sessions cannot silently switch caller identities. Detach only closes that session.
+The successful observation contract is `observation-result-v1.schema.json`; it
+selects fields explicitly, replaces internal profile/connection IDs with handles,
+and cannot elevate transport readiness into a delivery receipt. Profiles and
+connections are limited to 256 each; overflow fails instead of truncating results.
 
 Every handle resolves within the authenticated caller's permitted profile scope.
 A handle from another caller/profile must fail before any effect or database
