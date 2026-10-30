@@ -1,23 +1,8 @@
 name: Android WebRTC
 
 on:
+  workflow_call:
   workflow_dispatch:
-  pull_request:
-    paths:
-      - 'plugins/tauri-plugin-mesh-runtime/**'
-      - 'service/**'
-      - 'src/**'
-      - 'src-tauri/**'
-      - 'scripts/build_android.py'
-      - 'scripts/test_android_webrtc.sh'
-      - 'scripts/test_android_signaling.sh'
-      - 'scripts/test_android_qualification.sh'
-      - 'scripts/build_desktop_transport_fixture.mjs'
-      - 'deploy/cloudflare-signal/**'
-      - 'scripts/verify_android_webrtc.py'
-      - 'package.json'
-      - 'pnpm-lock.yaml'
-      - '.github/workflows/android-webrtc.yml'
 
 permissions:
   contents: read

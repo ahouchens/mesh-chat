@@ -53,7 +53,7 @@ identity. Monotonic deadlines never enter persistent storage.
 | M0 baseline | Spec and diagram imported; baseline regression corpus passes | Record platform timing baselines in CI |
 | M1 policy/contract foundation | Immutable model, pure phase reducer, fair supervisor, bounded effects, native domain adapters, simulator, strict model checks, executing snapshot schema and initial public request/error design contracts | Complete public result/event schemas and facade design; extend adversarial corpus to all invariant classes |
 | M2 shared policy | Experimental `shared-native` service composition, renderer fencing, consented native manual-carrier adoption and private Windows transport registration implemented | Windows host qualification and restart adoption, remaining manual-pairing modes, full native authority conformance, bridge-restart regression, removal of migrated legacy loops |
-| M3 qualification gates | Dedicated deterministic evidence gate with required collection inventory and run-bound result matching | Full dependency-aware selection and exact-artifact release aggregation |
+| M3 qualification gates | Deterministic inventory/evidence gate; shared conservative workflow selector and final execution gate | Narrower dependency selection after isolation is qualified; complete cross-suite evidence and exact-artifact release aggregation |
 | M4 headless messaging | Existing Android native transport reused | Production native Windows DataChannel adapter, packaged fault matrix and receipt soak |
 | M5 supported consumers | Not implemented | Public authenticated facade, durable idempotency/event cursors, packaged SDKs/CLI, independent Windows and Android consumers and compatibility matrix |
 
@@ -285,6 +285,25 @@ transport. Missing execution or missing checks fail qualification. The executabl
 and its report command are test tooling, absent from normal shipping builds.
 
 ## Local validation
+
+`connection-qualification.yml` is the common PR, main-branch and merge-queue
+entry point. It invokes the existing policy, verification/Windows, Android,
+Direct Fabric and layout workflows; each remains manually runnable. Code,
+contracts, build dependencies, selector changes and unknown paths select the
+complete matrix. Only isolated documentation changes may omit Android, Direct
+Fabric and layout; policy and normal verification still run. Missing diff bases,
+empty changes and manual/merge-queue events expand coverage. Rename detection is
+disabled for selection so both old and new paths participate. No code boundary
+is assumed safe to narrow merely from its directory name.
+
+The final `Required connection qualification gate` re-derives the plan from the
+same checkout, source tree and event, then rejects absent, failed, canceled or
+unexpectedly skipped workflows. This is the check to require in repository
+branch protection when adopting this workflow layout; repository rules are not
+changed by this source refactor. Suite evidence retains its existing labels and
+execution checks. The workflow result manifest is not a release qualification:
+uniform scenario/count/artifact evidence across every suite and exact release
+artifact aggregation remain outstanding.
 
 Private observation contracts live in `contracts/connection/`; experimental
 application request/error contracts and the permission inventory live separately

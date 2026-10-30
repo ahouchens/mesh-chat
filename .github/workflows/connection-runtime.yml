@@ -1,11 +1,8 @@
 name: Connection runtime policy
 
 on:
-  pull_request:
-  push:
-    branches: [codex/mesh-chat-core-refactor]
+  workflow_call:
   workflow_dispatch:
-  merge_group:
 
 permissions:
   contents: read

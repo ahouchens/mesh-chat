@@ -1,46 +1,7 @@
 name: Direct Fabric feasibility
 
 on:
-  push:
-    branches:
-      - 'codex/direct-connectivity'
-    paths:
-      - 'experiments/direct-fabric/**'
-      - 'experiments/direct-app-host/**'
-      - 'service/**'
-      - 'src-tauri/**'
-      - 'plugins/tauri-plugin-mesh-runtime/**'
-      - '.github/workflows/direct-fabric-proof.yml'
-  pull_request:
-    paths:
-      - 'experiments/direct-fabric/**'
-      - 'experiments/direct-app-host/**'
-      - 'service/src/mesh_chat/**'
-      - 'service/pyproject.toml'
-      - 'service/tools/direct_binding_proof.py'
-      - 'service/tools/direct_fabric_harness.py'
-      - 'service/tools/direct_nat_harness.py'
-      - 'service/tests/test_direct_nat_evidence.py'
-      - 'service/tests/test_direct_binding.py'
-      - 'service/tests/test_direct_relationship.py'
-      - 'service/tests/test_direct_recovery*.py'
-      - 'service/tests/test_direct_runtime.py'
-      - 'service/tests/test_direct_native.py'
-      - 'service/tests/test_direct_candidates.py'
-      - 'service/tests/test_direct_documents.py'
-      - 'service/tests/test_direct_setup.py'
-      - 'service/tests/test_direct_packets.py'
-      - 'service/tests/test_direct_network_audit.py'
-      - 'service/tools/direct_network_audit.py'
-      - 'service/tests/test_network_callback_dispatch.py'
-      - 'service/tests/test_direct_offer.py'
-      - 'service/tests/test_direct_exchange.py'
-      - 'service/tests/test_workspace_service.py'
-      - 'service/tests/test_direct_packet_adapter.py'
-      - 'service/tests/test_direct_packet_policy.py'
-      - 'service/tests/test_direct_fabric_harness.py'
-      - 'service/tests/test_udp_mapping.py'
-      - '.github/workflows/direct-fabric-proof.yml'
+  workflow_call:
   workflow_dispatch:
 
 permissions:
