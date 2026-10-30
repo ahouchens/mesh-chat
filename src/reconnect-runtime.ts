@@ -108,6 +108,7 @@ export function createReconnectDeps(
       const previous = new Map(serviceSessions);
       const next = new Map<string, ServiceSession>();
       await Promise.all(payload.profiles.map(async (profile) => {
+        if (profile.policy_owner === "service") return;
         const sessionId = profile.native_session_id;
         if (!sessionId || nativeSessions.has(profile.id)) return;
         if (!current(profile)) {

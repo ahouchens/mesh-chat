@@ -4993,9 +4993,8 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
     setWebRtcSessionRevision((revision) => revision + 1);
   }), []);
   const [webrtcPath, setWebrtcPath] = useState<WebRTCSessionPath>(() => getWebRTCSession()?.path ?? "unknown");
-  // Reconnect is renderer-owned because the WebView owns RTCPeerConnection.
-  // This component only exists while the service is unlocked, so the
-  // coordinator can never run while the app is locked.
+  // Transitional WebView profiles retain the legacy coordinator. Service-owned
+  // profiles expose projections and never negotiate from this component.
   const refreshRef = useRef(refresh);
   useEffect(() => { refreshRef.current = refresh; }, [refresh]);
   const [reconnectCoordinator] = useState(() => createReconnectCoordinator({
@@ -5027,7 +5026,7 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
       window.removeEventListener("focus", wake);
       window.removeEventListener("pageshow", wake);
       document.removeEventListener("visibilitychange", wake);
-      void reconnectCoordinator.stop();
+      reconnectCoordinator.detach();
       closeNativeReconnectSessions();
       void closeNativeWebRTCSessions();
       void closeWebRTCSession();

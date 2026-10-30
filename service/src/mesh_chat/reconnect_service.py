@@ -453,6 +453,12 @@ class ReconnectServiceMixin:
             if native_session:
                 public["native_session_id"] = native_session
             profiles.append(public)
+        runtime = getattr(self, "_connection_runtime", None)
+        if runtime is not None:
+            connections = runtime.snapshots()
+            for public in profiles:
+                public["policy_owner"] = "service"
+                public["connection"] = connections.get(public["id"])
         return {
             "local_device_id": self._reconnect_device_id(),
             "local_destination": profile.get("destination_hash"),
@@ -1006,9 +1012,15 @@ class ReconnectServiceMixin:
                 changed = True
         if changed:
             self._changed()
+        runtime = getattr(self, "_connection_runtime", None)
+        if runtime is not None:
+            runtime.committed_start(contact_id)
         return self.reconnect_status()
 
     def reconnect_stop(self, contact_id: Any = None) -> dict[str, Any]:
+        runtime = getattr(self, "_connection_runtime", None)
+        if runtime is not None:
+            runtime.fence(contact_id)
         if contact_id is not None:
             profile_id = _text(contact_id, "Reconnect profile ID")
             profiles = [

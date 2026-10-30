@@ -475,7 +475,16 @@ class MeshChatService(
         "acknowledge_native_notification",
     }
 
-    def __init__(self, store: VaultStore, profile_dir: Path, emit: EventCallback, *, direct_native=None):
+    def __init__(self, store: VaultStore, profile_dir: Path, emit: EventCallback, *, direct_native=None,
+                 connection_policy="legacy"):
+        if connection_policy not in {"legacy", "shared-native"}:
+            raise ValueError("Unsupported connection policy")
+        if connection_policy == "shared-native":
+            # Private composition option, never a renderer command. Qualification
+            # must explicitly select a native host before this becomes default.
+            self._native_webrtc_host()
+        self._connection_policy = connection_policy
+        self._connection_runtime = None
         self.store = store
         self.profile_dir = profile_dir
         self.emit = emit
@@ -549,6 +558,10 @@ class MeshChatService(
         )
         self._native_webrtc_event_thread.start()
         self._direct_recovery.start()
+        if self._connection_policy == "shared-native":
+            from .connection.composition import native_runtime
+            self._connection_runtime = native_runtime(self)
+            self._connection_runtime.start()
         if self._background_availability_enabled():
             self._sync_background_reconnect()
 
@@ -2440,12 +2453,16 @@ class MeshChatService(
         if session_id is not None:
             self.native_webrtc_close(session_id)
 
-    def _claim_native_session(self, session_id: str, profile_id: Any, *, background: bool) -> bool:
+    def _claim_native_session(self, session_id: str, profile_id: Any, *, background: bool,
+                              runtime_owned: bool = False) -> bool:
         relay_only = False
         with self._dispatch_lock:
             if self._shutdown.is_set():
                 raise NativeUnavailable("Native WebRTC is shutting down")
             if profile_id is not None:
+                shared = getattr(self, "_connection_policy", "legacy") == "shared-native"
+                if shared != runtime_owned:
+                    raise NativeUnavailable("Native reconnect is owned by another policy")
                 profile = self._reconnect_profile(profile_id)
                 public = self._reconnect_profile_public(profile)
                 if not public["effective"]["ready"] or not profile.get("active"):
@@ -2454,7 +2471,8 @@ class MeshChatService(
                 in_background = self._workspace_lifecycle_state().get("state") in {
                     "background", "background_available", "suspended",
                 }
-                if background != in_background or (background and not self._background_availability_enabled()):
+                if ((not runtime_owned and background != in_background)
+                        or (in_background and not self._background_availability_enabled())):
                     raise NativeUnavailable("Native reconnect ownership changed")
             with self._native_webrtc_lock:
                 if session_id in self._native_webrtc_live:
@@ -2497,12 +2515,13 @@ class MeshChatService(
 
     def native_webrtc_offer(
         self, session_id: Any, ice: Any, channels: Any, profile_id: Any = None, *, background: bool = False,
+        runtime_owned: bool = False,
     ) -> dict[str, Any]:
         if not isinstance(session_id, str) or not 8 <= len(session_id) <= 128:
             raise ValidationError("Native WebRTC session is invalid")
         if not isinstance(ice, dict) or not isinstance(channels, list):
             raise ValidationError("Native WebRTC configuration is invalid")
-        if self._claim_native_session(session_id, profile_id, background=background):
+        if self._claim_native_session(session_id, profile_id, background=background, runtime_owned=runtime_owned):
             ice = {**ice, "iceTransportPolicy": "relay"}
         try:
             return self._native_sdp_result(session_id, self._native_webrtc_host().createOffer(
@@ -2521,12 +2540,13 @@ class MeshChatService(
 
     def native_webrtc_accept(
         self, session_id: Any, offer_sdp: Any, ice: Any, channels: Any, profile_id: Any = None, *, background: bool = False,
+        runtime_owned: bool = False,
     ) -> dict[str, Any]:
         if not isinstance(session_id, str) or not isinstance(offer_sdp, str):
             raise ValidationError("Native WebRTC session is invalid")
         if not isinstance(ice, dict) or not isinstance(channels, list):
             raise ValidationError("Native WebRTC configuration is invalid")
-        if self._claim_native_session(session_id, profile_id, background=background):
+        if self._claim_native_session(session_id, profile_id, background=background, runtime_owned=runtime_owned):
             ice = {**ice, "iceTransportPolicy": "relay"}
         self._native_webrtc_descriptions[session_id] = {"remote_offer": offer_sdp}
         if profile_id is None and any(
@@ -5908,6 +5928,8 @@ class MeshChatService(
                 return
             self._close_started = True
         self._shutdown.set()
+        connection_runtime = getattr(self, "_connection_runtime", None)
+        connection_stopped = connection_runtime is None or connection_runtime.stop(timeout=0.5)
         getattr(self, "_signal_pairing_contexts", {}).clear()
         native_events = getattr(self, "_native_webrtc_events", None)
         if native_events is not None:
@@ -5978,7 +6000,8 @@ class MeshChatService(
         # callback or retry. If the bounded foreground shutdown expires, a
         # daemon finalizer waits for that worker and closes the vault exactly
         # once without delaying desktop's sidecar deadline.
-        workers_stopped = self._direct_recovery.wait(timeout=0.1) and packets_stopped and callbacks_stopped and not self._retry_thread.is_alive()
+        workers_stopped = (connection_stopped and self._direct_recovery.wait(timeout=0.1)
+                           and packets_stopped and callbacks_stopped and not self._retry_thread.is_alive())
         if not workers_stopped:
             finalizer = threading.Thread(
                 target=self._finish_deferred_close,
@@ -5996,6 +6019,9 @@ class MeshChatService(
 
         try:
             self._direct_packets.wait()
+            connection_runtime = getattr(self, "_connection_runtime", None)
+            if connection_runtime is not None:
+                connection_runtime.wait()
             self._direct_recovery.wait()
             if (
                 self._retry_thread.is_alive()

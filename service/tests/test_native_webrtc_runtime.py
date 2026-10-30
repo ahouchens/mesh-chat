@@ -77,6 +77,27 @@ def runtime():
     return service, host
 
 
+@pytest.mark.parametrize("lifecycle", ["foreground", "background_available"])
+def test_shared_policy_claim_has_one_owner_across_lifecycle(lifecycle):
+    service, host = runtime()
+    service._connection_policy = "shared-native"
+    service.lifecycle = lifecycle
+    with pytest.raises(NativeUnavailable):
+        service.native_webrtc_offer("renderer-session", ICE, [], "profile-1")
+    service.native_webrtc_offer("runtime-session", ICE, [], "profile-1", runtime_owned=True)
+    assert [session for session, _ in host.created] == ["runtime-session"]
+
+
+def test_shared_policy_cannot_bypass_background_execution_denial():
+    service, host = runtime()
+    service._connection_policy = "shared-native"
+    service.lifecycle = "background_available"
+    service._background_availability_enabled = lambda: False
+    with pytest.raises(NativeUnavailable):
+        service.native_webrtc_offer("runtime-session", ICE, [], "profile-1", runtime_owned=True)
+    assert host.created == []
+
+
 def test_native_capabilities_exchange_and_consent_updates_without_a_renderer():
     import base64
     service, host = runtime()

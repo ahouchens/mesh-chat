@@ -1,5 +1,13 @@
 # Architecture
 
+## Connection runtime refactor
+
+The [runtime specification](docs/Mesh_Chat_Connection_Runtime_Spec.md) and
+[implementation roadmap](docs/Mesh_Chat_Connection_Runtime_Roadmap.md) describe
+the experimental service-owned policy and its qualification boundaries. The
+[Mesh Chat Core diagram](docs/architecture/mesh-chat-core.png) shows the target
+architecture; it is not a claim that M2–M5 are complete.
+
 ![Mesh Chat architecture: renderer, Tauri shell, Python service, Reticulum/LXMF with optional I2P, protected profile, and network paths](docs/architecture/overview.png)
 
 ## Durable connectivity implementation boundary
