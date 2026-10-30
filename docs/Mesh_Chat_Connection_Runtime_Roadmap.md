@@ -819,9 +819,12 @@ error codes to typed errors with their retry hint, and turns malformed,
 oversized, uncorrelated or closed-stream responses into distinct failures. Typed
 helpers cover profile query, connection snapshot, received pages, durable
 enqueue, event polling, acknowledgment and diagnostics; out-of-bounds limits and
-a missing idempotency key fail before anything is written. Twelve Node tests
-cover those paths, including timeout without resend and serialization under
-concurrency.
+a missing idempotency key fail before anything is written. A resynchronizing
+consumer walks every snapshot page, deduplicates redelivered events, clears its
+position on `resync_required` and acknowledges only a caller-confirmed position;
+an AbortSignal cancels before dispatch without writing, or reports an unknown
+outcome without resending. Nineteen Node tests cover those paths, including
+abort, timeout, deduplication and confirmation.
 
 It carries no host authentication, socket, runtime ownership, peer retry or
 private import. It is not wired into CI, no package is published, no Kotlin

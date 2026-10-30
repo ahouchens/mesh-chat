@@ -7,7 +7,7 @@
  * experimental and is not a redistribution promise.
  */
 
-import { CoreError, ProtocolError, TimeoutError, TransportClosedError } from "./errors.js";
+import { AbortError, CoreError, ProtocolError, TimeoutError, TransportClosedError } from "./errors.js";
 import { decodeResponse, encodeRequest, type RequestEnvelope } from "./framing.js";
 import type { LineTransport } from "./transport.js";
 import type {
@@ -32,6 +32,7 @@ export interface CoreClientOptions {
 export interface RequestOptions {
   idempotencyKey?: string;
   timeoutMs?: number;
+  signal?: AbortSignal;
 }
 
 export class CoreClient {
@@ -88,7 +89,7 @@ export class CoreClient {
     }
     const line = encodeRequest(envelope);
     const run = (): Promise<unknown> =>
-      this.#exchange(line, requestId, options.timeoutMs ?? this.#timeoutMs);
+      this.#exchange(line, requestId, options.timeoutMs ?? this.#timeoutMs, options.signal);
     const result = this.#tail.then(run, run);
     this.#tail = result.then(
       () => undefined,
@@ -97,12 +98,17 @@ export class CoreClient {
     return (await result) as T;
   }
 
-  async #exchange(line: string, requestId: string, timeoutMs: number): Promise<unknown> {
-    if (this.#closed) {
-      throw new TransportClosedError();
+  async #exchange(
+    line: string,
+    requestId: string,
+    timeoutMs: number,
+    signal?: AbortSignal,
+  ): Promise<unknown> {
+    if (this.#closed || signal?.aborted) {
+      throw this.#closed ? new TransportClosedError() : new AbortError(requestId);
     }
     await this.#transport.writeLine(line);
-    const response = decodeResponse(await this.#read(requestId, timeoutMs));
+    const response = decodeResponse(await this.#read(requestId, timeoutMs, signal));
     if (response.request_id !== requestId) {
       throw new ProtocolError("response does not correlate with the dispatched request");
     }
@@ -112,13 +118,22 @@ export class CoreClient {
     return response.result;
   }
 
-  async #read(requestId: string, timeoutMs: number): Promise<string> {
+  async #read(requestId: string, timeoutMs: number, signal?: AbortSignal): Promise<string> {
     let timer: ReturnType<typeof setTimeout> | undefined;
+    let detach: (() => void) | undefined;
     try {
       const deadline = new Promise<never>((_, reject) => {
         timer = setTimeout(() => reject(new TimeoutError(requestId)), timeoutMs);
       });
-      const line = await Promise.race([this.#transport.readLine(), deadline]);
+      const racers: Promise<string | null>[] = [this.#transport.readLine(), deadline];
+      if (signal !== undefined) {
+        racers.push(new Promise<never>((_, reject) => {
+          const onAbort = (): void => reject(new AbortError(requestId));
+          signal.addEventListener("abort", onAbort, { once: true });
+          detach = () => signal.removeEventListener("abort", onAbort);
+        }));
+      }
+      const line = await Promise.race(racers);
       if (line === null) {
         this.close();
         throw new TransportClosedError();
@@ -127,6 +142,9 @@ export class CoreClient {
     } finally {
       if (timer !== undefined) {
         clearTimeout(timer);
+      }
+      if (detach !== undefined) {
+        detach();
       }
     }
   }

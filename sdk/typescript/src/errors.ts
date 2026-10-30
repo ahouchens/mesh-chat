@@ -33,3 +33,11 @@ export class TimeoutError extends Error {
     this.name = "TimeoutError";
   }
 }
+
+/** The caller cancelled locally; the remote outcome is unknown. */
+export class AbortError extends Error {
+  constructor(readonly requestId: string) {
+    super(`core api request aborted: ${requestId}`);
+    this.name = "AbortError";
+  }
+}

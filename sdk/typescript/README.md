@@ -22,6 +22,12 @@ reach a runtime. Do not treat it as a supported integration release.
   `message.received`, durable enqueue, event polling, acknowledgment and
   diagnostics, and refuses out-of-bounds limits or a missing idempotency key
   before writing anything.
+- Exposes a resynchronizing `CoreConsumer`: it walks every snapshot page,
+  adopts the replay watermark, deduplicates redelivered event ids, clears its
+  position on `resync_required` instead of skipping, and only acknowledges a
+  position the caller confirms it applied. It never polls on a timer.
+- Accepts an `AbortSignal`. Cancelling before dispatch writes nothing;
+  cancelling a dispatched request reports an unknown outcome and never resends.
 
 ## What it does not do
 
@@ -30,9 +36,10 @@ reach a runtime. Do not treat it as a supported integration release.
   responsibilities.
 - It carries no peer retry policy, no native adapter and no private Python
   imports. It cannot grant consent or pair a peer.
-- It does not yet ship in CI, a release artifact or a support matrix. Kotlin,
-  async concurrency, cancellation of an in-flight request and cursor expiry
-  handling beyond `resync_required` remain open.
+- It is built and tested by general verification CI, but no package is published
+  and no support matrix exists. Kotlin, parallel in-flight requests, automatic
+  poll scheduling and cursor-expiry recovery beyond `resync_required` remain
+  open.
 
 ## Usage
 
@@ -55,6 +62,8 @@ node ../../node_modules/typescript/bin/tsc -p .
 node --test "dist/**/*.test.js"
 ```
 
-Twelve tests cover negotiation, request shapes, bounded limits, typed failures,
-correlation, EOF, timeout without resend, serialization under concurrency,
-idempotency requirements and strict framing.
+Nineteen tests cover negotiation, request shapes, bounded limits, typed
+failures, correlation, EOF, timeout and abort without resend, serialization
+under concurrency, idempotency requirements, strict framing, snapshot
+resynchronization, event deduplication, esync_required\ handling and
+confirmation.

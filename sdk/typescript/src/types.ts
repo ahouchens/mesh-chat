@@ -23,6 +23,16 @@ export interface ConnectionView {
   observation: Record<string, unknown>;
 }
 
+export interface SnapshotMessage {
+  profile: string;
+  message: string;
+  recipient: string;
+  kind: "text";
+  text: string;
+  state: string;
+  created_at: number;
+}
+
 export interface ReceivedMessage {
   profile: string;
   message: string;
