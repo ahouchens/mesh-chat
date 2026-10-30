@@ -532,6 +532,8 @@ class MeshChatService(
         self._native_webrtc_lock = threading.RLock()
         from .native_resource_registry import NativeResourceRegistry
         self._native_resources = NativeResourceRegistry()
+        from .native_startup_packets import NativeStartupPackets
+        self._native_startup_packets = NativeStartupPackets()
         self._native_webrtc_live: set[str] = set()
         self._native_webrtc_creating: set[str] = set()
         self._native_webrtc_profile_sessions: dict[str, str] = {}
@@ -2276,6 +2278,7 @@ class MeshChatService(
             raise NetworkUnavailable("Could not attach the native WebRTC interface") from exc
         self._webrtc_bridges[bridge_id] = interface
         self._native_webrtc_sessions[session_id] = bridge_id
+        self._deliver_native_startup_packets(session_id, physical, interface)
         try:
             self.network.reannounce()
         except Exception:
@@ -2293,6 +2296,26 @@ class MeshChatService(
             "max_packet": WebRTCInterface.HW_MTU,
             "state": "online",
         }
+
+    def _deliver_native_startup_packets(self, session_id, physical, interface):
+        for packet in self._native_startup_packets.take(physical):
+            if (session_id not in self._native_webrtc_live
+                    or not self._native_resources.current(session_id, physical)
+                    or not self._native_bridge_attached(session_id)):
+                return
+            try:
+                interface.process_incoming(packet)
+            except Exception:
+                # One malformed early packet must not hide the remaining announces.
+                continue
+
+    def _retain_native_startup_packet(self, session_id, data):
+        with self._native_webrtc_lock:
+            if session_id not in self._native_webrtc_live or not self._shared_native_session(session_id):
+                return
+            physical = self._native_resources.physical(session_id)
+            if physical is not None:
+                self._native_startup_packets.retain(physical, data)
 
     def _native_bridge_attached(self, session_id: str) -> bool:
         bridge_id = self._native_webrtc_sessions.get(session_id)
@@ -2413,6 +2436,8 @@ class MeshChatService(
                         self.webrtc_packet(bridge_id, data)
                     except Exception:
                         pass
+                elif managed:
+                    self._retain_native_startup_packet(session_id, data)
             elif event == "control":
                 if session_id not in self._native_webrtc_live or len(data) > 90_000:
                     return
@@ -2576,6 +2601,7 @@ class MeshChatService(
     def _release_native_session(self, session_id: str) -> None:
         with self._native_webrtc_lock:
             self._native_webrtc_live.discard(session_id)
+            self._native_startup_packets.discard(self._native_resources.physical(session_id))
             if session_id in self._native_webrtc_creating or not self._native_resources.closed(session_id):
                 return
             self._native_resources.release(session_id, self._native_resources.physical(session_id))
@@ -2713,6 +2739,7 @@ class MeshChatService(
             physical = self._native_resources.physical(session_id)
             was_live = session_id in self._native_webrtc_live
             self._native_webrtc_live.discard(session_id)
+            self._native_startup_packets.discard(physical)
         if was_live:
             connection_diagnostics.record(self, "transport_state", {
                 "setup_id": session_id, "state": "closed", "command": "native_webrtc_close", "component": "bridge",

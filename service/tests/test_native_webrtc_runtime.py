@@ -11,6 +11,7 @@ import RNS
 from mesh_chat.errors import ContactNotApproved, IdentityMismatch, NativeUnavailable
 from mesh_chat.service import MeshChatService
 from mesh_chat.native_resource_registry import NativeResourceRegistry
+from mesh_chat.native_startup_packets import NativeStartupPackets
 from mesh_chat.webrtc_onboarding import create_onboarding_answer, create_onboarding_offer, verify_onboarding_offer, verify_onboarding_answer
 
 FINGERPRINT = "sha-256 " + ":".join(["AB"] * 32)
@@ -67,6 +68,7 @@ def runtime():
     service._dispatch_lock = threading.RLock()
     service._native_webrtc_lock = threading.RLock()
     service._native_resources = NativeResourceRegistry()
+    service._native_startup_packets = NativeStartupPackets()
     service._native_webrtc_live = set()
     service._native_webrtc_creating = set()
     service._native_webrtc_profile_sessions = {}
@@ -520,6 +522,101 @@ def test_old_bridge_send_cannot_reach_a_reused_public_session(monkeypatch):
     senders[0](b"stale")
     senders[1](b"current")
     assert sent == [(host.raw_created[-1], b"current")]
+
+
+@pytest.fixture
+def startup_bridge(monkeypatch):
+    from types import SimpleNamespace
+    from mesh_chat import service as service_module
+    service, host = runtime()
+    received, announcements = [], []
+    class Interface:
+        HW_MTU = 1064
+        MODE_POINT_TO_POINT = 1
+        def __init__(self, *_args, **_kwargs):
+            self.online = True
+        def detach(self):
+            self.online = False
+        def process_incoming(self, packet):
+            if packet == b"bad":
+                raise ValueError("Malformed packet")
+            received.append(packet)
+    monkeypatch.setattr(service_module, "WebRTCInterface", Interface)
+    monkeypatch.setattr(RNS.Transport, "interfaces", [])
+    service.network = SimpleNamespace(reticulum=SimpleNamespace(
+        _add_interface=lambda interface, **_: RNS.Transport.interfaces.append(interface)),
+        reannounce=lambda: announcements.append(tuple(received)))
+    service._webrtc_announce_later = lambda *_: None
+    service.native_webrtc_offer("early-carrier", ICE, [])
+    service._connection_policy = "shared-native"
+    service._native_webrtc_profile_sessions["profile-1"] = "early-carrier"
+    permitted = [False]
+    service._connection_runtime = SimpleNamespace(permits_carrier=lambda *_: permitted[0])
+    return service, host, permitted, received, announcements
+
+
+def test_startup_packets_wait_for_authorized_registered_bridge_before_announce(startup_bridge):
+    service, _, permitted, received, announcements = startup_bridge
+    native_event(service, "message", "early-carrier", "YmFk")  # bad
+    native_event(service, "message", "early-carrier", "AQI=")
+    with pytest.raises(ContactNotApproved):
+        service.webrtc_attach_native("early-carrier")
+    assert not received and not announcements
+    permitted[0] = True
+    bridge = service.webrtc_attach_native("early-carrier")
+    assert received == [b"\x01\x02"]
+    assert announcements == [(b"\x01\x02",)]
+    assert service.webrtc_attach_native("early-carrier") == bridge
+    assert received == [b"\x01\x02"]
+
+
+def test_unadopted_manual_packets_are_not_retained(startup_bridge):
+    service, _, permitted, received, _ = startup_bridge
+    service._native_webrtc_profile_sessions.clear()
+    native_event(service, "message", "early-carrier", "AQI=")
+    service._native_webrtc_profile_sessions["profile-1"] = "early-carrier"
+    permitted[0] = True
+    service.webrtc_attach_native("early-carrier")
+    assert not received
+
+
+def test_bridge_repair_retains_packets_without_replacing_native_carrier(startup_bridge):
+    service, host, permitted, received, _ = startup_bridge
+    permitted[0] = True
+    first = service.webrtc_attach_native("early-carrier")
+    RNS.Transport.interfaces.clear()
+    native_event(service, "message", "early-carrier", "AQI=")
+    assert not received
+    second = service.webrtc_attach_native("early-carrier")
+    assert first != second and received == [b"\x01\x02"]
+    assert len(host.raw_created) == 1 and not host.raw_closed
+
+
+def test_close_discards_startup_packets_even_when_native_disposal_fails(startup_bridge):
+    service, host, _, received, _ = startup_bridge
+    native_event(service, "message", "early-carrier", "AQI=")
+    physical = host.raw_created[0]
+    def fail_close(_):
+        raise RuntimeError("Native disposal pending")
+    host.close = fail_close
+    with pytest.raises(RuntimeError, match="disposal pending"):
+        service.native_webrtc_close("early-carrier")
+    service._handle_native_webrtc_event("message", physical, "AQI=")
+    assert service._native_startup_packets.take(physical) == ()
+    assert not received
+
+
+def test_reused_logical_carrier_cannot_replay_old_startup_packets(startup_bridge):
+    service, host, permitted, received, _ = startup_bridge
+    native_event(service, "message", "early-carrier", "AQI=")
+    old = host.raw_created[0]
+    service.native_webrtc_close("early-carrier")
+    service.native_webrtc_offer("early-carrier", ICE, [], "profile-1", runtime_owned=True)
+    service._handle_native_webrtc_event("message", old, "AQI=")
+    native_event(service, "message", "early-carrier", "AwQ=")
+    permitted[0] = True
+    service.webrtc_attach_native("early-carrier")
+    assert received == [b"\x03\x04"]
 
 
 @pytest.mark.parametrize("fault", ["missing", "offline", "unregistered", "network_absent", "equal_replacement"])

@@ -131,6 +131,21 @@ reservations and protected key lifetime; the UI reports `adapter_quarantined`
 until a new runtime is started. These bounds do not qualify all other legacy
 queues or constitute a packaged saturation result.
 
+Shared native carriers retain early encrypted packets while bridge attachment is
+pending or RNS registration is being repaired. A separate private buffer admits
+at most 16 physical allocations, 16 packets and 16 KiB per allocation, with a
+1,064-byte packet bound. Overflow drops incoming data and counts the loss without
+evicting lifecycle events. Unadopted manual peers cannot populate this buffer.
+Attachment installs the registered consumer, rechecks the current owner lease,
+and drains packets before announcing. Closing or releasing an exact allocation
+discards its queued packets even if native disposal fails. Public ID reuse cannot
+replay packets from an earlier allocation. The producer is the private JNI message
+callback and the consumer is the existing RNS interface; peer wire and public
+API contracts are unchanged. Unit regressions cover bounds, authorization,
+generation isolation and same-carrier repair. The emulator fixture delays the
+attachment port and checks an actual JNI packet reaches the replacement RNS
+interface; this does not assert valid RNS routing or authenticated LXMF receipts.
+
 Android's 16-session capacity includes pending creation and physical disposal.
 Duplicate native IDs cannot replace an existing peer. Empty-candidate gathering
 fallback retains its original reservation, waits for the exact old peer to be

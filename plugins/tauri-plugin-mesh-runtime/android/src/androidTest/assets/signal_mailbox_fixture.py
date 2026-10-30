@@ -303,6 +303,59 @@ def run_shared_runtime_native(root, url):
             for peer in peers:
                 peer.store.close()
 
+def verify_native_startup_retention(service, owner, native, local_id, remote_id):
+    """Delay attachment at its port; real JNI packets must survive until RNS registration."""
+    import base64
+    from dataclasses import replace
+    from mesh_chat.service import WebRTCInterface
+
+    port = owner.executor.native
+    attach_entered, allow_attach = threading.Event(), threading.Event()
+    retained, delivered = threading.Event(), threading.Event()
+    marker = b"mesh-startup-" + uuid.uuid4().bytes
+    encoded = base64.b64encode(marker).decode("ascii")
+    physical = service._native_resources.require(local_id)
+    original_retain = service._native_startup_packets.retain
+    original_incoming = WebRTCInterface.process_incoming
+
+    def delayed_attach(session):
+        attach_entered.set()
+        assert allow_attach.wait(15), "Test did not release bridge attachment"
+        return port.attach(session)
+
+    def observe_retention(resource, data):
+        accepted = original_retain(resource, data)
+        if accepted and resource == physical and data == encoded:
+            retained.set()
+        return accepted
+
+    def observe_delivery(interface, packet):
+        if packet == marker:
+            delivered.set()
+        return original_incoming(interface, packet)
+
+    owner.executor.native = replace(port, attach=delayed_attach)
+    service._native_startup_packets.retain = observe_retention
+    WebRTCInterface.process_incoming = observe_delivery
+    try:
+        with service._dispatch_lock:
+            bridge = service._native_webrtc_sessions[local_id]
+            RNS.Transport.interfaces.remove(service._webrtc_bridges[bridge])
+            assert not service.native_webrtc_stats(local_id)["attached"]
+        assert attach_entered.wait(10), "Owner did not attempt bridge repair"
+        assert native.host.send(remote_id, marker), "Native startup packet send failed"
+        assert retained.wait(5), "JNI startup packet was not retained"
+        assert not delivered.is_set(), "Packet reached RNS before authorized bridge attachment"
+        allow_attach.set()
+        assert delivered.wait(5), "Retained packet did not reach the replacement RNS interface"
+        assert service._native_resources.require(local_id) == physical
+    finally:
+        allow_attach.set()
+        owner.executor.native = port
+        service._native_startup_packets.retain = original_retain
+        WebRTCInterface.process_incoming = original_incoming
+
+
 def run_manual_native_adoption(automatic=True):
     """Actual service/composition, signed control and JNI; synthetic path only.
 
@@ -387,15 +440,7 @@ def run_manual_native_adoption(automatic=True):
                    "Restored bridge did not regain path readiness", 10)
         assert service._native_resources.require(local_id) == local_physical
         assert native.send(local_physical) and native.send(remote_id)
-        # Simulate lost RNS registration while the service's bridge map and
-        # actual JNI carrier survive. Stale metadata must not report readiness.
-        with service._dispatch_lock:
-            stale_bridge = service._native_webrtc_sessions[local_id]
-            interface = service._webrtc_bridges[stale_bridge]
-            RNS.Transport.interfaces.remove(interface)
-            assert not service.native_webrtc_stats(local_id)["attached"]
-        wait_until(lambda: service._native_webrtc_sessions.get(local_id) not in (None, stale_bridge),
-                   "Shared owner retained an unregistered bridge", 15)
+        verify_native_startup_retention(service, owner, native, local_id, remote_id)
         wait_until(lambda: owner.snapshots()[profile_id]["messaging_ready"],
                    "Re-registered bridge did not regain path readiness", 10)
         assert service._native_resources.require(local_id) == local_physical
