@@ -2497,7 +2497,7 @@ class MeshChatService(
                         or (in_background and not self._background_availability_enabled())):
                     raise NativeUnavailable("Native reconnect ownership changed")
             with self._native_webrtc_lock:
-                if session_id in self._native_webrtc_live:
+                if session_id in self._native_webrtc_live or session_id in self._native_webrtc_creating:
                     raise NativeUnavailable("Native WebRTC session already exists")
                 if profile_id is not None:
                     if self.native_reconnect_session(profile_id):

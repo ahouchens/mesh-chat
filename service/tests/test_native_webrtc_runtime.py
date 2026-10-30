@@ -383,6 +383,10 @@ def test_close_during_native_creation_retires_the_late_result_and_releases_reser
     try:
         assert entered.wait(1)
         service.close_native_reconnect_session("profile-1")
+        # Removing live routing cannot release the exact in-flight ID, even
+        # when a manual caller does not supply a reconnect profile.
+        with pytest.raises(NativeUnavailable, match="already exists"):
+            service.native_webrtc_offer("native-session", ICE, [])
         with pytest.raises(NativeUnavailable, match="already has a peer"):
             service.native_webrtc_accept("second-session", SDP, ICE, [], "profile-1")
     finally:
