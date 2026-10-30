@@ -53,7 +53,7 @@ identity. Monotonic deadlines never enter persistent storage.
 | M0 baseline | Spec and diagram imported; baseline regression corpus passes | Record platform timing baselines in CI |
 | M1 policy/contract foundation | Immutable model, pure phase reducer, fair supervisor, bounded effects, native domain adapters, simulator and strict model checks implemented | Complete contract versioning and public facade design; extend adversarial corpus to all invariant classes |
 | M2 shared policy | Experimental `shared-native` service composition, renderer fencing and consented native manual-carrier adoption implemented | Trusted desktop registration/adoption, remaining manual-pairing modes, full native authority conformance, bridge-restart regression, removal of migrated legacy loops |
-| M3 qualification gates | Dedicated deterministic evidence gate | Full dependency-aware selection and exact-artifact release aggregation |
+| M3 qualification gates | Dedicated deterministic evidence gate with required collection inventory and run-bound result matching | Full dependency-aware selection and exact-artifact release aggregation |
 | M4 headless messaging | Existing Android native transport reused | Production native Windows DataChannel adapter, packaged fault matrix and receipt soak |
 | M5 supported consumers | Not implemented | Public authenticated facade, durable idempotency/event cursors, packaged SDKs/CLI, independent Windows and Android consumers and compatibility matrix |
 
@@ -148,5 +148,10 @@ From `service/`:
 
 The simulator runs the production reducer/supervisor with virtual time. Its
 resource oracle and Hypothesis state machine exercise 1,000 sequences of up to
-100 actions. These are policy tests, not native transport, cryptographic,
+100 actions, including successful and failed manual adoption, duplicated
+completion, cancellation and recovery. The CI policy runner records every
+collected node ID before execution and binds JUnit results to that run. Filters,
+collection failures, missing suites, skipped cases, stale reports, duplicate
+results and partial execution fail the gate. The inventory is retained beside
+the report and evidence JSON. These are policy tests, not native transport, cryptographic,
 application-receipt, real-clock, or packaged interoperability evidence.
