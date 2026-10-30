@@ -123,6 +123,28 @@ also reject duplicate resource/channel identities, incompatible description
 roles and contradictory packet channel state beyond the structural schema.
 
 An inventory is a current mechanism observation, not permission to adopt or
-evidence of messaging readiness. Protected binding records, current scope and
-intent checks, trusted service rebinding and actual restart/receipt tests are
-still required before surviving-carrier adoption can be enabled.
+evidence of messaging readiness. Current scope and intent checks, trusted service
+rebinding and actual restart/receipt tests are still required before surviving-
+carrier adoption can be enabled.
+
+### Protected carrier checkpoint v1
+
+The private desktop service adapter writes `native_carrier_recovery/current`
+through the vault's atomic sealed-record update. Its only current consumers are
+the checkpoint and invalidation paths; there is no adoption reader or public
+command. Up to 16 entries bind exact physical resources and adapter epochs to
+profile/contact/workspace IDs, local/remote device IDs, peer destination, privacy
+policy, SDP roles and description hashes. It stores neither SDP/credentials nor
+connected/readiness claims. Unknown versions, shapes or duplicate resources fail
+closed. Repeating an identical checkpoint is idempotent; rebinding an existing
+resource to different evidence is rejected.
+
+An unpredictable persisted revision fences checkpoint writes spanning Stop,
+authority changes or retirement. Invalidation removes only matching records
+while advancing that revision; subsequent authority writes cannot restore them.
+The memory gate closes first, and persistence failures remain failures. Native
+inventory collection happens outside the dispatch lock; current lease, binding,
+host identity and revision are rechecked before persistence. The authenticated
+host pins its adapter epoch, so a checkpoint from a new host discards obsolete
+incarnation records. This bookkeeping does not authorize service rebinding or
+extend signed capabilities and is not a replacement for startup reconciliation.

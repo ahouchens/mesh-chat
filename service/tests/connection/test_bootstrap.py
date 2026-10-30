@@ -16,10 +16,12 @@ def host():
         "createOffer", "acceptOffer", "applyAnswer", "send", "sendControl", "stats", "close")})
 
 
-@pytest.mark.parametrize("binding", ["explicit", "android_default"])
+@pytest.mark.parametrize("binding", ["explicit", "explicit_inventory", "android_default"])
 def test_shared_constructor_binds_private_host(tmp_path, monkeypatch, binding):
     from mesh_chat import native_webrtc_host
     native = host()
+    if binding == "explicit_inventory":
+        native.inventory = lambda: pytest.fail("An empty profile cannot checkpoint a carrier")
     loaded = []
     def load_android():
         loaded.append(True)
@@ -31,9 +33,10 @@ def test_shared_constructor_binds_private_host(tmp_path, monkeypatch, binding):
     try:
         service = MeshChatService(store, tmp_path, lambda _: None,
                                   connection_policy="shared-native",
-                                  native_webrtc_host=native if binding == "explicit" else None)
+                                  native_webrtc_host=native if binding.startswith("explicit") else None)
         assert service._native_webrtc_host() is native
-        assert loaded == ([] if binding == "explicit" else [True])
+        assert loaded == ([] if binding.startswith("explicit") else [True])
+        assert (service._carrier_journal is not None) == (binding == "explicit_inventory")
         owner = service._connection_runtime
         deadline = monotonic() + 1
         while monotonic() < deadline:

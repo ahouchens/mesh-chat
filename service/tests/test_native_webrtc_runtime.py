@@ -892,7 +892,8 @@ def test_production_composition_adopts_manual_carrier_without_mailbox_or_new_pee
     service.reconnect_request_create = lambda *_: pytest.fail("Manual authority cannot negotiate replacement")
     service.reconnect_fetch = lambda *_: pytest.fail("Manual authority cannot fetch signaling")
     service.reconnect_path_status = lambda _: {"has_path": True, "ready": True}
-    def attach(session):
+    def attach(session, *, expected_physical=None):
+        assert service._native_resources.current(session, expected_physical)
         service._native_webrtc_sessions[session] = "bridge"
         return {"bridge_id": "bridge"}
     service.webrtc_attach_native = attach

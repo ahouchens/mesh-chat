@@ -478,6 +478,9 @@ class ReconnectServiceMixin:
     def _connection_authority_update(self, authority_id, changed=True):
         runtime = getattr(self, "_connection_runtime", None) if changed else None
         token = runtime.begin_authority_change(authority_id) if runtime is not None else None
+        journal = getattr(self, "_carrier_journal", None)
+        if changed and journal is not None:
+            journal.invalidate(authority_id)
         yield
         if runtime is not None:
             runtime.commit_authority_change(authority_id, token)
@@ -1051,6 +1054,9 @@ class ReconnectServiceMixin:
             profiles = self._reconnect_profiles_raw()
         if runtime is not None:
             self.retire_unmanaged_native_connections({profile["id"] for profile in profiles})
+        journal = getattr(self, "_carrier_journal", None)
+        if journal is not None:
+            journal.invalidate(contact_id)
         for profile in profiles:
             profile["active"] = False
             profile["state"] = "stopped"

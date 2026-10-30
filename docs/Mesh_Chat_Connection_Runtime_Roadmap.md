@@ -265,12 +265,29 @@ fences a changed adapter epoch; ordinary snapshot races remain retryable.
 Cross-language digest vectors, stale-resource tests, real WebView2 observations
 and both Android Chromium offer roles cover this port. This is a prerequisite,
 not restart adoption: service exit still disposes the transport window. Protected
-binding persistence, durable invalidation and trusted rebinding remain open.
+binding checkpoints and invalidation now use the encrypted vault as described
+below; trusted rebinding and actual restart adoption remain open.
 
 Conflicting browser SDP operations now have one admitted operation per peer.
 Overlap is rejected before native dispatch without retiring the active resource;
 different peers retain the shared bounded operation budget. Exact retirement can
 still interrupt gathering or answer application. No adapter retry queue is added.
+
+Before the experimental desktop adapter attaches a leased messaging carrier, it
+checks the native inventory against the service's signed-exchange descriptions,
+current profile/device/peer binding and privacy policy. The bounded checkpoint
+stores only hashes and binding identifiers in one encrypted vault record. Native
+inventory I/O runs outside the dispatch lock; authority and exact resource are
+rechecked before the atomic write and attachment. Stop and contact/profile/
+workspace authority changes invalidate matching records before the authority
+write. A persisted revision rejects stale checkpoint completions even after
+permission is restored. Unrelated records remain intact; native retirement also
+removes its exact checkpoint. Write failures cannot claim durable success or
+prevent attempted native disposal. New private adapter incarnations discard
+obsolete host records on checkpoint. These are controlled component tests and
+vault-reopen tests, not service-crash recovery evidence. No reader adopts these
+records yet; trusted rebind, orphan reconciliation and restart/receipt tests
+remain required, and service exit still destroys its transport window.
 
 Windows process retirement now captures the originating PID and detaches its
 transport host, native host and pending requests before a replacement is

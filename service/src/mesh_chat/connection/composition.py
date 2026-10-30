@@ -95,7 +95,9 @@ class _NativeBindings:
 
     def attach(self, resource):
         with self.service._dispatch_lock:
-            return self.service.webrtc_attach_native(self._session(resource))
+            session = self._session(resource)
+            physical = self.service._native_resources.require(session)
+        return self.service.webrtc_attach_native(session, expected_physical=physical)
 
     def close(self, resource):
         if resource.startswith("connection-"):

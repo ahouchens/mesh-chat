@@ -33,11 +33,22 @@ class NativeWebRTCServiceMixin(NativeWebRTCControlMixin):
         host = getattr(self, "_native_host", None)
         return android_host() if host is None else host
 
-    def webrtc_attach_native(self, session_id: str) -> dict[str, Any]:
+    def webrtc_attach_native(self, session_id: str, *, expected_physical: str | None = None) -> dict[str, Any]:
         with self._dispatch_lock:
+            self._require_native_bridge_authority(session_id)
+            physical = self._native_resources.require(session_id)
+            if expected_physical is not None and physical != expected_physical:
+                raise NativeUnavailable("Carrier attachment resource changed")
+        journal = getattr(self, "_carrier_journal", None)
+        if journal is not None:
+            from .native_carrier_checkpoint import checkpoint_carrier
+            checkpoint_carrier(self, session_id, journal)
+        with self._dispatch_lock:
+            if not self._native_resources.current(session_id, physical):
+                raise NativeUnavailable("Carrier attachment resource changed")
             return self._attach_native_bridge(session_id)
 
-    def _attach_native_bridge(self, session_id: str) -> dict[str, Any]:
+    def _require_native_bridge_authority(self, session_id):
         if (getattr(self, "_connection_policy", "legacy") == "shared-native"
                 and not self._shared_native_session(session_id)):
             raise ContactNotApproved("Native messaging carrier has not been adopted")
@@ -45,6 +56,9 @@ class NativeWebRTCServiceMixin(NativeWebRTCControlMixin):
             raise ContactNotApproved("Native messaging carrier authority is unavailable")
         if session_id not in self._native_webrtc_live:
             raise NativeUnavailable("Native messaging carrier is retiring")
+
+    def _attach_native_bridge(self, session_id: str) -> dict[str, Any]:
+        self._require_native_bridge_authority(session_id)
         if self.network is None:
             raise NetworkUnavailable("Reticulum is not running for a WebRTC bridge")
         existing = self._native_webrtc_sessions.get(session_id)
@@ -274,9 +288,15 @@ class NativeWebRTCServiceMixin(NativeWebRTCControlMixin):
                         }
                     )
             elif event == "closed":
-                self._native_resources.confirm_closed(session_id, self._native_resources.physical(session_id))
-                self._release_native_session(session_id)
-                self.webrtc_detach_native(session_id)
+                physical = self._native_resources.physical(session_id)
+                self._native_resources.confirm_closed(session_id, physical)
+                try:
+                    journal = getattr(self, "_carrier_journal", None)
+                    if journal is not None and physical is not None:
+                        journal.retire(physical)
+                finally:
+                    self._release_native_session(session_id)
+                    self.webrtc_detach_native(session_id)
                 self.emit(
                     {
                         "type": "event",
@@ -560,8 +580,13 @@ class NativeWebRTCServiceMixin(NativeWebRTCControlMixin):
             })
         try:
             if physical is not None:
-                self._native_webrtc_host().close(physical)
-                self._native_resources.confirm_closed(session_id, physical)
+                try:
+                    journal = getattr(self, "_carrier_journal", None)
+                    if journal is not None:
+                        journal.retire(physical)
+                finally:
+                    self._native_webrtc_host().close(physical)
+                    self._native_resources.confirm_closed(session_id, physical)
         finally:
             with self._dispatch_lock, self._native_webrtc_lock:
                 if self._native_resources.current(session_id, physical):
