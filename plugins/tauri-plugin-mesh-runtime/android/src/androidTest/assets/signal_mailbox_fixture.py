@@ -341,9 +341,10 @@ def run_manual_native_adoption():
         document = create_onboarding_offer(identity, session_id=uuid.uuid4().hex,
             sdp=offer["sdp"], dtls_fingerprint=offer["fingerprint"])
         answer = service.native_webrtc_accept(local_id, offer["sdp"], ice, channels)
+        local_physical = service._native_resources.require(local_id)
         service.native_webrtc_bind_onboarding(local_id, document)
         native.invoke("applyAnswer", remote_id, answer["sdp"])
-        wait_until(lambda: all(native.stats(s).get("attached") for s in (local_id, remote_id)),
+        wait_until(lambda: all(native.stats(s).get("attached") for s in (local_physical, remote_id)),
                    "Manual native channels did not open")
         service.reconnect_consent_set(contact_id, True, True)
         capabilities = create_connection_capabilities(identity,
@@ -369,13 +370,21 @@ def run_manual_native_adoption():
         states = owner.owner.snapshots()
         assert len(states) == 1 and states[0].carrier.resource.resource_id == local_id
         assert service._execute("native_webrtc_close", {"session_id": local_id}) == {"state": "managed"}
-        before = {s: native.stats(s).get("received_packets", 0) for s in (local_id, remote_id)}
-        assert native.send(local_id) and native.send(remote_id)
+        before = {s: native.stats(s).get("received_packets", 0) for s in (local_physical, remote_id)}
+        assert native.send(local_physical) and native.send(remote_id)
         wait_until(lambda: all(native.stats(s).get("received_packets", 0) > before[s]
                               for s in before), "Adopted native carrier did not pass traffic", 10)
         service.reconnect_stop(contact_id)
         wait_until(lambda: local_id not in service._native_webrtc_live,
                    "Stop did not retire the adopted native carrier", 10)
+        service.native_webrtc_offer(local_id, ice, channels)
+        replacement = service._native_resources.require(local_id)
+        assert replacement != local_physical
+        # Inject a delayed terminal callback from the retired real JNI peer.
+        service._handle_native_webrtc_event("closed", local_physical)
+        assert service._native_resources.require(local_id) == replacement
+        assert local_id in service._native_webrtc_live
+        assert native.invoke("stats", replacement)["ice_connection_state"] != "closed"
         return True
     finally:
         if owner is not None:

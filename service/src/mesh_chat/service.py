@@ -530,6 +530,8 @@ class MeshChatService(
         self._webrtc_bridges: dict[str, WebRTCInterface] = {}
         self._native_webrtc_sessions: dict[str, str] = {}
         self._native_webrtc_lock = threading.RLock()
+        from .native_resource_registry import NativeResourceRegistry
+        self._native_resources = NativeResourceRegistry()
         self._native_webrtc_live: set[str] = set()
         self._native_webrtc_creating: set[str] = set()
         self._native_webrtc_profile_sessions: dict[str, str] = {}
@@ -2224,6 +2226,10 @@ class MeshChatService(
         return cls._native_webrtc_host_class
 
     def webrtc_attach_native(self, session_id: str) -> dict[str, Any]:
+        with self._dispatch_lock:
+            return self._attach_native_bridge(session_id)
+
+    def _attach_native_bridge(self, session_id: str) -> dict[str, Any]:
         if (getattr(self, "_connection_policy", "legacy") == "shared-native"
                 and not self._shared_native_session(session_id)):
             raise ContactNotApproved("Native messaging carrier has not been adopted")
@@ -2237,10 +2243,14 @@ class MeshChatService(
                 "state": "online",
             }
         bridge_id = _new_id()
+        physical = self._native_resources.require(session_id)
 
         def send(data: bytes) -> None:
+            if (session_id not in self._native_webrtc_live
+                    or not self._native_resources.current(session_id, physical)):
+                return
             try:
-                self._native_webrtc_host().send(session_id, data)
+                self._native_webrtc_host().send(physical, data)
             except Exception:
                 pass
 
@@ -2335,6 +2345,11 @@ class MeshChatService(
                     if runtime is None or not self._shared_native_session(current):
                         self.native_webrtc_close(current)
                 return
+            # Resolve at consumption time: a queued event from a released
+            # physical peer must not target a later reuse of its public ID.
+            session_id = self._native_resources.resolve(session_id)
+            if session_id is None or (session_id not in self._native_webrtc_live and event != "closed"):
+                return
             managed = self._shared_native_session(session_id)
             if event == "ice" or event in {"open", "closed"}:
                 connection_diagnostics.record(self, "transport_state", {
@@ -2397,6 +2412,7 @@ class MeshChatService(
                         }
                     )
             elif event == "closed":
+                self._native_resources.confirm_closed(session_id, self._native_resources.physical(session_id))
                 self._release_native_session(session_id)
                 self.webrtc_detach_native(session_id)
                 self.emit(
@@ -2525,6 +2541,8 @@ class MeshChatService(
                 if profile_id is not None:
                     if self.native_reconnect_session(profile_id):
                         raise NativeUnavailable("Native reconnect profile already has a peer")
+                self._native_resources.reserve(session_id)
+                if profile_id is not None:
                     self._native_webrtc_profile_sessions[profile_id] = session_id
                 self._native_webrtc_live.add(session_id)
                 self._native_webrtc_creating.add(session_id)
@@ -2533,8 +2551,9 @@ class MeshChatService(
     def _release_native_session(self, session_id: str) -> None:
         with self._native_webrtc_lock:
             self._native_webrtc_live.discard(session_id)
-            if session_id in self._native_webrtc_creating:
+            if session_id in self._native_webrtc_creating or not self._native_resources.closed(session_id):
                 return
+            self._native_resources.release(session_id, self._native_resources.physical(session_id))
             self._native_webrtc_descriptions.pop(session_id, None)
             self._native_webrtc_peers.pop(session_id, None)
             self._native_webrtc_controls.pop(session_id, None)
@@ -2571,7 +2590,7 @@ class MeshChatService(
         self._native_webrtc_descriptions[session_id] = {"ice_policy": ice.get("iceTransportPolicy", "all")}
         try:
             return self._native_sdp_result(session_id, self._native_webrtc_host().createOffer(
-                session_id,
+                self._native_resources.require(session_id),
                 json.dumps(ice, separators=(",", ":")),
                 json.dumps(channels, separators=(",", ":")),
             ))
@@ -2588,7 +2607,8 @@ class MeshChatService(
         self, session_id: Any, offer_sdp: Any, ice: Any, channels: Any, profile_id: Any = None, *, background: bool = False,
         runtime_owned: bool = False,
     ) -> dict[str, Any]:
-        if not isinstance(session_id, str) or not isinstance(offer_sdp, str):
+        if (not isinstance(session_id, str) or not 8 <= len(session_id) <= 128
+                or not isinstance(offer_sdp, str)):
             raise ValidationError("Native WebRTC session is invalid")
         if not isinstance(ice, dict) or not isinstance(channels, list):
             raise ValidationError("Native WebRTC configuration is invalid")
@@ -2609,7 +2629,7 @@ class MeshChatService(
             )
         try:
             return self._native_sdp_result(session_id, self._native_webrtc_host().acceptOffer(
-                session_id,
+                self._native_resources.require(session_id),
                 offer_sdp,
                 json.dumps(ice, separators=(",", ":")),
                 json.dumps(channels, separators=(",", ":")),
@@ -2628,18 +2648,21 @@ class MeshChatService(
             raise ValidationError("Native WebRTC answer is invalid")
         from .native_webrtc_control import normalized_sdp
         with self._native_webrtc_lock:
+            physical = self._native_resources.require(session_id)
             description = self._native_webrtc_descriptions.get(session_id, {})
             bound = description.get("bound_remote_sdp")
             if bound and bound != normalized_sdp(answer_sdp):
                 raise IdentityMismatch("Answer does not match the verified native binding")
         result = json.loads(
-            self._native_webrtc_host().applyAnswer(session_id, answer_sdp)
+            self._native_webrtc_host().applyAnswer(physical, answer_sdp)
         )
         if not result.get("ok"):
             raise NativeUnavailable(str(result.get("error", "native_webrtc_apply_failed")))
         with self._native_webrtc_lock:
-            if session_id in self._native_webrtc_live:
-                self._native_webrtc_descriptions.setdefault(session_id, {})["remote_answer"] = answer_sdp
+            if (not self._native_resources.current(session_id, physical)
+                    or session_id not in self._native_webrtc_live):
+                raise NativeUnavailable("Native answer completed after its resource was retired")
+            self._native_webrtc_descriptions.setdefault(session_id, {})["remote_answer"] = answer_sdp
         return result
 
     def native_webrtc_control(
@@ -2652,13 +2675,17 @@ class MeshChatService(
             or not 1 <= len(text) <= 65_536
         ):
             raise ValidationError("Native WebRTC control message is invalid")
-        accepted = bool(self._native_webrtc_host().sendControl(session_id, label, text))
+        physical = self._native_resources.require(session_id)
+        accepted = bool(self._native_webrtc_host().sendControl(physical, label, text))
+        accepted = (accepted and session_id in self._native_webrtc_live
+                    and self._native_resources.current(session_id, physical))
         return {"accepted": accepted}
 
     def native_webrtc_close(self, session_id: Any) -> dict[str, Any]:
         if not isinstance(session_id, str):
             raise ValidationError("Native WebRTC session is invalid")
         with self._native_webrtc_lock:
+            physical = self._native_resources.physical(session_id)
             was_live = session_id in self._native_webrtc_live
             self._native_webrtc_live.discard(session_id)
         if was_live:
@@ -2666,17 +2693,23 @@ class MeshChatService(
                 "setup_id": session_id, "state": "closed", "command": "native_webrtc_close", "component": "bridge",
             })
         try:
-            self._native_webrtc_host().close(session_id)
+            if physical is not None:
+                self._native_webrtc_host().close(physical)
+                self._native_resources.confirm_closed(session_id, physical)
         finally:
-            self._release_native_session(session_id)
-            with self._dispatch_lock:
-                self.webrtc_detach_native(session_id)
+            with self._dispatch_lock, self._native_webrtc_lock:
+                if self._native_resources.current(session_id, physical):
+                    self._release_native_session(session_id)
+                    self.webrtc_detach_native(session_id)
         return {"state": "closed"}
 
     def native_webrtc_stats(self, session_id: Any) -> dict[str, Any]:
         if not isinstance(session_id, str):
             raise ValidationError("Native WebRTC session is invalid")
-        result = json.loads(self._native_webrtc_host().stats(session_id))
+        physical = self._native_resources.require(session_id)
+        result = json.loads(self._native_webrtc_host().stats(physical))
+        if not self._native_resources.current(session_id, physical):
+            raise NativeUnavailable("Native inspection completed after its resource was retired")
         if not result.get("ok"):
             raise NativeUnavailable(str(result.get("error", "native_webrtc_stats_failed")))
         stats = result.get("result", {})

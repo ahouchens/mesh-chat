@@ -124,6 +124,17 @@ failed physical disposal retains capacity and reports adapter overflow. JVM
 concurrency tests cover these reservation rules; Android instrumentation also
 checks duplicate creation and cancellation during real ICE gathering.
 
+The service maps public session IDs to private native identities containing a
+fresh service epoch and increasing allocation number. It resolves callbacks
+only when dequeued, and removes mappings after creation/cleanup accounting.
+Reusing a public session ID therefore cannot redirect queued native events,
+late answers, inspections, close completions or old bridge sends to the new
+peer. The registry admits at most 16 resources; native creation/disposal retains
+its separate capacity enforcement. This changes the private host binding only;
+public session IDs and signed peer wire documents remain unchanged. Instrumentation
+uses private test access to resolve native handles, which is absent from public
+commands and packages.
+
 Compatibility wrappers owned by this branch: `background_reconnect.py`, the
 renderer coordinator/runtime, and renderer bridge repair remain until M2
 adoption and parity checks pass. Removing them before desktop and manual-pairing

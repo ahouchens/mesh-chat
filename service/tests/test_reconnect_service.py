@@ -550,6 +550,7 @@ def test_contact_stop_and_consent_changes_close_the_service_owned_native_peer(
         profile_id = alex.reconnect_profiles()["profiles"][0]["id"]
         alex._native_webrtc_profile_sessions[profile_id] = "native-session"
         alex._native_webrtc_live.add("native-session")
+        physical = alex._native_resources.reserve("native-session")
         closed = []
         def close(session):
             profile = alex._reconnect_profile(profile_id)
@@ -563,7 +564,7 @@ def test_contact_stop_and_consent_changes_close_the_service_owned_native_peer(
             alex.reconnect_consent_set(blair_id, False, True)
         else:
             alex.reconnect_consent_set(blair_id, True, False)
-        assert closed == ["native-session"]
+        assert closed == [physical]
         assert alex.native_reconnect_session(profile_id) is None
     finally:
         blair.close()

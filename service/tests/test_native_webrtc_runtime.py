@@ -10,6 +10,7 @@ import RNS
 
 from mesh_chat.errors import ContactNotApproved, IdentityMismatch, NativeUnavailable
 from mesh_chat.service import MeshChatService
+from mesh_chat.native_resource_registry import NativeResourceRegistry
 from mesh_chat.webrtc_onboarding import create_onboarding_answer, create_onboarding_offer, verify_onboarding_offer, verify_onboarding_answer
 
 FINGERPRINT = "sha-256 " + ":".join(["AB"] * 32)
@@ -22,7 +23,10 @@ ONBOARDING_CHANNELS = [
 
 
 class Host:
-    def __init__(self):
+    def __init__(self, resources):
+        self.resources = resources
+        self.raw_created = []
+        self.raw_closed = []
         self.created = []
         self.closed = []
         self.state = {"ice_connection_state": "connected", "data_channel_state": "open"}
@@ -31,15 +35,16 @@ class Host:
         self.answers = []
 
     def applyAnswer(self, session, answer):
-        self.answers.append((session, answer))
+        self.answers.append((self.resources.resolve(session), answer))
         return json.dumps({"ok": True})
 
     def sendControl(self, session, label, text):
-        self.controls.append((session, label, json.loads(text)))
+        self.controls.append((self.resources.resolve(session), label, json.loads(text)))
         return True
 
     def createOffer(self, session, ice, channels):
-        self.created.append((session, json.loads(ice)))
+        self.raw_created.append(session)
+        self.created.append((self.resources.resolve(session), json.loads(ice)))
         self.during_create()
         # Deliberately use the old metadata format: service signing must use
         # the canonical fingerprint extracted from the actual SDP.
@@ -49,7 +54,8 @@ class Host:
         return self.createOffer(session, ice, channels)
 
     def close(self, session):
-        self.closed.append(session)
+        self.raw_closed.append(session)
+        self.closed.append(self.resources.resolve(session))
 
     def stats(self, session):
         return json.dumps({"ok": True, "result": self.state})
@@ -60,6 +66,7 @@ def runtime():
     service._shutdown = threading.Event()
     service._dispatch_lock = threading.RLock()
     service._native_webrtc_lock = threading.RLock()
+    service._native_resources = NativeResourceRegistry()
     service._native_webrtc_live = set()
     service._native_webrtc_creating = set()
     service._native_webrtc_profile_sessions = {}
@@ -68,7 +75,7 @@ def runtime():
     service._native_webrtc_controls = {}
     service._native_webrtc_sessions = {}
     service._webrtc_bridges = {}
-    host = Host()
+    host = Host(service._native_resources)
     service._native_webrtc_host = lambda: host
     service.profile = {"id": "profile-1", "contact_id": "contact-1", "active": True, "allow_direct_ip_disclosure": False}
     service._reconnect_profile = lambda profile: service.profile
@@ -80,6 +87,11 @@ def runtime():
     service.webrtc_detach = lambda bridge: service._webrtc_bridges.pop(bridge, None)
     service._contact_by_destination = lambda peer: {"id": "contact-1", "destination_hash": peer}
     return service, host
+
+
+def native_event(service, kind, logical, data=""):
+    physical = service._native_resources.physical(logical) or logical
+    service._handle_native_webrtc_event(kind, physical, data)
 
 
 @pytest.mark.parametrize("lifecycle", ["foreground", "background_available"])
@@ -109,9 +121,9 @@ def test_shared_native_callbacks_observe_but_do_not_attach_or_close():
     service.native_webrtc_offer("runtime-session", ICE, [], "profile-1", runtime_owned=True)
     attached = []
     service.webrtc_attach_native = attached.append
-    service._handle_native_webrtc_event("open", "runtime-session")
-    service._handle_native_webrtc_event("ice", "runtime-session", "failed")
-    service._handle_native_webrtc_event("channel", "runtime-session", "mesh-reticulum:closed")
+    native_event(service, "open", "runtime-session")
+    native_event(service, "ice", "runtime-session", "failed")
+    native_event(service, "channel", "runtime-session", "mesh-reticulum:closed")
     assert attached == []
     assert host.closed == []
     # Explicit effect cleanup still closes the exact owned resource.
@@ -127,7 +139,7 @@ def test_callback_overflow_quarantines_shared_owner_and_closes_manual_carriers()
     service.native_webrtc_offer("manual-session", ICE, [])
     quarantined = []
     service._connection_runtime = SimpleNamespace(quarantine=lambda: quarantined.append(True))
-    service._handle_native_webrtc_event("overflow", "", "")
+    native_event(service, "overflow", "", "")
     assert quarantined == [True]
     assert host.closed == ["manual-session"]
 
@@ -140,11 +152,11 @@ def test_native_capabilities_exchange_and_consent_updates_without_a_renderer():
     stored = []
     service.reconnect_capabilities_get = lambda contact: {"local_capabilities": document[0]}
     service.reconnect_capabilities_store = lambda doc, **binding: stored.append((doc, binding))
-    service._handle_native_webrtc_event("channel", "native-session", "meshchat-reconnect:open")
+    native_event(service, "channel", "native-session", "meshchat-reconnect:open")
     service._maintain_native_controls()
     assert host.controls[-1][2] == {"type": "connection_capabilities", "document": "signed-v1"}
     text = json.dumps({"type": "connection_capabilities", "document": "peer-signed"})
-    service._handle_native_webrtc_event("control", "native-session", "meshchat-reconnect:" + base64.b64encode(text.encode()).decode())
+    native_event(service, "control", "native-session", "meshchat-reconnect:" + base64.b64encode(text.encode()).decode())
     assert stored == [("peer-signed", {"expected_contact_id": "contact-1", "expected_peer_destination": None})]
     document[0] = "signed-consent-change"
     service._native_control_next = 0
@@ -165,10 +177,10 @@ def test_native_answer_can_be_bound_signed_and_verified_as_a_complete_exchange(f
     preview = service.verify_webrtc_onboarding_offer(offer)
     native = service.native_webrtc_accept("manual-answer", preview["sdp"], ICE, ONBOARDING_CHANNELS)
     if failure_at == "before_binding":
-        service._handle_native_webrtc_event("ice", "manual-answer", "failed")
+        native_event(service, "ice", "manual-answer", "failed")
     service.native_webrtc_bind_onboarding("manual-answer", preview["document"])
     if failure_at == "after_binding":
-        service._handle_native_webrtc_event("ice", "manual-answer", "failed")
+        native_event(service, "ice", "manual-answer", "failed")
     complete_sdp = native["sdp"] + "a=end-of-candidates\r\n"
     answer = service.webrtc_onboarding_answer(preview["document"], complete_sdp, native["fingerprint"])
     verified = verify_onboarding_answer(answer["document"], verify_onboarding_offer(offer))
@@ -182,7 +194,7 @@ def test_manual_answer_grace_ends_when_the_data_channel_opens(monkeypatch):
     clock = [1000.0]
     monkeypatch.setattr(time, "monotonic", lambda: clock[0])
     service.native_webrtc_accept("manual-answer", SDP, ICE, ONBOARDING_CHANNELS)
-    service._handle_native_webrtc_event("ice", "manual-answer", "failed")
+    native_event(service, "ice", "manual-answer", "failed")
     assert not host.closed
 
     def attach(session_id):
@@ -190,12 +202,12 @@ def test_manual_answer_grace_ends_when_the_data_channel_opens(monkeypatch):
         return {"bridge_id": "bridge"}
 
     service.webrtc_attach_native = attach
-    service._handle_native_webrtc_event("open", "manual-answer")
+    native_event(service, "open", "manual-answer")
     clock[0] += 121
     service._expire_native_answer_exchanges()
     assert not host.closed
     # Once the channel has opened, the 0.9.51 cleanup remains necessary.
-    service._handle_native_webrtc_event("ice", "manual-answer", "failed")
+    native_event(service, "ice", "manual-answer", "failed")
     assert host.closed == ["manual-answer"]
     assert not service._native_webrtc_sessions
 
@@ -206,7 +218,7 @@ def test_manual_answer_grace_is_bounded_and_does_not_hide_closure(monkeypatch, e
     clock = [1000.0]
     monkeypatch.setattr(time, "monotonic", lambda: clock[0])
     service.native_webrtc_accept("manual-answer", SDP, ICE, ONBOARDING_CHANNELS)
-    service._handle_native_webrtc_event("ice", "manual-answer", "failed")
+    native_event(service, "ice", "manual-answer", "failed")
     assert not host.closed
     if ending == "timeout":
         clock[0] += 119
@@ -217,9 +229,9 @@ def test_manual_answer_grace_is_bounded_and_does_not_hide_closure(monkeypatch, e
     elif ending == "cancel":
         service.native_webrtc_close("manual-answer")
     elif ending == "ice_closed":
-        service._handle_native_webrtc_event("ice", "manual-answer", "closed")
+        native_event(service, "ice", "manual-answer", "closed")
     else:
-        service._handle_native_webrtc_event("channel", "manual-answer", "mesh-reticulum:closed")
+        native_event(service, "channel", "manual-answer", "mesh-reticulum:closed")
     assert host.closed == ["manual-answer"]
     assert not service._native_webrtc_live
     assert not service._native_webrtc_descriptions
@@ -248,7 +260,7 @@ def test_native_worker_expires_abandoned_answer_without_renderer_commands():
     closed = threading.Event()
 
     def close(session_id):
-        host.closed.append(session_id)
+        host.closed.append(service._native_resources.resolve(session_id))
         closed.set()
 
     host.close = close
@@ -270,7 +282,7 @@ def test_answer_exchange_grace_does_not_delay_other_native_failure_cleanup(kind)
         service.native_webrtc_offer("native-session", ICE, ONBOARDING_CHANNELS)
     else:
         service.native_webrtc_accept("native-session", SDP, ICE, ONBOARDING_CHANNELS, "profile-1")
-    service._handle_native_webrtc_event("ice", "native-session", "failed")
+    native_event(service, "ice", "native-session", "failed")
     assert host.closed == ["native-session"]
 
 
@@ -303,7 +315,7 @@ def test_reconnect_control_cannot_run_invitation_actions_or_accept_closed_contro
     service.reconnect_capabilities_store = lambda *args, **kwargs: stored.append(args)
     for session in ["native-session", "closed-session"]:
         text = json.dumps({"type": "invitation_approved", "capabilities": "untrusted"})
-        service._handle_native_webrtc_event("control", session, "meshchat-reconnect:" + base64.b64encode(text.encode()).decode())
+        native_event(service, "control", session, "meshchat-reconnect:" + base64.b64encode(text.encode()).decode())
     assert not stored
     assert not host.controls
 
@@ -325,12 +337,13 @@ def test_native_fingerprint_can_sign_a_document_verified_by_the_real_parser(answ
 def test_native_stats_and_events_stop_claiming_a_failed_bridge_is_attached(state):
     service, host = runtime()
     service._native_webrtc_live.add("native-session")
+    service._native_resources.reserve("native-session")
     service._native_webrtc_sessions["native-session"] = "bridge"
     service._webrtc_bridges["bridge"] = object()
     assert service.native_webrtc_stats("native-session")["attached"]
     host.state["ice_connection_state"] = state
     assert not service.native_webrtc_stats("native-session")["attached"]
-    service._handle_native_webrtc_event("ice", "native-session", state)
+    native_event(service, "ice", "native-session", state)
     assert not service._native_webrtc_sessions
     assert not service._webrtc_bridges
     assert not service._native_webrtc_live
@@ -340,10 +353,11 @@ def test_native_stats_and_events_stop_claiming_a_failed_bridge_is_attached(state
 def test_channel_closure_detaches_even_if_the_peer_ice_state_is_connected():
     service, host = runtime()
     service._native_webrtc_live.add("native-session")
+    service._native_resources.reserve("native-session")
     service._native_webrtc_sessions["native-session"] = "bridge"
     host.state["data_channel_state"] = "closed"
     assert not service.native_webrtc_stats("native-session")["attached"]
-    service._handle_native_webrtc_event("channel", "native-session", "mesh-reticulum:closed")
+    native_event(service, "channel", "native-session", "mesh-reticulum:closed")
     assert not service._native_webrtc_sessions
     assert not service._native_webrtc_live
     assert host.closed == ["native-session"]
@@ -409,8 +423,120 @@ def test_a_late_open_callback_cannot_resurrect_a_closed_session():
     service.webrtc_attach_native = lambda session: attached.append(session)
     service.native_webrtc_offer("native-session", ICE, [])
     service.native_webrtc_close("native-session")
-    service._handle_native_webrtc_event("open", "native-session", "mesh-reticulum")
+    native_event(service, "open", "native-session", "mesh-reticulum")
     assert not attached
+
+
+@pytest.mark.parametrize("kind,data", [("open", "mesh-reticulum"), ("closed", ""),
+    ("ice", "failed"), ("channel", "mesh-reticulum:closed"),
+    ("message", "cGFja2V0"), ("control", "mesh-onboarding:e30=")])
+def test_queued_old_callbacks_cannot_target_reused_public_session_ids(kind, data):
+    service, host = runtime()
+    service._native_webrtc_events = queue.Queue()
+    service.native_webrtc_offer("same-session", ICE, [])
+    first = host.raw_created[-1]
+    service.native_webrtc_event(kind, first, data)
+    service.native_webrtc_close("same-session")
+    service.native_webrtc_offer("same-session", ICE, [])
+    second = host.raw_created[-1]
+    assert first != second
+    touched = []
+    service.webrtc_attach_native = lambda *args: touched.append(args)
+    service.webrtc_packet = lambda *args: touched.append(args)
+    service._native_control_receive = lambda *args: touched.append(args)
+    service._native_webrtc_sessions["same-session"] = "new-bridge"
+    service._handle_native_webrtc_event(*service._native_webrtc_events.get_nowait())
+    assert not touched
+    assert host.raw_closed == [first]
+    assert service._native_resources.physical("same-session") == second
+    assert service._native_webrtc_sessions["same-session"] == "new-bridge"
+    assert "same-session" in service._native_webrtc_live
+
+
+def test_late_close_completion_cannot_release_or_detach_replacement():
+    service, host = runtime()
+    service.native_webrtc_offer("same-session", ICE, [])
+    first = host.raw_created[-1]
+    def close(physical):
+        assert physical == first
+        service._handle_native_webrtc_event("closed", physical)
+        service.native_webrtc_offer("same-session", ICE, [])
+        service._native_webrtc_sessions["same-session"] = "replacement-bridge"
+    host.close = close
+    service.native_webrtc_close("same-session")
+    assert service._native_resources.physical("same-session") == host.raw_created[-1]
+    assert "same-session" in service._native_webrtc_live
+    assert service._native_webrtc_sessions["same-session"] == "replacement-bridge"
+
+
+def test_failed_native_close_keeps_exact_handle_for_retry_without_allowing_reuse():
+    service, host = runtime()
+    service.native_webrtc_offer("same-session", ICE, [])
+    first = host.raw_created[-1]
+    service._native_webrtc_sessions["same-session"] = "bridge"
+    def failed_close(_):
+        raise OSError("native close failed")
+    host.close = failed_close
+    with pytest.raises(OSError):
+        service.native_webrtc_close("same-session")
+    assert "same-session" not in service._native_webrtc_live
+    assert "same-session" not in service._native_webrtc_sessions
+    assert service._native_resources.physical("same-session") == first
+    with pytest.raises(NativeUnavailable):
+        service.native_webrtc_offer("same-session", ICE, [])
+    host.close = host.raw_closed.append
+    service.native_webrtc_close("same-session")
+    assert host.raw_closed == [first]
+    assert service._native_resources.physical("same-session") is None
+
+
+def test_old_bridge_send_cannot_reach_a_reused_public_session(monkeypatch):
+    from types import SimpleNamespace
+    from mesh_chat import service as service_module
+    service, host = runtime()
+    senders, sent = [], []
+    class Interface:
+        HW_MTU = 500
+        MODE_POINT_TO_POINT = 1
+        def __init__(self, transport, send, **_):
+            senders.append(send)
+        def detach(self):
+            pass
+    monkeypatch.setattr(service_module, "WebRTCInterface", Interface)
+    monkeypatch.setattr(RNS.Transport, "interfaces", [])
+    service.network = SimpleNamespace(reticulum=SimpleNamespace(
+        _add_interface=lambda interface, **_: RNS.Transport.interfaces.append(interface)), reannounce=lambda: None)
+    service._webrtc_announce_later = lambda *_: None
+    host.send = lambda physical, data: sent.append((physical, data))
+    service.native_webrtc_offer("same-session", ICE, [])
+    service.webrtc_attach_native("same-session")
+    service.native_webrtc_close("same-session")
+    service.native_webrtc_offer("same-session", ICE, [])
+    service.webrtc_attach_native("same-session")
+    senders[0](b"stale")
+    senders[1](b"current")
+    assert sent == [(host.raw_created[-1], b"current")]
+
+
+@pytest.mark.parametrize("operation", ["answer", "inspect"])
+def test_late_native_result_cannot_describe_replacement(operation):
+    service, host = runtime()
+    service.native_webrtc_offer("same-session", ICE, [])
+    first = host.raw_created[-1]
+    def complete(physical, *_):
+        assert physical == first
+        service.native_webrtc_close("same-session")
+        service.native_webrtc_offer("same-session", ICE, [])
+        return json.dumps({"ok": True, "result": host.state})
+    host.applyAnswer = complete
+    host.stats = complete
+    with pytest.raises(NativeUnavailable, match="after its resource was retired"):
+        if operation == "answer":
+            service.native_webrtc_apply_answer("same-session", SDP)
+        else:
+            service.native_webrtc_stats("same-session")
+    assert "remote_answer" not in service._native_webrtc_descriptions["same-session"]
+    assert host.raw_closed == [first]
 
 
 def adoptable_manual_carrier():
@@ -447,7 +573,7 @@ def test_private_claim_transfers_a_verified_manual_carrier_and_fences_ui_teardow
 
 def test_shared_manual_open_cannot_attach_messaging_before_adoption():
     service, _, _ = adoptable_manual_carrier()
-    service._handle_native_webrtc_event("open", "manual-carrier", "mesh-reticulum")
+    native_event(service, "open", "manual-carrier", "mesh-reticulum")
     assert not service._native_webrtc_sessions
     with pytest.raises(ContactNotApproved, match="has not been adopted"):
         service.webrtc_attach_native("manual-carrier")

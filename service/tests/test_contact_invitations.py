@@ -38,10 +38,11 @@ def inbox(tmp_path):
 def test_native_receipt_survives_reopen_without_a_renderer_or_accepting(inbox, tmp_path):
     service, document, destination, key = inbox
     service._native_webrtc_live.add("phone")
+    physical = service._native_resources.reserve("phone")
     service._native_webrtc_peers["phone"] = destination
     text = json.dumps({"type": "contact_invitation", "document": document})
     encoded = base64.b64encode(text.encode()).decode()
-    service._handle_native_webrtc_event("control", "phone", "mesh-onboarding:" + encoded)
+    service._handle_native_webrtc_event("control", physical, "mesh-onboarding:" + encoded)
     saved = service.snapshot()["contact_invitations"]
     assert len(saved) == 1
     assert saved[0]["preview"]["display_name"] == "Taylor"

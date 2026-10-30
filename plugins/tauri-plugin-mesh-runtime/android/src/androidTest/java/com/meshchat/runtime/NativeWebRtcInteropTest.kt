@@ -272,11 +272,14 @@ class NativeWebRtcInteropTest {
         if (JSONObject(initialized).getJSONObject("result").optJSONObject("profile") == null) {
             command("create_profile", JSONObject().put("display_name", "WebRTC CI"))
         }
+        // Test-only private host access. Public commands continue to use id.
+        fun physicalId(): String = module.get("_service")!!.get("_native_resources")!!
+            .callAttr("require", id).toString()
         fun injectEarlyIceFailure() {
             // Deterministic callback ordering regression: the production queue
             // must preserve this real peer until the signed answer is returned.
             // The test injects the notification, not a carrier/network failure.
-            module.callAttr("native_webrtc_event", "ice", id, "failed")
+            module.callAttr("native_webrtc_event", "ice", physicalId(), "failed")
             val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10)
             while (System.nanoTime() < deadline) {
                 val events = JSONObject(module.callAttr("drain_events").toString()).getJSONArray("result")
@@ -439,12 +442,13 @@ class NativeWebRtcInteropTest {
                 js("return finish(${JSONObject.quote(verified.getString("sdp"))})")
             }
             awaitStats(id) { it.optBoolean("attached") && it.optString("ice_connection_state") in setOf("connected", "completed") }
+            val nativeHandle = physicalId()
             js("return probe()")
             results.await("sent")
             awaitStats(id) { it.optLong("received_packets") >= 1 && it.optLong("received_controls") >= 1 }
-            assertTrue(NativeWebRtcHost.send(id, byteArrayOf(4, 5, 6)))
+            assertTrue(NativeWebRtcHost.send(nativeHandle, byteArrayOf(4, 5, 6)))
             assertEquals("4,5,6", results.await("mesh-reticulum"))
-            assertTrue(NativeWebRtcHost.sendControl(id, control, "probe-reply"))
+            assertTrue(NativeWebRtcHost.sendControl(nativeHandle, control, "probe-reply"))
             assertEquals("probe-reply", results.await(control, "probe-reply"))
             if (repeatedMedia) {
                 for ((cycle, media) in listOf("audio", "video", "audio", "video").withIndex()) {
@@ -452,18 +456,18 @@ class NativeWebRtcInteropTest {
                     js("return mediaCycle(${JSONObject.quote(media)}, $cycle)")
                     results.await("media-active", cycle.toString())
                     awaitStats(id) { it.optBoolean("attached") && it.optLong("received_packets") > before }
-                    assertTrue(NativeWebRtcHost.send(id, byteArrayOf(40, cycle.toByte())))
+                    assertTrue(NativeWebRtcHost.send(nativeHandle, byteArrayOf(40, cycle.toByte())))
                     assertEquals("40,$cycle", results.await("mesh-reticulum", "40,$cycle"))
                     js("finishMedia()")
                     results.await("media-closed", cycle.toString())
                     awaitStats(id) { it.optBoolean("attached") && it.optLong("received_packets") >= before + 2 &&
                         it.optString("ice_connection_state") in setOf("connected", "completed") }
-                    assertTrue(NativeWebRtcHost.send(id, byteArrayOf(50, cycle.toByte())))
+                    assertTrue(NativeWebRtcHost.send(nativeHandle, byteArrayOf(50, cycle.toByte())))
                     assertEquals("50,$cycle", results.await("mesh-reticulum", "50,$cycle"))
                 }
             }
             command("native_webrtc_close", JSONObject().put("session_id", id))
-            assertFalse(JSONObject(NativeWebRtcHost.stats(id)).optBoolean("ok"))
+            assertFalse(JSONObject(NativeWebRtcHost.stats(nativeHandle)).optBoolean("ok"))
             Thread.sleep(300) // Let late close/state callbacks drain before leaving the test.
             command("snapshot")
             if (nativeOffers) assertCloseDoesNotBlockTheMainThread(channels)
