@@ -87,6 +87,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--check-plan", type=Path)
+    parser.add_argument("--evidence-dir", type=Path)
     args = parser.parse_args()
     plan = current_plan()
     if args.check_plan:
@@ -98,8 +99,13 @@ def main():
             raise ValueError("Selection job did not succeed")
         jobs = {name: value for name, value in needs.items() if name != "plan"}
         validate(plan, jobs)
+        if args.evidence_dir is None:
+            raise ValueError("Required component evidence directory is missing")
+        from connection_matrix import collect
+        components = collect(args.evidence_dir, plan["source_commit"], plan["source_tree"], plan["required"])
         result = {**plan, "passed": True,
-                  "scope": "Selected workflow execution; not an exact-artifact release qualification",
+                  "scope": "Selected workflow execution and component reports; not an exact-artifact release qualification",
+                  "components": components,
                   "jobs": {name: value["result"] for name, value in jobs.items()}}
     else:
         result = plan

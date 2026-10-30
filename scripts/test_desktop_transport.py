@@ -10,6 +10,9 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 CHECKS = {"offer", "answer", "bidirectional_packets", "bidirectional_control", "retirement"}
+PYTHON_SOURCES = (ROOT / "service/tools/connection_harness/desktop_transport_probe.py",
+                  *(ROOT / "service/src/mesh_chat" / name for name in
+                    ("desktop_transport_host.py", "direct_native.py", "ipc.py", "errors.py")))
 
 
 def verified_report(result, expected_source=None):
@@ -59,8 +62,7 @@ def main():
         evidence["native_binary_sha256"] = hashlib.sha256(args.binary.read_bytes()).hexdigest()
         evidence["python_sources_sha256"] = {
             str(path.relative_to(ROOT)).replace("\\", "/"): hashlib.sha256(path.read_bytes()).hexdigest()
-            for path in [probe, *(ROOT / "service/src/mesh_chat" / name for name in
-                                ("desktop_transport_host.py", "direct_native.py", "ipc.py", "errors.py"))]}
+            for path in PYTHON_SOURCES}
         evidence["passed"] = True
     except Exception as error:
         evidence["failure"] = str(error)

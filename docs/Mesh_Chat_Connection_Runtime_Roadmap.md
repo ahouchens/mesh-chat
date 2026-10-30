@@ -300,8 +300,13 @@ The final `Required connection qualification gate` re-derives the plan from the
 same checkout, source tree and event, then rejects absent, failed, canceled or
 unexpectedly skipped workflows. This is the check to require in repository
 branch protection when adopting this workflow layout; repository rules are not
-changed by this source refactor. Suite evidence retains its existing labels and
-execution checks. The workflow result manifest is not a release qualification:
+changed by this source refactor. The gate downloads policy, Windows and selected
+Android evidence from that workflow run. It revalidates the policy JUnit against
+its complete inventory, the actual Windows transport checks and component
+digests, and Android source/tree, APKs, scenario counts, run identities and
+cleanup. Its manifest includes component report hashes and execution counts;
+missing required reports fail. Evidence retains its component labels.
+The workflow result manifest is not a release qualification:
 uniform scenario/count/artifact evidence across every suite and exact release
 artifact aggregation remain outstanding.
 

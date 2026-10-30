@@ -76,12 +76,26 @@ jobs:
         with:
           name: connection-selection-${{ github.sha }}
           path: dist/reports
+      - uses: actions/download-artifact@v4
+        with:
+          name: connection-policy-${{ github.sha }}
+          path: dist/qualification/policy
+      - uses: actions/download-artifact@v4
+        with:
+          name: desktop-transport-${{ github.sha }}
+          path: dist/qualification/desktop
+      - uses: actions/download-artifact@v4
+        if: needs.plan.outputs.android == 'true'
+        with:
+          name: android-qualification-${{ github.sha }}
+          path: dist/qualification/android
       - name: Reject missing, failed, canceled or unexpectedly skipped suites
         env:
           QUALIFICATION_NEEDS: ${{ toJSON(needs) }}
         run: >-
           python scripts/connection_ci.py
           --check-plan dist/reports/connection-selection.json
+          --evidence-dir dist/qualification
           --output dist/reports/connection-qualification.json
       - uses: actions/upload-artifact@v4
         if: always()
