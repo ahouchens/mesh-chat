@@ -9,6 +9,17 @@ import subprocess
 
 
 SUITES = ("policy", "verification", "android", "direct", "layout")
+
+# Component evidence each required suite must contribute to the uniform manifest.
+COMPONENTS = {
+    "policy": {"policy"},
+    "verification": {"windows_transport", "windows_packaged_lifecycle",
+                     "windows_packaged_transport", "windows_packaged_pairing"},
+    "android": {"android_webrtc", "android_signaling"},
+    "direct": {"direct_Linux_recovery", "direct_Linux_setup", "direct_Linux_fabric",
+               "direct_Windows_recovery", "direct_Windows_setup", "direct_Windows_fabric"},
+    "layout": set(),
+}
 PROTECTED_DOCS = {"AGENTS.md", "SKILL.md", "Mesh_Chat_Connection_Runtime_Spec.md"}
 
 

@@ -282,3 +282,13 @@ def test_manifest_rejects_duplicate_component_identities(tmp_path):
                matrix.suite_record("policy", "level", source, tree, report="policy")]
     with pytest.raises(ValueError):
         matrix.unique_manifest(records, {"policy": report})
+
+
+def test_manifest_component_identities_match_the_shared_requirement_table(tmp_path):
+    from connection_ci import COMPONENTS
+    source, tree, _ = fixture(tmp_path)
+    direct_reports(tmp_path, source, tree)
+    required = ["policy", "verification", "android", "direct"]
+    present = {record["suite"] for record in matrix.collect(tmp_path, source, tree, required)["suites"]}
+    expected = set().union(*(COMPONENTS[name] for name in required))
+    assert present == expected

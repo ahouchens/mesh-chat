@@ -39,22 +39,36 @@ def counts(record):
     return values
 
 
-def suite_record(name, level, source, tree, *, report, tests=None, checks=None,
-          artifacts=None, cleanup="not_applicable"):
-    """One uniform record per required component, whatever its native shape."""
+def validated_counts(tests):
+    if tests is None:
+        return None
+    if (set(tests) != set(COUNT_FIELDS)
+            or any(type(value) is not int or value < 0 for value in tests.values())
+            or tests["failed"] or tests["skipped"]):
+        raise ValueError("Required component evidence cannot skip or fail cases")
+    return tests
+
+
+def validated_checks(checks):
     if checks is not None and (type(checks) is not int or checks <= 0):
         raise ValueError("Component check inventory is incomplete")
-    if tests is not None and (set(tests) != set(COUNT_FIELDS)
-                              or any(type(value) is not int or value < 0 for value in tests.values())
-                              or tests["failed"] or tests["skipped"]):
-        raise ValueError("Required component evidence cannot skip or fail cases")
+    return checks
+
+
+def validated_digests(artifacts):
     digests = dict(artifacts or {})
     if any(not isinstance(value, str) or re.fullmatch(r"[a-f0-9]{64}", value) is None
            for value in digests.values()):
         raise ValueError("Component artifact digests are incomplete")
+    return digests
+
+
+def suite_record(name, level, source, tree, *, report, tests=None, checks=None,
+                 artifacts=None, cleanup="not_applicable"):
+    """One uniform record per required component, whatever its native shape."""
     return {"suite": name, "evidence_level": level, "source_commit": source, "source_tree": tree,
-            "tests": tests, "checks": checks, "artifacts": digests, "cleanup": cleanup,
-            "report": report}
+            "tests": validated_counts(tests), "checks": validated_checks(checks),
+            "artifacts": validated_digests(artifacts), "cleanup": cleanup, "report": report}
 
 
 def unique_manifest(records, reports):

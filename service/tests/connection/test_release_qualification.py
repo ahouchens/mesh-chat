@@ -7,7 +7,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "scripts"))
 import release_qualification as release
-from connection_ci import SUITES
+from connection_ci import COMPONENTS, SUITES
 
 
 SOURCE, TREE, VERSION = "a" * 40, "b" * 40, "1.2.3"
@@ -32,7 +32,7 @@ def fixture(tmp_path, required=("policy", "verification")):
     (repository / "contracts/core-api/operations-v1.json").write_text(json.dumps(
         {"api_major": 1, "api_minor": 0, "status": "experimental_design"}))
     suites = [component("policy", tests=counts(5))]
-    suites += [component(name, checks=3) for name in sorted(release.REQUIRED_COMPONENTS["verification"])]
+    suites += [component(name, checks=3) for name in sorted(COMPONENTS["verification"])]
     manifest = {"version": 1, "event": "pull_request", "paths": ["src/x"], "required": list(required),
                 "reason": "conservative_full_matrix", "source_commit": SOURCE, "source_tree": TREE,
                 "passed": True, "scope": "component qualification",

@@ -20,23 +20,13 @@ import json
 from pathlib import Path
 import re
 
-from connection_ci import SUITES
+from connection_ci import COMPONENTS, SUITES
 
 
 MAX_ARTIFACT_BYTES = 1024 * 1024 * 1024
 SUITE_KEYS = {"suite", "evidence_level", "source_commit", "source_tree",
               "tests", "checks", "artifacts", "cleanup", "report_sha256"}
 COUNT_KEYS = {"collected", "executed", "passed", "failed", "skipped"}
-# Component records a required suite must contribute to the uniform manifest.
-REQUIRED_COMPONENTS = {
-    "policy": {"policy"},
-    "verification": {"windows_transport", "windows_packaged_lifecycle",
-                     "windows_packaged_transport", "windows_packaged_pairing"},
-    "android": {"android_webrtc", "android_signaling"},
-    "direct": {"direct_Linux_recovery", "direct_Linux_setup", "direct_Linux_fabric",
-               "direct_Windows_recovery", "direct_Windows_setup", "direct_Windows_fabric"},
-    "layout": set(),
-}
 ARTIFACT_KINDS = ("setup", "msi", "apk")
 
 
@@ -100,7 +90,7 @@ def qualification(path, source, tree):
     suites = records(manifest)
     present = {record["suite"] for record in suites}
     for name in required:
-        if not REQUIRED_COMPONENTS[name] <= present:
+        if not COMPONENTS[name] <= present:
             raise ValueError(f"Qualification is missing component evidence for {name}")
     components = manifest.get("components")
     if not isinstance(components, dict) or "policy_tests_executed" not in components:
