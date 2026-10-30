@@ -793,6 +793,23 @@ Windows packaged checks, layout, Android compilation and the final policy gate p
 on the same run; the Direct Fabric jobs were still executing when this entry was
 written.
 
+## Host binding component
+
+`core_api/host.py` lets a trusted host hand the private facade a binary stream
+pair it already accepted, with the caller identity, permission subset and profile
+scope that host authenticated. The grant is captured before serving, so a frame
+cannot select a caller, widen its permissions or change scope; runtime ownership
+is not an available permission. Serving runs until EOF and detaches that one
+session without stopping the app-owned runtime or its outbox. Ten in-process
+regressions cover negotiated requests, a caller-injection attempt, caller-scoped
+handles, permission bounding, invalid caller/permission/scope forms, EOF detach
+and malformed-frame detach.
+
+This is a component binding only. No operating-system access control is implied:
+a Windows named pipe or Android Binder endpoint must still supply the streams and
+prove the peer's identity, and no SDK or packaged consumer exists. The checklist
+below therefore keeps authenticated host bindings open.
+
 ## Remaining work checklist
 
 Reconciled against the specification's invariant list, SC01-SC26 and definition of
@@ -840,7 +857,8 @@ M5 - supported reusable core
 - [x] Private facade with scoped capabilities, durable enqueue/idempotency, message
       snapshots, replay cursors, acknowledgments, diagnostics, bounded framing and
       received-text enumeration.
-- [ ] Authenticated Windows and Android host bindings; the facade remains a private
+- [x] Trusted host grant binding over a host-owned stream pair (component only).
+- [ ] Authenticated Windows and Android host endpoints; the facade remains a private
       component until they exist.
 - [ ] Remaining durable commands/events (connection intent, pairing/approval) and
       their idempotency/retention semantics.
