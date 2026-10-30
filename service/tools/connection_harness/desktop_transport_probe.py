@@ -35,25 +35,32 @@ def main():
             if monotonic() >= deadline and not expected <= history:
                 raise AssertionError("Native observation deadline expired")
 
+    phase = "offer"
     try:
         ice = json.dumps({"iceServers": [], "iceTransportPolicy": "all"})
         channels = json.dumps([{"label": "mesh-reticulum", "ordered": True, "binary": True},
                                {"label": "meshchat-reconnect", "ordered": True, "binary": False}])
         offer = json.loads(host.createOffer("native-probe-a", ice, channels))
+        phase = "answer"
         answer = json.loads(host.acceptOffer("native-probe-b", offer["sdp"], ice, channels))
         assert offer["ok"] and answer["ok"]
+        phase = "applyAnswer"
         assert json.loads(host.applyAnswer("native-probe-a", answer["sdp"]))["ok"]
+        phase = "channels"
         wait_for({("channel", resource, f"{label}:open") for resource in ("native-probe-a", "native-probe-b")
                   for label in ("mesh-reticulum", "meshchat-reconnect")})
         for resource in ("native-probe-a", "native-probe-b"):
             assert json.loads(host.stats(resource))["result"]["data_channel_state"] == "open"
+        phase = "packets"
         assert host.send("native-probe-a", bytes([1, 2, 3]))
         assert host.send("native-probe-b", bytes([4, 5, 6]))
+        phase = "control"
         assert host.sendControl("native-probe-a", "meshchat-reconnect", "probe-a")
         assert host.sendControl("native-probe-b", "meshchat-reconnect", "probe-b")
         wait_for({("message", "native-probe-b", "AQID"), ("message", "native-probe-a", "BAUG"),
                   ("control", "native-probe-b", "meshchat-reconnect:" + base64.b64encode(b"probe-a").decode()),
                   ("control", "native-probe-a", "meshchat-reconnect:" + base64.b64encode(b"probe-b").decode())})
+        phase = "retirement"
         host.close("native-probe-a")
         host.close("native-probe-b")
         assert not host.send("native-probe-a", b"retired")
@@ -65,7 +72,7 @@ def main():
             raise AssertionError("Retired resource remained visible")
         result = {"ok": True, "checks": ["offer", "answer", "bidirectional_packets", "bidirectional_control", "retirement"]}
     except Exception as error:
-        result = {"ok": False, "error_type": type(error).__name__}
+        result = {"ok": False, "phase": phase, "error_type": type(error).__name__}
     finally:
         reader.close()
     writer.write({"v": 1, "type": "desktop_transport_qualification", **result})

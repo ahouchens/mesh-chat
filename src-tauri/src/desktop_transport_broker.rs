@@ -11,6 +11,7 @@ pub struct Binding {
     requests: VecDeque<Value>,
     pending: HashSet<String>,
     retired: bool,
+    polls: u64,
 }
 
 impl Binding {
@@ -24,11 +25,17 @@ impl Binding {
             requests: VecDeque::new(),
             pending: HashSet::new(),
             retired: false,
+            polls: 0,
         }
     }
 
     pub fn pid(&self) -> u32 {
         self.pid
+    }
+    #[cfg(feature = "transport-qualification")]
+    pub fn diagnostics(&self) -> Value {
+        serde_json::json!({"registered":true, "polls":self.polls,
+            "pending":self.pending.len(), "queued":self.requests.len()})
     }
     pub fn fault(&self) -> Option<Value> {
         self.epoch.as_ref().map(|epoch| {
@@ -115,6 +122,7 @@ impl Binding {
         if pid != self.pid || label != self.label || token != self.token {
             return Err("transport_caller_denied");
         }
+        self.polls = self.polls.saturating_add(1);
         if incoming.len() > 64 || !bounded(&incoming, 2 * 1024 * 1024) {
             return Err("transport_frame_budget");
         }

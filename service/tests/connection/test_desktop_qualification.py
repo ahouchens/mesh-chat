@@ -42,3 +42,16 @@ def test_stale_incompatible_or_partial_evidence_is_rejected(change):
 def test_missing_or_ambiguous_execution_is_not_a_passing_skip(stdout):
     with pytest.raises(RuntimeError, match="one result"):
         gate["verified_report"](SimpleNamespace(stdout=stdout, returncode=0), "a" * 40)
+
+
+def test_native_failure_preserves_stage_and_bounded_counts_without_private_diagnostics():
+    value = record()
+    value["result"] = {"ok": False, "phase": "offer", "error_type": "NativeUnavailable",
+                       "message": "private SDP and credentials", "host": {
+                           "registered": True, "polls": 0, "pending": 1, "queued": 1,
+                           "token": "private capability"}}
+    with pytest.raises(RuntimeError) as failure:
+        verify(value, exit_code=1)
+    assert '"phase": "offer"' in str(failure.value)
+    assert '"polls": 0' in str(failure.value)
+    assert "private" not in str(failure.value)

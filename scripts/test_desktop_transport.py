@@ -27,7 +27,18 @@ def verified_report(result, expected_source=None):
     if (result.returncode != 0 or not isinstance(report, dict) or report.get("ok") is not True
             or not isinstance(report.get("checks"), list)
             or len(report["checks"]) != len(CHECKS) or set(report["checks"]) != CHECKS):
-        raise RuntimeError("Required browser transport checks did not all pass")
+        diagnostic = {}
+        if isinstance(report, dict):
+            for key in ("phase", "error_type"):
+                value = report.get(key)
+                if isinstance(value, str) and len(value) <= 64 and value.isidentifier():
+                    diagnostic[key] = value
+            host = report.get("host")
+            if isinstance(host, dict):
+                diagnostic["host"] = {key: value for key, value in host.items()
+                                      if key in {"registered", "polls", "pending", "queued"}
+                                      and type(value) in {int, bool}}
+        raise RuntimeError("Required browser transport checks did not all pass: " + json.dumps(diagnostic))
     return record
 
 

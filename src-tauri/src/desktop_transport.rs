@@ -8,6 +8,16 @@ pub struct RegisteredHost {
     window: Option<WebviewWindow>,
 }
 
+#[cfg(feature = "transport-qualification")]
+pub fn diagnostics(state: &ServiceState) -> Value {
+    state
+        .desktop_transport
+        .lock()
+        .ok()
+        .and_then(|host| host.as_ref().map(|host| host.binding.diagnostics()))
+        .unwrap_or_else(|| serde_json::json!({"registered":false}))
+}
+
 fn trusted_location(url: &tauri::Url) -> bool {
     if url.path() != "/transport-host.html"
         || url.query().is_some()

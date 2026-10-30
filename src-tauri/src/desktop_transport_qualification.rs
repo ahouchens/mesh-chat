@@ -45,10 +45,11 @@ pub fn run() -> i32 {
                     match event {
                         CommandEvent::Stdout(bytes) => {
                             buffer.extend_from_slice(&bytes);
-                            if consume_frames(&mut buffer, |value| {
+                            if consume_frames(&mut buffer, |mut value| {
                                 if value["type"] == "desktop_transport_qualification" {
                                     reported = true;
                                     let passed = value["ok"] == true;
+                                    value["host"] = desktop_transport::diagnostics(&setup_state);
                                     println!("{}", json!({"v":1, "source_commit":env!("MESH_BUILD_COMMIT"),
                                         "evidence_level":"windows_webview2_private_host_component", "result":value}));
                                     app.exit(if passed { 0 } else { 1 });
