@@ -990,7 +990,7 @@ class ReconnectServiceMixin:
             ],
         }
 
-    def reconnect_start(self, contact_id: Any = None) -> dict[str, Any]:
+    def reconnect_start(self, contact_id: Any = None, *, automatic: bool = False) -> dict[str, Any]:
         targets = (
             [self._reconnect_contact(contact_id)]
             if contact_id is not None
@@ -1003,6 +1003,8 @@ class ReconnectServiceMixin:
         changed = False
         for contact in targets:
             profile = self._reconnect_profile_for_contact(contact["id"])
+            if automatic and profile.get("state") == "stopped":
+                continue
             if profile.get("auto_reconnect") and profile.get("remote_auto_reconnect"):
                 profile["active"] = True
                 profile["state"] = "waiting_for_peer"
@@ -1013,7 +1015,7 @@ class ReconnectServiceMixin:
         if changed:
             self._changed()
         runtime = getattr(self, "_connection_runtime", None)
-        if runtime is not None:
+        if runtime is not None and not automatic:
             runtime.committed_start(contact_id)
         return self.reconnect_status()
 
@@ -1037,7 +1039,7 @@ class ReconnectServiceMixin:
             profile["updated_at"] = _now()
             self.store.put(PROFILE_KIND, profile["id"], profile)
             close_native = getattr(self, "close_native_reconnect_session", None)
-            if close_native is not None:
+            if close_native is not None and runtime is None:
                 close_native(profile["id"])
         if contact_id is None:
             # A per-contact stop must not claim the whole supervisor is stopped.

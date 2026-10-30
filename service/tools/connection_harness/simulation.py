@@ -5,7 +5,7 @@ from random import Random
 
 from mesh_chat.connection.model import (
     Authority, Bridge, Cancel, ConnectionKey, ConnectionState, ContextChanged,
-    Desired, Failed, Failure, Phase, Result, Retire, Work,
+    Desired, Failed, Failure, Health, Phase, Result, Retire, Work,
 )
 from mesh_chat.connection.supervisor import ConnectionSupervisor
 
@@ -50,7 +50,9 @@ class Simulation:
             self.allocated.add(allocated)
         event = (Failed(work.operation, self.now, Failure.TRANSIENT, allocated=allocated)
                  if fail else Result(work.operation, self.now, allocated=allocated,
-                                     verified=work.phase is Phase.CHECKING))
+                                     verified=work.phase is Phase.CHECKING,
+                                     observed_health=Health.OPEN if work.phase is Phase.INSPECT else None,
+                                     observed_bridge=Bridge.READY if work.phase is Phase.INSPECT else None))
         self.trace.append({"type": "complete", "index": index, "fail": fail, "duplicate": duplicate})
         self.owner.dispatch(self.key, event)
         self.drain()

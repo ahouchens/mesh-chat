@@ -1,7 +1,9 @@
 from threading import Event
 from time import monotonic
 
-from mesh_chat.connection.model import Bridge, Execution, Phase, Result
+import pytest
+
+from mesh_chat.connection.model import Bridge, Execution, Health, Phase, Result
 from mesh_chat.connection.runtime import ConnectionRuntime
 
 
@@ -10,7 +12,9 @@ class Executor:
         return Result(work.operation, monotonic(),
                       allocated=work.resource if work.phase in {
                           Phase.GATHER_OFFER, Phase.GATHER_ANSWER, Phase.CHECKING} else None,
-                      verified=work.phase is Phase.CHECKING)
+                      verified=work.phase is Phase.CHECKING,
+                      observed_health=Health.OPEN if work.phase is Phase.INSPECT else None,
+                      observed_bridge=Bridge.READY if work.phase is Phase.INSPECT else None)
 
     def retire(self, resource):
         pass
@@ -22,7 +26,6 @@ def runtime():
                "peer_auto_reconnect": True, "effective": {"ready": True, "preferred": True}}
     owner = ConnectionRuntime("test-epoch", lambda *_: Executor(),
         profiles=lambda: {"profiles": [profile]}, execution=lambda: Execution.AVAILABLE,
-        stats=lambda _: {"attached": True, "ice_connection_state": "connected"},
         activate=lambda _: None)
     return owner, profile
 
@@ -69,5 +72,39 @@ def test_runtime_projection_sequence_advances_on_observations():
         before = owner.snapshots()["p"]["sequence"]
         owner.fence("c")
         assert owner.snapshots()["p"]["sequence"] > before
+    finally:
+        owner.stop()
+
+
+@pytest.mark.parametrize("contact", [None, "c"])
+def test_failed_stop_before_first_scan_still_fences_loaded_profiles(contact):
+    owner, profile = runtime()
+    owner.fence(contact)
+    try:
+        owner.step()
+        assert owner.snapshots()["p"]["desired"] == "stopped"
+        assert owner.runner.idle
+        owner.committed_start("c")
+        owner.synchronize()
+        assert owner.snapshots()["p"]["desired"] == "enabled"
+    finally:
+        owner.stop()
+
+
+def test_removed_profile_requires_explicit_restart_and_preserves_operation_generation():
+    owner, profile = runtime()
+    try:
+        owner.synchronize()
+        owner.owner.tick(monotonic())
+        before = owner.owner.snapshots()[0].generation
+        owner.profiles = lambda: {"profiles": []}
+        owner.synchronize()
+        owner.profiles = lambda: {"profiles": [profile]}
+        owner.synchronize()
+        assert owner.snapshots()["p"]["desired"] == "stopped"
+        owner.committed_start("c")
+        owner.synchronize()
+        owner.owner.tick(monotonic())
+        assert owner.owner.snapshots()[0].generation > before
     finally:
         owner.stop()

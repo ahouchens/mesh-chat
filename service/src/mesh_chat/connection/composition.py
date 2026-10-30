@@ -26,6 +26,11 @@ def native_runtime(service):
             return Execution.PAUSED
         return Execution.AVAILABLE
 
+    def activate(contact_id):
+        with service._dispatch_lock:
+            # Reconciliation may enable a default, but cannot undo explicit Stop.
+            service.reconnect_start(contact_id, automatic=True)
+
     def factory(current, cached_profile):
         def fresh_profile(key):
             cached = cached_profile(key)
@@ -55,4 +60,4 @@ def native_runtime(service):
                     current=current, now=monotonic, wall_time=time)
 
     return ConnectionRuntime(uuid4().hex, factory, profiles=profiles, execution=execution,
-                             stats=service.native_webrtc_stats, activate=service.reconnect_start)
+                             activate=activate)

@@ -2322,6 +2322,7 @@ class MeshChatService(
         self, event: str, session_id: str, data: str = ""
     ) -> None:
         with self._dispatch_lock:
+            managed = self._shared_native_session(session_id)
             if event == "ice" or event in {"open", "closed"}:
                 connection_diagnostics.record(self, "transport_state", {
                     "setup_id": session_id, "state": data if event == "ice" else event,
@@ -2334,6 +2335,9 @@ class MeshChatService(
                 })
             if event == "open":
                 if session_id not in self._native_webrtc_live:
+                    return
+                if managed:
+                    # The reducer admits attachment after verified CHECKING.
                     return
                 self._native_webrtc_descriptions.get(session_id, {}).pop("answer_wait_until", None)
                 try:
@@ -2390,7 +2394,7 @@ class MeshChatService(
                     }
                 )
             elif event in {"ice", "channel", "signaling", "gathering"}:
-                if event == "ice" and (data == "closed" or (
+                if not managed and event == "ice" and (data == "closed" or (
                     data == "failed" and not self._native_answer_exchange_pending(session_id)
                 )):
                     self.native_webrtc_close(session_id)
@@ -2399,7 +2403,7 @@ class MeshChatService(
                     if session_id in self._native_webrtc_live and label in {"mesh-onboarding", "meshchat-reconnect"} and state == "open":
                         self._native_webrtc_controls.setdefault(session_id, {})["label"] = label
                         self._native_control_next = 0
-                    if label == "mesh-reticulum" and state in {"closing", "closed"}:
+                    if not managed and label == "mesh-reticulum" and state in {"closing", "closed"}:
                         self.native_webrtc_close(session_id)
                     if label == "mesh-onboarding" and state == "open":
                         self.emit(
@@ -2419,6 +2423,11 @@ class MeshChatService(
                         "detail": data[:160],
                     }
                 )
+
+    def _shared_native_session(self, session_id: str) -> bool:
+        with self._native_webrtc_lock:
+            return (getattr(self, "_connection_policy", "legacy") == "shared-native"
+                    and session_id in self._native_webrtc_profile_sessions.values())
 
     def _native_answer_exchange_pending(self, session_id: str) -> bool:
         with self._native_webrtc_lock:

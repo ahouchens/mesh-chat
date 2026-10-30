@@ -77,6 +77,13 @@ cannot allow the current runtime to restart that profile. Shutdown retains keys
 until native effects and cleanup have finished; late allocation is retired by
 exact handle.
 
+Native callbacks for service-owned profiles report transport facts; the reducer
+alone admits attachment and retirement. Periodic native/channel/route inspection
+uses the same bounded effect runner, with a poll-interval deadline. Failed or
+late inspection cannot restore readiness. A missing route invalidates readiness
+while preserving a healthy carrier for bridge repair. Default activation cannot
+clear an explicit Stop, including one issued before the first profile scan.
+
 Compatibility wrappers owned by this branch: `background_reconnect.py`, the
 renderer coordinator/runtime, and renderer bridge repair remain until M2
 adoption and parity checks pass. Removing them before desktop and manual-pairing

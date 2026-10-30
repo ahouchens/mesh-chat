@@ -5,7 +5,7 @@ import pytest
 
 from mesh_chat.connection.adapters.reconnect import NativePort, ReconnectExecutor, SignalingPort
 from mesh_chat.connection.model import (
-    Authority, Bridge, ConnectionKey, ConnectionState, Desired, Failed, Phase,
+    Authority, Bridge, Carrier, ConnectionKey, ConnectionState, Desired, Failed, Health, Phase, Resource,
     Tick, Work,
 )
 from mesh_chat.connection.reducer import transition
@@ -140,3 +140,20 @@ def test_missing_path_never_claims_messaging_ready():
         result = transition(result.state, executor.execute(result.effects[0], Event()))
     assert result.state.carrier.bridge is Bridge.PATH_PENDING
     assert result.state.negotiation.phase is Phase.PATH
+
+
+def test_inspection_checks_current_path_and_channel_not_just_ice():
+    domain = Domain(True)
+    resource = Resource("adapter", "carrier")
+    state = replace(initial(), carrier=Carrier(resource, 1, Health.OPEN, Bridge.READY, 0))
+    executor = domain.executor(state)
+    work = transition(state, Tick(0)).effects[0]
+    executor.native = replace(executor.native, stats=lambda _: {
+        "attached": True, "ice_connection_state": "connected", "data_channel_state": "open"})
+    executor.path = lambda _: {"has_path": False, "ready": False}
+    event = executor.execute(work, Event())
+    assert event.observed_health is Health.OPEN
+    assert event.observed_bridge is Bridge.PATH_PENDING
+    executor.native = replace(executor.native, stats=lambda _: {
+        "attached": True, "ice_connection_state": "connected", "data_channel_state": "closed"})
+    assert executor.execute(work, Event()).observed_health is Health.ABSENT

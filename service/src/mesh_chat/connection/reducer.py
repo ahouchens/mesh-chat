@@ -35,6 +35,8 @@ def _work(state: ConnectionState, phase: Phase, resource: Resource, now: float,
                           state.authority.revision, sequence)
     timeout = (state.policy.gather_timeout if phase in
                {Phase.GATHER_OFFER, Phase.GATHER_ANSWER} else state.policy.phase_timeout)
+    if phase is Phase.INSPECT:
+        timeout = min(timeout, state.policy.poll_interval)
     deadline = now + timeout if deadline is None else deadline
     step = Step(phase, resource, deadline, now, operation)
     return Transition(replace(state, sequence=sequence, negotiation=step, reason=phase.value),
@@ -56,6 +58,10 @@ def _failure(state: ConnectionState, now: float, reason: str,
     delay = state.policy.backoff[min(state.failures, len(state.policy.backoff) - 1)]
     delay = min(state.policy.backoff[-1], delay * (1 + state.policy.jitter_fraction * jitter))
     effects = _cancel(state)
+    if state.negotiation and state.negotiation.phase is Phase.INSPECT and state.carrier:
+        carrier = state.carrier
+        state = replace(state, carrier=replace(carrier, health=Health.SUSPECT,
+                        observed_at=carrier.observed_at if carrier.health is Health.SUSPECT else now))
     return Transition(replace(state, negotiation=None, failures=state.failures + 1,
                               retry_at=now + max(delay, retry_after), blocked=blocked,
                               reason=reason), effects, reason)
@@ -69,6 +75,11 @@ def _eligible(state: ConnectionState) -> bool:
 def _tick(state: ConnectionState, event: Tick) -> Transition:
     if not _eligible(state):
         return Transition(state, reason="ineligible")
+    carrier = state.carrier
+    if (carrier and carrier.health is Health.SUSPECT
+            and event.now - carrier.observed_at >= state.policy.disconnect_grace):
+        result = _failure(replace(state, carrier=None), event.now, "carrier_lost")
+        return replace(result, effects=(Retire(carrier.resource),) + result.effects)
     step = state.negotiation
     if step:
         if event.now >= step.deadline:
@@ -76,12 +87,11 @@ def _tick(state: ConnectionState, event: Tick) -> Transition:
         if step.operation is None and event.now >= step.poll_at:
             return _work(state, step.phase, step.resource, event.now, step.deadline)
         return Transition(state, reason="pending")
-    carrier = state.carrier
     if carrier:
+        if (event.now >= max(state.inspect_at, state.retry_at) and not state.blocked
+                and (carrier.health is Health.SUSPECT or carrier.bridge is Bridge.READY)):
+            return _work(state, Phase.INSPECT, carrier.resource, event.now)
         if carrier.health is Health.SUSPECT:
-            if event.now - carrier.observed_at >= state.policy.disconnect_grace:
-                result = _failure(replace(state, carrier=None), event.now, "carrier_lost")
-                return replace(result, effects=(Retire(carrier.resource),) + result.effects)
             return Transition(state, reason="health_unknown")
         if carrier.bridge is Bridge.READY:
             return Transition(state, reason="ready")
@@ -125,7 +135,7 @@ def _context(state: ConnectionState, event: ContextChanged) -> Transition:
         if state.carrier:
             effects += (Retire(state.carrier.resource),)
         new = replace(new, negotiation=None, carrier=None, blocked=False)
-    elif authority_changed:
+    elif authority_changed or new.desired != state.desired:
         new = replace(new, blocked=False)
     if not new.network_available and new.negotiation:
         effects += _cancel(new)
@@ -155,6 +165,12 @@ def _result(state: ConnectionState, event: Result | Failed) -> Transition:
     if isinstance(event, Failed):
         return _failure(state, event.now, event.failure.value,
                         event.failure in BLOCKING_FAILURES, event.retry_after, event.jitter)
+    if step.phase is Phase.INSPECT:
+        if event.observed_health is None or event.observed_bridge is None:
+            return _failure(state, event.now, "missing_observation", blocked=True)
+        state = replace(state, negotiation=None, inspect_at=event.now + state.policy.poll_interval)
+        return _observed(state, Observed(step.resource, event.now,
+                                        event.observed_health, event.observed_bridge))
     if event.allocated and event.allocated != step.resource:
         result = _failure(state, event.now, "wrong_resource", blocked=True)
         return replace(result, effects=result.effects + (Retire(event.allocated),))
@@ -176,6 +192,7 @@ def _result(state: ConnectionState, event: Result | Failed) -> Transition:
         if not state.carrier or state.carrier.resource != step.resource:
             return _failure(state, event.now, "missing_carrier", blocked=True)
         return Transition(replace(state, negotiation=None, failures=0, retry_at=0,
+                          inspect_at=event.now + state.policy.poll_interval,
                           carrier=replace(state.carrier, bridge=Bridge.READY,
                                           observed_at=event.now), reason="ready"), reason="ready")
     return _work(state, NEXT_PHASE[step.phase], step.resource, event.now)

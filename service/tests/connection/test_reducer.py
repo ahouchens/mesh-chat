@@ -208,3 +208,34 @@ def test_jitter_is_an_explicit_bounded_input_and_cannot_reduce_server_cooldown()
     assert result.state.retry_at == 61
     with pytest.raises(ValueError):
         transition(state, Tick(1, jitter=2))
+
+
+def test_health_inspection_is_bounded_and_stale_completion_cannot_restore_readiness():
+    resource = Resource("adapter", "carrier")
+    state = initial(carrier=Carrier(resource, 1, Health.OPEN, Bridge.READY, 0))
+    state, work = begin(state)
+    assert work.phase is Phase.INSPECT
+    assert work.deadline == state.policy.poll_interval
+    failed = transition(state, Tick(work.deadline))
+    assert failed.state.carrier.health is Health.SUSPECT
+    late = complete(failed.state, work, now=6, observed_health=Health.OPEN, observed_bridge=Bridge.READY)
+    assert late.state.carrier.health is Health.SUSPECT
+    lost = transition(late.state, Tick(15))
+    assert lost.state.carrier is None
+    assert any(effect.resource == resource for effect in lost.effects if hasattr(effect, "resource"))
+
+
+def test_route_loss_invalidates_ready_carrier_without_replacing_it():
+    resource = Resource("adapter", "carrier")
+    state, work = begin(initial(carrier=Carrier(resource, 1, Health.OPEN, Bridge.READY, 0)))
+    result = complete(state, work, observed_health=Health.OPEN, observed_bridge=Bridge.PATH_PENDING)
+    assert result.state.carrier.resource == resource
+    assert result.state.carrier.bridge is Bridge.PATH_PENDING
+    assert transition(result.state, Tick(2)).effects[0].phase is Phase.ATTACH
+
+
+def test_explicit_start_clears_configuration_block_without_bypassing_cooldown():
+    state = initial(desired=Desired.STOPPED, blocked=True, retry_at=90)
+    started = transition(state, ContextChanged(1, desired=Desired.ENABLED)).state
+    assert not started.blocked
+    assert transition(started, Tick(2)).effects == ()

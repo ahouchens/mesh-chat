@@ -263,6 +263,22 @@ def test_pending_capabilities_keep_newest_document_until_contact_arrives(pair, m
     assert blair.store.get("reconnect_profile", profiles[0]["id"])["remote_capabilities"] == newest
 
 
+def test_default_activation_does_not_clear_a_stop_or_runtime_fence(pair):
+    alex, blair = pair
+    enable_pair(alex, blair, None)
+    alex.reconnect_stop(blair.device)
+    resumed = []
+    alex._connection_runtime = SimpleNamespace(committed_start=resumed.append)
+    alex.reconnect_start(blair.device, automatic=True)
+    profile = alex._reconnect_profile_for_contact(blair.device)
+    assert profile["state"] == "stopped"
+    assert not profile["active"]
+    assert resumed == []
+    alex.reconnect_start(blair.device)
+    assert alex._reconnect_profile_for_contact(blair.device)["active"]
+    assert resumed == [blair.device]
+
+
 def test_delayed_capability_after_contact_request_preserves_newer_pending_consent(pair, monkeypatch):
     alex, blair = pair
     now = int(time.time())

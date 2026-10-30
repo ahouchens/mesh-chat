@@ -14,7 +14,7 @@ from ...errors import (
     MailboxRateLimited, MailboxUnauthorized, NativeUnavailable,
     NetworkUnavailable, ReconnectReplayed, ValidationError,
 )
-from ..model import Failed, Failure, Phase, Result, Resource, Work
+from ..model import Bridge, Failed, Failure, Health, Phase, Result, Resource, Work
 
 CHANNELS = (
     {"label": "mesh-reticulum", "binary": True, "ordered": True},
@@ -91,7 +91,7 @@ class ReconnectExecutor:
         profile = self.profile(work.operation.key)
         reasons = set((profile.get("effective") or {}).get("reasons") or ())
         ready = (profile.get("effective") or {}).get("ready")
-        signaling_required = work.phase not in {Phase.CHECKING, Phase.ATTACH, Phase.PATH}
+        signaling_required = work.phase not in {Phase.CHECKING, Phase.ATTACH, Phase.PATH, Phase.INSPECT}
         if (profile.get("state") == "stopped" or not profile.get("active")
                 or not (ready or (not signaling_required and reasons == {"mailbox_not_configured"}))):
             raise ContactNotApproved("Connection authority is unavailable")
@@ -113,6 +113,8 @@ class ReconnectExecutor:
                 value = operation(*args)
                 self._check(work, cancellation)
                 return value
+            if work.phase is Phase.INSPECT:
+                return self._inspect(work, exchange, call)
             pending = self._handlers[work.phase](work, exchange, call)
             return Result(work.operation, self.now(), pending=pending,
                           allocated=work.resource if work.phase in {
@@ -142,6 +144,19 @@ class ReconnectExecutor:
         self.native.close(resource.resource_id)
         with self._lock:
             self._exchanges.pop(resource, None)
+
+    def _inspect(self, work, exchange, call):
+        stats = call(self.native.stats, work.resource.resource_id)
+        ice = stats.get("ice_connection_state")
+        channel = stats.get("data_channel_state")
+        health = (Health.ABSENT if ice in {"closed", "failed"} or channel in {"closed", "closing"}
+                  else Health.OPEN if ice in {"connected", "completed"} and channel == "open"
+                  else Health.SUSPECT)
+        bridge = Bridge.DETACHED
+        if stats.get("attached"):
+            path = call(self.path, exchange.profile["contact_id"])
+            bridge = Bridge.READY if path.get("has_path") and path.get("ready") else Bridge.PATH_PENDING
+        return Result(work.operation, self.now(), observed_health=health, observed_bridge=bridge)
 
     def _request(self, work, exchange, call):
         key = work.operation.key

@@ -94,6 +94,13 @@ class ConnectionSupervisor:
             self.dispatch(key, ContextChanged(now, desired=Desired.STOPPED))
             self._retired.add(key)
 
+    def restore(self, key: ConnectionKey):
+        """Resume ticks after protected reconciliation; preserve all fences and counters."""
+        with self._lock:
+            if key not in self._states:
+                raise KeyError("Connection must be explicitly registered")
+            self._retired.discard(key)
+
     def drain(self):
         with self._lock:
             effects = list(self._control)

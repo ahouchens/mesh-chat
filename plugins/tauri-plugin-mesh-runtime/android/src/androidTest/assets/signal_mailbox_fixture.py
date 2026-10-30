@@ -253,7 +253,7 @@ def run_shared_runtime_native(root, url):
                         path=lambda _: {"has_path": True, "ready": True}, current=current,
                         now=time.monotonic, wall_time=time.time)
                 return ConnectionRuntime(uuid.uuid4().hex, factory, profiles=peer.reconnect_profiles,
-                    execution=lambda: Execution.AVAILABLE, stats=peer.native_webrtc_stats,
+                    execution=lambda: Execution.AVAILABLE,
                     activate=peer.reconnect_start)
 
             runtimes.extend(runtime(peer) for peer in peers)

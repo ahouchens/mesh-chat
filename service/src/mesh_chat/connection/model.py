@@ -29,6 +29,7 @@ class Phase(str, Enum):
     CHECKING = "checking"
     ATTACH = "attach"
     PATH = "path"
+    INSPECT = "inspect"
 
 
 class Health(str, Enum):
@@ -160,6 +161,7 @@ class ConnectionState:
     carrier: Carrier | None = None
     failures: int = 0
     retry_at: float = 0
+    inspect_at: float = 0
     blocked: bool = False
     reason: str = "idle"
     policy: Policy = Policy()
@@ -187,6 +189,8 @@ class Result:
     pending: bool = False
     allocated: Resource | None = None
     verified: bool = False
+    observed_health: Health | None = None
+    observed_bridge: Bridge | None = None
 
 
 @dataclass(frozen=True)

@@ -98,6 +98,22 @@ def test_shared_policy_cannot_bypass_background_execution_denial():
     assert host.created == []
 
 
+def test_shared_native_callbacks_observe_but_do_not_attach_or_close():
+    service, host = runtime()
+    service._connection_policy = "shared-native"
+    service.native_webrtc_offer("runtime-session", ICE, [], "profile-1", runtime_owned=True)
+    attached = []
+    service.webrtc_attach_native = attached.append
+    service._handle_native_webrtc_event("open", "runtime-session")
+    service._handle_native_webrtc_event("ice", "runtime-session", "failed")
+    service._handle_native_webrtc_event("channel", "runtime-session", "mesh-reticulum:closed")
+    assert attached == []
+    assert host.closed == []
+    # Explicit effect cleanup still closes the exact owned resource.
+    service.native_webrtc_close("runtime-session")
+    assert host.closed == ["runtime-session"]
+
+
 def test_native_capabilities_exchange_and_consent_updates_without_a_renderer():
     import base64
     service, host = runtime()
