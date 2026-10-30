@@ -170,7 +170,8 @@ export class DesktopTransport {
   }
 
   private bindChannel(allocation: Allocation, channel: RTCDataChannel) {
-    if (!this.current(allocation) || !allocation.purposes.has(channel.label) || allocation.channels.has(channel.label)) {
+    if (!this.current(allocation) || !allocation.purposes.has(channel.label) || allocation.channels.has(channel.label) ||
+        !channel.ordered || channel.maxRetransmits !== null || channel.maxPacketLifeTime !== null) {
       channel.close();
       return;
     }
@@ -179,7 +180,9 @@ export class DesktopTransport {
     for (const event of ["open", "close", "error"] as const) channel.addEventListener(event, () => {
       if (!this.current(allocation)) return;
       this.deliver(allocation, "channel", `${channel.label}:${channel.readyState}`, false);
-      if (event === "open" && channel.label === "mesh-reticulum") this.deliver(allocation, "open", "", false);
+      if (event === "open" && channel.label === "mesh-reticulum" && this.current(allocation)) {
+        this.deliver(allocation, "open", "", false);
+      }
     });
     channel.addEventListener("message", event => {
       if (!this.current(allocation)) return;

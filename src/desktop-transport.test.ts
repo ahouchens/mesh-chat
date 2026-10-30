@@ -8,6 +8,9 @@ const options = { resource: "physical-1", ice: { iceServers: [], iceTransportPol
 
 class Channel extends EventTarget {
   readyState = "open";
+  ordered = true;
+  maxRetransmits: number | null = null;
+  maxPacketLifeTime: number | null = null;
   binaryType = "arraybuffer";
   bufferedAmount = 0;
   sent: unknown[] = [];
@@ -111,6 +114,15 @@ it("drops bulk overflow but quarantines lost lifecycle or consent events", async
   await expect(host.createOffer({ ...options, resource: "next" })).rejects.toThrow("quarantined");
 });
 
+it("does not announce open after lifecycle rejection retires the allocation", async () => {
+  const events: TransportEvent[] = [];
+  const { host, peers } = fixture(event => { events.push(event); return event.event !== "channel"; });
+  await host.createOffer(options);
+  peers[0].channels[0].dispatchEvent(new Event("open"));
+  expect(host.inspect(options.resource)).toBeNull();
+  expect(events.map(event => event.event)).toEqual(["channel", "closed"]);
+});
+
 it("rejects unsupported channel purposes before creating a peer", async () => {
   const { host, peers } = fixture();
   await expect(host.createOffer({ ...options, channels: [{ label: "media", binary: true, ordered: true }] })).rejects.toThrow("channels");
@@ -188,5 +200,21 @@ it("accepts only negotiated channel purposes on the answering peer", async () =>
   }
   channel.dispatchEvent(new MessageEvent("message", { data: new Uint8Array([1, 2]).buffer }));
   expect(events.at(-1)).toEqual({ event: "message", resource: options.resource, data: "AQI=" });
+  host.closeAll();
+});
+
+it("rejects incoming unordered or partially reliable channels before binding", async () => {
+  const { host, peers } = fixture();
+  await host.acceptOffer(options, sdp);
+  for (const attributes of [{ ordered: false }, { maxRetransmits: 0 }, { maxPacketLifeTime: 1000 }]) {
+    const channel = new Channel("mesh-reticulum");
+    Object.assign(channel, attributes);
+    peers[0].dispatchEvent(Object.assign(new Event("datachannel"), { channel }));
+    expect(channel.readyState).toBe("closed");
+  }
+  const reliable = new Channel("mesh-reticulum");
+  peers[0].dispatchEvent(Object.assign(new Event("datachannel"), { channel: reliable }));
+  expect(host.send(options.resource, new Uint8Array([1]))).toBe(true);
+  expect(reliable.sent).toHaveLength(1);
   host.closeAll();
 });
