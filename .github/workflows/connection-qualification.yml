@@ -89,6 +89,16 @@ jobs:
         with:
           name: android-qualification-${{ github.sha }}
           path: dist/qualification/android
+      - uses: actions/download-artifact@v4
+        if: needs.plan.outputs.direct == 'true'
+        with:
+          name: direct-qualification-Linux-${{ github.sha }}
+          path: dist/qualification/direct-Linux
+      - uses: actions/download-artifact@v4
+        if: needs.plan.outputs.direct == 'true'
+        with:
+          name: direct-qualification-Windows-${{ github.sha }}
+          path: dist/qualification/direct-Windows
       - name: Reject missing, failed, canceled or unexpectedly skipped suites
         env:
           QUALIFICATION_NEEDS: ${{ toJSON(needs) }}

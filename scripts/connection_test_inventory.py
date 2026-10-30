@@ -21,9 +21,10 @@ REQUIRED_SUITES = (
 
 
 class TestInventory:
-    def __init__(self, path: Path, source: str):
+    def __init__(self, path: Path, source: str, selection=REQUIRED_SUITES):
         self.path = path
         self.source = source
+        self.selection = tuple(selection)
         self.run_id = uuid4().hex
         self.deselected = False
 
@@ -38,7 +39,7 @@ class TestInventory:
         if session.testsfailed or not session.items:
             raise ValueError("Required qualification collection failed or was empty")
         nodeids = [item.nodeid for item in session.items]
-        for suite in REQUIRED_SUITES:
+        for suite in self.selection:
             # Pytest's rootdir is service/, so nodeids omit that prefix.
             prefix = suite.removeprefix("service/")
             if not any(nodeid.startswith(prefix + ("::" if prefix.endswith(".py") else "/"))
@@ -50,5 +51,5 @@ class TestInventory:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.path.write_text(json.dumps({
             "v": 1, "source_commit": self.source, "run_id": self.run_id,
-            "selection": list(REQUIRED_SUITES), "nodeids": sorted(nodeids),
+            "selection": list(self.selection), "nodeids": sorted(nodeids),
         }, indent=2) + "\n", encoding="utf-8")

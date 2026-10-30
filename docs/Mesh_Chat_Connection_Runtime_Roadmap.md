@@ -306,6 +306,16 @@ its complete inventory, the actual Windows transport checks and component
 digests, and Android source/tree, APKs, scenario counts, run identities and
 cleanup. Its manifest includes component report hashes and execution counts;
 missing required reports fail. Evidence retains its component labels.
+The native Direct Fabric recovery, packet-carrier and setup suites also record
+their full pytest collection before execution on Linux and Windows. Required
+native binaries are hashed before and after the tests; missing binaries, skips,
+filters, changed source/binaries and partial execution fail. The final gate
+revalidates all six JUnit inventories and requires recovery/setup to identify
+the same shipping dispatcher on each platform. Source-pipe setup cases run in
+that complete setup selection, without a second filtered native invocation.
+This evidence covers controlled native QUIC and Python components, not packaged
+consumer or physical qualification. Other Direct Fabric unit/build checks and
+Linux NAT/network-provenance checks still retain their workflow gates.
 The workflow result manifest is not a release qualification:
 uniform scenario/count/artifact evidence across every suite and exact release
 artifact aggregation remain outstanding.

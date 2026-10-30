@@ -9,6 +9,7 @@ from types import SimpleNamespace
 
 from android_qualification import APKS, ROOT, cases
 from connection_evidence import evidence as policy_evidence
+from direct_qualification import SUITES as DIRECT_SUITES, read_suite as direct_suite
 from test_desktop_transport import PYTHON_SOURCES, verified_report as desktop_evidence
 
 
@@ -91,5 +92,22 @@ def collect(directory: Path, source: str, tree: str, required):
         reports["android"] = android_path
         summary["android_tests_executed"] = sum(suite["tests_executed"] for suite in android["suites"])
         summary["android_artifacts"] = android["artifacts"]
+    if "direct" in required:
+        direct = {}
+        for platform, host in (("Linux", "posix"), ("Windows", "nt")):
+            records = {}
+            for suite in DIRECT_SUITES:
+                path = directory / ("direct-" + platform) / (suite + ".json")
+                record = direct_suite(path, source, tree, host)
+                if record["suite"] != suite:
+                    raise ValueError("Direct component report belongs to another suite")
+                records[suite] = record
+                reports["direct_" + platform + "_" + suite] = path
+            if (len({record["qualification_run"] for record in records.values()}) != len(DIRECT_SUITES)
+                    or records["recovery"]["artifacts"] != records["setup"]["artifacts"]):
+                raise ValueError("Direct scenarios did not use distinct runs and the same shipping dispatcher")
+            direct[platform] = {"tests_executed": sum(record["tests_executed"] for record in records.values()),
+                                "artifacts": {**records["recovery"]["artifacts"], **records["fabric"]["artifacts"]}}
+        summary["direct"] = direct
     return {**summary, "report_sha256": {
         name: hashlib.sha256(path.read_bytes()).hexdigest() for name, path in reports.items()}}

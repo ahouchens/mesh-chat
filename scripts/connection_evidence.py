@@ -10,6 +10,15 @@ from connection_test_inventory import REQUIRED_SUITES, TestInventory
 
 
 def evidence(junit: Path, source: str, expected: str, inventory: Path) -> dict:
+    return {
+        **execution_evidence(junit, source, expected, inventory, REQUIRED_SUITES),
+        "suite": "connection-policy", "evidence_level": "simulated_and_in_process",
+        "internal_contract": 1,
+        "scope": "Policy and private adapter tests; no native, packaged or physical qualification",
+    }
+
+
+def execution_evidence(junit: Path, source: str, expected: str, inventory: Path, selection) -> dict:
     if source != expected:
         raise ValueError("Qualification source does not match the required commit")
     root = ET.parse(junit).getroot()
@@ -20,8 +29,8 @@ def evidence(junit: Path, source: str, expected: str, inventory: Path) -> dict:
     if not tests or skipped or failed or errors:
         raise ValueError(f"Required connection suite did not pass: tests={len(tests)}, skipped={skipped}, failed={failed}, errors={errors}")
     collected = json.loads(inventory.read_text(encoding="utf-8"))
-    if (collected.get("v") != 1 or collected.get("source_commit") != expected
-            or collected.get("selection") != list(REQUIRED_SUITES)):
+    if (type(collected.get("v")) is not int or collected["v"] != 1
+            or collected.get("source_commit") != expected or collected.get("selection") != list(selection)):
         raise ValueError("Required collection inventory has the wrong version, source or selection")
     nodeids = collected.get("nodeids")
     if (not isinstance(nodeids, list) or not nodeids or not all(isinstance(nodeid, str) for nodeid in nodeids)
@@ -37,14 +46,12 @@ def evidence(junit: Path, source: str, expected: str, inventory: Path) -> dict:
     if len(set(executed)) != len(executed) or set(executed) != set(nodeids):
         raise ValueError("Executed tests do not match the complete required collection")
     return {
-        "v": 1, "suite": "connection-policy", "source_commit": source,
-        "evidence_level": "simulated_and_in_process", "internal_contract": 1,
+        "v": 1, "source_commit": source,
         "qualification_run": collected["run_id"],
         "tests_collected": len(nodeids), "tests_executed": len(tests),
         "tests_passed": len(tests), "tests_failed": failed, "tests_skipped": skipped,
         "required": True,
         "duration_seconds": sum(float(test.get("time", 0)) for test in tests),
-        "scope": "Policy and private adapter tests; no native, packaged or physical qualification",
     }
 
 

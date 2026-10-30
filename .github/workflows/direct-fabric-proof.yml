@@ -50,9 +50,9 @@ jobs:
           if [[ "$RUNNER_OS" == "Windows" ]]; then binary="$binary.exe"; fi
           export MESH_DIRECT_APP_HOST_BINARY="$binary"
           if [[ "$RUNNER_OS" == "Linux" ]]; then
-            python service/tools/direct_network_audit.py --report direct-recovery-network-evidence.json -- python -m pytest service/tests/test_direct_recovery_pipeline.py -x -q
+            python service/tools/direct_network_audit.py --report direct-recovery-network-evidence.json -- python scripts/direct_qualification.py --suite recovery --expected-source "$GITHUB_SHA"
           else
-            python -m pytest service/tests/test_direct_recovery_pipeline.py -x -q
+            python scripts/direct_qualification.py --suite recovery --expected-source "$GITHUB_SHA"
           fi
       - name: Retain production recovery network provenance
         if: runner.os == 'Linux' && success()
@@ -71,8 +71,6 @@ jobs:
         run: python -m pytest service/tests/test_direct_documents.py service/tests/test_direct_setup.py -q
       - name: Validate isolated bootstrap process boundaries
         run: python -m pytest service/tests/test_direct_bootstrap.py service/tests/test_direct_bootstrap_process.py service/tests/test_direct_bootstrap_authority.py service/tests/test_direct_path.py service/tests/test_direct_admission.py -q
-      - name: Validate production setup and admission handoff with source packet pipes
-        run: python -m pytest service/tests/test_direct_setup_pipeline.py -q
       - name: Test controlled peers (no discovery service)
         env:
           MESH_DIRECT_BINDING_PYTHON: python
@@ -88,9 +86,9 @@ jobs:
           if [[ "$RUNNER_OS" == "Windows" ]]; then binary="$binary.exe"; fi
           export MESH_DIRECT_PROOF_BINARY="$binary"
           if [[ "$RUNNER_OS" == "Linux" ]]; then
-            python service/tools/direct_network_audit.py --report direct-network-evidence.json -- python -m pytest service/tests/test_direct_fabric_harness.py -q
+            python service/tools/direct_network_audit.py --report direct-network-evidence.json -- python scripts/direct_qualification.py --suite fabric --expected-source "$GITHUB_SHA"
           else
-            python -m pytest service/tests/test_direct_fabric_harness.py -q
+            python scripts/direct_qualification.py --suite fabric --expected-source "$GITHUB_SHA"
           fi
       - name: Retain endpoint-free network provenance
         if: runner.os == 'Linux' && success()
@@ -98,16 +96,16 @@ jobs:
         with:
           name: direct-network-evidence
           path: direct-network-evidence.json
-      - name: Production setup through shipping native dispatcher and real QUIC
+      - name: Production setup through source packet pipes and shipping native dispatcher
         shell: bash
         run: |
           binary="$PWD/experiments/direct-app-host/target/debug/mesh-direct-app-host-proof"
           if [[ "$RUNNER_OS" == "Windows" ]]; then binary="$binary.exe"; fi
           export MESH_DIRECT_APP_HOST_BINARY="$binary"
           if [[ "$RUNNER_OS" == "Linux" ]]; then
-            python service/tools/direct_network_audit.py --report direct-setup-network-evidence.json -- python -m pytest service/tests/test_direct_setup_pipeline.py -k native -q
+            python service/tools/direct_network_audit.py --report direct-setup-network-evidence.json -- python scripts/direct_qualification.py --suite setup --expected-source "$GITHUB_SHA"
           else
-            python -m pytest service/tests/test_direct_setup_pipeline.py -k native -q
+            python scripts/direct_qualification.py --suite setup --expected-source "$GITHUB_SHA"
           fi
       - name: Retain production setup network provenance
         if: runner.os == 'Linux' && success()
@@ -115,6 +113,13 @@ jobs:
         with:
           name: direct-setup-network-evidence
           path: direct-setup-network-evidence.json
+      - name: Retain complete native execution inventories
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: direct-qualification-${{ runner.os }}-${{ github.sha }}
+          path: dist/reports/direct/*
+          if-no-files-found: error
 
   android-compile:
     runs-on: ubuntu-latest

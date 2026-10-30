@@ -8,6 +8,8 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "scripts"))
 import connection_matrix as matrix
+from connection_evidence import execution_evidence
+from direct_qualification import LEVEL, SUITES as DIRECT_SUITES
 from connection_test_inventory import REQUIRED_SUITES
 from test_desktop_transport import CHECKS
 
@@ -94,3 +96,61 @@ def test_a_passing_summary_cannot_hide_missing_policy_execution(tmp_path):
     (tmp_path / "policy/connection-policy.xml").write_text("<testsuite/>")
     with pytest.raises(ValueError):
         matrix.collect(tmp_path, source, tree, [])
+
+
+def direct_reports(directory, source, tree):
+    for platform, host in (("Linux", "posix"), ("Windows", "nt")):
+        folder = directory / ("direct-" + platform)
+        folder.mkdir()
+        for suite, (selection, _, artifact) in DIRECT_SUITES.items():
+            run = platform + "-" + suite
+            inventory = {"v": 1, "source_commit": source, "selection": [selection],
+                         "nodeids": ["test_native"], "run_id": run}
+            path = folder / (suite + ".json")
+            path.with_suffix(".inventory.json").write_text(json.dumps(inventory))
+            xml = ET.Element("testsuite")
+            case = ET.SubElement(xml, "testcase", name="test_native", time="1")
+            properties = ET.SubElement(case, "properties")
+            for name, value in {"qualification_run": run, "qualification_nodeid": "test_native"}.items():
+                ET.SubElement(properties, "property", name=name, value=value)
+            ET.ElementTree(xml).write(path.with_suffix(".xml"))
+            record = {**execution_evidence(path.with_suffix(".xml"), source, source,
+                       path.with_suffix(".inventory.json"), [selection]),
+                      "suite": suite, "source_tree": tree, "passed": True, "evidence_level": LEVEL,
+                      "internal_contract": 1, "platform": host, "python_version": "3.13.1",
+                      "artifacts": {artifact: "c" * 64}}
+            path.write_text(json.dumps(record))
+
+
+def test_selected_direct_requires_complete_execution_from_both_platforms(tmp_path):
+    source, tree, _ = fixture(tmp_path)
+    direct_reports(tmp_path, source, tree)
+    result = matrix.collect(tmp_path, source, tree, ["direct"])
+    assert set(result["direct"]) == {"Linux", "Windows"}
+    assert all(value["tests_executed"] == 3 for value in result["direct"].values())
+    assert len(result["report_sha256"]) == 8
+
+
+@pytest.mark.parametrize("fault", ["missing_platform", "wrong_platform", "different_dispatcher", "skip", "wrong_suite"])
+def test_direct_component_gate_rejects_incomplete_or_inconsistent_native_runs(tmp_path, fault):
+    source, tree, _ = fixture(tmp_path)
+    direct_reports(tmp_path, source, tree)
+    path = tmp_path / "direct-Windows/setup.json"
+    record = json.loads(path.read_text())
+    if fault == "missing_platform":
+        path.unlink()
+    elif fault == "skip":
+        xml = path.with_suffix(".xml")
+        document = ET.parse(xml)
+        ET.SubElement(document.getroot().find("testcase"), "skipped")
+        document.write(xml)
+    else:
+        if fault == "different_dispatcher":
+            record["artifacts"]["shipping_dispatcher"] = "d" * 64
+        elif fault == "wrong_platform":
+            record["platform"] = "posix"
+        else:
+            record["suite"] = "recovery"
+        path.write_text(json.dumps(record))
+    with pytest.raises((ValueError, FileNotFoundError)):
+        matrix.collect(tmp_path, source, tree, ["direct"])
