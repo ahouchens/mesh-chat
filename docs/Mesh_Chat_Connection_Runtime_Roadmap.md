@@ -166,6 +166,16 @@ public session IDs and signed peer wire documents remain unchanged. Instrumentat
 uses private test access to resolve native handles, which is absent from public
 commands and packages.
 
+Adopted runtime resources carry the physical allocation identity rather than the
+reusable public session ID. Composition resolves that identity for inspections
+and attachment, and retirement verifies the expected physical allocation inside
+the native lock. Delayed cleanup cannot close a later public-ID reuse. The
+supervisor retains bounded retirement reservations until successful cleanup and
+rejects rediscovery of a resource pending disposal. The production runtime and
+deterministic simulator both acknowledge exact cleanup; failed cleanup retains
+the reservation. This refines private handle semantics without changing the
+versioned observation schema or signed peer protocol.
+
 Compatibility wrappers owned by this branch: `background_reconnect.py`, the
 renderer coordinator/runtime, and renderer bridge repair remain until M2
 adoption and parity checks pass. Removing them before desktop and manual-pairing

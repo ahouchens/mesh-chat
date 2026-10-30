@@ -129,6 +129,7 @@ class Simulation:
                 self.pending.append(effect)
             elif isinstance(effect, Retire):
                 self.allocated.discard(effect.resource)
+                self.owner.resource_released(effect.resource)
             elif not isinstance(effect, Cancel):
                 raise AssertionError("Unknown effect")
         self.assert_safe()

@@ -3,7 +3,7 @@
 from time import monotonic, time
 from uuid import uuid4
 
-from ..errors import ContactNotApproved
+from ..errors import ContactNotApproved, NativeUnavailable
 from .adapters.reconnect import NativePort, ReconnectExecutor, SignalingPort
 from .model import Execution, Resource
 from .reconcile import authority_signature, connection_key
@@ -53,11 +53,12 @@ def native_runtime(service):
             service.verify_reconnect_offer, service.verify_reconnect_answer,
             service.reconnect_publish, service.reconnect_fetch,
         )
+        bindings = _NativeBindings(service)
         native = NativePort(
             lambda *args: service.native_webrtc_offer(*args, runtime_owned=True),
             lambda *args: service.native_webrtc_accept(*args, runtime_owned=True),
-            service.native_webrtc_apply_answer, service.native_webrtc_stats,
-            service.webrtc_attach_native, service.native_webrtc_close,
+            service.native_webrtc_apply_answer, bindings.stats,
+            bindings.attach, bindings.close,
             lambda key: _claim_carrier(service, key),
         )
         return ReconnectExecutor(signaling, native, profile=fresh_profile,
@@ -69,5 +70,36 @@ def native_runtime(service):
 
 
 def _claim_carrier(service, key):
-    session = service.claim_native_reconnect_carrier(key.profile_id, key.local_device, key.remote_device)
-    return Resource("native", session) if session is not None else None
+    with service._dispatch_lock:
+        session = service.claim_native_reconnect_carrier(key.profile_id, key.local_device, key.remote_device)
+        return Resource("native", service._native_resources.require(session)) if session is not None else None
+
+
+class _NativeBindings:
+    """Adopted handles name physical peers; generated attempt IDs are never reused."""
+
+    def __init__(self, service):
+        self.service = service
+
+    def _session(self, resource):
+        session = self.service._native_resources.resolve(resource)
+        if session is not None:
+            return session
+        if resource.startswith("connection-"):
+            return resource
+        raise NativeUnavailable("Adopted native allocation was retired")
+
+    def stats(self, resource):
+        with self.service._dispatch_lock:
+            return self.service.native_webrtc_stats(self._session(resource))
+
+    def attach(self, resource):
+        with self.service._dispatch_lock:
+            return self.service.webrtc_attach_native(self._session(resource))
+
+    def close(self, resource):
+        if resource.startswith("connection-"):
+            return self.service.native_webrtc_close(resource)
+        session = self.service._native_resources.resolve(resource)
+        if session is not None:
+            return self.service.native_webrtc_close(session, expected_physical=resource)

@@ -155,6 +155,7 @@ class ConnectionRuntime:
                     self._failure = "cleanup_failed"
                 else:
                     self._cleanup_failed.discard(event.resource)
+                    self.owner.resource_released(event.resource)
             else:
                 if isinstance(event, Failed):
                     event = replace(event, jitter=self._random())

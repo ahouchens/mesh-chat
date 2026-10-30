@@ -422,7 +422,7 @@ def run_manual_native_adoption(automatic=True):
         wait_until(lambda: owner.snapshots().get(profile_id, {}).get("messaging_ready"),
                    "Shared owner did not adopt the manual native carrier", 30)
         states = owner.owner.snapshots()
-        assert len(states) == 1 and states[0].carrier.resource.resource_id == local_id
+        assert len(states) == 1 and states[0].carrier.resource.resource_id == local_physical
         if not automatic:
             profile = service._reconnect_profile(profile_id)
             assert not profile["auto_reconnect"] and not profile["remote_auto_reconnect"]

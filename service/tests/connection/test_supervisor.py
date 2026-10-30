@@ -81,6 +81,25 @@ def test_private_state_snapshot_is_immutable():
         owner.snapshot(state.key).desired = Desired.STOPPED
 
 
+def test_discovery_cannot_readopt_a_carrier_awaiting_exact_cleanup():
+    owner = ConnectionSupervisor("epoch")
+    resource = Resource("native", "physical-manual-carrier")
+    state = actor("one", carrier=Carrier(resource, 1, Health.OPEN, Bridge.READY, 0))
+    owner.register(state)
+    owner.dispatch(state.key, ContextChanged(1, authority=Authority(2, True, True, True)))
+    assert Retire(resource) in owner.drain()
+    owner.tick(2)
+    discovery = owner.drain()[0]
+    owner.dispatch(state.key, Adopted(discovery.operation, 3, resource))
+    assert owner.snapshot(state.key).carrier is None
+    assert not owner.snapshot(state.key).blocked
+    owner.resource_released(resource)
+    owner.tick(20)
+    discovery = next(effect for effect in owner.drain() if isinstance(effect, Work))
+    owner.dispatch(state.key, Adopted(discovery.operation, 21, Resource("native", "new-physical")))
+    assert owner.snapshot(state.key).carrier.resource.resource_id == "new-physical"
+
+
 @pytest.mark.parametrize("stale", [False, True])
 @pytest.mark.parametrize("completion", ["result", "failed", "adopted"])
 @pytest.mark.parametrize("other_status", ["negotiating", "cancelled", "ready"])

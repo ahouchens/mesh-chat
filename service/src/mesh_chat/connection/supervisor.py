@@ -26,6 +26,7 @@ class ConnectionSupervisor:
         self._running = {}
         self._control = OrderedDict()
         self._retired = set()
+        self._retiring = set()
         self.diagnostics = Diagnostics(policy.max_diagnostics)
 
     def register(self, state: ConnectionState):
@@ -64,6 +65,8 @@ class ConnectionSupervisor:
                     # A misrouted adapter result is not cleanup authority for
                     # another actor, including its canceled but still-live work.
                     event = Failed(event.operation, event.now, Failure.INTERNAL)
+                elif event.allocated in self._retiring:
+                    event = Failed(event.operation, event.now, Failure.TRANSIENT)
             result = transition(state, event)
             result = replace(result, state=replace(result.state, sequence=max(
                 state.sequence + 1, result.state.sequence)))
@@ -81,10 +84,19 @@ class ConnectionSupervisor:
                     # At most a cancellation and exact retirement per owned
                     # resource. Deduplication keeps repeated callbacks bounded.
                     self._control[effect] = None
+                    if isinstance(effect, Retire):
+                        self._retiring.add(effect.resource)
             # Backpressure is explicit and no control event is silently lost.
             if len(self._control) > self.policy.max_actors * 4 + self.policy.max_workers:
                 raise CapacityExceeded("Connection cleanup must be drained")
+            if len(self._retiring) > self.policy.max_actors * 4 + self.policy.max_workers:
+                raise CapacityExceeded("Connection cleanup must complete")
             return result.state
+
+    def resource_released(self, resource: Resource):
+        """Only confirmed cleanup releases the private retirement reservation."""
+        with self._lock:
+            self._retiring.discard(resource)
 
     def _owned_elsewhere(self, key: ConnectionKey, resource: Resource) -> bool:
         for other, state in self._states.items():

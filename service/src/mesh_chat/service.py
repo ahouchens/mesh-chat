@@ -2334,7 +2334,10 @@ class MeshChatService(
             profile_id = next((profile for profile, current in self._native_webrtc_profile_sessions.items()
                                if current == session_id), None)
         from .connection.model import Resource
-        return profile_id is not None and runtime.permits_carrier(profile_id, Resource("native", session_id))
+        physical = self._native_resources.physical(session_id)
+        return profile_id is not None and physical is not None and (
+            runtime.permits_carrier(profile_id, Resource("native", physical))
+            or runtime.permits_carrier(profile_id, Resource("native", session_id)))
 
     def webrtc_detach_native(self, session_id: str) -> dict[str, Any]:
         bridge_id = self._native_webrtc_sessions.pop(session_id, None)
@@ -2732,11 +2735,13 @@ class MeshChatService(
                     and self._native_resources.current(session_id, physical))
         return {"accepted": accepted}
 
-    def native_webrtc_close(self, session_id: Any) -> dict[str, Any]:
+    def native_webrtc_close(self, session_id: Any, *, expected_physical: str | None = None) -> dict[str, Any]:
         if not isinstance(session_id, str):
             raise ValidationError("Native WebRTC session is invalid")
         with self._native_webrtc_lock:
             physical = self._native_resources.physical(session_id)
+            if expected_physical is not None and physical != expected_physical:
+                return {"state": "closed"}
             was_live = session_id in self._native_webrtc_live
             self._native_webrtc_live.discard(session_id)
             self._native_startup_packets.discard(physical)

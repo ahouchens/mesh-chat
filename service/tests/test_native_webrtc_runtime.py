@@ -619,6 +619,25 @@ def test_reused_logical_carrier_cannot_replay_old_startup_packets(startup_bridge
     assert received == [b"\x03\x04"]
 
 
+def test_delayed_adopted_cleanup_cannot_close_reused_logical_session():
+    from mesh_chat.connection.composition import _NativeBindings
+    service, host = runtime()
+    service.native_webrtc_offer("same-session", ICE, [])
+    old = host.raw_created[-1]
+    service.native_webrtc_close("same-session")
+    service.native_webrtc_offer("same-session", ICE, [])
+    bindings = _NativeBindings(service)
+    bindings.close(old)
+    service.native_webrtc_close("same-session", expected_physical=old)
+    with pytest.raises(NativeUnavailable, match="retired"):
+        bindings.stats(old)
+    with pytest.raises(NativeUnavailable, match="retired"):
+        bindings.attach(old)
+    assert host.raw_closed == [old]
+    assert service._native_resources.require("same-session") == host.raw_created[-1]
+    assert "same-session" in service._native_webrtc_live
+
+
 @pytest.mark.parametrize("fault", ["missing", "offline", "unregistered", "network_absent", "equal_replacement"])
 def test_native_inspection_rejects_stale_bridge_registration(fault, monkeypatch):
     from types import SimpleNamespace
@@ -885,7 +904,7 @@ def test_production_composition_adopts_manual_carrier_without_mailbox_or_new_pee
                 break
             threading.Event().wait(0.005)
         assert owner.snapshots()["profile-1"]["messaging_ready"]
-        assert owner.owner.snapshots()[0].carrier.resource.resource_id == "manual-carrier"
+        assert owner.owner.snapshots()[0].carrier.resource.resource_id == host.raw_created[0]
         assert len(host.created) == 1
         assert service._execute("native_webrtc_close", {"session_id": "manual-carrier"}) == {"state": "managed"}
         assert "manual_carrier_authorized" not in public
