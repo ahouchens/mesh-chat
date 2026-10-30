@@ -1009,7 +1009,7 @@ def test_failed_durable_stop_also_retires_manual_carriers_awaiting_adoption():
     service._reconnect_profiles_raw = lambda: [dict(service.profile)]
     def failed_write(*_):
         raise OSError("vault write failed")
-    service.store.put = failed_write
+    service.store.put_many = failed_write
     with pytest.raises(OSError, match="vault write failed"):
         service.reconnect_stop("contact-1")
     assert fenced == ["contact-1"]

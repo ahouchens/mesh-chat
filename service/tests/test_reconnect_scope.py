@@ -42,6 +42,10 @@ class MemoryStore:
     def put(self, kind, identifier, value):
         self.records[kind, identifier] = deepcopy(value)
 
+    def put_many(self, records):
+        prepared = {(kind, identifier): deepcopy(value) for kind, identifier, value in records}
+        self.records.update(prepared)
+
     def delete(self, kind, identifier):
         self.records.pop((kind, identifier), None)
 
