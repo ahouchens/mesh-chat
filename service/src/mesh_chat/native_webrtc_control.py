@@ -10,12 +10,9 @@ import time
 
 from .errors import ContactNotApproved, IdentityMismatch, ValidationError
 from .webrtc_onboarding import verify_onboarding_answer, verify_onboarding_offer
+from .native_carrier_evidence import normalized_sdp
 
 MAX_CONTROL_LENGTH = 16_384
-
-
-def normalized_sdp(sdp):
-    return tuple(line for line in sdp.splitlines() if line and line != "a=end-of-candidates")
 
 
 def profile_binding(profile):

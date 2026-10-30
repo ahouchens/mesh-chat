@@ -9,10 +9,10 @@ import sys
 
 
 ROOT = Path(__file__).resolve().parents[1]
-CHECKS = {"offer", "answer", "bidirectional_packets", "bidirectional_control", "retirement"}
+CHECKS = {"offer", "answer", "bidirectional_packets", "bidirectional_control", "resource_inventory", "retirement"}
 PYTHON_SOURCES = (ROOT / "service/tools/connection_harness/desktop_transport_probe.py",
                   *(ROOT / "service/src/mesh_chat" / name for name in
-                    ("desktop_transport_host.py", "direct_native.py", "ipc.py", "errors.py")))
+                    ("desktop_transport_host.py", "native_carrier_evidence.py", "direct_native.py", "ipc.py", "errors.py")))
 
 
 def verified_report(result, expected_source=None):

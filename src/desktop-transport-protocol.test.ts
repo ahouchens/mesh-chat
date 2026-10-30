@@ -13,6 +13,7 @@ function fixture() {
     acceptOffer: vi.fn(async () => ({ sdp: "answer", fingerprint: "bound" })),
     applyAnswer: vi.fn(async () => {}), inspect: vi.fn(() => ({ data_channel_state: "open" })),
     send: vi.fn(() => true), sendControl: vi.fn(() => false), close: vi.fn(), closeAll: vi.fn(),
+    inventory: vi.fn(async () => ({ v: 1, adapter_epoch: "b".repeat(32), resources: [] })),
   };
   return { driver, protocol: new DesktopTransportProtocol(epoch, driver as unknown as DesktopTransport) };
 }
@@ -27,6 +28,14 @@ it("translates the inherited native host contract without altering ICE policy", 
   expect(driver.send).toHaveBeenCalledWith(options.resource, new Uint8Array([1, 2]));
   expect((await protocol.handle(request("3", { op: "sendControl", resource: options.resource,
     label: "meshchat-reconnect", text: "consent" }))).result).toBe(false);
+});
+
+it("allows only the parameter-free private inventory operation", async () => {
+  const { driver, protocol } = fixture();
+  expect(await protocol.handle(request("1", { op: "inventory" }))).toMatchObject({ ok: true,
+    result: { v: 1, adapter_epoch: "b".repeat(32), resources: [] } });
+  expect(await protocol.handle(request("2", { op: "inventory", peer_destination: "claimed" }))).toMatchObject({ ok: false });
+  expect(driver.inventory).toHaveBeenCalledOnce();
 });
 
 it("rejects stale epochs and monotonic request replays before invoking the adapter", async () => {

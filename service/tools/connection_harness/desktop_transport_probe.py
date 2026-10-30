@@ -16,6 +16,7 @@ from mesh_chat.desktop_transport_host import DesktopTransportHost
 from mesh_chat.direct_native import NativeChannel, NativeFrameReader
 from mesh_chat.errors import NativeUnavailable
 from mesh_chat.ipc import FrameWriter
+from mesh_chat.native_carrier_evidence import description_hash
 
 
 def main():
@@ -51,6 +52,16 @@ def main():
                   for label in ("mesh-reticulum", "meshchat-reconnect")})
         for resource in ("native-probe-a", "native-probe-b"):
             assert json.loads(host.stats(resource))["result"]["data_channel_state"] == "open"
+        phase = "inventory"
+        inventory = host.inventory()
+        resources = {resource["resource"]: resource for resource in inventory["resources"]}
+        assert set(resources) == {"native-probe-a", "native-probe-b"}
+        for resource, local, remote in (("native-probe-a", offer, answer), ("native-probe-b", answer, offer)):
+            assert resources[resource]["local_sdp_sha256"] == description_hash(local["sdp"])
+            assert resources[resource]["remote_sdp_sha256"] == description_hash(remote["sdp"])
+            assert resources[resource]["pending"] is False
+            assert resources[resource]["data_channel_state"] == "open"
+        assert host.inventory()["adapter_epoch"] == inventory["adapter_epoch"]
         phase = "packets"
         assert host.send("native-probe-a", bytes([1, 2, 3]))
         assert host.send("native-probe-b", bytes([4, 5, 6]))
@@ -63,6 +74,7 @@ def main():
         phase = "retirement"
         host.close("native-probe-a")
         host.close("native-probe-b")
+        assert host.inventory()["resources"] == []
         assert not host.send("native-probe-a", b"retired")
         try:
             host.stats("native-probe-a")
@@ -70,7 +82,7 @@ def main():
             pass
         else:
             raise AssertionError("Retired resource remained visible")
-        result = {"ok": True, "checks": ["offer", "answer", "bidirectional_packets", "bidirectional_control", "retirement"]}
+        result = {"ok": True, "checks": ["offer", "answer", "bidirectional_packets", "bidirectional_control", "resource_inventory", "retirement"]}
     except Exception as error:
         result = {"ok": False, "phase": phase, "error_type": type(error).__name__}
     finally:

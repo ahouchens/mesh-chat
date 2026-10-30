@@ -1,5 +1,6 @@
 /** Private WebView transport operations. No signaling, authority or peer retry policy. */
 import { fingerprint } from "./webrtc-sdp";
+import { adapterEpoch, descriptionHash } from "./native-carrier-evidence";
 
 export interface TransportEvent { event: string; resource: string; data: string }
 export interface ChannelPurpose { label: string; binary: boolean; ordered: boolean }
@@ -19,6 +20,9 @@ type Allocation = {
   closed: boolean;
   disposalFailed: boolean;
   packetDrops: number;
+  icePolicy: RTCIceTransportPolicy;
+  operations: number;
+  revision: number;
 };
 
 const PURPOSES = new Set(["mesh-reticulum", "meshchat-reconnect", "mesh-onboarding"]);
@@ -34,6 +38,7 @@ export class DesktopTransport {
   private readonly allocations = new Map<string, Allocation>();
   private quarantined = false;
   private pendingOperations = 0;
+  private readonly adapterEpoch = adapterEpoch();
 
   constructor(
     private readonly emit: (event: TransportEvent) => boolean,
@@ -66,6 +71,40 @@ export class DesktopTransport {
       data_channel_state: allocation.channels.get("mesh-reticulum")?.readyState ?? "connecting",
       packet_drops: allocation.packetDrops,
     };
+  }
+
+  async inventory() {
+    if (this.quarantined) throw new Error("transport_quarantined");
+    if (this.pendingOperations >= 16) throw new Error("transport_capacity");
+    this.pendingOperations++;
+    try {
+      const allocations = [...this.allocations.values()].filter(allocation => !allocation.closed);
+      const snapshots = allocations.map(allocation => this.observation(allocation));
+      const resources = await Promise.all(snapshots.map(async snapshot => {
+        const { local, remote, revision: _revision, ...observation } = snapshot;
+        return { ...observation, local_type: local?.type ?? null, remote_type: remote?.type ?? null,
+          local_sdp_sha256: await descriptionHash(local?.sdp), remote_sdp_sha256: await descriptionHash(remote?.sdp) };
+      }));
+      if (this.quarantined || allocations.length !== this.allocations.size || allocations.some((allocation, index) =>
+        !this.current(allocation) || JSON.stringify(this.observation(allocation)) !== JSON.stringify(snapshots[index]))) {
+        throw new Error("transport_observation_changed");
+      }
+      return { v: 1, adapter_epoch: this.adapterEpoch, resources };
+    } finally { this.pendingOperations--; }
+  }
+
+  private observation(allocation: Allocation) {
+    const pc = allocation.pc;
+    const local = pc.localDescription;
+    const remote = pc.remoteDescription;
+    return { resource: allocation.resource, ice_policy: allocation.icePolicy, revision: allocation.revision,
+      pending: allocation.creating || allocation.operations > 0, ice_connection_state: pc.iceConnectionState,
+      signaling_state: pc.signalingState,
+      data_channel_state: allocation.channels.get("mesh-reticulum")?.readyState ?? "connecting",
+      channels: [...allocation.channels].sort(([left], [right]) => left.localeCompare(right))
+        .map(([label, channel]) => ({ label, state: channel.readyState })),
+      local: local ? { type: local.type, sdp: local.sdp } : null,
+      remote: remote ? { type: remote.type, sdp: remote.sdp } : null };
   }
 
   send(resource: string, packet: Uint8Array): boolean {
@@ -108,6 +147,7 @@ export class DesktopTransport {
     const allocation: Allocation = {
       resource: options.resource, pc: this.openPeer(options.ice), purposes: new Set(options.channels.map(channel => channel.label)),
       channels: new Map(), abort: new AbortController(), creating: true, closed: false, disposalFailed: false, packetDrops: 0,
+      icePolicy: options.ice.iceTransportPolicy!, operations: 0, revision: 0,
     };
     this.allocations.set(options.resource, allocation);
     this.observe(allocation);
@@ -164,6 +204,7 @@ export class DesktopTransport {
       ["icegatheringstatechange", "gathering", () => allocation.pc.iceGatheringState],
       ["signalingstatechange", "signaling", () => allocation.pc.signalingState],
     ] as const) allocation.pc.addEventListener(name, () => {
+      allocation.revision++;
       if (this.current(allocation)) this.deliver(allocation, event, state(), false);
     });
     allocation.pc.addEventListener("datachannel", event => this.bindChannel(allocation, event.channel));
@@ -176,9 +217,11 @@ export class DesktopTransport {
       return;
     }
     allocation.channels.set(channel.label, channel);
+    allocation.revision++;
     channel.binaryType = "arraybuffer";
     for (const event of ["open", "close", "error"] as const) channel.addEventListener(event, () => {
       if (!this.current(allocation)) return;
+      allocation.revision++;
       this.deliver(allocation, "channel", `${channel.label}:${channel.readyState}`, false);
       if (event === "open" && channel.label === "mesh-reticulum" && this.current(allocation)) {
         this.deliver(allocation, "open", "", false);
@@ -249,6 +292,8 @@ export class DesktopTransport {
   private bounded<T>(allocation: Allocation, operation: () => Promise<T>): Promise<T> {
     if (this.pendingOperations >= 16) return Promise.reject(new Error("transport_capacity"));
     this.pendingOperations++;
+    allocation.operations++;
+    allocation.revision++;
     return new Promise<T>((resolve, reject) => {
       let completed = false;
       const signal = allocation.abort.signal;
@@ -262,6 +307,8 @@ export class DesktopTransport {
         if (completed) return;
         completed = true;
         this.pendingOperations--;
+        allocation.operations--;
+        allocation.revision++;
         clearTimeout(timer);
         signal.removeEventListener("abort", aborted);
       };

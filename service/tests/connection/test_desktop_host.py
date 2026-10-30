@@ -26,6 +26,52 @@ def fixture(**options):
     return host, outgoing, events
 
 
+def test_private_inventory_is_epoch_bound_and_invalid_schema_quarantines_the_host():
+    host, outgoing, events = fixture()
+    with ThreadPoolExecutor() as pool:
+        pending = pool.submit(host.inventory)
+        request = outgoing.get(timeout=1)
+        assert request["request"] == {"op": "inventory"}
+        host.receive(reply(request, {"v": 1, "adapter_epoch": "a" * 32, "resources": []}))
+        assert pending.result()["adapter_epoch"] == "a" * 32
+        pending = pool.submit(host.inventory)
+        request = outgoing.get(timeout=1)
+        host.receive(reply(request, {"v": 1, "adapter_epoch": "b" * 32, "resources": []}))
+        with pytest.raises(NativeUnavailable, match="identity changed"):
+            pending.result()
+        assert events == [("overflow", "", "")]
+        assert outgoing.get(timeout=1)["request"] == {"op": "reset"}
+
+
+def test_a_transient_inventory_failure_does_not_retire_healthy_carriers():
+    host, outgoing, events = fixture()
+    try:
+        with ThreadPoolExecutor() as pool:
+            pending = pool.submit(host.inventory)
+            request = outgoing.get(timeout=1)
+            host.receive({**reply(request, None), "ok": False})
+            with pytest.raises(NativeUnavailable, match="operation failed"):
+                pending.result()
+            pending = pool.submit(host.inventory)
+            request = outgoing.get(timeout=1)
+            host.receive(reply(request, {"v": 1, "adapter_epoch": "a" * 32, "resources": []}))
+            assert pending.result()["resources"] == []
+            assert events == []
+    finally:
+        host.shutdown()
+
+
+def test_private_inventory_rejects_identity_claims_and_fences_the_channel():
+    host, outgoing, events = fixture()
+    with ThreadPoolExecutor() as pool:
+        pending = pool.submit(host.inventory)
+        request = outgoing.get(timeout=1)
+        host.receive(reply(request, {"v": 1, "adapter_epoch": "a" * 32, "resources": [], "authenticated": True}))
+        with pytest.raises(NativeUnavailable, match="inventory is invalid"):
+            pending.result()
+        assert events == [("overflow", "", "")]
+
+
 def test_host_translates_native_contract_and_reordered_replies():
     host, outgoing, _ = fixture()
     with ThreadPoolExecutor(2) as pool:

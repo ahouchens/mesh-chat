@@ -54,7 +54,7 @@ old epochs and non-increasing IDs before executing any operation. This is an
 internal contract version, independent of snapshots and signed peer documents.
 
 Operations are `createOffer(options)`, `acceptOffer(options, offer)`,
-`applyAnswer(resource, answer)`, `inspect(resource)`, `send(resource, packet)`,
+`applyAnswer(resource, answer)`, `inspect(resource)`, `inventory()`, `send(resource, packet)`,
 `sendControl(resource, label, text)`, `close(resource)` and `reset`. Options contain
 only `resource`, `ice` and `channels`. Resources name exact physical allocations;
 packet values are canonical base64 for 1–1,064 bytes. The Python binding accepts
@@ -91,3 +91,33 @@ five-second stalled poll retires the host. These timers move private frames and
 do not implement peer retry policy. Windows qualification and surviving-carrier
 adoption remain required before this path can replace the renderer compatibility
 runtime.
+
+### Private carrier inventory v1
+
+`native-carrier-inventory-v1.schema.json` describes the optional desktop
+`inventory()` result. The browser driver produces it from actual peer objects;
+the Python private host validates it. Rust routes the parameter-free operation
+through the existing authenticated process/window binding. It is absent from
+the application command allowlist and does not change signed peer documents.
+
+An unpredictable adapter epoch distinguishes browser driver incarnations and
+must stay fixed within a private service binding. At most 16 records identify
+exact physical resources, local/remote description types and SHA-256 hashes,
+ICE policy, channel states and unfinished native work. The existing 16-operation
+budget also bounds inventory queries. Snapshots taken across resource reuse,
+retirement, native operations or observed state changes fail rather than mixing
+observations. A transient snapshot race does not quarantine healthy carriers;
+malformed inventories or a changed adapter identity do quarantine the binding.
+
+The digest hashes UTF-8 SDP after the existing normalization: split lines, drop
+empty lines and exactly `a=end-of-candidates`, and join with LF without a trailing
+newline. The shared vectors define browser/Python compatibility. No whitespace,
+Unicode or SDP attribute normalization is otherwise allowed. Inventories contain
+no SDP text, ICE credentials, peer identity or authorization claim. Consumers
+also reject duplicate resource/channel identities, incompatible description
+roles and contradictory packet channel state beyond the structural schema.
+
+An inventory is a current mechanism observation, not permission to adopt or
+evidence of messaging readiness. Protected binding records, current scope and
+intent checks, trusted service rebinding and actual restart/receipt tests are
+still required before surviving-carrier adoption can be enabled.

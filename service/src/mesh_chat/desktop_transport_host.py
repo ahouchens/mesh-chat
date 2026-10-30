@@ -13,6 +13,7 @@ from threading import Condition, Thread
 from uuid import uuid4
 
 from .errors import NativeUnavailable, ValidationError
+from .native_carrier_evidence import validate_inventory
 
 
 MAX_FRAME_BYTES = 256 * 1024
@@ -42,6 +43,7 @@ class DesktopTransportHost:
         self._pending = {}
         self._outgoing = deque()
         self._closed = False
+        self._adapter_epoch = None
         # One bounded writer prevents a stalled pipe from defeating deadlines
         # or accumulating a thread per blocked request.
         self._writer = Thread(target=self._write, daemon=True, name="mesh-chat-desktop-transport")
@@ -64,6 +66,19 @@ class DesktopTransportHost:
         if not isinstance(result, dict):
             raise NativeUnavailable("Desktop transport resource is unavailable")
         return _encode({"ok": True, "result": result})
+
+    def inventory(self):
+        result = self._request("inventory")
+        try:
+            inventory = validate_inventory(result)
+            with self._condition:
+                if self._closed or self._adapter_epoch not in (None, inventory["adapter_epoch"]):
+                    raise NativeUnavailable("Desktop transport adapter identity changed")
+                self._adapter_epoch = inventory["adapter_epoch"]
+            return inventory
+        except NativeUnavailable:
+            self.shutdown()
+            raise
 
     def send(self, resource, packet):
         if not isinstance(packet, (bytes, bytearray)) or not 1 <= len(packet) <= 1064:

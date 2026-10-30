@@ -1,5 +1,6 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { DesktopTransport, type TransportEvent } from "./desktop-transport";
+import { webcrypto } from "node:crypto";
 
 const sdp = "v=0\r\na=fingerprint:sha-256 " + Array(32).fill("AB").join(":") + "\r\n";
 const options = { resource: "physical-1", ice: { iceServers: [], iceTransportPolicy: "relay" as const },
@@ -24,7 +25,7 @@ class Peer extends EventTarget {
   signalingState = "stable";
   iceConnectionState = "connected";
   iceGatheringState = "complete";
-  localDescription: { sdp: string } | null = null;
+  localDescription: { sdp: string; type?: string } | null = null;
   remoteDescription: unknown;
   createOffer = vi.fn(async () => ({ type: "offer", sdp }));
   createAnswer = vi.fn(async () => ({ type: "answer", sdp }));
@@ -45,7 +46,78 @@ function fixture(sink: (event: TransportEvent) => boolean = () => true) {
   return { host, peers, configurations };
 }
 
-afterEach(() => vi.useRealTimers());
+afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
+
+it("observes exact live descriptions without returning SDP or ICE credentials", async () => {
+  vi.stubGlobal("crypto", webcrypto);
+  const { host } = fixture();
+  await host.createOffer(options);
+  await host.applyAnswer(options.resource, sdp + "a=ice-pwd:private-answer\r\n");
+  const first = await host.inventory();
+  const second = await host.inventory();
+  expect(first).toEqual(second);
+  expect(first.adapter_epoch).toMatch(/^[a-f0-9]{32}$/);
+  expect(first.resources).toHaveLength(1);
+  expect(first.resources[0]).toMatchObject({ resource: options.resource, ice_policy: "relay",
+    pending: false, data_channel_state: "open", local_type: "offer", remote_type: "answer" });
+  expect(first.resources[0].local_sdp_sha256).toMatch(/^[a-f0-9]{64}$/);
+  expect(first.resources[0].remote_sdp_sha256).not.toBe(first.resources[0].local_sdp_sha256);
+  expect(JSON.stringify(first)).not.toContain("private-answer");
+  expect((await fixture().host.inventory()).adapter_epoch).not.toBe(first.adapter_epoch);
+  host.closeAll();
+  expect((await host.inventory()).resources).toEqual([]);
+});
+
+it("cannot return an inventory collected across retirement and public ID reuse", async () => {
+  vi.stubGlobal("crypto", webcrypto);
+  const { host } = fixture();
+  await host.createOffer(options);
+  const inventory = host.inventory();
+  const rejected = expect(inventory).rejects.toThrow("observation_changed");
+  host.close(options.resource);
+  await host.createOffer(options);
+  await rejected;
+  host.closeAll();
+});
+
+it("reports unfinished answer work as pending rather than adoption evidence", async () => {
+  vi.stubGlobal("crypto", webcrypto);
+  const { host, peers } = fixture();
+  await host.createOffer(options);
+  let finish!: () => void;
+  peers[0].setRemoteDescription = () => new Promise<void>(resolve => { finish = resolve; });
+  const applying = host.applyAnswer(options.resource, sdp);
+  await Promise.resolve();
+  expect((await host.inventory()).resources[0].pending).toBe(true);
+  finish();
+  await applying;
+  expect((await host.inventory()).resources[0].pending).toBe(false);
+  host.closeAll();
+});
+
+it("rejects an observation if an answer operation overlaps its hash calculation", async () => {
+  vi.stubGlobal("crypto", webcrypto);
+  const { host } = fixture();
+  await host.createOffer(options);
+  await host.applyAnswer(options.resource, sdp);
+  const observed = host.inventory();
+  const rejected = expect(observed).rejects.toThrow("observation_changed");
+  await host.applyAnswer(options.resource, sdp);
+  await rejected;
+  host.closeAll();
+});
+
+it("uses the existing native-operation budget for inventory work", async () => {
+  vi.stubGlobal("crypto", webcrypto);
+  const { host, peers } = fixture();
+  await host.createOffer(options);
+  peers[0].setRemoteDescription = () => new Promise<void>(() => {});
+  const pending = Array.from({ length: 16 }, () => host.applyAnswer(options.resource, sdp));
+  const rejected = pending.map(operation => expect(operation).rejects.toThrow("transport_retired"));
+  await expect(host.inventory()).rejects.toThrow("transport_capacity");
+  host.closeAll();
+  await Promise.all(rejected);
+});
 
 it("preserves relay-only configuration and performs no peer retry", async () => {
   const { host, peers, configurations } = fixture();

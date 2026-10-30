@@ -299,6 +299,15 @@ class NativeWebRtcInteropTest {
                   !await perform({op:'sendControl',resource:options.resource,label:'$control',text:'probe'})) {
                 throw new Error('Production browser transport refused traffic');
               }
+              const inventory = await perform({op:'inventory'});
+              const observed = inventory.resources[0];
+              if (inventory.v !== 1 || !/^[a-f0-9]{32}$/.test(inventory.adapter_epoch) ||
+                  inventory.resources.length !== 1 || observed.resource !== options.resource ||
+                  observed.pending || observed.data_channel_state !== 'open' ||
+                  !/^[a-f0-9]{64}$/.test(observed.local_sdp_sha256) ||
+                  !/^[a-f0-9]{64}$/.test(observed.remote_sdp_sha256) || 'sdp' in observed) {
+                throw new Error('Production browser inventory is incomplete');
+              }
               report('sent', 'yes');
             };
             window.pc = {close: () => perform({op:'reset'})};

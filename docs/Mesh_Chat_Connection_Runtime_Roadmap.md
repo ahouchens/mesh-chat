@@ -256,6 +256,17 @@ lifecycle and packet budgets separate. Lost windows or stalled IPC quarantine th
 Python adapter. Service exit currently disposes that window and its carriers;
 surviving-carrier restart adoption remains required before M2 promotion.
 
+The private desktop host now exposes a bounded carrier inventory for recovery
+reconciliation. It reports a stable adapter epoch, exact physical resources,
+description hashes, channel states and pending work without SDP/ICE credentials
+or identity claims. Browser snapshots are rejected if a resource or operation
+changes during hashing. The Python binding validates the complete inventory and
+fences a changed adapter epoch; ordinary snapshot races remain retryable.
+Cross-language digest vectors, stale-resource tests, real WebView2 observations
+and both Android Chromium offer roles cover this port. This is a prerequisite,
+not restart adoption: service exit still disposes the transport window. Protected
+binding persistence, durable invalidation and trusted rebinding remain open.
+
 Windows process retirement now captures the originating PID and detaches its
 transport host, native host and pending requests before a replacement is
 published. Delayed cleanup cannot retire the replacement. The lifecycle guard

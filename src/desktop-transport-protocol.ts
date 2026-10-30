@@ -107,6 +107,9 @@ export class DesktopTransportProtocol {
       case "inspect":
         fields(request, ["op", "resource"]);
         return this.driver.inspect(resource(request.resource));
+      case "inventory":
+        fields(request, ["op"]);
+        return this.driver.inventory();
       case "close":
         fields(request, ["op", "resource"]);
         return this.driver.close(resource(request.resource));

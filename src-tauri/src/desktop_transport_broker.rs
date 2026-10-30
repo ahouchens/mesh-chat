@@ -87,6 +87,7 @@ impl Binding {
                 | "acceptOffer"
                 | "applyAnswer"
                 | "inspect"
+                | "inventory"
                 | "send"
                 | "sendControl"
                 | "close"
@@ -223,6 +224,18 @@ mod tests {
     fn exchange(host: &mut Binding, incoming: Vec<Value>) -> (Vec<Value>, Vec<Value>) {
         host.exchange(42, "private-window", "private-token", incoming)
             .unwrap()
+    }
+
+    #[test]
+    fn inventory_uses_the_same_private_process_and_request_fences() {
+        let mut host = binding();
+        assert!(host.admit(99, request(1, "inventory")).is_err());
+        host.admit(42, request(1, "inventory")).unwrap();
+        assert!(host.admit(42, request(1, "inventory")).is_err());
+        assert_eq!(exchange(&mut host, vec![]).1, vec![request(1, "inventory")]);
+        let mut reply = response(1);
+        reply["result"] = json!({"v":1,"adapter_epoch":EPOCH,"resources":[]});
+        assert_eq!(exchange(&mut host, vec![reply.clone()]).0, vec![reply]);
     }
 
     #[test]
