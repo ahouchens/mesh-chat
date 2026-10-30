@@ -34,6 +34,7 @@ class PendingContactCarrier:
     def current(self):
         service = self.service
         if (self._stop.is_set() or service._shutdown.is_set() or service._identity is None
+                or not service._native_work_allowed()
                 or time.monotonic() >= self.deadline or time.time() >= self.expires_at):
             return False
         lifecycle = getattr(service, "_workspace_lifecycle_state", lambda: {})()
@@ -85,6 +86,9 @@ class PendingContactCarrier:
             with self._worker_lock:
                 native_id = self._worker.request("send", kind=message["kind"], logical_id=message["id"],
                     document=message.get("invitation") or "", expires_at=int(message["expires_at"]))
+            if not self.current():
+                self._sent.pop(message["id"], None)
+                return False
             self.service._on_native_status_locked(message["id"], DeliveryState.SENDING, native_id)
             return True
         except Exception:
@@ -152,7 +156,8 @@ class PendingContactCarrier:
             while not self._open.wait(.05):
                 with self.service._dispatch_lock:
                     if not self.current(): return
-            if self._stop.is_set(): return
+            with self.service._dispatch_lock:
+                if not self.current(): return
             with self._worker_lock: self._worker.request("activate")
             while not self._stop.is_set() and self._exchange(): self._stop.wait(.025)
         except Exception:
@@ -182,6 +187,7 @@ class PendingContactCarrier:
 def begin(service, session, verified):
     if getattr(service, "_connection_policy", "legacy") != "shared-native" or service.network is None:
         return
+    service._require_native_work()
     contact = service._contact_by_destination(verified.signer_destination)
     if contact and contact["trust"] in {"blocked", "identity_changed"}:
         raise ContactNotApproved("Contact cannot establish an onboarding scope")

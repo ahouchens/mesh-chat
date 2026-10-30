@@ -28,6 +28,18 @@ from .webrtc_signaling import _fingerprint
 class NativeWebRTCServiceMixin(NativeWebRTCControlMixin):
     _native_answer_exchange_timeout = 120.0
 
+    def _native_work_allowed(self):
+        if self._shutdown.is_set():
+            return False
+        if getattr(self, "_connection_policy", "legacy") != "shared-native":
+            return True
+        runtime = getattr(self, "_connection_runtime", None)
+        return runtime is not None and runtime.permits_native_work()
+
+    def _require_native_work(self):
+        if not self._native_work_allowed():
+            raise NativeUnavailable("Native connection owner is unavailable")
+
     def _native_webrtc_host(self):
         from .native_webrtc_host import android_host
         host = getattr(self, "_native_host", None)
@@ -226,6 +238,8 @@ class NativeWebRTCServiceMixin(NativeWebRTCControlMixin):
                     if runtime is None or not self._shared_native_session(current):
                         self.native_webrtc_close(current)
                 return
+            if event != "closed" and not self._native_work_allowed():
+                return
             # Resolve at consumption time: a queued event from a released
             # physical peer must not target a later reuse of its public ID.
             session_id = self._native_resources.resolve(session_id)
@@ -367,11 +381,13 @@ class NativeWebRTCServiceMixin(NativeWebRTCControlMixin):
         # Run in the native event worker, even if the WebView is suspended.
         # Preserving a pending answer must not leave abandoned peers alive.
         now = time.monotonic()
+        admission_closed = not self._native_work_allowed()
         with self._native_webrtc_lock:
             expired = [session_id for session_id, description in self._native_webrtc_descriptions.items()
                        if session_id in self._native_webrtc_live
-                       and session_id not in self._native_webrtc_sessions
-                       and description.get("answer_wait_until", float("inf")) <= now]
+                       and ((admission_closed and not self._shared_native_session(session_id))
+                            or (session_id not in self._native_webrtc_sessions
+                                and description.get("answer_wait_until", float("inf")) <= now))]
         for session_id in expired:
             self.native_webrtc_close(session_id)
 
@@ -415,8 +431,7 @@ class NativeWebRTCServiceMixin(NativeWebRTCControlMixin):
                               runtime_owned: bool = False) -> bool:
         relay_only = False
         with self._dispatch_lock:
-            if self._shutdown.is_set():
-                raise NativeUnavailable("Native WebRTC is shutting down")
+            self._require_native_work()
             if getattr(self, "_carrier_recovery_pending", False):
                 raise NativeUnavailable("Native carrier recovery is pending")
             if profile_id is not None:
@@ -463,6 +478,7 @@ class NativeWebRTCServiceMixin(NativeWebRTCControlMixin):
                     del self._native_webrtc_profile_sessions[profile_id]
 
     def _native_sdp_result(self, session_id: str, raw: str) -> dict[str, Any]:
+        self._require_native_work()
         result = json.loads(raw)
         if not result.get("ok"):
             raise NativeUnavailable(str(result.get("error", "native_webrtc_sdp_failed")))
@@ -545,6 +561,7 @@ class NativeWebRTCServiceMixin(NativeWebRTCControlMixin):
                     self._release_native_session(session_id)
 
     def native_webrtc_apply_answer(self, session_id: Any, answer_sdp: Any) -> dict[str, Any]:
+        self._require_native_work()
         if not isinstance(session_id, str) or not isinstance(answer_sdp, str):
             raise ValidationError("Native WebRTC answer is invalid")
         from .native_webrtc_control import normalized_sdp
@@ -560,6 +577,7 @@ class NativeWebRTCServiceMixin(NativeWebRTCControlMixin):
         if not result.get("ok"):
             raise NativeUnavailable(str(result.get("error", "native_webrtc_apply_failed")))
         with self._native_webrtc_lock:
+            self._require_native_work()
             if (not self._native_resources.current(session_id, physical)
                     or session_id not in self._native_webrtc_live):
                 raise NativeUnavailable("Native answer completed after its resource was retired")
@@ -569,6 +587,7 @@ class NativeWebRTCServiceMixin(NativeWebRTCControlMixin):
     def native_webrtc_control(
         self, session_id: Any, label: Any, text: Any
     ) -> dict[str, Any]:
+        self._require_native_work()
         if (
             not isinstance(session_id, str)
             or label not in {"mesh-onboarding", "meshchat-reconnect"}
@@ -578,7 +597,7 @@ class NativeWebRTCServiceMixin(NativeWebRTCControlMixin):
             raise ValidationError("Native WebRTC control message is invalid")
         physical = self._native_resources.require(session_id)
         accepted = bool(self._native_webrtc_host().sendControl(physical, label, text))
-        accepted = (accepted and session_id in self._native_webrtc_live
+        accepted = (accepted and self._native_work_allowed() and session_id in self._native_webrtc_live
                     and self._native_resources.current(session_id, physical))
         return {"accepted": accepted}
 

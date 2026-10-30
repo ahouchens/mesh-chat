@@ -32,6 +32,7 @@ def bind_control_profile(state, profile):
 
 class NativeWebRTCControlMixin:
     def native_webrtc_bind_onboarding(self, session_id, offer_document, answer_document=None):
+        self._require_native_work()
         offer = verify_onboarding_offer(offer_document)
         answer = verify_onboarding_answer(answer_document, offer) if answer_document else None
         with self._native_webrtc_lock:
@@ -76,6 +77,7 @@ class NativeWebRTCControlMixin:
     def claim_native_reconnect_carrier(self, profile_id, local_device_id, remote_device_id):
         """Private ownership transfer; public JSON cannot supply binding evidence."""
         with self._dispatch_lock, self._native_webrtc_lock:
+            self._require_native_work()
             if getattr(self, "_connection_policy", "legacy") != "shared-native":
                 return None
             profile = self._reconnect_profile(profile_id)
@@ -96,6 +98,8 @@ class NativeWebRTCControlMixin:
     def native_manual_carrier_authorized(self, profile_id):
         """Private domain query; it grants no permission to negotiate a new peer."""
         with self._dispatch_lock, self._native_webrtc_lock:
+            if not self._native_work_allowed():
+                return False
             if getattr(self, "_connection_policy", "legacy") != "shared-native":
                 return False
             try:
@@ -149,6 +153,8 @@ class NativeWebRTCControlMixin:
         return contact["id"] if contact else None
 
     def _native_control_receive(self, session_id, label, text):
+        if not self._native_work_allowed():
+            return
         if len(text) > 65_536 or session_id not in self._native_webrtc_live:
             return
         # Only sessions bound by signed signaling or a verified reconnect
@@ -191,6 +197,8 @@ class NativeWebRTCControlMixin:
             return
 
     def _native_control_refresh(self, session_id, label):
+        if not self._native_work_allowed():
+            return
         contact_id = self._native_control_contact(session_id)
         if not contact_id or contact_id.startswith("workspace:"):
             return

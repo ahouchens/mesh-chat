@@ -4,6 +4,7 @@ import json
 import queue
 import threading
 import time
+from types import SimpleNamespace
 
 import pytest
 import RNS
@@ -65,6 +66,7 @@ class Host:
 def runtime():
     service = object.__new__(MeshChatService)
     service._shutdown = threading.Event()
+    service._connection_runtime = SimpleNamespace(permits_native_work=lambda: True)
     service._dispatch_lock = threading.RLock()
     service._native_webrtc_lock = threading.RLock()
     service._native_resources = NativeResourceRegistry()
@@ -89,6 +91,130 @@ def runtime():
     service.webrtc_detach = lambda bridge: service._webrtc_bridges.pop(bridge, None)
     service._contact_by_destination = lambda peer: {"id": "contact-1", "destination_hash": peer}
     return service, host
+
+
+def shared_owner(service):
+    from types import SimpleNamespace
+    from mesh_chat.connection.model import Execution
+    from mesh_chat.connection.runtime import ConnectionRuntime
+    service._connection_policy = "shared-native"
+    service._connection_runtime = ConnectionRuntime("native-admission", lambda *_: SimpleNamespace(),
+        profiles=lambda: {"profiles": []}, execution=lambda: Execution.AVAILABLE, activate=lambda _: None)
+    return service._connection_runtime
+
+
+@pytest.mark.parametrize("terminal", ["quarantine", "stop"])
+@pytest.mark.parametrize("operation", ["offer", "accept", "answer", "control", "bind"])
+def test_terminal_owner_rejects_manual_native_work_but_allows_disposal(terminal, operation):
+    service, host = runtime()
+    service.native_webrtc_offer("manual-session", ICE, [])
+    owner = shared_owner(service)
+    getattr(owner, terminal)()
+    owner.committed_start()
+    actions = {
+        "offer": lambda: service.native_webrtc_offer("another-session", ICE, []),
+        "accept": lambda: service.native_webrtc_accept("another-session", SDP, ICE, []),
+        "answer": lambda: service.native_webrtc_apply_answer("manual-session", SDP),
+        "control": lambda: service.native_webrtc_control("manual-session", "mesh-onboarding", "{}"),
+        "bind": lambda: service.native_webrtc_bind_onboarding("manual-session", "untrusted"),
+    }
+    try:
+        with pytest.raises(NativeUnavailable):
+            actions[operation]()
+        assert len(host.raw_created) == 1
+        assert not host.controls and not host.answers
+        assert service.native_webrtc_close("manual-session") == {"state": "closed"}
+        assert host.raw_closed == host.raw_created
+    finally:
+        owner.stop()
+
+
+@pytest.mark.parametrize("operation", ["offer", "accept"])
+def test_quarantine_during_native_allocation_retires_late_result(operation):
+    service, host = runtime()
+    owner = shared_owner(service)
+    host.during_create = owner.quarantine
+    try:
+        with pytest.raises(NativeUnavailable):
+            if operation == "offer":
+                service.native_webrtc_offer("late-session", ICE, [])
+            else:
+                service.native_webrtc_accept("late-session", SDP, ICE, [])
+        assert len(host.raw_created) == 1
+        assert host.raw_closed == host.raw_created
+        assert not service._native_webrtc_live
+        assert service._native_resources.physical("late-session") is None
+    finally:
+        owner.stop()
+
+
+def test_quarantine_during_answer_cannot_commit_negotiation_result():
+    service, host = runtime()
+    service.native_webrtc_offer("manual-session", ICE, [])
+    owner = shared_owner(service)
+    def answer(*_):
+        owner.quarantine()
+        return json.dumps({"ok": True})
+    host.applyAnswer = answer
+    try:
+        with pytest.raises(NativeUnavailable):
+            service.native_webrtc_apply_answer("manual-session", SDP)
+        assert "remote_answer" not in service._native_webrtc_descriptions["manual-session"]
+    finally:
+        service.native_webrtc_close("manual-session")
+        owner.stop()
+
+
+def test_quarantine_discards_native_control_before_contact_mutation():
+    service, _ = runtime()
+    service.native_webrtc_offer("manual-session", ICE, [])
+    owner = shared_owner(service)
+    service._native_control_receive = lambda *_: pytest.fail("Control crossed quarantine")
+    owner.quarantine()
+    try:
+        native_event(service, "control", "manual-session", "mesh-onboarding:e30=")
+    finally:
+        service.native_webrtc_close("manual-session")
+        owner.stop()
+
+
+def test_quarantine_during_control_send_does_not_report_acceptance():
+    service, host = runtime()
+    service.native_webrtc_offer("manual-session", ICE, [])
+    owner = shared_owner(service)
+    def send(*_):
+        owner.quarantine()
+        return True
+    host.sendControl = send
+    try:
+        assert service.native_webrtc_control("manual-session", "mesh-onboarding", "{}") == {"accepted": False}
+    finally:
+        service.native_webrtc_close("manual-session")
+        owner.stop()
+
+
+def test_shared_native_allocation_requires_a_constructed_owner():
+    service, host = runtime()
+    service._connection_policy = "shared-native"
+    service._connection_runtime = None
+    with pytest.raises(NativeUnavailable):
+        service.native_webrtc_offer("manual-session", ICE, [])
+    assert not host.raw_created and not service._native_webrtc_live
+
+
+def test_terminal_maintenance_retires_manual_carriers_without_touching_managed_resources():
+    service, host = runtime()
+    service.native_webrtc_offer("manual-session", ICE, [])
+    service.native_webrtc_offer("managed-session", ICE, [], "profile-1")
+    owner = shared_owner(service)
+    owner.quarantine()
+    try:
+        service._expire_native_answer_exchanges()
+        assert host.closed == ["manual-session"]
+        assert service._native_webrtc_live == {"managed-session"}
+    finally:
+        service.native_webrtc_close("managed-session")
+        owner.stop()
 
 
 def native_event(service, kind, logical, data=""):
@@ -559,7 +685,7 @@ def startup_bridge(monkeypatch):
     service._connection_policy = "shared-native"
     service._native_webrtc_profile_sessions["profile-1"] = "early-carrier"
     permitted = [False]
-    service._connection_runtime = SimpleNamespace(permits_carrier=lambda *_: permitted[0])
+    service._connection_runtime = SimpleNamespace(permits_carrier=lambda *_: permitted[0], permits_native_work=lambda: True)
     return service, host, permitted, received, announcements
 
 
@@ -704,7 +830,7 @@ def test_native_bridge_repair_keeps_the_carrier_but_fences_old_interface_sends(m
     permitted = [True]
     service._connection_policy = "shared-native"
     service._native_webrtc_profile_sessions["profile-1"] = "live-carrier"
-    service._connection_runtime = SimpleNamespace(permits_carrier=lambda *_: permitted[0])
+    service._connection_runtime = SimpleNamespace(permits_carrier=lambda *_: permitted[0], permits_native_work=lambda: True)
     received = []
     service.webrtc_packet = lambda *_: received.append(True)
     permitted[0] = False

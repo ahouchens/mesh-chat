@@ -9,6 +9,7 @@ from mesh_chat.app_protocol import build_fields, conversation_id, M_KIND, META_F
 from mesh_chat.contact_bootstrap import ContactBootstrapScope
 from mesh_chat.models import MessageKind
 from mesh_chat.native_onboarding_bootstrap import PendingContactCarrier
+from mesh_chat.native_webrtc_service import NativeWebRTCServiceMixin
 
 
 @pytest.fixture
@@ -17,6 +18,8 @@ def carrier():
     service = SimpleNamespace(_identity=object(), _shutdown=threading.Event(), _native_webrtc_live={"session"},
         _native_resources=SimpleNamespace(require=lambda _: "physical", current=lambda *_: True),
         _native_webrtc_peers={"session": contact["destination_hash"]}, _contact_by_destination=lambda _: contact)
+    service._native_work_allowed = lambda: True
+    service._require_native_work = NativeWebRTCServiceMixin._require_native_work.__get__(service)
     value = PendingContactCarrier(service, "session", b"p" * 64, int(time.time()) + 90)
     service._pending_contact_carriers = {"session": value}
     return value, service, contact
@@ -68,6 +71,41 @@ def test_shutdown_never_reopens_vault_authority(carrier):
     service._shutdown.set()
     service._contact_by_destination = lambda _: pytest.fail("Vault queried after shutdown")
     assert not value.current()
+
+
+def test_terminal_owner_denies_pending_scope_before_vault_or_worker_access(carrier):
+    value, service, contact = carrier
+    service._native_work_allowed = lambda: False
+    service._contact_by_destination = lambda _: pytest.fail("Authority read after terminal fence")
+    assert not value.current()
+    assert not value.send(contact, {"kind": "contact_request"})
+    value.receive("AQ==")
+    assert not value._packets
+
+
+def test_terminal_owner_discards_late_pending_send_status(carrier):
+    value, service, contact = carrier
+    value.ready = True
+    def request(*_args, **_kwargs):
+        service._native_work_allowed = lambda: False
+        return "native-control"
+    value._worker = SimpleNamespace(request=request)
+    service._on_native_status_locked = lambda *_: pytest.fail("Status crossed terminal fence")
+    assert not value.send(contact, {"kind": "contact_request", "id": "control", "expires_at": int(time.time()) + 30})
+    assert not value._sent
+
+
+def test_terminal_owner_prevents_pending_worker_activation(carrier):
+    value, service, _ = carrier
+    service._native_work_allowed = lambda: False
+    service._dispatch_lock = threading.RLock()
+    closed = []
+    service.native_webrtc_close = lambda session, **kwargs: closed.append((session, kwargs))
+    value._worker = SimpleNamespace(request=lambda *_: pytest.fail("Activated quarantined worker"), close=lambda: None)
+    value.opened()
+    value._run()
+    assert closed == [("session", {"expected_physical": "physical"})]
+    assert not service._pending_contact_carriers
 
 
 def test_shutdown_during_packet_send_stops_remaining_packets_and_events(carrier):

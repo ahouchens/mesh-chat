@@ -107,6 +107,11 @@ class ConnectionRuntime:
         with self._lock:
             return not self._stop.is_set() and not self._is_fenced(connection_key(profile), profile)
 
+    def permits_native_work(self):
+        """Private adapter admission, including work before a profile exists."""
+        with self._lock:
+            return not self._quarantined and not self._stop.is_set()
+
     def fence(self, contact_id=None):
         """Immediately deny work, before the caller attempts a durable Stop."""
         with self._lock:

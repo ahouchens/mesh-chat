@@ -20,6 +20,8 @@ def recovery(tmp_path):
     with VaultStore(tmp_path, b"x" * 32, allow_unprotected_for_tests=True) as store:
         service = NativeWebRTCServiceMixin()
         service._connection_policy = "shared-native"
+        service._shutdown = Event()
+        service._connection_runtime = SimpleNamespace(permits_native_work=lambda: True)
         service._dispatch_lock = RLock()
         service._native_webrtc_lock = RLock()
         service._native_resources = NativeResourceRegistry()

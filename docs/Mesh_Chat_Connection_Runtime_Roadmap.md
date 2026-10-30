@@ -167,6 +167,17 @@ until a new runtime is started. These bounds do not qualify all other legacy
 queues or constitute a packaged saturation result.
 
 Adapter quarantine is now a terminal runtime fence, separate from persisted user
+intent. Private native admission also covers manual offers/answers, onboarding
+binding, control delivery and pending contact interpreters before a connection
+profile exists. A missing, quarantined or stopped shared owner cannot admit this
+work. Late native allocations are retired by exact handle, late answer/control
+results cannot claim success, and pending-worker completions cannot update
+message status after admission closes. Existing native maintenance disposes
+unmanaged carriers; supervisor-owned carriers keep their existing cleanup owner.
+Explicit disposal and closed-resource callbacks remain available. These checks
+extend the shared policy fence without promoting it or removing legacy wrappers.
+
+The terminal fence remains separate from persisted user
 intent and diagnostic failures. Neither a contact Start nor Start-all can release
 it, including before the first actor scan. Shutdown has the same permanent
 admission boundary. Terminal runtimes cannot activate profiles, admit recovered
