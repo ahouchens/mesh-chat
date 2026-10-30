@@ -50,11 +50,11 @@ def test_foreign_epochs_cannot_complete_current_work_or_inject_observations():
     with ThreadPoolExecutor() as pool:
         pending = pool.submit(host.applyAnswer, "native-one", "answer")
         request = outgoing.get(timeout=1)
-        assert not host.receive({**reply(request, None), "epoch": "old"})
+        assert not host.receive({**reply(request, None), "epoch": "b" * 32})
         assert not pending.done()
         event = {"v": 1, "type": "desktop_transport_event", "epoch": request["epoch"],
                  "event": "ice", "resource": "native-one", "data": "connected"}
-        assert not host.receive({**event, "epoch": "old"})
+        assert not host.receive({**event, "epoch": "b" * 32})
         assert host.receive(event)
         assert events == [("ice", "native-one", "connected")]
         host.receive(reply(request, None))
@@ -109,7 +109,7 @@ def test_capacity_rejects_work_without_allocating_an_extra_request():
 
 
 @pytest.mark.parametrize("change", [
-    {"v": 2}, {"ok": 1}, {"result": "x" * 262144}, {"extra": "private"},
+    {"v": 2}, {"ok": 1}, {"result": "x" * 262144}, {"extra": "private"}, {"epoch": None},
 ])
 def test_malformed_current_reply_quarantines_and_wakes_waiters(change):
     host, outgoing, events = fixture()

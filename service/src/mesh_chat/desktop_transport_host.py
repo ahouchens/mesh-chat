@@ -139,7 +139,8 @@ class DesktopTransportHost:
                 return
 
     def receive(self, value):
-        if isinstance(value, dict) and value.get("epoch") != self._epoch:
+        if (isinstance(value, dict) and isinstance(value.get("epoch"), str)
+                and re.fullmatch(r"[a-f0-9]{32}", value["epoch"]) and value["epoch"] != self._epoch):
             return False
         try:
             self._validate(value)
@@ -168,7 +169,8 @@ class DesktopTransportHost:
     @staticmethod
     def _validate(value):
         _encode(value)
-        if not isinstance(value, dict) or type(value.get("v")) is not int or value["v"] != 1:
+        if (not isinstance(value, dict) or type(value.get("v")) is not int or value["v"] != 1
+                or not isinstance(value.get("epoch"), str) or not re.fullmatch(r"[a-f0-9]{32}", value["epoch"])):
             raise ValidationError("Desktop transport version is invalid")
         if value.get("type") == "desktop_transport_reply":
             if (set(value) == {"v", "type", "epoch", "id", "ok", "result"}

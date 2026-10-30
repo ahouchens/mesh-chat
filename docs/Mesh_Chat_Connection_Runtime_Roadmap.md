@@ -227,6 +227,11 @@ protocol is included in both emulator offer roles. This is component evidence,
 not Windows WebView2 qualification: trusted platform registration and
 service-restart adoption are not yet connected to this component. Existing
 renderer compatibility paths remain active until those parity gates pass.
+The service entry point can bind this channel at private process launch with
+`--shared-webview`; it selects the shared owner before workers start. JSON
+initialization rejects host/policy selectors. An executing inherited-pipe test
+covers replies and callbacks while dispatch waits, and shutdown wakes pending
+work. The shipping Tauri launcher does not select this experimental mode yet.
 
 ## Local validation
 
