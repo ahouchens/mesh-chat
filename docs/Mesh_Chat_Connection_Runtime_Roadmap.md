@@ -724,7 +724,12 @@ filtering, contact-authority hiding and resync, caller-scoped handles and cursor
 cursor-purpose confusion, state changes, deletion, bounds, request validation,
 service restart, inbound replay for changes and removal, hidden changes after
 blocking, the watermark handshake and outbound direction. Journal tests pin the
-stored direction, including its removal with the message. Four further vault regressions cover multiple projections, one
+stored direction, including its removal with the message. AST guards keep the
+received index free of ambient I/O and outer-layer imports, and keep the
+application facade from importing the service, workspace, native or reducer
+modules. The complete required inventory passed at 1,208 tests with zero skips and
+the strict model type check passed; these remain in-process and component
+results. Four further vault regressions cover multiple projections, one
 failing sibling rolling back the batch, duplicate binding rejection and the binding
 cap. The full connection directory passed locally (850 tests), the strict model
 type check passed, and the contract vectors and schemas were updated. This closes
