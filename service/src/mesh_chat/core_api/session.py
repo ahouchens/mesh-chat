@@ -13,7 +13,7 @@ import re
 from threading import RLock
 from typing import Protocol
 
-from .views import acceptance_view, connection_view, message_view, peer_view
+from .views import acceptance_view, connection_view, event_view, message_view, peer_view
 from .errors import ApiFailure
 from .messages import (
     IDEMPOTENCY_SECONDS, MAX_CALLER_ENQUEUES, MAX_PEERS, MAX_VAULT_ENQUEUES,
@@ -21,15 +21,19 @@ from .messages import (
 )
 from ..chat_text import validate_chat_text
 from ..errors import ValidationError
+from .recovery import MAX_BATCH, MAX_BATCH_BYTES, MAX_CURSOR_BYTES, Recovery
+from ..message_journal import MAX_EVENTS, RETENTION_SECONDS
 
 
 OPERATIONS = ("runtime.capabilities", "profile.query", "connection.snapshot")
 MESSAGE_OPERATIONS = ("peer.query", "message.enqueue", "message.query")
+RECOVERY_OPERATIONS = ("message.list", "events.poll")
 MAX_PROFILES = 256
 MAX_CONNECTIONS = 256
 REQUEST_ID = re.compile(r"[A-Za-z0-9._:-]{1,80}\Z")
 HANDLE = re.compile(r"[A-Za-z0-9_-]{16,128}\Z")
 IDEMPOTENCY_KEY = re.compile(r"[A-Za-z0-9._:-]{16,128}\Z")
+CURSOR = re.compile(r"[A-Za-z0-9_-]{16,1024}\Z")
 
 
 @dataclass(frozen=True)
@@ -59,13 +63,15 @@ class Observations(Protocol):
 
 class CoreSession:
     def __init__(self, authorize, observations: Observations, *, handle_key: bytes, transaction=None,
-                 messages: Messages | None = None):
+                 messages: Messages | None = None, recovery: Recovery | None = None):
         if not isinstance(handle_key, bytes) or not 32 <= len(handle_key) <= 64:
             raise ValueError("A protected handle key is required")
         self._authorize = authorize
         self._observations = observations
         self._messages = messages
-        self._operations = OPERATIONS + (MESSAGE_OPERATIONS if messages is not None else ())
+        self._recovery = recovery
+        self._operations = (OPERATIONS + (MESSAGE_OPERATIONS if messages is not None else ())
+                            + (RECOVERY_OPERATIONS if recovery is not None else ()))
         self._handle_key = handle_key
         self._transaction = transaction if transaction is not None else nullcontext()
         self._lock = RLock()
@@ -81,7 +87,8 @@ class CoreSession:
             try:
                 grant = self._grant()
                 operation, params = self._parse(value)
-                permission = {"message.enqueue": "send", "message.query": "read"}.get(operation, "observe")
+                permission = {"message.enqueue": "send", "message.query": "read", "message.list": "read",
+                              "events.poll": "read"}.get(operation, "observe")
                 if permission not in grant.permissions:
                     raise ApiFailure("forbidden")
                 result = self._execute(grant, operation, params, value.get("idempotency_key"))
@@ -126,6 +133,8 @@ class CoreSession:
             raise ApiFailure("unsupported_operation")
         if operation == "message.enqueue":
             return operation, self._enqueue_params(value)
+        if operation in RECOVERY_OPERATIONS:
+            return operation, self._recovery_params(value["params"])
         fields = {"runtime.capabilities": set(), "profile.query": {"profile"},
                   "connection.snapshot": {"profile", "connection"},
                   "peer.query": {"profile", "peer"},
@@ -135,6 +144,16 @@ class CoreSession:
                 or any(not isinstance(item, str) or HANDLE.fullmatch(item) is None for item in params.values())):
             raise ApiFailure("invalid_request")
         return operation, params
+
+    @staticmethod
+    def _recovery_params(params):
+        if (not isinstance(params, dict) or set(params) != {"profile", "cursor", "limit"}
+                or not isinstance(params["profile"], str) or HANDLE.fullmatch(params["profile"]) is None
+                or type(params["limit"]) is not int or not 1 <= params["limit"] <= MAX_BATCH
+                or (params["cursor"] is not None and (not isinstance(params["cursor"], str)
+                    or CURSOR.fullmatch(params["cursor"]) is None))):
+            raise ApiFailure("invalid_request")
+        return params
 
     @staticmethod
     def _enqueue_params(value):
@@ -169,6 +188,8 @@ class CoreSession:
             raise ApiFailure("forbidden")
         if operation in MESSAGE_OPERATIONS:
             return self._message(grant, profile, operation, params, key)
+        if operation in RECOVERY_OPERATIONS:
+            return self._recover(grant, profile, operation, params)
         return self._observe(grant, profile, operation, params)
 
     def _capabilities(self, profiles):
@@ -179,6 +200,10 @@ class CoreSession:
                           idempotency_seconds=IDEMPOTENCY_SECONDS,
                           enqueue_keys_per_caller_profile=MAX_CALLER_ENQUEUES,
                           enqueue_keys_per_vault=MAX_VAULT_ENQUEUES)
+        if self._recovery is not None:
+            limits.update(event_batch_count=MAX_BATCH, event_batch_bytes=MAX_BATCH_BYTES,
+                          event_retention_count=MAX_EVENTS, event_retention_seconds=RETENTION_SECONDS,
+                          recovery_scan_count=MAX_BATCH, cursor_bytes=MAX_CURSOR_BYTES)
         return {"api_major": 1, "api_minor": 0, "stability": "experimental",
                 "operations": list(self._operations), "profiles": list(profiles), "limits": limits}
 
@@ -223,3 +248,33 @@ class CoreSession:
         message = self._messages.query(scope, params["message"])
         recipient = self._handle(grant, "peer", profile, message.recipient)
         return message_view(params["profile"], params["message"], recipient, message)
+
+    def _recover(self, grant, profile, operation, params):
+        scope = MessageScope(grant.caller, profile)
+        if operation == "events.poll":
+            page = self._recovery.poll(scope, params["cursor"], params["limit"])
+            self._validate_recovery_cursor(page.next_cursor)
+            if type(page.more) is not bool or len(page.events) > params["limit"]:
+                raise ApiFailure("internal")
+            return self._bounded_recovery({"profile": params["profile"], "events": [event_view(item) for item in page.events],
+                                          "next_cursor": page.next_cursor, "more": page.more})
+        page = self._recovery.snapshot(scope, params["cursor"], params["limit"])
+        if len(page.messages) > params["limit"] or (page.next_cursor is None) == (page.events_cursor is None):
+            raise ApiFailure("internal")
+        self._validate_recovery_cursor(page.events_cursor if page.next_cursor is None else page.next_cursor)
+        messages = [message_view(params["profile"], item.handle,
+                    self._handle(grant, "peer", profile, item.value.recipient), item.value) for item in page.messages]
+        return self._bounded_recovery({"profile": params["profile"], "messages": messages,
+                                       "next_cursor": page.next_cursor, "events_cursor": page.events_cursor})
+
+    @staticmethod
+    def _validate_recovery_cursor(value):
+        if not isinstance(value, str) or CURSOR.fullmatch(value) is None:
+            raise ApiFailure("internal")
+
+    @staticmethod
+    def _bounded_recovery(result):
+        # Leave room for the version, bounded request ID and response envelope.
+        if len(json.dumps(result, ensure_ascii=True, allow_nan=False)) > MAX_BATCH_BYTES - 256:
+            raise ApiFailure("internal")
+        return result

@@ -74,6 +74,9 @@ def acceptance_view(profile, value):
 
 
 def message_view(profile, handle, recipient, value):
+    if any(not isinstance(item, str) or re.fullmatch(r"[A-Za-z0-9_-]{16,128}", item) is None
+           for item in (handle, recipient)):
+        raise ValueError("Invalid message observation handle")
     validate_chat_text(value.text)
     return {"profile": profile, "message": handle, "recipient": recipient, "kind": "text",
             "text": value.text, "state": DeliveryState(value.state).value,
@@ -86,3 +89,14 @@ def peer_view(profile, handle, value):
         raise ValueError("Invalid peer observation")
     return {"profile": profile, "peer": handle, "display_name": value.display_name,
             "destination": value.destination, "trust": TrustState(value.trust).value}
+
+
+def event_view(value):
+    if (value.type not in {"message.changed", "message.removed"}
+            or any(not isinstance(handle, str) or re.fullmatch(r"[A-Za-z0-9_-]{16,128}", handle) is None
+                   for handle in (value.identifier, value.message))
+            or (value.type == "message.removed" and value.state is not None)):
+        raise ValueError("Invalid message event")
+    state = DeliveryState(value.state).value if value.type == "message.changed" else None
+    return {"id": value.identifier, "message": value.message, "type": value.type,
+            "state": state, "timestamp": _timestamp(value.timestamp)}

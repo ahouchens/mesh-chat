@@ -7,6 +7,10 @@
     "handle": {
       "type": "string",
       "pattern": "^[A-Za-z0-9_-]{16,128}$"
+    },
+    "cursor": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]{16,1024}$"
     }
   },
   "oneOf": [
@@ -833,7 +837,7 @@
             "cursor": {
               "anyOf": [
                 {
-                  "$ref": "#/$defs/handle"
+                  "$ref": "#/$defs/cursor"
                 },
                 {
                   "type": "null"
@@ -886,7 +890,7 @@
             "cursor": {
               "anyOf": [
                 {
-                  "$ref": "#/$defs/handle"
+                  "$ref": "#/$defs/cursor"
                 },
                 {
                   "type": "null"
@@ -937,7 +941,7 @@
               "$ref": "#/$defs/handle"
             },
             "cursor": {
-              "$ref": "#/$defs/handle"
+              "$ref": "#/$defs/cursor"
             }
           },
           "required": [

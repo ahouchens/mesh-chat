@@ -2,8 +2,9 @@
 
 These are experimental contracts, not a supported integration release. A protected
 facade component implements capabilities, profile queries, connection observations,
-peer queries, durable text enqueue and queries of messages enqueued by the same caller.
-Host authentication, other mutations/events, SDKs and independent consumer
+peer queries, durable text enqueue, scoped message snapshots and retained change
+replay for messages enqueued by the same caller. Host authentication, remaining
+mutations/event streams, SDKs and independent consumer
 qualification remain required before M5. `operations-v1.json` deliberately lists
 no host-accessible implemented operations; its separate component list records
 the tested internal facade subset. A schema-valid request is not authorization and must
@@ -110,11 +111,53 @@ capacity or an explicit Stop that has not been superseded by a committed Start.
 ## Observation and recovery
 
 Connection observations use runtime epoch and sequence; gaps or epoch changes
-require a fresh scoped snapshot. Message/receipt event cursors are separately
-durable, opaque and caller/profile-bound. The future subscribe/list handshake must
-return a consistent snapshot and high watermark, then replay events after that
-watermark. Expired cursors return `resync_required`; slow consumers cannot stall
-connection control. Batches are limited to 128 records and one MiB.
+require a fresh scoped snapshot. The experimental message recovery component uses
+`message.list` followed by `events.poll`. Its result contract is
+`recovery-result-v1.schema.json`.
+
+Start a snapshot with a null cursor. Follow each `next_cursor`, accumulating pages
+until it is null. Only that final page supplies `events_cursor`, the high watermark
+captured at the start of the snapshot. Poll from that cursor to obtain subsequent
+changes. If messages change during pagination, or the contact-authority view
+changes, the component returns `resync_required`; discard partial pages and start
+a fresh snapshot. It never combines different revisions into a successful
+snapshot. Changes committed after the completed snapshot appear in replay, closing
+the query/subscribe race. This conservative pagination can require a fresh attempt
+under sustained writes; it does not hold a vault lock across client requests.
+
+Replay returns ordered, content-free `message.changed` and `message.removed`
+notifications with stable caller-scoped event/message IDs. A changed event includes
+the committed delivery state; it cannot turn endpoint evidence into application
+delivery. Polling the same cursor may redeliver the same IDs. Consumers deduplicate
+notifications and query retained messages when they need text. Local history
+deletion produces a removal event without retaining duplicate text. Public recovery
+currently covers only the caller's own facade-enqueued outbound text messages;
+incoming messages, other message kinds, connection event streams and durable
+consumer acknowledgment are still required for M5.
+
+The service installs the domain journal before startup recovery and workers. Every
+message mutation path uses one transaction-local storage projection, so the message
+and its change record commit or roll back together, including batch writes and
+history deletion. Native-only metadata and unchanged public message fields do not
+advance the stream. The vault depends on an injected projection port; it contains
+no message or receipt policy. Domain delivery logic remains authoritative.
+
+The encrypted journal retains at most 2,048 changes per vault. Replay is limited
+to seven days and available retained records. Opaque cursors use the existing vault
+record cipher, are bound to caller/profile and purpose, and survive ordinary service
+restart. They expire seven days after issuance. Retention overflow, expiry or changed
+authority returns `resync_required`; a null poll cursor also requires a snapshot
+instead of silently skipping history. Old binaries without the journal and stream
+format migrations are not qualified cursor-compatible runtimes.
+
+Each request scans at most 128 query indexes or journal entries (plus one index
+lookahead), returns at most the requested 1–128 items, and stays within one MiB
+including JSON escaping. Sparse caller scopes may yield empty intermediate pages;
+continue while `next_cursor` is non-null or replay `more` is true. Index order is
+opaque and is not a chronological ordering promise. Cursor tokens are bounded to
+1,024 ASCII bytes and have a separate schema from object handles. Grant checks,
+current profile availability and contact approval apply to every recovery request.
+No polling operation mutates peer delivery state or adds a peer retry policy.
 
 Detach closes the client session, not the app-owned runtime or durable outbox.
 Only `runtime.stop` with the runtime-owner grant requests shutdown. SDK recovery

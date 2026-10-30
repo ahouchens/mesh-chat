@@ -4,7 +4,7 @@
   "api_major": 1,
   "api_minor": 0,
   "implemented_operations": [],
-  "experimental_component_operations": ["runtime.capabilities", "profile.query", "connection.snapshot", "peer.query", "message.enqueue", "message.query"],
+  "experimental_component_operations": ["runtime.capabilities", "profile.query", "connection.snapshot", "peer.query", "message.enqueue", "message.query", "message.list", "events.poll"],
   "operations": [
     {
       "operation": "runtime.capabilities",
@@ -170,6 +170,10 @@
     "enqueue_keys_per_vault": 65536,
     "event_batch_count": 128,
     "event_batch_bytes": 1048576,
+    "event_retention_count": 2048,
+    "event_retention_seconds": 604800,
+    "recovery_scan_count": 128,
+    "cursor_bytes": 1024,
     "diagnostic_count": 256
   }
 }

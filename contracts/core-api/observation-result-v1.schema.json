@@ -19,18 +19,23 @@
       "required": ["api_major", "api_minor", "stability", "operations", "profiles", "limits"],
       "properties": {
         "api_major": {"const": 1}, "api_minor": {"const": 0}, "stability": {"const": "experimental"},
-        "operations": {"type": "array", "uniqueItems": true, "minItems": 3, "maxItems": 6,
-          "items": {"enum": ["runtime.capabilities", "profile.query", "connection.snapshot", "peer.query", "message.enqueue", "message.query"]}},
+        "operations": {"type": "array", "uniqueItems": true, "minItems": 3, "maxItems": 8,
+          "items": {"enum": ["runtime.capabilities", "profile.query", "connection.snapshot", "peer.query", "message.enqueue", "message.query", "message.list", "events.poll"]}},
         "profiles": {"$ref": "#/$defs/handles"},
         "limits": {"type": "object", "additionalProperties": false,
           "required": ["frame_bytes", "profiles", "connections_per_profile"],
           "properties": {"frame_bytes": {"const": 4194304}, "profiles": {"const": 256}, "connections_per_profile": {"const": 256},
             "peers_per_profile": {"const": 256}, "text_utf8_bytes": {"const": 16384},
             "idempotency_seconds": {"const": 604800}, "enqueue_keys_per_caller_profile": {"const": 4096},
-            "enqueue_keys_per_vault": {"const": 65536}}}
+            "enqueue_keys_per_vault": {"const": 65536},
+            "event_batch_count": {"const": 128}, "event_batch_bytes": {"const": 1048576},
+            "event_retention_count": {"const": 2048}, "event_retention_seconds": {"const": 604800},
+            "recovery_scan_count": {"const": 128}, "cursor_bytes": {"const": 1024}}}
       },
       "allOf": [{"if": {"properties": {"operations": {"contains": {"const": "message.enqueue"}}}},
-        "then": {"properties": {"limits": {"required": ["peers_per_profile", "text_utf8_bytes", "idempotency_seconds", "enqueue_keys_per_caller_profile", "enqueue_keys_per_vault"]}}}}]
+        "then": {"properties": {"limits": {"required": ["peers_per_profile", "text_utf8_bytes", "idempotency_seconds", "enqueue_keys_per_caller_profile", "enqueue_keys_per_vault"]}}}},
+        {"if": {"properties": {"operations": {"contains": {"const": "events.poll"}}}},
+         "then": {"properties": {"limits": {"required": ["event_batch_count", "event_batch_bytes", "event_retention_count", "event_retention_seconds", "recovery_scan_count", "cursor_bytes"]}}}}]
     },
     "profile": {
       "type": "object", "additionalProperties": false,

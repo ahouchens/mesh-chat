@@ -496,6 +496,8 @@ class MeshChatService(
         from .link_previews import LinkPreviews
         self._link_previews = LinkPreviews()
         self.store = store
+        from .message_journal import MessageJournal
+        self._message_journal = MessageJournal(store)
         self._carrier_journal = None
         if connection_policy == "shared-native" and callable(getattr(self._native_host, "inventory", None)):
             from .carrier_journal import CarrierJournal

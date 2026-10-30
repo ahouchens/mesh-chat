@@ -14,6 +14,7 @@ import subprocess
 import sys
 import threading
 import time
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Callable, Iterable
 
@@ -23,6 +24,7 @@ except ImportError:  # Mobile packages intentionally use RNS's pure-Python provi
     AESGCM = None  # type: ignore[assignment,misc]
 
 from .errors import ProfileInUse, StorageUnavailable, ValidationError
+from .record_projection import Projection, ProjectRecords, RecordChange
 
 FILE_ATTRIBUTE_ENCRYPTED = 0x4000
 INVALID_FILE_ATTRIBUTES = 0xFFFFFFFF
@@ -304,6 +306,7 @@ class VaultStore:
             self._token_type = None
             self._cipher = AESGCM(key)
         self._lock = threading.RLock()
+        self._projections: dict[str, ProjectRecords] = {}
         try:
             self._db = sqlite3.connect(
                 self.profile_dir / "mesh-chat.vault",
@@ -436,6 +439,12 @@ class VaultStore:
     def _transaction(self) -> "VaultStore._Transaction":
         return VaultStore._Transaction(self)
 
+    @contextmanager
+    def read_snapshot(self):
+        """Keep bounded multi-record reads consistent with this vault's writer."""
+        with self._lock:
+            yield
+
     @staticmethod
     def _aad(kind: str, record_id: str) -> bytes:
         return f"mesh-chat:v1:{kind}:{record_id}".encode("utf-8")
@@ -474,6 +483,53 @@ class VaultStore:
     def put_many(self, records: Iterable[tuple[str, str, dict[str, Any]]]) -> None:
         self.put_and_delete(records)
 
+    def register_projection(self, kind: str, project: ProjectRecords) -> None:
+        """Bind a trusted domain projection before service workers start.
+
+        Runs in the source transaction, with before/final values. Projectors may
+        read the vault but must not mutate it or perform external I/O. Failure
+        aborts the transaction. Derived records cannot replace source namespaces.
+        """
+        with self._lock:
+            if not isinstance(kind, str) or not kind or not callable(project) or kind in self._projections:
+                raise ValidationError("Record projection binding is invalid")
+            self._projections[kind] = project
+
+    def _write_records_locked(self, records, deletions=()) -> None:
+        values, removed = self._project_records(records, deletions)
+        now = time.time()
+        prepared = [(kind, identifier, self._seal(kind, identifier, value), now, now)
+                    for kind, identifier, value in values]
+        self._db.executemany("DELETE FROM records WHERE kind=? AND record_id=?", removed)
+        self._db.executemany(
+            """INSERT INTO records(kind, record_id, sealed, created_at, updated_at)
+               VALUES(?, ?, ?, ?, ?) ON CONFLICT(kind, record_id) DO UPDATE SET
+               sealed=excluded.sealed, updated_at=excluded.updated_at""", prepared)
+
+    def _project_records(self, records, deletions):
+        values, removed = list(records), list(deletions)
+        final = {key: None for key in removed}
+        final.update({(kind, identifier): value for kind, identifier, value in values})
+        reserved = set(final)
+        for kind, project in self._projections.items():
+            identifiers = [identifier for namespace, identifier in final if namespace == kind]
+            if not identifiers:
+                continue
+            changes = (RecordChange(identifier, self.get(kind, identifier), final[(kind, identifier)])
+                       for identifier in identifiers)
+            projection = project(changes)
+            if not isinstance(projection, Projection):
+                raise ValidationError("Invalid record projection result")
+            keys = [(namespace, identifier) for namespace, identifier, _ in projection.records]
+            keys.extend(projection.deletions)
+            if (len(keys) > 8192 or len(set(keys)) != len(keys)
+                    or any(key[0] in self._projections or key in reserved for key in keys)):
+                raise ValidationError("Record projection overlaps another mutation")
+            reserved.update(keys)
+            values.extend(projection.records)
+            removed.extend(projection.deletions)
+        return values, removed
+
     def put_and_delete(
         self,
         records: Iterable[tuple[str, str, dict[str, Any]]],
@@ -483,12 +539,6 @@ class VaultStore:
     ) -> None:
         """Commit sealed writes and secure deletions as one vault mutation."""
 
-        now = time.time()
-        prepared = [
-            (kind, record_id, self._seal(kind, record_id, value), now, now)
-            for kind, record_id, value in records
-        ]
-        removed = list(deletions)
         with self._transaction():
             if redact_command_cache:
                 # Cached mutation responses can contain a full message or, on
@@ -517,19 +567,7 @@ class VaultStore:
                     "UPDATE commands SET sealed_response=? WHERE command_id=?",
                     redacted,
                 )
-            self._db.executemany(
-                "DELETE FROM records WHERE kind=? AND record_id=?", removed
-            )
-            self._db.executemany(
-                """
-                INSERT INTO records(kind, record_id, sealed, created_at, updated_at)
-                VALUES(?, ?, ?, ?, ?)
-                ON CONFLICT(kind, record_id) DO UPDATE SET
-                    sealed=excluded.sealed,
-                    updated_at=excluded.updated_at
-                """,
-                prepared,
-            )
+            self._write_records_locked(records, deletions)
 
     def update_record(
         self, kind: str, record_id: str,
@@ -543,15 +581,7 @@ class VaultStore:
         """
         with self._transaction():
             value = update(self.get(kind, record_id))
-            sealed = self._seal(kind, record_id, value)
-            now = time.time()
-            self._db.execute(
-                """INSERT INTO records(kind, record_id, sealed, created_at, updated_at)
-                VALUES(?, ?, ?, ?, ?)
-                ON CONFLICT(kind, record_id) DO UPDATE SET
-                    sealed=excluded.sealed, updated_at=excluded.updated_at""",
-                (kind, record_id, sealed, now, now),
-            )
+            self._write_records_locked([(kind, record_id, value)])
         return value
 
     def update_records(self, keys, update):
@@ -568,13 +598,7 @@ class VaultStore:
             values = update({key: self.get(*key) for key in keys})
             if not isinstance(values, dict) or set(values) != set(keys):
                 raise ValidationError("Atomic record update changed its keys")
-            now = time.time()
-            prepared = [(kind, record_id, self._seal(kind, record_id, values[(kind, record_id)]), now, now)
-                        for kind, record_id in keys]
-            self._db.executemany(
-                """INSERT INTO records(kind, record_id, sealed, created_at, updated_at)
-                   VALUES(?, ?, ?, ?, ?) ON CONFLICT(kind, record_id) DO UPDATE SET
-                   sealed=excluded.sealed, updated_at=excluded.updated_at""", prepared)
+            self._write_records_locked((kind, record_id, values[(kind, record_id)]) for kind, record_id in keys)
         return values
 
     def opaque_id(self, namespace: str, *parts: str) -> str:
@@ -604,6 +628,25 @@ class VaultStore:
             base64.urlsafe_b64encode(part).rstrip(b"=").decode("ascii")
             for part in (body, signature)
         )
+
+    def seal_private_cursor(self, scope: str, value: dict[str, Any]) -> str:
+        """Opaque authenticated cursor using the vault's existing record cipher."""
+        sealed = self._seal("private_cursor", scope, value)
+        encoded = base64.urlsafe_b64encode(sealed).rstrip(b"=").decode("ascii")
+        if len(encoded) > 1024:
+            raise ValidationError("Private cursor is too large")
+        return encoded
+
+    def open_private_cursor(self, scope: str, token: str) -> dict[str, Any]:
+        if not isinstance(token, str) or not 16 <= len(token) <= 1024:
+            raise ValidationError("Private cursor is invalid")
+        try:
+            sealed = base64.urlsafe_b64decode(token + "=" * (-len(token) % 4))
+        except Exception as error:
+            raise ValidationError("Private cursor is invalid") from error
+        if base64.urlsafe_b64encode(sealed).rstrip(b"=").decode("ascii") != token:
+            raise ValidationError("Private cursor is invalid")
+        return self._open("private_cursor", scope, sealed)
 
     def open_cursor(self, token: str) -> dict[str, Any]:
         if not isinstance(token, str) or not 1 <= len(token) <= 8192:
@@ -688,11 +731,6 @@ class VaultStore:
             "created_at": now,
         }
         values = [*records, ("workspace_operation", operation_record_id, operation)]
-        prepared = [
-            (kind, record_id, self._seal(kind, record_id, value), now, now)
-            for kind, record_id, value in values
-        ]
-        removed = list(deletions)
         with self._transaction():
             existing = self._db.execute(
                 "SELECT sealed FROM records WHERE kind=? AND record_id=?",
@@ -730,19 +768,7 @@ class VaultStore:
                     "UPDATE commands SET sealed_response=? WHERE command_id=?",
                     redacted,
                 )
-            self._db.executemany(
-                "DELETE FROM records WHERE kind=? AND record_id=?", removed
-            )
-            self._db.executemany(
-                """
-                INSERT INTO records(kind, record_id, sealed, created_at, updated_at)
-                VALUES(?, ?, ?, ?, ?)
-                ON CONFLICT(kind, record_id) DO UPDATE SET
-                    sealed=excluded.sealed,
-                    updated_at=excluded.updated_at
-                """,
-                prepared,
-            )
+            self._write_records_locked(values, deletions)
         return outcome
 
     def get(self, kind: str, record_id: str) -> dict[str, Any] | None:
@@ -766,26 +792,27 @@ class VaultStore:
         with self._lock:
             return self._db.execute("SELECT COUNT(*) FROM records WHERE kind=?", (kind,)).fetchone()[0]
 
-    def items(self, kind: str, *, limit: int | None = None) -> list[tuple[str, dict[str, Any]]]:
+    def items(self, kind: str, *, limit: int | None = None, after: str | None = None) -> list[tuple[str, dict[str, Any]]]:
         """Return record IDs and opened values for bounded maintenance work."""
 
         if limit is not None and (type(limit) is not int or not 1 <= limit <= 65537):
             raise ValidationError("Record read limit is invalid")
+        query = "SELECT record_id, sealed FROM records WHERE kind=?"
+        params = [kind]
+        if after is not None:
+            query += " AND record_id>?"
+            params.append(after)
+        query += " ORDER BY record_id LIMIT ?"
+        params.append(-1 if limit is None else limit)
         with self._lock:
-            rows = self._db.execute(
-                "SELECT record_id, sealed FROM records WHERE kind=? ORDER BY record_id LIMIT ?",
-                (kind, -1 if limit is None else limit),
-            ).fetchall()
+            rows = self._db.execute(query, params).fetchall()
         return [
             (record_id, self._open(kind, record_id, sealed))
             for record_id, sealed in rows
         ]
 
     def delete(self, kind: str, record_id: str) -> None:
-        with self._transaction():
-            self._db.execute(
-                "DELETE FROM records WHERE kind=? AND record_id=?", (kind, record_id)
-            )
+        self.put_and_delete((), [(kind, record_id)])
 
     def command_response(self, command_id: str) -> dict[str, Any] | None:
         with self._lock:

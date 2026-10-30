@@ -506,6 +506,20 @@ other durable mutations/events, long-term idempotency storage policy and consume
 required. JSON Schema validation is a development-only dependency and
 does not replace trusted caller authentication or domain authorization.
 
+The private facade now also implements bounded message snapshots and durable
+change replay for its own outbound text messages. A domain journal is attached
+before service startup recovery; a storage projection port commits content-free
+change records in the original message transaction across every mutation path.
+The encrypted ring holds at most 2,048 changes, with a seven-day replay window.
+Snapshots expose their replay watermark only after the final consistent page;
+concurrent changes during pagination require an explicit resynchronization.
+Caller/profile/purpose-bound encrypted cursors survive ordinary service restart,
+and expiry, overwritten records and changed contact authority fail explicitly.
+Queries scan at most 128 entries plus index lookahead and bound encoded responses
+to one MiB. This is component evidence only. Incoming-message access, consumer
+acknowledgments, authenticated host bindings and mixed-version cursor compatibility
+remain unfinished; old journal-unaware binaries cannot claim replay compatibility.
+
 From the repository root:
 
 ```powershell
