@@ -543,6 +543,16 @@ This is component evidence only. Incoming-message access, authenticated host
 bindings, long-term key storage and mixed-version cursor compatibility remain
 unfinished; old journal-unaware binaries cannot claim replay compatibility.
 
+The private facade also provides `diagnostics.query` behind a separate `diagnose`
+grant. It exposes current shared-policy observations with caller/profile-scoped
+connection handles, explicit availability, allowlisted runtime failures and
+truncation metadata. Requests return at most 256 entries within 256 KiB; an
+oversized source fails rather than being silently truncated. Legacy-only runtimes
+report diagnostics unavailable. This read-only adapter cannot expose application-wide
+history, scan messages, persist retention changes, inspect native peers or alter
+lifecycle policy. Contract, scope, revocation, malformed-result and no-effects
+regressions qualify the component only; host authentication remains unfinished.
+
 From the repository root:
 
 ```powershell

@@ -15,8 +15,10 @@ from typing import Protocol
 
 from .views import acceptance_view, acknowledgment_view, connection_view, event_view, message_view, peer_view
 from .errors import ApiFailure
+from .diagnostics import Diagnostics, MAX_DIAGNOSTICS, MAX_DIAGNOSTIC_BYTES
+from .diagnostic_views import diagnostics_view
 from .requests import (
-    CURSOR, MESSAGE_OPERATIONS, OPERATIONS, RECOVERY_OPERATIONS, REQUEST_ID, parse_request,
+    CURSOR, DIAGNOSTIC_OPERATIONS, MESSAGE_OPERATIONS, OPERATIONS, RECOVERY_OPERATIONS, REQUEST_ID, parse_request,
 )
 from .messages import (
     IDEMPOTENCY_SECONDS, MAX_CALLER_ENQUEUES, MAX_PEERS, MAX_VAULT_ENQUEUES,
@@ -60,15 +62,18 @@ class Observations(Protocol):
 
 class CoreSession:
     def __init__(self, authorize, observations: Observations, *, handle_key: bytes, transaction=None,
-                 messages: Messages | None = None, recovery: Recovery | None = None):
+                 messages: Messages | None = None, recovery: Recovery | None = None,
+                 diagnostics: Diagnostics | None = None):
         if not isinstance(handle_key, bytes) or not 32 <= len(handle_key) <= 64:
             raise ValueError("A protected handle key is required")
         self._authorize = authorize
         self._observations = observations
         self._messages = messages
         self._recovery = recovery
+        self._diagnostics = diagnostics
         self._operations = (OPERATIONS + (MESSAGE_OPERATIONS if messages is not None else ())
-                            + (RECOVERY_OPERATIONS if recovery is not None else ()))
+                            + (RECOVERY_OPERATIONS if recovery is not None else ())
+                            + (DIAGNOSTIC_OPERATIONS if diagnostics is not None else ()))
         self._handle_key = handle_key
         self._transaction = transaction if transaction is not None else nullcontext()
         self._lock = RLock()
@@ -85,7 +90,8 @@ class CoreSession:
                 grant = self._grant()
                 operation, params = parse_request(value, self._operations)
                 permission = {"message.enqueue": "send", "message.query": "read", "message.list": "read",
-                              "events.poll": "read", "events.ack": "read"}.get(operation, "observe")
+                              "events.poll": "read", "events.ack": "read",
+                              "diagnostics.query": "diagnose"}.get(operation, "observe")
                 if permission not in grant.permissions:
                     raise ApiFailure("forbidden")
                 result = self._execute(grant, operation, params, value.get("idempotency_key"))
@@ -127,6 +133,9 @@ class CoreSession:
         profile = profiles.get(params["profile"])
         if profile is None:
             raise ApiFailure("forbidden")
+        if operation == "diagnostics.query":
+            return diagnostics_view(params["profile"], self._diagnostics.query(profile), params["limit"],
+                                    lambda internal: self._handle(grant, "connection", profile, internal))
         if operation in MESSAGE_OPERATIONS:
             return self._message(grant, profile, operation, params, key)
         if operation in RECOVERY_OPERATIONS:
@@ -148,6 +157,8 @@ class CoreSession:
                           acknowledgment_seconds=RETENTION_SECONDS,
                           acknowledgment_keys_per_caller_profile=MAX_CALLER_ACKNOWLEDGMENTS,
                           acknowledgment_keys_per_vault=MAX_VAULT_ACKNOWLEDGMENTS)
+        if self._diagnostics is not None:
+            limits.update(diagnostic_count=MAX_DIAGNOSTICS, diagnostic_bytes=MAX_DIAGNOSTIC_BYTES)
         return {"api_major": 1, "api_minor": 0, "stability": "experimental",
                 "operations": list(self._operations), "profiles": list(profiles), "limits": limits}
 

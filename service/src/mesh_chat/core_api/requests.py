@@ -6,11 +6,13 @@ from ..chat_text import validate_chat_text
 from ..errors import ValidationError
 from .errors import ApiFailure
 from .recovery import MAX_BATCH
+from .diagnostics import MAX_DIAGNOSTICS
 
 
 OPERATIONS = ("runtime.capabilities", "profile.query", "connection.snapshot")
 MESSAGE_OPERATIONS = ("peer.query", "message.enqueue", "message.query")
 RECOVERY_OPERATIONS = ("message.list", "events.poll", "events.ack")
+DIAGNOSTIC_OPERATIONS = ("diagnostics.query",)
 REQUEST_ID = re.compile(r"[A-Za-z0-9._:-]{1,80}\Z")
 HANDLE = re.compile(r"[A-Za-z0-9_-]{16,128}\Z")
 IDEMPOTENCY_KEY = re.compile(r"[A-Za-z0-9._:-]{16,128}\Z")
@@ -39,6 +41,8 @@ def parse_request(value, operations):
         return operation, _enqueue_params(value)
     if operation == "events.ack":
         return operation, _acknowledgment_params(value)
+    if operation == "diagnostics.query":
+        return operation, _diagnostic_params(value["params"])
     if operation in RECOVERY_OPERATIONS:
         return operation, _recovery_params(value["params"])
     fields = {"runtime.capabilities": set(), "profile.query": {"profile"},
@@ -50,6 +54,14 @@ def parse_request(value, operations):
             or any(not isinstance(item, str) or HANDLE.fullmatch(item) is None for item in params.values())):
         raise ApiFailure("invalid_request")
     return operation, params
+
+
+def _diagnostic_params(params):
+    if (not isinstance(params, dict) or set(params) != {"profile", "limit"}
+            or not isinstance(params["profile"], str) or HANDLE.fullmatch(params["profile"]) is None
+            or type(params["limit"]) is not int or not 1 <= params["limit"] <= MAX_DIAGNOSTICS):
+        raise ApiFailure("invalid_request")
+    return params
 
 
 def _acknowledgment_params(value):

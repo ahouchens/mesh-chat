@@ -3,7 +3,8 @@
 These are experimental contracts, not a supported integration release. A protected
 facade component implements capabilities, profile queries, connection observations,
 peer queries, durable text enqueue, scoped message snapshots and retained change
-replay with durable consumer progress for messages enqueued by the same caller.
+replay with durable consumer progress for messages enqueued by the same caller,
+and bounded current-policy diagnostics.
 Host authentication, remaining
 mutations/event streams, SDKs and independent consumer
 qualification remain required before M5. `operations-v1.json` deliberately lists
@@ -192,6 +193,38 @@ opaque and is not a chronological ordering promise. Cursor tokens are bounded to
 1,024 ASCII bytes and have a separate schema from object handles. Grant checks,
 current profile availability and contact approval apply to every recovery request.
 No polling operation mutates peer delivery state or adds a peer retry policy.
+
+## Current policy diagnostics
+
+`diagnostics.query` requires the dedicated `diagnose` permission and an authorized
+profile after capability negotiation. `observe`, `read` and `send` do not imply
+this grant. The private adapter checks current profile availability before reading
+policy observations; identity, permission and profile revocation are rechecked on
+every request. The result contract is `diagnostics-result-v1.schema.json`.
+
+The query returns a capture timestamp, `available`, an allowlisted
+`runtime_failure`, and selected connection observations using the same caller/profile
+handles as `connection.snapshot`. `available` means shared-policy diagnostics exist;
+it does not claim a working transport or delivery. A legacy-only runtime returns
+`available: false`, an empty connection list and no failure claim. Known runtime
+failures are `adapter_quarantined` and `cleanup_failed`; other string values become
+`unknown`. Observations retain their runtime epoch and sequence, and cannot promote
+transport readiness to a message receipt.
+
+The required `limit` is 1–256. Results are selected in opaque handle order with
+`total_connections` and explicit `truncated` metadata when the requested limit is
+smaller than the bounded snapshot. There is no history cursor or pagination promise:
+queries observe current policy, and callers needing all entries request 256. More
+than 256 internal entries fails with `resource_exhausted` instead of hiding an
+unbounded source. The entire encoded response stays within 256 KiB. These count
+and byte bounds are negotiated in capabilities.
+
+This query does not export the existing application-wide diagnostic history, which
+lacks caller/profile ownership. It performs no vault writes, retention cleanup,
+message scans, native inspection, signaling or lifecycle effects. It excludes
+peer labels, addresses, raw native IDs, private documents and exception text.
+Authenticated host bindings and packaged consumer qualification are still required
+before this experimental component becomes a supported diagnostic API.
 
 Detach closes the client session, not the app-owned runtime or durable outbox.
 Only `runtime.stop` with the runtime-owner grant requests shutdown. SDK recovery

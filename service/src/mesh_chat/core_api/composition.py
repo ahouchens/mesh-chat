@@ -7,6 +7,7 @@ the current caller grant before the component becomes a public host interface.
 from .session import ApiFailure, CoreSession, ProfileObservation
 from .service_messages import ServiceMessages
 from .service_recovery import ServiceRecovery
+from .service_diagnostics import ServiceDiagnostics
 
 
 class ServiceObservations:
@@ -35,4 +36,5 @@ def bind_service_session(service, authenticated_grant):
         messages = ServiceMessages(service)
         recovery = ServiceRecovery(service, messages) if hasattr(service, "_message_journal") else None
         return CoreSession(current_grant, ServiceObservations(service), handle_key=handle_key,
-                           transaction=service._dispatch_lock, messages=messages, recovery=recovery)
+                           transaction=service._dispatch_lock, messages=messages, recovery=recovery,
+                           diagnostics=ServiceDiagnostics(service, messages))
