@@ -625,6 +625,7 @@ fn allowed_renderer_command(command: &str) -> bool {
             | "call_settings"
             | "update_call_settings"
             | "call_ice_servers"
+            | "link_preview"
             | "signal_publish"
             | "signal_fetch"
             | "reconnect_profiles"

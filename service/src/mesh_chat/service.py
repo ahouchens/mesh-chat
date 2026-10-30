@@ -227,6 +227,7 @@ class MeshChatService(
         "call_settings",
         "update_call_settings",
         "call_ice_servers",
+        "link_preview",
         "signal_publish",
         "signal_fetch",
         "reconnect_profiles",
@@ -432,6 +433,7 @@ class MeshChatService(
     # allowed snapshot polling to grow the encrypted command table without a
     # useful bound.
     UNCACHED_COMMANDS = {
+        "link_preview",
         "reconnect_profiles", "reconnect_capabilities_get", "reconnect_path_status",
         "resume_direct_setup",
         "connection_diagnostics", "clear_connection_diagnostics",
@@ -485,6 +487,8 @@ class MeshChatService(
             self._native_webrtc_host()
         self._connection_policy = connection_policy
         self._connection_runtime = None
+        from .link_previews import LinkPreviews
+        self._link_previews = LinkPreviews()
         self.store = store
         self.profile_dir = profile_dir
         self.emit = emit
@@ -3972,6 +3976,9 @@ class MeshChatService(
             return response, command == "shutdown"
 
     def _execute(self, command: str, value: Any) -> Any:
+        if command == "link_preview":
+            body = _payload(value, allowed={"provider", "identifier"}, required={"provider", "identifier"})
+            return self._link_previews.get(body["provider"], body["identifier"])
         if command == "receive_contact_invitation":
             body = _payload(value, allowed={"document", "peer_destination", "workspace_document"},
                             required={"document", "peer_destination"})

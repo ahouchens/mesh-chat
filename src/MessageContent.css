@@ -12,12 +12,14 @@
 .link-preview__external { display: inline-flex; align-items: center; gap: 5px; margin-left: auto; font-size: .73rem; font-weight: 650; text-decoration: none; white-space: nowrap; }
 .link-preview__close { display: grid; place-items: center; padding: 6px; background: transparent; border: 0; border-radius: 7px; cursor: pointer; }
 .link-preview__body { padding: 14px; }
+.link-preview__thumbnail { display: block; width: calc(100% + 28px); max-width: none; margin: -14px -14px 14px; aspect-ratio: 4 / 3; object-fit: contain; background: #161b19; }
+.link-preview__author { margin-bottom: 8px; color: var(--muted); font-size: .8rem; overflow-wrap: anywhere; }
 .link-preview__art { display: flex; min-height: 116px; align-items: center; justify-content: center; gap: 14px; margin: -14px -14px 15px; color: white; background: radial-gradient(ellipse at 18% 0%, #52776b, transparent 60%), #192f29; }
 .link-preview__art--youtube { background: radial-gradient(ellipse at 15% 0%, #a35145, transparent 60%), #32282a; }
 .link-preview__art > span:last-child { letter-spacing: .2em; font-size: .64rem; font-weight: 750; opacity: .7; }
 .link-preview__art--x > span:first-child { font-size: 2rem; }
 .link-preview__copy h4 { margin: 0 0 6px; font-size: .97rem; letter-spacing: -.02em; }
-.message-content .link-preview__copy p { margin: 0; color: var(--muted); font-size: .8rem; line-height: 1.55; overflow-wrap: anywhere; white-space: normal; }
+.message-content .link-preview__copy p { margin: 0; color: var(--muted); font-size: .8rem; line-height: 1.55; overflow-wrap: anywhere; white-space: pre-wrap; }
 .link-preview__load { display: flex; align-items: center; justify-content: center; gap: 7px; width: 100%; min-height: 42px; margin-top: 15px; padding: 9px 12px; color: white; background: var(--accent-fill); border: 0; border-radius: 9px; font-size: .81rem; font-weight: 750; cursor: pointer; }
 .link-preview__load:hover { background: var(--accent-fill-hover); }
 .link-preview__privacy { display: flex; align-items: center; justify-content: center; gap: 5px; margin-top: 10px; color: var(--muted); font-size: .65rem; line-height: 1.5; }
