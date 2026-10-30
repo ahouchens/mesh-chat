@@ -8,10 +8,14 @@ from __future__ import annotations
 import json
 import time
 
-from .errors import IdentityMismatch, ValidationError
+from .errors import ContactNotApproved, IdentityMismatch, ValidationError
 from .webrtc_onboarding import verify_onboarding_answer, verify_onboarding_offer
 
 MAX_CONTROL_LENGTH = 16_384
+
+
+def normalized_sdp(sdp):
+    return tuple(line for line in sdp.splitlines() if line and line != "a=end-of-candidates")
 
 
 class NativeWebRTCControlMixin:
@@ -26,26 +30,68 @@ class NativeWebRTCControlMixin:
                 raise ValidationError("Reconnect sessions cannot become onboarding sessions")
             # Bind the signed signaling to this actual peer, including ICE
             # credentials, not just an identity supplied by the renderer.
-            def normalized(sdp):
-                return [line for line in sdp.splitlines() if line and line != "a=end-of-candidates"]
             if description.get("remote_offer") is not None:
-                if normalized(offer.sdp) != normalized(description["remote_offer"]):
+                if normalized_sdp(offer.sdp) != normalized_sdp(description["remote_offer"]):
                     raise IdentityMismatch("Offer does not belong to this native session")
                 peer = offer.signer_destination
+                remote = offer.sdp
             else:
-                if not answer or normalized(offer.sdp) != normalized(description["local"]):
+                if not answer or normalized_sdp(offer.sdp) != normalized_sdp(description["local"]):
                     raise IdentityMismatch("Answer does not belong to this native session")
                 peer = answer.signer_destination
+                remote = answer.sdp
+                applied = description.get("remote_answer")
+                if applied and normalized_sdp(applied) != normalized_sdp(remote):
+                    raise IdentityMismatch("Signed answer does not match the applied native answer")
+            previous_sdp = description.get("bound_remote_sdp")
+            if previous_sdp and previous_sdp != normalized_sdp(remote):
+                raise IdentityMismatch("Native session is already bound to another exchange")
             previous = self._native_webrtc_peers.get(session_id)
             if previous and previous != peer:
                 raise IdentityMismatch("Native session is already bound to another peer")
             self._native_webrtc_peers[session_id] = peer
+            description["bound_remote_sdp"] = normalized_sdp(remote)
             if "answer_wait_until" in description:
                 description["answer_wait_until"] = min(
                     description["answer_wait_until"],
                     time.monotonic() + max(0, offer.expires_at - time.time()),
                 )
         return {"peer_destination": peer}
+
+    def claim_native_reconnect_carrier(self, profile_id, local_device_id, remote_device_id):
+        """Private ownership transfer; public JSON cannot supply binding evidence."""
+        with self._dispatch_lock, self._native_webrtc_lock:
+            if getattr(self, "_connection_policy", "legacy") != "shared-native":
+                return None
+            profile = self._reconnect_profile(profile_id)
+            contact = self._reconnect_contact(profile["contact_id"])
+            public = self._reconnect_profile_public(profile)
+            reasons = set(public["effective"].get("reasons") or ())
+            if (profile.get("local_device_id") != local_device_id
+                    or (profile.get("remote_device_id") or None) != remote_device_id
+                    or not remote_device_id or not profile.get("active")
+                    or profile.get("state") == "stopped"
+                    or reasons - {"mailbox_not_configured"}):
+                raise ContactNotApproved("Carrier adoption authority is unavailable")
+            if profile_id in self._native_webrtc_profile_sessions:
+                return None
+            for session_id, peer in self._native_webrtc_peers.items():
+                description = self._native_webrtc_descriptions.get(session_id, {})
+                actual_remote = description.get("remote_offer") or description.get("remote_answer")
+                if (session_id not in self._native_webrtc_live
+                        or session_id in self._native_webrtc_creating
+                        or session_id in self._native_webrtc_profile_sessions.values()
+                        or peer != contact["destination_hash"]
+                        or self._native_webrtc_controls.get(session_id, {}).get("profile_id") != profile_id
+                        or not actual_remote
+                        or description.get("bound_remote_sdp") != normalized_sdp(actual_remote)
+                        or (not profile.get("allow_direct_ip_disclosure")
+                            and description.get("ice_policy") != "relay")):
+                    continue
+                self._native_webrtc_profile_sessions[profile_id] = session_id
+                description.pop("answer_wait_until", None)
+                return session_id
+            return None
 
     def _native_control_contact(self, session_id):
         if session_id not in self._native_webrtc_live:

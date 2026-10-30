@@ -1033,6 +1033,8 @@ class ReconnectServiceMixin:
             ]
         else:
             profiles = self._reconnect_profiles_raw()
+        if runtime is not None:
+            self.retire_unmanaged_native_connections({profile["id"] for profile in profiles})
         for profile in profiles:
             profile["active"] = False
             profile["state"] = "stopped"

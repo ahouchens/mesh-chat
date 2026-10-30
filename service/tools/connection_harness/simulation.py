@@ -4,8 +4,8 @@ from dataclasses import asdict
 from random import Random
 
 from mesh_chat.connection.model import (
-    Authority, Bridge, Cancel, ConnectionKey, ConnectionState, ContextChanged,
-    Desired, Failed, Failure, Health, Phase, Result, Retire, Work,
+    Adopted, Authority, Bridge, Cancel, ConnectionKey, ConnectionState, ContextChanged,
+    Desired, Failed, Failure, Health, Phase, Resource, Result, Retire, Work,
 )
 from mesh_chat.connection.supervisor import ConnectionSupervisor
 
@@ -39,13 +39,15 @@ class Simulation:
         self.owner.dispatch(self.key, ContextChanged(self.now, network_available=available))
         self.drain()
 
-    def complete(self, index=0, fail=False, duplicate=False):
+    def complete(self, index=0, fail=False, duplicate=False, adopt=False):
         if not self.pending:
             return
         index %= len(self.pending)
         work = self.pending.pop(index)
         allocated = (work.resource if work.phase in {
             Phase.GATHER_OFFER, Phase.GATHER_ANSWER, Phase.CHECKING} else None)
+        if adopt and work.phase is Phase.DISCOVER:
+            allocated = Resource(work.resource.adapter_epoch, "manual-" + work.resource.resource_id)
         if allocated:
             self.allocated.add(allocated)
         event = (Failed(work.operation, self.now, Failure.TRANSIENT, allocated=allocated)
@@ -53,7 +55,10 @@ class Simulation:
                                      verified=work.phase is Phase.CHECKING,
                                      observed_health=Health.OPEN if work.phase is Phase.INSPECT else None,
                                      observed_bridge=Bridge.READY if work.phase is Phase.INSPECT else None))
-        self.trace.append({"type": "complete", "index": index, "fail": fail, "duplicate": duplicate})
+        if adopt and work.phase is Phase.DISCOVER and not fail:
+            event = Adopted(work.operation, self.now, allocated)
+        self.trace.append({"type": "complete", "index": index, "fail": fail,
+                           "duplicate": duplicate, "adopt": adopt})
         self.owner.dispatch(self.key, event)
         self.drain()
         if duplicate:

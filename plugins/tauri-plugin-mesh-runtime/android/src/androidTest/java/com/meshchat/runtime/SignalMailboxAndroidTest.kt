@@ -149,4 +149,19 @@ class SignalMailboxAndroidTest {
             NativeWebRtcHost.closeAll()
         }
     }
+
+    @Test(timeout = 240_000)
+    fun sharedRuntimeAdoptsVerifiedManualNativeCarrierWithoutMailbox() {
+        python()
+        NativeWebRtcHost.initialize(context)
+        val key = Base64.encodeToString(ByteArray(32).also { SecureRandom().nextBytes(it) }, Base64.NO_WRAP)
+        try {
+            val directory = context.filesDir.resolve("manual-adoption-ci/${UUID.randomUUID()}").absolutePath
+            initialize(directory, key)
+            assertEquals("True", fixture().callAttr("run_manual_native_adoption").toString())
+        } finally {
+            shutdown()
+            NativeWebRtcHost.closeAll()
+        }
+    }
 }

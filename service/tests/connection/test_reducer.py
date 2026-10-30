@@ -3,7 +3,7 @@ from dataclasses import replace
 import pytest
 
 from mesh_chat.connection.model import (
-    Authority, Bridge, Carrier, ConnectionKey, ConnectionState, ContextChanged,
+    Adopted, Authority, Bridge, Carrier, ConnectionKey, ConnectionState, ContextChanged,
     Desired, Execution, Failed, Failure, Health, Observed, Phase, Policy,
     Resource, Result, Retire, Step, Tick, Work,
 )
@@ -21,6 +21,8 @@ def initial(**changes):
 
 def begin(state=None, now=0):
     result = transition(state or initial(), Tick(now))
+    if result.effects and result.effects[0].phase is Phase.DISCOVER:
+        result = transition(result.state, Result(result.effects[0].operation, now))
     return result.state, next(effect for effect in result.effects if isinstance(effect, Work))
 
 
@@ -39,8 +41,66 @@ def test_initial_negotiation_obeys_deterministic_roles():
 def test_offline_wait_does_not_allocate_work():
     state = initial(network_available=False)
     result = transition(state, Tick(0))
+    assert result.effects[0].phase is Phase.DISCOVER
+    result = transition(result.state, Result(result.effects[0].operation, 0))
     assert result.state.reason == "network_unavailable"
     assert result.effects == ()
+
+
+def test_verified_adoption_requires_fresh_health_and_path_before_readiness():
+    state = initial(authority=Authority(1, True, False, True))
+    discovery = transition(state, Tick(0))
+    work = discovery.effects[0]
+    resource = Resource("native", "manual-carrier")
+    adopted = transition(discovery.state, Adopted(work.operation, 1, resource))
+    assert adopted.state.carrier.health is Health.SUSPECT
+    assert adopted.state.carrier.bridge is Bridge.DETACHED
+    inspect = adopted.effects[0]
+    assert inspect.phase is Phase.INSPECT
+    inspected = complete(adopted.state, inspect, now=2,
+                         observed_health=Health.OPEN, observed_bridge=Bridge.READY)
+    assert inspected.state.carrier.bridge is Bridge.RESTORING
+    attach = inspected.effects[0]
+    assert attach.phase is Phase.ATTACH
+    attached = complete(inspected.state, attach, now=3)
+    ready = complete(attached.state, attached.effects[0], now=4)
+    assert ready.state.carrier.resource == resource
+    assert ready.state.carrier.bridge is Bridge.READY
+
+
+@pytest.mark.parametrize("ending", ["stop", "revision", "timeout", "locked"])
+def test_adoption_completion_cannot_cross_authority_or_time_fences(ending):
+    discovery = transition(initial(), Tick(0))
+    work = discovery.effects[0]
+    changes = {"stop": ContextChanged(1, desired=Desired.STOPPED),
+               "revision": ContextChanged(1, authority=Authority(2, True, True, True)),
+               "timeout": Tick(work.deadline),
+               "locked": ContextChanged(1, execution=Execution.LOCKED)}
+    state = transition(discovery.state, changes[ending]).state
+    resource = Resource("native", "manual-carrier")
+    late = transition(state, Adopted(work.operation, work.deadline + 1, resource))
+    assert late.state.carrier is None
+    assert Retire(resource) in late.effects
+
+
+def test_absent_manual_carrier_with_no_mailbox_waits_without_negotiating():
+    discovery = transition(initial(authority=Authority(1, True, False, True)), Tick(0))
+    result = complete(discovery.state, discovery.effects[0], now=1)
+    assert result.state.reason == "signaling_unavailable"
+    assert not result.effects
+    assert not transition(result.state, Tick(2)).effects
+    assert transition(result.state, Tick(6)).effects[0].phase is Phase.DISCOVER
+
+
+def test_transient_failure_after_claim_retires_the_handle_and_can_retry():
+    discovery = transition(initial(), Tick(0))
+    claimed = Resource("native", "manual-carrier")
+    result = transition(discovery.state, Failed(discovery.effects[0].operation, 1,
+                        Failure.TRANSIENT, allocated=claimed))
+    assert Retire(claimed) in result.effects
+    assert result.state.carrier is None
+    assert not result.state.blocked
+    assert transition(result.state, Tick(result.state.retry_at)).effects[0].phase is Phase.DISCOVER
 
 
 def test_phase_deadline_starts_after_previous_step_finishes():

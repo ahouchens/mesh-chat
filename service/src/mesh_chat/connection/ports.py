@@ -2,7 +2,7 @@
 
 from typing import Protocol
 
-from .model import ConnectionKey, Desired, Failed, Resource, Result, Work
+from .model import Adopted, ConnectionKey, Desired, Failed, Resource, Result, Work
 
 
 class Cancellation(Protocol):
@@ -16,7 +16,7 @@ class Clock(Protocol):
 class PhaseExecutor(Protocol):
     """One bounded operation. Poll once; the reducer decides whether to retry."""
 
-    def execute(self, work: Work, cancellation: Cancellation) -> Result | Failed: ...
+    def execute(self, work: Work, cancellation: Cancellation) -> Result | Failed | Adopted: ...
 
     def retire(self, resource: Resource) -> None:
         """Idempotent close of this exact resource, including a late allocation."""

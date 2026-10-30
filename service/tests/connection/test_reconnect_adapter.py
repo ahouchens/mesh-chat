@@ -5,7 +5,7 @@ import pytest
 
 from mesh_chat.connection.adapters.reconnect import NativePort, ReconnectExecutor, SignalingPort
 from mesh_chat.connection.model import (
-    Authority, Bridge, Carrier, ConnectionKey, ConnectionState, Desired, Failed, Health, Phase, Resource,
+    Adopted, Authority, Bridge, Carrier, ConnectionKey, ConnectionState, Desired, Failed, Health, Phase, Resource,
     Tick, Work,
 )
 from mesh_chat.connection.reducer import transition
@@ -102,9 +102,11 @@ def test_valid_signed_request_is_reused_across_local_attempts():
     state = initial()
     executor = domain.executor(state)
     first = transition(state, Tick(0)).effects[0]
+    first = replace(first, phase=Phase.REQUEST)
     executor.execute(first, Event())
     executor.retire(first.resource)
     second = transition(replace(state, generation=1), Tick(0)).effects[0]
+    second = replace(second, phase=Phase.REQUEST)
     executor.execute(second, Event())
     assert domain.created == 1
 
@@ -114,7 +116,7 @@ def test_late_native_creation_reports_exact_handle_for_cleanup():
     state = initial()
     executor = domain.executor(state)
     result = transition(state, Tick(0))
-    for _ in range(2):
+    for _ in range(3):
         work = result.effects[0]
         result = transition(result.state, executor.execute(work, Event()))
     work = result.effects[0]
@@ -157,3 +159,37 @@ def test_inspection_checks_current_path_and_channel_not_just_ice():
     executor.native = replace(executor.native, stats=lambda _: {
         "attached": True, "ice_connection_state": "connected", "data_channel_state": "closed"})
     assert executor.execute(work, Event()).observed_health is Health.ABSENT
+
+
+@pytest.mark.parametrize("preferred", [False, True])
+def test_adoption_uses_existing_carrier_without_signaling_or_allocating(preferred):
+    domain = Domain(preferred)
+    domain.profile["effective"].update(ready=False, reasons=["mailbox_not_configured"])
+    state = replace(initial(preferred), authority=Authority(1, True, False, preferred))
+    executor = domain.executor(state)
+    resource = Resource("native", "manual-peer")
+    executor.native = replace(executor.native, claim=lambda _: resource)
+    result = transition(state, Tick(0))
+    event = executor.execute(result.effects[0], Event())
+    assert isinstance(event, Adopted)
+    result = transition(result.state, event)
+    for _ in range(3):
+        result = transition(result.state, executor.execute(result.effects[0], Event()))
+    assert result.state.carrier.bridge is Bridge.READY
+    assert domain.calls == ["attach"]
+    executor.retire(resource)
+    assert domain.calls == ["attach", "close"]
+
+
+def test_stop_during_adoption_returns_the_claimed_handle_for_exact_cleanup():
+    domain = Domain(True)
+    executor = domain.executor(initial())
+    resource = Resource("native", "claimed-peer")
+    def claim(_):
+        domain.valid = False
+        return resource
+    executor.native = replace(executor.native, claim=claim)
+    work = transition(initial(), Tick(0)).effects[0]
+    event = executor.execute(work, Event())
+    assert isinstance(event, Failed)
+    assert event.allocated == resource

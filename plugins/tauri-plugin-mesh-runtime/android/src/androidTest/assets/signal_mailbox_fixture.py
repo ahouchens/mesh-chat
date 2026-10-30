@@ -303,6 +303,88 @@ def run_shared_runtime_native(root, url):
             for peer in peers:
                 peer.store.close()
 
+def run_manual_native_adoption():
+    """Actual service/composition, signed control and JNI; synthetic path only.
+
+    Approval is seeded. This proves ownership transfer and packet traffic,
+    not invitation UI, a remote Reticulum path or authenticated LXMF receipts.
+    The private selector is changed only at a quiescent test bootstrap.
+    """
+    from mesh_chat import mobile_bridge
+    from mesh_chat.connection.composition import native_runtime
+    from mesh_chat.connection.model import Execution
+    from mesh_chat.reconnect import create_connection_capabilities
+    from mesh_chat.webrtc_onboarding import create_onboarding_offer
+
+    service = mobile_bridge._service
+    assert service is not None and service.network is not None
+    assert service._connection_runtime is None
+    assert service._background_reconnect_supervisor is None
+    assert not service._native_webrtc_live
+    service._connection_policy = "shared-native"
+    service._call_settings.signal_mailbox_url = None
+    service._call_settings.turn_broker_url = None
+    service._call_settings.stun_urls = []
+    native = Native()
+    identity = RNS.Identity()
+    contact_id = "manual-" + uuid.uuid4().hex
+    destination = RNS.Destination.hash(identity, "lxmf", "delivery").hex()
+    service.store.put("contact", contact_id, {"id": contact_id, "trust": "approved",
+        "destination_hash": destination, "display_name": "Synthetic manual peer"})
+    remote_id, local_id = "remote-" + uuid.uuid4().hex, "local-" + uuid.uuid4().hex
+    ice = {"iceServers": [], "iceTransportPolicy": "all"}
+    channels = [{"label": "mesh-reticulum", "binary": True, "ordered": True},
+                {"label": "mesh-onboarding", "binary": False, "ordered": True}]
+    owner = None
+    try:
+        offer = native.invoke("createOffer", remote_id, json.dumps(ice), json.dumps(channels))
+        document = create_onboarding_offer(identity, session_id=uuid.uuid4().hex,
+            sdp=offer["sdp"], dtls_fingerprint=offer["fingerprint"])
+        answer = service.native_webrtc_accept(local_id, offer["sdp"], ice, channels)
+        service.native_webrtc_bind_onboarding(local_id, document)
+        native.invoke("applyAnswer", remote_id, answer["sdp"])
+        wait_until(lambda: all(native.stats(s).get("attached") for s in (local_id, remote_id)),
+                   "Manual native channels did not open")
+        service.reconnect_consent_set(contact_id, True, True)
+        capabilities = create_connection_capabilities(identity,
+            peer_destination=service._require_profile()["destination_hash"],
+            device_id="manual-" + uuid.uuid4().hex, transports=["webrtc"],
+            auto_reconnect=True, allow_direct_ip_disclosure=True,
+            persistent=True, encrypted=True)
+        control = json.dumps({"type": "connection_capabilities", "document": capabilities})
+        wait_until(lambda: bool(native.host.sendControl(remote_id, "mesh-onboarding", control)),
+                   "Manual control channel did not open", 15)
+        wait_until(lambda: service._native_webrtc_controls.get(local_id, {}).get("profile_id"),
+                   "Signed native capabilities were not bound to a profile", 15)
+        profile_id = service._native_webrtc_controls[local_id]["profile_id"]
+        service.reconnect_start(contact_id)
+        owner = service._connection_runtime = native_runtime(service)
+        # Instrumentation supplies execution availability and path readiness;
+        # authority, native discovery, inspection and attachment stay real.
+        owner.execution = lambda: Execution.AVAILABLE
+        owner.executor.path = lambda _: {"has_path": True, "ready": True}
+        owner.start()
+        wait_until(lambda: owner.snapshots().get(profile_id, {}).get("messaging_ready"),
+                   "Shared owner did not adopt the manual native carrier", 30)
+        states = owner.owner.snapshots()
+        assert len(states) == 1 and states[0].carrier.resource.resource_id == local_id
+        assert service._execute("native_webrtc_close", {"session_id": local_id}) == {"state": "managed"}
+        before = {s: native.stats(s).get("received_packets", 0) for s in (local_id, remote_id)}
+        assert native.send(local_id) and native.send(remote_id)
+        wait_until(lambda: all(native.stats(s).get("received_packets", 0) > before[s]
+                              for s in before), "Adopted native carrier did not pass traffic", 10)
+        service.reconnect_stop(contact_id)
+        wait_until(lambda: local_id not in service._native_webrtc_live,
+                   "Stop did not retire the adopted native carrier", 10)
+        return True
+    finally:
+        if owner is not None:
+            owner.stop()
+            owner.wait()
+        service.native_webrtc_close(local_id)
+        native.close(remote_id)
+
+
 def run_recovery(root, url, workspace=False, native=None, platform="android"):
     native = native or Native()
     workspace_id = str(uuid.uuid4()) if workspace else None

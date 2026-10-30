@@ -6,7 +6,7 @@ from threading import RLock
 
 from .diagnostics import Diagnostics
 from .model import (
-    Cancel, ConnectionKey, ConnectionState, ContextChanged, Desired, Event,
+    Adopted, Cancel, ConnectionKey, ConnectionState, ContextChanged, Desired, Event,
     Failed, Failure, Policy, Resource, Result, Retire, Work,
 )
 from .reducer import transition
@@ -55,7 +55,7 @@ class ConnectionSupervisor:
             state = self._states.get(key)
             if state is None:
                 raise KeyError("Connection must be explicitly registered")
-            if isinstance(event, (Result, Failed)):
+            if isinstance(event, (Result, Failed, Adopted)):
                 # An event for another actor cannot release its reservation.
                 if event.operation.key != key:
                     raise ValueError("Completion belongs to another connection")

@@ -27,6 +27,7 @@ from .app_protocol import (
 from .errors import (
     ContactInUse,
     ContactNotApproved,
+    IdentityMismatch,
     InvitationInvalid,
     MeshChatError,
     MailboxNotConfigured,
@@ -2223,6 +2224,9 @@ class MeshChatService(
         return cls._native_webrtc_host_class
 
     def webrtc_attach_native(self, session_id: str) -> dict[str, Any]:
+        if (getattr(self, "_connection_policy", "legacy") == "shared-native"
+                and not self._shared_native_session(session_id)):
+            raise ContactNotApproved("Native messaging carrier has not been adopted")
         if self.network is None:
             raise NetworkUnavailable("Reticulum is not running for a WebRTC bridge")
         existing = self._native_webrtc_sessions.get(session_id)
@@ -2345,8 +2349,9 @@ class MeshChatService(
             if event == "open":
                 if session_id not in self._native_webrtc_live:
                     return
-                if managed:
-                    # The reducer admits attachment after verified CHECKING.
+                if getattr(self, "_connection_policy", "legacy") == "shared-native":
+                    # Pending onboarding retains its control channel only.
+                    # The reducer admits messaging after verified discovery or CHECKING.
                     return
                 self._native_webrtc_descriptions.get(session_id, {}).pop("answer_wait_until", None)
                 try:
@@ -2465,7 +2470,7 @@ class MeshChatService(
             # A manually paired native transport remains usable without a
             # mailbox. Reconnect must reuse it after the contact is approved.
             for session_id in self._native_webrtc_peers:
-                if (session_id in self._native_webrtc_sessions
+                if (session_id in self._native_webrtc_live
                         and self._native_webrtc_controls.get(session_id, {}).get("profile_id") == profile_id):
                     return session_id
             return None
@@ -2474,6 +2479,24 @@ class MeshChatService(
         session_id = self.native_reconnect_session(profile_id)
         if session_id is not None:
             self.native_webrtc_close(session_id)
+
+    def retire_unmanaged_native_connections(self, profile_ids) -> None:
+        """Explicit Stop also covers verified manual peers awaiting transfer."""
+        with self._native_webrtc_lock:
+            sessions = [session for session, control in self._native_webrtc_controls.items()
+                        if control.get("profile_id") in profile_ids
+                        and session in self._native_webrtc_peers
+                        and session in self._native_webrtc_live
+                        and not self._shared_native_session(session)]
+        failure = None
+        for session in sessions:
+            try:
+                self.native_webrtc_close(session)
+            except Exception as error:
+                # Each close removes routing in finally, even when JNI fails.
+                failure = error
+        if failure is not None:
+            raise failure
 
     def _claim_native_session(self, session_id: str, profile_id: Any, *, background: bool,
                               runtime_owned: bool = False) -> bool:
@@ -2545,6 +2568,7 @@ class MeshChatService(
             raise ValidationError("Native WebRTC configuration is invalid")
         if self._claim_native_session(session_id, profile_id, background=background, runtime_owned=runtime_owned):
             ice = {**ice, "iceTransportPolicy": "relay"}
+        self._native_webrtc_descriptions[session_id] = {"ice_policy": ice.get("iceTransportPolicy", "all")}
         try:
             return self._native_sdp_result(session_id, self._native_webrtc_host().createOffer(
                 session_id,
@@ -2570,7 +2594,8 @@ class MeshChatService(
             raise ValidationError("Native WebRTC configuration is invalid")
         if self._claim_native_session(session_id, profile_id, background=background, runtime_owned=runtime_owned):
             ice = {**ice, "iceTransportPolicy": "relay"}
-        self._native_webrtc_descriptions[session_id] = {"remote_offer": offer_sdp}
+        self._native_webrtc_descriptions[session_id] = {
+            "remote_offer": offer_sdp, "ice_policy": ice.get("iceTransportPolicy", "all")}
         if profile_id is None and any(
             isinstance(channel, dict) and channel.get("label") == "mesh-onboarding" for channel in channels
         ):
@@ -2601,11 +2626,20 @@ class MeshChatService(
     def native_webrtc_apply_answer(self, session_id: Any, answer_sdp: Any) -> dict[str, Any]:
         if not isinstance(session_id, str) or not isinstance(answer_sdp, str):
             raise ValidationError("Native WebRTC answer is invalid")
+        from .native_webrtc_control import normalized_sdp
+        with self._native_webrtc_lock:
+            description = self._native_webrtc_descriptions.get(session_id, {})
+            bound = description.get("bound_remote_sdp")
+            if bound and bound != normalized_sdp(answer_sdp):
+                raise IdentityMismatch("Answer does not match the verified native binding")
         result = json.loads(
             self._native_webrtc_host().applyAnswer(session_id, answer_sdp)
         )
         if not result.get("ok"):
             raise NativeUnavailable(str(result.get("error", "native_webrtc_apply_failed")))
+        with self._native_webrtc_lock:
+            if session_id in self._native_webrtc_live:
+                self._native_webrtc_descriptions.setdefault(session_id, {})["remote_answer"] = answer_sdp
         return result
 
     def native_webrtc_control(
@@ -4452,6 +4486,9 @@ class MeshChatService(
             return self.webrtc_packet(body["bridge_id"], body["data"])
         if command == "webrtc_detach":
             body = _payload(value, allowed={"bridge_id"}, required={"bridge_id"})
+            if any(bridge == body["bridge_id"] and self._shared_native_session(session)
+                   for session, bridge in self._native_webrtc_sessions.items()):
+                return {"state": "managed"}
             return self.webrtc_detach(body["bridge_id"])
         if command == "native_webrtc_offer":
             body = _payload(
@@ -4477,6 +4514,8 @@ class MeshChatService(
                 allowed={"session_id", "answer_sdp"},
                 required={"session_id", "answer_sdp"},
             )
+            if self._shared_native_session(body["session_id"]):
+                raise NativeUnavailable("Native reconnect is owned by the service")
             return self.native_webrtc_apply_answer(
                 body["session_id"], body["answer_sdp"]
             )
@@ -4491,6 +4530,8 @@ class MeshChatService(
             )
         if command == "native_webrtc_close":
             body = _payload(value, allowed={"session_id"}, required={"session_id"})
+            if self._shared_native_session(body["session_id"]):
+                return {"state": "managed"}
             return self.native_webrtc_close(body["session_id"])
         if command == "native_webrtc_stats":
             body = _payload(value, allowed={"session_id"}, required={"session_id"})

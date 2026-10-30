@@ -17,6 +17,7 @@ class Execution(str, Enum):
 
 
 class Phase(str, Enum):
+    DISCOVER = "discover"
     REQUEST = "request"
     WAIT_REQUEST = "wait_request"
     WAIT_OFFER = "wait_offer"
@@ -194,6 +195,14 @@ class Result:
 
 
 @dataclass(frozen=True)
+class Adopted:
+    """Private effect completion after domain authority transfers a carrier."""
+    operation: Operation
+    now: float
+    allocated: Resource
+
+
+@dataclass(frozen=True)
 class Failed:
     operation: Operation
     now: float
@@ -211,7 +220,7 @@ class Observed:
     bridge: Bridge
 
 
-Event = Tick | ContextChanged | Result | Failed | Observed
+Event = Tick | ContextChanged | Result | Failed | Adopted | Observed
 
 
 @dataclass(frozen=True)

@@ -22,9 +22,10 @@ class ConnectionMachine(RuleBasedStateMachine):
     def network(self, available):
         self.sim.network(available)
 
-    @rule(index=st.integers(min_value=0, max_value=2), fail=st.booleans(), duplicate=st.booleans())
-    def completion(self, index, fail, duplicate):
-        self.sim.complete(index, fail, duplicate)
+    @rule(index=st.integers(min_value=0, max_value=2), fail=st.booleans(),
+          duplicate=st.booleans(), adopt=st.booleans())
+    def completion(self, index, fail, duplicate, adopt):
+        self.sim.complete(index, fail, duplicate, adopt)
 
     @invariant()
     def ownership_is_consistent(self):

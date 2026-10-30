@@ -4,7 +4,7 @@ from dataclasses import replace
 from hashlib import sha256
 
 from .model import (
-    Bridge, Cancel, Carrier, ConnectionState, ContextChanged, Desired, Event,
+    Adopted, Bridge, Cancel, Carrier, ConnectionState, ContextChanged, Desired, Event,
     Effect, Execution, Failed, Failure, Health, Observed, Operation, Phase, Resource,
     Result, Retire, Step, Tick, Transition, Work,
 )
@@ -98,10 +98,6 @@ def _tick(state: ConnectionState, event: Tick) -> Transition:
         if event.now >= state.retry_at and not state.blocked:
             return _work(state, Phase.ATTACH, carrier.resource, event.now)
         return Transition(state, reason="bridge_retry_wait")
-    if not state.network_available:
-        return Transition(replace(state, reason="network_unavailable"), reason="network_unavailable")
-    if not state.authority.signaling_available:
-        return Transition(replace(state, reason="signaling_unavailable"), reason="signaling_unavailable")
     if state.blocked or event.now < state.retry_at:
         return Transition(state, reason="blocked" if state.blocked else "retry_wait")
     state = replace(state, generation=state.generation + 1)
@@ -110,8 +106,7 @@ def _tick(state: ConnectionState, event: Tick) -> Transition:
     actor = sha256(binding.encode("utf-8")).hexdigest()[:24]
     resource = Resource(state.adapter_epoch,
                         f"connection-{state.runtime_epoch}-{actor}-{state.generation}")
-    phase = Phase.REQUEST if state.authority.preferred else Phase.WAIT_REQUEST
-    return _work(state, phase, resource, event.now)
+    return _work(state, Phase.DISCOVER, resource, event.now)
 
 
 def _context(state: ConnectionState, event: ContextChanged) -> Transition:
@@ -143,9 +138,9 @@ def _context(state: ConnectionState, event: ContextChanged) -> Transition:
     return Transition(new, effects, "context_changed")
 
 
-def _stale(state: ConnectionState, event: Result | Failed) -> Transition:
+def _stale(state: ConnectionState, event: Result | Failed | Adopted) -> Transition:
     effects: tuple[Effect, ...] = ()
-    if isinstance(event, (Result, Failed)) and event.allocated:
+    if event.allocated:
         owned = ((state.carrier and state.carrier.resource == event.allocated)
                  or (state.negotiation and state.negotiation.resource == event.allocated))
         if not owned:
@@ -153,7 +148,7 @@ def _stale(state: ConnectionState, event: Result | Failed) -> Transition:
     return Transition(state, effects, "stale_completion")
 
 
-def _result(state: ConnectionState, event: Result | Failed) -> Transition:
+def _result(state: ConnectionState, event: Result | Failed | Adopted) -> Transition:
     step = state.negotiation
     if step is None or step.operation != event.operation:
         return _stale(state, event)
@@ -162,12 +157,35 @@ def _result(state: ConnectionState, event: Result | Failed) -> Transition:
         if event.allocated and event.allocated != step.resource:
             result = replace(result, effects=result.effects + (Retire(event.allocated),))
         return result
+    if isinstance(event, Adopted):
+        if (step.phase is not Phase.DISCOVER or state.carrier is not None
+                or event.allocated.adapter_epoch != state.adapter_epoch or not _eligible(state)):
+            result = _failure(state, event.now, "invalid_adoption", blocked=True)
+            return replace(result, effects=result.effects + (Retire(event.allocated),))
+        # Verified identity does not prove the carrier is open or has a route.
+        state = replace(state, carrier=Carrier(event.allocated, state.authority.revision,
+                        Health.SUSPECT, Bridge.DETACHED, event.now), negotiation=None)
+        return _work(state, Phase.INSPECT, event.allocated, event.now)
+    if (isinstance(event, Failed) and step.phase is Phase.DISCOVER and event.allocated
+            and event.allocated.adapter_epoch == state.adapter_epoch):
+        # A claim may succeed before a cancellation or transport failure. Its
+        # handle differs from the discovery placeholder and still needs cleanup.
+        result = _failure(state, event.now, event.failure.value,
+                          event.failure in BLOCKING_FAILURES, event.retry_after, event.jitter)
+        return replace(result, effects=result.effects + (Retire(event.allocated),))
     if event.allocated and event.allocated != step.resource:
         result = _failure(state, event.now, "wrong_resource", blocked=True)
         return replace(result, effects=result.effects + (Retire(event.allocated),))
     if isinstance(event, Failed):
         return _failure(state, event.now, event.failure.value,
                         event.failure in BLOCKING_FAILURES, event.retry_after, event.jitter)
+    if step.phase is Phase.DISCOVER:
+        if not state.network_available or not state.authority.signaling_available:
+            reason = "network_unavailable" if not state.network_available else "signaling_unavailable"
+            return Transition(replace(state, negotiation=None, reason=reason,
+                              retry_at=event.now + state.policy.poll_interval), reason=reason)
+        phase = Phase.REQUEST if state.authority.preferred else Phase.WAIT_REQUEST
+        return _work(state, phase, step.resource, event.now)
     if step.phase is Phase.INSPECT:
         if event.observed_health is None or event.observed_bridge is None:
             return _failure(state, event.now, "missing_observation", blocked=True)
@@ -229,7 +247,7 @@ def transition(state: ConnectionState, event: Event) -> Transition:
         return _tick(state, event)
     if isinstance(event, ContextChanged):
         return _context(state, event)
-    if isinstance(event, (Result, Failed)):
+    if isinstance(event, (Result, Failed, Adopted)):
         return _result(state, event)
     if isinstance(event, Observed):
         return _observed(state, event)

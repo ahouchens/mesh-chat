@@ -3,7 +3,7 @@ from dataclasses import replace
 import pytest
 
 from mesh_chat.connection.model import (
-    Authority, Bridge, Carrier, ConnectionKey, ConnectionState, ContextChanged, Desired,
+    Adopted, Authority, Bridge, Carrier, ConnectionKey, ConnectionState, ContextChanged, Desired,
     Failed, Failure, Health, Policy, Resource, Result, Retire, Tick, Work,
 )
 from mesh_chat.connection.supervisor import ConnectionSupervisor, CapacityExceeded
@@ -82,9 +82,9 @@ def test_private_state_snapshot_is_immutable():
 
 
 @pytest.mark.parametrize("stale", [False, True])
-@pytest.mark.parametrize("failed", [False, True])
+@pytest.mark.parametrize("completion", ["result", "failed", "adopted"])
 @pytest.mark.parametrize("other_status", ["negotiating", "cancelled", "ready"])
-def test_misrouted_allocation_cannot_retire_another_profiles_resource(stale, failed, other_status):
+def test_misrouted_allocation_cannot_retire_another_profiles_resource(stale, completion, other_status):
     owner = ConnectionSupervisor("epoch")
     one, two = actor("one"), actor("two")
     if other_status == "ready":
@@ -104,8 +104,9 @@ def test_misrouted_allocation_cannot_retire_another_profiles_resource(stale, fai
     if stale:
         owner.retire(one.key, 1)
         owner.drain()
-    event = (Failed(first.operation, 2, Failure.TRANSIENT, allocated=second.resource) if failed
-             else Result(first.operation, 2, allocated=second.resource))
+    event = {"failed": Failed(first.operation, 2, Failure.TRANSIENT, allocated=second.resource),
+             "result": Result(first.operation, 2, allocated=second.resource),
+             "adopted": Adopted(first.operation, 2, second.resource)}[completion]
     owner.dispatch(one.key, event)
     assert Retire(second.resource) not in owner.drain()
     assert owner.snapshot(two.key) == other_before

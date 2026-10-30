@@ -52,7 +52,7 @@ identity. Monotonic deadlines never enter persistent storage.
 | --- | --- | --- |
 | M0 baseline | Spec and diagram imported; baseline regression corpus passes | Record platform timing baselines in CI |
 | M1 policy/contract foundation | Immutable model, pure phase reducer, fair supervisor, bounded effects, native domain adapters, simulator and strict model checks implemented | Complete contract versioning and public facade design; extend adversarial corpus to all invariant classes |
-| M2 shared policy | Experimental `shared-native` service composition and renderer fencing implemented | Trusted desktop registration/adoption, manual pairing adoption, full native authority conformance, bridge-restart regression, removal of migrated legacy loops |
+| M2 shared policy | Experimental `shared-native` service composition, renderer fencing and consented native manual-carrier adoption implemented | Trusted desktop registration/adoption, remaining manual-pairing modes, full native authority conformance, bridge-restart regression, removal of migrated legacy loops |
 | M3 qualification gates | Dedicated deterministic evidence gate | Full dependency-aware selection and exact-artifact release aggregation |
 | M4 headless messaging | Existing Android native transport reused | Production native Windows DataChannel adapter, packaged fault matrix and receipt soak |
 | M5 supported consumers | Not implemented | Public authenticated facade, durable idempotency/event cursors, packaged SDKs/CLI, independent Windows and Android consumers and compatibility matrix |
@@ -83,6 +83,29 @@ uses the same bounded effect runner, with a poll-interval deadline. Failed or
 late inspection cannot restore readiness. A missing route invalidates readiness
 while preserving a healthy carrier for bridge repair. Default activation cannot
 clear an explicit Stop, including one issued before the first profile scan.
+
+Before mailbox negotiation, a bounded private discovery effect can claim an
+existing native manual carrier. The protected service checks current approval,
+reciprocal reconnect consent, privacy policy, exact local/remote device profile,
+signed onboarding SDP against the actual applied remote description, and signed
+capabilities received on that carrier. The reducer then requires fresh native
+inspection, bridge attachment and path readiness. Mailbox configuration is not
+required to retain this established carrier. Pending onboarding in the shared
+composition keeps its control channel but cannot attach a messaging bridge
+before ownership transfer. UI close/detach commands cannot
+retire it after transfer; explicit Stop still does. Failed durable Stop also
+retires verified manual peers awaiting transfer while retaining the memory fence.
+Auto-reconnect-disabled manual sessions and desktop WebView carriers remain
+outside this adoption path.
+
+`DISCOVER` and `Adopted` extend the private in-process effect contract. Its
+producers are the native executor and simulator; its consumers are the reducer,
+supervisor and bounded effect runner. No public event injection or peer wire
+version changes accompany this addition. The Android signaling instrumentation
+includes a production-service/composition adoption scenario with real signed
+control, JNI channels and packet traffic. It injects execution availability and
+path readiness, seeds approval, and cannot qualify invitation UI or LXMF receipts.
+Its passing emulator result must be recorded against the tested commit.
 
 JNI ingress has separate lifecycle (512 events / 64 KiB) and data (256 events /
 2 MiB) budgets. Packet overflow records loss; lost lifecycle or consent control

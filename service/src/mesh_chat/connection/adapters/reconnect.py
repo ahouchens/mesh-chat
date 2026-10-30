@@ -14,7 +14,7 @@ from ...errors import (
     MailboxRateLimited, MailboxUnauthorized, NativeUnavailable,
     NetworkUnavailable, ReconnectReplayed, ValidationError,
 )
-from ..model import Bridge, Failed, Failure, Health, Phase, Result, Resource, Work
+from ..model import Adopted, Bridge, Failed, Failure, Health, Phase, Result, Resource, Work
 
 CHANNELS = (
     {"label": "mesh-reticulum", "binary": True, "ordered": True},
@@ -42,6 +42,7 @@ class NativePort:
     stats: Callable[[str], dict]
     attach: Callable[[str], dict]
     close: Callable[[str], Any]
+    claim: Callable[..., Resource | None] = lambda _key: None
 
 
 @dataclass
@@ -91,13 +92,15 @@ class ReconnectExecutor:
         profile = self.profile(work.operation.key)
         reasons = set((profile.get("effective") or {}).get("reasons") or ())
         ready = (profile.get("effective") or {}).get("ready")
-        signaling_required = work.phase not in {Phase.CHECKING, Phase.ATTACH, Phase.PATH, Phase.INSPECT}
+        signaling_required = work.phase not in {Phase.DISCOVER, Phase.CHECKING, Phase.ATTACH, Phase.PATH, Phase.INSPECT}
         if (profile.get("state") == "stopped" or not profile.get("active")
                 or not (ready or (not signaling_required and reasons == {"mailbox_not_configured"}))):
             raise ContactNotApproved("Connection authority is unavailable")
         return profile
 
     def execute(self, work: Work, cancellation):
+        if work.phase is Phase.DISCOVER:
+            return self._discover(work, cancellation)
         try:
             profile = self._check(work, cancellation)
             with self._lock:
@@ -144,6 +147,26 @@ class ReconnectExecutor:
         self.native.close(resource.resource_id)
         with self._lock:
             self._exchanges.pop(resource, None)
+
+    def _discover(self, work, cancellation):
+        claimed = None
+        try:
+            profile = self._check(work, cancellation)
+            claimed = self.native.claim(work.operation.key)
+            if claimed is not None:
+                with self._lock:
+                    if claimed in self._exchanges or len(self._exchanges) >= self.max_profiles:
+                        raise NativeUnavailable("Carrier exchange capacity reached")
+                    self._exchanges[claimed] = Exchange(profile, verified=True)
+            self._check(work, cancellation)
+            return (Adopted(work.operation, self.now(), claimed) if claimed is not None
+                    else Result(work.operation, self.now()))
+        except ContactNotApproved:
+            return Failed(work.operation, self.now(), Failure.REVOKED, allocated=claimed)
+        except (NativeUnavailable, NetworkUnavailable, TimeoutError, OSError):
+            return Failed(work.operation, self.now(), Failure.TRANSIENT, allocated=claimed)
+        except Exception:
+            return Failed(work.operation, self.now(), Failure.INTERNAL, allocated=claimed)
 
     def _inspect(self, work, exchange, call):
         stats = call(self.native.stats, work.resource.resource_id)
@@ -248,7 +271,8 @@ class ReconnectExecutor:
     def _path(self, work, exchange, call):
         value = call(self.path, exchange.profile["contact_id"])
         ready = bool(value.get("has_path") and value.get("ready"))
-        if ready and not (exchange.profile.get("effective") or {}).get("preferred"):
+        if (ready and exchange.request.get("document")
+                and not (exchange.profile.get("effective") or {}).get("preferred")):
             key = work.operation.key
             if key not in self._completed_requests and len(self._completed_requests) >= self.max_profiles:
                 raise NativeUnavailable("Replay cache capacity reached")

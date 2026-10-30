@@ -5,7 +5,7 @@ from uuid import uuid4
 
 from ..errors import ContactNotApproved
 from .adapters.reconnect import NativePort, ReconnectExecutor, SignalingPort
-from .model import Execution
+from .model import Execution, Resource
 from .reconcile import authority_signature, connection_key
 from .runtime import ConnectionRuntime
 
@@ -54,6 +54,7 @@ def native_runtime(service):
             lambda *args: service.native_webrtc_accept(*args, runtime_owned=True),
             service.native_webrtc_apply_answer, service.native_webrtc_stats,
             service.webrtc_attach_native, service.native_webrtc_close,
+            lambda key: _claim_carrier(service, key),
         )
         return ReconnectExecutor(signaling, native, profile=fresh_profile,
                     ice=service.call_ice_servers, path=service.reconnect_path_status,
@@ -61,3 +62,8 @@ def native_runtime(service):
 
     return ConnectionRuntime(uuid4().hex, factory, profiles=profiles, execution=execution,
                              activate=activate)
+
+
+def _claim_carrier(service, key):
+    session = service.claim_native_reconnect_carrier(key.profile_id, key.local_device, key.remote_device)
+    return Resource("native", session) if session is not None else None

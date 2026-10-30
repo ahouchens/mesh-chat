@@ -96,7 +96,7 @@ class ConnectionRuntime:
         # Explicit opt-outs are never activated by reconciliation.
         for profile in values:
             if (profile.get("state") != "stopped" and not profile.get("active")
-                    and (profile.get("effective") or {}).get("ready")):
+                    and authority(profile, 0).authorized):
                 key = connection_key(profile)
                 if not self._is_fenced(key, profile):
                     self.activate(profile["contact_id"])
