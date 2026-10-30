@@ -1,6 +1,11 @@
 """Explicitly selected public observations; domain dictionaries never escape."""
 
 import math
+import re
+
+from ..chat_text import validate_chat_text
+from ..models import DeliveryState, TrustState
+from .messages import IDEMPOTENCY_SECONDS
 
 
 ENUMS = {
@@ -49,3 +54,35 @@ def connection_view(value):
     selected["messaging_ready"] = ready
     selected["reason"] = value["reason"] if value.get("reason") in REASONS else "unknown"
     return selected
+
+
+def _timestamp(value):
+    if type(value) not in {int, float} or not math.isfinite(value) or not 0 <= value <= 9007199254740991:
+        raise ValueError("Invalid message timestamp")
+    return value
+
+
+def acceptance_view(profile, value):
+    if not isinstance(value.message, str) or re.fullmatch(r"[A-Za-z0-9_-]{16,128}", value.message) is None:
+        raise ValueError("Invalid message handle")
+    accepted = _timestamp(value.accepted_at)
+    expires = _timestamp(value.idempotency_expires_at)
+    if expires != accepted + IDEMPOTENCY_SECONDS:
+        raise ValueError("Invalid idempotency retention")
+    return {"profile": profile, "message": value.message, "accepted": True,
+            "accepted_at": accepted, "idempotency_expires_at": expires}
+
+
+def message_view(profile, handle, recipient, value):
+    validate_chat_text(value.text)
+    return {"profile": profile, "message": handle, "recipient": recipient, "kind": "text",
+            "text": value.text, "state": DeliveryState(value.state).value,
+            "created_at": _timestamp(value.created_at)}
+
+
+def peer_view(profile, handle, value):
+    if (not isinstance(value.display_name, str) or not 1 <= len(value.display_name) <= 80
+            or not isinstance(value.destination, str) or re.fullmatch(r"[a-f0-9]{32}", value.destination) is None):
+        raise ValueError("Invalid peer observation")
+    return {"profile": profile, "peer": handle, "display_name": value.display_name,
+            "destination": value.destination, "trust": TrustState(value.trust).value}

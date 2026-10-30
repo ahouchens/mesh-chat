@@ -5,6 +5,7 @@ the current caller grant before the component becomes a public host interface.
 """
 
 from .session import ApiFailure, CoreSession, ProfileObservation
+from .service_messages import ServiceMessages
 
 
 class ServiceObservations:
@@ -31,4 +32,4 @@ def bind_service_session(service, authenticated_grant):
     with service._dispatch_lock:
         handle_key = bytes.fromhex(service.store.opaque_id("core-api-handle-key", "v1"))
         return CoreSession(current_grant, ServiceObservations(service), handle_key=handle_key,
-                           transaction=service._dispatch_lock)
+                           transaction=service._dispatch_lock, messages=ServiceMessages(service))

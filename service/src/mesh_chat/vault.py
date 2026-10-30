@@ -761,13 +761,20 @@ class VaultStore:
             ).fetchall()
         return [self._open(kind, record_id, sealed) for record_id, sealed in rows]
 
-    def items(self, kind: str) -> list[tuple[str, dict[str, Any]]]:
+    def record_count(self, kind: str) -> int:
+        """Count a namespace without opening or materializing its records."""
+        with self._lock:
+            return self._db.execute("SELECT COUNT(*) FROM records WHERE kind=?", (kind,)).fetchone()[0]
+
+    def items(self, kind: str, *, limit: int | None = None) -> list[tuple[str, dict[str, Any]]]:
         """Return record IDs and opened values for bounded maintenance work."""
 
+        if limit is not None and (type(limit) is not int or not 1 <= limit <= 65537):
+            raise ValidationError("Record read limit is invalid")
         with self._lock:
             rows = self._db.execute(
-                "SELECT record_id, sealed FROM records WHERE kind=? ORDER BY record_id",
-                (kind,),
+                "SELECT record_id, sealed FROM records WHERE kind=? ORDER BY record_id LIMIT ?",
+                (kind, -1 if limit is None else limit),
             ).fetchall()
         return [
             (record_id, self._open(kind, record_id, sealed))

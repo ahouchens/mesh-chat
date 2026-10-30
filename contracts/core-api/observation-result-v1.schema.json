@@ -9,7 +9,7 @@
     "api_version": {"const": 1},
     "request_id": {"type": "string", "pattern": "^[A-Za-z0-9._:-]{1,80}$"},
     "ok": {"const": true},
-    "result": {"oneOf": [{"$ref": "#/$defs/capabilities"}, {"$ref": "#/$defs/profile"}, {"$ref": "#/$defs/connection"}]}
+    "result": {"oneOf": [{"$ref": "#/$defs/capabilities"}, {"$ref": "#/$defs/profile"}, {"$ref": "#/$defs/connection"}, {"$ref": "#/$defs/peer"}]}
   },
   "$defs": {
     "handle": {"type": "string", "pattern": "^[A-Za-z0-9_-]{16,128}$"},
@@ -19,25 +19,41 @@
       "required": ["api_major", "api_minor", "stability", "operations", "profiles", "limits"],
       "properties": {
         "api_major": {"const": 1}, "api_minor": {"const": 0}, "stability": {"const": "experimental"},
-        "operations": {"type": "array", "uniqueItems": true, "minItems": 3, "maxItems": 3,
-          "items": {"enum": ["runtime.capabilities", "profile.query", "connection.snapshot"]}},
+        "operations": {"type": "array", "uniqueItems": true, "minItems": 3, "maxItems": 6,
+          "items": {"enum": ["runtime.capabilities", "profile.query", "connection.snapshot", "peer.query", "message.enqueue", "message.query"]}},
         "profiles": {"$ref": "#/$defs/handles"},
         "limits": {"type": "object", "additionalProperties": false,
           "required": ["frame_bytes", "profiles", "connections_per_profile"],
-          "properties": {"frame_bytes": {"const": 4194304}, "profiles": {"const": 256}, "connections_per_profile": {"const": 256}}}
-      }
+          "properties": {"frame_bytes": {"const": 4194304}, "profiles": {"const": 256}, "connections_per_profile": {"const": 256},
+            "peers_per_profile": {"const": 256}, "text_utf8_bytes": {"const": 16384},
+            "idempotency_seconds": {"const": 604800}, "enqueue_keys_per_caller_profile": {"const": 4096},
+            "enqueue_keys_per_vault": {"const": 65536}}}
+      },
+      "allOf": [{"if": {"properties": {"operations": {"contains": {"const": "message.enqueue"}}}},
+        "then": {"properties": {"limits": {"required": ["peers_per_profile", "text_utf8_bytes", "idempotency_seconds", "enqueue_keys_per_caller_profile", "enqueue_keys_per_vault"]}}}}]
     },
     "profile": {
       "type": "object", "additionalProperties": false,
       "required": ["profile", "display_name", "destination", "connections"],
       "properties": {
         "profile": {"$ref": "#/$defs/handle"}, "display_name": {"type": "string", "minLength": 1, "maxLength": 80},
-        "destination": {"type": "string", "pattern": "^[a-f0-9]{32}$"}, "connections": {"$ref": "#/$defs/handles"}
+        "destination": {"type": "string", "pattern": "^[a-f0-9]{32}$"}, "connections": {"$ref": "#/$defs/handles"},
+        "peers": {"$ref": "#/$defs/handles"}
       }
     },
     "connection": {
       "type": "object", "additionalProperties": false, "required": ["profile", "connection", "observation"],
       "properties": {"profile": {"$ref": "#/$defs/handle"}, "connection": {"$ref": "#/$defs/handle"}, "observation": {"$ref": "#/$defs/observation"}}
+    },
+    "peer": {
+      "type": "object", "additionalProperties": false,
+      "required": ["profile", "peer", "display_name", "destination", "trust"],
+      "properties": {
+        "profile": {"$ref": "#/$defs/handle"}, "peer": {"$ref": "#/$defs/handle"},
+        "display_name": {"type": "string", "minLength": 1, "maxLength": 80},
+        "destination": {"type": "string", "pattern": "^[a-f0-9]{32}$"},
+        "trust": {"enum": ["awaiting_consent", "pending_request", "approved", "verified", "identity_changed", "blocked"]}
+      }
     },
     "observation": {
       "type": "object", "additionalProperties": false,

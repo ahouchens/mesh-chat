@@ -4,7 +4,7 @@
   "api_major": 1,
   "api_minor": 0,
   "implemented_operations": [],
-  "experimental_component_operations": ["runtime.capabilities", "profile.query", "connection.snapshot"],
+  "experimental_component_operations": ["runtime.capabilities", "profile.query", "connection.snapshot", "peer.query", "message.enqueue", "message.query"],
   "operations": [
     {
       "operation": "runtime.capabilities",
@@ -164,6 +164,10 @@
   "limits": {
     "frame_bytes": 4194304,
     "text_utf8_bytes": 16384,
+    "peers_per_profile": 256,
+    "idempotency_seconds": 604800,
+    "enqueue_keys_per_caller_profile": 4096,
+    "enqueue_keys_per_vault": 65536,
     "event_batch_count": 128,
     "event_batch_bytes": 1048576,
     "diagnostic_count": 256

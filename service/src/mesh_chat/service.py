@@ -13,6 +13,7 @@ import LXMF
 import RNS
 
 from . import connection_diagnostics
+from .chat_text import validate_chat_text
 from .background_availability import BackgroundAvailabilityMixin
 from .contact_invitations import ContactInvitationsMixin
 from .native_webrtc_service import NativeWebRTCServiceMixin
@@ -1719,10 +1720,7 @@ class MeshChatService(
             TrustState.PENDING_REQUEST.value,
         }:
             raise ContactNotApproved("Contact is not approved for outbound chat")
-        if not isinstance(text, str) or not text.strip():
-            raise ValidationError("Message is empty")
-        if len(text.encode("utf-8")) > MAX_TEXT_BYTES:
-            raise ValidationError("Message exceeds the 16 KiB limit")
+        validate_chat_text(text)
         message = self._create_outbound(contact, MessageKind.CHAT, text)
         if contact["trust"] in {TrustState.APPROVED.value, TrustState.VERIFIED.value}:
             self._attempt(message["id"])

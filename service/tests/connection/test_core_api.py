@@ -169,7 +169,7 @@ def test_every_returned_result_matches_its_contract_and_drops_private_fields():
     client, _, observations = session()
     cap = client.request(request("runtime.capabilities"))
     manifest = json.loads((root / "operations-v1.json").read_text())
-    assert cap["result"]["operations"] == manifest["experimental_component_operations"]
+    assert cap["result"]["operations"] == manifest["experimental_component_operations"][:3]
     profile = cap["result"]["profiles"][0]
     profile_reply = client.request(request("profile.query", profile=profile))
     connection = profile_reply["result"]["connections"][0]
@@ -198,7 +198,8 @@ def test_service_binding_uses_current_policy_projection_and_serialized_authority
     sim = Simulation()
     sim.recover()
     service = SimpleNamespace(_shutdown=Event(), _dispatch_lock=RLock(), _identity=object(),
-        store=SimpleNamespace(opaque_id=lambda *_: "ab" * 32),
+        store=SimpleNamespace(opaque_id=lambda *_: "ab" * 32, items=lambda *_, **__: [],
+                              get=lambda *_: {"display_name": "Alex", "destination_hash": "cd" * 16}),
         _require_profile=lambda: {"display_name": "Alex", "destination_hash": "cd" * 16},
         _connection_runtime=SimpleNamespace(snapshots=lambda: {
             sim.key.profile_id: snapshot(sim.owner.snapshot(sim.key), sim.now)}))
