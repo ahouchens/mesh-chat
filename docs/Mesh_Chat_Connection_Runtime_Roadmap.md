@@ -810,6 +810,24 @@ a Windows named pipe or Android Binder endpoint must still supply the streams an
 prove the peer's identity, and no SDK or packaged consumer exists. The checklist
 below therefore keeps authenticated host bindings open.
 
+## Experimental TypeScript client
+
+`sdk/typescript/` is a thin, strict client for the same frame contract: it
+negotiates capabilities, serializes requests because the host binding reads one
+frame at a time, correlates each response with its own request id, maps stable
+error codes to typed errors with their retry hint, and turns malformed,
+oversized, uncorrelated or closed-stream responses into distinct failures. Typed
+helpers cover profile query, connection snapshot, received pages, durable
+enqueue, event polling, acknowledgment and diagnostics; out-of-bounds limits and
+a missing idempotency key fail before anything is written. Twelve Node tests
+cover those paths, including timeout without resend and serialization under
+concurrency.
+
+It carries no host authentication, socket, runtime ownership, peer retry or
+private import. It is not wired into CI, no package is published, no Kotlin
+client or production CLI exists, and no independent consumer uses it. It does
+not qualify M5.
+
 ## Remaining work checklist
 
 Reconciled against the specification's invariant list, SC01-SC26 and definition of
@@ -862,6 +880,8 @@ M5 - supported reusable core
       component until they exist.
 - [ ] Remaining durable commands/events (connection intent, pairing/approval) and
       their idempotency/retention semantics.
+- [x] Experimental TypeScript client over the frame contract (component only; no
+      packaging, CI conformance, Kotlin client or consumer).
 - [ ] Versioned TypeScript/Kotlin SDKs, production CLI and the supported
       compatibility matrix.
 - [ ] Mesh Chat messaging routed through the supported facade.
