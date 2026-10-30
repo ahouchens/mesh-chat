@@ -210,3 +210,29 @@ def test_the_endpoint_refuses_untrusted_configuration():
         endpoint(pipe_name(), permissions=("runtime_owner",))
     with pytest.raises(ValueError):
         endpoint(pipe_name(), images=("relative.exe",))
+
+def test_bounded_concurrent_clients_are_served_independently(service):
+    name = pipe_name()
+    server = endpoint(name)
+    server.start(service)
+    try:
+        first, second = connect(name), connect(name)
+        first.write(request("runtime.capabilities"))
+        second.write(request("runtime.capabilities"))
+        assert json.loads(first.readline())["ok"] is True
+        assert json.loads(second.readline())["ok"] is True
+        deadline = time.monotonic() + 5
+        while server.accepted < 2 and time.monotonic() < deadline:
+            time.sleep(0.02)
+        assert server.accepted == 2
+        first.close()
+        second.close()
+    finally:
+        server.close()
+
+
+def test_client_budget_is_bounded():
+    for value in (0, 9, True, "4"):
+        with pytest.raises(ValueError):
+            PipeEndpoint(pipe_name(), allowed_images=(current_image(),),
+                         caller="mesh-chat-desktop", permissions=("observe",), max_clients=value)

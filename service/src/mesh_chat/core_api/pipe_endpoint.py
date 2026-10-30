@@ -29,6 +29,7 @@ PIPE_TYPE_BYTE = 0x00000000
 PIPE_READMODE_BYTE = 0x00000000
 PIPE_WAIT = 0x00000000
 PIPE_REJECT_REMOTE_CLIENTS = 0x00000008
+PIPE_UNLIMITED_INSTANCES = 255
 BUFFER_BYTES = 65536
 WAIT_OBJECT_0 = 0
 WAIT_TIMEOUT = 258
@@ -203,19 +204,22 @@ class _Duplex:
 class PipeEndpoint:
     """One host-owned endpoint; callers cannot choose its name or allowlist."""
 
-    def __init__(self, name, *, allowed_images, caller, permissions):
+    def __init__(self, name, *, allowed_images, caller, permissions, max_clients=4):
         if os.name != "nt":
             raise RuntimeError("The core API pipe endpoint requires Windows")
         self.kernel, self.advapi = _bind()
         self._name = pipe_name(name)
+        if type(max_clients) is not int or not 1 <= max_clients <= 8:
+            raise ValueError("Core API endpoint client budget is invalid")
         self._images = validate_images(allowed_images)
         self._grant = host.host_grant(caller, permissions)
         self._stop = threading.Event()
         self._ready = threading.Event()
         self._lock = threading.Lock()
-        self._handle = None
+        self._handles = set()
         self._error = None
-        self._thread = None
+        self._threads = []
+        self._max_clients = max_clients
         self.rejected = 0
         self.accepted = 0
         self.failure = None
@@ -225,50 +229,59 @@ class PipeEndpoint:
         return self._name
 
     def start(self, service):
-        if self._thread is not None:
+        if self._threads:
             raise RuntimeError("Core API endpoint is already running")
-        self._thread = threading.Thread(target=self._serve, args=(service,),
-                                        name="mesh-core-api-pipe", daemon=True)
-        self._thread.start()
-        if not self._ready.wait(5):
-            raise OSError("Core API endpoint did not bind")
-        if self._error is not None:
-            raise self._error
+        try:
+            first = self._create(first=True)
+        except OSError as error:
+            self._error = error
+            self._ready.set()
+            raise
+        self._ready.set()
+        first_worker = threading.Thread(target=self._serve_client, args=(service, first),
+                                        name="mesh-core-api-pipe-0", daemon=True)
+        first_worker.start()
+        self._threads.append(first_worker)
+        for index in range(1, self._max_clients):
+            worker = threading.Thread(target=self._serve_client, args=(service, None),
+                                      name=f"mesh-core-api-pipe-{index}", daemon=True)
+            worker.start()
+            self._threads.append(worker)
 
     def close(self):
         self._stop.set()
         with self._lock:
-            handle = self._handle
-        if handle is not None:
+            handles = tuple(self._handles)
+        for handle in handles:
             # Cancels a pending accept/read so the worker returns instead of
             # blocking on a synchronous handle close.
             self.kernel.CancelIoEx(handle, None)
-        if self._thread is not None:
-            self._thread.join(5)
-            if self._thread.is_alive():
-                with self._lock:
-                    stale, self._handle = self._handle, None
-                if stale is not None:
-                    self.kernel.CloseHandle(stale)
+        for thread in self._threads:
+            thread.join(5)
+        with self._lock:
+            stale = tuple(self._handles)
+            self._handles.clear()
+        for handle in stale:
+            self.kernel.CloseHandle(handle)
 
-    def _serve(self, service):
+    def _serve_client(self, service, handle):
         while not self._stop.is_set():
-            try:
-                handle = self._create()
-            except OSError as error:
-                self._error = error
-                self._ready.set()
-                return
-            with self._lock:
-                self._handle = handle
+            if handle is None:
+                try:
+                    handle = self._create()
+                except OSError as error:
+                    self.failure = f"{type(error).__name__}: {error}"[:120]
+                    return
             try:
                 if not self._connect(handle):
                     continue
                 image = self._client_image(handle)
                 if not image_allowed(image, self._images):
-                    self.rejected += 1
+                    with self._lock:
+                        self.rejected += 1
                     continue
-                self.accepted += 1
+                with self._lock:
+                    self.accepted += 1
                 session = host.bind_host_stream(service, caller=self._grant.caller,
                                                 permissions=self._grant.permissions,
                                                 profiles=self._grant.profiles)
@@ -280,12 +293,10 @@ class PipeEndpoint:
                 self.failure = f"{type(error).__name__}: {error}"[:120]
             finally:
                 with self._lock:
-                    ours = self._handle == handle
-                    if ours:
-                        self._handle = None
-                if ours:
-                    self.kernel.DisconnectNamedPipe(handle)
-                    self.kernel.CloseHandle(handle)
+                    self._handles.discard(handle)
+                self.kernel.DisconnectNamedPipe(handle)
+                self.kernel.CloseHandle(handle)
+                handle = None
 
     def _security(self):
         token = wintypes.HANDLE()
@@ -316,20 +327,21 @@ class PipeEndpoint:
             raise OSError(ctypes.get_last_error(), "Core API endpoint security descriptor failed")
         return descriptor
 
-    def _create(self):
+    def _create(self, first=False):
         descriptor = self._security()
         attributes = SECURITY_ATTRIBUTES(ctypes.sizeof(SECURITY_ATTRIBUTES), descriptor, False)
         handle = self.kernel.CreateNamedPipeW(
             self._name,
-            PIPE_ACCESS_DUPLEX | FILE_FLAG_OVERLAPPED | FILE_FLAG_FIRST_PIPE_INSTANCE,
+            PIPE_ACCESS_DUPLEX | FILE_FLAG_OVERLAPPED | (FILE_FLAG_FIRST_PIPE_INSTANCE if first else 0),
             PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT | PIPE_REJECT_REMOTE_CLIENTS,
-            1, BUFFER_BYTES, BUFFER_BYTES, 0, ctypes.byref(attributes))
+            PIPE_UNLIMITED_INSTANCES, BUFFER_BYTES, BUFFER_BYTES, 0, ctypes.byref(attributes))
         if handle == INVALID_HANDLE_VALUE or handle is None:
             error = ctypes.get_last_error()
             self.kernel.LocalFree(descriptor)
             raise OSError(error, "Core API endpoint cannot create its pipe")
         self.kernel.LocalFree(descriptor)
-        self._ready.set()
+        with self._lock:
+            self._handles.add(handle)
         return handle
 
     def _connect(self, handle):

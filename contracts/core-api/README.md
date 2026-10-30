@@ -35,8 +35,9 @@ This component does not itself authenticate a Windows or Android IPC peer. A
 private Windows named-pipe endpoint now exists beside it as component evidence:
 its descriptor admits only SYSTEM and the current user, remote clients are
 rejected, and the connecting executable must match a host-supplied allowlist
-before a frame is read. Android's Binder binding and packaged consumers remain
-required.
+before a frame is read. A bounded number of concurrent local clients is served,
+each with the host-supplied caller and permissions. Android's Binder binding and
+packaged consumers remain required.
 
 Within the component, each session negotiates through `runtime.capabilities`.
 Other operations before negotiation return `negotiation_required`; unimplemented

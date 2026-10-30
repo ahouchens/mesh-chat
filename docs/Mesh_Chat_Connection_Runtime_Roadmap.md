@@ -818,18 +818,19 @@ are rejected, and the endpoint refuses to reuse an existing pipe name, so a
 squatter cannot serve a caller first. A connection is admitted only when the
 client's real executable image matches a host-supplied allowlist exactly; the
 observed image is not assumed to equal a launcher path, and rejection happens
-before any frame is read. One authenticated client is served at a time, each
-with the fixed caller and permission set the trusted host supplied; the endpoint
-never starts or stops a runtime.
+before any frame is read. A bounded number of authenticated clients (one to
+eight, four by default) is served concurrently, each session carrying the fixed
+caller and permission set the trusted host supplied; the endpoint never starts or
+stops a runtime, and every client shares the one app-owned runtime.
 
 All pipe I/O is overlapped so shutdown cancels a pending accept or read instead
 of blocking on a synchronous handle close. The endpoint is Windows-only by
 construction; its portable rules live in `pipe_policy.py` and are checked on every
-runner. Five Windows integration tests cover an allowed client negotiating through
-the real service, rejection of an unlisted image without a session, sequential
-clients, refusal to reuse a live pipe name, and untrusted configuration. Three
-portable tests cover the name namespace, allowlist validation and exact image
-matching. This is component evidence: no packaged consumer, Android Binder
+runner. Seven Windows integration tests cover an allowed client negotiating
+through the real service, rejection of an unlisted image without a session,
+sequential and concurrent clients, the client budget, refusal to reuse a live
+pipe name, and untrusted configuration. Three portable tests cover the name
+namespace, allowlist validation and exact image matching. This is component evidence: no packaged consumer, Android Binder
 endpoint, SDK distribution or support matrix exists.
 
 ## Experimental TypeScript client
