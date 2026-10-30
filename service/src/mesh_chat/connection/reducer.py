@@ -52,8 +52,9 @@ def _cancel(state: ConnectionState) -> tuple[Effect, ...]:
 
 
 def _failure(state: ConnectionState, now: float, reason: str,
-             blocked: bool = False, retry_after: float = 0) -> Transition:
+             blocked: bool = False, retry_after: float = 0, jitter: float = 0) -> Transition:
     delay = state.policy.backoff[min(state.failures, len(state.policy.backoff) - 1)]
+    delay = min(state.policy.backoff[-1], delay * (1 + state.policy.jitter_fraction * jitter))
     effects = _cancel(state)
     return Transition(replace(state, negotiation=None, failures=state.failures + 1,
                               retry_at=now + max(delay, retry_after), blocked=blocked,
@@ -71,7 +72,7 @@ def _tick(state: ConnectionState, event: Tick) -> Transition:
     step = state.negotiation
     if step:
         if event.now >= step.deadline:
-            return _failure(state, event.now, "phase_timeout")
+            return _failure(state, event.now, "phase_timeout", jitter=event.jitter)
         if step.operation is None and event.now >= step.poll_at:
             return _work(state, step.phase, step.resource, event.now, step.deadline)
         return Transition(state, reason="pending")
@@ -153,7 +154,7 @@ def _result(state: ConnectionState, event: Result | Failed) -> Transition:
         return result
     if isinstance(event, Failed):
         return _failure(state, event.now, event.failure.value,
-                        event.failure in BLOCKING_FAILURES, event.retry_after)
+                        event.failure in BLOCKING_FAILURES, event.retry_after, event.jitter)
     if event.allocated and event.allocated != step.resource:
         result = _failure(state, event.now, "wrong_resource", blocked=True)
         return replace(result, effects=result.effects + (Retire(event.allocated),))
@@ -205,6 +206,8 @@ def _observed(state: ConnectionState, event: Observed) -> Transition:
 
 def transition(state: ConnectionState, event: Event) -> Transition:
     """Exhaustive event classification; untrusted mappings are never events."""
+    if isinstance(event, (Tick, Failed)) and not 0 <= event.jitter <= 1:
+        raise ValueError("Jitter input must be between zero and one")
     if isinstance(event, Tick):
         return _tick(state, event)
     if isinstance(event, ContextChanged):

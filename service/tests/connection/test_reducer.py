@@ -195,3 +195,16 @@ def test_identical_trace_produces_identical_outputs():
 def test_unknown_input_is_rejected():
     with pytest.raises(TypeError):
         transition(initial(), {"type": "grant_trust"})
+
+
+def test_jitter_is_an_explicit_bounded_input_and_cannot_reduce_server_cooldown():
+    state, work = begin()
+    result = transition(state, Failed(work.operation, 1, Failure.TRANSIENT, jitter=1))
+    assert result.state.retry_at == 2.2
+    result = transition(state, Failed(work.operation, 1, Failure.RATE_LIMITED, retry_after=90, jitter=1))
+    assert result.state.retry_at == 91
+    state, work = begin(initial(failures=100))
+    result = transition(state, Failed(work.operation, 1, Failure.TRANSIENT, jitter=1))
+    assert result.state.retry_at == 61
+    with pytest.raises(ValueError):
+        transition(state, Tick(1, jitter=2))

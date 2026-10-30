@@ -1,7 +1,9 @@
 """Drive the production supervisor without running I/O in its critical section."""
 
 from collections import OrderedDict
+from dataclasses import replace
 from queue import Empty
+from random import SystemRandom
 from threading import Event, RLock, Thread
 from time import monotonic
 
@@ -24,6 +26,7 @@ class ConnectionRuntime:
         self.stats = stats
         self.activate = activate
         self.now = now
+        self._random = SystemRandom().random
         self._lock = RLock()
         self._profile_values = {}
         self._signatures = {}
@@ -105,6 +108,8 @@ class ConnectionRuntime:
                 else:
                     self._cleanup_failed.discard(event.resource)
             else:
+                if isinstance(event, Failed):
+                    event = replace(event, jitter=self._random())
                 self.owner.dispatch(event.operation.key, event)
 
     def _effects(self):
@@ -139,7 +144,7 @@ class ConnectionRuntime:
                     self.owner.dispatch(state.key, Observed(state.carrier.resource, now, health, bridge))
             for resource in self._cleanup_failed:
                 self._pending[Retire(resource)] = None
-        self.owner.tick(now)
+        self.owner.tick(now, jitter=self._random())
         self._effects()
 
     def snapshots(self):

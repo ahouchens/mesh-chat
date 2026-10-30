@@ -82,12 +82,12 @@ class ConnectionSupervisor:
                 raise CapacityExceeded("Connection cleanup must be drained")
             return result.state
 
-    def tick(self, now: float):
+    def tick(self, now: float, jitter: float = 0):
         from .model import Tick
         with self._lock:
             for key in tuple(self._states):
                 if key not in self._retired:
-                    self.dispatch(key, Tick(now))
+                    self.dispatch(key, Tick(now, jitter))
 
     def retire(self, key: ConnectionKey, now: float):
         with self._lock:

@@ -133,6 +133,7 @@ class Policy:
     max_effects: int = 64
     max_effect_bytes: int = 262144
     max_diagnostics: int = 256
+    jitter_fraction: float = 0.2
 
     def __post_init__(self) -> None:
         if (min(self.phase_timeout, self.gather_timeout, self.poll_interval,
@@ -140,6 +141,8 @@ class Policy:
                 self.max_effects, self.max_effect_bytes, self.max_diagnostics) <= 0
                 or not self.backoff or min(self.backoff) <= 0):
             raise ValueError("Connection policy limits must be positive")
+        if not 0 <= self.jitter_fraction <= 1:
+            raise ValueError("Connection jitter must be bounded")
 
 
 @dataclass(frozen=True)
@@ -165,6 +168,7 @@ class ConnectionState:
 @dataclass(frozen=True)
 class Tick:
     now: float
+    jitter: float = 0
 
 
 @dataclass(frozen=True)
@@ -192,6 +196,7 @@ class Failed:
     failure: Failure
     retry_after: float = 0
     allocated: Resource | None = None
+    jitter: float = 0
 
 
 @dataclass(frozen=True)
