@@ -256,3 +256,26 @@ def test_cli_queries_the_endpoint_over_the_host_pipe(service):
         assert err.getvalue() == ""
     finally:
         server.close()
+
+def test_idle_client_is_disconnected_and_does_not_hold_a_worker(service):
+    name = pipe_name()
+    server = PipeEndpoint(name, allowed_images=(current_image(),), caller="mesh-chat-desktop",
+                          permissions=("observe", "read"), idle_timeout=0.5)
+    server.start(service)
+    try:
+        idle = connect(name)
+        assert idle.readline() == b""
+        idle.close()
+        client = connect(name)
+        client.write(request("runtime.capabilities"))
+        assert json.loads(client.readline())["ok"] is True
+        client.close()
+    finally:
+        server.close()
+
+
+def test_idle_timeout_is_bounded():
+    for value in (0, -1, 3601, "60", True):
+        with pytest.raises(ValueError):
+            PipeEndpoint(pipe_name(), allowed_images=(current_image(),),
+                         caller="mesh-chat-desktop", permissions=("observe",), idle_timeout=value)

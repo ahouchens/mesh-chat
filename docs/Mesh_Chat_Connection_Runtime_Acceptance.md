@@ -34,7 +34,7 @@ never described as physical-device qualification.
 | INV09 | `component` | Stale cleanup and replacement retirement fences; packaged scenarios prove exact carrier reuse after restart. |
 | INV10 | `component` | Durable outbox and logical IDs are covered locally; packaged crash/restart delivers without a duplicate visible message. |
 | INV11 | `component` | Only an authenticated application receipt establishes delivery; packaged peers assert receipts. |
-| INV12 | `partial` | Policy, effect-runner, JNI ingress and startup-packet bounds are tested. Other legacy queues have not been re-qualified as part of this work. |
+| INV12 | `partial` | Policy, effect-runner, JNI ingress, startup-packet and Windows endpoint bounds are tested, including concurrent-client and idle-session limits. Other legacy queues have not been re-qualified as part of this work. |
 | INV13 | `local` | Every phase has a deadline, cancellation path and classified exit in the reducer corpus; cleanup reservations survive late completion. |
 | INV14 | `local` | Fair scheduling and capacity tests, including the property corpus. |
 | INV15 | `component` | Committed Stop fences immediately; packaged lifecycle proves the reopened profile keeps its identity and committed preference. |

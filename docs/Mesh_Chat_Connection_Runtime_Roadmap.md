@@ -512,7 +512,14 @@ transport admission with `transport_host_unavailable`; no Python startup failure
 was captured. The packaged harness now retains up to eight host fault outcomes
 per peer, distinguishing a WebView-reported fault from a pipe failure, with only
 allowlisted codes and a boolean flag in failure artifacts. This improves diagnosis
-of the recurring restart failure; it does not establish a root cause or fix.
+of the recurring restart failure; it does not establish a root cause or fix. The
+same WebView2 host failure recurs intermittently rather than deterministically: it
+failed at `44af158` and `af4b1ce` with `NativeUnavailable`, `pending: 1, polls: 0,
+queued: 1, registered: true` during offer, while the same job passed at `4a2c52c`,
+`16a0dea`, `874c805` and `fea361b`. Both failing revisions were unrelated to the
+Windows host (documentation and Python-client changes). The cause remains open; no
+retry is masked and no successful matrix is claimed for a revision whose Windows
+job failed.
 Broker regressions now reproduce a process-publication race: the new process ID
 is visible before trusted host rebinding, so a retained window could be rejected
 as an unauthorized caller while still suspended. Poll routing now keeps the
@@ -821,15 +828,17 @@ observed image is not assumed to equal a launcher path, and rejection happens
 before any frame is read. A bounded number of authenticated clients (one to
 eight, four by default) is served concurrently, each session carrying the fixed
 caller and permission set the trusted host supplied; the endpoint never starts or
-stops a runtime, and every client shares the one app-owned runtime.
+stops a runtime, and every client shares the one app-owned runtime. An
+inactivity deadline (sixty seconds by default, bounded to one hour) closes an
+idle connection so one silent client cannot hold a worker slot indefinitely.
 
 All pipe I/O is overlapped so shutdown cancels a pending accept or read instead
 of blocking on a synchronous handle close. The endpoint is Windows-only by
 construction; its portable rules live in `pipe_policy.py` and are checked on every
 runner. Seven Windows integration tests cover an allowed client negotiating
 through the real service, rejection of an unlisted image without a session,
-sequential and concurrent clients, the client budget, refusal to reuse a live
-pipe name, and untrusted configuration. Three portable tests cover the name
+sequential and concurrent clients, the client budget, idle disconnection and its
+bounds, refusal to reuse a live pipe name, and untrusted configuration. Three portable tests cover the name
 namespace, allowlist validation and exact image matching. This is component evidence: no packaged consumer, Android Binder
 endpoint, SDK distribution or support matrix exists.
 

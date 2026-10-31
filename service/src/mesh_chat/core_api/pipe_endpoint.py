@@ -16,6 +16,7 @@ import ctypes
 from ctypes import wintypes
 import os
 import threading
+import time
 
 from . import host
 from .pipe_policy import allowed_images as validate_images, image_allowed, pipe_name
@@ -107,10 +108,12 @@ def _bind():
 class _Duplex:
     """Overlapped byte duplex over one connected pipe handle."""
 
-    def __init__(self, kernel, handle, stop):
+    def __init__(self, kernel, handle, stop, idle_timeout):
         self._kernel = kernel
         self._handle = handle
         self._stop = stop
+        self._idle_timeout = idle_timeout
+        self._last_activity = time.monotonic()
         self._buffer = bytearray()
 
     def _event(self):
@@ -160,7 +163,8 @@ class _Duplex:
                     return b""
                 raise OSError(error, "Core API pipe read failed")
             while self._kernel.WaitForSingleObject(event, 50) == WAIT_TIMEOUT:
-                if self._stop.is_set():
+                if (self._stop.is_set()
+                        or time.monotonic() - self._last_activity >= self._idle_timeout):
                     self._kernel.CancelIoEx(self._handle, ctypes.byref(overlapped))
                     self._kernel.GetOverlappedResult(self._handle, ctypes.byref(overlapped),
                                                      ctypes.byref(read), False)
@@ -168,6 +172,7 @@ class _Duplex:
                     return b""
         if not self._finish(overlapped, read, event):
             return b""
+        self._last_activity = time.monotonic()
         return data.raw[:read.value]
 
     def write(self, payload):
@@ -194,6 +199,7 @@ class _Duplex:
                         raise OSError(ERROR_OPERATION_ABORTED, "Core API pipe write canceled")
             if not self._finish(overlapped, written, event) or written.value == 0:
                 raise OSError("Core API pipe write failed")
+            self._last_activity = time.monotonic()
             total += written.value
         return total
 
@@ -204,13 +210,16 @@ class _Duplex:
 class PipeEndpoint:
     """One host-owned endpoint; callers cannot choose its name or allowlist."""
 
-    def __init__(self, name, *, allowed_images, caller, permissions, max_clients=4):
+    def __init__(self, name, *, allowed_images, caller, permissions, max_clients=4,
+                 idle_timeout=60.0):
         if os.name != "nt":
             raise RuntimeError("The core API pipe endpoint requires Windows")
         self.kernel, self.advapi = _bind()
         self._name = pipe_name(name)
         if type(max_clients) is not int or not 1 <= max_clients <= 8:
             raise ValueError("Core API endpoint client budget is invalid")
+        if (type(idle_timeout) not in {int, float} or not 0.1 <= idle_timeout <= 3600):
+            raise ValueError("Core API endpoint idle timeout is invalid")
         self._images = validate_images(allowed_images)
         self._grant = host.host_grant(caller, permissions)
         self._stop = threading.Event()
@@ -220,6 +229,7 @@ class PipeEndpoint:
         self._error = None
         self._threads = []
         self._max_clients = max_clients
+        self._idle_timeout = float(idle_timeout)
         self.rejected = 0
         self.accepted = 0
         self.failure = None
@@ -285,8 +295,8 @@ class PipeEndpoint:
                 session = host.bind_host_stream(service, caller=self._grant.caller,
                                                 permissions=self._grant.permissions,
                                                 profiles=self._grant.profiles)
-                session.serve(_Duplex(self.kernel, handle, self._stop),
-                              _Duplex(self.kernel, handle, self._stop))
+                session.serve(_Duplex(self.kernel, handle, self._stop, self._idle_timeout),
+                              _Duplex(self.kernel, handle, self._stop, self._idle_timeout))
             except (OSError, ValueError) as error:
                 if self._stop.is_set():
                     return
