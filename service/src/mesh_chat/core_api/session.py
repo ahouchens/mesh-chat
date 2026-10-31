@@ -28,8 +28,8 @@ from .diagnostic_views import diagnostics_view
 from .requests import (
     CURSOR, DIAGNOSTIC_OPERATIONS, INTENT_OPERATIONS, MESSAGE_OPERATIONS, OPERATIONS,
     INVITATION_OPERATIONS, PAIRING_OPERATIONS, RECEIVED_OPERATIONS, RECOVERY_OPERATIONS,
-    RELATIONSHIP_OPERATIONS, REQUEST_OPERATIONS, STOP_OPERATIONS, WORKSPACE_JOIN_OPERATIONS,
-    WORKSPACE_PREVIEW_OPERATIONS, REQUEST_ID, parse_request,
+    COMPONENT_OPERATIONS, RELATIONSHIP_OPERATIONS, REQUEST_OPERATIONS, STOP_OPERATIONS,
+    WORKSPACE_JOIN_OPERATIONS, WORKSPACE_PREVIEW_OPERATIONS, REQUEST_ID, parse_request,
 )
 from .messages import (
     IDEMPOTENCY_SECONDS, MAX_CALLER_ENQUEUES, MAX_PEERS, MAX_VAULT_ENQUEUES,
@@ -112,18 +112,24 @@ class CoreSession:
         self._lifecycle = ports.lifecycle
         self._workspace = ports.workspace
         self._stopped = False
-        self._operations = (OPERATIONS + (MESSAGE_OPERATIONS if self._messages is not None else ())
-                            + (RECOVERY_OPERATIONS if self._recovery is not None else ())
-                            + (RECEIVED_OPERATIONS if self._received is not None else ())
-                            + (INTENT_OPERATIONS if self._intent is not None else ())
-                            + (RELATIONSHIP_OPERATIONS if self._relationship is not None else ())
-                            + (PAIRING_OPERATIONS if self._pairing is not None else ())
-                            + (REQUEST_OPERATIONS if self._pairing is not None else ())
-                            + (INVITATION_OPERATIONS if self._invitations is not None else ())
-                            + (STOP_OPERATIONS if self._lifecycle is not None else ())
-                            + (WORKSPACE_PREVIEW_OPERATIONS if self._workspace is not None else ())
-                            + (WORKSPACE_JOIN_OPERATIONS if self._workspace is not None else ())
-                            + (DIAGNOSTIC_OPERATIONS if self._diagnostics is not None else ()))
+        bound = set(OPERATIONS)
+        for operations, port in (
+            (MESSAGE_OPERATIONS, self._messages),
+            (RECOVERY_OPERATIONS, self._recovery),
+            (RECEIVED_OPERATIONS, self._received),
+            (INTENT_OPERATIONS, self._intent),
+            (RELATIONSHIP_OPERATIONS, self._relationship),
+            (PAIRING_OPERATIONS, self._pairing),
+            (REQUEST_OPERATIONS, self._pairing),
+            (INVITATION_OPERATIONS, self._invitations),
+            (STOP_OPERATIONS, self._lifecycle),
+            (WORKSPACE_PREVIEW_OPERATIONS, self._workspace),
+            (WORKSPACE_JOIN_OPERATIONS, self._workspace),
+            (DIAGNOSTIC_OPERATIONS, self._diagnostics),
+        ):
+            if port is not None:
+                bound.update(operations)
+        self._operations = tuple(name for name in COMPONENT_OPERATIONS if name in bound)
         self._handle_key = handle_key
         self._transaction = transaction if transaction is not None else nullcontext()
         self._lock = RLock()

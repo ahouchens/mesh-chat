@@ -194,6 +194,10 @@ inside major 1. A declaration/contract test keeps the file consistent with the
 operations inventory, so the three namespaces cannot silently drift into one
 version number.
 
+The `operations` array in a capability response is a set with no declared order;
+clients must compare membership and must not depend on position. The session
+filters one canonical composition by the ports its host actually bound.
+
 ## Peer approval and revocation
 
 `peer.approve` accepts a pending contact request; an already approved or verified

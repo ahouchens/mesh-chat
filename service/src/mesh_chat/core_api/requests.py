@@ -167,3 +167,23 @@ def _enqueue_params(value):
     except ValidationError as error:
         raise ApiFailure("invalid_request") from error
     return params
+
+
+# The order in which a fully bound session advertises its operations. It is not
+# part of the public contract (clients compare membership), so this tuple is the
+# single place that knows the composition order.
+COMPONENT_OPERATIONS = (
+    OPERATIONS
+    + MESSAGE_OPERATIONS
+    + RECOVERY_OPERATIONS
+    + RECEIVED_OPERATIONS
+    + INTENT_OPERATIONS
+    + RELATIONSHIP_OPERATIONS
+    + PAIRING_OPERATIONS
+    + REQUEST_OPERATIONS
+    + INVITATION_OPERATIONS
+    + STOP_OPERATIONS
+    + WORKSPACE_PREVIEW_OPERATIONS
+    + WORKSPACE_JOIN_OPERATIONS
+    + DIAGNOSTIC_OPERATIONS
+)

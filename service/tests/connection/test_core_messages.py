@@ -214,7 +214,10 @@ def test_message_results_and_requests_match_contracts(host):
         assert "internal-peer" not in json.dumps(reply)
     cap = session.request(request("runtime.capabilities"))
     Draft202012Validator(json.loads((root / "observation-result-v1.schema.json").read_text())).validate(cap)
-    assert cap["result"]["operations"] == json.loads((root / "operations-v1.json").read_text())["experimental_component_operations"]
+    declared = json.loads((root / "operations-v1.json").read_text())["experimental_component_operations"]
+    # Order is not significant; membership is the contract.
+    assert sorted(cap["result"]["operations"]) == sorted(declared)
+    assert len(cap["result"]["operations"]) == len(set(cap["result"]["operations"]))
 
 
 def test_observe_does_not_grant_send_or_read(host):
