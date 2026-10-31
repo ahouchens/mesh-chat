@@ -115,3 +115,32 @@ def test_cli_rejects_unknown_commands():
     with pytest.raises(SystemExit) as raised:
         run_cli(["--pipe", r"\\.\pipe\mesh-chat-test", "explode"], Scripted(), io.StringIO(), io.StringIO())
     assert raised.value.code == 2
+
+
+def test_client_relationship_and_pairing_helpers_reuse_the_contract():
+    transport = Scripted(
+        reply(CAPABILITIES),
+        reply({"profile": PROFILE, "peer": PEER, "trust": "approved"}, "client:2"),
+        reply({"profile": PROFILE, "peer": PEER, "trust": "blocked"}, "client:3"),
+        reply({"profile": PROFILE, "file": "signed", "link": "meshchat://invite/t", "expires_at": 1},
+              "client:4"),
+        reply({"profile": PROFILE, "peer": PEER, "trust": "awaiting_consent"}, "client:5"),
+    )
+    client = CoreClient.open(transport.readline, transport.write)
+    assert client.approve(PROFILE, PEER)["trust"] == "approved"
+    assert client.revoke(PROFILE, PEER)["trust"] == "blocked"
+    assert client.pairing_create(PROFILE)["file"] == "signed"
+    assert client.pairing_accept(PROFILE, "signed")["trust"] == "awaiting_consent"
+    sent = [decode_frame(payload) for payload in transport.written]
+    assert sent[1] == {"api_version": 1, "request_id": "client:2", "operation": "peer.approve",
+                       "params": {"profile": PROFILE, "peer": PEER}}
+    assert sent[4]["operation"] == "peer.pairing_accept"
+    assert sent[4]["params"] == {"profile": PROFILE, "document": "signed"}
+
+
+def test_client_refuses_to_dispatch_an_empty_pairing_document():
+    transport = Scripted(reply(CAPABILITIES))
+    client = CoreClient.open(transport.readline, transport.write)
+    with pytest.raises(ValueError):
+        client.pairing_accept(PROFILE, "")
+    assert len(transport.written) == 1

@@ -96,3 +96,17 @@ class CoreClient:
 
     def diagnostics(self, handle, limit=256):
         return self.request("diagnostics.query", {"profile": handle, "limit": limit})
+
+    def approve(self, handle, peer):
+        return self.request("peer.approve", {"profile": handle, "peer": peer})
+
+    def revoke(self, handle, peer):
+        return self.request("peer.revoke", {"profile": handle, "peer": peer})
+
+    def pairing_create(self, handle):
+        return self.request("peer.pairing_create", {"profile": handle})
+
+    def pairing_accept(self, handle, document):
+        if not isinstance(document, str) or not document:
+            raise ValueError("Signed pairing material is required")
+        return self.request("peer.pairing_accept", {"profile": handle, "document": document})
