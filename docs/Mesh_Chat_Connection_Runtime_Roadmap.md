@@ -1051,6 +1051,19 @@ from the frame. Four in-process regressions exercise that half. The AIDL service
 manifest permission, instrumentation suite and a packaged consumer remain open,
 so the endpoint is not yet an authenticated Android binding.
 
+## Android Binder endpoint
+
+The plugin now carries the other half of the Android binding: an AIDL exchange
+method, an exported service behind the signature permission
+`com.meshchat.runtime.permission.CORE_API`, caller identity from
+`Binder.getCallingUid`, a 256 KiB pre-dispatch cap and typed fail-closed frames.
+Same-UID callers are the owning application and skip the permission check; every
+other caller must hold the signature permission. Four instrumentation tests run
+in the Android qualification job on the API 35 emulator and passed: the declared
+permission/export, empty and oversized refusals, and the typed `unavailable`
+reply from an uninitialized bridge. The suite is not yet part of the qualification
+gate inventory, and no packaged consumer exists.
+
 ## Remaining work checklist
 
 Reconciled against the specification's invariant list, SC01-SC26 and definition of
@@ -1105,9 +1118,10 @@ M5 - supported reusable core
 - [x] Trusted host grant binding over a host-owned stream pair (component only).
 - [x] Private Windows named-pipe endpoint with OS access control and an executable
       allowlist (component only; no packaged consumer).
-- [ ] Authenticated Android Binder endpoint and packaged consumers; the Python
-      host half exists, but no AIDL service or instrumentation has run, so the
-      facade remains a private component.
+- [ ] Authenticated Android Binder endpoint and packaged consumers. The AIDL
+      service, signature permission and caller-derived grant now exist, and four
+      instrumentation tests pass on the API 35 emulator; the suite is not yet in
+      the gate inventory and no packaged consumer exists.
 - [x] Contact-wide connection start/stop intent with convergent semantics
       (component only; no per-device selection or workspace pairing).
 - [x] Explicit convergent peer approval and revocation (component only).

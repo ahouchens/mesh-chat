@@ -278,8 +278,12 @@ frames.
 Four in-process regressions cover caller-scoped negotiation and profile handles,
 the fixed grant (runtime stop is refused), malformed and oversized frames, the
 bounded caller table and detach, and the mobile-bridge forwarder with and without
-a running service. Kotlin Binder plumbing and its instrumentation suite are
-component work in progress; no packaged consumer exists yet.
+a running service. The Kotlin side now declares the AIDL service behind the
+signature permission, derives the caller from `Binder.getCallingUid`, refuses
+frames above 256 KiB before dispatch and lets same-UID (own-app) callers through
+without the permission check. Its four instrumentation tests pass on the API 35
+emulator inside the Android qualification job; the suite is not yet part of the
+gate's suite inventory, and no packaged consumer exists.
 
 ## Observation and recovery
 
