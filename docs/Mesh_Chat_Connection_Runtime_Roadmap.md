@@ -900,6 +900,24 @@ connect grant and caller scope, failed-persistence honesty, and capability
 advertisement. This is contact-wide intent; per-device selection, workspace
 pairing and the shared-runtime parity gates remain open.
 
+## Compatibility declaration and packaged entry point
+
+`contracts/core-api/compatibility-v1.json` now states the compatibility posture
+explicitly: public API major 1 with additive minors, internal IPC 1, the signed
+peer wire unchanged, TypeScript `0.1.0-experimental`, Python an unversioned
+component and Kotlin absent. Incompatible combinations are rejected before side
+effects and no upgrade window is promised before M5. A declaration test compares
+the file with the operations inventory, so the namespaces cannot drift.
+
+Both clients refuse an unsupported public API major during negotiation, before
+any other command, and accept additive minors inside major 1. The service also
+declares a `mesh-chat-core` console entry point and `python -m
+mesh_chat.core_api` runs the CLI; neither is a published distribution, and the
+CLI reports `unsupported_platform` rather than a traceback where no Windows pipe
+exists. Eight Python regressions and one TypeScript regression cover the rules,
+the client refusal, the entry-point help path, the declared script and the typed
+platform failure.
+
 ## Remaining work checklist
 
 Reconciled against the specification's invariant list, SC01-SC26 and definition of
@@ -961,8 +979,8 @@ M5 - supported reusable core
       idempotency/retention semantics.
 - [x] Experimental TypeScript client over the frame contract (component only; no
       packaging, CI conformance, Kotlin client or consumer).
-- [x] Experimental Python client and Windows CLI over the host pipe (component
-      only; no packaged console entry point).
+- [x] Experimental Python client and Windows CLI over the host pipe, with a
+      declared console entry point (component only; no published distribution).
 - [ ] Versioned TypeScript/Kotlin SDKs, production CLI and the supported
       compatibility matrix.
 - [ ] Mesh Chat messaging routed through the supported facade.

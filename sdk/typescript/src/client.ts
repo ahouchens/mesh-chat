@@ -52,6 +52,9 @@ export class CoreClient {
   static async open(transport: LineTransport, options: CoreClientOptions = {}): Promise<CoreClient> {
     const client = new CoreClient(transport, options);
     const capabilities = await client.request<Capabilities>("runtime.capabilities", {});
+    if (capabilities.api_major !== 1) {
+      throw new ProtocolError("unsupported public API major");
+    }
     client.#capabilities = capabilities;
     return client;
   }

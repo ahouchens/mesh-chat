@@ -212,3 +212,9 @@ test("malformed JSON and unsupported versions are protocol errors", () => {
     ProtocolError,
   );
 });
+
+test("an unsupported public API major is refused before any command", async () => {
+  const transport = new Scripted(success("client:1", { ...CAPABILITIES, api_major: 2 }));
+  await assert.rejects(CoreClient.open(transport), ProtocolError);
+  assert.equal(transport.written.length, 1);
+});

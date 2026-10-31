@@ -47,7 +47,7 @@ never described as physical-device qualification.
 | INV22 | `partial` | The client carries no peer policy and cannot start a runtime. Exclusive data-directory ownership is checked by the host, which is not implemented. |
 | INV23 | `local` | Durable enqueue receipts, conflicting payload rejection and stable logical IDs across restart; acknowledgments never change peer delivery state. |
 | INV24 | `local` | Explicit `resync_required` for gaps, expiry and authority change; the client consumer clears its position and resnapshots. Long-term retention is not promised. |
-| INV25 | `partial` | API major/mirror negotiation and the aggregator's contract check exist. No SDK/package compatibility matrix or upgrade fixtures exist. |
+| INV25 | `partial` | A declared compatibility file fixes the public API, IPC, peer-wire and client namespaces; both clients refuse an unsupported major before side effects, and the aggregator checks the contract. No published package matrix or upgrade fixtures exist. |
 | INV26 | `open` | No packaged SDK, runtime distribution or independent consumer exists. |
 
 ## Required scenarios

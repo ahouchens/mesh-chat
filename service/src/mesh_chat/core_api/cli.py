@@ -78,8 +78,15 @@ def main(argv=None):
     import sys
     args = sys.argv[1:] if argv is None else argv
     parsed = build_parser().parse_args(args)
-    from .pipe_client import connect
-    transport = connect(parsed.pipe)
+    try:
+        from .pipe_client import connect
+        transport = connect(parsed.pipe)
+    except RuntimeError:
+        sys.stderr.write(json.dumps({"error": "unsupported_platform"}) + "\n")
+        return 2
+    except OSError:
+        sys.stderr.write(json.dumps({"error": "transport_unavailable"}) + "\n")
+        return 2
     try:
         return run(args, transport, sys.stdout, sys.stderr)
     finally:

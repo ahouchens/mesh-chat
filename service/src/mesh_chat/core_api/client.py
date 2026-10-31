@@ -5,6 +5,7 @@ runtime or authenticates a caller. It exists so the production CLI and Python
 tooling can use the same versioned frames as any other consumer.
 """
 
+from .compatibility import check_capabilities
 from .limits import MAX_FRAME_BYTES
 from .wire_codec import decode_frame, encode_frame
 
@@ -31,7 +32,12 @@ class CoreClient:
     @classmethod
     def open(cls, readline, write):
         client = cls(readline, write)
-        client._capabilities = client.request("runtime.capabilities", {})
+        capabilities = client.request("runtime.capabilities", {})
+        try:
+            check_capabilities(capabilities)
+        except ValueError as error:
+            raise CoreClientError("incompatible_version") from error
+        client._capabilities = capabilities
         return client
 
     @property

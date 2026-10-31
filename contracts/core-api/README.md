@@ -178,6 +178,22 @@ previous state remains and the caller must resolve it. The result contract is
 selection; device-scoped intent requires the device-profile parity still listed
 as remaining work. No retry policy, runtime ownership or native call is involved.
 
+## Compatibility declaration
+
+`compatibility-v1.json` separates the four version namespaces: public API (major
+1, additive minors accepted), internal IPC (1, unchanged), signed peer wire (1,
+unchanged by this refactor) and the client surfaces (TypeScript
+`0.1.0-experimental`, Python unversioned component, Kotlin absent). The status is
+`experimental_unfrozen`, the incompatible-combination rule is
+`reject_before_side_effects`, and no upgrade window is promised until independent
+consumers pass M5.
+
+Both first-party clients now negotiate before any other command and refuse an
+unsupported public API major with a typed error, while accepting additive minors
+inside major 1. A declaration/contract test keeps the file consistent with the
+operations inventory, so the three namespaces cannot silently drift into one
+version number.
+
 ## Observation and recovery
 
 Connection observations use runtime epoch and sequence; gaps or epoch changes
