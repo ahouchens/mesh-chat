@@ -4,7 +4,8 @@
   "api_major": 1,
   "api_minor": 0,
   "implemented_operations": [],
-  "experimental_component_operations": ["runtime.capabilities", "profile.query", "connection.snapshot", "peer.query", "message.enqueue", "message.query", "message.list", "events.poll", "events.ack", "message.received", "connection.start", "connection.stop", "peer.approve", "peer.revoke", "peer.pairing_accept", "peer.pairing_create", "runtime.stop", "diagnostics.query"],
+  "experimental_component_operations": ["runtime.capabilities", "profile.query", "connection.snapshot", "peer.query", "message.enqueue", "message.query", "message.list", "events.poll", "events.ack", "message.received", "connection.start", "connection.stop", "peer.approve", "peer.revoke", "peer.pairing_accept", "peer.pairing_create", "runtime.stop", "workspace.invitation_preview", "workspace.join",
+    "diagnostics.query"],
   "operations": [
     {
       "operation": "runtime.capabilities",
@@ -68,6 +69,20 @@
       "scope": "profile",
       "mutation": true,
       "idempotency": "convergent_desired_state"
+    },
+    {
+      "operation": "workspace.invitation_preview",
+      "permission": "read",
+      "scope": "profile",
+      "mutation": false,
+      "idempotency": "query"
+    },
+    {
+      "operation": "workspace.join",
+      "permission": "pair",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "caller_profile_operation_key"
     },
     {
       "operation": "peer.query",

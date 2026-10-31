@@ -147,6 +147,32 @@ def invitation_view(profile, value):
             "expires_at": value.expires_at}
 
 
+def workspace_preview_view(profile, value):
+    if not isinstance(profile, str) or re.fullmatch(r"[A-Za-z0-9_-]{16,128}", profile) is None:
+        raise ValueError("Invalid workspace preview handle")
+    if (not isinstance(value.name, str) or not value.name
+            or not isinstance(value.description, str)
+            or type(value.member_count) is not int or value.member_count < 1
+            or type(value.retention_days) is not int
+            or type(value.expires_at) not in {int, float}
+            or type(value.requires_i2p_consent) is not bool):
+        raise ValueError("Invalid workspace preview")
+    return {"profile": profile, "name": value.name, "description": value.description,
+            "member_count": value.member_count, "retention_days": value.retention_days,
+            "expires_at": value.expires_at, "requires_i2p_consent": value.requires_i2p_consent}
+
+
+def workspace_join_view(profile, workspace, value):
+    if any(not isinstance(item, str) or re.fullmatch(r"[A-Za-z0-9_-]{16,128}", item) is None
+           for item in (profile, workspace)):
+        raise ValueError("Invalid workspace join handle")
+    if (not isinstance(value.name, str) or not value.name
+            or value.state not in {"joining", "active", "pending", "left"}):
+        raise ValueError("Invalid workspace join")
+    return {"profile": profile, "workspace": workspace, "name": value.name,
+            "state": value.state}
+
+
 def peer_view(profile, handle, value):
     if (not isinstance(value.display_name, str) or not 1 <= len(value.display_name) <= 80
             or not isinstance(value.destination, str) or re.fullmatch(r"[a-f0-9]{32}", value.destination) is None):

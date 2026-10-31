@@ -18,6 +18,8 @@ RELATIONSHIP_OPERATIONS = ("peer.approve", "peer.revoke")
 PAIRING_OPERATIONS = ("peer.pairing_accept",)
 INVITATION_OPERATIONS = ("peer.pairing_create",)
 STOP_OPERATIONS = ("runtime.stop",)
+WORKSPACE_PREVIEW_OPERATIONS = ("workspace.invitation_preview",)
+WORKSPACE_JOIN_OPERATIONS = ("workspace.join",)
 DIAGNOSTIC_OPERATIONS = ("diagnostics.query",)
 REQUEST_ID = re.compile(r"[A-Za-z0-9._:-]{1,80}\Z")
 HANDLE = re.compile(r"[A-Za-z0-9_-]{16,128}\Z")
@@ -39,7 +41,7 @@ def parse_request(value, operations):
     operation = value["operation"]
     if not isinstance(operation, str) or operation not in operations:
         raise ApiFailure("unsupported_operation")
-    if operation in ("message.enqueue", "events.ack"):
+    if operation in ("message.enqueue", "events.ack", "workspace.join"):
         fields.add("idempotency_key")
     if set(value) != fields:
         raise ApiFailure("invalid_request")
@@ -53,6 +55,23 @@ def parse_request(value, operations):
         return operation, _recovery_params(value["params"])
     if operation in RECEIVED_OPERATIONS:
         return operation, _recovery_params(value["params"])
+    if operation in WORKSPACE_PREVIEW_OPERATIONS:
+        params = value["params"]
+        if (not isinstance(params, dict) or set(params) != {"profile", "document"}
+                or not isinstance(params["profile"], str)
+                or HANDLE.fullmatch(params["profile"]) is None
+                or not isinstance(params["document"], str)
+                or not 1 <= len(params["document"]) <= 1048576):
+            raise ApiFailure("invalid_request")
+        return operation, params
+    if operation in WORKSPACE_JOIN_OPERATIONS:
+        params = value["params"]
+        if (not isinstance(params, dict) or set(params) != {"profile", "document"}
+                or "idempotency_key" not in value
+                or not isinstance(params["document"], str)
+                or not 1 <= len(params["document"]) <= 1048576):
+            raise ApiFailure("invalid_request")
+        return operation, params
     if operation in STOP_OPERATIONS:
         if value["params"] != {}:
             raise ApiFailure("invalid_request")

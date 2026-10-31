@@ -246,6 +246,20 @@ the trusted grant callback now returns nothing). The operation is convergent and
 rejects a caller idempotency key instead of silently ignoring it; the result
 contract is `stop-result-v1.schema.json`.
 
+## Workspace invitations
+
+`workspace.invitation_preview` verifies a workspace invitation and returns only
+safe presentation fields: name, description, member count, retention, expiry and
+whether joining would require I2P consent. It never returns the internal workspace
+id, the authority chain or the manifest. `workspace.join` requires the caller's
+idempotency key; the facade maps that key to a caller-scoped, deterministic UUID
+operation id and hands it to the existing domain join transaction, so a replay of
+the same key returns the same workspace instead of joining twice. The result
+reports a caller-scoped workspace handle, its name and the join state; manifests,
+authority material and member identities stay private. Preview needs `read` and
+join needs `pair`; an I2P invitation is refused because that consent cannot be
+inferred from a request.
+
 ## Observation and recovery
 
 Connection observations use runtime epoch and sequence; gaps or epoch changes

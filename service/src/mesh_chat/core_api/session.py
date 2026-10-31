@@ -7,15 +7,18 @@ an authenticated connection; callers never choose that function or its grants.
 from contextlib import nullcontext
 from dataclasses import dataclass
 import hashlib
+import hashlib
 import hmac
 import json
 import re
 from threading import RLock
+import uuid
 from typing import Protocol
 
 from .views import (
     acceptance_view, acknowledgment_view, connection_view, event_view, intent_view, message_view,
     invitation_view, pairing_view, peer_view, received_view, relationship_view, stop_view,
+    workspace_join_view, workspace_preview_view,
 )
 from .errors import ApiFailure
 from .limits import MAX_FRAME_BYTES, MAX_REQUEST_JSON_DEPTH, MAX_REQUEST_JSON_TOKENS
@@ -24,7 +27,8 @@ from .diagnostic_views import diagnostics_view
 from .requests import (
     CURSOR, DIAGNOSTIC_OPERATIONS, INTENT_OPERATIONS, MESSAGE_OPERATIONS, OPERATIONS,
     INVITATION_OPERATIONS, PAIRING_OPERATIONS, RECEIVED_OPERATIONS, RECOVERY_OPERATIONS,
-    RELATIONSHIP_OPERATIONS, STOP_OPERATIONS, REQUEST_ID, parse_request,
+    RELATIONSHIP_OPERATIONS, STOP_OPERATIONS, WORKSPACE_JOIN_OPERATIONS,
+    WORKSPACE_PREVIEW_OPERATIONS, REQUEST_ID, parse_request,
 )
 from .messages import (
     IDEMPOTENCY_SECONDS, MAX_CALLER_ENQUEUES, MAX_PEERS, MAX_VAULT_ENQUEUES,
@@ -33,6 +37,7 @@ from .messages import (
 from .intent import ConnectionIntent
 from .invitations import Invitations
 from .lifecycle import Lifecycle
+from .workspace_relationship import WorkspaceRelationships
 from .pairing import Pairing
 from .relationship import Relationship
 from .recovery import (
@@ -84,6 +89,7 @@ class Ports:
     pairing: Pairing | None = None
     invitations: Invitations | None = None
     lifecycle: Lifecycle | None = None
+    workspace: WorkspaceRelationships | None = None
 
 
 class CoreSession:
@@ -103,6 +109,7 @@ class CoreSession:
         self._pairing = ports.pairing
         self._invitations = ports.invitations
         self._lifecycle = ports.lifecycle
+        self._workspace = ports.workspace
         self._stopped = False
         self._operations = (OPERATIONS + (MESSAGE_OPERATIONS if self._messages is not None else ())
                             + (RECOVERY_OPERATIONS if self._recovery is not None else ())
@@ -112,6 +119,8 @@ class CoreSession:
                             + (PAIRING_OPERATIONS if self._pairing is not None else ())
                             + (INVITATION_OPERATIONS if self._invitations is not None else ())
                             + (STOP_OPERATIONS if self._lifecycle is not None else ())
+                            + (WORKSPACE_PREVIEW_OPERATIONS if self._workspace is not None else ())
+                            + (WORKSPACE_JOIN_OPERATIONS if self._workspace is not None else ())
                             + (DIAGNOSTIC_OPERATIONS if self._diagnostics is not None else ()))
         self._handle_key = handle_key
         self._transaction = transaction if transaction is not None else nullcontext()
@@ -131,7 +140,8 @@ class CoreSession:
                 grant = self._grant()
                 operation, params = parse_request(value, self._operations)
                 key = value.get("idempotency_key") if isinstance(value, dict) else None
-                if key is not None and operation not in {"message.enqueue", "events.ack"}:
+                if key is not None and operation not in {"message.enqueue", "events.ack",
+                                                        "workspace.join"}:
                     raise ApiFailure("invalid_request")
                 permission = {"message.enqueue": "send", "message.query": "read", "message.list": "read",
                               "message.received": "read", "events.poll": "read", "events.ack": "read",
@@ -139,6 +149,7 @@ class CoreSession:
                               "peer.approve": "approve", "peer.revoke": "approve",
                               "peer.pairing_accept": "pair", "peer.pairing_create": "pair",
                               "runtime.stop": "runtime_owner",
+                              "workspace.invitation_preview": "read", "workspace.join": "pair",
                               "diagnostics.query": "diagnose"}.get(operation, "observe")
                 if permission not in grant.permissions:
                     raise ApiFailure("forbidden")
@@ -175,6 +186,13 @@ class CoreSession:
                               separators=(",", ":")).encode("ascii")
         return hmac.new(self._handle_key, b"mesh-core-handle:v1:" + material, hashlib.sha256).hexdigest()
 
+    def _operation_id(self, grant, profile, key):
+        material = json.dumps([grant.caller, profile, key], ensure_ascii=True,
+                              separators=(",", ":")).encode("ascii")
+        digest = hmac.new(self._handle_key, b"mesh-core-operation:v1:" + material,
+                          hashlib.sha256).digest()[:16]
+        return str(uuid.UUID(bytes=digest))
+
     def _execute(self, grant, operation, params, key=None):
         profiles = {self._handle(grant, "profile", profile, profile): profile for profile in grant.profiles}
         if operation == "runtime.capabilities":
@@ -182,6 +200,22 @@ class CoreSession:
             return self._capabilities(profiles)
         if not self._negotiated:
             raise ApiFailure("negotiation_required")
+        if operation in WORKSPACE_PREVIEW_OPERATIONS:
+            target = profiles.get(params["profile"])
+            if target is None:
+                raise ApiFailure("forbidden")
+            return workspace_preview_view(params["profile"],
+                                          self._workspace.preview(target, params["document"]))
+        if operation in WORKSPACE_JOIN_OPERATIONS:
+            target = profiles.get(params["profile"])
+            if target is None:
+                raise ApiFailure("forbidden")
+            if key is None:
+                raise ApiFailure("invalid_request")
+            operation_id = self._operation_id(grant, target, key)
+            joined = self._workspace.join(target, params["document"], operation_id)
+            workspace = self._handle(grant, "workspace", target, joined.workspace)
+            return workspace_join_view(params["profile"], workspace, joined)
         if operation in STOP_OPERATIONS:
             result = stop_view(self._lifecycle.stop())
             self._stopped = True

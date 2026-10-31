@@ -1024,6 +1024,21 @@ adapter's already-stopping observation, owner-only access, caller-key rejection 
 a framed stream that returns the stop reply and then closes. Actual process exit is
 the host's responsibility and is not claimed by this component.
 
+## Workspace invitation preview and join
+
+`workspace.invitation_preview` returns only safe presentation fields and
+`workspace.join` maps the caller's idempotency key to a caller-scoped UUID
+operation id before calling the existing domain join transaction, so a replay
+returns the same workspace instead of joining twice. Results carry a caller-scoped
+workspace handle, name and join state; internal ids, manifests and member
+identities never cross the boundary. Preview needs `read`, join needs `pair`, and
+I2P invitations are refused because their consent cannot be inferred from a
+request.
+
+Three in-process regressions cover preview and join with replay, the grants and
+caller scope, and invalid material. Per-peer pairing documents and workspace
+roles beyond joining remain open.
+
 ## Remaining work checklist
 
 Reconciled against the specification's invariant list, SC01-SC26 and definition of
@@ -1086,8 +1101,9 @@ M5 - supported reusable core
 - [x] Convergent inbound signed-invitation acceptance (component only).
 - [x] Profile-level outbound invitation material (query, component only).
 - [x] Owner-authorized runtime stop that closes the host stream (component only).
-- [ ] Per-peer pairing documents, workspace relationships and their
-      idempotency/retention semantics.
+- [x] Workspace invitation preview and idempotent join (component only;
+      joining states only, no role administration).
+- [ ] Per-peer pairing documents and workspace role administration.
 - [x] Experimental TypeScript client over the frame contract (component only; no
       packaging, CI conformance, Kotlin client or consumer).
 - [x] Experimental Python client and Windows CLI over the host pipe, with a
