@@ -42,7 +42,7 @@ never described as physical-device qualification.
 | INV17 | `partial` | Shared-policy UI detach cannot retire a transferred carrier; media-call teardown parity across all modes is not re-qualified. |
 | INV18 | `local` | Deterministic traces, replay and the seeded simulator corpus. |
 | INV19 | `local` | Failed persistence keeps the in-memory denial and never reports durable success; intent-batch and authority-write regressions. |
-| INV20 | `partial` | The gate rejects failed, canceled, skipped or missing required evidence, and the release aggregator refuses partial input. Publication does not yet run it. |
+| INV20 | `partial` | The gate rejects failed, canceled, skipped or missing required evidence; publication now requires that manifest and re-hashes staged assets against it. No tag has executed the release path yet. |
 | INV21 | `partial` | The facade enforces caller, profile, permission and private-event boundaries in tests, and a Windows named-pipe endpoint now adds OS access control plus executable allowlisting. No Android endpoint or packaged consumer exercises the boundary yet. |
 | INV22 | `partial` | The client carries no peer policy and cannot start a runtime. Exclusive data-directory ownership is checked by the host, which is not implemented. |
 | INV23 | `local` | Durable enqueue receipts, conflicting payload rejection and stable logical IDs across restart; acknowledgments never change peer delivery state. |

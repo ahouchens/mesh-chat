@@ -249,6 +249,83 @@ jobs:
           if-no-files-found: warn
           retention-days: 30
 
+  qualification:
+    name: Required connection qualification
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: verify
+    uses: ./.github/workflows/connection-qualification.yml
+
+  qualify:
+    name: Bind release artifacts to qualification evidence
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [verify, desktop, android, qualification]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+
+      - name: Download required connection qualification
+        uses: actions/download-artifact@v5
+        with:
+          name: connection-qualification-${{ github.sha }}
+          path: dist/reports
+
+      - name: Download verified Windows artifacts
+        uses: actions/download-artifact@v5
+        with:
+          name: mesh-chat-${{ needs.verify.outputs.version }}-windows-desktop
+          path: release-input/windows
+
+      - name: Download verified Android artifacts
+        uses: actions/download-artifact@v5
+        with:
+          name: mesh-chat-${{ needs.verify.outputs.version }}-android-arm64
+          path: release-input/android
+
+      - name: Stage the exact release assets
+        shell: bash
+        env:
+          RELEASE_VERSION: ${{ needs.verify.outputs.version }}
+        run: |
+          set -euo pipefail
+          mapfile -d '' windows_exe < <(find release-input/windows -type f -path "*/releases/$RELEASE_VERSION/x86_64-pc-windows-msvc/bundle/nsis/*.exe" -print0)
+          mapfile -d '' windows_msi < <(find release-input/windows -type f -path "*/releases/$RELEASE_VERSION/x86_64-pc-windows-msvc/bundle/msi/*.msi" -print0)
+          mapfile -d '' android_apk < <(find release-input/android -type f -name "mesh-chat-$RELEASE_VERSION-android-arm64-release.apk" -not -path "*/releases/*" -print0)
+          if (( ${#windows_exe[@]} != 1 || ${#windows_msi[@]} != 1 || ${#android_apk[@]} != 1 )); then
+            echo "Expected exactly one verified NSIS installer, MSI, and signed Android APK" >&2
+            exit 1
+          fi
+          mkdir -p release-assets
+          cp "${windows_exe[0]}" "release-assets/Mesh-Chat_${RELEASE_VERSION}_x64-setup.exe"
+          cp "${windows_msi[0]}" "release-assets/Mesh-Chat_${RELEASE_VERSION}_x64_en-US.msi"
+          cp "${android_apk[0]}" "release-assets/mesh-chat-${RELEASE_VERSION}-android-arm64-release.apk"
+          (cd release-assets && sha256sum -- * > SHA256SUMS.txt)
+
+      - name: Qualify the exact release artifacts
+        shell: bash
+        env:
+          RELEASE_VERSION: ${{ needs.verify.outputs.version }}
+        run: |
+          set -euo pipefail
+          python scripts/release_qualification.py             --qualification dist/reports/connection-qualification.json             --artifact "setup=release-assets/Mesh-Chat_${RELEASE_VERSION}_x64-setup.exe"             --artifact "msi=release-assets/Mesh-Chat_${RELEASE_VERSION}_x64_en-US.msi"             --artifact "apk=release-assets/mesh-chat-${RELEASE_VERSION}-android-arm64-release.apk"             --source "${{ github.sha }}"             --tree "$(git rev-parse HEAD^{tree})"             --version "$RELEASE_VERSION"             --output dist/reports/release-qualification.json
+
+      - name: Upload qualified assets and manifest
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-qualification-${{ github.sha }}
+          path: |
+            release-assets/**
+            dist/reports/release-qualification.json
+          if-no-files-found: error
+
   publish:
     name: Publish GitHub release
     if: startsWith(github.ref, 'refs/tags/v')
@@ -256,6 +333,8 @@ jobs:
       - verify
       - desktop
       - android
+      - qualification
+      - qualify
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -291,6 +370,20 @@ jobs:
           cp "${windows_msi[0]}" "release-assets/Mesh-Chat_${RELEASE_VERSION}_x64_en-US.msi"
           cp "${android_apk[0]}" release-assets/
           (cd release-assets && sha256sum -- * > SHA256SUMS.txt)
+
+      - name: Download the release qualification manifest
+        uses: actions/download-artifact@v5
+        with:
+          name: release-qualification-${{ github.sha }}
+          path: release-evidence
+
+      - name: Require the qualified bytes before publishing
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/verify_release_assets.py \
+            --manifest release-evidence/dist/reports/release-qualification.json \
+            --assets release-assets
 
       - name: Create persistent GitHub release
         shell: bash

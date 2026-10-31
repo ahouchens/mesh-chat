@@ -921,6 +921,25 @@ exists. Eight Python regressions and one TypeScript regression cover the rules,
 the client refusal, the entry-point help path, the declared script and the typed
 platform failure.
 
+## Release publication gate
+
+Publication no longer depends only on a green build. The release workflow now
+calls the connection qualification workflow for the tag commit, requires its
+final manifest, stages the exact Windows and Android artifacts, and runs the
+release aggregator to bind their names, sizes and SHA-256 digests to the qualified
+source, tree and API contract. Publication then downloads that manifest and
+re-hashes the staged files with `scripts/verify_release_assets.py` immediately
+before upload; a changed byte, missing asset, unpassed manifest or different
+release version fails the job instead of publishing.
+
+Seven asset-verification regressions cover the accepted bytes and every refusal
+(changed byte, missing asset, unpassed manifest, wrong version, incomplete
+inventory), and three narrow packaging guards keep the workflow wiring present:
+the qualification workflow is callable, publication depends on it, and the
+pre-upload digest check still points at the manifest. No release run has executed
+this path yet, so it is wiring evidence rather than an executed release
+qualification.
+
 ## Remaining work checklist
 
 Reconciled against the specification's invariant list, SC01-SC26 and definition of
@@ -951,9 +970,10 @@ M3 - qualification
 
 - [x] Deterministic inventory-bound policy evidence and a required final gate.
 - [x] Uniform per-suite scenario/count/artifact manifest for every required suite.
-- [ ] Exact release-artifact aggregation wired into publication, and cross-suite
-      compatibility validation; the aggregator and its refusal tests exist, but no
-      release run executes them.
+- [x] Publication requires the qualification manifest and re-hashes the staged
+      assets against it before upload.
+- [ ] An executed release run and cross-suite compatibility validation; the
+      aggregator and its refusal tests exist, but no tag has exercised them.
 - [ ] Narrower dependency selection after the architectural isolation is itself
       tested. Conservative selection remains in force.
 
