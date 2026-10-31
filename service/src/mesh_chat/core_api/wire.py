@@ -13,6 +13,8 @@ from .wire_codec import decode_frame, encode_frame
 
 
 class RequestSession(Protocol):
+    @property
+    def stopped(self): ...
     def request(self, value): ...
     def detach(self): ...
 
@@ -68,6 +70,8 @@ class FramedSession:
                     return
                 response = self.exchange(frame)
                 self._write(writer, response)
+                if self._session.stopped:
+                    return
         finally:
             self.close()
 

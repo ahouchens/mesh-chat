@@ -17,6 +17,7 @@ INTENT_OPERATIONS = ("connection.start", "connection.stop")
 RELATIONSHIP_OPERATIONS = ("peer.approve", "peer.revoke")
 PAIRING_OPERATIONS = ("peer.pairing_accept",)
 INVITATION_OPERATIONS = ("peer.pairing_create",)
+STOP_OPERATIONS = ("runtime.stop",)
 DIAGNOSTIC_OPERATIONS = ("diagnostics.query",)
 REQUEST_ID = re.compile(r"[A-Za-z0-9._:-]{1,80}\Z")
 HANDLE = re.compile(r"[A-Za-z0-9_-]{16,128}\Z")
@@ -52,6 +53,10 @@ def parse_request(value, operations):
         return operation, _recovery_params(value["params"])
     if operation in RECEIVED_OPERATIONS:
         return operation, _recovery_params(value["params"])
+    if operation in STOP_OPERATIONS:
+        if value["params"] != {}:
+            raise ApiFailure("invalid_request")
+        return operation, {}
     if operation in INVITATION_OPERATIONS:
         params = value["params"]
         if (not isinstance(params, dict) or set(params) != {"profile"}

@@ -165,3 +165,9 @@ def event_view(value):
     state = DeliveryState(value.state).value if value.type == "message.changed" else None
     return {"id": value.identifier, "message": value.message, "type": value.type,
             "state": state, "timestamp": _timestamp(value.timestamp), "direction": value.direction}
+
+
+def stop_view(value):
+    if value.stopping is not True or type(value.already_stopping) is not bool:
+        raise ValueError("Invalid stop observation")
+    return {"stopping": True, "already_stopping": value.already_stopping}

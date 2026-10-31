@@ -992,6 +992,23 @@ destination and that repeated calls succeed, plus refusal without the grant or
 for another caller's profile. Per-peer documents, workspace invitations and the
 Android binding remain open.
 
+## Owner-authorized stop
+
+`runtime.stop` is available to the trusted host that holds the `runtime_owner`
+grant. It sets the service's existing shutdown event, replies with
+`{stopping: true, already_stopping}` and lets `FramedSession` close the stream
+after the reply; the owning host still performs resource cleanup, because calling
+`close()` under the dispatch lock would be a deadlock rather than a graceful stop.
+Afterward the same session answers `forbidden` and other sessions on that service
+become `unauthenticated`, since the grant callback returns nothing once shutdown is
+requested. The operation is convergent, rejects a caller key rather than ignoring
+it, and its result is bounded by `stop-result-v1`.
+
+Five regressions cover the shutdown request and refusal of further work, the
+adapter's already-stopping observation, owner-only access, caller-key rejection and
+a framed stream that returns the stop reply and then closes. Actual process exit is
+the host's responsibility and is not claimed by this component.
+
 ## Remaining work checklist
 
 Reconciled against the specification's invariant list, SC01-SC26 and definition of
@@ -1053,6 +1070,7 @@ M5 - supported reusable core
 - [x] Explicit convergent peer approval and revocation (component only).
 - [x] Convergent inbound signed-invitation acceptance (component only).
 - [x] Profile-level outbound invitation material (query, component only).
+- [x] Owner-authorized runtime stop that closes the host stream (component only).
 - [ ] Per-peer pairing documents, workspace relationships and their
       idempotency/retention semantics.
 - [x] Experimental TypeScript client over the frame contract (component only; no

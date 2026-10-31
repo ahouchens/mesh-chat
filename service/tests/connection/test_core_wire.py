@@ -15,6 +15,8 @@ def frame(value):
 
 
 class Session:
+    stopped = False
+
     def __init__(self):
         self.requests = []
         self.closed = False

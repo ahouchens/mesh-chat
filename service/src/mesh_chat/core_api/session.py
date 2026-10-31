@@ -15,7 +15,7 @@ from typing import Protocol
 
 from .views import (
     acceptance_view, acknowledgment_view, connection_view, event_view, intent_view, message_view,
-    invitation_view, pairing_view, peer_view, received_view, relationship_view,
+    invitation_view, pairing_view, peer_view, received_view, relationship_view, stop_view,
 )
 from .errors import ApiFailure
 from .limits import MAX_FRAME_BYTES, MAX_REQUEST_JSON_DEPTH, MAX_REQUEST_JSON_TOKENS
@@ -24,8 +24,7 @@ from .diagnostic_views import diagnostics_view
 from .requests import (
     CURSOR, DIAGNOSTIC_OPERATIONS, INTENT_OPERATIONS, MESSAGE_OPERATIONS, OPERATIONS,
     INVITATION_OPERATIONS, PAIRING_OPERATIONS, RECEIVED_OPERATIONS, RECOVERY_OPERATIONS,
-    RELATIONSHIP_OPERATIONS,
-    REQUEST_ID, parse_request,
+    RELATIONSHIP_OPERATIONS, STOP_OPERATIONS, REQUEST_ID, parse_request,
 )
 from .messages import (
     IDEMPOTENCY_SECONDS, MAX_CALLER_ENQUEUES, MAX_PEERS, MAX_VAULT_ENQUEUES,
@@ -33,6 +32,7 @@ from .messages import (
 )
 from .intent import ConnectionIntent
 from .invitations import Invitations
+from .lifecycle import Lifecycle
 from .pairing import Pairing
 from .relationship import Relationship
 from .recovery import (
@@ -83,6 +83,7 @@ class Ports:
     relationship: Relationship | None = None
     pairing: Pairing | None = None
     invitations: Invitations | None = None
+    lifecycle: Lifecycle | None = None
 
 
 class CoreSession:
@@ -101,6 +102,8 @@ class CoreSession:
         self._relationship = ports.relationship
         self._pairing = ports.pairing
         self._invitations = ports.invitations
+        self._lifecycle = ports.lifecycle
+        self._stopped = False
         self._operations = (OPERATIONS + (MESSAGE_OPERATIONS if self._messages is not None else ())
                             + (RECOVERY_OPERATIONS if self._recovery is not None else ())
                             + (RECEIVED_OPERATIONS if self._received is not None else ())
@@ -108,6 +111,7 @@ class CoreSession:
                             + (RELATIONSHIP_OPERATIONS if self._relationship is not None else ())
                             + (PAIRING_OPERATIONS if self._pairing is not None else ())
                             + (INVITATION_OPERATIONS if self._invitations is not None else ())
+                            + (STOP_OPERATIONS if self._lifecycle is not None else ())
                             + (DIAGNOSTIC_OPERATIONS if self._diagnostics is not None else ()))
         self._handle_key = handle_key
         self._transaction = transaction if transaction is not None else nullcontext()
@@ -122,17 +126,23 @@ class CoreSession:
             request_id = None
         with self._lock, self._transaction:
             try:
+                if self._stopped:
+                    raise ApiFailure("forbidden")
                 grant = self._grant()
                 operation, params = parse_request(value, self._operations)
+                key = value.get("idempotency_key") if isinstance(value, dict) else None
+                if key is not None and operation not in {"message.enqueue", "events.ack"}:
+                    raise ApiFailure("invalid_request")
                 permission = {"message.enqueue": "send", "message.query": "read", "message.list": "read",
                               "message.received": "read", "events.poll": "read", "events.ack": "read",
                               "connection.start": "connect", "connection.stop": "connect",
                               "peer.approve": "approve", "peer.revoke": "approve",
                               "peer.pairing_accept": "pair", "peer.pairing_create": "pair",
+                              "runtime.stop": "runtime_owner",
                               "diagnostics.query": "diagnose"}.get(operation, "observe")
                 if permission not in grant.permissions:
                     raise ApiFailure("forbidden")
-                result = self._execute(grant, operation, params, value.get("idempotency_key"))
+                result = self._execute(grant, operation, params, key)
                 return {"api_version": 1, "request_id": request_id, "ok": True, "result": result}
             except ApiFailure as error:
                 code = error.code
@@ -140,6 +150,10 @@ class CoreSession:
                 code = "internal"
         return {"api_version": 1, "request_id": request_id, "ok": False,
                 "error": {"code": code, "retry_after_ms": None}}
+
+    @property
+    def stopped(self):
+        return self._stopped
 
     def detach(self):
         with self._lock:
@@ -168,6 +182,10 @@ class CoreSession:
             return self._capabilities(profiles)
         if not self._negotiated:
             raise ApiFailure("negotiation_required")
+        if operation in STOP_OPERATIONS:
+            result = stop_view(self._lifecycle.stop())
+            self._stopped = True
+            return result
         profile = profiles.get(params["profile"])
         if profile is None:
             raise ApiFailure("forbidden")

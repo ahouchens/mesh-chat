@@ -233,6 +233,19 @@ client receives exactly what it would put in a QR code. Per-peer pairing
 documents, workspace invitations and the Android Binder binding remain outside
 this surface.
 
+## Owner shutdown
+
+`runtime.stop` requires the `runtime_owner` grant and takes no parameters. It sets
+the service's existing shutdown event — the same first step `close()` performs —
+and replies `{stopping: true, already_stopping}` before the host binding closes the
+stream. Cleanup stays with the owning host: the facade never calls `close()` while
+holding the dispatch lock, so it does not claim that resources are already
+released. After the reply the session refuses further work (its own answers are
+`forbidden`; other sessions on the same service become `unauthenticated` because
+the trusted grant callback now returns nothing). The operation is convergent and
+rejects a caller idempotency key instead of silently ignoring it; the result
+contract is `stop-result-v1.schema.json`.
+
 ## Observation and recovery
 
 Connection observations use runtime epoch and sequence; gaps or epoch changes
