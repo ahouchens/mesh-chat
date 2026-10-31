@@ -79,7 +79,7 @@ never described as physical-device qualification.
 | SC23 | `local` | Lost reply, timeout and duplicate request after restart resolve by idempotency key; conflicting payloads fail. |
 | SC24 | `local` | Bounded replay, explicit gaps, cursor expiry and consumer deduplication are covered by facade and client tests. |
 | SC25 | `open` | No supported SDK/API/package version pairs exist to validate or reject. |
-| SC26 | `partial` | Detach does not stop the runtime, and the Windows endpoint serves a bounded number of concurrent local clients. An owner-initiated runtime stop and packaged multi-client evidence are not implemented. |
+| SC26 | `partial` | Detach does not stop the runtime; the owner can now request a stop that sets the shutdown event and closes the host stream after the reply, but process exit and packaged multi-client evidence remain unqualified. The Windows endpoint serves a bounded number of concurrent local clients. |
 
 ## Completion boundaries
 
