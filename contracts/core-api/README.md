@@ -260,6 +260,27 @@ authority material and member identities stay private. Preview needs `read` and
 join needs `pair`; an I2P invitation is refused because that consent cannot be
 inferred from a request.
 
+## Android Binder host
+
+The Android host binding runs inside the application process beside the embedded
+service. The caller is never taken from the frame: the Binder service derives the
+calling package from `Binder.getCallingUid`, requires the signature permission
+`com.meshchat.runtime.permission.CORE_API`, and passes only that package name to
+the Python bridge, which binds one framed session per caller with a fixed read /
+send / pair / connect / diagnose grant. Runtime ownership and approval are not
+part of that grant, so a third-party consumer cannot stop the runtime or approve
+peers. Binder transactions are smaller than the facade frame ceiling, so the
+Kotlin side caps a frame at 256 KiB and answers `invalid_request` for anything
+larger before dispatch. Before mobile initialization the bridge answers
+`unavailable`; malformed base64 and invalid callers also fail closed with typed
+frames.
+
+Four in-process regressions cover caller-scoped negotiation and profile handles,
+the fixed grant (runtime stop is refused), malformed and oversized frames, the
+bounded caller table and detach, and the mobile-bridge forwarder with and without
+a running service. Kotlin Binder plumbing and its instrumentation suite are
+component work in progress; no packaged consumer exists yet.
+
 ## Observation and recovery
 
 Connection observations use runtime epoch and sequence; gaps or epoch changes

@@ -35,6 +35,10 @@ class FramedSession:
         self._closed = False
         self._lock = RLock()
 
+    @property
+    def stopped(self):
+        return bool(getattr(self._session, "stopped", False))
+
     def close(self):
         with self._lock:
             if not self._closed:

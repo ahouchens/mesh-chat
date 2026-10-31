@@ -1039,6 +1039,18 @@ Three in-process regressions cover preview and join with replay, the grants and
 caller scope, and invalid material. Per-peer pairing documents and workspace
 roles beyond joining remain open.
 
+## Android Binder host binding
+
+The Python half of the Android host binding now exists: one framed session per
+authenticated Binder caller, bound to a fixed grant that excludes runtime
+ownership and approval, with a bounded caller table, fail-closed typing for
+malformed or oversized input, and explicit `unavailable` before the embedded
+service is initialized. Caller identity is a host decision: the Kotlin side must
+derive it from `Binder.getCallingUid` behind the signature permission and never
+from the frame. Four in-process regressions exercise that half. The AIDL service,
+manifest permission, instrumentation suite and a packaged consumer remain open,
+so the endpoint is not yet an authenticated Android binding.
+
 ## Remaining work checklist
 
 Reconciled against the specification's invariant list, SC01-SC26 and definition of
@@ -1093,8 +1105,9 @@ M5 - supported reusable core
 - [x] Trusted host grant binding over a host-owned stream pair (component only).
 - [x] Private Windows named-pipe endpoint with OS access control and an executable
       allowlist (component only; no packaged consumer).
-- [ ] Authenticated Android Binder endpoint and packaged consumers; the facade
-      remains a private component until they exist.
+- [ ] Authenticated Android Binder endpoint and packaged consumers; the Python
+      host half exists, but no AIDL service or instrumentation has run, so the
+      facade remains a private component.
 - [x] Contact-wide connection start/stop intent with convergent semantics
       (component only; no per-device selection or workspace pairing).
 - [x] Explicit convergent peer approval and revocation (component only).

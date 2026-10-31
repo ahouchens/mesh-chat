@@ -270,6 +270,35 @@ def native_webrtc_event(event: str, session_id: str, data: str = "") -> str:
         return _error(exc)
 
 
+def core_exchange(caller: str, frame_b64: str) -> str:
+    """Binder host entry: caller and grant are fixed by the Kotlin allowlist.
+
+    Frames travel base64-encoded because the Binder service already treats them
+    as opaque bytes, and because a string boundary is thinner than a converted
+    byte array across Chaquopy.
+    """
+
+    from .core_api.android_host import exchange
+    from .core_api.wire_codec import encode_frame
+
+    try:
+        if not isinstance(caller, str) or not isinstance(frame_b64, str):
+            raise ValidationError("Core API bridge request is invalid")
+        if len(frame_b64) > 4 * 1024 * 1024 * 4 // 3 + 4:
+            raise ValidationError("Core API frame is too large")
+        try:
+            frame = base64.b64decode(frame_b64, validate=True)
+        except Exception as exc:
+            raise ValidationError("Core API frame is not valid base64") from exc
+        reply = exchange(_service, caller, frame)
+        return base64.b64encode(reply).decode("ascii")
+    except Exception:
+        return base64.b64encode(encode_frame({
+            "api_version": 1, "request_id": None, "ok": False,
+            "error": {"code": "invalid_request", "retry_after_ms": None},
+        })).decode("ascii")
+
+
 def shutdown() -> str:
     global _service, _event_overflow, _native_channel
     try:
