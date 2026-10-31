@@ -36,6 +36,14 @@ def build_parser():
     ack.add_argument("--key", required=True)
     diagnostics = commands.add_parser("diagnostics", help="selected runtime diagnostics")
     diagnostics.add_argument("--limit", type=int, default=256)
+    approve = commands.add_parser("approve", help="approve one pending peer")
+    approve.add_argument("--peer", required=True)
+    revoke = commands.add_parser("revoke", help="revoke one peer")
+    revoke.add_argument("--peer", required=True)
+    commands.add_parser("pairing-create", help="signed invitation material for this profile")
+    pairing_accept = commands.add_parser("pairing-accept", help="accept a signed invitation file")
+    pairing_accept.add_argument("--document-file", required=True)
+    commands.add_parser("stop", help="ask the owning host to stop and close the stream")
     return parser
 
 
@@ -55,6 +63,21 @@ def execute(args, client):
         return client.acknowledge(profile, args.cursor, args.key)
     if args.command == "diagnostics":
         return client.diagnostics(profile, args.limit)
+    if args.command == "approve":
+        return client.approve(profile, args.peer)
+    if args.command == "revoke":
+        return client.revoke(profile, args.peer)
+    if args.command == "pairing-create":
+        return client.pairing_create(profile)
+    if args.command == "pairing-accept":
+        try:
+            with open(args.document_file, encoding="utf-8") as handle:
+                document = handle.read(1048577)
+        except OSError as error:
+            raise CoreClientError("invalid_document") from error
+        return client.pairing_accept(profile, document)
+    if args.command == "stop":
+        return client.stop()
     raise CoreClientError("unsupported_operation")
 
 

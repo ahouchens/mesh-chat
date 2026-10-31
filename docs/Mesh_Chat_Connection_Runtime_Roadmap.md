@@ -925,6 +925,21 @@ exists. Eight Python regressions and one TypeScript regression cover the rules,
 the client refusal, the entry-point help path, the declared script and the typed
 platform failure.
 
+## CLI commands over the pipe
+
+The console client now covers the whole experimental surface instead of only the
+message path: `capabilities`, `profile`, `received`, `events`, `enqueue`, `ack`,
+`diagnostics`, plus `approve`, `revoke`, `pairing-create`, `pairing-accept` and
+`stop`. `pairing-accept` reads a signed invitation file with a bounded read and
+reports `invalid_document` instead of a traceback when the file cannot be read;
+`stop` asks the owning host to shut down and the stream closes after the reply.
+The CLI still owns no policy: it opens the pipe, negotiates, sends one command and
+prints the selected result or typed error.
+
+Two additional regressions cover the new dispatch envelopes (including the exact
+pairing-accept parameters) and the unreadable-document path, on top of the earlier
+entry-point, script and platform-failure checks.
+
 ## Release publication gate
 
 Publication no longer depends only on a green build. The release workflow now
@@ -1076,7 +1091,8 @@ M5 - supported reusable core
 - [x] Experimental TypeScript client over the frame contract (component only; no
       packaging, CI conformance, Kotlin client or consumer).
 - [x] Experimental Python client and Windows CLI over the host pipe, with a
-      declared console entry point (component only; no published distribution).
+      declared console entry point and relationship, pairing and owner-stop
+      commands (component only; no published distribution).
 - [ ] Versioned TypeScript/Kotlin SDKs, production CLI and the supported
       compatibility matrix.
 - [ ] Mesh Chat messaging routed through the supported facade.

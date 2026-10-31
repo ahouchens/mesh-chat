@@ -154,3 +154,39 @@ def test_client_stop_asks_the_owner_without_a_key():
     sent = decode_frame(transport.written[1])
     assert sent == {"api_version": 1, "request_id": "client:2", "operation": "runtime.stop",
                     "params": {}}
+
+
+def test_cli_dispatches_relationship_pairing_and_owner_commands(tmp_path):
+    document = tmp_path / "invitation.txt"
+    document.write_text("signed-invitation", encoding="utf-8")
+    results = [
+        ({"profile": PROFILE, "peer": PEER, "trust": "approved"},
+         ["--pipe", "pipe", "--profile", PROFILE, "approve", "--peer", PEER]),
+        ({"profile": PROFILE, "peer": PEER, "trust": "blocked"},
+         ["--pipe", "pipe", "--profile", PROFILE, "revoke", "--peer", PEER]),
+        ({"profile": PROFILE, "file": "signed", "link": "meshchat://invite/t", "expires_at": 1},
+         ["--pipe", "pipe", "--profile", PROFILE, "pairing-create"]),
+        ({"profile": PROFILE, "peer": PEER, "trust": "awaiting_consent"},
+         ["--pipe", "pipe", "--profile", PROFILE, "pairing-accept",
+          "--document-file", str(document)]),
+        ({"stopping": True, "already_stopping": False},
+         ["--pipe", "pipe", "--profile", PROFILE, "stop"]),
+    ]
+    sent = []
+    for result, argv in results:
+        transport = Scripted(reply(CAPABILITIES), reply(result, "client:2"))
+        out, err = io.StringIO(), io.StringIO()
+        assert run_cli(argv, transport, out, err) == 0, err.getvalue()
+        sent.extend(decode_frame(payload) for payload in transport.written)
+    assert [item["operation"] for item in sent if item["operation"] != "runtime.capabilities"] == [
+        "peer.approve", "peer.revoke", "peer.pairing_create", "peer.pairing_accept", "runtime.stop"]
+    accept = next(item for item in sent if item["operation"] == "peer.pairing_accept")
+    assert accept["params"] == {"profile": PROFILE, "document": "signed-invitation"}
+
+
+def test_cli_reports_an_unreadable_pairing_document():
+    transport = Scripted(reply(CAPABILITIES))
+    out, err = io.StringIO(), io.StringIO()
+    assert run_cli(["--pipe", "pipe", "--profile", PROFILE, "pairing-accept",
+                    "--document-file", "missing-invitation.txt"], transport, out, err) == 2
+    assert json.loads(err.getvalue())["error"] == "invalid_document"
