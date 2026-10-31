@@ -1061,8 +1061,10 @@ Same-UID callers are the owning application and skip the permission check; every
 other caller must hold the signature permission. Four instrumentation tests run
 in the Android qualification job on the API 35 emulator and passed: the declared
 permission/export, empty and oversized refusals, and the typed `unavailable`
-reply from an uninitialized bridge. The suite is not yet part of the qualification
-gate inventory, and no packaged consumer exists.
+reply from an uninitialized bridge. The suite now runs once per scenario through
+the real instrumentation runner, emits run-bound reports and is a required suite
+in the gate inventory, tied to the exact source commit and test APK digest. No
+packaged consumer exists yet, so the roadmap item stays open.
 
 ## Remaining work checklist
 
@@ -1119,9 +1121,9 @@ M5 - supported reusable core
 - [x] Private Windows named-pipe endpoint with OS access control and an executable
       allowlist (component only; no packaged consumer).
 - [ ] Authenticated Android Binder endpoint and packaged consumers. The AIDL
-      service, signature permission and caller-derived grant now exist, and four
-      instrumentation tests pass on the API 35 emulator; the suite is not yet in
-      the gate inventory and no packaged consumer exists.
+      service, signature permission and caller-derived grant exist, and four
+      instrumentation tests are a required gate suite on the API 35 emulator;
+      no packaged consumer exists.
 - [x] Contact-wide connection start/stop intent with convergent semantics
       (component only; no per-device selection or workspace pairing).
 - [x] Explicit convergent peer approval and revocation (component only).

@@ -16,6 +16,8 @@ REPORTS = ROOT / "dist/reports"
 APK_DIRECTORY = ROOT / "plugins/tauri-plugin-mesh-runtime/android/webrtc-smoke/build/outputs/apk"
 APKS = (APK_DIRECTORY / "release/webrtc-smoke-release.apk",
         APK_DIRECTORY / "androidTest/release/webrtc-smoke-release-androidTest.apk")
+PLUGIN_APK_DIRECTORY = ROOT / "plugins/tauri-plugin-mesh-runtime/android/build/outputs/apk"
+CORE_APKS = (PLUGIN_APK_DIRECTORY / "androidTest/debug/tauri-plugin-mesh-runtime-debug-androidTest.apk",)
 APP_ID = "com.meshchat.runtime.smoke"
 WEBRTC = {
     "NativeCallbackQueueTest": ("saturatedMetadataQueueStillAdmitsExactDisposal",),
@@ -36,6 +38,10 @@ WEBRTC = {
         "optedInServiceRestoresAndKeepsNativeTrafficWhileActivityIsStopped",
         "productionDesktopTransportOffersToNative", "productionDesktopTransportAnswersNative"),
 }
+CORE_API = ("serviceIsExportedBehindTheSignaturePermission",
+            "emptyFrameIsRejectedBeforeDispatch",
+            "oversizedFrameIsRejectedBeforeDispatch",
+            "uninitializedBridgeFailsClosedWithATypedFrame")
 SIGNALING = (
     ("embeddedDefaultAndChoicesSurviveProcessRestart", "seed"),
     ("embeddedDefaultAndChoicesSurviveProcessRestart", "verify"),
@@ -54,6 +60,8 @@ def cases(suite):
     entries = ((name, method, "none") for name, methods in WEBRTC.items() for method in methods)
     if suite == "signaling":
         entries = (("SignalMailboxAndroidTest", method, phase) for method, phase in SIGNALING)
+    elif suite == "core_api":
+        entries = (("MeshCoreApiServiceTest", method, "none") for method in CORE_API)
     elif suite != "webrtc":
         raise ValueError("Unknown qualification suite")
     return [{"id": f"{name}.{method}.{phase}", "class": name, "method": method, "phase": phase,
@@ -84,8 +92,9 @@ def digest(path):
         return hashlib.file_digest(source, "sha256").hexdigest()
 
 
-def artifacts():
-    return {str(path.relative_to(ROOT)).replace("\\", "/"): digest(path) for path in APKS}
+def artifacts(suite="webrtc"):
+    selected = CORE_APKS if suite == "core_api" else APKS
+    return {str(path.relative_to(ROOT)).replace("\\", "/"): digest(path) for path in selected}
 
 
 def source():
@@ -100,7 +109,7 @@ def prepare(suite):
     directory = REPORTS / f"android-{suite}"
     directory.mkdir(parents=True, exist_ok=True)
     inventory = {"v": 1, **source(), "run_id": uuid4().hex, "scenarios": cases(suite),
-                 "artifacts": artifacts(), "started_at": time.time()}
+                 "artifacts": artifacts(suite), "started_at": time.time()}
     (directory / "inventory.json").write_text(json.dumps(inventory, indent=2) + "\n", encoding="utf-8")
     print(inventory["run_id"])
 
@@ -150,11 +159,13 @@ def report(status):
         if status != 0:
             raise ValueError("Android qualification runner failed")
         result["phase"] = "source_and_artifacts"
-        identity, binaries = source(), artifacts()
+        identity = source()
+        binaries = {**artifacts("webrtc"), **artifacts("core_api")}
         suites = []
-        for suite in ("webrtc", "signaling"):
+        for suite in ("webrtc", "signaling", "core_api"):
             result["phase"] = suite
-            suites.append(verify_suite(REPORTS / f"android-{suite}", suite, identity, binaries))
+            suites.append(verify_suite(REPORTS / f"android-{suite}", suite, identity,
+                                       artifacts(suite)))
         result["phase"] = "cleanup"
         result.update(identity, artifacts=binaries, suites=suites, platform=emulator_and_cleanup(), passed=True)
         del result["phase"]
@@ -171,7 +182,7 @@ def report(status):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("command", choices=("prepare", "list", "report"))
-    parser.add_argument("--suite", choices=("webrtc", "signaling"))
+    parser.add_argument("--suite", choices=("webrtc", "signaling", "core_api"))
     parser.add_argument("--status", type=int, default=1)
     args = parser.parse_args()
     if args.command == "report":

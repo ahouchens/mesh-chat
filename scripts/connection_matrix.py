@@ -7,7 +7,7 @@ from pathlib import Path
 import re
 from types import SimpleNamespace
 
-from android_qualification import APKS, ROOT, cases
+from android_qualification import APKS, CORE_APKS, ROOT, cases
 from connection_evidence import evidence as policy_evidence
 from direct_qualification import SUITES as DIRECT_SUITES, read_suite as direct_suite
 from test_desktop_transport import PYTHON_SOURCES, verified_report as desktop_evidence
@@ -89,16 +89,17 @@ def android_evidence(record, source, tree):
         raise ValueError("Android evidence has the wrong source, type or outcome")
     binaries = record.get("artifacts")
     hashes(binaries)
-    if set(binaries) != {str(path.relative_to(ROOT)).replace("\\", "/") for path in APKS}:
-        raise ValueError("Android evidence does not identify both tested APKs")
+    if set(binaries) != ({str(path.relative_to(ROOT)).replace("\\", "/") for path in APKS}
+                         | {str(path.relative_to(ROOT)).replace("\\", "/") for path in CORE_APKS}):
+        raise ValueError("Android evidence does not identify every tested APK")
     platform = record.get("platform", {})
     if platform.get("emulated") is not True or platform.get("test_host_cleanup") != "passed":
         raise ValueError("Android emulator execution or cleanup is unqualified")
     suites = record.get("suites")
-    if not isinstance(suites, list) or len(suites) != 2:
+    if not isinstance(suites, list) or len(suites) != 3:
         raise ValueError("Android suite inventory is incomplete")
     run_ids = set()
-    for suite, expected in zip(suites, ("webrtc", "signaling")):
+    for suite, expected in zip(suites, ("webrtc", "signaling", "core_api")):
         run_id = suite.get("run_id")
         if not isinstance(run_id, str) or not re.fullmatch(r"[a-f0-9]{32}", run_id) or run_id in run_ids:
             raise ValueError("Android suite run identity is missing or duplicated")

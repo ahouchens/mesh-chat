@@ -281,9 +281,9 @@ bounded caller table and detach, and the mobile-bridge forwarder with and withou
 a running service. The Kotlin side now declares the AIDL service behind the
 signature permission, derives the caller from `Binder.getCallingUid`, refuses
 frames above 256 KiB before dispatch and lets same-UID (own-app) callers through
-without the permission check. Its four instrumentation tests pass on the API 35
-emulator inside the Android qualification job; the suite is not yet part of the
-gate's suite inventory, and no packaged consumer exists.
+without the permission check. Its four instrumentation tests run once per scenario inside the Android
+qualification job and now form a required suite in the gate inventory, bound to
+the exact source commit and test APK digest; no packaged consumer exists yet.
 
 ## Observation and recovery
 

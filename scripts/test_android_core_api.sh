@@ -1,28 +1,39 @@
 #!/usr/bin/env bash
-# The plugin library's instrumentation suite covers the Binder entry: exported
-# signature permission, caller-derived identity, bounded frames and fail-closed
-# typing before the embedded service is initialized.
+# Required Android Binder qualification: run each scenario once through the real
+# instrumentation runner and bind the evidence to this exact source and APK.
 set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-cd "$root/src-tauri/gen/android"
+cd "$root"
+report_dir="$root/dist/reports/android-core_api"
+test_apk="plugins/tauri-plugin-mesh-runtime/android/build/outputs/apk/androidTest/debug/tauri-plugin-mesh-runtime-debug-androidTest.apk"
+app_id="com.meshchat.runtime.test"
 
-# The earlier WebRTC smoke app also includes this library, so it defines the same
-# signature permission. Only one package may own a permission on a device; the
-# smoke suite has already finished, so drop that installation before the plugin
-# test app defines the permission as its own.
+# The WebRTC smoke app also includes the library and therefore defines the same
+# signature permission. Only one package may own it on a device, and that suite
+# has already finished, so remove its installation before this APK declares it.
 adb uninstall com.meshchat.runtime.smoke >/dev/null 2>&1 || true
-adb uninstall com.meshchat.runtime.test >/dev/null 2>&1 || true
+adb uninstall "$app_id" >/dev/null 2>&1 || true
 
-status=0
-./gradlew :tauri-plugin-mesh-runtime:connectedDebugAndroidTest \
-  -PmeshRuntimeAbis=x86_64 \
-  --no-configuration-cache \
-  -Pandroid.testInstrumentationRunnerArguments.class=com.meshchat.runtime.MeshCoreApiServiceTest || status=$?
+(cd src-tauri/gen/android && \
+  ./gradlew :tauri-plugin-mesh-runtime:assembleDebugAndroidTest \
+    -PmeshRuntimeAbis=x86_64 --no-configuration-cache)
 
-if [[ "$status" -ne 0 ]]; then
-  echo "::group::Plugin instrumentation results"
-  find "/plugins/tauri-plugin-mesh-runtime/android/build/outputs/androidTest-results" \
-    -name '*.xml' -type f -print -exec sed -n '1,220p' {} \; 2>/dev/null || true
-  echo "::endgroup::"
-fi
-exit "$status"
+mkdir -p "$report_dir"
+run_id="$(python scripts/android_qualification.py prepare --suite core_api)"
+python scripts/android_qualification.py list --suite core_api > "$report_dir/cases.tsv"
+timeout 120s adb install -r "$test_apk"
+result=0
+mapfile -t case_lines < "$report_dir/cases.tsv"
+for line in "${case_lines[@]}"; do
+  IFS=$'\t' read -r method test_class phase <<< "$line"
+  timeout 15s adb shell am force-stop "$app_id" || true
+  printf 'MESH_QUALIFICATION_RUN=%s\n' "$run_id" > "$report_dir/$method.txt"
+  if ! timeout --signal=INT --kill-after=10s 180s adb shell am instrument -w -r \
+      -e class "com.meshchat.runtime.$test_class#$method" \
+      "$app_id/androidx.test.runner.AndroidJUnitRunner" </dev/null | tee -a "$report_dir/$method.txt"; then
+    result=1
+  fi
+  if ! grep -Fq 'OK (1 test)' "$report_dir/$method.txt"; then result=1; fi
+done
+timeout 15s adb shell am force-stop "$app_id" || true
+exit "$result"

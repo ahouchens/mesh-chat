@@ -36,9 +36,12 @@ def test_the_interface_and_caller_derivation_stay_bounded():
 
 
 def test_android_qualification_runs_the_instrumentation_suite():
-    script = (ROOT / "scripts" / "test_android_core_api.sh").read_text(encoding="utf-8")
-    assert ":tauri-plugin-mesh-runtime:connectedDebugAndroidTest" in script
-    assert "MeshCoreApiServiceTest" in script
+    path = ROOT / "scripts" / "test_android_core_api.sh"
+    assert path.read_bytes().startswith(b"#!/usr/bin/env bash")  # no BOM before the shebang
+    script = path.read_text(encoding="utf-8")
+    assert ":tauri-plugin-mesh-runtime:assembleDebugAndroidTest" in script
+    assert "prepare --suite core_api" in script
+    assert "androidx.test.runner.AndroidJUnitRunner" in script
     qualification = (ROOT / "scripts" / "test_android_qualification.sh").read_text(encoding="utf-8")
     assert "bash scripts/test_android_core_api.sh" in qualification
     assert (PLUGIN / "src" / "androidTest" / "java" / "com" / "meshchat" / "runtime" /
