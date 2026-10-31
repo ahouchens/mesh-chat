@@ -1,10 +1,7 @@
 name: CI
 
 on:
-  push:
-    branches:
-      - main
-  pull_request:
+  workflow_call:
   workflow_dispatch:
 
 permissions:
@@ -46,6 +43,16 @@ jobs:
 
       - name: Install Python dependencies
         run: python -m pip install --disable-pip-version-check -r service/requirements-dev.lock
+
+      - name: Build and test the experimental core client
+        run: |
+          node node_modules/typescript/bin/tsc -p sdk/typescript
+          node --test "sdk/typescript/dist/**/*.test.js"
+
+      - name: Prove the TypeScript client against the Python facade
+        run: |
+          node --version
+          python -m pytest service/tests/test_sdk_conformance.py -q
 
       - name: Validate and test
         run: python scripts/release.py verify
@@ -94,4 +101,29 @@ jobs:
       - run: python -m pip install --disable-pip-version-check -r service/requirements-dev.lock
       - run: pnpm build
       - run: python scripts/build_sidecar.py
+      - name: Qualify initialized packaged service shutdown and process recovery
+        run: python scripts/test_packaged_lifecycle.py --expected-source "${{ github.sha }}"
       - run: cargo test --locked --manifest-path src-tauri/Cargo.toml --lib
+      - name: Qualify the private core API pipe endpoint
+        run: python -m pytest service/tests/test_core_pipe_windows.py -q
+
+      - name: Check experimental shared WebView host
+        run: cargo test --locked --manifest-path src-tauri/Cargo.toml --lib --features experimental-shared-webview
+      - name: Build isolated WebView2 qualification executable
+        run: cargo build --locked --manifest-path src-tauri/Cargo.toml --bin mesh-transport-qualification --features transport-qualification
+      - name: Exercise real WebView2 through the private host pipe
+        run: python scripts/test_desktop_transport.py --expected-source "${{ github.sha }}"
+      - name: Qualify frozen peers and receipts across a service crash
+        run: python scripts/test_packaged_transport.py --expected-source "${{ github.sha }}"
+      - name: Qualify explicit first-time approval and paired messaging
+        run: python scripts/test_packaged_transport.py --pairing --expected-source "${{ github.sha }}"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: desktop-transport-${{ github.sha }}
+          path: |
+            dist/reports/desktop-transport.json
+            dist/reports/packaged-lifecycle.json
+            dist/reports/packaged-transport.json
+            dist/reports/packaged-pairing.json
+          if-no-files-found: error

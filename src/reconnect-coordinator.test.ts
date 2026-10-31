@@ -228,6 +228,44 @@ afterEach(async () => {
 });
 
 describe("automatic reconnect coordinator", () => {
+  it("observes service-owned profiles without negotiating or closing their native carrier", async () => {
+    const stop = vi.fn(async () => undefined);
+    const closeSession = vi.fn(async () => undefined);
+    const probe = harness({ profiles: [profile({ policy_owner: "service", connection: {
+      runtime_epoch: "epoch", sequence: 1, desired: "enabled", messaging_ready: true,
+      reason: "ready", retry_in: 0,
+    } })], overrides: { stop, closeSession } });
+    await probe.coordinator.start();
+    await vi.waitFor(() => expect(probe.coordinator.snapshot().entries["profile-1"]?.state).toBe("connected"));
+    expect(probe.peers).toHaveLength(0);
+    expect(probe.published).toHaveLength(0);
+    expect(probe.statuses).toHaveLength(0);
+    await probe.coordinator.stop("contact-1");
+    expect(stop).toHaveBeenCalledWith("contact-1");
+    expect(closeSession).not.toHaveBeenCalled();
+  });
+
+  it("detaching the UI does not persist Stop", async () => {
+    const stop = vi.fn(async () => undefined);
+    const probe = harness({ profiles: [profile({ policy_owner: "service" })], overrides: { stop } });
+    await probe.coordinator.start();
+    await probe.coordinator.refresh();
+    probe.coordinator.detach();
+    expect(stop).not.toHaveBeenCalled();
+    expect(probe.peers).toHaveLength(0);
+  });
+
+  it("shows service quarantine without starting a replacement policy", async () => {
+    const probe = harness({ profiles: [profile({ policy_owner: "service", connection: {
+      runtime_epoch: "epoch", sequence: 2, desired: "stopped", messaging_ready: false,
+      reason: "ineligible", runtime_failure: "adapter_quarantined", retry_in: 0,
+    } })] });
+    await probe.coordinator.start();
+    await probe.coordinator.refresh();
+    expect(probe.coordinator.snapshot().entries["profile-1"].detail).toBe("adapter_quarantined");
+    expect(probe.peers).toHaveLength(0);
+  });
+
   it("preferred device publishes a request and accepts the peer's answer", async () => {
     let attempt = "";
     const mailbox = new Map<string, string>();

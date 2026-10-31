@@ -1,4 +1,4 @@
-import react from "@vitejs/plugin-react";
+import { frontendConfig, frontendEntries } from "./frontend-config.mjs";
 import { createHash } from "node:crypto";
 import { readdir, readFile, rename, rm, mkdir, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -24,7 +24,7 @@ async function filesBelow(candidate) {
 
 async function inputDigest() {
   const candidates = [
-    "index.html",
+    ...Object.values(frontendEntries),
     "package.json",
     "pnpm-lock.yaml",
     "tsconfig.json",
@@ -34,6 +34,7 @@ async function inputDigest() {
     "src",
     "public",
     "scripts/run-frontend-build.mjs",
+    "scripts/frontend-config.mjs",
   ];
   const inputs = (await Promise.all(candidates.map((item) => filesBelow(path.join(repository, item)))))
     .flat()
@@ -58,9 +59,9 @@ const digest = await inputDigest();
 const previous = await readFile(stampPath, "utf8")
   .then((value) => JSON.parse(value))
   .catch(() => null);
-const outputExists = await stat(path.join(output, "index.html"))
-  .then((value) => value.isFile())
-  .catch(() => false);
+const outputExists = (await Promise.all(Object.values(frontendEntries).map((entry) =>
+  stat(path.join(output, entry)).then((value) => value.isFile()).catch(() => false),
+))).every(Boolean);
 if (
   process.env.MESH_CHAT_FORCE_WEB_BUILD !== "1" &&
   outputExists &&
@@ -72,16 +73,8 @@ if (
 }
 
 await build({
+  ...frontendConfig(),
   configFile: false,
-  plugins: [react()],
-  clearScreen: false,
-  envPrefix: ["VITE_", "TAURI_ENV_*"],
-  build: {
-    outDir: "dist/web",
-    target: ["es2022", "chrome105", "safari13"],
-    minify: process.env.TAURI_ENV_DEBUG ? false : "esbuild",
-    sourcemap: Boolean(process.env.TAURI_ENV_DEBUG),
-  },
 });
 
 await mkdir(path.dirname(stampPath), { recursive: true });

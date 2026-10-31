@@ -27,6 +27,16 @@ export interface ReconnectEffective {
 }
 
 export interface ReconnectProfile {
+  policy_owner?: "service";
+  connection?: {
+    runtime_epoch: string;
+    sequence: number;
+    desired: "enabled" | "stopped";
+    messaging_ready: boolean;
+    reason: string;
+    runtime_failure?: string | null;
+    retry_in: number;
+  } | null;
   native_session_id?: string;
   id: string;
   contact_id: string;
@@ -349,12 +359,23 @@ export class ReconnectCoordinator {
     this.wakeSupervisor?.();
     this.emit();
     await Promise.all(selected.map(async (entry) => {
+      if (this.profiles.get(entry.profileId)?.policy_owner === "service") return;
       try { await this.deps.closeSession?.(entry.profileId); } catch { /* Already closed. */ }
     }));
     try { await this.deps.stop(contactId); } catch { /* Local cancellation is already effective. */ }
   }
 
+  /** Release a UI subscription without changing service-owned durable intent. */
+  detach(): void {
+    this.running = false;
+    this.cancelAttempts();
+    this.wakeSupervisor?.();
+  }
+
   async retryNow(contactId?: string): Promise<void> {
+    const managed = [...this.profiles.values()].filter((profile) =>
+      profile.policy_owner === "service" && (!contactId || profile.contact_id === contactId));
+    await Promise.all(managed.map((profile) => this.deps.start(profile.contact_id)));
     // Keep the one supervisor and leave other contacts and healthy sessions alone.
     this.cancelAttempts(contactId);
     if (contactId) this.stoppedContacts.delete(contactId);
@@ -414,6 +435,7 @@ export class ReconnectCoordinator {
       if (!this.running) break;
       if (!this.online) continue;
       const eligible = [...this.profiles.values()].filter((profile) => {
+        if (profile.policy_owner === "service") return false;
         if (this.stoppedContacts.has(profile.contact_id) || this.stoppedProfiles.has(profile.id)) return false;
         if (this.hasSession(profile.id, profile.contact_id)) {
           this.retries.delete(profile.id);
@@ -484,7 +506,7 @@ export class ReconnectCoordinator {
     return this.running && this.online && !attempt.controller.signal.aborted &&
       this.attempts.get(attempt.profile.id) === attempt &&
       !this.stoppedContacts.has(attempt.profile.contact_id) && !this.stoppedProfiles.has(attempt.profile.id) &&
-      Boolean(profile && this.isReady(profile));
+      Boolean(profile && profile.policy_owner !== "service" && this.isReady(profile));
   }
 
   private reconcile(profiles: ReconnectProfile[]): void {
@@ -499,6 +521,14 @@ export class ReconnectCoordinator {
       };
       next[profile.id].contactId = profile.contact_id;
       next[profile.id].displayName = profile.display_name ?? next[profile.id].displayName;
+      if (profile.policy_owner === "service") {
+        const connection = profile.connection;
+        next[profile.id].state = connection?.desired === "stopped" ? "stopped"
+          : connection?.messaging_ready ? "connected"
+          : connection?.retry_in ? "retry_wait" : "connecting";
+        next[profile.id].detail = connection?.runtime_failure ?? connection?.reason ?? "Waiting for service connection state";
+        next[profile.id].nextAttemptAt = connection?.retry_in ? this.now() + connection.retry_in : null;
+      }
       if (this.stoppedContacts.has(profile.contact_id) || this.stoppedProfiles.has(profile.id)) {
         next[profile.id].state = "stopped";
         next[profile.id].detail = "Stopped by you";

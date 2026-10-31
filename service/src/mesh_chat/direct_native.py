@@ -130,12 +130,15 @@ class NativeChannel:
 
 class NativeFrameReader:
     """Read inherited frames while a dispatch worker waits for native results."""
-    def __init__(self, stream, channel):
+    def __init__(self, stream, channel, *, desktop_transport=None):
+        from .inherited_input import interruptible_input
+        self._stream = interruptible_input(stream)
         self._requests = queue.Queue(maxsize=8)
         self._error = None
         self._stopped = threading.Event()
         self._channel = channel
-        self._thread = threading.Thread(target=self._run, args=(stream,), daemon=True,
+        self._desktop_transport = desktop_transport
+        self._thread = threading.Thread(target=self._run, args=(self._stream,), daemon=True,
                                         name="mesh-chat-private-reader")
         self._thread.start()
 
@@ -146,6 +149,10 @@ class NativeFrameReader:
                 value = read_frame(stream)
                 if value.get("type") == "direct_native_reply":
                     self._channel.receive(value)
+                elif value.get("type") in {"desktop_transport_reply", "desktop_transport_event", "desktop_transport_fault"}:
+                    if self._desktop_transport is None:
+                        raise ValidationError("Desktop transport host is not registered")
+                    self._desktop_transport.receive(value)
                 else:
                     # Never block the sole reader behind renderer work: overflow
                     # closes the channel and wakes a dispatch waiting on native.
@@ -153,9 +160,13 @@ class NativeFrameReader:
         except Exception as exc:
             self._error = exc
             self._channel.close()
+            if self._desktop_transport is not None:
+                self._desktop_transport.shutdown()
 
     def read(self):
         while True:
+            if self._stopped.is_set():
+                raise EOFError("Private reader stopped")
             if self._error is not None and (not isinstance(self._error, EOFError) or self._requests.empty()):
                 raise self._error
             try:
@@ -165,4 +176,13 @@ class NativeFrameReader:
 
     def close(self):
         self._stopped.set()
+        cancel = getattr(self._stream, "cancel", None)
+        if cancel is not None:
+            cancel()
         self._channel.close()
+        if self._desktop_transport is not None:
+            self._desktop_transport.shutdown()
+        if self._thread is not threading.current_thread():
+            self._thread.join(timeout=1)
+            if self._thread.is_alive():
+                raise RuntimeError("Private reader did not stop")

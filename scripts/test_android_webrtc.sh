@@ -6,6 +6,8 @@ report_dir="$task_root/dist/reports/android-webrtc"
 apk_dir="$task_root/plugins/tauri-plugin-mesh-runtime/android/webrtc-smoke/build/outputs/apk"
 app_id="com.meshchat.runtime.smoke"
 mkdir -p "$report_dir"
+run_id="$(python scripts/android_qualification.py prepare --suite webrtc)"
+python scripts/android_qualification.py list --suite webrtc > "$report_dir/cases.tsv"
 # Persist diagnostics continuously, including when the outer CI job is stopped.
 adb logcat -c
 adb logcat -v threadtime > "$report_dir/logcat.txt" &
@@ -17,18 +19,23 @@ timeout 15s adb shell pm grant "$app_id" android.permission.POST_NOTIFICATIONS
 result=0
 # RNS, CPython and WebView are process-wide runtimes. Each direction starts
 # with a fresh instrumentation process, just as a fresh app launch does.
-for method in chromiumOfferCanBeAcceptedThroughTheRealPythonBridge chromiumOfferSurvivesEarlyIceFailureDuringManualAnswerExchange nativeOfferCanConnectToChromiumWithReconnectControl repeatedChromiumMediaCallsPreserveNativeMessaging repeatedChromiumMediaCallsPreserveNativeOfferedMessaging backgroundRuntimeCanInitializeNativeWebRtc backgroundDefaultResumesAfterUnlockAndPreservesAnExplicitOffChoice queuedAvailabilityStartHonorsStopWithoutCrashingOrOpeningTheRuntime optedInServiceRestoresAndKeepsNativeTrafficWhileActivityIsStopped; do
+run_test() {
+  local method="$1" test_class="${2:-NativeWebRtcInteropTest}"
   timeout 15s adb shell am force-stop "$app_id"
+  printf 'MESH_QUALIFICATION_RUN=%s\n' "$run_id" > "$report_dir/$method.txt"
   # Run the already-built APKs directly so a Gradle/UTP hang cannot conceal
   # instrumentation output or prevent the next scenario from running.
   if ! timeout --signal=INT --kill-after=10s 240s adb shell am instrument -w -r \
-      -e class "com.meshchat.runtime.NativeWebRtcInteropTest#$method" \
-      "$app_id.test/androidx.test.runner.AndroidJUnitRunner" | tee "$report_dir/$method.txt"; then
+      -e class "com.meshchat.runtime.$test_class#$method" \
+      "$app_id.test/androidx.test.runner.AndroidJUnitRunner" | tee -a "$report_dir/$method.txt"; then
     result=1
   fi
   # `am instrument` can exit zero for failed tests or an aborted process.
   # Require one actual passing test, not merely a successful ADB invocation.
   if ! grep -Fq 'OK (1 test)' "$report_dir/$method.txt"; then result=1; fi
-done
+}
+while IFS=$'\t' read -r method test_class phase; do
+  run_test "$method" "$test_class" </dev/null
+done < "$report_dir/cases.tsv"
 timeout 15s adb shell am force-stop "$app_id" || true
 exit "$result"

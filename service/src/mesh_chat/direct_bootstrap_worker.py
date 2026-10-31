@@ -10,6 +10,7 @@ import json
 import sys
 
 from .direct_bootstrap import BootstrapEngine
+from .contact_bootstrap import ContactBootstrapEngine
 from .errors import ValidationError
 from .ipc import read_frame, encode_frame
 
@@ -28,6 +29,7 @@ class BootstrapWorker:
         operation, payload = request["operation"], request["payload"]
         schemas = {
             "initialize": {"private_identity", "peer_identity", "workspace_id", "expires_at"},
+            "initialize_contact": {"private_identity", "peer_identity", "expires_at"},
             "activate": set(), "exchange": {"packets"},
             "send": {"kind", "logical_id", "document", "expires_at"}, "close": set(),
         }
@@ -38,12 +40,14 @@ class BootstrapWorker:
             return None
         if self.retired:
             raise ValidationError("Bootstrap worker is retired")
-        if operation == "initialize":
+        if operation in {"initialize", "initialize_contact"}:
             if self.engine is not None:
                 raise ValidationError("Bootstrap worker already initialized")
-            self.engine = BootstrapEngine(bytes.fromhex(payload["private_identity"]),
-                bytes.fromhex(payload["peer_identity"]), payload["workspace_id"], payload["expires_at"],
-                directory=self.directory)
+            identities = (bytes.fromhex(payload["private_identity"]), bytes.fromhex(payload["peer_identity"]))
+            if operation == "initialize":
+                self.engine = BootstrapEngine(*identities, payload["workspace_id"], payload["expires_at"], directory=self.directory)
+            else:
+                self.engine = ContactBootstrapEngine(*identities, payload["expires_at"], directory=self.directory)
             return None
         if self.engine is None:
             raise ValidationError("Bootstrap worker is not initialized")

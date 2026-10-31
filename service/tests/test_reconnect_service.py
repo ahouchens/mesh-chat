@@ -223,6 +223,56 @@ def _consent(alex: MeshChatService, blair: MeshChatService) -> None:
     )
 
 
+@pytest.mark.parametrize("operation", ["consent", "block", "remote_capability", "rotate"])
+@pytest.mark.parametrize("fail_write", [False, True])
+def test_shared_authority_writes_fence_before_persistence(tmp_path, monkeypatch, operation, fail_write):
+    from mesh_chat.connection.model import Execution
+    from mesh_chat.connection.runtime import ConnectionRuntime
+    alex, contact, blair, remote_contact = _pair(tmp_path)
+    _consent(alex, blair)
+    alex.reconnect_start(contact)
+    blair.reconnect_consent_set(remote_contact, False, False)
+    remote = blair.reconnect_capabilities_get(remote_contact)["local_capabilities"]
+    owner = alex._connection_runtime = ConnectionRuntime("authority-test", lambda *_: object(),
+        profiles=alex.reconnect_profiles, execution=lambda: Execution.AVAILABLE, activate=lambda _: None)
+    owner.synchronize()
+    key = owner.owner.snapshots()[0].key
+    original_put = alex.store.put
+    writes = []
+    def protected_put(kind, record_id, value):
+        if kind in {"contact", "reconnect_profile"}:
+            assert owner.profile(key) == {"state": "stopped"}
+            writes.append(kind)
+            if fail_write:
+                raise OSError("authority persistence failed")
+        return original_put(kind, record_id, value)
+    monkeypatch.setattr(alex.store, "put", protected_put)
+    monkeypatch.setattr(alex, "close_native_reconnect_session",
+                        lambda *_: pytest.fail("Domain code cannot close shared-owner resources"))
+    mutations = {
+        "consent": lambda: alex.reconnect_consent_set(contact, False, False),
+        "block": lambda: alex.block_contact(contact),
+        "remote_capability": lambda: alex.reconnect_capabilities_store(remote),
+        "rotate": lambda: alex.reconnect_capabilities_create(contact),
+    }
+    try:
+        if fail_write:
+            with pytest.raises(OSError, match="authority persistence failed"):
+                mutations[operation]()
+        else:
+            mutations[operation]()
+        assert writes
+        monkeypatch.setattr(alex.store, "put", original_put)
+        owner.synchronize()
+        if fail_write:
+            assert owner.profile(key) == {"state": "stopped"}
+        elif operation != "rotate":
+            assert not owner.owner.snapshot(key).authority.authorized
+    finally:
+        owner.stop()
+        owner.wait()
+
+
 def test_capabilities_default_on_and_persist_without_exposing_token(
     tmp_path: Path, mailbox: FakeMailbox
 ) -> None:
@@ -550,6 +600,7 @@ def test_contact_stop_and_consent_changes_close_the_service_owned_native_peer(
         profile_id = alex.reconnect_profiles()["profiles"][0]["id"]
         alex._native_webrtc_profile_sessions[profile_id] = "native-session"
         alex._native_webrtc_live.add("native-session")
+        physical = alex._native_resources.reserve("native-session")
         closed = []
         def close(session):
             profile = alex._reconnect_profile(profile_id)
@@ -563,7 +614,7 @@ def test_contact_stop_and_consent_changes_close_the_service_owned_native_peer(
             alex.reconnect_consent_set(blair_id, False, True)
         else:
             alex.reconnect_consent_set(blair_id, True, False)
-        assert closed == ["native-session"]
+        assert closed == [physical]
         assert alex.native_reconnect_session(profile_id) is None
     finally:
         blair.close()

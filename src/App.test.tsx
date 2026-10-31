@@ -3652,6 +3652,7 @@ describe("connected conversation", () => {
     });
     const start = vi.spyOn(ReconnectCoordinator.prototype, "start");
     const stop = vi.spyOn(ReconnectCoordinator.prototype, "stop");
+    const detach = vi.spyOn(ReconnectCoordinator.prototype, "detach");
     const online = vi.spyOn(ReconnectCoordinator.prototype, "setOnline");
     const wake = vi.spyOn(ReconnectCoordinator.prototype, "wake");
     const visibility = vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
@@ -3660,7 +3661,7 @@ describe("connected conversation", () => {
       await screen.findByLabelText("Conversation with Taylor");
       const manual = pairingSession(approved.destination_hash);
       act(() => setWebRTCSession(manual));
-      expect(start).toHaveBeenCalledTimes(1);
+      await waitFor(() => expect(start).toHaveBeenCalledTimes(1));
       expect(online).toHaveBeenCalledWith(true);
       act(() => window.dispatchEvent(new Event("offline")));
       expect(online).toHaveBeenLastCalledWith(false);
@@ -3678,7 +3679,8 @@ describe("connected conversation", () => {
       act(() => window.dispatchEvent(new Event("pageshow")));
       expect(wake).toHaveBeenCalledTimes(3);
       view.unmount();
-      expect(stop).toHaveBeenCalledTimes(1);
+      expect(detach).toHaveBeenCalledOnce();
+      expect(stop).not.toHaveBeenCalled();
       expect(getWebRTCSessionCount()).toBe(0);
       expect(manual.pc.close).toHaveBeenCalledTimes(1);
       wake.mockClear();
@@ -3690,6 +3692,7 @@ describe("connected conversation", () => {
     } finally {
       start.mockRestore();
       stop.mockRestore();
+      detach.mockRestore();
       online.mockRestore();
       wake.mockRestore();
       visibility.mockRestore();

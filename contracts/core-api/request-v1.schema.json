@@ -1,0 +1,1094 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:mesh-chat:core-api:request:1",
+  "title": "Experimental Core API request v1",
+  "description": "Design contract. Schema validity never grants caller authority. Not a shipping command allowlist.",
+  "$defs": {
+    "handle": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]{16,128}$"
+    },
+    "cursor": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]{16,1024}$"
+    }
+  },
+  "oneOf": [
+    {
+      "type": "object",
+      "properties": {
+        "api_version": {
+          "const": 1
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        },
+        "operation": {
+          "const": "runtime.capabilities"
+        },
+        "params": {
+          "type": "object",
+          "properties": {},
+          "required": [],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "api_version",
+        "request_id",
+        "operation",
+        "params"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "api_version": {
+          "const": 1
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        },
+        "operation": {
+          "const": "workspace.invitation_preview"
+        },
+        "params": {
+          "type": "object",
+          "properties": {
+            "profile": {
+              "$ref": "#/$defs/handle"
+            },
+            "document": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 1048576
+            }
+          },
+          "required": [
+            "profile",
+            "document"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "api_version",
+        "request_id",
+        "operation",
+        "params"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "api_version": {
+          "const": 1
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        },
+        "operation": {
+          "const": "workspace.join"
+        },
+        "params": {
+          "type": "object",
+          "properties": {
+            "profile": {
+              "$ref": "#/$defs/handle"
+            },
+            "document": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 1048576
+            }
+          },
+          "required": [
+            "profile",
+            "document"
+          ],
+          "additionalProperties": false
+        },
+        "idempotency_key": {
+          "type": "string",
+          "minLength": 16,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        }
+      },
+      "required": [
+        "api_version",
+        "request_id",
+        "operation",
+        "params",
+        "idempotency_key"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "api_version": {
+          "const": 1
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        },
+        "operation": {
+          "const": "runtime.stop"
+        },
+        "params": {
+          "type": "object",
+          "properties": {},
+          "required": [],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "api_version",
+        "request_id",
+        "operation",
+        "params"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "api_version": {
+          "const": 1
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        },
+        "operation": {
+          "const": "profile.create"
+        },
+        "params": {
+          "type": "object",
+          "properties": {
+            "display_name": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 80
+            }
+          },
+          "required": [
+            "display_name"
+          ],
+          "additionalProperties": false
+        },
+        "idempotency_key": {
+          "type": "string",
+          "minLength": 16,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        }
+      },
+      "required": [
+        "api_version",
+        "request_id",
+        "operation",
+        "params",
+        "idempotency_key"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "api_version": {
+          "const": 1
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        },
+        "operation": {
+          "const": "profile.select"
+        },
+        "params": {
+          "type": "object",
+          "properties": {
+            "profile": {
+              "$ref": "#/$defs/handle"
+            }
+          },
+          "required": [
+            "profile"
+          ],
+          "additionalProperties": false
+        },
+        "idempotency_key": {
+          "type": "string",
+          "minLength": 16,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        }
+      },
+      "required": [
+        "api_version",
+        "request_id",
+        "operation",
+        "params",
+        "idempotency_key"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "api_version": {
+          "const": 1
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        },
+        "operation": {
+          "const": "profile.unlock"
+        },
+        "params": {
+          "type": "object",
+          "properties": {
+            "profile": {
+              "$ref": "#/$defs/handle"
+            },
+            "credential_handle": {
+              "$ref": "#/$defs/handle"
+            }
+          },
+          "required": [
+            "profile",
+            "credential_handle"
+          ],
+          "additionalProperties": false
+        },
+        "idempotency_key": {
+          "type": "string",
+          "minLength": 16,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        }
+      },
+      "required": [
+        "api_version",
+        "request_id",
+        "operation",
+        "params",
+        "idempotency_key"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "api_version": {
+          "const": 1
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        },
+        "operation": {
+          "const": "profile.lock"
+        },
+        "params": {
+          "type": "object",
+          "properties": {
+            "profile": {
+              "$ref": "#/$defs/handle"
+            }
+          },
+          "required": [
+            "profile"
+          ],
+          "additionalProperties": false
+        },
+        "idempotency_key": {
+          "type": "string",
+          "minLength": 16,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        }
+      },
+      "required": [
+        "api_version",
+        "request_id",
+        "operation",
+        "params",
+        "idempotency_key"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "api_version": {
+          "const": 1
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        },
+        "operation": {
+          "const": "profile.query"
+        },
+        "params": {
+          "type": "object",
+          "properties": {
+            "profile": {
+              "$ref": "#/$defs/handle"
+            }
+          },
+          "required": [
+            "profile"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "api_version",
+        "request_id",
+        "operation",
+        "params"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "api_version": {
+          "const": 1
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        },
+        "operation": {
+          "const": "peer.pairing_create"
+        },
+        "params": {
+          "type": "object",
+          "properties": {
+            "profile": {
+              "$ref": "#/$defs/handle"
+            }
+          },
+          "required": [
+            "profile"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "api_version",
+        "request_id",
+        "operation",
+        "params"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "api_version": {
+          "const": 1
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        },
+        "operation": {
+          "const": "peer.pairing_accept"
+        },
+        "params": {
+          "type": "object",
+          "properties": {
+            "profile": {
+              "$ref": "#/$defs/handle"
+            },
+            "document": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 1048576
+            }
+          },
+          "required": [
+            "profile",
+            "document"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "api_version",
+        "request_id",
+        "operation",
+        "params"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "api_version": {
+          "const": 1
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        },
+        "operation": {
+          "const": "peer.query"
+        },
+        "params": {
+          "type": "object",
+          "properties": {
+            "profile": {
+              "$ref": "#/$defs/handle"
+            },
+            "peer": {
+              "$ref": "#/$defs/handle"
+            }
+          },
+          "required": [
+            "profile",
+            "peer"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "api_version",
+        "request_id",
+        "operation",
+        "params"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "api_version": {
+          "const": 1
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        },
+        "operation": {
+          "const": "peer.approve"
+        },
+        "params": {
+          "type": "object",
+          "properties": {
+            "profile": {
+              "$ref": "#/$defs/handle"
+            },
+            "peer": {
+              "$ref": "#/$defs/handle"
+            }
+          },
+          "required": [
+            "profile",
+            "peer"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "api_version",
+        "request_id",
+        "operation",
+        "params"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "api_version": {
+          "const": 1
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        },
+        "operation": {
+          "const": "peer.revoke"
+        },
+        "params": {
+          "type": "object",
+          "properties": {
+            "profile": {
+              "$ref": "#/$defs/handle"
+            },
+            "peer": {
+              "$ref": "#/$defs/handle"
+            }
+          },
+          "required": [
+            "profile",
+            "peer"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "api_version",
+        "request_id",
+        "operation",
+        "params"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "api_version": {
+          "const": 1
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        },
+        "operation": {
+          "const": "connection.start"
+        },
+        "params": {
+          "type": "object",
+          "properties": {
+            "profile": {
+              "$ref": "#/$defs/handle"
+            },
+            "peer": {
+              "$ref": "#/$defs/handle"
+            }
+          },
+          "required": [
+            "profile",
+            "peer"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "api_version",
+        "request_id",
+        "operation",
+        "params"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "api_version": {
+          "const": 1
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        },
+        "operation": {
+          "const": "connection.stop"
+        },
+        "params": {
+          "type": "object",
+          "properties": {
+            "profile": {
+              "$ref": "#/$defs/handle"
+            },
+            "peer": {
+              "$ref": "#/$defs/handle"
+            }
+          },
+          "required": [
+            "profile",
+            "peer"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "api_version",
+        "request_id",
+        "operation",
+        "params"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "api_version": {
+          "const": 1
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        },
+        "operation": {
+          "const": "connection.retry"
+        },
+        "params": {
+          "type": "object",
+          "properties": {
+            "profile": {
+              "$ref": "#/$defs/handle"
+            },
+            "connection": {
+              "$ref": "#/$defs/handle"
+            }
+          },
+          "required": [
+            "profile",
+            "connection"
+          ],
+          "additionalProperties": false
+        },
+        "idempotency_key": {
+          "type": "string",
+          "minLength": 16,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        }
+      },
+      "required": [
+        "api_version",
+        "request_id",
+        "operation",
+        "params",
+        "idempotency_key"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "api_version": {
+          "const": 1
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        },
+        "operation": {
+          "const": "connection.snapshot"
+        },
+        "params": {
+          "type": "object",
+          "properties": {
+            "profile": {
+              "$ref": "#/$defs/handle"
+            },
+            "connection": {
+              "$ref": "#/$defs/handle"
+            }
+          },
+          "required": [
+            "profile",
+            "connection"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "api_version",
+        "request_id",
+        "operation",
+        "params"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "api_version": {
+          "const": 1
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        },
+        "operation": {
+          "const": "message.enqueue"
+        },
+        "params": {
+          "type": "object",
+          "properties": {
+            "profile": {
+              "$ref": "#/$defs/handle"
+            },
+            "recipient": {
+              "$ref": "#/$defs/handle"
+            },
+            "kind": {
+              "const": "text"
+            },
+            "text": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 16384
+            }
+          },
+          "required": [
+            "profile",
+            "recipient",
+            "kind",
+            "text"
+          ],
+          "additionalProperties": false
+        },
+        "idempotency_key": {
+          "type": "string",
+          "minLength": 16,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        }
+      },
+      "required": [
+        "api_version",
+        "request_id",
+        "operation",
+        "params",
+        "idempotency_key"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "api_version": {
+          "const": 1
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        },
+        "operation": {
+          "const": "message.query"
+        },
+        "params": {
+          "type": "object",
+          "properties": {
+            "profile": {
+              "$ref": "#/$defs/handle"
+            },
+            "message": {
+              "$ref": "#/$defs/handle"
+            }
+          },
+          "required": [
+            "profile",
+            "message"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "api_version",
+        "request_id",
+        "operation",
+        "params"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "api_version": {
+          "const": 1
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        },
+        "operation": {
+          "const": "message.list"
+        },
+        "params": {
+          "type": "object",
+          "properties": {
+            "profile": {
+              "$ref": "#/$defs/handle"
+            },
+            "cursor": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/cursor"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "limit": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 128
+            }
+          },
+          "required": [
+            "profile",
+            "cursor",
+            "limit"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "api_version",
+        "request_id",
+        "operation",
+        "params"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "api_version": {
+          "const": 1
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        },
+        "operation": {
+          "const": "message.received"
+        },
+        "params": {
+          "type": "object",
+          "properties": {
+            "profile": {
+              "$ref": "#/$defs/handle"
+            },
+            "cursor": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/cursor"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "limit": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 128
+            }
+          },
+          "required": [
+            "profile",
+            "cursor",
+            "limit"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "api_version",
+        "request_id",
+        "operation",
+        "params"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "api_version": {
+          "const": 1
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        },
+        "operation": {
+          "const": "events.poll"
+        },
+        "params": {
+          "type": "object",
+          "properties": {
+            "profile": {
+              "$ref": "#/$defs/handle"
+            },
+            "cursor": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/cursor"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "limit": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 128
+            }
+          },
+          "required": [
+            "profile",
+            "cursor",
+            "limit"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "api_version",
+        "request_id",
+        "operation",
+        "params"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "api_version": {
+          "const": 1
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        },
+        "operation": {
+          "const": "events.ack"
+        },
+        "params": {
+          "type": "object",
+          "properties": {
+            "profile": {
+              "$ref": "#/$defs/handle"
+            },
+            "cursor": {
+              "$ref": "#/$defs/cursor"
+            }
+          },
+          "required": [
+            "profile",
+            "cursor"
+          ],
+          "additionalProperties": false
+        },
+        "idempotency_key": {
+          "type": "string",
+          "minLength": 16,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        }
+      },
+      "required": [
+        "api_version",
+        "request_id",
+        "operation",
+        "params",
+        "idempotency_key"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "api_version": {
+          "const": 1
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        },
+        "operation": {
+          "const": "diagnostics.query"
+        },
+        "params": {
+          "type": "object",
+          "properties": {
+            "profile": {
+              "$ref": "#/$defs/handle"
+            },
+            "limit": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 256
+            }
+          },
+          "required": [
+            "profile",
+            "limit"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "api_version",
+        "request_id",
+        "operation",
+        "params"
+      ],
+      "additionalProperties": false
+    }
+  ]
+}
+

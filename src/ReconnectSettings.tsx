@@ -54,6 +54,8 @@ function setupHints(profile: ReconnectProfile | null): string[] {
         return "Automatic reconnect is turned off for this contact.";
       case "peer_consent_missing":
         return "Automatic reconnect is turned off on the contact’s device.";
+      case "contact_not_approved":
+        return "Reconnect requires an approved, unblocked contact.";
       case "relay_required":
         return "Direct IP disclosure is off. Enable the community relay or allow direct IP disclosure.";
       default:

@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:mesh-chat:core-api:stop-result:1",
+  "title": "Experimental runtime stop result v1",
+  "description": "Shutdown requested; the owning host closes the stream after this reply.",
+  "type": "object", "additionalProperties": false,
+  "required": ["api_version", "request_id", "ok", "result"],
+  "properties": {
+    "api_version": {"const": 1},
+    "request_id": {"type": "string", "pattern": "^[A-Za-z0-9._:-]{1,80}$"},
+    "ok": {"const": true},
+    "result": {"$ref": "#/$defs/stop"}
+  },
+  "$defs": {
+    "stop": {
+      "type": "object", "additionalProperties": false,
+      "required": ["stopping", "already_stopping"],
+      "properties": {
+        "stopping": {"const": true},
+        "already_stopping": {"type": "boolean"}
+      }
+    }
+  }
+}

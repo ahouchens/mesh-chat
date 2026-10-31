@@ -94,6 +94,8 @@ def test_acceptance_commit_failure_does_not_return_or_persist(binding, tmp_path)
                 if statement == "COMMIT":
                     raise OSError("commit failure")
                 return database.execute(statement, *args)
+            def __getattr__(self, name):
+                return getattr(database, name)
         store._db = FailCommit()
         try:
             with pytest.raises(OSError, match="commit failure"):

@@ -1,0 +1,12 @@
+{
+  "v": 1,
+  "status": "experimental_unfrozen",
+  "public_api": {"major": 1, "minor": 0, "accepts_additive_minors": true},
+  "internal_ipc": {"version": 1, "note": "distinct namespace; not the public API version"},
+  "peer_wire": {"version": 1, "changed": false, "note": "signed documents unchanged by this refactor"},
+  "python_client": {"status": "unversioned_component"},
+  "typescript_client": {"version": "0.1.0-experimental", "packaged": false},
+  "kotlin_client": {"exists": false},
+  "incompatible_combination": "reject_before_side_effects",
+  "upgrade_window": "none until independent consumers pass M5"
+}

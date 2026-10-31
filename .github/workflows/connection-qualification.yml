@@ -1,0 +1,116 @@
+name: Connection qualification
+
+on:
+  pull_request:
+  push:
+    branches: [main, codex/direct-connectivity]
+  merge_group:
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: connection-qualification-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  plan:
+    name: Select dependent qualification suites
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      policy: ${{ steps.select.outputs.policy }}
+      verification: ${{ steps.select.outputs.verification }}
+      android: ${{ steps.select.outputs.android }}
+      direct: ${{ steps.select.outputs.direct }}
+      layout: ${{ steps.select.outputs.layout }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - id: select
+        run: python scripts/connection_ci.py --output dist/reports/connection-selection.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: connection-selection-${{ github.sha }}
+          path: dist/reports/connection-selection.json
+          if-no-files-found: error
+
+  policy:
+    needs: plan
+    if: needs.plan.outputs.policy == 'true'
+    uses: ./.github/workflows/connection-runtime.yml
+
+  verification:
+    needs: plan
+    if: needs.plan.outputs.verification == 'true'
+    uses: ./.github/workflows/ci.yml
+
+  android:
+    needs: plan
+    if: needs.plan.outputs.android == 'true'
+    uses: ./.github/workflows/android-webrtc.yml
+
+  direct:
+    needs: plan
+    if: needs.plan.outputs.direct == 'true'
+    uses: ./.github/workflows/direct-fabric-proof.yml
+
+  layout:
+    needs: plan
+    if: needs.plan.outputs.layout == 'true'
+    uses: ./.github/workflows/connection-layout.yml
+
+  gate:
+    name: Required connection qualification gate
+    if: always()
+    needs: [plan, policy, verification, android, direct, layout]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/download-artifact@v4
+        with:
+          name: connection-selection-${{ github.sha }}
+          path: dist/reports
+      - uses: actions/download-artifact@v4
+        with:
+          name: connection-policy-${{ github.sha }}
+          path: dist/qualification/policy
+      - uses: actions/download-artifact@v4
+        with:
+          name: desktop-transport-${{ github.sha }}
+          path: dist/qualification/desktop
+      - uses: actions/download-artifact@v4
+        if: needs.plan.outputs.android == 'true'
+        with:
+          name: android-qualification-${{ github.sha }}
+          path: dist/qualification/android
+      - uses: actions/download-artifact@v4
+        if: needs.plan.outputs.direct == 'true'
+        with:
+          name: direct-qualification-Linux-${{ github.sha }}
+          path: dist/qualification/direct-Linux
+      - uses: actions/download-artifact@v4
+        if: needs.plan.outputs.direct == 'true'
+        with:
+          name: direct-qualification-Windows-${{ github.sha }}
+          path: dist/qualification/direct-Windows
+      - name: Reject missing, failed, canceled or unexpectedly skipped suites
+        env:
+          QUALIFICATION_NEEDS: ${{ toJSON(needs) }}
+        run: >-
+          python scripts/connection_ci.py
+          --check-plan dist/reports/connection-selection.json
+          --evidence-dir dist/qualification
+          --output dist/reports/connection-qualification.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: connection-qualification-${{ github.sha }}
+          path: dist/reports/connection-qualification.json
+          if-no-files-found: error

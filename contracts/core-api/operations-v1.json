@@ -1,0 +1,209 @@
+{
+  "v": 1,
+  "status": "experimental_design",
+  "api_major": 1,
+  "api_minor": 0,
+  "implemented_operations": [],
+  "experimental_component_operations": ["runtime.capabilities", "profile.query", "connection.snapshot", "peer.query", "message.enqueue", "message.query", "message.list", "events.poll", "events.ack", "message.received", "connection.start", "connection.stop", "peer.approve", "peer.revoke", "peer.pairing_accept", "peer.pairing_create", "runtime.stop", "workspace.invitation_preview", "workspace.join",
+    "diagnostics.query"],
+  "operations": [
+    {
+      "operation": "runtime.capabilities",
+      "permission": "observe",
+      "scope": "runtime",
+      "mutation": false,
+      "idempotency": "query"
+    },
+    {
+      "operation": "runtime.stop",
+      "permission": "runtime_owner",
+      "scope": "runtime",
+      "mutation": true,
+      "idempotency": "convergent_desired_state"
+    },
+    {
+      "operation": "profile.create",
+      "permission": "profile_owner",
+      "scope": "runtime",
+      "mutation": true,
+      "idempotency": "caller_profile_operation_key"
+    },
+    {
+      "operation": "profile.select",
+      "permission": "profile_owner",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "caller_profile_operation_key"
+    },
+    {
+      "operation": "profile.unlock",
+      "permission": "profile_owner",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "caller_profile_operation_key"
+    },
+    {
+      "operation": "profile.lock",
+      "permission": "profile_owner",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "caller_profile_operation_key"
+    },
+    {
+      "operation": "profile.query",
+      "permission": "observe",
+      "scope": "profile",
+      "mutation": false,
+      "idempotency": "query"
+    },
+    {
+      "operation": "peer.pairing_create",
+      "permission": "pair",
+      "scope": "profile",
+      "mutation": false,
+      "idempotency": "query"
+    },
+    {
+      "operation": "peer.pairing_accept",
+      "permission": "pair",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "convergent_desired_state"
+    },
+    {
+      "operation": "workspace.invitation_preview",
+      "permission": "read",
+      "scope": "profile",
+      "mutation": false,
+      "idempotency": "query"
+    },
+    {
+      "operation": "workspace.join",
+      "permission": "pair",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "caller_profile_operation_key"
+    },
+    {
+      "operation": "peer.query",
+      "permission": "observe",
+      "scope": "profile",
+      "mutation": false,
+      "idempotency": "query"
+    },
+    {
+      "operation": "peer.approve",
+      "permission": "approve",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "convergent_desired_state"
+    },
+    {
+      "operation": "peer.revoke",
+      "permission": "approve",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "convergent_desired_state"
+    },
+    {
+      "operation": "connection.start",
+      "permission": "connect",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "convergent_desired_state"
+    },
+    {
+      "operation": "connection.stop",
+      "permission": "connect",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "convergent_desired_state"
+    },
+    {
+      "operation": "connection.retry",
+      "permission": "connect",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "caller_profile_operation_key"
+    },
+    {
+      "operation": "connection.snapshot",
+      "permission": "observe",
+      "scope": "profile",
+      "mutation": false,
+      "idempotency": "query"
+    },
+    {
+      "operation": "message.enqueue",
+      "permission": "send",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "caller_profile_operation_key"
+    },
+    {
+      "operation": "message.query",
+      "permission": "read",
+      "scope": "profile",
+      "mutation": false,
+      "idempotency": "query"
+    },
+    {
+      "operation": "message.list",
+      "permission": "read",
+      "scope": "profile",
+      "mutation": false,
+      "idempotency": "query"
+    },
+    {
+      "operation": "message.received",
+      "permission": "read",
+      "scope": "profile",
+      "mutation": false,
+      "idempotency": "query"
+    },
+    {
+      "operation": "events.poll",
+      "permission": "read",
+      "scope": "profile",
+      "mutation": false,
+      "idempotency": "query"
+    },
+    {
+      "operation": "events.ack",
+      "permission": "read",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "caller_profile_operation_key"
+    },
+    {
+      "operation": "diagnostics.query",
+      "permission": "diagnose",
+      "scope": "profile",
+      "mutation": false,
+      "idempotency": "query"
+    }
+  ],
+  "limits": {
+    "frame_bytes": 4194304,
+    "request_json_depth": 16,
+    "request_json_structural_tokens": 1024,
+    "text_utf8_bytes": 16384,
+    "peers_per_profile": 256,
+    "idempotency_seconds": 604800,
+    "enqueue_keys_per_caller_profile": 4096,
+    "enqueue_keys_per_vault": 65536,
+    "event_batch_count": 128,
+    "event_batch_bytes": 1048576,
+    "event_retention_count": 2048,
+    "event_retention_seconds": 604800,
+    "recovery_scan_count": 128,
+    "cursor_bytes": 1024,
+    "acknowledgment_seconds": 604800,
+    "acknowledgment_keys_per_caller_profile": 4096,
+    "acknowledgment_keys_per_vault": 65536,
+    "received_scan_count": 128,
+    "received_batch_bytes": 1048576,
+    "diagnostic_count": 256,
+    "diagnostic_bytes": 262144
+  }
+}

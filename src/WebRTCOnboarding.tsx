@@ -4,7 +4,7 @@ import { Check, Copy, Phone, RefreshCw, X } from "lucide-react";
 
 import { desktopServiceHealth, serviceCommand, onServiceEvent, type ServiceEvent } from "./api";
 import { attachWebRTCBridge, isWindowsWebRTCPlatform, shouldAutoCloseWebRTCOnboarding, webRTCWindowsChecklist, type WebRTCBridge } from "./webrtc-onboarding";
-import { isNativeWebRTCPlatform, nativeWebRTCAccept, nativeWebRTCApplyAnswer, nativeWebRTCClose, nativeWebRTCControl, nativeWebRTCOffer, nativeWebRTCStats, type NativeChannelSpec } from "./native-webrtc";
+import { usesServiceWebRTCTransport, nativeWebRTCAccept, nativeWebRTCApplyAnswer, nativeWebRTCClose, nativeWebRTCControl, nativeWebRTCOffer, nativeWebRTCStats, type NativeChannelSpec } from "./native-webrtc";
 import { rememberWebRTCDiagnostics } from "./webrtc-diagnostics";
 import { startPeerTrace, type PeerTrace } from "./webrtc-trace";
 import { getWebRTCSessionByKey, removeWebRTCSession, setWebRTCSession, updateWebRTCSessionApprovalPending, updateWebRTCSessionContact, type WebRTCSessionPath } from "./webrtc-session";
@@ -210,7 +210,7 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
   phaseRef.current = phase;
   useEffect(() => () => { answerFetchRef.current += 1; }, []);
   const windowsPlatform = isWindowsWebRTCPlatform(typeof navigator === "undefined" ? "" : navigator.userAgent);
-  const nativeMode = isNativeWebRTCPlatform(typeof navigator === "undefined" ? "" : navigator.userAgent);
+  const nativeMode = usesServiceWebRTCTransport(typeof navigator === "undefined" ? "" : navigator.userAgent);
   const nativeSessionRef = useRef<string | null>(null);
   const handleControlMessageRef = useRef<((raw: string) => Promise<void>) | null>(null);
   const sendInvitationRef = useRef<(() => Promise<void>) | null>(null);
@@ -267,7 +267,10 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
       if (nativeSessionRef.current !== sessionId) throw new Error("Native WebRTC pairing was cancelled.");
       try {
         const stats = await nativeWebRTCStats(sessionId);
-        if (stats.attached && nativeSessionRef.current === sessionId) return;
+        // Pairing control can be open while approval still forbids a packet bridge.
+        // Older hosts only reported attachment; current hosts report channel state.
+        const open = stats.data_channel_state === "open" || (stats.data_channel_state === undefined && stats.attached);
+        if (open && nativeSessionRef.current === sessionId) return;
       } catch {
         // Native session or Python bridge is still starting.
       }

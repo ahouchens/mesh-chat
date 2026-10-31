@@ -28,6 +28,7 @@ android {
     testBuildType = "release"
     sourceSets.getByName("androidTest").java.srcDir("../src/androidTest/java")
     sourceSets.getByName("androidTest").assets.srcDir("../src/androidTest/assets")
+    sourceSets.getByName("androidTest").assets.srcDir("../build/generated/transport-test-assets")
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17

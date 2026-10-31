@@ -21,6 +21,7 @@ from __future__ import annotations
 import hashlib
 import secrets
 import time
+from contextlib import contextmanager
 from typing import Any
 
 from .errors import (
@@ -30,6 +31,7 @@ from .errors import (
     ValidationError,
 )
 from .models import TrustState
+from .reconnect_intent import ReconnectIntents
 from .reconnect import (
     MAX_CAPABILITY_SECONDS,
     DURABLE_CAPABILITIES_VERSION,
@@ -326,9 +328,10 @@ class ReconnectServiceMixin:
     ) -> dict[str, Any]:
         contact = self.store.get("contact", profile.get("contact_id", "")) or {}
         workspace_authorized = True
-        if profile.get("scope_kind") == "workspace" or str(
+        workspace_scope = profile.get("scope_kind") == "workspace" or str(
             profile.get("contact_id", "")
-        ).startswith("workspace:"):
+        ).startswith("workspace:")
+        if workspace_scope:
             try:
                 contact = self._workspace_reconnect_contact(profile["contact_id"])
             except Exception:
@@ -364,6 +367,8 @@ class ReconnectServiceMixin:
             reasons.append("encrypted_capabilities_required")
         if not workspace_authorized:
             reasons.append("workspace_peer_inactive")
+        elif not workspace_scope and contact.get("trust") not in CONNECTED_TRUST:
+            reasons.append("contact_not_approved")
         return {
             "id": profile["id"],
             "contact_id": profile.get("contact_id"),
@@ -453,6 +458,12 @@ class ReconnectServiceMixin:
             if native_session:
                 public["native_session_id"] = native_session
             profiles.append(public)
+        runtime = getattr(self, "_connection_runtime", None)
+        if runtime is not None:
+            connections = runtime.snapshots()
+            for public in profiles:
+                public["policy_owner"] = "service"
+                public["connection"] = connections.get(public["id"])
         return {
             "local_device_id": self._reconnect_device_id(),
             "local_destination": profile.get("destination_hash"),
@@ -463,6 +474,17 @@ class ReconnectServiceMixin:
         }
 
     # ----------------------------------------------------------------- consent
+
+    @contextmanager
+    def _connection_authority_update(self, authority_id, changed=True):
+        runtime = getattr(self, "_connection_runtime", None) if changed else None
+        token = runtime.begin_authority_change(authority_id) if runtime is not None else None
+        journal = getattr(self, "_carrier_journal", None)
+        if changed and journal is not None:
+            journal.invalidate(authority_id)
+        yield
+        if runtime is not None:
+            runtime.commit_authority_change(authority_id, token)
 
     def _reconnect_contact(self, contact_id: Any) -> dict[str, Any]:
         contact_id = _text(contact_id, "Contact ID")
@@ -601,17 +623,19 @@ class ReconnectServiceMixin:
             or profile.get("local_capabilities_version") != ENCRYPTED_CAPABILITIES_VERSION
             or (not contact["id"].startswith("workspace:") and not _capability_persistent(profile, "local"))
         )
-        if changed or rotate_token or stale:
-            self._reconnect_issue_local_capabilities(
-                profile, contact, rotate=changed or rotate_token
-            )
-        profile["updated_at"] = _now()
-        self.store.put(PROFILE_KIND, profile["id"], profile)
-        # Send revoked consent before retiring a native channel. The service
-        # owns this exchange even when the WebView is suspended.
+        with self._connection_authority_update(contact["id"], changed or rotate_token):
+            if changed or rotate_token or stale:
+                self._reconnect_issue_local_capabilities(
+                    profile, contact, rotate=changed or rotate_token
+                )
+            profile["updated_at"] = _now()
+            self.store.put(PROFILE_KIND, profile["id"], profile)
+        # Share current consent when the channel is still usable. Shared-owner
+        # retirement may already be pending and is never delayed for this send.
         native_shared = getattr(self, "_share_native_capabilities", lambda *_: False)(
             contact["id"], profile.get("local_capabilities"))
-        if changed and (not auto_reconnect or not allow_direct_ip_disclosure):
+        if (getattr(self, "_connection_runtime", None) is None
+                and changed and (not auto_reconnect or not allow_direct_ip_disclosure)):
             close_native = getattr(self, "close_native_reconnect_session", None)
             if close_native is not None:
                 close_native(profile["id"])
@@ -632,9 +656,10 @@ class ReconnectServiceMixin:
         if not isinstance(rotate_token, bool):
             raise ValidationError("Reconnect token rotation must be boolean")
         profile = self._reconnect_profile_for_contact(contact["id"])
-        self._reconnect_issue_local_capabilities(profile, contact, rotate=rotate_token)
-        profile["updated_at"] = _now()
-        self.store.put(PROFILE_KIND, profile["id"], profile)
+        with self._connection_authority_update(contact["id"], rotate_token):
+            self._reconnect_issue_local_capabilities(profile, contact, rotate=rotate_token)
+            profile["updated_at"] = _now()
+            self.store.put(PROFILE_KIND, profile["id"], profile)
         self._changed()
         return {
             "profile": self._reconnect_profile_public(profile),
@@ -805,7 +830,8 @@ class ReconnectServiceMixin:
             contact["id"], verified.device_id
         )
         if self._reconnect_apply_remote_capabilities(profile, verified):
-            self.store.put(PROFILE_KIND, profile["id"], profile)
+            with self._connection_authority_update(profile["id"]):
+                self.store.put(PROFILE_KIND, profile["id"], profile)
         return profile
 
     def _reconnect_apply_remote_capabilities(self, profile, verified) -> bool:
@@ -984,63 +1010,14 @@ class ReconnectServiceMixin:
             ],
         }
 
-    def reconnect_start(self, contact_id: Any = None) -> dict[str, Any]:
-        targets = (
-            [self._reconnect_contact(contact_id)]
-            if contact_id is not None
-            else [
-                contact
-                for contact in self.store.list("contact")
-                if contact.get("trust") in CONNECTED_TRUST
-            ]
-        )
-        changed = False
-        for contact in targets:
-            profile = self._reconnect_profile_for_contact(contact["id"])
-            if profile.get("auto_reconnect") and profile.get("remote_auto_reconnect"):
-                profile["active"] = True
-                profile["state"] = "waiting_for_peer"
-                profile["last_error"] = ""
-                profile["updated_at"] = _now()
-                self.store.put(PROFILE_KIND, profile["id"], profile)
-                changed = True
-        if changed:
-            self._changed()
+    def reconnect_start(self, contact_id: Any = None, *, automatic: bool = False) -> dict[str, Any]:
+        ReconnectIntents(self, _now).start(contact_id, automatic=automatic)
         return self.reconnect_status()
 
     def reconnect_stop(self, contact_id: Any = None) -> dict[str, Any]:
         if contact_id is not None:
-            profile_id = _text(contact_id, "Reconnect profile ID")
-            profiles = [
-                profile
-                for profile in self._reconnect_profiles_raw()
-                if profile.get("contact_id") == profile_id
-                or profile.get("id") == profile_id
-            ]
-        else:
-            profiles = self._reconnect_profiles_raw()
-        for profile in profiles:
-            profile["active"] = False
-            profile["state"] = "stopped"
-            profile["updated_at"] = _now()
-            self.store.put(PROFILE_KIND, profile["id"], profile)
-            close_native = getattr(self, "close_native_reconnect_session", None)
-            if close_native is not None:
-                close_native(profile["id"])
-        if contact_id is None:
-            # A per-contact stop must not claim the whole supervisor is stopped.
-            self.store.put(
-                STATE_KIND,
-                "current",
-                {
-                    "v": PROFILE_VERSION,
-                    "state": "stopped",
-                    "detail": "",
-                    "attempt_id": "",
-                    "updated_at": _now(),
-                },
-            )
-        self._changed()
+            contact_id = _text(contact_id, "Reconnect profile ID")
+        ReconnectIntents(self, _now).stop(contact_id)
         return self.reconnect_status()
 
     # --------------------------------------------------------------- documents

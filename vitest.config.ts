@@ -16,6 +16,7 @@ export default defineConfig({
       ".venv/**",
       "src-tauri/**",
       "plugins/**",
+      "sdk/**",
       ".test-tmp/**",
       "scripts/**",
       ".pytest_cache/**",

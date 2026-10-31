@@ -21,6 +21,7 @@ from .connectivity import (
 from .errors import MeshChatError, ValidationError, WORKSPACE_ALREADY_KNOWN_REASONS, WorkspaceAlreadyKnown
 from .direct_native import NativeChannel, NativeFrameReader
 from .ipc import FrameWriter, IPC_VERSION, read_frame
+from .inherited_input import interruptible_input
 from .service import MeshChatService
 from .vault import VaultStore
 from .crash_diagnostics import report_failure
@@ -239,7 +240,7 @@ def _error_response(command_id: Any, error: Exception) -> dict[str, Any]:
     }
 
 
-def _initialize(request: dict[str, Any], writer: FrameWriter) -> MeshChatService:
+def _initialize(request: dict[str, Any], writer: FrameWriter, *, desktop_transport=None) -> MeshChatService:
     if request.get("v") != IPC_VERSION or request.get("command") != "initialize":
         raise ValidationError("First command must initialize the service")
     payload = request.get("payload")
@@ -263,8 +264,10 @@ def _initialize(request: dict[str, Any], writer: FrameWriter) -> MeshChatService
         raise ValidationError("Vault key is invalid") from exc
     _start_parent_watchdog(parent_pid)
     store = VaultStore(Path(profile_value), key)
+    private_host = ({"connection_policy": "shared-native", "native_webrtc_host": desktop_transport}
+                    if desktop_transport is not None else {})
     service = MeshChatService(store, Path(profile_value).resolve(), writer.write,
-                              direct_native=NativeChannel(writer.write))
+                              direct_native=NativeChannel(writer.write), **private_host)
     display_name = payload.get("display_name")
     if display_name is not None and service.store.get("profile", "local") is None:
         service.create_profile(display_name)
@@ -275,9 +278,10 @@ def main() -> int:
     if sys.argv[1:] == ["--direct-bootstrap"]:
         from .direct_bootstrap_worker import main as bootstrap_main
         return bootstrap_main(os.environ.get("MESH_CHAT_BOOTSTRAP_DIRECTORY"))
-    reader = sys.stdin.buffer
+    reader = interruptible_input(sys.stdin.buffer)
     writer = FrameWriter(sys.stdout.buffer)
     service: MeshChatService | None = None
+    desktop_transport = None
     requests = None
     stage = "read_initial"
     command = "initialize"
@@ -287,7 +291,15 @@ def main() -> int:
         initial = read_frame(reader)
         try:
             stage = "initialize"
-            service = _initialize(initial, writer)
+            if sys.argv[1:] == ["--shared-webview"]:
+                from .desktop_transport_host import DesktopTransportHost
+                # Only the app-owned launcher supplies this private mode. JSON
+                # initialization cannot select or replace the transport host.
+                desktop_transport = DesktopTransportHost(writer.write,
+                    lambda *event: service.native_webrtc_event(*event) if service is not None else None)
+                service = _initialize(initial, writer, desktop_transport=desktop_transport)
+            else:
+                service = _initialize(initial, writer)
             stage = "write_response"
             writer.write(
                 {
@@ -302,7 +314,8 @@ def main() -> int:
             writer.write(_error_response(initial.get("id"), exc))
             return 2
 
-        requests = NativeFrameReader(reader, service._direct_native)
+        private_reader = {"desktop_transport": desktop_transport} if desktop_transport is not None else {}
+        requests = NativeFrameReader(reader, service._direct_native, **private_reader)
         while True:
             stage = "read_command"
             request = requests.read()
@@ -323,6 +336,8 @@ def main() -> int:
         report_failure(stage, exc, command, requests)
         return 3
     finally:
+        if desktop_transport is not None:
+            desktop_transport.shutdown()
         if requests is not None:
             try:
                 requests.close()

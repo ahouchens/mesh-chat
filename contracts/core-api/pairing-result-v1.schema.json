@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:mesh-chat:core-api:pairing-result:1",
+  "title": "Experimental inbound pairing result v1",
+  "description": "Verified signed invitation accepted into a contact. Schema validity never grants authority.",
+  "type": "object", "additionalProperties": false,
+  "required": ["api_version", "request_id", "ok", "result"],
+  "properties": {
+    "api_version": {"const": 1},
+    "request_id": {"type": "string", "pattern": "^[A-Za-z0-9._:-]{1,80}$"},
+    "ok": {"const": true},
+    "result": {"$ref": "#/$defs/pairing"}
+  },
+  "$defs": {
+    "handle": {"type": "string", "pattern": "^[A-Za-z0-9_-]{16,128}$"},
+    "pairing": {
+      "type": "object", "additionalProperties": false,
+      "required": ["profile", "peer", "trust"],
+      "properties": {
+        "profile": {"$ref": "#/$defs/handle"},
+        "peer": {"$ref": "#/$defs/handle"},
+        "trust": {"enum": ["awaiting_consent", "pending_request", "approved", "verified"]}
+      }
+    }
+  }
+}

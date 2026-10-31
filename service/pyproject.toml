@@ -17,6 +17,7 @@ dependencies = [
 
 [project.scripts]
 mesh-chat-service = "mesh_chat.__main__:main"
+mesh-chat-core = "mesh_chat.core_api.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

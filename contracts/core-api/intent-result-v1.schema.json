@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:mesh-chat:core-api:intent-result:1",
+  "title": "Experimental contact-wide connection intent result v1",
+  "description": "Convergent desired state after an intent command. Schema validity never grants authority.",
+  "type": "object", "additionalProperties": false,
+  "required": ["api_version", "request_id", "ok", "result"],
+  "properties": {
+    "api_version": {"const": 1},
+    "request_id": {"type": "string", "pattern": "^[A-Za-z0-9._:-]{1,80}$"},
+    "ok": {"const": true},
+    "result": {"$ref": "#/$defs/intent"}
+  },
+  "$defs": {
+    "handle": {"type": "string", "pattern": "^[A-Za-z0-9_-]{16,128}$"},
+    "intent": {
+      "type": "object", "additionalProperties": false,
+      "required": ["profile", "peer", "desired", "active"],
+      "properties": {
+        "profile": {"$ref": "#/$defs/handle"},
+        "peer": {"$ref": "#/$defs/handle"},
+        "desired": {"enum": ["enabled", "stopped"]},
+        "active": {"type": "boolean"}
+      },
+      "allOf": [
+        {"if": {"properties": {"desired": {"const": "enabled"}}},
+         "then": {"properties": {"active": {"const": true}}}},
+        {"if": {"properties": {"desired": {"const": "stopped"}}},
+         "then": {"properties": {"active": {"const": false}}}}
+      ]
+    }
+  }
+}
