@@ -110,6 +110,24 @@ class CoreClient private constructor(private val transport: CoreTransport) {
     fun pairingRequest(profile: String, peer: String): JSONObject =
         request("peer.pairing_request", JSONObject().put("profile", profile).put("peer", peer))
 
+    fun workspacePreview(profile: String, document: String): JSONObject {
+        if (document.isEmpty()) throw CoreException("invalid_request")
+        return request(
+            "workspace.invitation_preview",
+            JSONObject().put("profile", profile).put("document", document),
+        )
+    }
+
+    fun workspaceJoin(profile: String, document: String, idempotencyKey: String): JSONObject {
+        if (document.isEmpty()) throw CoreException("invalid_request")
+        requireKey(idempotencyKey, "workspace joins")
+        return dispatch(
+            "workspace.join",
+            JSONObject().put("profile", profile).put("document", document),
+            idempotencyKey,
+        )
+    }
+
     fun pairingAccept(profile: String, document: String): JSONObject {
         if (document.isEmpty()) throw CoreException("invalid_request")
         return request(

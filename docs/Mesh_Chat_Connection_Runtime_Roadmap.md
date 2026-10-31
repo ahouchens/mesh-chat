@@ -1036,7 +1036,9 @@ I2P invitations are refused because their consent cannot be inferred from a
 request.
 
 Three in-process regressions cover preview and join with replay, the grants and
-caller scope, and invalid material. Per-peer pairing documents and workspace
+caller scope, and invalid material. The Python, TypeScript and Kotlin clients
+expose both helpers, and the Python and TypeScript clients pin their exact
+envelopes. Per-peer pairing documents and workspace
 roles beyond joining remain open.
 
 ## Android Binder host binding

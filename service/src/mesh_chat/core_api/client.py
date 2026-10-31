@@ -109,6 +109,21 @@ class CoreClient:
     def pairing_request(self, handle, peer):
         return self.request("peer.pairing_request", {"profile": handle, "peer": peer})
 
+    def workspace_preview(self, handle, document):
+        if not isinstance(document, str) or not document:
+            raise ValueError("Workspace invitation is required")
+        return self.request("workspace.invitation_preview",
+                            {"profile": handle, "document": document})
+
+    def workspace_join(self, handle, document, key):
+        if not isinstance(document, str) or not document:
+            raise ValueError("Workspace invitation is required")
+        if not isinstance(key, str) or len(key) < 16:
+            raise ValueError("Workspace joins require a caller-scoped key")
+        return self.request("workspace.join",
+                            {"profile": handle, "document": document},
+                            idempotency_key=key)
+
     def pairing_accept(self, handle, document):
         if not isinstance(document, str) or not document:
             raise ValueError("Signed pairing material is required")

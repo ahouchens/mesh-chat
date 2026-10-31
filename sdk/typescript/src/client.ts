@@ -24,6 +24,8 @@ import type {
   ReceivedPage,
   RelationshipView,
   StopView,
+  WorkspaceJoinView,
+  WorkspacePreviewView,
 } from "./types.js";
 
 export const DEFAULT_TIMEOUT_MS = 30_000;
@@ -220,6 +222,28 @@ export class CoreClient {
       throw new ProtocolError("pairing requires signed invitation material");
     }
     return this.request<PairingView>("peer.pairing_accept", { profile, document });
+  }
+
+  async workspacePreview(profile: string, document: string): Promise<WorkspacePreviewView> {
+    if (document.length === 0) {
+      throw new ProtocolError("workspace invitations require material");
+    }
+    return this.request<WorkspacePreviewView>("workspace.invitation_preview", { profile, document });
+  }
+
+  async workspaceJoin(
+    profile: string,
+    document: string,
+    idempotencyKey: string,
+  ): Promise<WorkspaceJoinView> {
+    if (document.length === 0 || idempotencyKey.length < 16) {
+      throw new ProtocolError("workspace joins require material and a caller key");
+    }
+    return this.request<WorkspaceJoinView>(
+      "workspace.join",
+      { profile, document },
+      { idempotencyKey },
+    );
   }
 
   async pairingRequest(profile: string, peer: string): Promise<PairingRequestView> {

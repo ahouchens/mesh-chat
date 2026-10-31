@@ -252,6 +252,31 @@ test("pairing acceptance refuses an empty document before dispatch", async () =>
   assert.equal(transport.written.length, 1);
 });
 
+test("workspace preview and join use the declared envelopes", async () => {
+  const transport = new Scripted(
+    success("client:1", CAPABILITIES),
+    success("client:2", {
+      profile: PROFILE,
+      name: "Core",
+      description: "",
+      member_count: 1,
+      retention_days: 30,
+      expires_at: 1,
+      requires_i2p_consent: false,
+    }),
+    success("client:3", { profile: PROFILE, workspace: "w".repeat(64), name: "Core", state: "joining" }),
+  );
+  const client = await CoreClient.open(transport);
+  assert.equal((await client.workspacePreview(PROFILE, "invitation")).name, "Core");
+  assert.equal((await client.workspaceJoin(PROFILE, "invitation", "k".repeat(16))).state, "joining");
+  const preview = JSON.parse(transport.written[1]);
+  const join = JSON.parse(transport.written[2]);
+  assert.equal(preview.operation, "workspace.invitation_preview");
+  assert.equal("idempotency_key" in preview, false);
+  assert.equal(join.operation, "workspace.join");
+  assert.equal(join.idempotency_key, "k".repeat(16));
+});
+
 test("pairingRequest targets the peer without a caller key", async () => {
   const transport = new Scripted(
     success("client:1", CAPABILITIES),

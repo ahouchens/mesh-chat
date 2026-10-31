@@ -146,6 +146,25 @@ def test_client_refuses_to_dispatch_an_empty_pairing_document():
     assert len(transport.written) == 1
 
 
+def test_client_workspace_helpers_use_the_declared_envelopes():
+    transport = Scripted(
+        reply(CAPABILITIES),
+        reply({"profile": PROFILE, "name": "Core", "description": "", "member_count": 1,
+               "retention_days": 30, "expires_at": 1, "requires_i2p_consent": False}, "client:2"),
+        reply({"profile": PROFILE, "workspace": "w" * 64, "name": "Core", "state": "joining"},
+              "client:3"),
+    )
+    client = CoreClient.open(transport.readline, transport.write)
+    assert client.workspace_preview(PROFILE, "invitation")["name"] == "Core"
+    assert client.workspace_join(PROFILE, "invitation", "k" * 16)["state"] == "joining"
+    preview, join = (decode_frame(payload) for payload in transport.written[1:])
+    assert preview["operation"] == "workspace.invitation_preview"
+    assert preview["params"] == {"profile": PROFILE, "document": "invitation"}
+    assert "idempotency_key" not in preview
+    assert join["operation"] == "workspace.join"
+    assert join["idempotency_key"] == "k" * 16
+
+
 def test_client_pairing_request_uses_the_declared_envelope():
     transport = Scripted(reply(CAPABILITIES),
                          reply({"profile": PROFILE, "peer": PEER, "state": "requested"},

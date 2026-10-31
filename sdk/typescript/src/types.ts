@@ -121,3 +121,20 @@ export interface PairingRequestView {
   peer: string;
   state: "requested";
 }
+
+export interface WorkspacePreviewView {
+  profile: string;
+  name: string;
+  description: string;
+  member_count: number;
+  retention_days: number;
+  expires_at: number;
+  requires_i2p_consent: boolean;
+}
+
+export interface WorkspaceJoinView {
+  profile: string;
+  workspace: string;
+  name: string;
+  state: "joining" | "active" | "pending" | "left";
+}
