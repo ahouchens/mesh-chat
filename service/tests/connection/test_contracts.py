@@ -72,7 +72,7 @@ def test_each_designed_operation_has_an_executable_request_vector_and_permission
         "peer.pairing_create": {"lifetime_seconds": 300},
         "peer.pairing_accept": {"document": "signed-pairing-document"},
         "peer.query": {"peer": handle},
-        "peer.approve": {"peer": handle, "auto_reconnect": False, "allow_direct_ip_disclosure": False},
+        "peer.approve": {"peer": handle},
         "peer.revoke": {"peer": handle},
         "connection.start": {"connection": handle}, "connection.stop": {"connection": handle},
         "connection.retry": {"connection": handle}, "connection.snapshot": {"connection": handle},

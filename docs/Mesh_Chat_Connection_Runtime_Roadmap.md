@@ -940,6 +940,23 @@ pre-upload digest check still points at the manifest. No release run has execute
 this path yet, so it is wiring evidence rather than an executed release
 qualification.
 
+## Peer approval and revocation
+
+The relationship family now has its explicit, convergent half: `peer.approve`
+accepts a pending request (a no-op for an already approved or verified peer, a
+refusal for any other trust state) and `peer.revoke` blocks the peer. Both address
+the caller-scoped peer handle, require the `approve` grant, and reuse the existing
+domain transactions: approval queues the signed acceptance, revocation fences
+connection work before the trust write commits, and a failed write returns
+`unavailable` without reporting the change. No consent default, disclosure
+preference or workspace membership is modified.
+
+Seven in-process regressions cover pending approval and convergence, an already
+verified peer, refused states (blocked, awaiting consent, identity changed),
+revocation and its convergence, the approve grant with caller scope, failed-write
+honesty and capability advertisement. Pairing-document creation/acceptance and
+workspace relationships remain open.
+
 ## Remaining work checklist
 
 Reconciled against the specification's invariant list, SC01-SC26 and definition of
@@ -998,7 +1015,8 @@ M5 - supported reusable core
       remains a private component until they exist.
 - [x] Contact-wide connection start/stop intent with convergent semantics
       (component only; no per-device selection or workspace pairing).
-- [ ] Remaining durable commands/events (pairing/approval) and their
+- [x] Explicit convergent peer approval and revocation (component only).
+- [ ] Pairing-document creation/acceptance, workspace relationships and their
       idempotency/retention semantics.
 - [x] Experimental TypeScript client over the frame contract (component only; no
       packaging, CI conformance, Kotlin client or consumer).

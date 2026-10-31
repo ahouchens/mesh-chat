@@ -456,35 +456,20 @@
             },
             "peer": {
               "$ref": "#/$defs/handle"
-            },
-            "auto_reconnect": {
-              "type": "boolean"
-            },
-            "allow_direct_ip_disclosure": {
-              "type": "boolean"
             }
           },
           "required": [
             "profile",
-            "peer",
-            "auto_reconnect",
-            "allow_direct_ip_disclosure"
+            "peer"
           ],
           "additionalProperties": false
-        },
-        "idempotency_key": {
-          "type": "string",
-          "minLength": 16,
-          "maxLength": 128,
-          "pattern": "^[A-Za-z0-9._:-]+$"
         }
       },
       "required": [
         "api_version",
         "request_id",
         "operation",
-        "params",
-        "idempotency_key"
+        "params"
       ],
       "additionalProperties": false
     },
@@ -518,20 +503,13 @@
             "peer"
           ],
           "additionalProperties": false
-        },
-        "idempotency_key": {
-          "type": "string",
-          "minLength": 16,
-          "maxLength": 128,
-          "pattern": "^[A-Za-z0-9._:-]+$"
         }
       },
       "required": [
         "api_version",
         "request_id",
         "operation",
-        "params",
-        "idempotency_key"
+        "params"
       ],
       "additionalProperties": false
     },

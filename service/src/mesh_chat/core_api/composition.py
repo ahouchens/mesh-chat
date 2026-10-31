@@ -9,6 +9,7 @@ from .service_messages import ServiceMessages
 from .service_recovery import ServiceRecovery
 from .service_diagnostics import ServiceDiagnostics
 from .service_intent import ServiceIntent
+from .service_relationship import ServiceRelationship
 from .wire import FramedSession
 
 
@@ -39,10 +40,12 @@ def bind_service_session(service, authenticated_grant):
         recovery = ServiceRecovery(service, messages) if hasattr(service, "_message_journal") else None
         received = recovery if hasattr(service, "_received_messages") else None
         intent = ServiceIntent(service) if hasattr(service, "reconnect_start") else None
+        relationship = (ServiceRelationship(service) if hasattr(service, "approve_request")
+                        else None)
         return CoreSession(current_grant, ServiceObservations(service), handle_key=handle_key,
                            transaction=service._dispatch_lock, messages=messages, recovery=recovery,
                            diagnostics=ServiceDiagnostics(service, messages), received=received,
-                           intent=intent)
+                           intent=intent, relationship=relationship)
 
 
 def bind_service_stream(service, authenticated_grant):

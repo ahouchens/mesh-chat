@@ -15,7 +15,7 @@ from typing import Protocol
 
 from .views import (
     acceptance_view, acknowledgment_view, connection_view, event_view, intent_view, message_view,
-    peer_view, received_view,
+    peer_view, received_view, relationship_view,
 )
 from .errors import ApiFailure
 from .limits import MAX_FRAME_BYTES, MAX_REQUEST_JSON_DEPTH, MAX_REQUEST_JSON_TOKENS
@@ -23,13 +23,15 @@ from .diagnostics import Diagnostics, MAX_DIAGNOSTICS, MAX_DIAGNOSTIC_BYTES
 from .diagnostic_views import diagnostics_view
 from .requests import (
     CURSOR, DIAGNOSTIC_OPERATIONS, INTENT_OPERATIONS, MESSAGE_OPERATIONS, OPERATIONS,
-    RECEIVED_OPERATIONS, RECOVERY_OPERATIONS, REQUEST_ID, parse_request,
+    RECEIVED_OPERATIONS, RECOVERY_OPERATIONS, RELATIONSHIP_OPERATIONS, REQUEST_ID,
+    parse_request,
 )
 from .messages import (
     IDEMPOTENCY_SECONDS, MAX_CALLER_ENQUEUES, MAX_PEERS, MAX_VAULT_ENQUEUES,
     MessageScope, Messages,
 )
 from .intent import ConnectionIntent
+from .relationship import Relationship
 from .recovery import (
     MAX_BATCH, MAX_BATCH_BYTES, MAX_CALLER_ACKNOWLEDGMENTS, MAX_CURSOR_BYTES,
     MAX_VAULT_ACKNOWLEDGMENTS, ReceivedLog, Recovery,
@@ -70,7 +72,8 @@ class CoreSession:
     def __init__(self, authorize, observations: Observations, *, handle_key: bytes, transaction=None,
                  messages: Messages | None = None, recovery: Recovery | None = None,
                  diagnostics: Diagnostics | None = None, received: ReceivedLog | None = None,
-                 intent: ConnectionIntent | None = None):
+                 intent: ConnectionIntent | None = None,
+                 relationship: Relationship | None = None):
         if not isinstance(handle_key, bytes) or not 32 <= len(handle_key) <= 64:
             raise ValueError("A protected handle key is required")
         self._authorize = authorize
@@ -80,10 +83,12 @@ class CoreSession:
         self._diagnostics = diagnostics
         self._received = received
         self._intent = intent
+        self._relationship = relationship
         self._operations = (OPERATIONS + (MESSAGE_OPERATIONS if messages is not None else ())
                             + (RECOVERY_OPERATIONS if recovery is not None else ())
                             + (RECEIVED_OPERATIONS if received is not None else ())
                             + (INTENT_OPERATIONS if intent is not None else ())
+                            + (RELATIONSHIP_OPERATIONS if relationship is not None else ())
                             + (DIAGNOSTIC_OPERATIONS if diagnostics is not None else ()))
         self._handle_key = handle_key
         self._transaction = transaction if transaction is not None else nullcontext()
@@ -103,6 +108,7 @@ class CoreSession:
                 permission = {"message.enqueue": "send", "message.query": "read", "message.list": "read",
                               "message.received": "read", "events.poll": "read", "events.ack": "read",
                               "connection.start": "connect", "connection.stop": "connect",
+                              "peer.approve": "approve", "peer.revoke": "approve",
                               "diagnostics.query": "diagnose"}.get(operation, "observe")
                 if permission not in grant.permissions:
                     raise ApiFailure("forbidden")
@@ -154,6 +160,8 @@ class CoreSession:
             return self._received_messages(grant, profile, params)
         if operation in INTENT_OPERATIONS:
             return self._intent_operation(grant, profile, operation, params)
+        if operation in RELATIONSHIP_OPERATIONS:
+            return self._relationship_operation(grant, profile, operation, params)
         if operation in RECOVERY_OPERATIONS:
             return self._recover(grant, profile, operation, params, key)
         return self._observe(grant, profile, operation, params)
@@ -243,6 +251,13 @@ class CoreSession:
                     self._handle(grant, "peer", profile, item.value.recipient), item.value) for item in page.messages]
         return self._bounded_recovery({"profile": params["profile"], "messages": messages,
                                        "next_cursor": page.next_cursor, "events_cursor": page.events_cursor})
+
+    def _relationship_operation(self, grant, profile, operation, params):
+        contact = self._peers(grant, profile).get(params["peer"])
+        if contact is None:
+            raise ApiFailure("forbidden")
+        observation = self._relationship.apply(profile, contact, operation == "peer.approve")
+        return relationship_view(params["profile"], params["peer"], operation, observation)
 
     def _intent_operation(self, grant, profile, operation, params):
         contact = self._peers(grant, profile).get(params["peer"])

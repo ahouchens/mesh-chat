@@ -194,6 +194,23 @@ inside major 1. A declaration/contract test keeps the file consistent with the
 operations inventory, so the three namespaces cannot silently drift into one
 version number.
 
+## Peer approval and revocation
+
+`peer.approve` accepts a pending contact request; an already approved or verified
+peer is a convergent no-op and any other trust state is refused, so approval cannot
+silently resurrect a blocked peer. `peer.revoke` blocks the peer and is likewise
+convergent. Approval keeps the existing acceptance transaction, queues the signed
+acceptance, and does not change reconnect consent, disclosure preferences or
+workspace membership. Revocation uses the existing bounded authority write that
+fences connection work before the trust change commits.
+
+Both commands take the caller-scoped peer handle and require the `approve` grant;
+the result contract is `relationship-result-v1.schema.json` and reports only the
+selected trust state. Neither carries a caller idempotency key: they converge by
+state, and a failed write returns `unavailable` without reporting the change.
+Pairing-document creation and acceptance, workspace membership and Android's
+Binder binding remain outside this surface.
+
 ## Observation and recovery
 
 Connection observations use runtime epoch and sequence; gaps or epoch changes
