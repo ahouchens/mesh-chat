@@ -73,6 +73,7 @@ def test_each_designed_operation_has_an_executable_request_vector_and_permission
         "workspace.invitation_preview": {"document": "workspace-invitation"},
         "workspace.join": {"document": "workspace-invitation"},
         "peer.pairing_accept": {"document": "signed-pairing-document"},
+        "peer.pairing_request": {"peer": handle},
         "peer.query": {"peer": handle},
         "peer.approve": {"peer": handle},
         "peer.revoke": {"peer": handle},

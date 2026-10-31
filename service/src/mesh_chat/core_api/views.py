@@ -197,3 +197,12 @@ def stop_view(value):
     if value.stopping is not True or type(value.already_stopping) is not bool:
         raise ValueError("Invalid stop observation")
     return {"stopping": True, "already_stopping": value.already_stopping}
+
+
+def pairing_request_view(profile, peer, value):
+    if any(not isinstance(item, str) or re.fullmatch(r"[A-Za-z0-9_-]{16,128}", item) is None
+           for item in (profile, peer)):
+        raise ValueError("Invalid pairing request handle")
+    if not isinstance(value.contact, str) or not value.contact:
+        raise ValueError("Invalid pairing request observation")
+    return {"profile": profile, "peer": peer, "state": "requested"}

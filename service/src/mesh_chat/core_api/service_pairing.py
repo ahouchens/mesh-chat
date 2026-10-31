@@ -2,12 +2,13 @@
 
 from ..errors import InvitationExpired, InvitationInvalid, ValidationError
 from .errors import ApiFailure
-from .pairing import PairingObservation
+from .pairing import PairingObservation, PairingRequest
 from .service_messages import storage_errors
 
 
 MAX_DOCUMENT = 1048576
 TRUST = {"awaiting_consent", "pending_request", "approved", "verified"}
+REQUESTABLE = {"awaiting_consent", "pending_request"}
 
 
 class ServicePairing:
@@ -30,3 +31,24 @@ class ServicePairing:
             if not isinstance(contact_id, str) or trust not in TRUST:
                 raise ApiFailure("internal")
             return PairingObservation(contact_id, trust)
+
+    def request(self, profile, contact_id):
+        if profile != "local":
+            raise ApiFailure("forbidden")
+        if self._service._identity is None:
+            raise ApiFailure("locked")
+        with storage_errors():
+            contact = self._service.store.get("contact", contact_id)
+            if contact is None:
+                raise ApiFailure("forbidden")
+            if contact.get("trust") not in REQUESTABLE:
+                raise ApiFailure("invalid_request")
+            try:
+                message = self._service.send_contact_request(contact_id)
+            except ValidationError as error:
+                raise ApiFailure("invalid_request") from error
+            if (not isinstance(message, dict) or not isinstance(message.get("id"), str)
+                    or message.get("kind") != "contact_request"
+                    or message.get("direction") != "outbound"):
+                raise ApiFailure("internal")
+            return PairingRequest(contact_id)

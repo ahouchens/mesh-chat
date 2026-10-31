@@ -101,3 +101,42 @@ def test_capabilities_advertise_pairing_only_with_the_port(host):
     service = host()
     _, _, operations = open_client(service)
     assert "peer.pairing_accept" in operations
+
+
+def request_frame(profile, peer):
+    return {"api_version": 1, "request_id": "request:1", "operation": "peer.pairing_request",
+            "params": {"profile": profile, "peer": peer}}
+
+
+def contact_requests(service):
+    return [message for message in service.store.list("message")
+            if message["kind"] == "contact_request" and message["direction"] == "outbound"]
+
+
+def test_the_signed_contact_request_is_queued_once_and_reused(host):
+    service = host()
+    session, profile, _ = open_client(service)
+    accepted = accept(session, profile, invitation_document())
+    peer = accepted["result"]["peer"]
+    before = contact_requests(service)
+    assert len(before) == 1
+    first = session.request(request_frame(profile, peer))
+    assert first["ok"], first
+    assert first["result"] == {"profile": profile, "peer": peer, "state": "requested"}
+    assert session.request(request_frame(profile, peer)) == first
+    assert len(contact_requests(service)) == len(before)
+    schema = json.loads((CONTRACTS / "pairing-request-result-v1.schema.json").read_text())
+    Draft202012Validator.check_schema(schema)
+    Draft202012Validator(schema).validate(first)
+
+
+def test_pairing_request_refuses_other_states_permissions_and_scope(host):
+    service = host()
+    session, profile, _ = open_client(service)
+    peer = session.request(request("profile.query", profile=profile))["result"]["peers"][0]
+    assert session.request(request_frame(profile, peer))["error"]["code"] == "invalid_request"
+    reader, reader_profile, _ = open_client(service, permissions=("observe", "read"))
+    assert reader.request(request_frame(reader_profile, peer))["error"]["code"] == "forbidden"
+    alex, alex_profile, _ = open_client(service, caller="alex")
+    _, blair_profile, _ = open_client(service, caller="blair")
+    assert alex.request(request_frame(blair_profile, peer))["error"]["code"] == "forbidden"

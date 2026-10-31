@@ -4,7 +4,7 @@
   "api_major": 1,
   "api_minor": 0,
   "implemented_operations": [],
-  "experimental_component_operations": ["runtime.capabilities", "profile.query", "connection.snapshot", "peer.query", "message.enqueue", "message.query", "message.list", "events.poll", "events.ack", "message.received", "connection.start", "connection.stop", "peer.approve", "peer.revoke", "peer.pairing_accept", "peer.pairing_create", "runtime.stop", "workspace.invitation_preview", "workspace.join",
+  "experimental_component_operations": ["runtime.capabilities", "profile.query", "connection.snapshot", "peer.query", "message.enqueue", "message.query", "message.list", "events.poll", "events.ack", "message.received", "connection.start", "connection.stop", "peer.approve", "peer.revoke", "peer.pairing_accept", "peer.pairing_request", "peer.pairing_create", "runtime.stop", "workspace.invitation_preview", "workspace.join",
     "diagnostics.query"],
   "operations": [
     {
@@ -62,6 +62,13 @@
       "scope": "profile",
       "mutation": false,
       "idempotency": "query"
+    },
+    {
+      "operation": "peer.pairing_request",
+      "permission": "pair",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "convergent_desired_state"
     },
     {
       "operation": "peer.pairing_accept",

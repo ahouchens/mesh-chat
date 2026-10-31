@@ -252,6 +252,19 @@ test("pairing acceptance refuses an empty document before dispatch", async () =>
   assert.equal(transport.written.length, 1);
 });
 
+test("pairingRequest targets the peer without a caller key", async () => {
+  const transport = new Scripted(
+    success("client:1", CAPABILITIES),
+    success("client:2", { profile: PROFILE, peer: PEER, state: "requested" }),
+  );
+  const client = await CoreClient.open(transport);
+  assert.equal((await client.pairingRequest(PROFILE, PEER)).state, "requested");
+  const sent = JSON.parse(transport.written[1]);
+  assert.equal(sent.operation, "peer.pairing_request");
+  assert.deepEqual(sent.params, { profile: PROFILE, peer: PEER });
+  assert.equal("idempotency_key" in sent, false);
+});
+
 test("stopRuntime asks the owner and never attaches a key", async () => {
   const transport = new Scripted(
     success("client:1", CAPABILITIES),

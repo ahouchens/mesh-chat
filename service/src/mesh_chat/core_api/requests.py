@@ -16,6 +16,7 @@ RECEIVED_OPERATIONS = ("message.received",)
 INTENT_OPERATIONS = ("connection.start", "connection.stop")
 RELATIONSHIP_OPERATIONS = ("peer.approve", "peer.revoke")
 PAIRING_OPERATIONS = ("peer.pairing_accept",)
+REQUEST_OPERATIONS = ("peer.pairing_request",)
 INVITATION_OPERATIONS = ("peer.pairing_create",)
 STOP_OPERATIONS = ("runtime.stop",)
 WORKSPACE_PREVIEW_OPERATIONS = ("workspace.invitation_preview",)
@@ -81,6 +82,13 @@ def parse_request(value, operations):
         if (not isinstance(params, dict) or set(params) != {"profile"}
                 or not isinstance(params["profile"], str)
                 or HANDLE.fullmatch(params["profile"]) is None):
+            raise ApiFailure("invalid_request")
+        return operation, params
+    if operation in REQUEST_OPERATIONS:
+        params = value["params"]
+        if (not isinstance(params, dict) or set(params) != {"profile", "peer"}
+                or any(not isinstance(item, str) or HANDLE.fullmatch(item) is None
+                       for item in params.values())):
             raise ApiFailure("invalid_request")
         return operation, params
     if operation in PAIRING_OPERATIONS:

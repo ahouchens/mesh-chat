@@ -1474,6 +1474,20 @@ class MeshChatService(
         self._attempt(request["id"])
         return request
 
+    def send_contact_request(self, contact_id: str) -> dict[str, Any]:
+        """Send or resend this device's signed request to a known peer.
+
+        An unexpired outbound request is reused rather than duplicated, so the
+        operation converges while the request window is open.
+        """
+        contact = self._require_contact(contact_id)
+        if contact["trust"] not in {
+            TrustState.AWAITING_CONSENT.value,
+            TrustState.PENDING_REQUEST.value,
+        }:
+            raise ValidationError("Contact request is not available for this trust state")
+        return self._ensure_contact_request(contact)
+
     def approve_request(self, contact_id: str) -> dict[str, Any]:
         contact = self._require_contact(contact_id)
         if contact["trust"] != TrustState.PENDING_REQUEST.value:

@@ -246,6 +246,13 @@ the trusted grant callback now returns nothing). The operation is convergent and
 rejects a caller idempotency key instead of silently ignoring it; the result
 contract is `stop-result-v1.schema.json`.
 
+`peer.pairing_request` sends this device's signed contact request to a peer that
+is awaiting consent or has a pending request, and reuses an unexpired request
+instead of duplicating it, so repeated calls converge while the request window is
+open. It returns only `{profile, peer, state: requested}`; the signed document
+itself is delivered through the peer path and is not handed back. Approved,
+blocked or failing peers, and callers without the `pair` grant, are refused.
+
 ## Workspace invitations
 
 `workspace.invitation_preview` verifies a workspace invitation and returns only

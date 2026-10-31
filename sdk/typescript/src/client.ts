@@ -19,6 +19,7 @@ import type {
   EventPage,
   ProfileView,
   InvitationView,
+  PairingRequestView,
   PairingView,
   ReceivedPage,
   RelationshipView,
@@ -219,6 +220,10 @@ export class CoreClient {
       throw new ProtocolError("pairing requires signed invitation material");
     }
     return this.request<PairingView>("peer.pairing_accept", { profile, document });
+  }
+
+  async pairingRequest(profile: string, peer: string): Promise<PairingRequestView> {
+    return this.request<PairingRequestView>("peer.pairing_request", { profile, peer });
   }
 
   /** Ask the owning host to stop; the stream closes after this reply. */

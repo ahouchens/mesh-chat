@@ -106,6 +106,9 @@ class CoreClient:
     def pairing_create(self, handle):
         return self.request("peer.pairing_create", {"profile": handle})
 
+    def pairing_request(self, handle, peer):
+        return self.request("peer.pairing_request", {"profile": handle, "peer": peer})
+
     def pairing_accept(self, handle, document):
         if not isinstance(document, str) or not document:
             raise ValueError("Signed pairing material is required")

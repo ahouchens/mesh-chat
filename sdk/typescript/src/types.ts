@@ -115,3 +115,9 @@ export interface StopView {
   stopping: true;
   already_stopping: boolean;
 }
+
+export interface PairingRequestView {
+  profile: string;
+  peer: string;
+  state: "requested";
+}

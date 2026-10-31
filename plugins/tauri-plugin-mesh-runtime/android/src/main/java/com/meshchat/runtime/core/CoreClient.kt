@@ -103,6 +103,9 @@ class CoreClient private constructor(private val transport: CoreTransport) {
     fun pairingCreate(profile: String): JSONObject =
         request("peer.pairing_create", JSONObject().put("profile", profile))
 
+    fun pairingRequest(profile: String, peer: String): JSONObject =
+        request("peer.pairing_request", JSONObject().put("profile", profile).put("peer", peer))
+
     fun pairingAccept(profile: String, document: String): JSONObject {
         if (document.isEmpty()) throw CoreException("invalid_request")
         return request(

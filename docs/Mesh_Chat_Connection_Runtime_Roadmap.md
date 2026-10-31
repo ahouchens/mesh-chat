@@ -1078,6 +1078,16 @@ key placement and pre-dispatch refusals. The compatibility declaration now says 
 Kotlin client exists as an experimental component; it is not packaged or
 published, so the versioned-SDK item stays open.
 
+## Per-peer pairing request
+
+`peer.pairing_request` exposes the domain's existing signed contact request for a
+peer awaiting consent or with a pending request. The domain reuses an unexpired
+outbound request and re-attempts it, so repeated calls converge while the window
+is open; the result is only `{profile, peer, state: requested}` and never returns
+the signed document. Two in-process regressions cover convergence with a single
+queued request, and refusal for approved peers, missing `pair` grants and another
+caller's profile.
+
 ## Remaining work checklist
 
 Reconciled against the specification's invariant list, SC01-SC26 and definition of
@@ -1144,7 +1154,10 @@ M5 - supported reusable core
 - [x] Owner-authorized runtime stop that closes the host stream (component only).
 - [x] Workspace invitation preview and idempotent join (component only;
       joining states only, no role administration).
-- [ ] Per-peer pairing documents and workspace role administration.
+- [x] Per-peer signed contact request with bounded convergence (component only;
+      the signed document is not returned).
+- [ ] Per-peer pairing documents returned to the caller and workspace role
+      administration.
 - [x] Experimental TypeScript client over the frame contract (component only; no
       packaging, CI conformance, Kotlin client or consumer).
 - [x] Experimental Python client and Windows CLI over the host pipe, with a

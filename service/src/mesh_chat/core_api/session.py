@@ -17,7 +17,8 @@ from typing import Protocol
 
 from .views import (
     acceptance_view, acknowledgment_view, connection_view, event_view, intent_view, message_view,
-    invitation_view, pairing_view, peer_view, received_view, relationship_view, stop_view,
+    invitation_view, pairing_request_view, pairing_view, peer_view, received_view,
+    relationship_view, stop_view,
     workspace_join_view, workspace_preview_view,
 )
 from .errors import ApiFailure
@@ -27,7 +28,7 @@ from .diagnostic_views import diagnostics_view
 from .requests import (
     CURSOR, DIAGNOSTIC_OPERATIONS, INTENT_OPERATIONS, MESSAGE_OPERATIONS, OPERATIONS,
     INVITATION_OPERATIONS, PAIRING_OPERATIONS, RECEIVED_OPERATIONS, RECOVERY_OPERATIONS,
-    RELATIONSHIP_OPERATIONS, STOP_OPERATIONS, WORKSPACE_JOIN_OPERATIONS,
+    RELATIONSHIP_OPERATIONS, REQUEST_OPERATIONS, STOP_OPERATIONS, WORKSPACE_JOIN_OPERATIONS,
     WORKSPACE_PREVIEW_OPERATIONS, REQUEST_ID, parse_request,
 )
 from .messages import (
@@ -117,6 +118,7 @@ class CoreSession:
                             + (INTENT_OPERATIONS if self._intent is not None else ())
                             + (RELATIONSHIP_OPERATIONS if self._relationship is not None else ())
                             + (PAIRING_OPERATIONS if self._pairing is not None else ())
+                            + (REQUEST_OPERATIONS if self._pairing is not None else ())
                             + (INVITATION_OPERATIONS if self._invitations is not None else ())
                             + (STOP_OPERATIONS if self._lifecycle is not None else ())
                             + (WORKSPACE_PREVIEW_OPERATIONS if self._workspace is not None else ())
@@ -148,6 +150,7 @@ class CoreSession:
                               "connection.start": "connect", "connection.stop": "connect",
                               "peer.approve": "approve", "peer.revoke": "approve",
                               "peer.pairing_accept": "pair", "peer.pairing_create": "pair",
+                              "peer.pairing_request": "pair",
                               "runtime.stop": "runtime_owner",
                               "workspace.invitation_preview": "read", "workspace.join": "pair",
                               "diagnostics.query": "diagnose"}.get(operation, "observe")
@@ -236,6 +239,8 @@ class CoreSession:
             return self._relationship_operation(grant, profile, operation, params)
         if operation in PAIRING_OPERATIONS:
             return self._pairing_operation(grant, profile, params)
+        if operation in REQUEST_OPERATIONS:
+            return self._pairing_request_operation(grant, profile, params)
         if operation in INVITATION_OPERATIONS:
             return self._invitation_operation(grant, profile)
         if operation in RECOVERY_OPERATIONS:
@@ -331,6 +336,13 @@ class CoreSession:
     def _invitation_operation(self, grant, profile):
         handle = self._handle(grant, "profile", profile, profile)
         return invitation_view(handle, self._invitations.create(profile))
+
+    def _pairing_request_operation(self, grant, profile, params):
+        contact = self._peers(grant, profile).get(params["peer"])
+        if contact is None:
+            raise ApiFailure("forbidden")
+        observation = self._pairing.request(profile, contact)
+        return pairing_request_view(params["profile"], params["peer"], observation)
 
     def _pairing_operation(self, grant, profile, params):
         observation = self._pairing.accept(profile, params["document"])
