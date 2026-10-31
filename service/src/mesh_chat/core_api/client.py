@@ -110,3 +110,6 @@ class CoreClient:
         if not isinstance(document, str) or not document:
             raise ValueError("Signed pairing material is required")
         return self.request("peer.pairing_accept", {"profile": handle, "document": document})
+
+    def stop(self):
+        return self.request("runtime.stop", {})

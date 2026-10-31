@@ -22,6 +22,7 @@ import type {
   PairingView,
   ReceivedPage,
   RelationshipView,
+  StopView,
 } from "./types.js";
 
 export const DEFAULT_TIMEOUT_MS = 30_000;
@@ -218,6 +219,11 @@ export class CoreClient {
       throw new ProtocolError("pairing requires signed invitation material");
     }
     return this.request<PairingView>("peer.pairing_accept", { profile, document });
+  }
+
+  /** Ask the owning host to stop; the stream closes after this reply. */
+  async stopRuntime(): Promise<StopView> {
+    return this.request<StopView>("runtime.stop", {});
   }
 }
 

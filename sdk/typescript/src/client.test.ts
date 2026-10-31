@@ -251,3 +251,16 @@ test("pairing acceptance refuses an empty document before dispatch", async () =>
   await assert.rejects(() => client.pairingAccept(PROFILE, ""), ProtocolError);
   assert.equal(transport.written.length, 1);
 });
+
+test("stopRuntime asks the owner and never attaches a key", async () => {
+  const transport = new Scripted(
+    success("client:1", CAPABILITIES),
+    success("client:2", { stopping: true, already_stopping: false }),
+  );
+  const client = await CoreClient.open(transport);
+  assert.deepEqual(await client.stopRuntime(), { stopping: true, already_stopping: false });
+  const sent = JSON.parse(transport.written[1]);
+  assert.equal(sent.operation, "runtime.stop");
+  assert.deepEqual(sent.params, {});
+  assert.equal("idempotency_key" in sent, false);
+});

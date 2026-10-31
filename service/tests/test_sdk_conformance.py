@@ -56,7 +56,7 @@ def test_typescript_client_conforms_over_inherited_stdio(host):
     requests_read, requests_write = os.pipe()
     responses_read, responses_write = os.pipe()
     service = host()
-    grants = [Grant("alex", frozenset({"observe", "read", "send", "pair"}), ("local",))]
+    grants = [Grant("alex", frozenset({"observe", "read", "send", "pair", "runtime_owner"}), ("local",))]
     session = bind_service_stream(service, lambda: grants[0])
 
     def serve():
@@ -81,3 +81,4 @@ def test_typescript_client_conforms_over_inherited_stdio(host):
     assert payload["peers"] == 1
     assert payload["messages"] == 0
     assert payload["events"] == 0
+    assert payload["stopped"] is True

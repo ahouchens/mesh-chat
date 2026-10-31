@@ -110,3 +110,8 @@ export interface InvitationView {
   link: string;
   expires_at: number;
 }
+
+export interface StopView {
+  stopping: true;
+  already_stopping: boolean;
+}

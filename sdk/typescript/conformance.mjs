@@ -34,6 +34,7 @@ try {
   const invitation = await client.pairingCreate(profile);
   const snapshot = await client.request("message.list", { profile, cursor: null, limit: 8 });
   const events = await client.pollEvents(profile, snapshot.events_cursor);
+  const stopped = await client.stopRuntime();
   client.close();
   finish({
     ok: true,
@@ -42,6 +43,7 @@ try {
     messages: page.messages.length,
     events: events.events.length,
     invitation: invitation.file.length > 0,
+    stopped: stopped.stopping,
     api_major: client.capabilities.api_major,
   }, 0);
 } catch (error) {

@@ -144,3 +144,13 @@ def test_client_refuses_to_dispatch_an_empty_pairing_document():
     with pytest.raises(ValueError):
         client.pairing_accept(PROFILE, "")
     assert len(transport.written) == 1
+
+
+def test_client_stop_asks_the_owner_without_a_key():
+    transport = Scripted(reply(CAPABILITIES),
+                         reply({"stopping": True, "already_stopping": False}, "client:2"))
+    client = CoreClient.open(transport.readline, transport.write)
+    assert client.stop() == {"stopping": True, "already_stopping": False}
+    sent = decode_frame(transport.written[1])
+    assert sent == {"api_version": 1, "request_id": "client:2", "operation": "runtime.stop",
+                    "params": {}}
