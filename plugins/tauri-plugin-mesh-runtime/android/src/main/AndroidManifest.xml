@@ -13,6 +13,9 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CAMERA" />
 
+    <permission android:name="com.meshchat.runtime.permission.CORE_API"
+        android:protectionLevel="signature" />
+
     <application
         android:allowBackup="false"
         android:fullBackupContent="false">
@@ -21,6 +24,9 @@
         <service android:name="com.meshchat.runtime.CallService"
             android:exported="false"
             android:foregroundServiceType="microphone|camera" />
+        <service android:name="com.meshchat.runtime.MeshCoreApiService"
+            android:exported="true"
+            android:permission="com.meshchat.runtime.permission.CORE_API" />
         <service android:name="com.meshchat.runtime.MeshAvailabilityService"
             android:exported="false"
             android:foregroundServiceType="remoteMessaging"
