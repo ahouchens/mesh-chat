@@ -961,6 +961,23 @@ revocation and its convergence, the approve grant with caller scope, failed-writ
 honesty and capability advertisement. Pairing-document creation/acceptance and
 workspace relationships remain open.
 
+## Inbound pairing acceptance
+
+`peer.pairing_accept` lets an authenticated caller submit a signed invitation the
+user obtained out of band. Verification stays in the existing domain rules:
+signature, destination, expiry and kind are checked before a contact exists, a
+self-invitation is refused, and I2P invitations are refused because their consent
+cannot be inferred from a request. The result returns only the peer handle and its
+trust state; accepting the same document again converges on the same contact, so
+the operation is declared convergent. The contact remains unapproved until the
+ordinary explicit approval flow completes, and no disclosure or reconnect consent
+is changed.
+
+Four in-process regressions cover acceptance into an unapproved contact plus
+convergence, invalid/self/oversized documents, the pair grant with caller scope,
+and capability advertisement. Outbound pairing creation, per-peer documents,
+workspace invitations and the Android binding remain open.
+
 ## Remaining work checklist
 
 Reconciled against the specification's invariant list, SC01-SC26 and definition of
@@ -1020,7 +1037,8 @@ M5 - supported reusable core
 - [x] Contact-wide connection start/stop intent with convergent semantics
       (component only; no per-device selection or workspace pairing).
 - [x] Explicit convergent peer approval and revocation (component only).
-- [ ] Pairing-document creation/acceptance, workspace relationships and their
+- [x] Convergent inbound signed-invitation acceptance (component only).
+- [ ] Outbound pairing creation, workspace relationships and their
       idempotency/retention semantics.
 - [x] Experimental TypeScript client over the frame contract (component only; no
       packaging, CI conformance, Kotlin client or consumer).

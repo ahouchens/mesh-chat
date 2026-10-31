@@ -15,6 +15,7 @@ RECOVERY_OPERATIONS = ("message.list", "events.poll", "events.ack")
 RECEIVED_OPERATIONS = ("message.received",)
 INTENT_OPERATIONS = ("connection.start", "connection.stop")
 RELATIONSHIP_OPERATIONS = ("peer.approve", "peer.revoke")
+PAIRING_OPERATIONS = ("peer.pairing_accept",)
 DIAGNOSTIC_OPERATIONS = ("diagnostics.query",)
 REQUEST_ID = re.compile(r"[A-Za-z0-9._:-]{1,80}\Z")
 HANDLE = re.compile(r"[A-Za-z0-9_-]{16,128}\Z")
@@ -50,6 +51,15 @@ def parse_request(value, operations):
         return operation, _recovery_params(value["params"])
     if operation in RECEIVED_OPERATIONS:
         return operation, _recovery_params(value["params"])
+    if operation in PAIRING_OPERATIONS:
+        params = value["params"]
+        if (not isinstance(params, dict) or set(params) != {"profile", "document"}
+                or not isinstance(params["profile"], str)
+                or HANDLE.fullmatch(params["profile"]) is None
+                or not isinstance(params["document"], str)
+                or not 1 <= len(params["document"]) <= 1048576):
+            raise ApiFailure("invalid_request")
+        return operation, params
     if operation in RELATIONSHIP_OPERATIONS:
         params = value["params"]
         if (not isinstance(params, dict) or set(params) != {"profile", "peer"}

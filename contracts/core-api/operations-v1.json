@@ -4,7 +4,7 @@
   "api_major": 1,
   "api_minor": 0,
   "implemented_operations": [],
-  "experimental_component_operations": ["runtime.capabilities", "profile.query", "connection.snapshot", "peer.query", "message.enqueue", "message.query", "message.list", "events.poll", "events.ack", "message.received", "connection.start", "connection.stop", "peer.approve", "peer.revoke", "diagnostics.query"],
+  "experimental_component_operations": ["runtime.capabilities", "profile.query", "connection.snapshot", "peer.query", "message.enqueue", "message.query", "message.list", "events.poll", "events.ack", "message.received", "connection.start", "connection.stop", "peer.approve", "peer.revoke", "peer.pairing_accept", "diagnostics.query"],
   "operations": [
     {
       "operation": "runtime.capabilities",
@@ -67,7 +67,7 @@
       "permission": "pair",
       "scope": "profile",
       "mutation": true,
-      "idempotency": "caller_profile_operation_key"
+      "idempotency": "convergent_desired_state"
     },
     {
       "operation": "peer.query",

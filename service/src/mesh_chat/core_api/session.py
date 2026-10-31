@@ -15,7 +15,7 @@ from typing import Protocol
 
 from .views import (
     acceptance_view, acknowledgment_view, connection_view, event_view, intent_view, message_view,
-    peer_view, received_view, relationship_view,
+    pairing_view, peer_view, received_view, relationship_view,
 )
 from .errors import ApiFailure
 from .limits import MAX_FRAME_BYTES, MAX_REQUEST_JSON_DEPTH, MAX_REQUEST_JSON_TOKENS
@@ -23,14 +23,15 @@ from .diagnostics import Diagnostics, MAX_DIAGNOSTICS, MAX_DIAGNOSTIC_BYTES
 from .diagnostic_views import diagnostics_view
 from .requests import (
     CURSOR, DIAGNOSTIC_OPERATIONS, INTENT_OPERATIONS, MESSAGE_OPERATIONS, OPERATIONS,
-    RECEIVED_OPERATIONS, RECOVERY_OPERATIONS, RELATIONSHIP_OPERATIONS, REQUEST_ID,
-    parse_request,
+    PAIRING_OPERATIONS, RECEIVED_OPERATIONS, RECOVERY_OPERATIONS, RELATIONSHIP_OPERATIONS,
+    REQUEST_ID, parse_request,
 )
 from .messages import (
     IDEMPOTENCY_SECONDS, MAX_CALLER_ENQUEUES, MAX_PEERS, MAX_VAULT_ENQUEUES,
     MessageScope, Messages,
 )
 from .intent import ConnectionIntent
+from .pairing import Pairing
 from .relationship import Relationship
 from .recovery import (
     MAX_BATCH, MAX_BATCH_BYTES, MAX_CALLER_ACKNOWLEDGMENTS, MAX_CURSOR_BYTES,
@@ -78,6 +79,7 @@ class Ports:
     received: ReceivedLog | None = None
     intent: ConnectionIntent | None = None
     relationship: Relationship | None = None
+    pairing: Pairing | None = None
 
 
 class CoreSession:
@@ -94,11 +96,13 @@ class CoreSession:
         self._received = ports.received
         self._intent = ports.intent
         self._relationship = ports.relationship
+        self._pairing = ports.pairing
         self._operations = (OPERATIONS + (MESSAGE_OPERATIONS if self._messages is not None else ())
                             + (RECOVERY_OPERATIONS if self._recovery is not None else ())
                             + (RECEIVED_OPERATIONS if self._received is not None else ())
                             + (INTENT_OPERATIONS if self._intent is not None else ())
                             + (RELATIONSHIP_OPERATIONS if self._relationship is not None else ())
+                            + (PAIRING_OPERATIONS if self._pairing is not None else ())
                             + (DIAGNOSTIC_OPERATIONS if self._diagnostics is not None else ()))
         self._handle_key = handle_key
         self._transaction = transaction if transaction is not None else nullcontext()
@@ -119,6 +123,7 @@ class CoreSession:
                               "message.received": "read", "events.poll": "read", "events.ack": "read",
                               "connection.start": "connect", "connection.stop": "connect",
                               "peer.approve": "approve", "peer.revoke": "approve",
+                              "peer.pairing_accept": "pair",
                               "diagnostics.query": "diagnose"}.get(operation, "observe")
                 if permission not in grant.permissions:
                     raise ApiFailure("forbidden")
@@ -172,6 +177,8 @@ class CoreSession:
             return self._intent_operation(grant, profile, operation, params)
         if operation in RELATIONSHIP_OPERATIONS:
             return self._relationship_operation(grant, profile, operation, params)
+        if operation in PAIRING_OPERATIONS:
+            return self._pairing_operation(grant, profile, params)
         if operation in RECOVERY_OPERATIONS:
             return self._recover(grant, profile, operation, params, key)
         return self._observe(grant, profile, operation, params)
@@ -261,6 +268,11 @@ class CoreSession:
                     self._handle(grant, "peer", profile, item.value.recipient), item.value) for item in page.messages]
         return self._bounded_recovery({"profile": params["profile"], "messages": messages,
                                        "next_cursor": page.next_cursor, "events_cursor": page.events_cursor})
+
+    def _pairing_operation(self, grant, profile, params):
+        observation = self._pairing.accept(profile, params["document"])
+        peer = self._handle(grant, "peer", profile, observation.contact)
+        return pairing_view(params["profile"], peer, observation)
 
     def _relationship_operation(self, grant, profile, operation, params):
         contact = self._peers(grant, profile).get(params["peer"])

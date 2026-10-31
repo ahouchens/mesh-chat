@@ -126,6 +126,15 @@ def relationship_view(profile, peer, operation, value):
     return {"profile": profile, "peer": peer, "trust": value.trust}
 
 
+def pairing_view(profile, peer, value):
+    if any(not isinstance(item, str) or re.fullmatch(r"[A-Za-z0-9_-]{16,128}", item) is None
+           for item in (profile, peer)):
+        raise ValueError("Invalid pairing handle")
+    if value.trust not in {"awaiting_consent", "pending_request", "approved", "verified"}:
+        raise ValueError("Invalid pairing trust observation")
+    return {"profile": profile, "peer": peer, "trust": value.trust}
+
+
 def peer_view(profile, handle, value):
     if (not isinstance(value.display_name, str) or not 1 <= len(value.display_name) <= 80
             or not isinstance(value.destination, str) or re.fullmatch(r"[a-f0-9]{32}", value.destination) is None):

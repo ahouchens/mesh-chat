@@ -211,6 +211,23 @@ state, and a failed write returns `unavailable` without reporting the change.
 Pairing-document creation and acceptance, workspace membership and Android's
 Binder binding remain outside this surface.
 
+## Inbound pairing
+
+`peer.pairing_accept` accepts a signed invitation document that the user supplied
+out of band. The document is verified entirely by the existing domain rules: the
+signature, destination, expiry and invitation kind are checked before any contact
+exists, a local self-invitation is refused, and I2P access points are refused
+because that consent cannot be inferred from a request. Success returns the
+resulting peer handle and its trust state, never the parsed document or the
+sender's identity material; the contact remains at `awaiting_consent` until the
+ordinary explicit approval flow completes. Accepting the same document again
+converges on the same contact, so the operation is declared convergent rather
+than carrying a receipt that could not share the domain transaction. The result
+contract is `pairing-result-v1.schema.json`.
+
+Outbound pairing creation and per-peer pairing documents, workspace invitations
+and the Android Binder binding remain outside this surface.
+
 ## Observation and recovery
 
 Connection observations use runtime epoch and sequence; gaps or epoch changes

@@ -376,20 +376,13 @@
             "document"
           ],
           "additionalProperties": false
-        },
-        "idempotency_key": {
-          "type": "string",
-          "minLength": 16,
-          "maxLength": 128,
-          "pattern": "^[A-Za-z0-9._:-]+$"
         }
       },
       "required": [
         "api_version",
         "request_id",
         "operation",
-        "params",
-        "idempotency_key"
+        "params"
       ],
       "additionalProperties": false
     },
