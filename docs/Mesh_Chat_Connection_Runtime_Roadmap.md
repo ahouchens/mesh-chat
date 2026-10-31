@@ -978,6 +978,20 @@ convergence, invalid/self/oversized documents, the pair grant with caller scope,
 and capability advertisement. Outbound pairing creation, per-peer documents,
 workspace invitations and the Android binding remain open.
 
+## Outbound pairing material
+
+`peer.pairing_create` exposes the profile's signed invitation in the forms the
+application already displays (`file`, `link`, `expires_at`). It is a query: no
+durable state changes, it is declared `query` in the manifest rather than a
+mutation, and it requires the `pair` grant. The returned material is public
+onboarding data, not identity key material, and the adapter re-checks the type,
+size and timestamp before the view accepts it.
+
+Two in-process regressions verify that the returned file verifies to the local
+destination and that repeated calls succeed, plus refusal without the grant or
+for another caller's profile. Per-peer documents, workspace invitations and the
+Android binding remain open.
+
 ## Remaining work checklist
 
 Reconciled against the specification's invariant list, SC01-SC26 and definition of
@@ -1038,7 +1052,8 @@ M5 - supported reusable core
       (component only; no per-device selection or workspace pairing).
 - [x] Explicit convergent peer approval and revocation (component only).
 - [x] Convergent inbound signed-invitation acceptance (component only).
-- [ ] Outbound pairing creation, workspace relationships and their
+- [x] Profile-level outbound invitation material (query, component only).
+- [ ] Per-peer pairing documents, workspace relationships and their
       idempotency/retention semantics.
 - [x] Experimental TypeScript client over the frame contract (component only; no
       packaging, CI conformance, Kotlin client or consumer).

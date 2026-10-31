@@ -4,12 +4,14 @@ import json
 from pathlib import Path
 
 from jsonschema import Draft202012Validator
+import time
+
 import pytest
 import RNS
 
 from mesh_chat.core_api.composition import bind_service_session
 from mesh_chat.core_api.session import Grant
-from mesh_chat.invitations import create_invitation
+from mesh_chat.invitations import create_invitation, verify_invitation
 from test_core_messages import host, request
 
 
@@ -66,6 +68,33 @@ def test_pairing_requires_the_pair_grant_and_caller_scope(host):
     alex, alex_profile, _ = open_client(service)
     _, blair_profile, _ = open_client(service, caller="blair")
     assert accept(alex, blair_profile, invitation_document())["error"]["code"] == "forbidden"
+
+
+def test_profile_invitation_material_is_signed_and_verifiable(host):
+    service = host()
+    session, profile, operations = open_client(service)
+    assert "peer.pairing_create" in operations
+    reply = session.request(request("peer.pairing_create", profile=profile))
+    assert reply["ok"], reply
+    result = reply["result"]
+    assert result["profile"] == profile
+    assert result["link"].startswith("meshchat://invite/")
+    assert result["expires_at"] > time.time()
+    verified = verify_invitation(result["file"])
+    assert verified.destination_hash.hex() == service.store.get("profile", "local")["destination_hash"]
+    schema = json.loads((CONTRACTS / "invitation-result-v1.schema.json").read_text())
+    Draft202012Validator.check_schema(schema)
+    Draft202012Validator(schema).validate(reply)
+    assert session.request(request("peer.pairing_create", profile=profile))["ok"]
+
+
+def test_invitation_creation_requires_the_pair_grant_and_caller_scope(host):
+    service = host()
+    reader, profile, _ = open_client(service, permissions=("observe", "read"))
+    assert reader.request(request("peer.pairing_create", profile=profile))["error"]["code"] == "forbidden"
+    alex, alex_profile, _ = open_client(service)
+    _, blair_profile, _ = open_client(service, caller="blair")
+    assert alex.request(request("peer.pairing_create", profile=blair_profile))["error"]["code"] == "forbidden"
 
 
 def test_capabilities_advertise_pairing_only_with_the_port(host):

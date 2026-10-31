@@ -19,8 +19,8 @@
       "required": ["api_major", "api_minor", "stability", "operations", "profiles", "limits"],
       "properties": {
         "api_major": {"const": 1}, "api_minor": {"const": 0}, "stability": {"const": "experimental"},
-        "operations": {"type": "array", "uniqueItems": true, "minItems": 3, "maxItems": 16,
-          "items": {"enum": ["runtime.capabilities", "profile.query", "connection.snapshot", "peer.query", "message.enqueue", "message.query", "message.list", "events.poll", "events.ack", "message.received", "connection.start", "connection.stop", "peer.approve", "peer.revoke", "peer.pairing_accept", "diagnostics.query"]}},
+        "operations": {"type": "array", "uniqueItems": true, "minItems": 3, "maxItems": 17,
+          "items": {"enum": ["runtime.capabilities", "profile.query", "connection.snapshot", "peer.query", "message.enqueue", "message.query", "message.list", "events.poll", "events.ack", "message.received", "connection.start", "connection.stop", "peer.approve", "peer.revoke", "peer.pairing_accept", "peer.pairing_create", "diagnostics.query"]}},
         "profiles": {"$ref": "#/$defs/handles"},
         "limits": {"type": "object", "additionalProperties": false,
           "required": ["frame_bytes", "request_json_depth", "request_json_structural_tokens", "profiles", "connections_per_profile"],

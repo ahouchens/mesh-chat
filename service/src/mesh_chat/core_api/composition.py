@@ -5,6 +5,7 @@ the current caller grant before the component becomes a public host interface.
 """
 
 from .session import ApiFailure, CoreSession, Ports, ProfileObservation
+from .service_invitations import ServiceInvitations
 from .service_messages import ServiceMessages
 from .service_pairing import ServicePairing
 from .service_recovery import ServiceRecovery
@@ -44,9 +45,11 @@ def bind_service_session(service, authenticated_grant):
         relationship = (ServiceRelationship(service) if hasattr(service, "approve_request")
                         else None)
         pairing = ServicePairing(service) if hasattr(service, "accept_invitation") else None
+        invitations = ServiceInvitations(service) if hasattr(service, "invitation") else None
         ports = Ports(messages=messages, recovery=recovery,
                       diagnostics=ServiceDiagnostics(service, messages), received=received,
-                      intent=intent, relationship=relationship, pairing=pairing)
+                      intent=intent, relationship=relationship, pairing=pairing,
+                      invitations=invitations)
         return CoreSession(current_grant, ServiceObservations(service), handle_key=handle_key,
                            transaction=service._dispatch_lock, ports=ports)
 

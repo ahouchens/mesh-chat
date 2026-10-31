@@ -135,6 +135,18 @@ def pairing_view(profile, peer, value):
     return {"profile": profile, "peer": peer, "trust": value.trust}
 
 
+def invitation_view(profile, value):
+    if not isinstance(profile, str) or re.fullmatch(r"[A-Za-z0-9_-]{16,128}", profile) is None:
+        raise ValueError("Invalid invitation profile handle")
+    if (not isinstance(value.file, str) or not 1 <= len(value.file) <= 65536
+            or not isinstance(value.link, str) or not 1 <= len(value.link) <= 65536
+            or len(value.file) + len(value.link) > 200000
+            or type(value.expires_at) not in {int, float} or not 0 < value.expires_at <= 9007199254740991):
+        raise ValueError("Invalid invitation observation")
+    return {"profile": profile, "file": value.file, "link": value.link,
+            "expires_at": value.expires_at}
+
+
 def peer_view(profile, handle, value):
     if (not isinstance(value.display_name, str) or not 1 <= len(value.display_name) <= 80
             or not isinstance(value.destination, str) or re.fullmatch(r"[a-f0-9]{32}", value.destination) is None):

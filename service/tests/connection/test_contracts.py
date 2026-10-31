@@ -69,7 +69,7 @@ def test_each_designed_operation_has_an_executable_request_vector_and_permission
         "runtime.capabilities": {}, "runtime.stop": {},
         "profile.create": {"display_name": "Alex"}, "profile.select": {},
         "profile.unlock": {"credential_handle": handle}, "profile.lock": {}, "profile.query": {},
-        "peer.pairing_create": {"lifetime_seconds": 300},
+        "peer.pairing_create": {},
         "peer.pairing_accept": {"document": "signed-pairing-document"},
         "peer.query": {"peer": handle},
         "peer.approve": {"peer": handle},

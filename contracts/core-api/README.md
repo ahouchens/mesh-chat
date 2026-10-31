@@ -225,8 +225,13 @@ converges on the same contact, so the operation is declared convergent rather
 than carrying a receipt that could not share the domain transaction. The result
 contract is `pairing-result-v1.schema.json`.
 
-Outbound pairing creation and per-peer pairing documents, workspace invitations
-and the Android Binder binding remain outside this surface.
+`peer.pairing_create` returns the profile's current signed invitation in the
+same three forms the application shows (`file`, `link`, `expires_at`); it changes
+no durable state, is declared a query rather than a mutation, and requires the
+`pair` grant. The material is public onboarding data, not identity keys: the
+client receives exactly what it would put in a QR code. Per-peer pairing
+documents, workspace invitations and the Android Binder binding remain outside
+this surface.
 
 ## Observation and recovery
 

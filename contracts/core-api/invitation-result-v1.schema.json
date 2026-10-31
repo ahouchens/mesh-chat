@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:mesh-chat:core-api:invitation-result:1",
+  "title": "Experimental local pairing invitation v1",
+  "description": "Signed invitation material for the authorized profile. Schema validity never grants authority.",
+  "type": "object", "additionalProperties": false,
+  "required": ["api_version", "request_id", "ok", "result"],
+  "properties": {
+    "api_version": {"const": 1},
+    "request_id": {"type": "string", "pattern": "^[A-Za-z0-9._:-]{1,80}$"},
+    "ok": {"const": true},
+    "result": {"$ref": "#/$defs/invitation"}
+  },
+  "$defs": {
+    "handle": {"type": "string", "pattern": "^[A-Za-z0-9_-]{16,128}$"},
+    "timestamp": {"type": "number", "minimum": 0, "maximum": 9007199254740991},
+    "invitation": {
+      "type": "object", "additionalProperties": false,
+      "required": ["profile", "file", "link", "expires_at"],
+      "properties": {
+        "profile": {"$ref": "#/$defs/handle"},
+        "file": {"type": "string", "minLength": 1, "maxLength": 65536},
+        "link": {"type": "string", "minLength": 1, "maxLength": 65536},
+        "expires_at": {"$ref": "#/$defs/timestamp"}
+      }
+    }
+  }
+}
