@@ -341,8 +341,8 @@ class CoreSession:
         contact = self._peers(grant, profile).get(params["peer"])
         if contact is None:
             raise ApiFailure("forbidden")
-        observation = self._pairing.request(profile, contact)
-        return pairing_request_view(params["profile"], params["peer"], observation)
+        self._pairing.request(profile, contact)
+        return pairing_request_view(params["profile"], params["peer"])
 
     def _pairing_operation(self, grant, profile, params):
         observation = self._pairing.accept(profile, params["document"])

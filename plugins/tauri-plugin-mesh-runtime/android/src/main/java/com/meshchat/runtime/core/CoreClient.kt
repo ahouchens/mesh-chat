@@ -35,7 +35,10 @@ class CoreClient private constructor(private val transport: CoreTransport) {
     }
 
     /** Send one request and return its selected result object. */
-    fun request(operation: String, params: JSONObject = JSONObject()): JSONObject {
+    fun request(operation: String, params: JSONObject = JSONObject()): JSONObject =
+        dispatch(operation, params, null)
+
+    private fun dispatch(operation: String, params: JSONObject, key: String?): JSONObject {
         if (closed) throw CoreException("transport_closed")
         val requestId = "client:${(++sequence).toString(36)}"
         val envelope = JSONObject()
@@ -43,6 +46,7 @@ class CoreClient private constructor(private val transport: CoreTransport) {
             .put("request_id", requestId)
             .put("operation", operation)
             .put("params", params)
+        if (key != null) envelope.put("idempotency_key", key)
         val line = envelope.toString() + "\n"
         if (line.length > MAX_FRAME_CHARS) throw CoreException("invalid_request", requestId)
         transport.writeLine(line)
@@ -63,7 +67,7 @@ class CoreClient private constructor(private val transport: CoreTransport) {
 
     fun enqueue(profile: String, recipient: String, text: String, idempotencyKey: String): JSONObject {
         requireKey(idempotencyKey, "mutations")
-        return requestWithKey(
+        return dispatch(
             "message.enqueue",
             JSONObject().put("profile", profile).put("recipient", recipient)
                 .put("kind", "text").put("text", text),
@@ -82,7 +86,7 @@ class CoreClient private constructor(private val transport: CoreTransport) {
 
     fun acknowledge(profile: String, cursor: String, idempotencyKey: String): JSONObject {
         requireKey(idempotencyKey, "acknowledgments")
-        return requestWithKey(
+        return dispatch(
             "events.ack",
             JSONObject().put("profile", profile).put("cursor", cursor),
             idempotencyKey,
@@ -124,20 +128,7 @@ class CoreClient private constructor(private val transport: CoreTransport) {
         }
     }
 
-    private fun requestWithKey(operation: String, params: JSONObject, key: String): JSONObject {
-        if (closed) throw CoreException("transport_closed")
-        val requestId = "client:${(++sequence).toString(36)}"
-        val envelope = JSONObject()
-            .put("api_version", 1)
-            .put("request_id", requestId)
-            .put("operation", operation)
-            .put("params", params)
-            .put("idempotency_key", key)
-        val line = envelope.toString() + "\n"
-        if (line.length > MAX_FRAME_CHARS) throw CoreException("invalid_request", requestId)
-        transport.writeLine(line)
-        return decodeReply(requestId)
-    }
+
 
     private fun decodeReply(requestId: String): JSONObject {
         val replyLine = transport.readLine()

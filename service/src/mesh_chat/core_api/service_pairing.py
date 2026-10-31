@@ -2,7 +2,7 @@
 
 from ..errors import InvitationExpired, InvitationInvalid, ValidationError
 from .errors import ApiFailure
-from .pairing import PairingObservation, PairingRequest
+from .pairing import PairingObservation
 from .service_messages import storage_errors
 
 
@@ -15,11 +15,14 @@ class ServicePairing:
     def __init__(self, service):
         self._service = service
 
-    def accept(self, profile, document):
+    def _require_local(self, profile):
         if profile != "local":
             raise ApiFailure("forbidden")
         if self._service._identity is None:
             raise ApiFailure("locked")
+
+    def accept(self, profile, document):
+        self._require_local(profile)
         if (not isinstance(document, str) or not 1 <= len(document) <= MAX_DOCUMENT):
             raise ApiFailure("invalid_request")
         with storage_errors():
@@ -33,10 +36,7 @@ class ServicePairing:
             return PairingObservation(contact_id, trust)
 
     def request(self, profile, contact_id):
-        if profile != "local":
-            raise ApiFailure("forbidden")
-        if self._service._identity is None:
-            raise ApiFailure("locked")
+        self._require_local(profile)
         with storage_errors():
             contact = self._service.store.get("contact", contact_id)
             if contact is None:
@@ -51,4 +51,3 @@ class ServicePairing:
                     or message.get("kind") != "contact_request"
                     or message.get("direction") != "outbound"):
                 raise ApiFailure("internal")
-            return PairingRequest(contact_id)

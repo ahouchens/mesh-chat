@@ -1004,7 +1004,7 @@ size and timestamp before the view accepts it.
 
 Two in-process regressions verify that the returned file verifies to the local
 destination and that repeated calls succeed, plus refusal without the grant or
-for another caller's profile. Per-peer documents, workspace invitations and the
+for another caller's profile. The Python, TypeScript and Kotlin clients expose the helper, and the Python and TypeScript clients pin its exact envelope. Per-peer documents, workspace invitations and the
 Android binding remain open.
 
 ## Owner-authorized stop
