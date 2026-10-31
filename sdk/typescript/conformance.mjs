@@ -31,6 +31,7 @@ try {
   const profile = client.capabilities.profiles[0];
   const view = await client.profileQuery(profile);
   const page = await client.received(profile);
+  const invitation = await client.pairingCreate(profile);
   const snapshot = await client.request("message.list", { profile, cursor: null, limit: 8 });
   const events = await client.pollEvents(profile, snapshot.events_cursor);
   client.close();
@@ -40,6 +41,7 @@ try {
     peers: view.peers.length,
     messages: page.messages.length,
     events: events.events.length,
+    invitation: invitation.file.length > 0,
     api_major: client.capabilities.api_major,
   }, 0);
 } catch (error) {

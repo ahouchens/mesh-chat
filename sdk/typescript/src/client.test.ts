@@ -218,3 +218,36 @@ test("an unsupported public API major is refused before any command", async () =
   await assert.rejects(CoreClient.open(transport), ProtocolError);
   assert.equal(transport.written.length, 1);
 });
+
+test("relationship and pairing helpers use the declared contract", async () => {
+  const transport = new Scripted(
+    success("client:1", CAPABILITIES),
+    success("client:2", { profile: PROFILE, peer: PEER, trust: "approved" }),
+    success("client:3", { profile: PROFILE, peer: PEER, trust: "blocked" }),
+    success("client:4", {
+      profile: PROFILE,
+      file: "signed-invitation",
+      link: "meshchat://invite/token",
+      expires_at: 1767225600,
+    }),
+    success("client:5", { profile: PROFILE, peer: PEER, trust: "awaiting_consent" }),
+  );
+  const client = await CoreClient.open(transport);
+  assert.equal((await client.approve(PROFILE, PEER)).trust, "approved");
+  assert.equal((await client.revoke(PROFILE, PEER)).trust, "blocked");
+  assert.equal((await client.pairingCreate(PROFILE)).file, "signed-invitation");
+  assert.equal((await client.pairingAccept(PROFILE, "signed-invitation")).trust, "awaiting_consent");
+  const requests = transport.written.map((line) => JSON.parse(line));
+  assert.equal(requests[1].operation, "peer.approve");
+  assert.deepEqual(requests[1].params, { profile: PROFILE, peer: PEER });
+  assert.equal("idempotency_key" in requests[1], false);
+  assert.equal(requests[4].operation, "peer.pairing_accept");
+  assert.deepEqual(requests[4].params, { profile: PROFILE, document: "signed-invitation" });
+});
+
+test("pairing acceptance refuses an empty document before dispatch", async () => {
+  const transport = new Scripted(success("client:1", CAPABILITIES));
+  const client = await CoreClient.open(transport);
+  await assert.rejects(() => client.pairingAccept(PROFILE, ""), ProtocolError);
+  assert.equal(transport.written.length, 1);
+});

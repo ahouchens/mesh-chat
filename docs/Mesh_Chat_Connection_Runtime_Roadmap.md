@@ -855,7 +855,7 @@ a missing idempotency key fail before anything is written. A resynchronizing
 consumer walks every snapshot page, deduplicates redelivered events, clears its
 position on `resync_required` and acknowledges only a caller-confirmed position;
 an AbortSignal cancels before dispatch without writing, or reports an unknown
-outcome without resending. Nineteen Node tests cover those paths, including
+outcome without resending. Twenty-two Node tests cover those paths, including
 abort, timeout, deduplication and confirmation. A cross-language conformance
 test runs the compiled client against the real Python facade over inherited
 stdio: capability negotiation, profile query, received pages, snapshot watermark

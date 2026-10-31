@@ -18,7 +18,10 @@ import type {
   DiagnosticsView,
   EventPage,
   ProfileView,
+  InvitationView,
+  PairingView,
   ReceivedPage,
+  RelationshipView,
 } from "./types.js";
 
 export const DEFAULT_TIMEOUT_MS = 30_000;
@@ -196,6 +199,25 @@ export class CoreClient {
   async diagnostics(profile: string, limit = MAX_DIAGNOSTICS): Promise<DiagnosticsView> {
     bounded(limit, MAX_DIAGNOSTICS, "diagnostic page");
     return this.request<DiagnosticsView>("diagnostics.query", { profile, limit });
+  }
+
+  async approve(profile: string, peer: string): Promise<RelationshipView> {
+    return this.request<RelationshipView>("peer.approve", { profile, peer });
+  }
+
+  async revoke(profile: string, peer: string): Promise<RelationshipView> {
+    return this.request<RelationshipView>("peer.revoke", { profile, peer });
+  }
+
+  async pairingCreate(profile: string): Promise<InvitationView> {
+    return this.request<InvitationView>("peer.pairing_create", { profile });
+  }
+
+  async pairingAccept(profile: string, document: string): Promise<PairingView> {
+    if (document.length === 0) {
+      throw new ProtocolError("pairing requires signed invitation material");
+    }
+    return this.request<PairingView>("peer.pairing_accept", { profile, document });
   }
 }
 

@@ -91,3 +91,22 @@ export interface DiagnosticsView {
   total_connections?: number;
   truncated?: boolean;
 }
+
+export interface RelationshipView {
+  profile: string;
+  peer: string;
+  trust: "approved" | "verified" | "blocked";
+}
+
+export interface PairingView {
+  profile: string;
+  peer: string;
+  trust: "awaiting_consent" | "pending_request" | "approved" | "verified";
+}
+
+export interface InvitationView {
+  profile: string;
+  file: string;
+  link: string;
+  expires_at: number;
+}
