@@ -13,6 +13,7 @@ OPERATIONS = ("runtime.capabilities", "profile.query", "connection.snapshot")
 MESSAGE_OPERATIONS = ("peer.query", "message.enqueue", "message.query")
 RECOVERY_OPERATIONS = ("message.list", "events.poll", "events.ack")
 RECEIVED_OPERATIONS = ("message.received",)
+INTENT_OPERATIONS = ("connection.start", "connection.stop")
 DIAGNOSTIC_OPERATIONS = ("diagnostics.query",)
 REQUEST_ID = re.compile(r"[A-Za-z0-9._:-]{1,80}\Z")
 HANDLE = re.compile(r"[A-Za-z0-9_-]{16,128}\Z")
@@ -48,6 +49,13 @@ def parse_request(value, operations):
         return operation, _recovery_params(value["params"])
     if operation in RECEIVED_OPERATIONS:
         return operation, _recovery_params(value["params"])
+    if operation in INTENT_OPERATIONS:
+        params = value["params"]
+        if (not isinstance(params, dict) or set(params) != {"profile", "peer"}
+                or any(not isinstance(item, str) or HANDLE.fullmatch(item) is None
+                       for item in params.values())):
+            raise ApiFailure("invalid_request")
+        return operation, params
     fields = {"runtime.capabilities": set(), "profile.query": {"profile"},
               "connection.snapshot": {"profile", "connection"},
               "peer.query": {"profile", "peer"},

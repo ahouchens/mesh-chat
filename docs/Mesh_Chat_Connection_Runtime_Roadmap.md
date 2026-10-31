@@ -881,6 +881,25 @@ through its pipe. This is not a packaged console script: there is no installed
 entry point, no versioned distribution, no Android transport and no support
 matrix.
 
+## Contact-wide connection intent
+
+A consumer could observe and message but could not ask the runtime to connect or
+stop. `connection.start` and `connection.stop` now apply contact-wide desired
+state to an approved peer handle. The domain keeps ownership of durable intent
+and its fences; `ServiceIntent` only rechecks current caller, profile and peer
+authority, applies the domain command and projects the resulting state. A start
+that no current consent or capability makes eligible reports `stopped`/inactive
+rather than claiming intent, and a failed write returns `unavailable` without
+reporting a stop. Both commands converge on the same state, so the contract
+declares them convergent mutations instead of inventing a receipt that could not
+share the domain transaction.
+
+Seven in-process regressions cover convergent stop, truthful ineligible start,
+applied start/stop after both consents exist, blocked and unknown peers, the
+connect grant and caller scope, failed-persistence honesty, and capability
+advertisement. This is contact-wide intent; per-device selection, workspace
+pairing and the shared-runtime parity gates remain open.
+
 ## Remaining work checklist
 
 Reconciled against the specification's invariant list, SC01-SC26 and definition of
@@ -936,8 +955,10 @@ M5 - supported reusable core
       allowlist (component only; no packaged consumer).
 - [ ] Authenticated Android Binder endpoint and packaged consumers; the facade
       remains a private component until they exist.
-- [ ] Remaining durable commands/events (connection intent, pairing/approval) and
-      their idempotency/retention semantics.
+- [x] Contact-wide connection start/stop intent with convergent semantics
+      (component only; no per-device selection or workspace pairing).
+- [ ] Remaining durable commands/events (pairing/approval) and their
+      idempotency/retention semantics.
 - [x] Experimental TypeScript client over the frame contract (component only; no
       packaging, CI conformance, Kotlin client or consumer).
 - [x] Experimental Python client and Windows CLI over the host pipe (component

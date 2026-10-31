@@ -79,6 +79,7 @@ def test_each_designed_operation_has_an_executable_request_vector_and_permission
         "message.enqueue": {"recipient": handle, "kind": "text", "text": "Hello"},
         "message.query": {"message": handle}, "message.list": {"cursor": None, "limit": 128},
         "message.received": {"cursor": None, "limit": 128},
+        "connection.start": {"peer": handle}, "connection.stop": {"peer": handle},
         "events.poll": {"cursor": None, "limit": 128}, "events.ack": {"cursor": handle},
         "diagnostics.query": {"limit": 256},
     }
@@ -93,7 +94,7 @@ def test_each_designed_operation_has_an_executable_request_vector_and_permission
         if operation["scope"] == "profile":
             params["profile"] = handle
         request = {"api_version": 1, "request_id": "vector:1", "operation": operation["operation"], "params": params}
-        if operation["mutation"]:
+        if operation["idempotency"] == "caller_profile_operation_key":
             request["idempotency_key"] = "operation-key-0001"
         contract.validate(request)
 

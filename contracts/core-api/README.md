@@ -160,6 +160,24 @@ state. Stop and revocation fence work immediately and report persistence failure
 without claiming durability. Start/retry cannot bypass consent, cooldown, native
 capacity or an explicit Stop that has not been superseded by a committed Start.
 
+## Connection intent
+
+`connection.start` and `connection.stop` apply contact-wide desired state to
+an approved peer, addressed by the caller-scoped peer handle. The domain owns
+durability and fencing; the facade only checks current caller, profile and peer
+authority and projects the resulting state. A start that no current consent or
+capability makes eligible is not an error: it reports `desired: stopped` and
+`active: false` instead of claiming intent it did not apply. Repeating either
+command converges on the same state, so they are declared as convergent mutations
+rather than carrying a caller-scoped idempotency key that no receipt could make
+atomic with the domain batch.
+
+A failed persistence write returns `unavailable` and never reports `stopped`: the
+previous state remains and the caller must resolve it. The result contract is
+`intent-result-v1.schema.json`. This is contact-wide intent, not per-device
+selection; device-scoped intent requires the device-profile parity still listed
+as remaining work. No retry policy, runtime ownership or native call is involved.
+
 ## Observation and recovery
 
 Connection observations use runtime epoch and sequence; gaps or epoch changes
