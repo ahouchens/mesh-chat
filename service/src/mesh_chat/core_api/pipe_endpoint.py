@@ -14,6 +14,7 @@ This is the Windows host binding; Android still requires its own Binder binding.
 
 import ctypes
 from ctypes import wintypes
+from dataclasses import dataclass
 import os
 import threading
 import time
@@ -207,29 +208,45 @@ class _Duplex:
         return None
 
 
+@dataclass(frozen=True)
+class PipeConfig:
+    """Validated host facts for one endpoint; callers cannot choose defaults."""
+
+    caller: str
+    permissions: tuple
+    allowed_images: tuple
+    max_clients: int = 4
+    idle_timeout: float = 60.0
+
+    def __post_init__(self):
+        host.host_grant(self.caller, self.permissions)
+        validate_images(self.allowed_images)
+        if type(self.max_clients) is not int or not 1 <= self.max_clients <= 8:
+            raise ValueError("Core API endpoint client budget is invalid")
+        if type(self.idle_timeout) not in {int, float} or not 0.1 <= self.idle_timeout <= 3600:
+            raise ValueError("Core API endpoint idle timeout is invalid")
+
+
 class PipeEndpoint:
     """One host-owned endpoint; callers cannot choose its name or allowlist."""
 
-    def __init__(self, name, *, allowed_images, caller, permissions, max_clients=4,
-                 idle_timeout=60.0):
+    def __init__(self, name, config):
         if os.name != "nt":
             raise RuntimeError("The core API pipe endpoint requires Windows")
+        if not isinstance(config, PipeConfig):
+            raise ValueError("Core API endpoint configuration is required")
         self.kernel, self.advapi = _bind()
         self._name = pipe_name(name)
-        if type(max_clients) is not int or not 1 <= max_clients <= 8:
-            raise ValueError("Core API endpoint client budget is invalid")
-        if (type(idle_timeout) not in {int, float} or not 0.1 <= idle_timeout <= 3600):
-            raise ValueError("Core API endpoint idle timeout is invalid")
-        self._images = validate_images(allowed_images)
-        self._grant = host.host_grant(caller, permissions)
+        self._images = config.allowed_images
+        self._grant = host.host_grant(config.caller, config.permissions)
         self._stop = threading.Event()
         self._ready = threading.Event()
         self._lock = threading.Lock()
         self._handles = set()
         self._error = None
         self._threads = []
-        self._max_clients = max_clients
-        self._idle_timeout = float(idle_timeout)
+        self._max_clients = config.max_clients
+        self._idle_timeout = float(config.idle_timeout)
         self.rejected = 0
         self.accepted = 0
         self.failure = None

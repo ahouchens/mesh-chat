@@ -17,7 +17,7 @@ import pytest
 if os.name != "nt":
     pytest.skip("Windows named pipes are required", allow_module_level=True)
 
-from mesh_chat.core_api.pipe_endpoint import PipeEndpoint
+from mesh_chat.core_api.pipe_endpoint import PipeConfig, PipeEndpoint
 from mesh_chat.service import MeshChatService
 from mesh_chat.vault import VaultStore
 
@@ -105,9 +105,15 @@ def current_image():
         kernel32.CloseHandle(process)
 
 
+def config(images=None, caller="mesh-chat-desktop", permissions=("observe", "read", "send"),
+           max_clients=4, idle_timeout=60.0):
+    return PipeConfig(caller=caller, permissions=tuple(permissions),
+                      allowed_images=tuple(images or (current_image(),)),
+                      max_clients=max_clients, idle_timeout=idle_timeout)
+
+
 def endpoint(name, images=None, caller="mesh-chat-desktop", permissions=("observe", "read", "send")):
-    return PipeEndpoint(name, allowed_images=images or (current_image(),),
-                        caller=caller, permissions=permissions)
+    return PipeEndpoint(name, config(images=images, caller=caller, permissions=permissions))
 
 
 def pipe_name():
@@ -235,8 +241,7 @@ def test_bounded_concurrent_clients_are_served_independently(service):
 def test_client_budget_is_bounded():
     for value in (0, 9, True, "4"):
         with pytest.raises(ValueError):
-            PipeEndpoint(pipe_name(), allowed_images=(current_image(),),
-                         caller="mesh-chat-desktop", permissions=("observe",), max_clients=value)
+            config(permissions=("observe",), max_clients=value)
 
 def test_cli_queries_the_endpoint_over_the_host_pipe(service):
     from mesh_chat.core_api.cli import run
@@ -259,8 +264,7 @@ def test_cli_queries_the_endpoint_over_the_host_pipe(service):
 
 def test_idle_client_is_disconnected_and_does_not_hold_a_worker(service):
     name = pipe_name()
-    server = PipeEndpoint(name, allowed_images=(current_image(),), caller="mesh-chat-desktop",
-                          permissions=("observe", "read"), idle_timeout=0.5)
+    server = PipeEndpoint(name, config(permissions=("observe", "read"), idle_timeout=0.5))
     server.start(service)
     try:
         idle = connect(name)
@@ -277,5 +281,4 @@ def test_idle_client_is_disconnected_and_does_not_hold_a_worker(service):
 def test_idle_timeout_is_bounded():
     for value in (0, -1, 3601, "60", True):
         with pytest.raises(ValueError):
-            PipeEndpoint(pipe_name(), allowed_images=(current_image(),),
-                         caller="mesh-chat-desktop", permissions=("observe",), idle_timeout=value)
+            config(permissions=("observe",), idle_timeout=value)

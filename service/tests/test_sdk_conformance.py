@@ -8,9 +8,19 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import sys
 import threading
 
 import pytest
+
+
+# The connection suite owns the one real-service fixture; reuse it rather than
+# maintaining a second copy. Its module is importable once its directory is on
+# the path, which pytest already does for tests inside it.
+_CONNECTION = Path(__file__).resolve().parent / "connection"
+if str(_CONNECTION) not in sys.path:
+    sys.path.insert(0, str(_CONNECTION))
+from test_core_messages import host  # noqa: E402
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -35,24 +45,6 @@ def modern_node():
     return None
 
 
-@pytest.fixture
-def host(tmp_path, monkeypatch):
-    from mesh_chat.service import MeshChatService
-    from mesh_chat.vault import VaultStore
-
-    monkeypatch.setattr(MeshChatService, "_start_network", lambda *_: None)
-    monkeypatch.setattr(MeshChatService, "_prepare_lan_fallback", lambda *_: None)
-    store = VaultStore(tmp_path, os.urandom(32), allow_unprotected_for_tests=True)
-    service = MeshChatService(store, tmp_path, lambda _: None)
-    if store.get("profile", "local") is None:
-        service.create_profile("Alex")
-        store.put("contact", "internal-peer", {
-            "id": "internal-peer", "display_name": "Blair", "trust": "approved",
-            "destination_hash": "ab" * 16})
-    yield service
-    service.close()
-
-
 @pytest.mark.skipif(modern_node() is None, reason="A Node 20+ runtime is required")
 def test_typescript_client_conforms_over_inherited_stdio(host):
     from mesh_chat.core_api.composition import bind_service_stream
@@ -63,8 +55,9 @@ def test_typescript_client_conforms_over_inherited_stdio(host):
     # sockets, so only the spawned child can reach the session.
     requests_read, requests_write = os.pipe()
     responses_read, responses_write = os.pipe()
+    service = host()
     grants = [Grant("alex", frozenset({"observe", "read", "send"}), ("local",))]
-    session = bind_service_stream(host, lambda: grants[0])
+    session = bind_service_stream(service, lambda: grants[0])
 
     def serve():
         with os.fdopen(requests_read, "rb", buffering=0) as reader:
