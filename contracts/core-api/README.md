@@ -296,6 +296,20 @@ without the permission check. Its four instrumentation tests run once per scenar
 qualification job and now form a required suite in the gate inventory, bound to
 the exact source commit and test APK digest; no packaged consumer exists yet.
 
+## Workspace administration
+
+`workspace.query` lists the caller's workspaces with caller-scoped handles and only
+name, role and state. `workspace.join_requests` lists pending join requests for a
+workspace the caller owns or administers, exposing a caller-scoped request handle,
+the applicant's display name and the request time — never identity documents,
+destination hashes or member records. `workspace.join_approve` requires the
+`approve` grant and a caller key; the facade resolves the handles, maps the key to
+a caller-scoped UUID operation id and delegates to the existing domain approval
+transaction, so a replay returns the same workspace state instead of approving
+twice. A request handle remains resolvable after a decision so replays stay
+honest. Declining, role changes and channel administration remain outside this
+surface.
+
 ## Observation and recovery
 
 Connection observations use runtime epoch and sequence; gaps or epoch changes

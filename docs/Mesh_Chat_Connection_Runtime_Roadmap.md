@@ -1090,6 +1090,17 @@ the signed document. Two in-process regressions cover convergence with a single
 queued request, and refusal for approved peers, missing `pair` grants and another
 caller's profile.
 
+## Workspace administration
+
+The facade can now list caller-scoped workspaces, review pending join requests and
+approve one with a caller key. Views expose only names, roles, states and the
+applicant's display name; handles stay caller-scoped and request handles remain
+resolvable after a decision so a replayed key returns the same state instead of
+failing or approving twice. Two regressions drive the real domain flow from a
+pending join request through approval and replay, and cover the approve grant,
+role requirement and caller scope. Decline, role changes and channel
+administration remain open.
+
 ## Remaining work checklist
 
 Reconciled against the specification's invariant list, SC01-SC26 and definition of
@@ -1158,8 +1169,10 @@ M5 - supported reusable core
       joining states only, no role administration).
 - [x] Per-peer signed contact request with bounded convergence (component only;
       the signed document is not returned).
+- [x] Workspace listing, pending join review and idempotent join approval
+      (component only; decline, role changes and channel administration open).
 - [ ] Per-peer pairing documents returned to the caller and workspace role
-      administration.
+      changes.
 - [x] Experimental TypeScript client over the frame contract (component only; no
       packaging, CI conformance, Kotlin client or consumer).
 - [x] Experimental Python client and Windows CLI over the host pipe, with a

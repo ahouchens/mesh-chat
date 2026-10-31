@@ -204,3 +204,49 @@ def pairing_request_view(profile, peer):
            for item in (profile, peer)):
         raise ValueError("Invalid pairing request handle")
     return {"profile": profile, "peer": peer, "state": "requested"}
+
+
+WORKSPACE_ROLES = {"owner", "admin", "member"}
+WORKSPACE_STATES = {"active", "joining", "left", "removed", "revoked", "archived"}
+
+
+def workspace_list_view(profile, items):
+    if not isinstance(profile, str) or re.fullmatch(r"[A-Za-z0-9_-]{16,128}", profile) is None:
+        raise ValueError("Invalid workspace profile handle")
+    if len(items) > 16:
+        raise ValueError("Workspace page is unbounded")
+    workspaces = []
+    for handle, value in items:
+        if (re.fullmatch(r"[A-Za-z0-9_-]{16,128}", handle) is None
+                or not isinstance(value.name, str) or not value.name
+                or value.role not in WORKSPACE_ROLES or value.state not in WORKSPACE_STATES):
+            raise ValueError("Invalid workspace summary")
+        workspaces.append({"workspace": handle, "name": value.name,
+                           "role": value.role, "state": value.state})
+    return {"profile": profile, "workspaces": workspaces}
+
+
+def workspace_requests_view(profile, workspace, items):
+    if any(not isinstance(item, str) or re.fullmatch(r"[A-Za-z0-9_-]{16,128}", item) is None
+           for item in (profile, workspace)):
+        raise ValueError("Invalid workspace request handle")
+    if len(items) > 32:
+        raise ValueError("Join request page is unbounded")
+    requests = []
+    for handle, value in items:
+        if (re.fullmatch(r"[A-Za-z0-9_-]{16,128}", handle) is None
+                or not isinstance(value.display_name, str) or not value.display_name
+                or type(value.created_at) not in {int, float}):
+            raise ValueError("Invalid join request summary")
+        requests.append({"request": handle, "display_name": value.display_name,
+                         "created_at": value.created_at})
+    return {"profile": profile, "workspace": workspace, "requests": requests}
+
+
+def workspace_approve_view(profile, workspace, value):
+    if any(not isinstance(item, str) or re.fullmatch(r"[A-Za-z0-9_-]{16,128}", item) is None
+           for item in (profile, workspace)):
+        raise ValueError("Invalid workspace approval handle")
+    if value.state not in WORKSPACE_STATES:
+        raise ValueError("Invalid workspace approval state")
+    return {"profile": profile, "workspace": workspace, "state": value.state}

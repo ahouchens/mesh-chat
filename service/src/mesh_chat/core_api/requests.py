@@ -21,6 +21,9 @@ INVITATION_OPERATIONS = ("peer.pairing_create",)
 STOP_OPERATIONS = ("runtime.stop",)
 WORKSPACE_PREVIEW_OPERATIONS = ("workspace.invitation_preview",)
 WORKSPACE_JOIN_OPERATIONS = ("workspace.join",)
+WORKSPACE_LIST_OPERATIONS = ("workspace.query",)
+WORKSPACE_REQUESTS_OPERATIONS = ("workspace.join_requests",)
+WORKSPACE_APPROVE_OPERATIONS = ("workspace.join_approve",)
 DIAGNOSTIC_OPERATIONS = ("diagnostics.query",)
 REQUEST_ID = re.compile(r"[A-Za-z0-9._:-]{1,80}\Z")
 HANDLE = re.compile(r"[A-Za-z0-9_-]{16,128}\Z")
@@ -42,7 +45,8 @@ def parse_request(value, operations):
     operation = value["operation"]
     if not isinstance(operation, str) or operation not in operations:
         raise ApiFailure("unsupported_operation")
-    if operation in ("message.enqueue", "events.ack", "workspace.join"):
+    if operation in ("message.enqueue", "events.ack", "workspace.join",
+                      "workspace.join_approve"):
         fields.add("idempotency_key")
     if set(value) != fields:
         raise ApiFailure("invalid_request")
@@ -56,6 +60,28 @@ def parse_request(value, operations):
         return operation, _recovery_params(value["params"])
     if operation in RECEIVED_OPERATIONS:
         return operation, _recovery_params(value["params"])
+    if operation in WORKSPACE_LIST_OPERATIONS:
+        params = value["params"]
+        if (not isinstance(params, dict) or set(params) != {"profile"}
+                or not isinstance(params["profile"], str)
+                or HANDLE.fullmatch(params["profile"]) is None):
+            raise ApiFailure("invalid_request")
+        return operation, params
+    if operation in WORKSPACE_REQUESTS_OPERATIONS:
+        params = value["params"]
+        if (not isinstance(params, dict) or set(params) != {"profile", "workspace"}
+                or any(not isinstance(item, str) or HANDLE.fullmatch(item) is None
+                       for item in params.values())):
+            raise ApiFailure("invalid_request")
+        return operation, params
+    if operation in WORKSPACE_APPROVE_OPERATIONS:
+        params = value["params"]
+        if (not isinstance(params, dict) or set(params) != {"profile", "workspace", "request"}
+                or "idempotency_key" not in value
+                or any(not isinstance(item, str) or HANDLE.fullmatch(item) is None
+                       for item in params.values())):
+            raise ApiFailure("invalid_request")
+        return operation, params
     if operation in WORKSPACE_PREVIEW_OPERATIONS:
         params = value["params"]
         if (not isinstance(params, dict) or set(params) != {"profile", "document"}
@@ -185,5 +211,8 @@ COMPONENT_OPERATIONS = (
     + STOP_OPERATIONS
     + WORKSPACE_PREVIEW_OPERATIONS
     + WORKSPACE_JOIN_OPERATIONS
+    + WORKSPACE_LIST_OPERATIONS
+    + WORKSPACE_REQUESTS_OPERATIONS
+    + WORKSPACE_APPROVE_OPERATIONS
     + DIAGNOSTIC_OPERATIONS
 )

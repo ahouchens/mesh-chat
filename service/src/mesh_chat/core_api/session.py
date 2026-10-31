@@ -18,8 +18,8 @@ from typing import Protocol
 from .views import (
     acceptance_view, acknowledgment_view, connection_view, event_view, intent_view, message_view,
     invitation_view, pairing_request_view, pairing_view, peer_view, received_view,
-    relationship_view, stop_view,
-    workspace_join_view, workspace_preview_view,
+    relationship_view, stop_view, workspace_approve_view, workspace_join_view,
+    workspace_list_view, workspace_preview_view, workspace_requests_view,
 )
 from .errors import ApiFailure
 from .limits import MAX_FRAME_BYTES, MAX_REQUEST_JSON_DEPTH, MAX_REQUEST_JSON_TOKENS
@@ -29,7 +29,8 @@ from .requests import (
     CURSOR, DIAGNOSTIC_OPERATIONS, INTENT_OPERATIONS, MESSAGE_OPERATIONS, OPERATIONS,
     INVITATION_OPERATIONS, PAIRING_OPERATIONS, RECEIVED_OPERATIONS, RECOVERY_OPERATIONS,
     COMPONENT_OPERATIONS, RELATIONSHIP_OPERATIONS, REQUEST_OPERATIONS, STOP_OPERATIONS,
-    WORKSPACE_JOIN_OPERATIONS, WORKSPACE_PREVIEW_OPERATIONS, REQUEST_ID, parse_request,
+    WORKSPACE_APPROVE_OPERATIONS, WORKSPACE_JOIN_OPERATIONS, WORKSPACE_LIST_OPERATIONS,
+    WORKSPACE_PREVIEW_OPERATIONS, WORKSPACE_REQUESTS_OPERATIONS, REQUEST_ID, parse_request,
 )
 from .messages import (
     IDEMPOTENCY_SECONDS, MAX_CALLER_ENQUEUES, MAX_PEERS, MAX_VAULT_ENQUEUES,
@@ -38,6 +39,7 @@ from .messages import (
 from .intent import ConnectionIntent
 from .invitations import Invitations
 from .lifecycle import Lifecycle
+from .workspace_admin import WorkspaceAdmin
 from .workspace_relationship import WorkspaceRelationships
 from .pairing import Pairing
 from .relationship import Relationship
@@ -91,6 +93,7 @@ class Ports:
     invitations: Invitations | None = None
     lifecycle: Lifecycle | None = None
     workspace: WorkspaceRelationships | None = None
+    workspace_admin: WorkspaceAdmin | None = None
 
 
 class CoreSession:
@@ -111,6 +114,7 @@ class CoreSession:
         self._invitations = ports.invitations
         self._lifecycle = ports.lifecycle
         self._workspace = ports.workspace
+        self._workspace_admin = ports.workspace_admin
         self._stopped = False
         bound = set(OPERATIONS)
         for operations, port in (
@@ -125,6 +129,9 @@ class CoreSession:
             (STOP_OPERATIONS, self._lifecycle),
             (WORKSPACE_PREVIEW_OPERATIONS, self._workspace),
             (WORKSPACE_JOIN_OPERATIONS, self._workspace),
+            (WORKSPACE_LIST_OPERATIONS, self._workspace_admin),
+            (WORKSPACE_REQUESTS_OPERATIONS, self._workspace_admin),
+            (WORKSPACE_APPROVE_OPERATIONS, self._workspace_admin),
             (DIAGNOSTIC_OPERATIONS, self._diagnostics),
         ):
             if port is not None:
@@ -149,7 +156,8 @@ class CoreSession:
                 operation, params = parse_request(value, self._operations)
                 key = value.get("idempotency_key") if isinstance(value, dict) else None
                 if key is not None and operation not in {"message.enqueue", "events.ack",
-                                                        "workspace.join"}:
+                                                        "workspace.join",
+                                                        "workspace.join_approve"}:
                     raise ApiFailure("invalid_request")
                 permission = {"message.enqueue": "send", "message.query": "read", "message.list": "read",
                               "message.received": "read", "events.poll": "read", "events.ack": "read",
@@ -159,6 +167,8 @@ class CoreSession:
                               "peer.pairing_request": "pair",
                               "runtime.stop": "runtime_owner",
                               "workspace.invitation_preview": "read", "workspace.join": "pair",
+                              "workspace.query": "read", "workspace.join_requests": "approve",
+                              "workspace.join_approve": "approve",
                               "diagnostics.query": "diagnose"}.get(operation, "observe")
                 if permission not in grant.permissions:
                     raise ApiFailure("forbidden")
@@ -209,6 +219,33 @@ class CoreSession:
             return self._capabilities(profiles)
         if not self._negotiated:
             raise ApiFailure("negotiation_required")
+        if operation in WORKSPACE_LIST_OPERATIONS:
+            target = profiles.get(params["profile"])
+            if target is None:
+                raise ApiFailure("forbidden")
+            return workspace_list_view(params["profile"],
+                                       self._workspace_entries(grant, target))
+        if operation in WORKSPACE_REQUESTS_OPERATIONS:
+            target = profiles.get(params["profile"])
+            if target is None:
+                raise ApiFailure("forbidden")
+            inside = self._workspace_target(grant, target, params["workspace"])
+            requests = self._workspace_admin.requests(target, inside)
+            return workspace_requests_view(
+                params["profile"], params["workspace"],
+                [(self._handle(grant, "join_request", target, item.request), item)
+                 for item in requests])
+        if operation in WORKSPACE_APPROVE_OPERATIONS:
+            target = profiles.get(params["profile"])
+            if target is None:
+                raise ApiFailure("forbidden")
+            inside = self._workspace_target(grant, target, params["workspace"])
+            request = self._join_request_target(grant, target, inside, params["request"])
+            if key is None:
+                raise ApiFailure("invalid_request")
+            approval = self._workspace_admin.approve(
+                target, inside, request, self._operation_id(grant, target, key))
+            return workspace_approve_view(params["profile"], params["workspace"], approval)
         if operation in WORKSPACE_PREVIEW_OPERATIONS:
             target = profiles.get(params["profile"])
             if target is None:
@@ -338,6 +375,22 @@ class CoreSession:
                     self._handle(grant, "peer", profile, item.value.recipient), item.value) for item in page.messages]
         return self._bounded_recovery({"profile": params["profile"], "messages": messages,
                                        "next_cursor": page.next_cursor, "events_cursor": page.events_cursor})
+
+    def _workspace_entries(self, grant, profile):
+        return [(self._handle(grant, "workspace", profile, item.workspace), item)
+                for item in self._workspace_admin.list(profile)]
+
+    def _workspace_target(self, grant, profile, handle):
+        for mapped, item in self._workspace_entries(grant, profile):
+            if mapped == handle:
+                return item.workspace
+        raise ApiFailure("forbidden")
+
+    def _join_request_target(self, grant, profile, workspace, handle):
+        for request_id in self._workspace_admin.request_ids(profile, workspace):
+            if self._handle(grant, "join_request", profile, request_id) == handle:
+                return request_id
+        raise ApiFailure("forbidden")
 
     def _invitation_operation(self, grant, profile):
         handle = self._handle(grant, "profile", profile, profile)
