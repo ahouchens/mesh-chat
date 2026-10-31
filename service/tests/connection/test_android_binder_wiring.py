@@ -40,9 +40,20 @@ def test_android_qualification_runs_the_instrumentation_suite():
     assert path.read_bytes().startswith(b"#!/usr/bin/env bash")  # no BOM before the shebang
     script = path.read_text(encoding="utf-8")
     assert ":tauri-plugin-mesh-runtime:assembleDebugAndroidTest" in script
+    assert "testDebugUnitTest" in script
     assert "prepare --suite core_api" in script
     assert "androidx.test.runner.AndroidJUnitRunner" in script
     qualification = (ROOT / "scripts" / "test_android_qualification.sh").read_text(encoding="utf-8")
     assert "bash scripts/test_android_core_api.sh" in qualification
     assert (PLUGIN / "src" / "androidTest" / "java" / "com" / "meshchat" / "runtime" /
             "MeshCoreApiServiceTest.kt").is_file()
+
+
+def test_the_kotlin_client_wraps_the_same_contract():
+    client = (PLUGIN / "src" / "main" / "java" / "com" / "meshchat" / "runtime" / "core" /
+              "CoreClient.kt").read_text(encoding="utf-8")
+    for operation in ("peer.pairing_accept", "peer.pairing_create", "runtime.stop",
+                      "message.enqueue", "events.ack"):
+        assert operation in client
+    assert (PLUGIN / "src" / "test" / "java" / "com" / "meshchat" / "runtime" / "core" /
+            "CoreClientTest.kt").is_file()

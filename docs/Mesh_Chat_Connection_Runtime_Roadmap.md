@@ -1066,6 +1066,18 @@ the real instrumentation runner, emits run-bound reports and is a required suite
 in the gate inventory, tied to the exact source commit and test APK digest. No
 packaged consumer exists yet, so the roadmap item stays open.
 
+## Kotlin client component
+
+A Kotlin client now wraps the same frame contract as the Python and TypeScript
+clients: one `CoreTransport` line channel, a single negotiation, typed
+`CoreException` codes with retry hints, the declared envelope and caller key only
+on keyed mutations, and helpers for queries, enqueue/ack, relationships, pairing
+and owner stop. Five JVM unit tests run in the Android qualification job through
+`testDebugUnitTest`, covering negotiation, an unsupported major, typed errors,
+key placement and pre-dispatch refusals. The compatibility declaration now says a
+Kotlin client exists as an experimental component; it is not packaged or
+published, so the versioned-SDK item stays open.
+
 ## Remaining work checklist
 
 Reconciled against the specification's invariant list, SC01-SC26 and definition of
@@ -1139,7 +1151,8 @@ M5 - supported reusable core
       declared console entry point and relationship, pairing and owner-stop
       commands (component only; no published distribution).
 - [ ] Versioned TypeScript/Kotlin SDKs, production CLI and the supported
-      compatibility matrix.
+      compatibility matrix. Kotlin, TypeScript and Python clients exist as
+      components with JVM/Node/in-process tests; none is packaged or published.
 - [ ] Mesh Chat messaging routed through the supported facade.
 - [ ] Independent Windows and Android consumers built only from distribution
       artifacts and documentation.

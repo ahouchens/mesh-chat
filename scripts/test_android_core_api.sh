@@ -15,6 +15,10 @@ adb uninstall com.meshchat.runtime.smoke >/dev/null 2>&1 || true
 adb uninstall "$app_id" >/dev/null 2>&1 || true
 
 (cd src-tauri/gen/android && \
+  ./gradlew :tauri-plugin-mesh-runtime:testDebugUnitTest \
+    -PmeshRuntimeAbis=x86_64 --no-configuration-cache)
+
+(cd src-tauri/gen/android && \
   ./gradlew :tauri-plugin-mesh-runtime:assembleDebugAndroidTest \
     -PmeshRuntimeAbis=x86_64 --no-configuration-cache)
 

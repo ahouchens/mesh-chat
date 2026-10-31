@@ -31,7 +31,8 @@ def test_declared_compatibility_matches_the_contract_inventory():
     assert declaration["public_api"]["minor"] == manifest["api_minor"]
     assert declaration["status"] == "experimental_unfrozen"
     assert declaration["peer_wire"]["changed"] is False
-    assert declaration["kotlin_client"]["exists"] is False
+    assert declaration["kotlin_client"] == {"exists": True,
+        "status": "experimental_component", "packaged": False}
     assert declaration["incompatible_combination"] == "reject_before_side_effects"
 
 
