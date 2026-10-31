@@ -856,7 +856,11 @@ consumer walks every snapshot page, deduplicates redelivered events, clears its
 position on `resync_required` and acknowledges only a caller-confirmed position;
 an AbortSignal cancels before dispatch without writing, or reports an unknown
 outcome without resending. Nineteen Node tests cover those paths, including
-abort, timeout, deduplication and confirmation.
+abort, timeout, deduplication and confirmation. A cross-language conformance
+test runs the compiled client against the real Python facade over inherited
+stdio: capability negotiation, profile query, received pages, snapshot watermark
+and replay all traverse the production frame contract. General verification runs
+it after building the client.
 
 It carries no host authentication, socket, runtime ownership, peer retry or
 private import. It is not wired into CI, no package is published, no Kotlin

@@ -49,6 +49,11 @@ jobs:
           node node_modules/typescript/bin/tsc -p sdk/typescript
           node --test "sdk/typescript/dist/**/*.test.js"
 
+      - name: Prove the TypeScript client against the Python facade
+        run: |
+          node --version
+          python -m pytest service/tests/test_sdk_conformance.py -q
+
       - name: Validate and test
         run: python scripts/release.py verify
 
