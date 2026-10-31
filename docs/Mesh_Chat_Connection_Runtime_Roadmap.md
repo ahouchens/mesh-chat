@@ -876,8 +876,11 @@ minimal blocking Windows transport; it never listens and never starts a runtime.
 
 Ten portable tests cover negotiation, typed failures, malformed and misrouted
 responses, helper parameters and idempotency keys, CLI output and error mapping,
-and command rejection. One Windows test runs the CLI against the real endpoint
-through its pipe. This is not a packaged console script: there is no installed
+and command rejection. Four end-to-end tests run the client and CLI against the
+real framed facade over OS pipes: negotiated capabilities, durable enqueue and
+query, replay from a snapshot watermark, null-cursor resynchronization, and handle
+rejection. One Windows test runs the CLI against the real endpoint through its
+pipe. This is not a packaged console script: there is no installed
 entry point, no versioned distribution, no Android transport and no support
 matrix.
 
