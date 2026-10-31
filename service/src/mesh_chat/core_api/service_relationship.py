@@ -38,9 +38,13 @@ class ServiceRelationship:
             raise ApiFailure("forbidden")
         return RelationshipObservation(contact["trust"])
 
-    def apply(self, profile, contact_id, approve):
-        if type(approve) is not bool:
-            raise ApiFailure("invalid_request")
+    def approve(self, profile, contact_id):
+        return self._apply(profile, contact_id, True)
+
+    def revoke(self, profile, contact_id):
+        return self._apply(profile, contact_id, False)
+
+    def _apply(self, profile, contact_id, approve):
         with storage_errors():
             contact = self._contact(profile, contact_id)
             trust = contact.get("trust")

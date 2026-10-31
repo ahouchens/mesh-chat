@@ -10,12 +10,9 @@ import hashlib
 import json
 from pathlib import Path
 
+from release_qualification import ARTIFACT_KINDS, expected_name
 
-EXPECTED_NAMES = {
-    "setup": "Mesh-Chat_{version}_x64-setup.exe",
-    "msi": "Mesh-Chat_{version}_x64_en-US.msi",
-    "apk": "mesh-chat-{version}-android-arm64-release.apk",
-}
+
 MAX_ASSET_BYTES = 1024 * 1024 * 1024
 
 
@@ -25,12 +22,12 @@ def verify(manifest_path, assets):
         raise ValueError("Release qualification manifest did not pass")
     version = manifest.get("release_version")
     artifacts = manifest.get("artifacts")
-    if not isinstance(version, str) or not isinstance(artifacts, dict) or set(artifacts) != set(EXPECTED_NAMES):
+    if not isinstance(version, str) or not isinstance(artifacts, dict) or set(artifacts) != set(ARTIFACT_KINDS):
         raise ValueError("Release qualification manifest is incomplete")
     observed = {}
-    for kind, pattern in EXPECTED_NAMES.items():
+    for kind in ARTIFACT_KINDS:
         expected = artifacts[kind]
-        path = Path(assets) / pattern.format(version=version)
+        path = Path(assets) / expected_name(kind, version)
         if not path.is_file():
             raise ValueError(f"Qualified asset is missing: {path.name}")
         size = path.stat().st_size

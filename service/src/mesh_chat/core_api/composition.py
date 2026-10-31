@@ -4,7 +4,7 @@ No renderer/IPC command invokes this factory. Platform authentication must suppl
 the current caller grant before the component becomes a public host interface.
 """
 
-from .session import ApiFailure, CoreSession, ProfileObservation
+from .session import ApiFailure, CoreSession, Ports, ProfileObservation
 from .service_messages import ServiceMessages
 from .service_recovery import ServiceRecovery
 from .service_diagnostics import ServiceDiagnostics
@@ -42,10 +42,11 @@ def bind_service_session(service, authenticated_grant):
         intent = ServiceIntent(service) if hasattr(service, "reconnect_start") else None
         relationship = (ServiceRelationship(service) if hasattr(service, "approve_request")
                         else None)
+        ports = Ports(messages=messages, recovery=recovery,
+                      diagnostics=ServiceDiagnostics(service, messages), received=received,
+                      intent=intent, relationship=relationship)
         return CoreSession(current_grant, ServiceObservations(service), handle_key=handle_key,
-                           transaction=service._dispatch_lock, messages=messages, recovery=recovery,
-                           diagnostics=ServiceDiagnostics(service, messages), received=received,
-                           intent=intent, relationship=relationship)
+                           transaction=service._dispatch_lock, ports=ports)
 
 
 def bind_service_stream(service, authenticated_grant):

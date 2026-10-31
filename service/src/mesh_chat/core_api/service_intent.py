@@ -33,9 +33,13 @@ class ServiceIntent:
         active = any(bool(profile.get("active")) for profile in profiles)
         return IntentObservation("enabled" if active else "stopped", active)
 
-    def apply(self, profile, contact_id, enabled):
-        if type(enabled) is not bool:
-            raise ApiFailure("invalid_request")
+    def start(self, profile, contact_id):
+        return self._apply(profile, contact_id, True)
+
+    def stop(self, profile, contact_id):
+        return self._apply(profile, contact_id, False)
+
+    def _apply(self, profile, contact_id, enabled):
         with storage_errors():
             self._contact(profile, contact_id)
             if enabled:

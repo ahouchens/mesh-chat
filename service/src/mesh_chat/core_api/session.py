@@ -68,28 +68,38 @@ class Observations(Protocol):
     def profile(self, internal_profile: str) -> ProfileObservation: ...
 
 
+@dataclass(frozen=True)
+class Ports:
+    """Optional capability ports bound by the trusted composition."""
+
+    messages: Messages | None = None
+    recovery: Recovery | None = None
+    diagnostics: Diagnostics | None = None
+    received: ReceivedLog | None = None
+    intent: ConnectionIntent | None = None
+    relationship: Relationship | None = None
+
+
 class CoreSession:
     def __init__(self, authorize, observations: Observations, *, handle_key: bytes, transaction=None,
-                 messages: Messages | None = None, recovery: Recovery | None = None,
-                 diagnostics: Diagnostics | None = None, received: ReceivedLog | None = None,
-                 intent: ConnectionIntent | None = None,
-                 relationship: Relationship | None = None):
+                 ports: Ports | None = None):
         if not isinstance(handle_key, bytes) or not 32 <= len(handle_key) <= 64:
             raise ValueError("A protected handle key is required")
+        ports = ports or Ports()
         self._authorize = authorize
         self._observations = observations
-        self._messages = messages
-        self._recovery = recovery
-        self._diagnostics = diagnostics
-        self._received = received
-        self._intent = intent
-        self._relationship = relationship
-        self._operations = (OPERATIONS + (MESSAGE_OPERATIONS if messages is not None else ())
-                            + (RECOVERY_OPERATIONS if recovery is not None else ())
-                            + (RECEIVED_OPERATIONS if received is not None else ())
-                            + (INTENT_OPERATIONS if intent is not None else ())
-                            + (RELATIONSHIP_OPERATIONS if relationship is not None else ())
-                            + (DIAGNOSTIC_OPERATIONS if diagnostics is not None else ()))
+        self._messages = ports.messages
+        self._recovery = ports.recovery
+        self._diagnostics = ports.diagnostics
+        self._received = ports.received
+        self._intent = ports.intent
+        self._relationship = ports.relationship
+        self._operations = (OPERATIONS + (MESSAGE_OPERATIONS if self._messages is not None else ())
+                            + (RECOVERY_OPERATIONS if self._recovery is not None else ())
+                            + (RECEIVED_OPERATIONS if self._received is not None else ())
+                            + (INTENT_OPERATIONS if self._intent is not None else ())
+                            + (RELATIONSHIP_OPERATIONS if self._relationship is not None else ())
+                            + (DIAGNOSTIC_OPERATIONS if self._diagnostics is not None else ()))
         self._handle_key = handle_key
         self._transaction = transaction if transaction is not None else nullcontext()
         self._lock = RLock()
@@ -256,14 +266,17 @@ class CoreSession:
         contact = self._peers(grant, profile).get(params["peer"])
         if contact is None:
             raise ApiFailure("forbidden")
-        observation = self._relationship.apply(profile, contact, operation == "peer.approve")
+        action = (self._relationship.approve if operation == "peer.approve"
+                  else self._relationship.revoke)
+        observation = action(profile, contact)
         return relationship_view(params["profile"], params["peer"], operation, observation)
 
     def _intent_operation(self, grant, profile, operation, params):
         contact = self._peers(grant, profile).get(params["peer"])
         if contact is None:
             raise ApiFailure("forbidden")
-        observation = self._intent.apply(profile, contact, operation == "connection.start")
+        action = self._intent.start if operation == "connection.start" else self._intent.stop
+        observation = action(profile, contact)
         return intent_view(params["profile"], params["peer"], observation)
 
     def _received_messages(self, grant, profile, params):
