@@ -1215,7 +1215,8 @@ M5 - supported reusable core
 - [x] TypeScript tarball packaging smoke: pack, install into an empty project,
       import the public entry point (unpublished artifact).
 - [x] Python wheel packaging smoke: build, install into an empty target, import
-      the package and check both console entry points (unpublished artifact).
+      the package, execute `mesh-chat-core --version` and answer facade
+      capabilities/workspace queries from the packaged service (unpublished).
 
 - [x] Workspace device-link creation, preview, submission and sponsor
       approval/decline (component, two-service delivery test).
