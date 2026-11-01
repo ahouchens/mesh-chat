@@ -53,6 +53,7 @@ concluded **success**:
 | Frontend | `node scripts/run-frontend-tests.mjs` | 587 passed |
 | TypeScript client + package | `node --test sdk/typescript/dist/**/*.test.js` | 38 passed |
 | Compatibility | `pytest service/tests/connection/test_core_compatibility.py` | 17 passed |
+| Budget conformance | `pytest service/tests/connection/test_core_budgets.py` | 3 passed (exact advertised limits; over-budget rejected; edges accepted) |
 
 ## Explicit limits
 
