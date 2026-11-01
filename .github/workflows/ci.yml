@@ -52,6 +52,9 @@ jobs:
       - name: Package and smoke the TypeScript client
         run: node scripts/check_typescript_distribution.mjs
 
+      - name: Package and smoke the Python service
+        run: python scripts/check_python_distribution.py
+
       - name: Prove the TypeScript client against the Python facade
         run: |
           node --version

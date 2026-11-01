@@ -48,3 +48,6 @@ plugins/*/android/*.iml
 Thumbs.db
 .codex-remote-attachments/
 **/.wrangler/
+
+*.egg-info/
+

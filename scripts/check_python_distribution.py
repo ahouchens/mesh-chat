@@ -1,0 +1,63 @@
+"""Build the Python wheel, install it into an empty target and import it.
+
+This qualifies the packaged Python artifact without publishing anything.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+import tempfile
+
+ROOT = Path(__file__).resolve().parents[1]
+SERVICE = ROOT / "service"
+
+
+def run(arguments: list[str], *, cwd: Path, env: dict[str, str] | None = None) -> str:
+    completed = subprocess.run(
+        arguments, cwd=cwd, env=env, text=True, capture_output=True, check=False
+    )
+    if completed.returncode != 0:
+        raise SystemExit(
+            f"command failed ({completed.returncode}): {' '.join(arguments)}\n"
+            f"{completed.stdout}\n{completed.stderr}"
+        )
+    return completed.stdout
+
+
+def main() -> int:
+    with tempfile.TemporaryDirectory(prefix="mesh-chat-wheel-") as temporary:
+        work = Path(temporary)
+        wheels = work / "wheels"
+        wheels.mkdir()
+        run([sys.executable, "-m", "pip", "wheel", str(SERVICE), "--no-deps",
+             "--no-build-isolation", "--wheel-dir", str(wheels)], cwd=work)
+        artifacts = sorted(wheels.glob("mesh_chat_service-*.whl"))
+        if len(artifacts) != 1:
+            raise SystemExit(f"expected one wheel, found {artifacts}")
+        target = work / "site"
+        run([sys.executable, "-m", "pip", "install", str(artifacts[0]), "--no-deps",
+             "--target", str(target)], cwd=work)
+        environment = {**os.environ, "PYTHONPATH": str(target)}
+        code = (
+            "import json, importlib.metadata as metadata\n"
+            "import mesh_chat.core_api as api\n"
+            "from mesh_chat.core_api.client import CoreClient\n"
+            "distribution = metadata.distribution('mesh-chat-service')\n"
+            "scripts = {entry.name for entry in distribution.entry_points}\n"
+            "assert scripts >= {'mesh-chat-service', 'mesh-chat-core'}, scripts\n"
+            "assert api.__version__ == '0.2.0-experimental', api.__version__\n"
+            "assert CoreClient.__name__ == 'CoreClient'\n"
+            "print(json.dumps({'version': api.__version__, 'scripts': sorted(scripts)}))\n"
+        )
+        output = run([sys.executable, "-c", code], cwd=work, env=environment)
+        print(json.dumps({"passed": True, "wheel": artifacts[0].name,
+                          "smoke": output.strip()}))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

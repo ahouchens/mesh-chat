@@ -1211,6 +1211,8 @@ M5 - supported reusable core
 - [x] Component versions and a TypeScript package-shape gate (not published).
 - [x] TypeScript tarball packaging smoke: pack, install into an empty project,
       import the public entry point (unpublished artifact).
+- [x] Python wheel packaging smoke: build, install into an empty target, import
+      the package and check both console entry points (unpublished artifact).
 
 - [x] Workspace device-link creation, preview, submission and sponsor
       approval/decline (component, two-service delivery test).
