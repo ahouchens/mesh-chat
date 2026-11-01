@@ -2,7 +2,7 @@
 
 from ..errors import InvitationExpired, InvitationInvalid, ValidationError
 from .errors import ApiFailure
-from .pairing import PairingObservation
+from .pairing import PairingObservation, PairingRequest
 from .service_messages import storage_errors
 
 
@@ -51,3 +51,7 @@ class ServicePairing:
                     or message.get("kind") != "contact_request"
                     or message.get("direction") != "outbound"):
                 raise ApiFailure("internal")
+            document = message.get("invitation")
+            if not isinstance(document, str) or not 1 <= len(document) <= 65536:
+                raise ApiFailure("internal")
+            return PairingRequest(contact_id, document)

@@ -252,6 +252,47 @@ test("pairing acceptance refuses an empty document before dispatch", async () =>
   assert.equal(transport.written.length, 1);
 });
 
+test("channel edit helpers use the declared envelopes", async () => {
+  const transport = new Scripted(
+    success("client:1", CAPABILITIES),
+    success("client:2", {
+      profile: PROFILE,
+      workspace: "w".repeat(64),
+      channel: "c".repeat(64),
+      members: ["m".repeat(64)],
+    }),
+    success("client:3", {
+      profile: PROFILE,
+      workspace: "w".repeat(64),
+      channel: "c".repeat(64),
+      members: ["m".repeat(64)],
+    }),
+    success("client:4", {
+      profile: PROFILE,
+      workspace: "w".repeat(64),
+      channel: "c".repeat(64),
+      name: "Renamed",
+      topic: "Ops",
+      visibility: "private",
+    }),
+  );
+  const client = await CoreClient.open(transport);
+  assert.equal(
+    (await client.workspaceChannelMembers(PROFILE, "w".repeat(64), "c".repeat(64))).members[0],
+    "m".repeat(64),
+  );
+  await client.workspaceChannelMembersUpdate(
+    PROFILE, "w".repeat(64), "c".repeat(64), ["m".repeat(64)], "m".repeat(16),
+  );
+  const edited = await client.workspaceChannelUpdate(
+    PROFILE, "w".repeat(64), "c".repeat(64), "Renamed", "Ops", "e".repeat(16),
+  );
+  assert.equal(edited.name, "Renamed");
+  const update = JSON.parse(transport.written[3]);
+  assert.equal(update.operation, "workspace.channel_update");
+  assert.equal(update.params.topic, "Ops");
+});
+
 test("channel helpers use the declared envelopes", async () => {
   const transport = new Scripted(
     success("client:1", CAPABILITIES),

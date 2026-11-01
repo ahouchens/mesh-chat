@@ -253,9 +253,11 @@ contract is `stop-result-v1.schema.json`.
 `peer.pairing_request` sends this device's signed contact request to a peer that
 is awaiting consent or has a pending request, and reuses an unexpired request
 instead of duplicating it, so repeated calls converge while the request window is
-open. It returns only `{profile, peer, state: requested}`; the signed document
-itself is delivered through the peer path and is not handed back. Approved,
-blocked or failing peers, and callers without the `pair` grant, are refused.
+open. It returns `{profile, peer, state: requested, document}` where the document
+is the same signed invitation the application shows as onboarding material —
+public key material, not a secret — so a caller can hand it to the peer out of
+band. Approved, blocked or failing peers, and callers without the `pair` grant,
+are refused.
 
 ## Workspace invitations
 
@@ -313,9 +315,13 @@ and status only. `workspace.member_role` lets the active owner assign `admin` or
 `member` with a caller key; it is owner-only and replay-safe, and the result
 carries only the selected member handle and applied role. `workspace.channels`
 lists caller-scoped channel handles with name, visibility and state, and
-`workspace.channel_create` creates a public channel for an owner or administrator
-with a caller key. Private channel membership management and channel editing
-remain outside this surface.
+`workspace.channel_create` creates a public or private channel for an owner or
+administrator with a caller key; private channels require one to eight member
+handles. `workspace.channel_members` reads a private channel's caller-scoped
+member handles, `workspace.channel_members_update` replaces that roster with a
+caller key, and `workspace.channel_update` edits a channel's name and topic.
+All are owner/administrator operations and expose no manifests or identity
+documents.
 
 ## Observation and recovery
 

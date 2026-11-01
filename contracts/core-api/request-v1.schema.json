@@ -112,6 +112,21 @@
               "type": "string",
               "minLength": 1,
               "maxLength": 64
+            },
+            "visibility": {
+              "enum": [
+                "public",
+                "private"
+              ]
+            },
+            "members": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 8,
+              "uniqueItems": true,
+              "items": {
+                "$ref": "#/$defs/handle"
+              }
             }
           },
           "required": [
@@ -1497,7 +1512,173 @@
         "params"
       ],
       "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "api_version": {
+          "const": 1
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        },
+        "operation": {
+          "const": "workspace.channel_members"
+        },
+        "params": {
+          "type": "object",
+          "properties": {
+            "profile": {
+              "$ref": "#/$defs/handle"
+            },
+            "workspace": {
+              "$ref": "#/$defs/handle"
+            },
+            "channel": {
+              "$ref": "#/$defs/handle"
+            }
+          },
+          "required": [
+            "profile",
+            "workspace",
+            "channel"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "api_version",
+        "request_id",
+        "operation",
+        "params"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "api_version": {
+          "const": 1
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        },
+        "operation": {
+          "const": "workspace.channel_members_update"
+        },
+        "params": {
+          "type": "object",
+          "properties": {
+            "profile": {
+              "$ref": "#/$defs/handle"
+            },
+            "workspace": {
+              "$ref": "#/$defs/handle"
+            },
+            "channel": {
+              "$ref": "#/$defs/handle"
+            },
+            "members": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 8,
+              "uniqueItems": true,
+              "items": {
+                "$ref": "#/$defs/handle"
+              }
+            }
+          },
+          "required": [
+            "profile",
+            "workspace",
+            "channel",
+            "members"
+          ],
+          "additionalProperties": false
+        },
+        "idempotency_key": {
+          "type": "string",
+          "minLength": 16,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        }
+      },
+      "required": [
+        "api_version",
+        "request_id",
+        "operation",
+        "params",
+        "idempotency_key"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "api_version": {
+          "const": 1
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        },
+        "operation": {
+          "const": "workspace.channel_update"
+        },
+        "params": {
+          "type": "object",
+          "properties": {
+            "profile": {
+              "$ref": "#/$defs/handle"
+            },
+            "workspace": {
+              "$ref": "#/$defs/handle"
+            },
+            "channel": {
+              "$ref": "#/$defs/handle"
+            },
+            "name": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64
+            },
+            "topic": {
+              "type": "string",
+              "maxLength": 1024
+            }
+          },
+          "required": [
+            "profile",
+            "workspace",
+            "channel",
+            "name",
+            "topic"
+          ],
+          "additionalProperties": false
+        },
+        "idempotency_key": {
+          "type": "string",
+          "minLength": 16,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        }
+      },
+      "required": [
+        "api_version",
+        "request_id",
+        "operation",
+        "params",
+        "idempotency_key"
+      ],
+      "additionalProperties": false
     }
   ]
 }
-

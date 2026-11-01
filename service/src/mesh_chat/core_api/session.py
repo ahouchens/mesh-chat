@@ -19,7 +19,8 @@ from .views import (
     acceptance_view, acknowledgment_view, connection_view, event_view, intent_view, message_view,
     invitation_view, pairing_request_view, pairing_view, peer_view, received_view,
     relationship_view, stop_view, workspace_approve_view, workspace_decline_view,
-    workspace_channel_create_view, workspace_channels_view, workspace_join_view,
+    workspace_channel_create_view, workspace_channel_members_view,
+    workspace_channel_update_view, workspace_channels_view, workspace_join_view,
     workspace_list_view, workspace_member_role_view, workspace_members_view,
     workspace_preview_view, workspace_requests_view,
 )
@@ -32,8 +33,10 @@ from .requests import (
     INVITATION_OPERATIONS, PAIRING_OPERATIONS, RECEIVED_OPERATIONS, RECOVERY_OPERATIONS,
     COMPONENT_OPERATIONS, RELATIONSHIP_OPERATIONS, REQUEST_OPERATIONS, STOP_OPERATIONS,
     WORKSPACE_APPROVE_OPERATIONS, WORKSPACE_DECLINE_OPERATIONS, WORKSPACE_JOIN_OPERATIONS,
-    WORKSPACE_CHANNEL_CREATE_OPERATIONS, WORKSPACE_CHANNELS_OPERATIONS,
-    WORKSPACE_LIST_OPERATIONS, WORKSPACE_MEMBERS_OPERATIONS, WORKSPACE_PREVIEW_OPERATIONS,
+    WORKSPACE_CHANNEL_CREATE_OPERATIONS, WORKSPACE_CHANNEL_MEMBERS_OPERATIONS,
+    WORKSPACE_CHANNEL_MEMBERS_UPDATE_OPERATIONS, WORKSPACE_CHANNEL_UPDATE_OPERATIONS,
+    WORKSPACE_CHANNELS_OPERATIONS, WORKSPACE_LIST_OPERATIONS, WORKSPACE_MEMBERS_OPERATIONS,
+    WORKSPACE_PREVIEW_OPERATIONS,
     WORKSPACE_REQUESTS_OPERATIONS, WORKSPACE_ROLE_OPERATIONS, REQUEST_ID, parse_request,
 )
 from .messages import (
@@ -141,6 +144,9 @@ class CoreSession:
             (WORKSPACE_ROLE_OPERATIONS, self._workspace_admin),
             (WORKSPACE_CHANNELS_OPERATIONS, self._workspace_admin),
             (WORKSPACE_CHANNEL_CREATE_OPERATIONS, self._workspace_admin),
+            (WORKSPACE_CHANNEL_MEMBERS_OPERATIONS, self._workspace_admin),
+            (WORKSPACE_CHANNEL_MEMBERS_UPDATE_OPERATIONS, self._workspace_admin),
+            (WORKSPACE_CHANNEL_UPDATE_OPERATIONS, self._workspace_admin),
             (DIAGNOSTIC_OPERATIONS, self._diagnostics),
         ):
             if port is not None:
@@ -169,7 +175,9 @@ class CoreSession:
                                                         "workspace.join_approve",
                                                         "workspace.join_decline",
                                                         "workspace.member_role",
-                                                        "workspace.channel_create"}:
+                                                        "workspace.channel_create",
+                                                        "workspace.channel_members_update",
+                                                        "workspace.channel_update"}:
                     raise ApiFailure("invalid_request")
                 permission = {"message.enqueue": "send", "message.query": "read", "message.list": "read",
                               "message.received": "read", "events.poll": "read", "events.ack": "read",
@@ -186,6 +194,9 @@ class CoreSession:
                               "workspace.member_role": "approve",
                               "workspace.channels": "approve",
                               "workspace.channel_create": "approve",
+                              "workspace.channel_members": "approve",
+                              "workspace.channel_members_update": "approve",
+                              "workspace.channel_update": "approve",
                               "diagnostics.query": "diagnose"}.get(operation, "observe")
                 if permission not in grant.permissions:
                     raise ApiFailure("forbidden")
@@ -314,13 +325,61 @@ class CoreSession:
             inside = self._workspace_target(grant, target, params["workspace"])
             if key is None:
                 raise ApiFailure("invalid_request")
+            visibility = params.get("visibility", "public")
+            member_ids = tuple(
+                self._member_target(grant, target, inside, handle)
+                for handle in params.get("members", ()))
             created = self._workspace_admin.create_channel(
-                target, inside, params["name"], self._operation_id(grant, target, key))
+                target, inside, params["name"], self._operation_id(grant, target, key),
+                visibility, member_ids)
             summary = ChannelSummary(
                 self._handle(grant, "channel", target, created.channel),
                 created.name, created.visibility, created.state)
             return workspace_channel_create_view(
                 params["profile"], params["workspace"], summary)
+        if operation in WORKSPACE_CHANNEL_MEMBERS_OPERATIONS:
+            target = profiles.get(params["profile"])
+            if target is None:
+                raise ApiFailure("forbidden")
+            inside = self._workspace_target(grant, target, params["workspace"])
+            channel = self._channel_target(grant, target, inside, params["channel"])
+            members = self._workspace_admin.members(target, inside)
+            handles = {item.member: self._handle(grant, "member", target, item.member)
+                       for item in members}
+            current = [handles[item] for item in
+                       self._workspace_admin.channel_members(target, inside, channel)
+                       if item in handles]
+            return workspace_channel_members_view(
+                params["profile"], params["workspace"], params["channel"], current)
+        if operation in WORKSPACE_CHANNEL_MEMBERS_UPDATE_OPERATIONS:
+            target = profiles.get(params["profile"])
+            if target is None:
+                raise ApiFailure("forbidden")
+            inside = self._workspace_target(grant, target, params["workspace"])
+            channel = self._channel_target(grant, target, inside, params["channel"])
+            if key is None:
+                raise ApiFailure("invalid_request")
+            member_ids = tuple(self._member_target(grant, target, inside, handle)
+                               for handle in params["members"])
+            self._workspace_admin.update_channel_members(
+                target, inside, channel, member_ids,
+                self._operation_id(grant, target, key))
+            return workspace_channel_members_view(
+                params["profile"], params["workspace"], params["channel"],
+                sorted(params["members"]))
+        if operation in WORKSPACE_CHANNEL_UPDATE_OPERATIONS:
+            target = profiles.get(params["profile"])
+            if target is None:
+                raise ApiFailure("forbidden")
+            inside = self._workspace_target(grant, target, params["workspace"])
+            channel = self._channel_target(grant, target, inside, params["channel"])
+            if key is None:
+                raise ApiFailure("invalid_request")
+            edited = self._workspace_admin.update_channel(
+                target, inside, channel, params["name"], params["topic"],
+                self._operation_id(grant, target, key))
+            return workspace_channel_update_view(
+                params["profile"], params["workspace"], params["channel"], edited)
         if operation in WORKSPACE_PREVIEW_OPERATIONS:
             target = profiles.get(params["profile"])
             if target is None:
@@ -451,6 +510,12 @@ class CoreSession:
         return self._bounded_recovery({"profile": params["profile"], "messages": messages,
                                        "next_cursor": page.next_cursor, "events_cursor": page.events_cursor})
 
+    def _channel_target(self, grant, profile, workspace, handle):
+        for item in self._workspace_admin.channels(profile, workspace):
+            if self._handle(grant, "channel", profile, item.channel) == handle:
+                return item.channel
+        raise ApiFailure("forbidden")
+
     def _member_target(self, grant, profile, workspace, handle):
         for item in self._workspace_admin.members(profile, workspace):
             if self._handle(grant, "member", profile, item.member) == handle:
@@ -481,8 +546,8 @@ class CoreSession:
         contact = self._peers(grant, profile).get(params["peer"])
         if contact is None:
             raise ApiFailure("forbidden")
-        self._pairing.request(profile, contact)
-        return pairing_request_view(params["profile"], params["peer"])
+        observation = self._pairing.request(profile, contact)
+        return pairing_request_view(params["profile"], params["peer"], observation)
 
     def _pairing_operation(self, grant, profile, params):
         observation = self._pairing.accept(profile, params["document"])

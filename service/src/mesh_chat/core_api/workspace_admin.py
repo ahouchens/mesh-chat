@@ -36,6 +36,15 @@ class ChannelSummary:
 
 
 @dataclass(frozen=True)
+class ChannelEdit:
+    channel: str
+    name: str
+    topic: str
+    visibility: str
+    state: str
+
+
+@dataclass(frozen=True)
 class MemberRoleChange:
     member: str
     role: str
@@ -68,4 +77,15 @@ class WorkspaceAdmin(Protocol):
     def channels(self, profile: str, workspace: str) -> tuple[ChannelSummary, ...]: ...
 
     def create_channel(self, profile: str, workspace: str, name: str,
-                       operation_id: str) -> ChannelSummary: ...
+                       operation_id: str, visibility: str = "public",
+                       member_ids: tuple[str, ...] = ()) -> ChannelSummary: ...
+
+    def channel_members(self, profile: str, workspace: str,
+                        channel: str) -> tuple[str, ...]: ...
+
+    def update_channel_members(self, profile: str, workspace: str, channel: str,
+                               member_ids: tuple[str, ...],
+                               operation_id: str) -> tuple[str, ...]: ...
+
+    def update_channel(self, profile: str, workspace: str, channel: str, name: str,
+                       topic: str, operation_id: str) -> ChannelEdit: ...

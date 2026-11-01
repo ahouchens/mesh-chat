@@ -120,6 +120,7 @@ export interface PairingRequestView {
   profile: string;
   peer: string;
   state: "requested";
+  document: string;
 }
 
 export interface WorkspacePreviewView {
@@ -184,4 +185,20 @@ export interface WorkspaceChannelCreateView {
   channel: string;
   name: string;
   visibility: "public";
+}
+
+export interface WorkspaceChannelMembersView {
+  profile: string;
+  workspace: string;
+  channel: string;
+  members: string[];
+}
+
+export interface WorkspaceChannelUpdateView {
+  profile: string;
+  workspace: string;
+  channel: string;
+  name: string;
+  topic: string;
+  visibility: "public" | "private";
 }

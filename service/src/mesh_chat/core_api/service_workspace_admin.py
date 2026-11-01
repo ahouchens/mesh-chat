@@ -3,7 +3,7 @@
 from ..errors import ContactNotApproved, InvitationExpired, InvitationInvalid, ValidationError
 from .errors import ApiFailure
 from .service_messages import storage_errors
-from .workspace_admin import (ChannelSummary, JoinApproval, JoinRequestSummary,
+from .workspace_admin import (ChannelEdit, ChannelSummary, JoinApproval, JoinRequestSummary,
                               MemberRoleChange, MemberSummary, WorkspaceSummary)
 
 
@@ -190,10 +190,78 @@ class ServiceWorkspaceAdmin:
                     break
             return tuple(sorted(found, key=lambda item: (item.name, item.channel)))
 
-    def create_channel(self, profile, workspace_id, name, operation_id):
+    def _channel(self, workspace_id, channel_id):
+        for item in self._store.list("workspace_channel"):
+            if item.get("workspace_id") == workspace_id and item.get("id") == channel_id:
+                return item
+        raise ApiFailure("not_found")
+
+    def channel_members(self, profile, workspace_id, channel_id):
+        self._require_local(profile)
+        with storage_errors():
+            channel = self._channel(workspace_id, channel_id)
+            if channel.get("visibility") != "private":
+                raise ApiFailure("invalid_request")
+            member_ids = channel.get("member_ids")
+            if not isinstance(member_ids, list) or len(member_ids) > 8:
+                raise ApiFailure("internal")
+            return tuple(item for item in member_ids if isinstance(item, str))
+
+    def update_channel_members(self, profile, workspace_id, channel_id, member_ids,
+                               operation_id):
+        self._require_local(profile)
+        if not isinstance(operation_id, str) or not operation_id:
+            raise ApiFailure("invalid_request")
+        with storage_errors():
+            workspace = self._workspace(workspace_id)
+            if workspace.get("local_role") not in {"owner", "admin"}:
+                raise ApiFailure("forbidden")
+            channel = self._channel(workspace_id, channel_id)
+            if channel.get("visibility") != "private":
+                raise ApiFailure("invalid_request")
+            requested = tuple(dict.fromkeys(member_ids))
+            if not 1 <= len(requested) <= 8:
+                raise ApiFailure("invalid_request")
+            try:
+                self._service.update_workspace_private_channel_members(
+                    workspace_id, channel_id, list(requested), operation_id)
+            except (ValidationError, ContactNotApproved) as error:
+                raise ApiFailure("invalid_request") from error
+            updated = self._channel(workspace_id, channel_id)
+            current = updated.get("member_ids")
+            if not isinstance(current, list) or set(requested) != set(current):
+                raise ApiFailure("internal")
+            return tuple(requested)
+
+    def update_channel(self, profile, workspace_id, channel_id, name, topic, operation_id):
         self._require_local(profile)
         if (not isinstance(name, str) or not 1 <= len(name.strip()) <= 64
+                or not isinstance(topic, str) or len(topic) > 1024
                 or not isinstance(operation_id, str) or not operation_id):
+            raise ApiFailure("invalid_request")
+        with storage_errors():
+            workspace = self._workspace(workspace_id)
+            if workspace.get("local_role") not in {"owner", "admin"}:
+                raise ApiFailure("forbidden")
+            try:
+                self._service.update_workspace_channel(
+                    workspace_id, channel_id, name.strip(), topic, False, operation_id)
+            except (ValidationError, ContactNotApproved) as error:
+                raise ApiFailure("invalid_request") from error
+            updated = self._channel(workspace_id, channel_id)
+            visibility, state = updated.get("visibility"), updated.get("state")
+            if visibility not in {"public", "private"} or state not in CHANNEL_STATES:
+                raise ApiFailure("internal")
+            return ChannelEdit(channel_id, name.strip(), topic, visibility, state)
+
+    def create_channel(self, profile, workspace_id, name, operation_id, visibility="public",
+                       member_ids=()):
+        self._require_local(profile)
+        if (not isinstance(name, str) or not 1 <= len(name.strip()) <= 64
+                or visibility not in {"public", "private"}
+                or not isinstance(operation_id, str) or not operation_id):
+            raise ApiFailure("invalid_request")
+        if visibility == "private" and not 1 <= len(tuple(member_ids)) <= 8:
             raise ApiFailure("invalid_request")
         with storage_errors():
             workspace = self._workspace(workspace_id)
@@ -203,7 +271,8 @@ class ServiceWorkspaceAdmin:
                 raise ApiFailure("forbidden")
             try:
                 self._service.create_workspace_channel(
-                    workspace_id, name.strip(), "", operation_id)
+                    workspace_id, name.strip(), "", operation_id, visibility,
+                    list(member_ids) if visibility == "private" else None)
             except (ValidationError, ContactNotApproved) as error:
                 raise ApiFailure("invalid_request") from error
             candidates = [item for item in self._store.list("workspace_channel")

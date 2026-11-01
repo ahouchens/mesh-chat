@@ -1103,9 +1103,11 @@ through approval, replay, decline, replay and the member list, and cover the
 approve grant, role requirement and caller scope. `workspace.member_role` lets the
 active owner assign administrator or member with a caller key; the domain applies
 a manifest transition and the facade returns only the member handle and applied
-role. `workspace.channels` and `workspace.channel_create` complete the public
-channel basics for owners and administrators; private channel membership and
-channel editing remain open.
+role. `workspace.channels`, `workspace.channel_create`, `workspace.channel_members`,
+`workspace.channel_members_update` and `workspace.channel_update` cover public and
+private channel basics, private rosters and channel edits for owners and
+administrators. Per-peer pairing now returns the signed invitation document, so
+callers can exchange it out of band.
 
 ## Remaining work checklist
 
@@ -1178,8 +1180,9 @@ M5 - supported reusable core
 - [x] Workspace listing, join review, approval/decline, member visibility, owner
       role changes and public channel creation (component only; private channel
       membership and channel editing open).
-- [ ] Per-peer pairing documents returned to the caller, private channel
-      membership and channel editing.
+- [x] Per-peer signed pairing document returned to the caller.
+- [x] Private channel membership and channel editing (component only).
+- [ ] Channel archiving/transfers and role-scoped channel policy overrides.
 - [x] Experimental TypeScript client over the frame contract (component only; no
       packaging, CI conformance, Kotlin client or consumer).
 - [x] Experimental Python client and Windows CLI over the host pipe, with a

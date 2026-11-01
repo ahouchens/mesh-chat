@@ -10,9 +10,15 @@ class PairingObservation:
     trust: str
 
 
+@dataclass(frozen=True)
+class PairingRequest:
+    contact: str
+    document: str
+
+
 class Pairing(Protocol):
     """Accept one signed invitation and send a signed request to a known peer."""
 
     def accept(self, profile: str, document: str) -> PairingObservation: ...
 
-    def request(self, profile: str, contact: str) -> None: ...
+    def request(self, profile: str, contact: str) -> PairingRequest: ...

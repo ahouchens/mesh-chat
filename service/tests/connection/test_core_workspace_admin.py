@@ -169,3 +169,66 @@ def test_channels_can_be_listed_and_a_public_channel_created(admin_pair):
     empty = dict(create)
     empty["params"] = {"profile": profile, "workspace": workspace, "name": ""}
     assert session.request(empty)["error"]["code"] == "invalid_request"
+
+
+def test_private_channels_support_membership_and_edits(admin_pair):
+    owner, _, _ = admin_pair
+    session, profile = open_client(owner)
+    workspace = session.request(request("workspace.query", profile=profile)
+                                )["result"]["workspaces"][0]["workspace"]
+    pending = session.request(request("workspace.join_requests", profile=profile,
+                                      workspace=workspace))["result"]["requests"][0]
+    assert session.request({
+        "api_version": 1, "request_id": "request:1", "operation": "workspace.join_approve",
+        "params": {"profile": profile, "workspace": workspace, "request": pending["request"]},
+        "idempotency_key": "a" * 32,
+    })["ok"]
+    members = session.request(request("workspace.members", profile=profile,
+                                      workspace=workspace))
+    by_name = {item["display_name"]: item["member"] for item in members["result"]["members"]}
+
+    create = {"api_version": 1, "request_id": "request:2",
+              "operation": "workspace.channel_create",
+              "params": {"profile": profile, "workspace": workspace, "name": "Secret",
+                         "visibility": "private", "members": [by_name["Blair"]]},
+              "idempotency_key": "p" * 32}
+    created = session.request(create)
+    assert created["ok"], created
+    assert created["result"]["visibility"] == "private"
+    channel = created["result"]["channel"]
+
+    listed = session.request(request("workspace.channel_members", profile=profile,
+                                     workspace=workspace, channel=channel))
+    assert listed["ok"], listed
+    assert len(listed["result"]["members"]) == 2
+    Draft202012Validator(
+        json.loads((CONTRACTS / "workspace-channel-members-result-v1.schema.json").read_text())
+    ).validate(listed)
+
+    updated = session.request({
+        "api_version": 1, "request_id": "request:3", "operation": "workspace.channel_update",
+        "params": {"profile": profile, "workspace": workspace, "channel": channel,
+                   "name": "Renamed", "topic": "Ops"},
+        "idempotency_key": "e" * 32,
+    })
+    assert updated["ok"], updated
+    assert updated["result"]["name"] == "Renamed" and updated["result"]["topic"] == "Ops"
+    Draft202012Validator(
+        json.loads((CONTRACTS / "workspace-channel-update-result-v1.schema.json").read_text())
+    ).validate(updated)
+
+    roster = session.request({
+        "api_version": 1, "request_id": "request:4",
+        "operation": "workspace.channel_members_update",
+        "params": {"profile": profile, "workspace": workspace, "channel": channel,
+                   "members": [by_name["Alex"]]},
+        "idempotency_key": "m" * 32,
+    })
+    assert roster["ok"], roster
+    assert roster["result"]["members"] == [by_name["Alex"]]
+    public_channel = next(item for item in session.request(
+        request("workspace.channels", profile=profile, workspace=workspace)
+    )["result"]["channels"] if item["visibility"] == "public")["channel"]
+    assert session.request(request("workspace.channel_members", profile=profile,
+                                   workspace=workspace, channel=public_channel)
+                           )["error"]["code"] == "invalid_request"

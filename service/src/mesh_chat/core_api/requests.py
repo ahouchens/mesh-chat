@@ -29,6 +29,9 @@ WORKSPACE_MEMBERS_OPERATIONS = ("workspace.members",)
 WORKSPACE_ROLE_OPERATIONS = ("workspace.member_role",)
 WORKSPACE_CHANNELS_OPERATIONS = ("workspace.channels",)
 WORKSPACE_CHANNEL_CREATE_OPERATIONS = ("workspace.channel_create",)
+WORKSPACE_CHANNEL_MEMBERS_OPERATIONS = ("workspace.channel_members",)
+WORKSPACE_CHANNEL_MEMBERS_UPDATE_OPERATIONS = ("workspace.channel_members_update",)
+WORKSPACE_CHANNEL_UPDATE_OPERATIONS = ("workspace.channel_update",)
 DIAGNOSTIC_OPERATIONS = ("diagnostics.query",)
 REQUEST_ID = re.compile(r"[A-Za-z0-9._:-]{1,80}\Z")
 HANDLE = re.compile(r"[A-Za-z0-9_-]{16,128}\Z")
@@ -52,7 +55,8 @@ def parse_request(value, operations):
         raise ApiFailure("unsupported_operation")
     if operation in ("message.enqueue", "events.ack", "workspace.join",
                       "workspace.join_approve", "workspace.join_decline",
-                      "workspace.member_role", "workspace.channel_create"):
+                      "workspace.member_role", "workspace.channel_create",
+                      "workspace.channel_members_update", "workspace.channel_update"):
         fields.add("idempotency_key")
     if set(value) != fields:
         raise ApiFailure("invalid_request")
@@ -95,13 +99,55 @@ def parse_request(value, operations):
                        for item in params.values())):
             raise ApiFailure("invalid_request")
         return operation, params
+    if operation in WORKSPACE_CHANNEL_MEMBERS_OPERATIONS:
+        params = value["params"]
+        if (not isinstance(params, dict) or set(params) != {"profile", "workspace", "channel"}
+                or any(not isinstance(item, str) or HANDLE.fullmatch(item) is None
+                       for item in params.values())):
+            raise ApiFailure("invalid_request")
+        return operation, params
+    if operation in WORKSPACE_CHANNEL_MEMBERS_UPDATE_OPERATIONS:
+        params = value["params"]
+        if (not isinstance(params, dict) or set(params) != {"profile", "workspace",
+                                                            "channel", "members"}
+                or "idempotency_key" not in value
+                or not isinstance(params.get("members"), list)
+                or not 1 <= len(params["members"]) <= 8
+                or any(not isinstance(item, str) or HANDLE.fullmatch(item) is None
+                       for item in params["members"])
+                or any(not isinstance(params.get(name), str) or HANDLE.fullmatch(params[name]) is None
+                       for name in ("profile", "workspace", "channel"))):
+            raise ApiFailure("invalid_request")
+        return operation, params
+    if operation in WORKSPACE_CHANNEL_UPDATE_OPERATIONS:
+        params = value["params"]
+        if (not isinstance(params, dict) or set(params) != {"profile", "workspace",
+                                                            "channel", "name", "topic"}
+                or "idempotency_key" not in value
+                or not isinstance(params.get("name"), str) or not 1 <= len(params["name"]) <= 64
+                or not isinstance(params.get("topic"), str) or len(params["topic"]) > 1024
+                or any(not isinstance(params.get(name), str) or HANDLE.fullmatch(params[name]) is None
+                       for name in ("profile", "workspace", "channel"))):
+            raise ApiFailure("invalid_request")
+        return operation, params
     if operation in WORKSPACE_CHANNEL_CREATE_OPERATIONS:
         params = value["params"]
-        if (not isinstance(params, dict) or set(params) != {"profile", "workspace", "name"}
-                or "idempotency_key" not in value
+        allowed = {"profile", "workspace", "name", "visibility", "members"}
+        if (not isinstance(params, dict) or not {"profile", "workspace", "name"} <= set(params)
+                or set(params) - allowed or "idempotency_key" not in value
+                or params.get("visibility", "public") not in {"public", "private"}
                 or not isinstance(params.get("name"), str) or not 1 <= len(params["name"]) <= 64
                 or any(not isinstance(params.get(name), str) or HANDLE.fullmatch(params[name]) is None
                        for name in ("profile", "workspace"))):
+            raise ApiFailure("invalid_request")
+        members = params.get("members")
+        if members is not None:
+            if (params.get("visibility") != "private" or not isinstance(members, list)
+                    or not 1 <= len(members) <= 8
+                    or any(not isinstance(item, str) or HANDLE.fullmatch(item) is None
+                           for item in members)):
+                raise ApiFailure("invalid_request")
+        elif params.get("visibility") == "private":
             raise ApiFailure("invalid_request")
         return operation, params
     if operation in WORKSPACE_ROLE_OPERATIONS:
@@ -265,5 +311,8 @@ COMPONENT_OPERATIONS = (
     + WORKSPACE_ROLE_OPERATIONS
     + WORKSPACE_CHANNELS_OPERATIONS
     + WORKSPACE_CHANNEL_CREATE_OPERATIONS
+    + WORKSPACE_CHANNEL_MEMBERS_OPERATIONS
+    + WORKSPACE_CHANNEL_MEMBERS_UPDATE_OPERATIONS
+    + WORKSPACE_CHANNEL_UPDATE_OPERATIONS
     + DIAGNOSTIC_OPERATIONS
 )

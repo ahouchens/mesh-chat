@@ -127,6 +127,32 @@ class CoreClient:
                             {"profile": handle, "workspace": workspace, "name": name},
                             idempotency_key=key)
 
+    def workspace_channel_members(self, handle, workspace, channel):
+        return self.request("workspace.channel_members",
+                            {"profile": handle, "workspace": workspace, "channel": channel})
+
+    def workspace_channel_members_update(self, handle, workspace, channel, members, key):
+        if not isinstance(members, list) or not 1 <= len(members) <= 8:
+            raise ValueError("Channel membership is invalid")
+        if not isinstance(key, str) or len(key) < 16:
+            raise ValueError("Channel membership requires a caller-scoped key")
+        return self.request("workspace.channel_members_update",
+                            {"profile": handle, "workspace": workspace,
+                             "channel": channel, "members": members},
+                            idempotency_key=key)
+
+    def workspace_channel_update(self, handle, workspace, channel, name, topic, key):
+        if not isinstance(name, str) or not 1 <= len(name) <= 64:
+            raise ValueError("Channel name is invalid")
+        if not isinstance(topic, str) or len(topic) > 1024:
+            raise ValueError("Channel topic is invalid")
+        if not isinstance(key, str) or len(key) < 16:
+            raise ValueError("Channel edits require a caller-scoped key")
+        return self.request("workspace.channel_update",
+                            {"profile": handle, "workspace": workspace, "channel": channel,
+                             "name": name, "topic": topic},
+                            idempotency_key=key)
+
     def workspace_members(self, handle, workspace):
         return self.request("workspace.members", {"profile": handle, "workspace": workspace})
 

@@ -146,6 +146,28 @@ def test_client_refuses_to_dispatch_an_empty_pairing_document():
     assert len(transport.written) == 1
 
 
+def test_client_channel_edit_helpers_use_the_declared_envelopes():
+    transport = Scripted(
+        reply(CAPABILITIES),
+        reply({"profile": PROFILE, "workspace": "w" * 64, "channel": "c" * 64,
+               "members": ["m" * 64]}, "client:2"),
+        reply({"profile": PROFILE, "workspace": "w" * 64, "channel": "c" * 64,
+               "members": ["m" * 64]}, "client:3"),
+        reply({"profile": PROFILE, "workspace": "w" * 64, "channel": "c" * 64,
+               "name": "Renamed", "topic": "Ops", "visibility": "private"}, "client:4"),
+    )
+    client = CoreClient.open(transport.readline, transport.write)
+    assert client.workspace_channel_members(PROFILE, "w" * 64, "c" * 64)["members"] == ["m" * 64]
+    client.workspace_channel_members_update(PROFILE, "w" * 64, "c" * 64, ["m" * 64], "m" * 16)
+    edited = client.workspace_channel_update(PROFILE, "w" * 64, "c" * 64, "Renamed", "Ops", "e" * 16)
+    assert edited["name"] == "Renamed"
+    roster, update = (decode_frame(payload) for payload in transport.written[2:])
+    assert roster["operation"] == "workspace.channel_members_update"
+    assert roster["idempotency_key"] == "m" * 16
+    assert update["operation"] == "workspace.channel_update"
+    assert update["params"]["topic"] == "Ops"
+
+
 def test_client_channel_helpers_use_the_declared_envelopes():
     transport = Scripted(
         reply(CAPABILITIES),

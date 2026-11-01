@@ -199,11 +199,14 @@ def stop_view(value):
     return {"stopping": True, "already_stopping": value.already_stopping}
 
 
-def pairing_request_view(profile, peer):
+def pairing_request_view(profile, peer, value):
     if any(not isinstance(item, str) or re.fullmatch(r"[A-Za-z0-9_-]{16,128}", item) is None
            for item in (profile, peer)):
         raise ValueError("Invalid pairing request handle")
-    return {"profile": profile, "peer": peer, "state": "requested"}
+    if not isinstance(value.document, str) or not 1 <= len(value.document) <= 65536:
+        raise ValueError("Invalid pairing request document")
+    return {"profile": profile, "peer": peer, "state": "requested",
+            "document": value.document}
 
 
 WORKSPACE_ROLES = {"owner", "admin", "member"}
@@ -317,3 +320,27 @@ def workspace_channel_create_view(profile, workspace, value):
         raise ValueError("Invalid created channel")
     return {"profile": profile, "workspace": workspace, "channel": value.channel,
             "name": value.name, "visibility": value.visibility}
+
+
+def workspace_channel_members_view(profile, workspace, channel, members):
+    if any(not isinstance(item, str) or re.fullmatch(r"[A-Za-z0-9_-]{16,128}", item) is None
+           for item in (profile, workspace, channel)):
+        raise ValueError("Invalid channel member handle")
+    if not isinstance(members, list) or not 1 <= len(members) <= 8:
+        raise ValueError("Invalid channel membership")
+    if any(re.fullmatch(r"[A-Za-z0-9_-]{16,128}", item) is None for item in members):
+        raise ValueError("Invalid channel member")
+    return {"profile": profile, "workspace": workspace, "channel": channel,
+            "members": members}
+
+
+def workspace_channel_update_view(profile, workspace, channel, value):
+    if any(not isinstance(item, str) or re.fullmatch(r"[A-Za-z0-9_-]{16,128}", item) is None
+           for item in (profile, workspace, channel)):
+        raise ValueError("Invalid channel update handle")
+    if (not isinstance(value.name, str) or not value.name
+            or not isinstance(value.topic, str)
+            or value.visibility not in {"public", "private"}):
+        raise ValueError("Invalid channel update")
+    return {"profile": profile, "workspace": workspace, "channel": channel,
+            "name": value.name, "topic": value.topic, "visibility": value.visibility}

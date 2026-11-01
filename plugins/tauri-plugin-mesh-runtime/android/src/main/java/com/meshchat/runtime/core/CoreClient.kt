@@ -128,6 +128,52 @@ class CoreClient private constructor(private val transport: CoreTransport) {
         )
     }
 
+    fun workspaceChannelMembers(
+        profile: String,
+        workspace: String,
+        channel: String,
+    ): JSONObject = request(
+        "workspace.channel_members",
+        JSONObject().put("profile", profile).put("workspace", workspace).put("channel", channel),
+    )
+
+    fun workspaceChannelMembersUpdate(
+        profile: String,
+        workspace: String,
+        channel: String,
+        members: List<String>,
+        idempotencyKey: String,
+    ): JSONObject {
+        if (members.size !in 1..8) throw CoreException("invalid_request")
+        requireKey(idempotencyKey, "channel membership")
+        return dispatch(
+            "workspace.channel_members_update",
+            JSONObject().put("profile", profile).put("workspace", workspace)
+                .put("channel", channel).put("members", org.json.JSONArray(members)),
+            idempotencyKey,
+        )
+    }
+
+    fun workspaceChannelUpdate(
+        profile: String,
+        workspace: String,
+        channel: String,
+        name: String,
+        topic: String,
+        idempotencyKey: String,
+    ): JSONObject {
+        if (name.isEmpty() || name.length > 64 || topic.length > 1024) {
+            throw CoreException("invalid_request")
+        }
+        requireKey(idempotencyKey, "channel edits")
+        return dispatch(
+            "workspace.channel_update",
+            JSONObject().put("profile", profile).put("workspace", workspace)
+                .put("channel", channel).put("name", name).put("topic", topic),
+            idempotencyKey,
+        )
+    }
+
     fun workspaceMembers(profile: String, workspace: String): JSONObject =
         request("workspace.members", JSONObject().put("profile", profile).put("workspace", workspace))
 

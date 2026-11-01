@@ -25,6 +25,8 @@ import type {
   RelationshipView,
   StopView,
   WorkspaceChannelCreateView,
+  WorkspaceChannelMembersView,
+  WorkspaceChannelUpdateView,
   WorkspaceChannelsView,
   WorkspaceDeclineView,
   WorkspaceJoinView,
@@ -267,6 +269,53 @@ export class CoreClient {
     return this.request<WorkspaceChannelCreateView>(
       "workspace.channel_create",
       { profile, workspace, name },
+      { idempotencyKey },
+    );
+  }
+
+  async workspaceChannelMembers(
+    profile: string,
+    workspace: string,
+    channel: string,
+  ): Promise<WorkspaceChannelMembersView> {
+    return this.request<WorkspaceChannelMembersView>("workspace.channel_members", {
+      profile,
+      workspace,
+      channel,
+    });
+  }
+
+  async workspaceChannelMembersUpdate(
+    profile: string,
+    workspace: string,
+    channel: string,
+    members: string[],
+    idempotencyKey: string,
+  ): Promise<WorkspaceChannelMembersView> {
+    if (members.length < 1 || members.length > 8 || idempotencyKey.length < 16) {
+      throw new ProtocolError("channel membership requires members and a caller key");
+    }
+    return this.request<WorkspaceChannelMembersView>(
+      "workspace.channel_members_update",
+      { profile, workspace, channel, members },
+      { idempotencyKey },
+    );
+  }
+
+  async workspaceChannelUpdate(
+    profile: string,
+    workspace: string,
+    channel: string,
+    name: string,
+    topic: string,
+    idempotencyKey: string,
+  ): Promise<WorkspaceChannelUpdateView> {
+    if (name.length === 0 || name.length > 64 || topic.length > 1024 || idempotencyKey.length < 16) {
+      throw new ProtocolError("channel edits require a name, topic and caller key");
+    }
+    return this.request<WorkspaceChannelUpdateView>(
+      "workspace.channel_update",
+      { profile, workspace, channel, name, topic },
       { idempotencyKey },
     );
   }

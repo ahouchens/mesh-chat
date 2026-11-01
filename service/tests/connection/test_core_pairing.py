@@ -122,7 +122,9 @@ def test_the_signed_contact_request_is_queued_once_and_reused(host):
     assert len(before) == 1
     first = session.request(request_frame(profile, peer))
     assert first["ok"], first
-    assert first["result"] == {"profile": profile, "peer": peer, "state": "requested"}
+    assert first["result"]["profile"] == profile and first["result"]["peer"] == peer
+    assert first["result"]["state"] == "requested"
+    assert verify_invitation(first["result"]["document"]).destination_hash
     assert session.request(request_frame(profile, peer)) == first
     assert len(contact_requests(service)) == len(before)
     schema = json.loads((CONTRACTS / "pairing-request-result-v1.schema.json").read_text())
