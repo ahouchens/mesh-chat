@@ -558,6 +558,19 @@ class ServiceWorkspaceAdmin:
                     raise ApiFailure("internal")
             return tuple(sorted(found, key=lambda item: item.device))
 
+    def device_ids(self, profile, workspace_id):
+        self._require_local(profile)
+        with storage_errors():
+            self._workspace(workspace_id)
+            found = {item.device for item in self.devices(profile, workspace_id)}
+            for item in self._store.list("workspace_device_transition"):
+                if (item.get("workspace_id") == workspace_id
+                        and item.get("transition_kind") == "removal"
+                        and item.get("state") in {"pending", "approved", "declined"}
+                        and isinstance(item.get("device_id"), str)):
+                    found.add(item["device_id"])
+            return tuple(sorted(found))
+
     def remove_device(self, profile, workspace_id, device_id, operation_id):
         self._require_local(profile)
         if (not isinstance(device_id, str) or not isinstance(operation_id, str)
@@ -571,6 +584,14 @@ class ServiceWorkspaceAdmin:
                 raise ApiFailure("invalid_request")
             known = {item.device for item in self.devices(profile, workspace_id)}
             if device_id not in known:
+                settled = any(
+                    item.get("workspace_id") == workspace_id
+                    and item.get("transition_kind") == "removal"
+                    and item.get("device_id") == device_id
+                    and item.get("state") == "approved"
+                    for item in self._store.list("workspace_device_transition"))
+                if settled:
+                    return "removed"
                 raise ApiFailure("forbidden")
             try:
                 requested = self._service.request_workspace_device_removal(

@@ -406,6 +406,14 @@ def test_pending_device_links_can_be_listed_and_approved(tmp_path):
         Draft202012Validator(
             json.loads((CONTRACTS / "workspace-device-remove-result-v1.schema.json").read_text())
         ).validate(removed)
+        replay = owner_session.request({
+            "api_version": 1, "request_id": "request:4",
+            "operation": "workspace.device_remove",
+            "params": {"profile": owner_profile, "workspace": workspace,
+                       "device": target_device},
+            "idempotency_key": "x" * 32,
+        })
+        assert replay["ok"] and replay["result"]["state"] == "removed", replay
         _deliver_all(linked, _flush(owner, owner_network),
                      source_profile=owner._require_profile(),
                      recipient_profile=linked._require_profile())

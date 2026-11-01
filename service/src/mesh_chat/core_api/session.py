@@ -467,8 +467,8 @@ class CoreSession:
                 raise ApiFailure("forbidden")
             inside = self._workspace_target(grant, target, params["workspace"])
             device_id = next(
-                (item.device for item in self._workspace_admin.devices(target, inside)
-                 if self._handle(grant, "device", target, item.device) == params["device"]),
+                (item for item in self._workspace_admin.device_ids(target, inside)
+                 if self._handle(grant, "device", target, item) == params["device"]),
                 None)
             if device_id is None:
                 raise ApiFailure("forbidden")
