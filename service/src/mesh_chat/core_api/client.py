@@ -127,6 +127,19 @@ class CoreClient:
                             {"profile": handle, "workspace": workspace, "name": name},
                             idempotency_key=key)
 
+    def workspace_device_link_create(self, handle, workspace, key):
+        if not isinstance(key, str) or len(key) < 16:
+            raise ValueError("Device links require a caller-scoped key")
+        return self.request("workspace.device_link_create",
+                            {"profile": handle, "workspace": workspace},
+                            idempotency_key=key)
+
+    def workspace_device_link_preview(self, handle, document):
+        if not isinstance(document, str) or not document:
+            raise ValueError("Device link material is required")
+        return self.request("workspace.device_link_preview",
+                            {"profile": handle, "document": document})
+
     def workspace_channel_members(self, handle, workspace, channel):
         return self.request("workspace.channel_members",
                             {"profile": handle, "workspace": workspace, "channel": channel})

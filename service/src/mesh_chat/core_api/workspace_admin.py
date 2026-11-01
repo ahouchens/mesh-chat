@@ -45,6 +45,22 @@ class ChannelEdit:
 
 
 @dataclass(frozen=True)
+class DeviceLink:
+    document: str
+    link: str
+    expires_at: float
+
+
+@dataclass(frozen=True)
+class DeviceLinkPreview:
+    workspace: str
+    name: str
+    member_display_name: str
+    device_count: int
+    expires_at: float
+
+
+@dataclass(frozen=True)
 class MemberRoleChange:
     member: str
     role: str
@@ -92,3 +108,9 @@ class WorkspaceAdmin(Protocol):
 
     def archive_channel(self, profile: str, workspace: str, channel: str,
                         operation_id: str) -> ChannelEdit: ...
+
+    def device_link_create(self, profile: str, workspace: str,
+                           operation_id: str) -> DeviceLink: ...
+
+    def device_link_preview(self, profile: str,
+                            document: str) -> DeviceLinkPreview: ...

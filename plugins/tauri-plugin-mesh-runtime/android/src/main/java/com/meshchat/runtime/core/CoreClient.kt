@@ -17,6 +17,7 @@ class CoreClient private constructor(private val transport: CoreTransport) {
         private set
 
     companion object {
+        const val VERSION = "0.2.0-experimental"
         const val MAX_FRAME_CHARS = 4 * 1024 * 1024
         const val MAX_BATCH = 128
         const val MAX_DIAGNOSTICS = 256
@@ -140,6 +141,27 @@ class CoreClient private constructor(private val transport: CoreTransport) {
             JSONObject().put("profile", profile).put("workspace", workspace)
                 .put("channel", channel),
             idempotencyKey,
+        )
+    }
+
+    fun workspaceDeviceLinkCreate(
+        profile: String,
+        workspace: String,
+        idempotencyKey: String,
+    ): JSONObject {
+        requireKey(idempotencyKey, "device links")
+        return dispatch(
+            "workspace.device_link_create",
+            JSONObject().put("profile", profile).put("workspace", workspace),
+            idempotencyKey,
+        )
+    }
+
+    fun workspaceDeviceLinkPreview(profile: String, document: String): JSONObject {
+        if (document.isEmpty()) throw CoreException("invalid_request")
+        return request(
+            "workspace.device_link_preview",
+            JSONObject().put("profile", profile).put("document", document),
         )
     }
 

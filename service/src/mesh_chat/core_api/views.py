@@ -354,3 +354,29 @@ def workspace_channel_archive_view(profile, workspace, channel, value):
         raise ValueError("Invalid channel archive state")
     return {"profile": profile, "workspace": workspace, "channel": channel,
             "state": "archived"}
+
+
+def device_link_create_view(profile, workspace, value):
+    if any(not isinstance(item, str) or re.fullmatch(r"[A-Za-z0-9_-]{16,128}", item) is None
+           for item in (profile, workspace)):
+        raise ValueError("Invalid device link handle")
+    if (not isinstance(value.document, str) or not 1 <= len(value.document) <= 65536
+            or not isinstance(value.link, str) or not 1 <= len(value.link) <= 65536
+            or type(value.expires_at) not in {int, float}):
+        raise ValueError("Invalid device link")
+    return {"profile": profile, "workspace": workspace, "document": value.document,
+            "link": value.link, "expires_at": value.expires_at}
+
+
+def device_link_preview_view(profile, workspace, value):
+    if any(not isinstance(item, str) or re.fullmatch(r"[A-Za-z0-9_-]{16,128}", item) is None
+           for item in (profile, workspace)):
+        raise ValueError("Invalid device link preview handle")
+    if (not isinstance(value.name, str) or not value.name
+            or not isinstance(value.member_display_name, str) or not value.member_display_name
+            or type(value.device_count) is not int or not 1 <= value.device_count <= 24
+            or type(value.expires_at) not in {int, float}):
+        raise ValueError("Invalid device link preview")
+    return {"profile": profile, "workspace": workspace, "name": value.name,
+            "member_display_name": value.member_display_name,
+            "device_count": value.device_count, "expires_at": value.expires_at}

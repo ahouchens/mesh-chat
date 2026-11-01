@@ -16,15 +16,18 @@
     "note": "signed documents unchanged by this refactor"
   },
   "python_client": {
-    "status": "unversioned_component"
+    "status": "experimental_component",
+    "version": "0.2.0-experimental",
+    "packaged": false
   },
   "typescript_client": {
-    "version": "0.1.0-experimental",
+    "version": "0.2.0-experimental",
     "packaged": false
   },
   "kotlin_client": {
     "exists": true,
     "status": "experimental_component",
+    "version": "0.2.0-experimental",
     "packaged": false
   },
   "incompatible_combination": "reject_before_side_effects",

@@ -1107,8 +1107,20 @@ role. `workspace.channels`, `workspace.channel_create`, `workspace.channel_membe
 `workspace.channel_members_update` and `workspace.channel_update` cover public and
 private channel basics, private rosters and channel edits for owners and
 administrators, and `workspace.channel_archive` adds the archive transition.
-Per-peer pairing now returns the signed invitation document, so callers can
-exchange it out of band.
+`workspace.device_link_create`/`workspace.device_link_preview` expose signed
+device-link material and its safe preview, so a member can add another device
+without handling raw documents. Per-peer pairing returns the signed invitation
+document, so callers can exchange it out of band.
+
+## Component versions
+
+The Python, TypeScript and Kotlin clients now declare `0.2.0-experimental`, and the
+compatibility declaration carries those versions. A regression binds each source
+(the Python package attribute, `sdk/typescript/package.json` and the Kotlin
+constant) to the declaration, so a bump cannot drift between code and contract.
+The TypeScript package stays private and unpublished; none of the clients is a
+redistribution promise, and no supported version pairs exist yet, so SC25 remains
+open.
 
 ## Remaining work checklist
 
@@ -1183,15 +1195,17 @@ M5 - supported reusable core
       membership and channel editing open).
 - [x] Per-peer signed pairing document returned to the caller.
 - [x] Private channel membership, channel editing and archiving (component only).
-- [ ] Channel transfers and role-scoped channel policy overrides.
+- [x] Workspace device-link creation and preview (component only).
+- [ ] Channel transfers, device-link submission/approval and role-scoped channel
+      policy overrides.
 - [x] Experimental TypeScript client over the frame contract (component only; no
       packaging, CI conformance, Kotlin client or consumer).
 - [x] Experimental Python client and Windows CLI over the host pipe, with a
       declared console entry point and relationship, pairing and owner-stop
       commands (component only; no published distribution).
 - [ ] Versioned TypeScript/Kotlin SDKs, production CLI and the supported
-      compatibility matrix. Kotlin, TypeScript and Python clients exist as
-      components with JVM/Node/in-process tests; none is packaged or published.
+      compatibility matrix. Component versions are declared and bound by test;
+      none is packaged or published.
 - [ ] Mesh Chat messaging routed through the supported facade.
 - [ ] Independent Windows and Android consumers built only from distribution
       artifacts and documentation.

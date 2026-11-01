@@ -76,7 +76,7 @@
           "type": "array",
           "uniqueItems": true,
           "minItems": 3,
-          "maxItems": 33,
+          "maxItems": 35,
           "items": {
             "enum": [
               "runtime.capabilities",
@@ -111,6 +111,8 @@
               "workspace.channel_members_update",
               "workspace.channel_update",
               "workspace.channel_archive",
+              "workspace.device_link_create",
+              "workspace.device_link_preview",
               "diagnostics.query"
             ]
           }

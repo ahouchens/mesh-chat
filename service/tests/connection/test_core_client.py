@@ -146,6 +146,24 @@ def test_client_refuses_to_dispatch_an_empty_pairing_document():
     assert len(transport.written) == 1
 
 
+def test_client_device_link_helpers_use_the_declared_envelopes():
+    transport = Scripted(
+        reply(CAPABILITIES),
+        reply({"profile": PROFILE, "workspace": "w" * 64, "document": "link-document",
+               "link": "meshchat://workspace-device/token", "expires_at": 1}, "client:2"),
+        reply({"profile": PROFILE, "workspace": "w" * 64, "name": "Core",
+               "member_display_name": "Alex", "device_count": 1, "expires_at": 1}, "client:3"),
+    )
+    client = CoreClient.open(transport.readline, transport.write)
+    created = client.workspace_device_link_create(PROFILE, "w" * 64, "l" * 16)
+    assert created["document"] == "link-document"
+    assert client.workspace_device_link_preview(PROFILE, "link-document")["device_count"] == 1
+    create, preview = (decode_frame(payload) for payload in transport.written[1:])
+    assert create["operation"] == "workspace.device_link_create"
+    assert create["idempotency_key"] == "l" * 16
+    assert preview["operation"] == "workspace.device_link_preview"
+
+
 def test_client_channel_archive_uses_the_declared_envelope():
     transport = Scripted(
         reply(CAPABILITIES),

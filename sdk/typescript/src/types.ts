@@ -209,3 +209,20 @@ export interface WorkspaceChannelArchiveView {
   channel: string;
   state: "archived";
 }
+
+export interface WorkspaceDeviceLinkView {
+  profile: string;
+  workspace: string;
+  document: string;
+  link: string;
+  expires_at: number;
+}
+
+export interface WorkspaceDeviceLinkPreviewView {
+  profile: string;
+  workspace: string;
+  name: string;
+  member_display_name: string;
+  device_count: number;
+  expires_at: number;
+}

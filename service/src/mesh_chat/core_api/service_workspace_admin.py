@@ -3,7 +3,8 @@
 from ..errors import ContactNotApproved, InvitationExpired, InvitationInvalid, ValidationError
 from .errors import ApiFailure
 from .service_messages import storage_errors
-from .workspace_admin import (ChannelEdit, ChannelSummary, JoinApproval, JoinRequestSummary,
+from .workspace_admin import (ChannelEdit, ChannelSummary, DeviceLink, DeviceLinkPreview,
+                              JoinApproval, JoinRequestSummary,
                               MemberRoleChange, MemberSummary, WorkspaceSummary)
 
 
@@ -11,6 +12,7 @@ MAX_WORKSPACES = 16
 MAX_JOIN_REQUESTS = 32
 MAX_REQUEST_IDS = 64
 MAX_CHANNELS = 32
+MAX_DOCUMENT_BYTES = 65536
 CHANNEL_STATES = {"active", "archived", "left"}
 ROLES = {"owner", "admin", "member"}
 STATES = {"active", "joining", "left", "removed", "revoked", "archived"}
@@ -310,3 +312,42 @@ class ServiceWorkspaceAdmin:
             if state != "archived" or visibility not in {"public", "private"}:
                 raise ApiFailure("internal")
             return ChannelEdit(channel_id, name, topic, visibility, state)
+
+    def device_link_create(self, profile, workspace_id, operation_id):
+        self._require_local(profile)
+        if not isinstance(operation_id, str) or not operation_id:
+            raise ApiFailure("invalid_request")
+        with storage_errors():
+            workspace = self._workspace(workspace_id)
+            if workspace.get("state") != "active":
+                raise ApiFailure("conflict")
+            try:
+                outcome = self._service.create_workspace_device_link(
+                    workspace_id, operation_id)
+            except (ValidationError, ContactNotApproved) as error:
+                raise ApiFailure("invalid_request") from error
+            document, link = outcome.get("value"), outcome.get("link")
+            expires = outcome.get("expires_at")
+            if (not isinstance(document, str) or not 1 <= len(document) <= MAX_DOCUMENT_BYTES
+                    or not isinstance(link, str) or not 1 <= len(link) <= MAX_DOCUMENT_BYTES
+                    or type(expires) not in {int, float}):
+                raise ApiFailure("internal")
+            return DeviceLink(document, link, float(expires))
+
+    def device_link_preview(self, profile, document):
+        self._require_local(profile)
+        if (not isinstance(document, str) or not 1 <= len(document) <= MAX_DOCUMENT_BYTES):
+            raise ApiFailure("invalid_request")
+        with storage_errors():
+            try:
+                preview = self._service.preview_workspace_device_link(document)
+            except (ValidationError, ContactNotApproved) as error:
+                raise ApiFailure("invalid_request") from error
+            workspace_id, name = preview.get("workspace_id"), preview.get("name")
+            member_name, count = preview.get("member_display_name"), preview.get("device_count")
+            expires = preview.get("expires_at")
+            if (not isinstance(workspace_id, str) or not isinstance(name, str)
+                    or not isinstance(member_name, str) or type(count) is not int
+                    or not 1 <= count <= 24 or type(expires) not in {int, float}):
+                raise ApiFailure("internal")
+            return DeviceLinkPreview(workspace_id, name, member_name, count, float(expires))

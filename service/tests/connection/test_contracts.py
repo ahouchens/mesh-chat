@@ -86,6 +86,8 @@ def test_each_designed_operation_has_an_executable_request_vector_and_permission
         "workspace.channel_update": {"workspace": handle, "channel": handle,
                                      "name": "Renamed", "topic": ""},
         "workspace.channel_archive": {"workspace": handle, "channel": handle},
+        "workspace.device_link_create": {"workspace": handle},
+        "workspace.device_link_preview": {"document": "device-link"},
         "workspace.channels": {"workspace": handle},
         "workspace.channel_create": {"workspace": handle, "name": "Core Chat"},
         "peer.pairing_accept": {"document": "signed-pairing-document"},

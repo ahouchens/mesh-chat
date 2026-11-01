@@ -252,6 +252,40 @@ test("pairing acceptance refuses an empty document before dispatch", async () =>
   assert.equal(transport.written.length, 1);
 });
 
+test("device link helpers use the declared envelopes", async () => {
+  const transport = new Scripted(
+    success("client:1", CAPABILITIES),
+    success("client:2", {
+      profile: PROFILE,
+      workspace: "w".repeat(64),
+      document: "link-document",
+      link: "meshchat://workspace-device/token",
+      expires_at: 1,
+    }),
+    success("client:3", {
+      profile: PROFILE,
+      workspace: "w".repeat(64),
+      name: "Core",
+      member_display_name: "Alex",
+      device_count: 1,
+      expires_at: 1,
+    }),
+  );
+  const client = await CoreClient.open(transport);
+  assert.equal(
+    (await client.workspaceDeviceLinkCreate(PROFILE, "w".repeat(64), "l".repeat(16))).document,
+    "link-document",
+  );
+  assert.equal(
+    (await client.workspaceDeviceLinkPreview(PROFILE, "link-document")).device_count,
+    1,
+  );
+  const create = JSON.parse(transport.written[1]);
+  const preview = JSON.parse(transport.written[2]);
+  assert.equal(create.operation, "workspace.device_link_create");
+  assert.equal(preview.operation, "workspace.device_link_preview");
+});
+
 test("channel archive uses the declared envelope", async () => {
   const transport = new Scripted(
     success("client:1", CAPABILITIES),

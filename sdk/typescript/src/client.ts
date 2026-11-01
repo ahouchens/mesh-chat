@@ -30,6 +30,8 @@ import type {
   WorkspaceChannelUpdateView,
   WorkspaceChannelsView,
   WorkspaceDeclineView,
+  WorkspaceDeviceLinkPreviewView,
+  WorkspaceDeviceLinkView,
   WorkspaceJoinView,
   WorkspaceMemberRoleView,
   WorkspaceMembersView,
@@ -334,6 +336,34 @@ export class CoreClient {
       "workspace.channel_archive",
       { profile, workspace, channel },
       { idempotencyKey },
+    );
+  }
+
+  async workspaceDeviceLinkCreate(
+    profile: string,
+    workspace: string,
+    idempotencyKey: string,
+  ): Promise<WorkspaceDeviceLinkView> {
+    if (idempotencyKey.length < 16) {
+      throw new ProtocolError("device links require a caller key");
+    }
+    return this.request<WorkspaceDeviceLinkView>(
+      "workspace.device_link_create",
+      { profile, workspace },
+      { idempotencyKey },
+    );
+  }
+
+  async workspaceDeviceLinkPreview(
+    profile: string,
+    document: string,
+  ): Promise<WorkspaceDeviceLinkPreviewView> {
+    if (document.length === 0) {
+      throw new ProtocolError("device link material is required");
+    }
+    return this.request<WorkspaceDeviceLinkPreviewView>(
+      "workspace.device_link_preview",
+      { profile, document },
     );
   }
 

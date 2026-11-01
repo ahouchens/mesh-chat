@@ -43,11 +43,11 @@ never described as physical-device qualification.
 | INV18 | `local` | Deterministic traces, replay and the seeded simulator corpus. |
 | INV19 | `local` | Failed persistence keeps the in-memory denial and never reports durable success; intent-batch and authority-write regressions. |
 | INV20 | `partial` | The gate rejects failed, canceled, skipped or missing required evidence; publication now requires that manifest and re-hashes staged assets against it. No tag has executed the release path yet. |
-| INV21 | `partial` | The facade enforces caller, profile, permission and private-event boundaries in tests, and a Windows named-pipe endpoint now adds OS access control plus executable allowlisting. No Android endpoint or packaged consumer exercises the boundary yet. |
+| INV21 | `partial` | The facade enforces caller, profile, permission and private-event boundaries in tests. A Windows named-pipe endpoint adds OS access control plus executable allowlisting, and an Android Binder endpoint now carries a signature permission, caller-derived grant and its own required gate suite. No packaged consumer exercises either boundary yet. |
 | INV22 | `partial` | The client carries no peer policy and cannot start a runtime. Exclusive data-directory ownership is checked by the host, which is not implemented. |
 | INV23 | `local` | Durable enqueue receipts, conflicting payload rejection and stable logical IDs across restart; acknowledgments never change peer delivery state. |
 | INV24 | `local` | Explicit `resync_required` for gaps, expiry and authority change; the client consumer clears its position and resnapshots. Long-term retention is not promised. |
-| INV25 | `partial` | A declared compatibility file fixes the public API, IPC, peer-wire and client namespaces; both clients refuse an unsupported major before side effects, and the aggregator checks the contract. No published package matrix or upgrade fixtures exist. |
+| INV25 | `partial` | A declared compatibility file fixes the public API, IPC, peer-wire and client namespaces, and the Python, TypeScript and Kotlin component versions are bound to it by test. Every client refuses an unsupported major before side effects, and the aggregator checks the contract. No published package matrix or upgrade fixtures exist. |
 | INV26 | `open` | No packaged SDK, runtime distribution or independent consumer exists. |
 
 ## Required scenarios
@@ -78,7 +78,7 @@ never described as physical-device qualification.
 | SC22 | `component` | Wrong caller, profile/scope and private-control attempts are rejected before effects in facade tests. |
 | SC23 | `local` | Lost reply, timeout and duplicate request after restart resolve by idempotency key; conflicting payloads fail. |
 | SC24 | `local` | Bounded replay, explicit gaps, cursor expiry and consumer deduplication are covered by facade and client tests. |
-| SC25 | `open` | No supported SDK/API/package version pairs exist to validate or reject. |
+| SC25 | `open` | Component clients declare versions that are checked against the compatibility declaration, but no supported SDK/API/package version pairs are published to validate or reject. |
 | SC26 | `partial` | Detach does not stop the runtime; the owner can now request a stop that sets the shutdown event and closes the host stream after the reply, but process exit and packaged multi-client evidence remain unqualified. The Windows endpoint serves a bounded number of concurrent local clients. |
 
 ## Completion boundaries

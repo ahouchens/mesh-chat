@@ -320,8 +320,12 @@ administrator with a caller key; private channels require one to eight member
 handles. `workspace.channel_members` reads a private channel's caller-scoped
 member handles, `workspace.channel_members_update` replaces that roster with a
 caller key, `workspace.channel_update` edits a channel's name and topic, and
-`workspace.channel_archive` archives it. All are owner/administrator operations,
-keyed and replay-safe, and expose no manifests or identity documents.
+`workspace.channel_archive` archives it. `workspace.device_link_create` returns
+signed device-link material for the caller's own member device — the same public
+onboarding artifact the application shows — and `workspace.device_link_preview`
+verifies a link and returns the workspace name, member display name, device count
+and expiry only. Links are keyed and replay-safe; no fingerprints, keys or
+manifests cross the boundary.
 
 ## Observation and recovery
 

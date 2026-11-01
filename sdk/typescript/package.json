@@ -1,6 +1,6 @@
 {
   "name": "@mesh-chat/core-client",
-  "version": "0.1.0-experimental",
+  "version": "0.2.0-experimental",
   "private": true,
   "description": "Experimental TypeScript client for the private Mesh Chat Core API.",
   "type": "module",

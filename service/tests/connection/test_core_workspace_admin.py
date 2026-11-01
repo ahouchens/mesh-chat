@@ -259,3 +259,33 @@ def test_channels_can_be_archived_and_replays_are_stable(admin_pair):
                                      workspace=workspace))
     assert next(item for item in listed["result"]["channels"]
                 if item["channel"] == channel)["state"] == "archived"
+
+
+def test_device_links_can_be_created_and_previewed(admin_pair):
+    owner, _, _ = admin_pair
+    session, profile = open_client(owner, permissions=("observe", "read", "approve", "pair"))
+    workspace = session.request(request("workspace.query", profile=profile)
+                                )["result"]["workspaces"][0]["workspace"]
+    create = {"api_version": 1, "request_id": "request:1",
+              "operation": "workspace.device_link_create",
+              "params": {"profile": profile, "workspace": workspace},
+              "idempotency_key": "l" * 32}
+    created = session.request(create)
+    assert created["ok"], created
+    Draft202012Validator(
+        json.loads((CONTRACTS / "workspace-device-link-create-result-v1.schema.json").read_text())
+    ).validate(created)
+    document = created["result"]["document"]
+    assert created["result"]["link"].startswith("meshchat://workspace-device/")
+    assert session.request(create)["result"] == created["result"]
+    preview = session.request(request("workspace.device_link_preview", profile=profile,
+                                      document=document))
+    assert preview["ok"], preview
+    assert preview["result"]["name"] == "Core"
+    assert preview["result"]["member_display_name"] == "Alex"
+    assert preview["result"]["device_count"] == 1
+    Draft202012Validator(
+        json.loads((CONTRACTS / "workspace-device-link-preview-result-v1.schema.json").read_text())
+    ).validate(preview)
+    assert session.request(request("workspace.device_link_preview", profile=profile,
+                                   document="not-a-link"))["error"]["code"] == "invalid_request"

@@ -37,6 +37,8 @@
     "workspace.channel_members_update",
     "workspace.channel_update",
     "workspace.channel_archive",
+    "workspace.device_link_create",
+    "workspace.device_link_preview",
     "diagnostics.query"
   ],
   "operations": [
@@ -319,6 +321,20 @@
       "scope": "profile",
       "mutation": true,
       "idempotency": "caller_profile_operation_key"
+    },
+    {
+      "operation": "workspace.device_link_create",
+      "permission": "pair",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "caller_profile_operation_key"
+    },
+    {
+      "operation": "workspace.device_link_preview",
+      "permission": "pair",
+      "scope": "profile",
+      "mutation": false,
+      "idempotency": "query"
     }
   ],
   "limits": {

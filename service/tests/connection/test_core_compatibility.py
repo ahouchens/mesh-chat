@@ -32,7 +32,8 @@ def test_declared_compatibility_matches_the_contract_inventory():
     assert declaration["status"] == "experimental_unfrozen"
     assert declaration["peer_wire"]["changed"] is False
     assert declaration["kotlin_client"] == {"exists": True,
-        "status": "experimental_component", "packaged": False}
+        "status": "experimental_component", "version": "0.2.0-experimental",
+        "packaged": False}
     assert declaration["incompatible_combination"] == "reject_before_side_effects"
 
 
@@ -80,3 +81,15 @@ def test_cli_maps_a_platform_or_transport_failure_to_a_typed_exit(monkeypatch, c
     monkeypatch.setitem(sys.modules, "mesh_chat.core_api.pipe_client", fake)
     assert cli.main(["--pipe", r"\\.\pipe\mesh-chat-test", "capabilities"]) == 2
     assert json.loads(capsys.readouterr().err)["error"] == "unsupported_platform"
+
+
+def test_component_versions_match_the_compatibility_declaration():
+    from mesh_chat.core_api import __version__
+
+    declaration = json.loads((ROOT / "contracts/core-api/compatibility-v1.json").read_text())
+    package = json.loads((ROOT / "sdk/typescript/package.json").read_text())
+    kotlin = (ROOT / "plugins/tauri-plugin-mesh-runtime/android/src/main/java/com/meshchat/runtime/core/CoreClient.kt").read_text()
+    assert declaration["python_client"]["version"] == __version__
+    assert declaration["typescript_client"]["version"] == package["version"]
+    assert f'const val VERSION = "{declaration["kotlin_client"]["version"]}"' in kotlin
+    assert declaration["typescript_client"]["version"] == declaration["python_client"]["version"]
