@@ -49,6 +49,9 @@ jobs:
           node node_modules/typescript/bin/tsc -p sdk/typescript
           node --test "sdk/typescript/dist/**/*.test.js"
 
+      - name: Package and smoke the TypeScript client
+        run: node scripts/check_typescript_distribution.mjs
+
       - name: Prove the TypeScript client against the Python facade
         run: |
           node --version

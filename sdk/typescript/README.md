@@ -18,3 +18,7 @@ do not accept one.
 A packaging regression checks that the package stays private, that its version is
 bound to the compatibility declaration, and that every declared entry point ships
 from `dist`. It is still a shape check, not a published artifact.
+
+`node scripts/check_typescript_distribution.mjs` packs the package, installs the tarball
+into an empty project and imports the public entry point. It qualifies the packaged
+shape without publishing anything.

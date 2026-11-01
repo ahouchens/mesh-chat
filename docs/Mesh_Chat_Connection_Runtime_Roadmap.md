@@ -1209,6 +1209,8 @@ M5 - supported reusable core
 - [x] Signed device-link creation, preview, new-device submission and
       owner approve/decline (component, two-service delivery test).
 - [x] Component versions and a TypeScript package-shape gate (not published).
+- [x] TypeScript tarball packaging smoke: pack, install into an empty project,
+      import the public entry point (unpublished artifact).
 
 - [x] Workspace device-link creation, preview, submission and sponsor
       approval/decline (component, two-service delivery test).

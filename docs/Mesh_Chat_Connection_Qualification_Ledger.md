@@ -55,6 +55,7 @@ concluded **success**:
 | TypeScript client + package | `node --test sdk/typescript/dist/**/*.test.js` | 38 passed |
 | Compatibility | `pytest service/tests/connection/test_core_compatibility.py` | 17 passed |
 | Budget conformance | `pytest service/tests/connection/test_core_budgets.py` | 3 passed (exact advertised limits; over-budget rejected; edges accepted) |
+| Packaged client smoke (unpublished) | `node scripts/check_typescript_distribution.mjs` | passes: npm pack, install into an empty project, import `@mesh-chat/core-client` |
 
 ## Definition-of-done disposition
 
