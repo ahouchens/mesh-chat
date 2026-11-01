@@ -249,19 +249,11 @@ export class CoreClient {
     return this.request<WorkspacePreviewView>("workspace.invitation_preview", { profile, document });
   }
 
-  async workspaceJoin(
-    profile: string,
-    document: string,
-    idempotencyKey: string,
-  ): Promise<WorkspaceJoinView> {
-    if (document.length === 0 || idempotencyKey.length < 16) {
-      throw new ProtocolError("workspace joins require material and a caller key");
+  async workspaceJoin(profile: string, document: string): Promise<WorkspaceJoinView> {
+    if (document.length === 0) {
+      throw new ProtocolError("workspace joins require signed material");
     }
-    return this.request<WorkspaceJoinView>(
-      "workspace.join",
-      { profile, document },
-      { idempotencyKey },
-    );
+    return this.request<WorkspaceJoinView>("workspace.join", { profile, document });
   }
 
   async workspaceChannels(profile: string, workspace: string): Promise<WorkspaceChannelsView> {

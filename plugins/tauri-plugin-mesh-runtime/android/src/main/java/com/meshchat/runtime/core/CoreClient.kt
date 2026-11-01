@@ -391,13 +391,11 @@ class CoreClient private constructor(private val transport: CoreTransport) {
         )
     }
 
-    fun workspaceJoin(profile: String, document: String, idempotencyKey: String): JSONObject {
+    fun workspaceJoin(profile: String, document: String): JSONObject {
         if (document.isEmpty()) throw CoreException("invalid_request")
-        requireKey(idempotencyKey, "workspace joins")
-        return dispatch(
+        return request(
             "workspace.join",
             JSONObject().put("profile", profile).put("document", document),
-            idempotencyKey,
         )
     }
 

@@ -144,4 +144,21 @@ class CoreClientTest {
             }.exceptionOrNull() is CoreException,
         )
     }
+
+    @Test
+    fun workspaceJoinIsConvergentWithoutACallerKey() {
+        val transport = Scripted(
+            success("client:1", capabilities()),
+            success(
+                "client:2",
+                JSONObject().put("profile", PROFILE).put("workspace", "w".repeat(64))
+                    .put("name", "Core").put("state", "joining"),
+            ),
+        )
+        val client = CoreClient.open(transport)
+        client.workspaceJoin(PROFILE, "invitation")
+        val join = JSONObject(transport.written[1])
+        assertEquals("workspace.join", join.getString("operation"))
+        assertFalse(join.has("idempotency_key"))
+    }
 }

@@ -338,13 +338,13 @@ def test_client_workspace_helpers_use_the_declared_envelopes():
     )
     client = CoreClient.open(transport.readline, transport.write)
     assert client.workspace_preview(PROFILE, "invitation")["name"] == "Core"
-    assert client.workspace_join(PROFILE, "invitation", "k" * 16)["state"] == "joining"
+    assert client.workspace_join(PROFILE, "invitation")["state"] == "joining"
     preview, join = (decode_frame(payload) for payload in transport.written[1:])
     assert preview["operation"] == "workspace.invitation_preview"
     assert preview["params"] == {"profile": PROFILE, "document": "invitation"}
     assert "idempotency_key" not in preview
     assert join["operation"] == "workspace.join"
-    assert join["idempotency_key"] == "k" * 16
+    assert "idempotency_key" not in join
 
 
 def test_client_pairing_request_uses_the_declared_envelope():

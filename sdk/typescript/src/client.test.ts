@@ -585,13 +585,13 @@ test("workspace preview and join use the declared envelopes", async () => {
   );
   const client = await CoreClient.open(transport);
   assert.equal((await client.workspacePreview(PROFILE, "invitation")).name, "Core");
-  assert.equal((await client.workspaceJoin(PROFILE, "invitation", "k".repeat(16))).state, "joining");
+  assert.equal((await client.workspaceJoin(PROFILE, "invitation")).state, "joining");
   const preview = JSON.parse(transport.written[1]);
   const join = JSON.parse(transport.written[2]);
   assert.equal(preview.operation, "workspace.invitation_preview");
   assert.equal("idempotency_key" in preview, false);
   assert.equal(join.operation, "workspace.join");
-  assert.equal(join.idempotency_key, "k".repeat(16));
+  assert.equal("idempotency_key" in join, false);
 });
 
 test("pairingRequest targets the peer without a caller key", async () => {
