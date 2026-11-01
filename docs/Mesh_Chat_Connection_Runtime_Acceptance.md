@@ -10,6 +10,21 @@ with executed evidence. It is deliberately conservative: a requirement is only
 marked at the level the evidence actually reaches, and physical-only acceptance
 is marked unavailable rather than inferred from emulation or CI.
 
+## Environment limits
+
+These constraints cap the evidence above and are recorded again in the
+[qualification ledger](Mesh_Chat_Connection_Qualification_Ledger.md):
+
+- No physical Android or Windows device and no isolated physical test network is
+  available; Android evidence is API 35 emulator evidence only.
+- Packaged Windows evidence runs WebView2 and frozen peers on one Windows host;
+  it is not Windows-and-Android interoperability.
+- No packaged Android consumer application exists.
+- No SDK or package is published, so no supported version-pair matrix exists.
+- Release qualification requires a tag and was not executed; publishing is
+  outside this work's authorization.
+- The production native Windows DataChannel adapter is not implemented.
+
 ## Status vocabulary
 
 | Status | Meaning |

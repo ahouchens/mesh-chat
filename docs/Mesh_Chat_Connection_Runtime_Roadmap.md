@@ -55,11 +55,11 @@ identity. Monotonic deadlines never enter persistent storage.
 | Milestone | Implementation status | Required remaining evidence/work |
 | --- | --- | --- |
 | M0 baseline | Spec and diagram imported; baseline regression corpus passes | Record platform timing baselines in CI |
-| M1 policy/contract foundation | Immutable model, pure phase reducer, fair supervisor, bounded effects, native domain adapters, simulator, strict model checks, executing snapshot schema and initial public request/error design contracts | Complete public result/event schemas and facade design; extend adversarial corpus to all invariant classes |
-| M2 shared policy | Experimental service composition, renderer fencing, native manual-carrier adoption, isolated contact onboarding and private Windows transport registration/rebinding | Remaining manual-pairing modes, Windows/Android interoperability, full native authority conformance, broader restart/fault cases and removal of migrated legacy loops |
-| M3 qualification gates | Deterministic inventory/evidence gate; shared conservative workflow selector and final execution gate | Narrower dependency selection after isolation is qualified; complete cross-suite evidence and exact-artifact release aggregation |
-| M4 headless messaging | Existing Android native transport reused | Production native Windows DataChannel adapter, packaged fault matrix and receipt soak |
-| M5 supported consumers | Not implemented | Public authenticated facade, durable idempotency/event cursors, packaged SDKs/CLI, independent Windows and Android consumers and compatibility matrix |
+| M1 policy/contract foundation | Immutable model, pure phase reducer, fair supervisor, bounded effects, native domain adapters, simulator, strict model checks, executing snapshot schema and complete public request/result/event contracts with a scoped facade | Extend the adversarial corpus to the remaining invariant classes |
+| M2 shared policy | Experimental service composition, renderer fencing, native manual-carrier adoption, isolated contact onboarding, private Windows transport registration/rebinding, and complete workspace/device administration through the facade | Windows/Android packaged interoperability, shared-composition workspace onboarding, full native authority conformance, broader restart/fault parity and removal of migrated legacy loops |
+| M3 qualification gates | Deterministic inventory/evidence gate; shared conservative workflow selector and final execution gate; release aggregator refuses to publish without the qualification manifest | Executed release qualification (requires a tag) and exact-artifact aggregation at release; narrower dependency selection after isolation testing |
+| M4 headless messaging | Android native transport and the private Windows WebView2 host with packaged crash, pairing and receipt scenarios | Production native Windows DataChannel adapter, packaged fault matrix, real-clock budgets and receipt soak |
+| M5 supported consumers | Public authenticated facade, durable idempotency/event cursors, Python/TypeScript/Kotlin clients, console client, version and package binding, Windows and Android host components | Packaged Windows and Android consumers, published SDK/package artifacts and a supported compatibility matrix |
 
 The user has specified emulation and GitHub CI only. Physical devices and an
 isolated physical test network are unavailable. Physical acceptance items in the
@@ -1195,15 +1195,21 @@ M5 - supported reusable core
 - [x] Convergent inbound signed-invitation acceptance (component only).
 - [x] Profile-level outbound invitation material (query, component only).
 - [x] Owner-authorized runtime stop that closes the host stream (component only).
-- [x] Workspace invitation preview and idempotent join (component only;
-      joining states only, no role administration).
+- [x] Workspace invitation preview and idempotent join (component only).
+- [x] Workspace member visibility, role changes and join review (component only).
 - [x] Per-peer signed contact request with bounded convergence (component only;
-      the signed document is not returned).
-- [x] Workspace listing, join review, approval/decline, member visibility, owner
-      role changes and public channel creation (component only; private channel
-      membership and channel editing open).
+      the signed document is returned for out-of-band exchange).
+- [x] Workspace listing, join review, approval/decline and public channel
+      creation (component only).
 - [x] Per-peer signed pairing document returned to the caller.
-- [x] Private channel membership, channel editing and archiving (component only).
+- [x] Private channel membership, channel editing, archiving and transfer
+      (component, two-service delivery test).
+- [x] Workspace policy updates, device listing and owner device removal
+      (component, two-service test).
+- [x] Signed device-link creation, preview, new-device submission and
+      owner approve/decline (component, two-service delivery test).
+- [x] Component versions and a TypeScript package-shape gate (not published).
+
 - [x] Workspace device-link creation, preview, submission and sponsor
       approval/decline (component, two-service delivery test).
 - [x] Channel transfer offer and acceptance (component, two-service delivery test).
