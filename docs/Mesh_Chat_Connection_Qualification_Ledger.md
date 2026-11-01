@@ -1,10 +1,11 @@
 # Connection runtime qualification ledger
 
 This ledger records the automated evidence behind the connection-runtime refactor at
-commit `67ac8fe34b19db335fc9b772af0bd0cd7ff78d49` (tree
-`bd09a02ade1b83a2515fd2a0f515c7f4d23467bd`, 2026-11-01). It separates what was
-executed from what this environment cannot execute; it is not a physical-device
-qualification.
+commit `c56277c` (2026-11-01). The runtime evidence below was captured at
+`67ac8fe34b19db335fc9b772af0bd0cd7ff78d49` (tree
+`bd09a02ade1b83a2515fd2a0f515c7f4d23467bd`); later commits only add tests,
+documentation and ledger rows. It separates what was executed from what this
+environment cannot execute; it is not a physical-device qualification.
 
 ## Connection qualification workflow
 
@@ -54,6 +55,58 @@ concluded **success**:
 | TypeScript client + package | `node --test sdk/typescript/dist/**/*.test.js` | 38 passed |
 | Compatibility | `pytest service/tests/connection/test_core_compatibility.py` | 17 passed |
 | Budget conformance | `pytest service/tests/connection/test_core_budgets.py` | 3 passed (exact advertised limits; over-budget rejected; edges accepted) |
+
+## Definition-of-done disposition
+
+The specification's section 13 asks for more than this branch can execute. Each
+condition is recorded with its actual status:
+
+| Definition-of-done condition | Status | Evidence or gap |
+| --- | --- | --- |
+| M2: INV01–INV19 pass in applicable suites | partial | Local/component suites
+  pass; INV12/16/17/20 remain partial for packaged lifecycle, parity and carrier
+  reuse. |
+| M2: one policy owner for Android foreground/background and desktop
+  transitional messaging | partial | Single-owner composition and tests; full
+  platform lifecycle parity is not qualified. |
+| M2: baseline compatibility and surviving-carrier repair | component |
+  Compatibility tests and bridge-repair components pass; no packaged cross-platform
+  run. |
+| M2: replaced scheduling/repair loops are removed | **not met** | Legacy loops
+  remain; removal is gated on the packaged parity above. |
+| M2: dependency checks enforce the boundary | met | Import/boundary checks and
+  the policy inventory pass. |
+| M2: required coverage intact with explicit skip reporting | met | Gate fails
+  missing, skipped, canceled or stale evidence; inventory has zero skips. |
+| M4: production Windows and Android transports no longer require a WebView |
+  **partially met** | Android native transport exists; Windows uses packaged
+  WebView2, and the production native Windows DataChannel is not implemented. |
+| M4: scenario runner on those exact transports, fault and 100-iteration
+  matrices | **not met** | Packaged WebView2 scenarios pass; the native Windows
+  fault/receipt soak does not exist. |
+| M4: defined physical qualification checklist on a release candidate |
+  unavailable | No physical devices or isolated network. |
+| M5: INV21–INV26 and SC21–SC26 pass | **not met** | INV21/22/25/26 and
+  SC21/25 are partial or open; the rest pass at component/local level. |
+| M5: independently built packaged consumers through the public API | **not met**
+  | No packaged Windows or Android consumer exists. |
+| M5: supported Mesh Chat messaging UI uses the same facade | **not met** | Not
+  routed or qualified in this environment. |
+| M5: install/upgrade/caller isolation/resync/compatibility evidence | partial |
+  Component tests cover isolation and resync; installation/upgrade and supported
+  version pairs are absent. |
+| M5: API documentation and support matrix release-ready | partial | Contract and
+  compatibility declarations are test-bound and package shape is checked; no
+  published matrix. |
+| Release gating: INV20 exact source/artifact evidence, skips fail, publication
+  cannot bypass the matrix | met at gate level | The gate and aggregator refuse
+  without exact evidence; no tag has exercised a release run. |
+
+**Conclusion.** The refactor's facade, clients, tests and automated qualification
+are complete for the operations the domain supports, but the specification's M2–M5
+definition of done is not fully met. The unmet conditions are the legacy-loop
+removal, the native Windows DataChannel, packaged consumers, physical qualification
+and publication, all of which are outside this environment or authorization.
 
 ## Explicit limits
 
