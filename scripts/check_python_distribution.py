@@ -54,7 +54,15 @@ def main() -> int:
             "print(json.dumps({'version': api.__version__, 'scripts': sorted(scripts)}))\n"
         )
         output = run([sys.executable, "-c", code], cwd=work, env=environment)
+        script = target / "bin" / ("mesh-chat-core.exe" if os.name == "nt"
+                                    else "mesh-chat-core")
+        if not script.is_file():
+            raise SystemExit(f"console entry point not installed: {script}")
+        version_output = run([str(script), "--version"], cwd=work, env=environment)
+        if version_output.strip() != "0.2.0-experimental":
+            raise SystemExit(f"unexpected console version: {version_output!r}")
         print(json.dumps({"passed": True, "wheel": artifacts[0].name,
+                          "console": version_output.strip(),
                           "smoke": output.strip()}))
     return 0
 

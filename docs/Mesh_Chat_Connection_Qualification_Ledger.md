@@ -56,7 +56,7 @@ concluded **success**:
 | Compatibility | `pytest service/tests/connection/test_core_compatibility.py` | 17 passed |
 | Budget conformance | `pytest service/tests/connection/test_core_budgets.py` | 3 passed (exact advertised limits; over-budget rejected; edges accepted) |
 | Packaged client smoke (unpublished) | `node scripts/check_typescript_distribution.mjs` | passes: npm pack, install into an empty project, import `@mesh-chat/core-client` |
-| Packaged service wheel (unpublished) | `python scripts/check_python_distribution.py` | passes: wheel build, install into an empty target, import `mesh_chat.core_api`, console entry points present |
+| Packaged service wheel (unpublished) | `python scripts/check_python_distribution.py` | passes: wheel build, install into an empty target, import `mesh_chat.core_api`, both console entry points installed, and `mesh-chat-core --version` prints `0.2.0-experimental` |
 
 ## Definition-of-done disposition
 
