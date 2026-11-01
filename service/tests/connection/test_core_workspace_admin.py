@@ -135,3 +135,37 @@ def test_workspace_administration_requires_the_approve_grant_and_scope(admin_pai
     _, blair_profile = open_client(owner, caller="blair")
     assert alex.request(request("workspace.query", profile=blair_profile)
                         )["error"]["code"] == "forbidden"
+
+
+def test_channels_can_be_listed_and_a_public_channel_created(admin_pair):
+    owner, _, _ = admin_pair
+    session, profile = open_client(owner)
+    workspace = session.request(request("workspace.query", profile=profile)
+                                )["result"]["workspaces"][0]["workspace"]
+    listed = session.request(request("workspace.channels", profile=profile,
+                                     workspace=workspace))
+    assert listed["ok"], listed
+    assert listed["result"]["channels"]
+    Draft202012Validator(
+        json.loads((CONTRACTS / "workspace-channels-result-v1.schema.json").read_text())
+    ).validate(listed)
+
+    create = {"api_version": 1, "request_id": "request:1",
+              "operation": "workspace.channel_create",
+              "params": {"profile": profile, "workspace": workspace, "name": "Core Chat"},
+              "idempotency_key": "c" * 32}
+    created = session.request(create)
+    assert created["ok"], created
+    assert created["result"]["name"] == "Core Chat"
+    assert created["result"]["visibility"] == "public"
+    Draft202012Validator(
+        json.loads((CONTRACTS / "workspace-channel-create-result-v1.schema.json").read_text())
+    ).validate(created)
+    assert session.request(create)["result"] == created["result"]
+    refreshed = session.request(request("workspace.channels", profile=profile,
+                                        workspace=workspace))
+    assert created["result"]["channel"] in [item["channel"]
+                                            for item in refreshed["result"]["channels"]]
+    empty = dict(create)
+    empty["params"] = {"profile": profile, "workspace": workspace, "name": ""}
+    assert session.request(empty)["error"]["code"] == "invalid_request"

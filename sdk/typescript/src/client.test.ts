@@ -252,6 +252,33 @@ test("pairing acceptance refuses an empty document before dispatch", async () =>
   assert.equal(transport.written.length, 1);
 });
 
+test("channel helpers use the declared envelopes", async () => {
+  const transport = new Scripted(
+    success("client:1", CAPABILITIES),
+    success("client:2", {
+      profile: PROFILE,
+      workspace: "w".repeat(64),
+      channels: [{ channel: "c".repeat(64), name: "General", visibility: "public", state: "active" }],
+    }),
+    success("client:3", {
+      profile: PROFILE,
+      workspace: "w".repeat(64),
+      channel: "c".repeat(64),
+      name: "Core Chat",
+      visibility: "public",
+    }),
+  );
+  const client = await CoreClient.open(transport);
+  assert.equal((await client.workspaceChannels(PROFILE, "w".repeat(64))).channels[0].name, "General");
+  const created = await client.workspaceChannelCreate(
+    PROFILE, "w".repeat(64), "Core Chat", "c".repeat(16),
+  );
+  assert.equal(created.name, "Core Chat");
+  const create = JSON.parse(transport.written[2]);
+  assert.equal(create.operation, "workspace.channel_create");
+  assert.equal(create.idempotency_key, "c".repeat(16));
+});
+
 test("workspace review helpers use the declared envelopes", async () => {
   const transport = new Scripted(
     success("client:1", CAPABILITIES),

@@ -24,6 +24,8 @@ import type {
   ReceivedPage,
   RelationshipView,
   StopView,
+  WorkspaceChannelCreateView,
+  WorkspaceChannelsView,
   WorkspaceDeclineView,
   WorkspaceJoinView,
   WorkspaceMemberRoleView,
@@ -245,6 +247,26 @@ export class CoreClient {
     return this.request<WorkspaceJoinView>(
       "workspace.join",
       { profile, document },
+      { idempotencyKey },
+    );
+  }
+
+  async workspaceChannels(profile: string, workspace: string): Promise<WorkspaceChannelsView> {
+    return this.request<WorkspaceChannelsView>("workspace.channels", { profile, workspace });
+  }
+
+  async workspaceChannelCreate(
+    profile: string,
+    workspace: string,
+    name: string,
+    idempotencyKey: string,
+  ): Promise<WorkspaceChannelCreateView> {
+    if (name.length === 0 || name.length > 64 || idempotencyKey.length < 16) {
+      throw new ProtocolError("channel creation requires a name and caller key");
+    }
+    return this.request<WorkspaceChannelCreateView>(
+      "workspace.channel_create",
+      { profile, workspace, name },
       { idempotencyKey },
     );
   }

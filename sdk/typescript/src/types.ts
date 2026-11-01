@@ -164,3 +164,24 @@ export interface WorkspaceMemberRoleView {
   member: string;
   role: "admin" | "member";
 }
+
+export interface WorkspaceChannel {
+  channel: string;
+  name: string;
+  visibility: "public" | "private";
+  state: "active" | "archived" | "left";
+}
+
+export interface WorkspaceChannelsView {
+  profile: string;
+  workspace: string;
+  channels: WorkspaceChannel[];
+}
+
+export interface WorkspaceChannelCreateView {
+  profile: string;
+  workspace: string;
+  channel: string;
+  name: string;
+  visibility: "public";
+}

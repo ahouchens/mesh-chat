@@ -146,6 +146,26 @@ def test_client_refuses_to_dispatch_an_empty_pairing_document():
     assert len(transport.written) == 1
 
 
+def test_client_channel_helpers_use_the_declared_envelopes():
+    transport = Scripted(
+        reply(CAPABILITIES),
+        reply({"profile": PROFILE, "workspace": "w" * 64,
+               "channels": [{"channel": "c" * 64, "name": "General",
+                             "visibility": "public", "state": "active"}]}, "client:2"),
+        reply({"profile": PROFILE, "workspace": "w" * 64, "channel": "c" * 64,
+               "name": "Core Chat", "visibility": "public"}, "client:3"),
+    )
+    client = CoreClient.open(transport.readline, transport.write)
+    assert client.workspace_channels(PROFILE, "w" * 64)["channels"][0]["name"] == "General"
+    created = client.workspace_channel_create(PROFILE, "w" * 64, "Core Chat", "c" * 16)
+    assert created["name"] == "Core Chat"
+    channels, create = (decode_frame(payload) for payload in transport.written[1:])
+    assert channels["operation"] == "workspace.channels"
+    assert create["operation"] == "workspace.channel_create"
+    assert create["idempotency_key"] == "c" * 16
+    assert create["params"]["name"] == "Core Chat"
+
+
 def test_client_workspace_review_helpers_use_the_declared_envelopes():
     transport = Scripted(
         reply(CAPABILITIES),

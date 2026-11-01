@@ -115,6 +115,18 @@ class CoreClient:
         return self.request("workspace.invitation_preview",
                             {"profile": handle, "document": document})
 
+    def workspace_channels(self, handle, workspace):
+        return self.request("workspace.channels", {"profile": handle, "workspace": workspace})
+
+    def workspace_channel_create(self, handle, workspace, name, key):
+        if not isinstance(name, str) or not 1 <= len(name) <= 64:
+            raise ValueError("Channel name is invalid")
+        if not isinstance(key, str) or len(key) < 16:
+            raise ValueError("Channel creation requires a caller-scoped key")
+        return self.request("workspace.channel_create",
+                            {"profile": handle, "workspace": workspace, "name": name},
+                            idempotency_key=key)
+
     def workspace_members(self, handle, workspace):
         return self.request("workspace.members", {"profile": handle, "workspace": workspace})
 

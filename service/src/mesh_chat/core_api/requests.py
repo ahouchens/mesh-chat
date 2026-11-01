@@ -27,6 +27,8 @@ WORKSPACE_APPROVE_OPERATIONS = ("workspace.join_approve",)
 WORKSPACE_DECLINE_OPERATIONS = ("workspace.join_decline",)
 WORKSPACE_MEMBERS_OPERATIONS = ("workspace.members",)
 WORKSPACE_ROLE_OPERATIONS = ("workspace.member_role",)
+WORKSPACE_CHANNELS_OPERATIONS = ("workspace.channels",)
+WORKSPACE_CHANNEL_CREATE_OPERATIONS = ("workspace.channel_create",)
 DIAGNOSTIC_OPERATIONS = ("diagnostics.query",)
 REQUEST_ID = re.compile(r"[A-Za-z0-9._:-]{1,80}\Z")
 HANDLE = re.compile(r"[A-Za-z0-9_-]{16,128}\Z")
@@ -50,7 +52,7 @@ def parse_request(value, operations):
         raise ApiFailure("unsupported_operation")
     if operation in ("message.enqueue", "events.ack", "workspace.join",
                       "workspace.join_approve", "workspace.join_decline",
-                      "workspace.member_role"):
+                      "workspace.member_role", "workspace.channel_create"):
         fields.add("idempotency_key")
     if set(value) != fields:
         raise ApiFailure("invalid_request")
@@ -84,6 +86,22 @@ def parse_request(value, operations):
                 or "idempotency_key" not in value
                 or any(not isinstance(item, str) or HANDLE.fullmatch(item) is None
                        for item in params.values())):
+            raise ApiFailure("invalid_request")
+        return operation, params
+    if operation in WORKSPACE_CHANNELS_OPERATIONS:
+        params = value["params"]
+        if (not isinstance(params, dict) or set(params) != {"profile", "workspace"}
+                or any(not isinstance(item, str) or HANDLE.fullmatch(item) is None
+                       for item in params.values())):
+            raise ApiFailure("invalid_request")
+        return operation, params
+    if operation in WORKSPACE_CHANNEL_CREATE_OPERATIONS:
+        params = value["params"]
+        if (not isinstance(params, dict) or set(params) != {"profile", "workspace", "name"}
+                or "idempotency_key" not in value
+                or not isinstance(params.get("name"), str) or not 1 <= len(params["name"]) <= 64
+                or any(not isinstance(params.get(name), str) or HANDLE.fullmatch(params[name]) is None
+                       for name in ("profile", "workspace"))):
             raise ApiFailure("invalid_request")
         return operation, params
     if operation in WORKSPACE_ROLE_OPERATIONS:
@@ -245,5 +263,7 @@ COMPONENT_OPERATIONS = (
     + WORKSPACE_DECLINE_OPERATIONS
     + WORKSPACE_MEMBERS_OPERATIONS
     + WORKSPACE_ROLE_OPERATIONS
+    + WORKSPACE_CHANNELS_OPERATIONS
+    + WORKSPACE_CHANNEL_CREATE_OPERATIONS
     + DIAGNOSTIC_OPERATIONS
 )

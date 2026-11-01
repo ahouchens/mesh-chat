@@ -311,8 +311,11 @@ twice. A request handle remains resolvable after a decision so replays stay hone
 and `workspace.members` lists caller-scoped member handles with display name, role
 and status only. `workspace.member_role` lets the active owner assign `admin` or
 `member` with a caller key; it is owner-only and replay-safe, and the result
-carries only the selected member handle and applied role. Channel administration
-remains outside this surface.
+carries only the selected member handle and applied role. `workspace.channels`
+lists caller-scoped channel handles with name, visibility and state, and
+`workspace.channel_create` creates a public channel for an owner or administrator
+with a caller key. Private channel membership management and channel editing
+remain outside this surface.
 
 ## Observation and recovery
 

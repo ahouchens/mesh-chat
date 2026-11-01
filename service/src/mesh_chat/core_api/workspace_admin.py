@@ -28,6 +28,14 @@ class MemberSummary:
 
 
 @dataclass(frozen=True)
+class ChannelSummary:
+    channel: str
+    name: str
+    visibility: str
+    state: str
+
+
+@dataclass(frozen=True)
 class MemberRoleChange:
     member: str
     role: str
@@ -56,3 +64,8 @@ class WorkspaceAdmin(Protocol):
 
     def change_role(self, profile: str, workspace: str, member: str, role: str,
                     operation_id: str) -> MemberRoleChange: ...
+
+    def channels(self, profile: str, workspace: str) -> tuple[ChannelSummary, ...]: ...
+
+    def create_channel(self, profile: str, workspace: str, name: str,
+                       operation_id: str) -> ChannelSummary: ...

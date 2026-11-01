@@ -287,3 +287,33 @@ def workspace_member_role_view(profile, workspace, member, value):
         raise ValueError("Invalid workspace member role")
     return {"profile": profile, "workspace": workspace, "member": member,
             "role": value.role}
+
+
+def workspace_channels_view(profile, workspace, items):
+    if any(not isinstance(item, str) or re.fullmatch(r"[A-Za-z0-9_-]{16,128}", item) is None
+           for item in (profile, workspace)):
+        raise ValueError("Invalid workspace channel handle")
+    if len(items) > 32:
+        raise ValueError("Workspace channel page is unbounded")
+    channels = []
+    for handle, value in items:
+        if (re.fullmatch(r"[A-Za-z0-9_-]{16,128}", handle) is None
+                or not isinstance(value.name, str) or not value.name
+                or value.visibility not in {"public", "private"}
+                or value.state not in {"active", "archived", "left"}):
+            raise ValueError("Invalid workspace channel summary")
+        channels.append({"channel": handle, "name": value.name,
+                         "visibility": value.visibility, "state": value.state})
+    return {"profile": profile, "workspace": workspace, "channels": channels}
+
+
+def workspace_channel_create_view(profile, workspace, value):
+    if any(not isinstance(item, str) or re.fullmatch(r"[A-Za-z0-9_-]{16,128}", item) is None
+           for item in (profile, workspace)):
+        raise ValueError("Invalid workspace channel create handle")
+    if (not isinstance(value.name, str) or not value.name
+            or value.visibility not in {"public", "private"}
+            or value.state not in {"active", "archived", "left"}):
+        raise ValueError("Invalid created channel")
+    return {"profile": profile, "workspace": workspace, "channel": value.channel,
+            "name": value.name, "visibility": value.visibility}

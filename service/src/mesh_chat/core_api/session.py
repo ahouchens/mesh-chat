@@ -19,8 +19,9 @@ from .views import (
     acceptance_view, acknowledgment_view, connection_view, event_view, intent_view, message_view,
     invitation_view, pairing_request_view, pairing_view, peer_view, received_view,
     relationship_view, stop_view, workspace_approve_view, workspace_decline_view,
-    workspace_join_view, workspace_list_view, workspace_member_role_view,
-    workspace_members_view, workspace_preview_view, workspace_requests_view,
+    workspace_channel_create_view, workspace_channels_view, workspace_join_view,
+    workspace_list_view, workspace_member_role_view, workspace_members_view,
+    workspace_preview_view, workspace_requests_view,
 )
 from .errors import ApiFailure
 from .limits import MAX_FRAME_BYTES, MAX_REQUEST_JSON_DEPTH, MAX_REQUEST_JSON_TOKENS
@@ -31,6 +32,7 @@ from .requests import (
     INVITATION_OPERATIONS, PAIRING_OPERATIONS, RECEIVED_OPERATIONS, RECOVERY_OPERATIONS,
     COMPONENT_OPERATIONS, RELATIONSHIP_OPERATIONS, REQUEST_OPERATIONS, STOP_OPERATIONS,
     WORKSPACE_APPROVE_OPERATIONS, WORKSPACE_DECLINE_OPERATIONS, WORKSPACE_JOIN_OPERATIONS,
+    WORKSPACE_CHANNEL_CREATE_OPERATIONS, WORKSPACE_CHANNELS_OPERATIONS,
     WORKSPACE_LIST_OPERATIONS, WORKSPACE_MEMBERS_OPERATIONS, WORKSPACE_PREVIEW_OPERATIONS,
     WORKSPACE_REQUESTS_OPERATIONS, WORKSPACE_ROLE_OPERATIONS, REQUEST_ID, parse_request,
 )
@@ -41,7 +43,7 @@ from .messages import (
 from .intent import ConnectionIntent
 from .invitations import Invitations
 from .lifecycle import Lifecycle
-from .workspace_admin import WorkspaceAdmin
+from .workspace_admin import ChannelSummary, WorkspaceAdmin
 from .workspace_relationship import WorkspaceRelationships
 from .pairing import Pairing
 from .relationship import Relationship
@@ -137,6 +139,8 @@ class CoreSession:
             (WORKSPACE_DECLINE_OPERATIONS, self._workspace_admin),
             (WORKSPACE_MEMBERS_OPERATIONS, self._workspace_admin),
             (WORKSPACE_ROLE_OPERATIONS, self._workspace_admin),
+            (WORKSPACE_CHANNELS_OPERATIONS, self._workspace_admin),
+            (WORKSPACE_CHANNEL_CREATE_OPERATIONS, self._workspace_admin),
             (DIAGNOSTIC_OPERATIONS, self._diagnostics),
         ):
             if port is not None:
@@ -164,7 +168,8 @@ class CoreSession:
                                                         "workspace.join",
                                                         "workspace.join_approve",
                                                         "workspace.join_decline",
-                                                        "workspace.member_role"}:
+                                                        "workspace.member_role",
+                                                        "workspace.channel_create"}:
                     raise ApiFailure("invalid_request")
                 permission = {"message.enqueue": "send", "message.query": "read", "message.list": "read",
                               "message.received": "read", "events.poll": "read", "events.ack": "read",
@@ -179,6 +184,8 @@ class CoreSession:
                               "workspace.join_decline": "approve",
                               "workspace.members": "approve",
                               "workspace.member_role": "approve",
+                              "workspace.channels": "approve",
+                              "workspace.channel_create": "approve",
                               "diagnostics.query": "diagnose"}.get(operation, "observe")
                 if permission not in grant.permissions:
                     raise ApiFailure("forbidden")
@@ -290,6 +297,30 @@ class CoreSession:
                 self._operation_id(grant, target, key))
             return workspace_member_role_view(
                 params["profile"], params["workspace"], params["member"], change)
+        if operation in WORKSPACE_CHANNELS_OPERATIONS:
+            target = profiles.get(params["profile"])
+            if target is None:
+                raise ApiFailure("forbidden")
+            inside = self._workspace_target(grant, target, params["workspace"])
+            channels = self._workspace_admin.channels(target, inside)
+            return workspace_channels_view(
+                params["profile"], params["workspace"],
+                [(self._handle(grant, "channel", target, item.channel), item)
+                 for item in channels])
+        if operation in WORKSPACE_CHANNEL_CREATE_OPERATIONS:
+            target = profiles.get(params["profile"])
+            if target is None:
+                raise ApiFailure("forbidden")
+            inside = self._workspace_target(grant, target, params["workspace"])
+            if key is None:
+                raise ApiFailure("invalid_request")
+            created = self._workspace_admin.create_channel(
+                target, inside, params["name"], self._operation_id(grant, target, key))
+            summary = ChannelSummary(
+                self._handle(grant, "channel", target, created.channel),
+                created.name, created.visibility, created.state)
+            return workspace_channel_create_view(
+                params["profile"], params["workspace"], summary)
         if operation in WORKSPACE_PREVIEW_OPERATIONS:
             target = profiles.get(params["profile"])
             if target is None:

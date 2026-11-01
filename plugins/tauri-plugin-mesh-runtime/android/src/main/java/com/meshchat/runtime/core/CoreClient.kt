@@ -110,6 +110,24 @@ class CoreClient private constructor(private val transport: CoreTransport) {
     fun pairingRequest(profile: String, peer: String): JSONObject =
         request("peer.pairing_request", JSONObject().put("profile", profile).put("peer", peer))
 
+    fun workspaceChannels(profile: String, workspace: String): JSONObject =
+        request("workspace.channels", JSONObject().put("profile", profile).put("workspace", workspace))
+
+    fun workspaceChannelCreate(
+        profile: String,
+        workspace: String,
+        name: String,
+        idempotencyKey: String,
+    ): JSONObject {
+        if (name.isEmpty() || name.length > 64) throw CoreException("invalid_request")
+        requireKey(idempotencyKey, "channel creation")
+        return dispatch(
+            "workspace.channel_create",
+            JSONObject().put("profile", profile).put("workspace", workspace).put("name", name),
+            idempotencyKey,
+        )
+    }
+
     fun workspaceMembers(profile: String, workspace: String): JSONObject =
         request("workspace.members", JSONObject().put("profile", profile).put("workspace", workspace))
 
