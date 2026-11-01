@@ -1,7 +1,8 @@
 # Connection runtime qualification ledger
 
 This ledger records the automated evidence behind the connection-runtime refactor at
-commit `c56277c` (2026-11-01). The runtime evidence below was captured at
+commit `169a0d5` (2026-11-01). The transport and packaged-Windows evidence below
+was captured at
 `67ac8fe34b19db335fc9b772af0bd0cd7ff78d49` (tree
 `bd09a02ade1b83a2515fd2a0f515c7f4d23467bd`); later commits only add tests,
 documentation and ledger rows. It separates what was executed from what this
@@ -49,7 +50,7 @@ concluded **success**:
 
 | Suite | Command | Result |
 | --- | --- | --- |
-| Required policy inventory | `python scripts/connection_evidence.py --run --junit … --expected-source <tree>` | 1,402 passed, zero skips |
+| Required policy inventory | `python scripts/connection_evidence.py --run --junit … --expected-source <tree>` | 1,416 passed, zero skips at 169a0d5 |
 | Strict typing | `mypy --config-file mypy-connection.ini` | clean |
 | Frontend | `node scripts/run-frontend-tests.mjs` | 587 passed |
 | TypeScript client + package | `node --test sdk/typescript/dist/**/*.test.js` | 38 passed |
@@ -91,7 +92,8 @@ condition is recorded with its actual status:
 | M5: INV21–INV26 and SC21–SC26 pass | **not met** | INV21/22/25/26 and
   SC21/25 are partial or open; the rest pass at component/local level. |
 | M5: independently built packaged consumers through the public API | **not met**
-  | No packaged Windows or Android consumer exists. |
+  | Packaged TypeScript and Python component smokes install and answer facade
+  requests, but no independently built Windows or Android application exists. |
 | M5: supported Mesh Chat messaging UI uses the same facade | **not met** | Not
   routed or qualified in this environment. |
 | M5: install/upgrade/caller isolation/resync/compatibility evidence | partial |
@@ -117,7 +119,8 @@ These were **not** executed and are not claimed anywhere in this ledger:
 - physical-device qualification across independent Android and Windows devices;
 - packaged Windows↔Android interoperability (the packaged evidence above is a
   single Windows host with WebView2 and frozen peers);
-- a packaged Android consumer application;
+- packaged Windows or Android graphical consumer applications; in-process
+  component smokes exist (TypeScript tarball, Python wheel);
 - published SDK/package artifacts and a supported version-pair matrix;
 - executed release qualification (requires a tag) and any release publication;
 - a native Windows DataChannel implementation.

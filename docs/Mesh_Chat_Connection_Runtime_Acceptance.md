@@ -19,7 +19,8 @@ These constraints cap the evidence above and are recorded again in the
   available; Android evidence is API 35 emulator evidence only.
 - Packaged Windows evidence runs WebView2 and frozen peers on one Windows host;
   it is not Windows-and-Android interoperability.
-- No packaged Android consumer application exists.
+- In-process packaged component smokes exist (TypeScript tarball, Python wheel), but
+  no packaged Windows or Android graphical consumer application exists.
 - No SDK or package is published, so no supported version-pair matrix exists.
 - Release qualification requires a tag and was not executed; publishing is
   outside this work's authorization.
