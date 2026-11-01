@@ -287,3 +287,26 @@ class ServiceWorkspaceAdmin:
                     or visibility not in {"public", "private"}):
                 raise ApiFailure("internal")
             return ChannelSummary(channel_id, name.strip(), visibility, state)
+
+    def archive_channel(self, profile, workspace_id, channel_id, operation_id):
+        self._require_local(profile)
+        if not isinstance(operation_id, str) or not operation_id:
+            raise ApiFailure("invalid_request")
+        with storage_errors():
+            workspace = self._workspace(workspace_id)
+            if workspace.get("local_role") not in {"owner", "admin"}:
+                raise ApiFailure("forbidden")
+            channel = self._channel(workspace_id, channel_id)
+            name, topic = channel.get("name"), channel.get("topic", "")
+            if not isinstance(name, str) or not isinstance(topic, str):
+                raise ApiFailure("internal")
+            try:
+                self._service.update_workspace_channel(
+                    workspace_id, channel_id, name, topic, True, operation_id)
+            except (ValidationError, ContactNotApproved) as error:
+                raise ApiFailure("invalid_request") from error
+            updated = self._channel(workspace_id, channel_id)
+            state, visibility = updated.get("state"), updated.get("visibility")
+            if state != "archived" or visibility not in {"public", "private"}:
+                raise ApiFailure("internal")
+            return ChannelEdit(channel_id, name, topic, visibility, state)

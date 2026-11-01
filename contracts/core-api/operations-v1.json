@@ -36,6 +36,7 @@
     "workspace.channel_members",
     "workspace.channel_members_update",
     "workspace.channel_update",
+    "workspace.channel_archive",
     "diagnostics.query"
   ],
   "operations": [
@@ -307,6 +308,13 @@
     },
     {
       "operation": "workspace.channel_update",
+      "permission": "approve",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "caller_profile_operation_key"
+    },
+    {
+      "operation": "workspace.channel_archive",
       "permission": "approve",
       "scope": "profile",
       "mutation": true,

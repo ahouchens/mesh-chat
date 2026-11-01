@@ -19,7 +19,8 @@ from .views import (
     acceptance_view, acknowledgment_view, connection_view, event_view, intent_view, message_view,
     invitation_view, pairing_request_view, pairing_view, peer_view, received_view,
     relationship_view, stop_view, workspace_approve_view, workspace_decline_view,
-    workspace_channel_create_view, workspace_channel_members_view,
+    workspace_channel_archive_view, workspace_channel_create_view,
+    workspace_channel_members_view,
     workspace_channel_update_view, workspace_channels_view, workspace_join_view,
     workspace_list_view, workspace_member_role_view, workspace_members_view,
     workspace_preview_view, workspace_requests_view,
@@ -33,7 +34,8 @@ from .requests import (
     INVITATION_OPERATIONS, PAIRING_OPERATIONS, RECEIVED_OPERATIONS, RECOVERY_OPERATIONS,
     COMPONENT_OPERATIONS, RELATIONSHIP_OPERATIONS, REQUEST_OPERATIONS, STOP_OPERATIONS,
     WORKSPACE_APPROVE_OPERATIONS, WORKSPACE_DECLINE_OPERATIONS, WORKSPACE_JOIN_OPERATIONS,
-    WORKSPACE_CHANNEL_CREATE_OPERATIONS, WORKSPACE_CHANNEL_MEMBERS_OPERATIONS,
+    WORKSPACE_CHANNEL_ARCHIVE_OPERATIONS, WORKSPACE_CHANNEL_CREATE_OPERATIONS,
+    WORKSPACE_CHANNEL_MEMBERS_OPERATIONS,
     WORKSPACE_CHANNEL_MEMBERS_UPDATE_OPERATIONS, WORKSPACE_CHANNEL_UPDATE_OPERATIONS,
     WORKSPACE_CHANNELS_OPERATIONS, WORKSPACE_LIST_OPERATIONS, WORKSPACE_MEMBERS_OPERATIONS,
     WORKSPACE_PREVIEW_OPERATIONS,
@@ -147,6 +149,7 @@ class CoreSession:
             (WORKSPACE_CHANNEL_MEMBERS_OPERATIONS, self._workspace_admin),
             (WORKSPACE_CHANNEL_MEMBERS_UPDATE_OPERATIONS, self._workspace_admin),
             (WORKSPACE_CHANNEL_UPDATE_OPERATIONS, self._workspace_admin),
+            (WORKSPACE_CHANNEL_ARCHIVE_OPERATIONS, self._workspace_admin),
             (DIAGNOSTIC_OPERATIONS, self._diagnostics),
         ):
             if port is not None:
@@ -177,7 +180,8 @@ class CoreSession:
                                                         "workspace.member_role",
                                                         "workspace.channel_create",
                                                         "workspace.channel_members_update",
-                                                        "workspace.channel_update"}:
+                                                        "workspace.channel_update",
+                                                        "workspace.channel_archive"}:
                     raise ApiFailure("invalid_request")
                 permission = {"message.enqueue": "send", "message.query": "read", "message.list": "read",
                               "message.received": "read", "events.poll": "read", "events.ack": "read",
@@ -197,6 +201,7 @@ class CoreSession:
                               "workspace.channel_members": "approve",
                               "workspace.channel_members_update": "approve",
                               "workspace.channel_update": "approve",
+                              "workspace.channel_archive": "approve",
                               "diagnostics.query": "diagnose"}.get(operation, "observe")
                 if permission not in grant.permissions:
                     raise ApiFailure("forbidden")
@@ -380,6 +385,18 @@ class CoreSession:
                 self._operation_id(grant, target, key))
             return workspace_channel_update_view(
                 params["profile"], params["workspace"], params["channel"], edited)
+        if operation in WORKSPACE_CHANNEL_ARCHIVE_OPERATIONS:
+            target = profiles.get(params["profile"])
+            if target is None:
+                raise ApiFailure("forbidden")
+            inside = self._workspace_target(grant, target, params["workspace"])
+            channel = self._channel_target(grant, target, inside, params["channel"])
+            if key is None:
+                raise ApiFailure("invalid_request")
+            archived = self._workspace_admin.archive_channel(
+                target, inside, channel, self._operation_id(grant, target, key))
+            return workspace_channel_archive_view(
+                params["profile"], params["workspace"], params["channel"], archived)
         if operation in WORKSPACE_PREVIEW_OPERATIONS:
             target = profiles.get(params["profile"])
             if target is None:

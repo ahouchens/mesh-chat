@@ -25,6 +25,7 @@ import type {
   RelationshipView,
   StopView,
   WorkspaceChannelCreateView,
+  WorkspaceChannelArchiveView,
   WorkspaceChannelMembersView,
   WorkspaceChannelUpdateView,
   WorkspaceChannelsView,
@@ -316,6 +317,22 @@ export class CoreClient {
     return this.request<WorkspaceChannelUpdateView>(
       "workspace.channel_update",
       { profile, workspace, channel, name, topic },
+      { idempotencyKey },
+    );
+  }
+
+  async workspaceChannelArchive(
+    profile: string,
+    workspace: string,
+    channel: string,
+    idempotencyKey: string,
+  ): Promise<WorkspaceChannelArchiveView> {
+    if (idempotencyKey.length < 16) {
+      throw new ProtocolError("channel archive requires a caller key");
+    }
+    return this.request<WorkspaceChannelArchiveView>(
+      "workspace.channel_archive",
+      { profile, workspace, channel },
       { idempotencyKey },
     );
   }

@@ -252,6 +252,26 @@ test("pairing acceptance refuses an empty document before dispatch", async () =>
   assert.equal(transport.written.length, 1);
 });
 
+test("channel archive uses the declared envelope", async () => {
+  const transport = new Scripted(
+    success("client:1", CAPABILITIES),
+    success("client:2", {
+      profile: PROFILE,
+      workspace: "w".repeat(64),
+      channel: "c".repeat(64),
+      state: "archived",
+    }),
+  );
+  const client = await CoreClient.open(transport);
+  assert.equal(
+    (await client.workspaceChannelArchive(PROFILE, "w".repeat(64), "c".repeat(64), "r".repeat(16))).state,
+    "archived",
+  );
+  const sent = JSON.parse(transport.written[1]);
+  assert.equal(sent.operation, "workspace.channel_archive");
+  assert.equal(sent.idempotency_key, "r".repeat(16));
+});
+
 test("channel edit helpers use the declared envelopes", async () => {
   const transport = new Scripted(
     success("client:1", CAPABILITIES),

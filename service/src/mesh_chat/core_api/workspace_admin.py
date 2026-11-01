@@ -89,3 +89,6 @@ class WorkspaceAdmin(Protocol):
 
     def update_channel(self, profile: str, workspace: str, channel: str, name: str,
                        topic: str, operation_id: str) -> ChannelEdit: ...
+
+    def archive_channel(self, profile: str, workspace: str, channel: str,
+                        operation_id: str) -> ChannelEdit: ...

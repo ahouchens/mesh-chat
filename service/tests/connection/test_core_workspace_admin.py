@@ -232,3 +232,30 @@ def test_private_channels_support_membership_and_edits(admin_pair):
     assert session.request(request("workspace.channel_members", profile=profile,
                                    workspace=workspace, channel=public_channel)
                            )["error"]["code"] == "invalid_request"
+
+
+def test_channels_can_be_archived_and_replays_are_stable(admin_pair):
+    owner, _, _ = admin_pair
+    session, profile = open_client(owner)
+    workspace = session.request(request("workspace.query", profile=profile)
+                                )["result"]["workspaces"][0]["workspace"]
+    create = {"api_version": 1, "request_id": "request:1",
+              "operation": "workspace.channel_create",
+              "params": {"profile": profile, "workspace": workspace, "name": "Archive Me"},
+              "idempotency_key": "a" * 32}
+    channel = session.request(create)["result"]["channel"]
+    archive = {"api_version": 1, "request_id": "request:2",
+               "operation": "workspace.channel_archive",
+               "params": {"profile": profile, "workspace": workspace, "channel": channel},
+               "idempotency_key": "r" * 32}
+    archived = session.request(archive)
+    assert archived["ok"], archived
+    assert archived["result"]["state"] == "archived"
+    Draft202012Validator(
+        json.loads((CONTRACTS / "workspace-channel-archive-result-v1.schema.json").read_text())
+    ).validate(archived)
+    assert session.request(archive)["result"] == archived["result"]
+    listed = session.request(request("workspace.channels", profile=profile,
+                                     workspace=workspace))
+    assert next(item for item in listed["result"]["channels"]
+                if item["channel"] == channel)["state"] == "archived"

@@ -128,6 +128,21 @@ class CoreClient private constructor(private val transport: CoreTransport) {
         )
     }
 
+    fun workspaceChannelArchive(
+        profile: String,
+        workspace: String,
+        channel: String,
+        idempotencyKey: String,
+    ): JSONObject {
+        requireKey(idempotencyKey, "channel archive")
+        return dispatch(
+            "workspace.channel_archive",
+            JSONObject().put("profile", profile).put("workspace", workspace)
+                .put("channel", channel),
+            idempotencyKey,
+        )
+    }
+
     fun workspaceChannelMembers(
         profile: String,
         workspace: String,

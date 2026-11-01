@@ -319,9 +319,9 @@ lists caller-scoped channel handles with name, visibility and state, and
 administrator with a caller key; private channels require one to eight member
 handles. `workspace.channel_members` reads a private channel's caller-scoped
 member handles, `workspace.channel_members_update` replaces that roster with a
-caller key, and `workspace.channel_update` edits a channel's name and topic.
-All are owner/administrator operations and expose no manifests or identity
-documents.
+caller key, `workspace.channel_update` edits a channel's name and topic, and
+`workspace.channel_archive` archives it. All are owner/administrator operations,
+keyed and replay-safe, and expose no manifests or identity documents.
 
 ## Observation and recovery
 

@@ -202,3 +202,10 @@ export interface WorkspaceChannelUpdateView {
   topic: string;
   visibility: "public" | "private";
 }
+
+export interface WorkspaceChannelArchiveView {
+  profile: string;
+  workspace: string;
+  channel: string;
+  state: "archived";
+}

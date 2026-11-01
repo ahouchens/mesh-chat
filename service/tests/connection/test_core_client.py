@@ -146,6 +146,19 @@ def test_client_refuses_to_dispatch_an_empty_pairing_document():
     assert len(transport.written) == 1
 
 
+def test_client_channel_archive_uses_the_declared_envelope():
+    transport = Scripted(
+        reply(CAPABILITIES),
+        reply({"profile": PROFILE, "workspace": "w" * 64, "channel": "c" * 64,
+               "state": "archived"}, "client:2"),
+    )
+    client = CoreClient.open(transport.readline, transport.write)
+    assert client.workspace_channel_archive(PROFILE, "w" * 64, "c" * 64, "r" * 16)["state"] == "archived"
+    sent = decode_frame(transport.written[1])
+    assert sent["operation"] == "workspace.channel_archive"
+    assert sent["idempotency_key"] == "r" * 16
+
+
 def test_client_channel_edit_helpers_use_the_declared_envelopes():
     transport = Scripted(
         reply(CAPABILITIES),

@@ -344,3 +344,13 @@ def workspace_channel_update_view(profile, workspace, channel, value):
         raise ValueError("Invalid channel update")
     return {"profile": profile, "workspace": workspace, "channel": channel,
             "name": value.name, "topic": value.topic, "visibility": value.visibility}
+
+
+def workspace_channel_archive_view(profile, workspace, channel, value):
+    if any(not isinstance(item, str) or re.fullmatch(r"[A-Za-z0-9_-]{16,128}", item) is None
+           for item in (profile, workspace, channel)):
+        raise ValueError("Invalid channel archive handle")
+    if value.state != "archived":
+        raise ValueError("Invalid channel archive state")
+    return {"profile": profile, "workspace": workspace, "channel": channel,
+            "state": "archived"}

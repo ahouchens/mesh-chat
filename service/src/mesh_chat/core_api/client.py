@@ -141,6 +141,13 @@ class CoreClient:
                              "channel": channel, "members": members},
                             idempotency_key=key)
 
+    def workspace_channel_archive(self, handle, workspace, channel, key):
+        if not isinstance(key, str) or len(key) < 16:
+            raise ValueError("Channel archive requires a caller-scoped key")
+        return self.request("workspace.channel_archive",
+                            {"profile": handle, "workspace": workspace, "channel": channel},
+                            idempotency_key=key)
+
     def workspace_channel_update(self, handle, workspace, channel, name, topic, key):
         if not isinstance(name, str) or not 1 <= len(name) <= 64:
             raise ValueError("Channel name is invalid")
