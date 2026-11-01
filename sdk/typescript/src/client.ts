@@ -32,7 +32,11 @@ import type {
   WorkspaceChannelUpdateView,
   WorkspaceChannelsView,
   WorkspaceDeclineView,
+  WorkspaceApproveView,
+  WorkspaceJoinRequestSummary,
+  WorkspaceListView,
   WorkspacePolicyView,
+  WorkspaceRequestsView,
   WorkspaceDeviceLinkDecisionView,
   WorkspaceDeviceLinkPreviewView,
   WorkspaceDeviceLinkSubmitView,
@@ -515,6 +519,36 @@ export class CoreClient {
         posting,
         invitation_requests: invitationRequests,
       },
+      { idempotencyKey },
+    );
+  }
+
+  async workspaceList(profile: string): Promise<WorkspaceListView> {
+    return this.request<WorkspaceListView>("workspace.query", { profile });
+  }
+
+  async workspaceJoinRequests(
+    profile: string,
+    workspace: string,
+  ): Promise<WorkspaceRequestsView> {
+    return this.request<WorkspaceRequestsView>("workspace.join_requests", {
+      profile,
+      workspace,
+    });
+  }
+
+  async workspaceJoinApprove(
+    profile: string,
+    workspace: string,
+    request: string,
+    idempotencyKey: string,
+  ): Promise<WorkspaceApproveView> {
+    if (idempotencyKey.length < 16) {
+      throw new ProtocolError("workspace approvals require a caller key");
+    }
+    return this.request<WorkspaceApproveView>(
+      "workspace.join_approve",
+      { profile, workspace, request },
       { idempotencyKey },
     );
   }

@@ -161,4 +161,31 @@ class CoreClientTest {
         assertEquals("workspace.join", join.getString("operation"))
         assertFalse(join.has("idempotency_key"))
     }
+
+    @Test
+    fun workspaceAdministrationHelpersEmitDeclaredEnvelopes() {
+        val transport = Scripted(
+            success("client:1", capabilities()),
+            success("client:2", JSONObject().put("profile", PROFILE).put(
+                "workspaces", org.json.JSONArray())),
+            success("client:3", JSONObject().put("profile", PROFILE)
+                .put("workspace", "w".repeat(64)).put("requests", org.json.JSONArray())),
+            success("client:4", JSONObject().put("profile", PROFILE)
+                .put("workspace", "w".repeat(64)).put("state", "active")),
+        )
+        val client = CoreClient.open(transport)
+        client.workspaceList(PROFILE)
+        client.workspaceJoinRequests(PROFILE, "w".repeat(64))
+        client.workspaceJoinApprove(
+            PROFILE, "w".repeat(64), "r".repeat(64), "k".repeat(16),
+        )
+        assertEquals("workspace.query", JSONObject(transport.written[1]).getString("operation"))
+        assertEquals(
+            "workspace.join_requests",
+            JSONObject(transport.written[2]).getString("operation"),
+        )
+        val approve = JSONObject(transport.written[3])
+        assertEquals("workspace.join_approve", approve.getString("operation"))
+        assertEquals("k".repeat(16), approve.getString("idempotency_key"))
+    }
 }

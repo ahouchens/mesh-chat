@@ -569,6 +569,39 @@ test("workspace review helpers use the declared envelopes", async () => {
   });
 });
 
+test("workspace administration helpers use declared envelopes", async () => {
+  const transport = new Scripted(
+    success("client:1", CAPABILITIES),
+    success("client:2", {
+      profile: PROFILE,
+      workspaces: [{ workspace: "w".repeat(64), name: "Core", role: "owner", state: "active" }],
+    }),
+    success("client:3", {
+      profile: PROFILE,
+      workspace: "w".repeat(64),
+      requests: [{ request: "r".repeat(64), display_name: "Blair", created_at: 1 }],
+    }),
+    success("client:4", { profile: PROFILE, workspace: "w".repeat(64), state: "active" }),
+  );
+  const client = await CoreClient.open(transport);
+  assert.equal((await client.workspaceList(PROFILE)).workspaces[0].name, "Core");
+  assert.equal(
+    (await client.workspaceJoinRequests(PROFILE, "w".repeat(64))).requests[0].display_name,
+    "Blair",
+  );
+  assert.equal(
+    (await client.workspaceJoinApprove(
+      PROFILE, "w".repeat(64), "r".repeat(64), "k".repeat(16),
+    )).state,
+    "active",
+  );
+  assert.equal(JSON.parse(transport.written[1]).operation, "workspace.query");
+  assert.equal(JSON.parse(transport.written[2]).operation, "workspace.join_requests");
+  const approve = JSON.parse(transport.written[3]);
+  assert.equal(approve.operation, "workspace.join_approve");
+  assert.equal(approve.idempotency_key, "k".repeat(16));
+});
+
 test("workspace preview and join use the declared envelopes", async () => {
   const transport = new Scripted(
     success("client:1", CAPABILITIES),

@@ -282,3 +282,33 @@ export interface WorkspaceDeviceRemoveView {
   device: string;
   state: "removed";
 }
+
+export interface WorkspaceSummary {
+  workspace: string;
+  name: string;
+  role: "owner" | "admin" | "member";
+  state: string;
+}
+
+export interface WorkspaceListView {
+  profile: string;
+  workspaces: WorkspaceSummary[];
+}
+
+export interface WorkspaceJoinRequestSummary {
+  request: string;
+  display_name: string;
+  created_at: number;
+}
+
+export interface WorkspaceRequestsView {
+  profile: string;
+  workspace: string;
+  requests: WorkspaceJoinRequestSummary[];
+}
+
+export interface WorkspaceApproveView {
+  profile: string;
+  workspace: string;
+  state: "active" | "joining" | "linking" | "left" | "removed" | "device_removed" | "revoked" | "archived";
+}

@@ -348,6 +348,29 @@ class CoreClient private constructor(private val transport: CoreTransport) {
         )
     }
 
+    fun workspaceList(profile: String): JSONObject =
+        request("workspace.query", JSONObject().put("profile", profile))
+
+    fun workspaceJoinRequests(profile: String, workspace: String): JSONObject = request(
+        "workspace.join_requests",
+        JSONObject().put("profile", profile).put("workspace", workspace),
+    )
+
+    fun workspaceJoinApprove(
+        profile: String,
+        workspace: String,
+        requestHandle: String,
+        idempotencyKey: String,
+    ): JSONObject {
+        requireKey(idempotencyKey, "workspace approvals")
+        return dispatch(
+            "workspace.join_approve",
+            JSONObject().put("profile", profile).put("workspace", workspace)
+                .put("request", requestHandle),
+            idempotencyKey,
+        )
+    }
+
     fun workspaceMembers(profile: String, workspace: String): JSONObject =
         request("workspace.members", JSONObject().put("profile", profile).put("workspace", workspace))
 
