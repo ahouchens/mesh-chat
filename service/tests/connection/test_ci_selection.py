@@ -128,3 +128,39 @@ def test_mixed_or_non_test_paths_still_require_the_full_matrix(paths):
 def test_connection_test_narrowing_is_limited_to_branch_events(event):
     assert ci.select(["service/tests/connection/test_core_messages.py"],
                      event=event)["required"] == list(ci.SUITES)
+
+
+def test_typescript_sdk_only_changes_skip_platform_recompilation():
+    plan = ci.select(["sdk/typescript/src/client.ts", "sdk/typescript/package.json"])
+    assert plan["required"] == ["policy", "verification"]
+    assert plan["reason"] == "isolated_typescript_sdk"
+    jobs = {suite: {"result": "success" if suite in plan["required"] else "skipped"}
+            for suite in ci.SUITES}
+    ci.validate(plan, jobs)
+
+
+@pytest.mark.parametrize("paths", [
+    ["sdk/typescript/src/client.ts", "src/desktop-transport.ts"],
+    ["sdk/typescript/src/client.ts", "docs/guide.md"],
+    ["sdk/typescript/src/client.ts", "pnpm-lock.yaml"],
+    ["sdk/typescript/../service/src/mesh_chat/service.py"],
+])
+def test_mixed_or_ambiguous_sdk_paths_keep_the_full_matrix(paths):
+    assert ci.select(paths)["required"] == list(ci.SUITES)
+
+
+@pytest.mark.parametrize("event", ["workflow_dispatch", "merge_group", "release", "schedule"])
+def test_sdk_narrowing_is_limited_to_branch_events(event):
+    assert ci.select(["sdk/typescript/src/client.ts"], event=event)["required"] == list(ci.SUITES)
+
+
+def test_frontend_sources_do_not_consume_the_typescript_sdk():
+    frontend = Path(__file__).resolve().parents[3] / "src"
+    offenders = []
+    for path in frontend.rglob("*"):
+        if path.suffix not in {".ts", ".tsx", ".js", ".mjs"} or not path.is_file():
+            continue
+        text = path.read_text(encoding="utf-8")
+        if "@mesh-chat/core-client" in text or "sdk/typescript" in text:
+            offenders.append(str(path.relative_to(frontend)))
+    assert offenders == []

@@ -57,7 +57,7 @@ identity. Monotonic deadlines never enter persistent storage.
 | M0 baseline | Spec and diagram imported; baseline regression corpus passes | Record platform timing baselines in CI |
 | M1 policy/contract foundation | Immutable model, pure phase reducer, fair supervisor, bounded effects, native domain adapters, simulator, strict model checks, executing snapshot schema and complete public request/result/event contracts with a scoped facade | Extend the adversarial corpus to the remaining invariant classes |
 | M2 shared policy | Experimental service composition, renderer fencing, native manual-carrier adoption, isolated contact onboarding, private Windows transport registration/rebinding, and complete workspace/device administration through the facade | Windows/Android packaged interoperability, shared-composition workspace onboarding, full native authority conformance, broader restart/fault parity and removal of migrated legacy loops |
-| M3 qualification gates | Deterministic inventory/evidence gate; conservative workflow selector with isolated documentation and connection-test narrowing; final execution gate; release aggregator refuses to publish without the qualification manifest | Executed release qualification (requires a tag) and exact-artifact aggregation at release; production-source narrowing after per-component isolation |
+| M3 qualification gates | Deterministic inventory/evidence gate; conservative workflow selector with isolated documentation, connection-test and TypeScript-SDK narrowing; final execution gate; release aggregator refuses to publish without the qualification manifest | Executed release qualification (requires a tag) and exact-artifact aggregation at release; production-source narrowing after per-component isolation |
 | M4 headless messaging | Android native transport and the private Windows WebView2 host with packaged crash, pairing and receipt scenarios | Production native Windows DataChannel adapter, packaged fault matrix, real-clock budgets and receipt soak |
 | M5 supported consumers | Public authenticated facade with packaged TypeScript and
 Python component smokes, durable idempotency/event cursors, Python/TypeScript/Kotlin clients, console client, version and package binding, Windows and Android host components | Packaged Windows and Android consumers, published SDK/package artifacts and a supported compatibility matrix |
@@ -1166,9 +1166,9 @@ M3 - qualification
       assets against it before upload.
 - [ ] An executed release run and cross-suite compatibility validation; the
       aggregator and its refusal tests exist, but no tag has exercised them.
-- [x] Isolated documentation and test-module-only connection diffs narrow to
-      policy and verification; conftest, helper, mixed, production and unknown
-      paths keep the full matrix.
+- [x] Isolated documentation, test-module-only connection and TypeScript-SDK
+      diffs narrow to policy and verification; conftest, helper, mixed,
+      production and unknown paths keep the full matrix.
 - [ ] Narrowing for production source changes waits until each component's
       isolation is proven; the conservative full matrix remains the default.
 
