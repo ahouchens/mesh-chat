@@ -499,6 +499,35 @@ test("channel helpers use the declared envelopes", async () => {
   const create = JSON.parse(transport.written[2]);
   assert.equal(create.operation, "workspace.channel_create");
   assert.equal(create.idempotency_key, "c".repeat(16));
+  assert.equal(create.params.visibility, "public");
+});
+
+test("private channel creation carries members and rejects an empty roster", async () => {
+  const transport = new Scripted(
+    success("client:1", CAPABILITIES),
+    success("client:2", {
+      profile: PROFILE,
+      workspace: "w".repeat(64),
+      channel: "c".repeat(64),
+      name: "Secret",
+      visibility: "private",
+    }),
+  );
+  const client = await CoreClient.open(transport);
+  await client.workspaceChannelCreate(
+    PROFILE, "w".repeat(64), "Secret", "p".repeat(16),
+    { visibility: "private", members: ["m".repeat(64)] },
+  );
+  const create = JSON.parse(transport.written[1]);
+  assert.equal(create.params.visibility, "private");
+  assert.deepEqual(create.params.members, ["m".repeat(64)]);
+  await assert.rejects(
+    client.workspaceChannelCreate(
+      PROFILE, "w".repeat(64), "Bad", "q".repeat(16),
+      { visibility: "private" },
+    ),
+    /private channels require/,
+  );
 });
 
 test("workspace review helpers use the declared envelopes", async () => {

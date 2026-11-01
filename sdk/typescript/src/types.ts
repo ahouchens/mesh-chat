@@ -184,7 +184,7 @@ export interface WorkspaceChannelCreateView {
   workspace: string;
   channel: string;
   name: string;
-  visibility: "public";
+  visibility: "public" | "private";
 }
 
 export interface WorkspaceChannelMembersView {

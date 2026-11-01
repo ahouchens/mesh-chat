@@ -273,13 +273,32 @@ export class CoreClient {
     workspace: string,
     name: string,
     idempotencyKey: string,
+    options: {
+      visibility?: "public" | "private";
+      members?: string[];
+    } = {},
   ): Promise<WorkspaceChannelCreateView> {
+    const visibility = options.visibility ?? "public";
+    const members = options.members ?? [];
     if (name.length === 0 || name.length > 64 || idempotencyKey.length < 16) {
       throw new ProtocolError("channel creation requires a name and caller key");
     }
+    if (visibility === "private" && (members.length < 1 || members.length > 8)) {
+      throw new ProtocolError("private channels require one to eight members");
+    }
+    if (visibility === "public" && members.length > 0) {
+      throw new ProtocolError("public channels do not take a member list");
+    }
+    const params: Record<string, unknown> = {
+      profile,
+      workspace,
+      name,
+      visibility,
+    };
+    if (visibility === "private") params.members = members;
     return this.request<WorkspaceChannelCreateView>(
       "workspace.channel_create",
-      { profile, workspace, name },
+      params,
       { idempotencyKey },
     );
   }
