@@ -93,3 +93,21 @@ def test_component_versions_match_the_compatibility_declaration():
     assert declaration["typescript_client"]["version"] == package["version"]
     assert f'const val VERSION = "{declaration["kotlin_client"]["version"]}"' in kotlin
     assert declaration["typescript_client"]["version"] == declaration["python_client"]["version"]
+
+
+def test_component_clients_cover_every_advertised_operation():
+    from mesh_chat.core_api.requests import COMPONENT_OPERATIONS
+
+    root = Path(__file__).resolve().parents[3]
+    clients = {
+        "python": root / "service" / "src" / "mesh_chat" / "core_api" / "client.py",
+        "typescript": root / "sdk" / "typescript" / "src" / "client.ts",
+        "kotlin": (root / "plugins" / "tauri-plugin-mesh-runtime" / "android" / "src"
+                   / "main" / "java" / "com" / "meshchat" / "runtime" / "core"
+                   / "CoreClient.kt"),
+    }
+    for name, path in clients.items():
+        source = path.read_text(encoding="utf-8")
+        missing = [operation for operation in COMPONENT_OPERATIONS
+                   if f'"{operation}"' not in source]
+        assert not missing, f"{name} client is missing {missing}"
