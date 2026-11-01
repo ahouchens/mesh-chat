@@ -1218,6 +1218,9 @@ M5 - supported reusable core
 - [x] Python wheel packaging smoke: build, install into an empty target, import
       the package, execute `mesh-chat-core --version` and answer facade
       capabilities/workspace queries from the packaged service (unpublished).
+- [x] Windows packaged pipe consumer: installed wheel hosts the named-pipe
+      endpoint and a separate installed-wheel consumer completes the framed
+      capabilities/workspace exchange (component, unpublished).
 
 - [x] Workspace device-link creation, preview, submission and sponsor
       approval/decline (component, two-service delivery test).
