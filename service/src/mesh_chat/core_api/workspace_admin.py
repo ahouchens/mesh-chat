@@ -52,6 +52,13 @@ class DeviceLink:
 
 
 @dataclass(frozen=True)
+class DeviceLinkSubmission:
+    workspace: str
+    name: str
+    state: str
+
+
+@dataclass(frozen=True)
 class DeviceLinkPreview:
     workspace: str
     name: str
@@ -114,3 +121,6 @@ class WorkspaceAdmin(Protocol):
 
     def device_link_preview(self, profile: str,
                             document: str) -> DeviceLinkPreview: ...
+
+    def device_link_submit(self, profile: str, document: str,
+                           operation_id: str) -> DeviceLinkSubmission: ...

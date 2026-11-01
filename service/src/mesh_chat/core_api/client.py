@@ -143,6 +143,15 @@ class CoreClient:
                             {"profile": handle, "workspace": workspace},
                             idempotency_key=key)
 
+    def workspace_device_link_submit(self, handle, document, key):
+        if not isinstance(document, str) or not document:
+            raise ValueError("Device link material is required")
+        if not isinstance(key, str) or len(key) < 16:
+            raise ValueError("Device link submission requires a caller-scoped key")
+        return self.request("workspace.device_link_submit",
+                            {"profile": handle, "document": document},
+                            idempotency_key=key)
+
     def workspace_device_link_preview(self, handle, document):
         if not isinstance(document, str) or not document:
             raise ValueError("Device link material is required")

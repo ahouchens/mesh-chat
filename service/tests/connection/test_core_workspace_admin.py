@@ -289,3 +289,40 @@ def test_device_links_can_be_created_and_previewed(admin_pair):
     ).validate(preview)
     assert session.request(request("workspace.device_link_preview", profile=profile,
                                    document="not-a-link"))["error"]["code"] == "invalid_request"
+
+
+def test_a_new_device_can_submit_a_device_link_and_wait_for_approval(admin_pair, tmp_path):
+    owner, _, _ = admin_pair
+    owner_session, owner_profile = open_client(
+        owner, permissions=("observe", "read", "approve", "pair"))
+    workspace = owner_session.request(request("workspace.query", profile=owner_profile)
+                                      )["result"]["workspaces"][0]["workspace"]
+    created = owner_session.request({
+        "api_version": 1, "request_id": "request:1",
+        "operation": "workspace.device_link_create",
+        "params": {"profile": owner_profile, "workspace": workspace},
+        "idempotency_key": "l" * 32,
+    })
+    assert created["ok"], created
+    new_device, _ = _service(tmp_path / "newdevice", RNS.Identity(), "Blair")
+    new_device._shutdown.clear()
+    try:
+        new_session, new_profile = open_client(
+            new_device, permissions=("observe", "read", "approve", "pair"), caller="blair")
+        submit = {"api_version": 1, "request_id": "request:2",
+                  "operation": "workspace.device_link_submit",
+                  "params": {"profile": new_profile, "document": created["result"]["document"]},
+                  "idempotency_key": "s" * 32}
+        submitted = new_session.request(submit)
+        assert submitted["ok"], submitted
+        assert submitted["result"]["state"] == "linking"
+        assert submitted["result"]["name"] == "Core"
+        Draft202012Validator(
+            json.loads((CONTRACTS / "workspace-device-link-submit-result-v1.schema.json").read_text())
+        ).validate(submitted)
+        assert new_session.request(submit)["result"] == submitted["result"]
+        invalid = dict(submit)
+        invalid["params"] = {"profile": new_profile, "document": "not-a-link"}
+        assert new_session.request(invalid)["error"]["code"] == "invalid_request"
+    finally:
+        new_device.close()

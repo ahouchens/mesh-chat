@@ -324,8 +324,10 @@ caller key, `workspace.channel_update` edits a channel's name and topic, and
 signed device-link material for the caller's own member device — the same public
 onboarding artifact the application shows — and `workspace.device_link_preview`
 verifies a link and returns the workspace name, member display name, device count
-and expiry only. Links are keyed and replay-safe; no fingerprints, keys or
-manifests cross the boundary.
+and expiry only. `workspace.device_link_submit` lets a new device admit the
+workspace as `linking` while sponsor approval is pending; sponsor approval remains a separate step.
+Link operations are keyed and replay-safe, and no fingerprints, keys or manifests
+cross the boundary.
 
 ## Observation and recovery
 

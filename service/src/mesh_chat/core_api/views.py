@@ -210,7 +210,7 @@ def pairing_request_view(profile, peer, value):
 
 
 WORKSPACE_ROLES = {"owner", "admin", "member"}
-WORKSPACE_STATES = {"active", "joining", "left", "removed", "revoked", "archived"}
+WORKSPACE_STATES = {"active", "joining", "linking", "left", "removed", "revoked", "archived"}
 
 
 def workspace_list_view(profile, items):
@@ -380,3 +380,14 @@ def device_link_preview_view(profile, workspace, value):
     return {"profile": profile, "workspace": workspace, "name": value.name,
             "member_display_name": value.member_display_name,
             "device_count": value.device_count, "expires_at": value.expires_at}
+
+
+def device_link_submit_view(profile, workspace, value):
+    if any(not isinstance(item, str) or re.fullmatch(r"[A-Za-z0-9_-]{16,128}", item) is None
+           for item in (profile, workspace)):
+        raise ValueError("Invalid device link submission handle")
+    if (not isinstance(value.name, str) or not value.name
+            or value.state != "linking"):
+        raise ValueError("Invalid device link submission")
+    return {"profile": profile, "workspace": workspace, "name": value.name,
+            "state": "linking"}

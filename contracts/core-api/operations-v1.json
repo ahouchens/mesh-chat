@@ -39,6 +39,7 @@
     "workspace.channel_archive",
     "workspace.device_link_create",
     "workspace.device_link_preview",
+    "workspace.device_link_submit",
     "diagnostics.query"
   ],
   "operations": [
@@ -335,6 +336,13 @@
       "scope": "profile",
       "mutation": false,
       "idempotency": "query"
+    },
+    {
+      "operation": "workspace.device_link_submit",
+      "permission": "pair",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "caller_profile_operation_key"
     }
   ],
   "limits": {

@@ -3,23 +3,60 @@
   "$id": "urn:mesh-chat:core-api:workspace-approve-result:1",
   "title": "Experimental workspace join approval v1",
   "description": "Approved join with the workspace's resulting state.",
-  "type": "object", "additionalProperties": false,
-  "required": ["api_version", "request_id", "ok", "result"],
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "api_version",
+    "request_id",
+    "ok",
+    "result"
+  ],
   "properties": {
-    "api_version": {"const": 1},
-    "request_id": {"type": "string", "pattern": "^[A-Za-z0-9._:-]{1,80}$"},
-    "ok": {"const": true},
-    "result": {"$ref": "#/$defs/approval"}
+    "api_version": {
+      "const": 1
+    },
+    "request_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9._:-]{1,80}$"
+    },
+    "ok": {
+      "const": true
+    },
+    "result": {
+      "$ref": "#/$defs/approval"
+    }
   },
   "$defs": {
-    "handle": {"type": "string", "pattern": "^[A-Za-z0-9_-]{16,128}$"},
+    "handle": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]{16,128}$"
+    },
     "approval": {
-      "type": "object", "additionalProperties": false,
-      "required": ["profile", "workspace", "state"],
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "profile",
+        "workspace",
+        "state"
+      ],
       "properties": {
-        "profile": {"$ref": "#/$defs/handle"},
-        "workspace": {"$ref": "#/$defs/handle"},
-        "state": {"enum": ["active", "joining", "left", "removed", "revoked", "archived"]}
+        "profile": {
+          "$ref": "#/$defs/handle"
+        },
+        "workspace": {
+          "$ref": "#/$defs/handle"
+        },
+        "state": {
+          "enum": [
+            "active",
+            "joining",
+            "left",
+            "removed",
+            "revoked",
+            "archived",
+            "linking"
+          ]
+        }
       }
     }
   }

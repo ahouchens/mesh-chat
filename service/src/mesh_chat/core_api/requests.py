@@ -35,6 +35,7 @@ WORKSPACE_CHANNEL_UPDATE_OPERATIONS = ("workspace.channel_update",)
 WORKSPACE_CHANNEL_ARCHIVE_OPERATIONS = ("workspace.channel_archive",)
 WORKSPACE_DEVICE_LINK_CREATE_OPERATIONS = ("workspace.device_link_create",)
 WORKSPACE_DEVICE_LINK_PREVIEW_OPERATIONS = ("workspace.device_link_preview",)
+WORKSPACE_DEVICE_LINK_SUBMIT_OPERATIONS = ("workspace.device_link_submit",)
 DIAGNOSTIC_OPERATIONS = ("diagnostics.query",)
 REQUEST_ID = re.compile(r"[A-Za-z0-9._:-]{1,80}\Z")
 HANDLE = re.compile(r"[A-Za-z0-9_-]{16,128}\Z")
@@ -60,7 +61,8 @@ def parse_request(value, operations):
                       "workspace.join_approve", "workspace.join_decline",
                       "workspace.member_role", "workspace.channel_create",
                       "workspace.channel_members_update", "workspace.channel_update",
-                      "workspace.channel_archive", "workspace.device_link_create"):
+                      "workspace.channel_archive", "workspace.device_link_create",
+                      "workspace.device_link_submit"):
         fields.add("idempotency_key")
     if set(value) != fields:
         raise ApiFailure("invalid_request")
@@ -101,6 +103,16 @@ def parse_request(value, operations):
         if (not isinstance(params, dict) or set(params) != {"profile", "workspace"}
                 or any(not isinstance(item, str) or HANDLE.fullmatch(item) is None
                        for item in params.values())):
+            raise ApiFailure("invalid_request")
+        return operation, params
+    if operation in WORKSPACE_DEVICE_LINK_SUBMIT_OPERATIONS:
+        params = value["params"]
+        if (not isinstance(params, dict) or set(params) != {"profile", "document"}
+                or "idempotency_key" not in value
+                or not isinstance(params["profile"], str)
+                or HANDLE.fullmatch(params["profile"]) is None
+                or not isinstance(params["document"], str)
+                or not 1 <= len(params["document"]) <= 65536):
             raise ApiFailure("invalid_request")
         return operation, params
     if operation in WORKSPACE_DEVICE_LINK_PREVIEW_OPERATIONS:
@@ -346,5 +358,6 @@ COMPONENT_OPERATIONS = (
     + WORKSPACE_CHANNEL_ARCHIVE_OPERATIONS
     + WORKSPACE_DEVICE_LINK_CREATE_OPERATIONS
     + WORKSPACE_DEVICE_LINK_PREVIEW_OPERATIONS
+    + WORKSPACE_DEVICE_LINK_SUBMIT_OPERATIONS
     + DIAGNOSTIC_OPERATIONS
 )

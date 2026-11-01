@@ -31,6 +31,7 @@ import type {
   WorkspaceChannelsView,
   WorkspaceDeclineView,
   WorkspaceDeviceLinkPreviewView,
+  WorkspaceDeviceLinkSubmitView,
   WorkspaceDeviceLinkView,
   WorkspaceJoinView,
   WorkspaceMemberRoleView,
@@ -350,6 +351,21 @@ export class CoreClient {
     return this.request<WorkspaceDeviceLinkView>(
       "workspace.device_link_create",
       { profile, workspace },
+      { idempotencyKey },
+    );
+  }
+
+  async workspaceDeviceLinkSubmit(
+    profile: string,
+    document: string,
+    idempotencyKey: string,
+  ): Promise<WorkspaceDeviceLinkSubmitView> {
+    if (document.length === 0 || idempotencyKey.length < 16) {
+      throw new ProtocolError("device link submission requires material and a caller key");
+    }
+    return this.request<WorkspaceDeviceLinkSubmitView>(
+      "workspace.device_link_submit",
+      { profile, document },
       { idempotencyKey },
     );
   }

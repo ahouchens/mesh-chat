@@ -252,6 +252,26 @@ test("pairing acceptance refuses an empty document before dispatch", async () =>
   assert.equal(transport.written.length, 1);
 });
 
+test("device link submission uses the declared envelope", async () => {
+  const transport = new Scripted(
+    success("client:1", CAPABILITIES),
+    success("client:2", {
+      profile: PROFILE,
+      workspace: "w".repeat(64),
+      name: "Core",
+      state: "linking",
+    }),
+  );
+  const client = await CoreClient.open(transport);
+  const submitted = await client.workspaceDeviceLinkSubmit(
+    PROFILE, "link-document", "s".repeat(16),
+  );
+  assert.equal(submitted.state, "linking");
+  const sent = JSON.parse(transport.written[1]);
+  assert.equal(sent.operation, "workspace.device_link_submit");
+  assert.equal(sent.idempotency_key, "s".repeat(16));
+});
+
 test("device link helpers use the declared envelopes", async () => {
   const transport = new Scripted(
     success("client:1", CAPABILITIES),

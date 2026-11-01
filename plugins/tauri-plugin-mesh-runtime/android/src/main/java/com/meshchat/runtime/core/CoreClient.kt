@@ -157,6 +157,20 @@ class CoreClient private constructor(private val transport: CoreTransport) {
         )
     }
 
+    fun workspaceDeviceLinkSubmit(
+        profile: String,
+        document: String,
+        idempotencyKey: String,
+    ): JSONObject {
+        if (document.isEmpty()) throw CoreException("invalid_request")
+        requireKey(idempotencyKey, "device link submission")
+        return dispatch(
+            "workspace.device_link_submit",
+            JSONObject().put("profile", profile).put("document", document),
+            idempotencyKey,
+        )
+    }
+
     fun workspaceDeviceLinkPreview(profile: String, document: String): JSONObject {
         if (document.isEmpty()) throw CoreException("invalid_request")
         return request(

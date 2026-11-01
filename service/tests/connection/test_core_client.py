@@ -146,6 +146,20 @@ def test_client_refuses_to_dispatch_an_empty_pairing_document():
     assert len(transport.written) == 1
 
 
+def test_client_device_link_submit_uses_the_declared_envelope():
+    transport = Scripted(
+        reply(CAPABILITIES),
+        reply({"profile": PROFILE, "workspace": "w" * 64, "name": "Core",
+               "state": "linking"}, "client:2"),
+    )
+    client = CoreClient.open(transport.readline, transport.write)
+    submitted = client.workspace_device_link_submit(PROFILE, "link-document", "s" * 16)
+    assert submitted["state"] == "linking"
+    sent = decode_frame(transport.written[1])
+    assert sent["operation"] == "workspace.device_link_submit"
+    assert sent["idempotency_key"] == "s" * 16
+
+
 def test_client_device_link_helpers_use_the_declared_envelopes():
     transport = Scripted(
         reply(CAPABILITIES),

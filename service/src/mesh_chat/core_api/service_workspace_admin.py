@@ -4,6 +4,7 @@ from ..errors import ContactNotApproved, InvitationExpired, InvitationInvalid, V
 from .errors import ApiFailure
 from .service_messages import storage_errors
 from .workspace_admin import (ChannelEdit, ChannelSummary, DeviceLink, DeviceLinkPreview,
+                              DeviceLinkSubmission,
                               JoinApproval, JoinRequestSummary,
                               MemberRoleChange, MemberSummary, WorkspaceSummary)
 
@@ -15,7 +16,7 @@ MAX_CHANNELS = 32
 MAX_DOCUMENT_BYTES = 65536
 CHANNEL_STATES = {"active", "archived", "left"}
 ROLES = {"owner", "admin", "member"}
-STATES = {"active", "joining", "left", "removed", "revoked", "archived"}
+STATES = {"active", "joining", "linking", "left", "removed", "revoked", "archived"}
 MEMBER_STATES = {"active", "invited", "leaving", "left", "removed"}
 ROLES_ASSIGNABLE = {"admin", "member"}
 
@@ -351,3 +352,20 @@ class ServiceWorkspaceAdmin:
                     or not 1 <= count <= 24 or type(expires) not in {int, float}):
                 raise ApiFailure("internal")
             return DeviceLinkPreview(workspace_id, name, member_name, count, float(expires))
+
+    def device_link_submit(self, profile, document, operation_id):
+        self._require_local(profile)
+        if (not isinstance(document, str) or not 1 <= len(document) <= MAX_DOCUMENT_BYTES
+                or not isinstance(operation_id, str) or not operation_id):
+            raise ApiFailure("invalid_request")
+        with storage_errors():
+            try:
+                outcome = self._service.submit_workspace_device_link(document, operation_id)
+            except (ValidationError, ContactNotApproved) as error:
+                raise ApiFailure("invalid_request") from error
+            workspace_id, name = outcome.get("id"), outcome.get("name")
+            state = outcome.get("state")
+            if (not isinstance(workspace_id, str) or not isinstance(name, str)
+                    or state != "linking"):
+                raise ApiFailure("internal")
+            return DeviceLinkSubmission(workspace_id, name, state)

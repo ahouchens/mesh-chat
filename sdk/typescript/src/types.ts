@@ -226,3 +226,10 @@ export interface WorkspaceDeviceLinkPreviewView {
   device_count: number;
   expires_at: number;
 }
+
+export interface WorkspaceDeviceLinkSubmitView {
+  profile: string;
+  workspace: string;
+  name: string;
+  state: "linking";
+}

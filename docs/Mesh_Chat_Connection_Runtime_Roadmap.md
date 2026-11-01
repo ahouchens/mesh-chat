@@ -1108,8 +1108,10 @@ role. `workspace.channels`, `workspace.channel_create`, `workspace.channel_membe
 private channel basics, private rosters and channel edits for owners and
 administrators, and `workspace.channel_archive` adds the archive transition.
 `workspace.device_link_create`/`workspace.device_link_preview` expose signed
-device-link material and its safe preview, so a member can add another device
-without handling raw documents. Per-peer pairing returns the signed invitation
+device-link material and its safe preview, and `workspace.device_link_submit` lets
+a new device admit the workspace as `linking`; sponsor approval is
+still open, so a member can add another device without handling raw documents but
+cannot yet complete the handshake from the facade. Per-peer pairing returns the signed invitation
 document, so callers can exchange it out of band.
 
 ## Component versions
@@ -1197,8 +1199,9 @@ M5 - supported reusable core
       membership and channel editing open).
 - [x] Per-peer signed pairing document returned to the caller.
 - [x] Private channel membership, channel editing and archiving (component only).
-- [x] Workspace device-link creation and preview (component only).
-- [ ] Channel transfers, device-link submission/approval and role-scoped channel
+- [x] Workspace device-link creation, preview and new-device submission (component
+      only).
+- [ ] Device-link sponsor approval, channel transfers and role-scoped channel
       policy overrides.
 - [x] Experimental TypeScript client over the frame contract (component only; no
       packaging, CI conformance, Kotlin client or consumer).
