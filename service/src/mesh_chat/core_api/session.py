@@ -23,7 +23,7 @@ from .views import (
     device_link_submit_view, device_links_view,
     workspace_channel_archive_view,
     workspace_channel_create_view, workspace_channel_transfer_accept_view,
-    workspace_policies_view,
+    workspace_device_remove_view, workspace_devices_view, workspace_policies_view,
     workspace_channel_transfer_offer_view,
     workspace_channel_members_view,
     workspace_channel_update_view, workspace_channels_view, workspace_join_view,
@@ -43,7 +43,8 @@ from .requests import (
     WORKSPACE_CHANNEL_MEMBERS_OPERATIONS,
     WORKSPACE_CHANNEL_MEMBERS_UPDATE_OPERATIONS, WORKSPACE_CHANNEL_UPDATE_OPERATIONS,
     WORKSPACE_CHANNEL_TRANSFER_ACCEPT_OPERATIONS, WORKSPACE_CHANNEL_TRANSFER_OFFER_OPERATIONS,
-    WORKSPACE_POLICY_UPDATE_OPERATIONS,
+    WORKSPACE_POLICY_UPDATE_OPERATIONS, WORKSPACE_DEVICES_OPERATIONS,
+    WORKSPACE_DEVICE_REMOVE_OPERATIONS,
     WORKSPACE_DEVICE_LINK_APPROVE_OPERATIONS, WORKSPACE_DEVICE_LINK_CREATE_OPERATIONS,
     WORKSPACE_DEVICE_LINK_DECLINE_OPERATIONS, WORKSPACE_DEVICE_LINK_PREVIEW_OPERATIONS,
     WORKSPACE_DEVICE_LINK_SUBMIT_OPERATIONS, WORKSPACE_DEVICE_LINKS_OPERATIONS,
@@ -58,7 +59,7 @@ from .messages import (
 from .intent import ConnectionIntent
 from .invitations import Invitations
 from .lifecycle import Lifecycle
-from .workspace_admin import ChannelSummary, WorkspaceAdmin
+from .workspace_admin import ChannelSummary, DeviceSummary, WorkspaceAdmin
 from .workspace_relationship import WorkspaceRelationships
 from .pairing import Pairing
 from .relationship import Relationship
@@ -169,6 +170,8 @@ class CoreSession:
             (WORKSPACE_CHANNEL_TRANSFER_OFFER_OPERATIONS, self._workspace_admin),
             (WORKSPACE_CHANNEL_TRANSFER_ACCEPT_OPERATIONS, self._workspace_admin),
             (WORKSPACE_POLICY_UPDATE_OPERATIONS, self._workspace_admin),
+            (WORKSPACE_DEVICES_OPERATIONS, self._workspace_admin),
+            (WORKSPACE_DEVICE_REMOVE_OPERATIONS, self._workspace_admin),
             (DIAGNOSTIC_OPERATIONS, self._diagnostics),
         ):
             if port is not None:
@@ -207,7 +210,8 @@ class CoreSession:
                                                         "workspace.device_link_decline",
                                                         "workspace.channel_transfer_offer",
                                                         "workspace.channel_transfer_accept",
-                                                        "workspace.policy_update"}:
+                                                        "workspace.policy_update",
+                                                        "workspace.device_remove"}:
                     raise ApiFailure("invalid_request")
                 permission = {"message.enqueue": "send", "message.query": "read", "message.list": "read",
                               "message.received": "read", "events.poll": "read", "events.ack": "read",
@@ -237,6 +241,8 @@ class CoreSession:
                               "workspace.channel_transfer_offer": "approve",
                               "workspace.channel_transfer_accept": "approve",
                               "workspace.policy_update": "approve",
+                              "workspace.devices": "approve",
+                              "workspace.device_remove": "approve",
                               "diagnostics.query": "diagnose"}.get(operation, "observe")
                 if permission not in grant.permissions:
                     raise ApiFailure("forbidden")
@@ -442,6 +448,36 @@ class CoreSession:
             link = self._workspace_admin.device_link_create(
                 target, inside, self._operation_id(grant, target, key))
             return device_link_create_view(params["profile"], params["workspace"], link)
+        if operation in WORKSPACE_DEVICES_OPERATIONS:
+            target = profiles.get(params["profile"])
+            if target is None:
+                raise ApiFailure("forbidden")
+            inside = self._workspace_target(grant, target, params["workspace"])
+            members = {item.member: self._handle(grant, "member", target, item.member)
+                       for item in self._workspace_admin.members(target, inside)}
+            devices = self._workspace_admin.devices(target, inside)
+            mapped = [(self._handle(grant, "device", target, item.device),
+                       DeviceSummary(item.device, members.get(item.member, ""), item.current))
+                      for item in devices]
+            return workspace_devices_view(params["profile"], params["workspace"],
+                                          [(handle, value) for handle, value in mapped])
+        if operation in WORKSPACE_DEVICE_REMOVE_OPERATIONS:
+            target = profiles.get(params["profile"])
+            if target is None:
+                raise ApiFailure("forbidden")
+            inside = self._workspace_target(grant, target, params["workspace"])
+            device_id = next(
+                (item.device for item in self._workspace_admin.devices(target, inside)
+                 if self._handle(grant, "device", target, item.device) == params["device"]),
+                None)
+            if device_id is None:
+                raise ApiFailure("forbidden")
+            if key is None:
+                raise ApiFailure("invalid_request")
+            self._workspace_admin.remove_device(
+                target, inside, device_id, self._operation_id(grant, target, key))
+            return workspace_device_remove_view(
+                params["profile"], params["workspace"], params["device"], "removed")
         if operation in WORKSPACE_POLICY_UPDATE_OPERATIONS:
             target = profiles.get(params["profile"])
             if target is None:

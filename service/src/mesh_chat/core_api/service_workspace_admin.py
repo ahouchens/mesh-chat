@@ -1,9 +1,12 @@
 """Private adapter: workspace listing and join approval over domain transactions."""
 
+import uuid
+
 from ..errors import ContactNotApproved, InvitationExpired, InvitationInvalid, ValidationError
 from .errors import ApiFailure
 from .service_messages import storage_errors
 from .workspace_admin import (ChannelEdit, ChannelSummary, DeviceLink, DeviceLinkPreview,
+                              DeviceSummary,
                               WorkspacePolicies,
                               DeviceLinkSubmission,
                               JoinApproval, JoinRequestSummary,
@@ -17,7 +20,8 @@ MAX_CHANNELS = 32
 MAX_DOCUMENT_BYTES = 65536
 CHANNEL_STATES = {"active", "archived", "left"}
 ROLES = {"owner", "admin", "member"}
-STATES = {"active", "joining", "linking", "left", "removed", "revoked", "archived"}
+STATES = {"active", "joining", "linking", "left", "removed", "device_removed",
+          "revoked", "archived"}
 MEMBER_STATES = {"active", "invited", "leaving", "left", "removed"}
 ROLES_ASSIGNABLE = {"admin", "member"}
 
@@ -519,3 +523,74 @@ class ServiceWorkspaceAdmin:
                                              invitation_requests):
                 raise ApiFailure("internal")
             return applied
+
+    def devices(self, profile, workspace_id):
+        self._require_local(profile)
+        with storage_errors():
+            workspace = self._workspace(workspace_id)
+            snapshot = self._service.workspace_snapshot()
+            summaries = snapshot.get("workspaces", [])
+            if not isinstance(summaries, list):
+                raise ApiFailure("internal")
+            summary = next(
+                (item for item in summaries
+                 if isinstance(item, dict) and item.get("id") == workspace_id),
+                None)
+            if summary is None:
+                raise ApiFailure("internal")
+            members = summary.get("members", [])
+            if not isinstance(members, list):
+                raise ApiFailure("internal")
+            found = []
+            for member in members:
+                member_id = member.get("id")
+                devices = member.get("devices", [])
+                if not isinstance(member_id, str) or not isinstance(devices, list):
+                    raise ApiFailure("internal")
+                for item in devices:
+                    device_id = item.get("id")
+                    if not isinstance(device_id, str):
+                        raise ApiFailure("internal")
+                    found.append(DeviceSummary(
+                        device_id, member_id,
+                        device_id == workspace.get("local_device_id")))
+                if len(found) > 24:
+                    raise ApiFailure("internal")
+            return tuple(sorted(found, key=lambda item: item.device))
+
+    def remove_device(self, profile, workspace_id, device_id, operation_id):
+        self._require_local(profile)
+        if (not isinstance(device_id, str) or not isinstance(operation_id, str)
+                or not operation_id):
+            raise ApiFailure("invalid_request")
+        with storage_errors():
+            workspace = self._workspace(workspace_id)
+            if workspace.get("local_role") != "owner":
+                raise ApiFailure("forbidden")
+            if device_id == workspace.get("local_device_id"):
+                raise ApiFailure("invalid_request")
+            known = {item.device for item in self.devices(profile, workspace_id)}
+            if device_id not in known:
+                raise ApiFailure("forbidden")
+            try:
+                requested = self._service.request_workspace_device_removal(
+                    workspace_id, device_id, operation_id)
+            except (ValidationError, ContactNotApproved) as error:
+                raise ApiFailure("invalid_request") from error
+            state, removal_id = requested.get("state"), requested.get("id")
+            if not isinstance(removal_id, str) or state not in {"pending", "approved"}:
+                raise ApiFailure("internal")
+            if state == "pending":
+                approval_id = str(uuid.uuid5(uuid.UUID(operation_id),
+                                             "device-removal-approve"))
+                try:
+                    outcome = self._service.approve_workspace_device_removal(
+                        workspace_id, removal_id, approval_id)
+                except (ValidationError, ContactNotApproved) as error:
+                    raise ApiFailure("invalid_request") from error
+                if outcome.get("state") != "approved":
+                    raise ApiFailure("internal")
+            remaining = {item.device for item in self.devices(profile, workspace_id)}
+            if device_id in remaining:
+                raise ApiFailure("internal")
+            return "removed"

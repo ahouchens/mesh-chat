@@ -384,6 +384,33 @@ def test_pending_device_links_can_be_listed_and_approved(tmp_path):
         linked_workspace = linked_session.request(request("workspace.query",
                                                           profile=linked_profile))
         assert linked_workspace["result"]["workspaces"][0]["state"] == "active"
+        devices = owner_session.request(request("workspace.devices",
+                                                profile=owner_profile, workspace=workspace))
+        assert devices["ok"], devices
+        assert len(devices["result"]["devices"]) == 2
+        assert sum(item["current"] for item in devices["result"]["devices"]) == 1
+        Draft202012Validator(
+            json.loads((CONTRACTS / "workspace-devices-result-v1.schema.json").read_text())
+        ).validate(devices)
+        target_device = next(item["device"] for item in devices["result"]["devices"]
+                             if not item["current"])
+        removed = owner_session.request({
+            "api_version": 1, "request_id": "request:4",
+            "operation": "workspace.device_remove",
+            "params": {"profile": owner_profile, "workspace": workspace,
+                       "device": target_device},
+            "idempotency_key": "x" * 32,
+        })
+        assert removed["ok"], removed
+        assert removed["result"]["state"] == "removed"
+        Draft202012Validator(
+            json.loads((CONTRACTS / "workspace-device-remove-result-v1.schema.json").read_text())
+        ).validate(removed)
+        _deliver_all(linked, _flush(owner, owner_network),
+                     source_profile=owner._require_profile(),
+                     recipient_profile=linked._require_profile())
+        assert linked_session.request(request("workspace.query", profile=linked_profile)
+                                      )["result"]["workspaces"][0]["state"] == "device_removed"
         assert owner_session.request(request("workspace.device_links",
                                              profile=owner_profile, workspace=workspace)
                                      )["result"]["links"] == []

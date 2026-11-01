@@ -267,6 +267,26 @@ class CoreClient private constructor(private val transport: CoreTransport) {
         )
     }
 
+    fun workspaceDevices(profile: String, workspace: String): JSONObject = request(
+        "workspace.devices",
+        JSONObject().put("profile", profile).put("workspace", workspace),
+    )
+
+    fun workspaceDeviceRemove(
+        profile: String,
+        workspace: String,
+        device: String,
+        idempotencyKey: String,
+    ): JSONObject {
+        requireKey(idempotencyKey, "device removal")
+        return dispatch(
+            "workspace.device_remove",
+            JSONObject().put("profile", profile).put("workspace", workspace)
+                .put("device", device),
+            idempotencyKey,
+        )
+    }
+
     fun workspaceChannelMembers(
         profile: String,
         workspace: String,

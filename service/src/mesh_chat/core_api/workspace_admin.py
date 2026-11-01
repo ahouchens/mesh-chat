@@ -5,6 +5,13 @@ from typing import Protocol
 
 
 @dataclass(frozen=True)
+class DeviceSummary:
+    device: str
+    member: str
+    current: bool
+
+
+@dataclass(frozen=True)
 class WorkspacePolicies:
     channel_creation: str
     posting: str
@@ -151,3 +158,8 @@ class WorkspaceAdmin(Protocol):
     def update_policies(self, profile: str, workspace: str, channel_creation: str,
                         posting: str, invitation_requests: str,
                         operation_id: str) -> WorkspacePolicies: ...
+
+    def devices(self, profile: str, workspace: str) -> tuple[DeviceSummary, ...]: ...
+
+    def remove_device(self, profile: str, workspace: str, device_id: str,
+                      operation_id: str) -> str: ...

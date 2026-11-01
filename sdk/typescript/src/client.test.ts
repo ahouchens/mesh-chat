@@ -335,6 +335,32 @@ test("device link helpers use the declared envelopes", async () => {
   assert.equal(preview.operation, "workspace.device_link_preview");
 });
 
+test("device listing and removal use declared envelopes", async () => {
+  const transport = new Scripted(
+    success("client:1", CAPABILITIES),
+    success("client:2", {
+      profile: PROFILE,
+      workspace: "w".repeat(64),
+      devices: [{ device: "d".repeat(64), member: "m".repeat(64), current: true }],
+    }),
+    success("client:3", {
+      profile: PROFILE,
+      workspace: "w".repeat(64),
+      device: "d".repeat(64),
+      state: "removed",
+    }),
+  );
+  const client = await CoreClient.open(transport);
+  assert.equal((await client.workspaceDevices(PROFILE, "w".repeat(64))).devices[0].current, true);
+  assert.equal(
+    (await client.workspaceDeviceRemove(
+      PROFILE, "w".repeat(64), "d".repeat(64), "x".repeat(16),
+    )).state,
+    "removed",
+  );
+  assert.equal(JSON.parse(transport.written[2]).operation, "workspace.device_remove");
+});
+
 test("workspace policy update uses the declared envelope", async () => {
   const transport = new Scripted(
     success("client:1", CAPABILITIES),

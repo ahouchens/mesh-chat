@@ -1205,6 +1205,7 @@ M5 - supported reusable core
 - [x] Channel transfer offer and acceptance (component, two-service delivery test).
 - [x] Workspace channel-creation, posting and invitation policy updates
       (component).
+- [x] Workspace device listing and owner removal (component, two-service test).
 - [ ] Finer-grained per-channel role policy overrides; the domain supports
       workspace-level policies only.
 - [x] Experimental TypeScript client over the frame contract (component only; no

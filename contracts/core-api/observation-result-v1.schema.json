@@ -76,7 +76,7 @@
           "type": "array",
           "uniqueItems": true,
           "minItems": 3,
-          "maxItems": 42,
+          "maxItems": 44,
           "items": {
             "enum": [
               "runtime.capabilities",
@@ -120,6 +120,8 @@
               "workspace.channel_transfer_offer",
               "workspace.channel_transfer_accept",
               "workspace.policy_update",
+              "workspace.devices",
+              "workspace.device_remove",
               "diagnostics.query"
             ]
           }

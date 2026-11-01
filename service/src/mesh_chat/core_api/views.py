@@ -210,7 +210,8 @@ def pairing_request_view(profile, peer, value):
 
 
 WORKSPACE_ROLES = {"owner", "admin", "member"}
-WORKSPACE_STATES = {"active", "joining", "linking", "left", "removed", "revoked", "archived"}
+WORKSPACE_STATES = {"active", "joining", "linking", "left", "removed", "device_removed",
+                    "revoked", "archived"}
 
 
 def workspace_list_view(profile, items):
@@ -443,3 +444,29 @@ def workspace_policies_view(profile, workspace, value):
     return {"profile": profile, "workspace": workspace,
             "channel_creation": value.channel_creation, "posting": value.posting,
             "invitation_requests": value.invitation_requests}
+
+
+def workspace_devices_view(profile, workspace, items):
+    if any(not isinstance(item, str) or re.fullmatch(r"[A-Za-z0-9_-]{16,128}", item) is None
+           for item in (profile, workspace)):
+        raise ValueError("Invalid workspace device handle")
+    if len(items) > 48:
+        raise ValueError("Workspace device page is unbounded")
+    devices = []
+    for handle, value in items:
+        if (re.fullmatch(r"[A-Za-z0-9_-]{16,128}", handle) is None
+                or not isinstance(value.current, bool)):
+            raise ValueError("Invalid workspace device")
+        devices.append({"device": handle, "member": value.member,
+                        "current": value.current})
+    return {"profile": profile, "workspace": workspace, "devices": devices}
+
+
+def workspace_device_remove_view(profile, workspace, device, state):
+    if any(not isinstance(item, str) or re.fullmatch(r"[A-Za-z0-9_-]{16,128}", item) is None
+           for item in (profile, workspace, device)):
+        raise ValueError("Invalid workspace device removal handle")
+    if state != "removed":
+        raise ValueError("Invalid workspace device removal state")
+    return {"profile": profile, "workspace": workspace, "device": device,
+            "state": "removed"}

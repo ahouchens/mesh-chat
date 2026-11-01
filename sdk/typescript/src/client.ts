@@ -36,6 +36,8 @@ import type {
   WorkspaceDeviceLinkDecisionView,
   WorkspaceDeviceLinkPreviewView,
   WorkspaceDeviceLinkSubmitView,
+  WorkspaceDeviceRemoveView,
+  WorkspaceDevicesView,
   WorkspaceDeviceLinksView,
   WorkspaceDeviceLinkView,
   WorkspaceJoinView,
@@ -459,6 +461,26 @@ export class CoreClient {
     return this.request<WorkspaceDeviceLinkPreviewView>(
       "workspace.device_link_preview",
       { profile, document },
+    );
+  }
+
+  async workspaceDevices(profile: string, workspace: string): Promise<WorkspaceDevicesView> {
+    return this.request<WorkspaceDevicesView>("workspace.devices", { profile, workspace });
+  }
+
+  async workspaceDeviceRemove(
+    profile: string,
+    workspace: string,
+    device: string,
+    idempotencyKey: string,
+  ): Promise<WorkspaceDeviceRemoveView> {
+    if (idempotencyKey.length < 16) {
+      throw new ProtocolError("device removal requires a caller key");
+    }
+    return this.request<WorkspaceDeviceRemoveView>(
+      "workspace.device_remove",
+      { profile, workspace, device },
+      { idempotencyKey },
     );
   }
 

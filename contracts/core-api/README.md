@@ -325,7 +325,9 @@ caller key, `workspace.channel_update` edits a channel's name and topic, and
 keyed and expose only handles and the offered/accepted state.
 `workspace.policy_update` sets the workspace's channel-creation, posting and
 invitation-request policies for the active owner and returns only the applied
-values. `workspace.device_link_create` returns
+values. `workspace.devices` lists caller-scoped device handles with their member
+handle and current-device flag, and `workspace.device_remove` lets the owner
+request and approve removal of a linked device in one keyed operation. `workspace.device_link_create` returns
 signed device-link material for the caller's own member device — the same public
 onboarding artifact the application shows — and `workspace.device_link_preview`
 verifies a link and returns the workspace name, member display name, device count

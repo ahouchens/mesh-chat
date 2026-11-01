@@ -95,6 +95,8 @@ def test_each_designed_operation_has_an_executable_request_vector_and_permission
         "workspace.channel_transfer_offer": {"workspace": handle, "channel": handle,
                                             "member": handle},
         "workspace.channel_transfer_accept": {"workspace": handle, "channel": handle},
+        "workspace.devices": {"workspace": handle},
+        "workspace.device_remove": {"workspace": handle, "device": handle},
         "workspace.policy_update": {"workspace": handle,
                                   "channel_creation": "owner_and_admins",
                                   "posting": "owner_and_admins",

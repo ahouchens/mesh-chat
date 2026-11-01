@@ -269,3 +269,16 @@ export interface WorkspacePolicyView {
   posting: "all_members" | "owner_and_admins";
   invitation_requests: "owner_only" | "owner_and_admins" | "all_members_request";
 }
+
+export interface WorkspaceDevicesView {
+  profile: string;
+  workspace: string;
+  devices: Array<{ device: string; member: string; current: boolean }>;
+}
+
+export interface WorkspaceDeviceRemoveView {
+  profile: string;
+  workspace: string;
+  device: string;
+  state: "removed";
+}

@@ -54,7 +54,8 @@
             "removed",
             "revoked",
             "archived",
-            "linking"
+            "linking",
+            "device_removed"
           ]
         }
       }

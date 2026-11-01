@@ -192,6 +192,17 @@ class CoreClient:
                              "channel": channel, "members": members},
                             idempotency_key=key)
 
+    def workspace_devices(self, handle, workspace):
+        return self.request("workspace.devices",
+                            {"profile": handle, "workspace": workspace})
+
+    def workspace_device_remove(self, handle, workspace, device, key):
+        if not isinstance(key, str) or len(key) < 16:
+            raise ValueError("Device removal requires a caller-scoped key")
+        return self.request("workspace.device_remove",
+                            {"profile": handle, "workspace": workspace, "device": device},
+                            idempotency_key=key)
+
     def workspace_policy_update(self, handle, workspace, channel_creation, posting,
                                 invitation_requests, key):
         allowed_creation = {"all_members", "owner_and_admins"}

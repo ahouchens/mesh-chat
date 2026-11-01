@@ -201,6 +201,23 @@ def test_client_device_link_helpers_use_the_declared_envelopes():
     assert preview["operation"] == "workspace.device_link_preview"
 
 
+def test_client_device_listing_and_removal_use_declared_envelopes():
+    transport = Scripted(
+        reply(CAPABILITIES),
+        reply({"profile": PROFILE, "workspace": "w" * 64,
+               "devices": [{"device": "d" * 64, "member": "m" * 64, "current": True}]},
+              "client:2"),
+        reply({"profile": PROFILE, "workspace": "w" * 64, "device": "d" * 64,
+               "state": "removed"}, "client:3"),
+    )
+    client = CoreClient.open(transport.readline, transport.write)
+    assert client.workspace_devices(PROFILE, "w" * 64)["devices"][0]["current"] is True
+    assert client.workspace_device_remove(
+        PROFILE, "w" * 64, "d" * 64, "x" * 16)["state"] == "removed"
+    assert decode_frame(transport.written[1])["operation"] == "workspace.devices"
+    assert decode_frame(transport.written[2])["operation"] == "workspace.device_remove"
+
+
 def test_client_policy_update_uses_the_declared_envelope():
     transport = Scripted(
         reply(CAPABILITIES),
