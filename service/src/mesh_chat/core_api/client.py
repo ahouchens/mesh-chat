@@ -118,14 +118,23 @@ class CoreClient:
     def workspace_channels(self, handle, workspace):
         return self.request("workspace.channels", {"profile": handle, "workspace": workspace})
 
-    def workspace_channel_create(self, handle, workspace, name, key):
+    def workspace_channel_create(self, handle, workspace, name, key, *,
+                                 visibility="public", members=None):
         if not isinstance(name, str) or not 1 <= len(name) <= 64:
             raise ValueError("Channel name is invalid")
+        if visibility not in {"public", "private"}:
+            raise ValueError("Channel visibility is invalid")
         if not isinstance(key, str) or len(key) < 16:
             raise ValueError("Channel creation requires a caller-scoped key")
-        return self.request("workspace.channel_create",
-                            {"profile": handle, "workspace": workspace, "name": name},
-                            idempotency_key=key)
+        params = {"profile": handle, "workspace": workspace, "name": name,
+                  "visibility": visibility}
+        if visibility == "private":
+            if not members or not 1 <= len(members) <= 8:
+                raise ValueError("Private channels require one to eight members")
+            params["members"] = list(members)
+        elif members:
+            raise ValueError("Public channels do not take a member list")
+        return self.request("workspace.channel_create", params, idempotency_key=key)
 
     def workspace_device_link_create(self, handle, workspace, key):
         if not isinstance(key, str) or len(key) < 16:
@@ -171,6 +180,21 @@ class CoreClient:
         return self.request("workspace.channel_update",
                             {"profile": handle, "workspace": workspace, "channel": channel,
                              "name": name, "topic": topic},
+                            idempotency_key=key)
+
+    def workspace_list(self, handle):
+        return self.request("workspace.query", {"profile": handle})
+
+    def workspace_join_requests(self, handle, workspace):
+        return self.request("workspace.join_requests",
+                            {"profile": handle, "workspace": workspace})
+
+    def workspace_join_approve(self, handle, workspace, request_handle, key):
+        if not isinstance(key, str) or len(key) < 16:
+            raise ValueError("Workspace approvals require a caller-scoped key")
+        return self.request("workspace.join_approve",
+                            {"profile": handle, "workspace": workspace,
+                             "request": request_handle},
                             idempotency_key=key)
 
     def workspace_members(self, handle, workspace):

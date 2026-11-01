@@ -5,7 +5,7 @@ import json
 
 import pytest
 
-from mesh_chat.core_api.cli import run as run_cli
+from mesh_chat.core_api.cli import main, run as run_cli
 from mesh_chat.core_api.client import CoreClient, CoreClientError
 from mesh_chat.core_api.wire_codec import decode_frame, encode_frame
 
@@ -316,3 +316,54 @@ def test_cli_reports_an_unreadable_pairing_document():
     assert run_cli(["--pipe", "pipe", "--profile", PROFILE, "pairing-accept",
                     "--document-file", "missing-invitation.txt"], transport, out, err) == 2
     assert json.loads(err.getvalue())["error"] == "invalid_document"
+
+
+def test_cli_version_reports_the_component_version(capsys):
+    from mesh_chat.core_api import __version__
+
+    assert main(["--version"]) == 0
+    assert capsys.readouterr().out.strip() == __version__
+
+
+def test_cli_dispatches_workspace_and_device_commands(tmp_path):
+    document = tmp_path / "device-link.txt"
+    document.write_text("signed-device-link", encoding="utf-8")
+
+    def invoke(command, body):
+        transport = Scripted(reply(CAPABILITIES), reply(body, "client:2"))
+        out, err = io.StringIO(), io.StringIO()
+        assert run_cli(["--pipe", r"\\.\pipe\mesh-chat-test", *command],
+                       transport, out, err) == 0
+        assert err.getvalue() == ""
+        return transport, json.loads(out.getvalue())
+
+    transport, result = invoke(["workspace-channels", "--workspace", "w" * 64],
+                               {"profile": PROFILE, "workspace": "w" * 64,
+                                "channels": [{"channel": "c" * 64, "name": "Core",
+                                              "visibility": "public", "state": "active"}]})
+    assert result["channels"][0]["name"] == "Core"
+    transport, result = invoke(["workspace-channel-create", "--workspace", "w" * 64,
+                                "--name", "Secret", "--visibility", "private",
+                                "--member", "m" * 64, "--key", "k" * 16],
+                               {"profile": PROFILE, "workspace": "w" * 64,
+                                "channel": "c" * 64, "name": "Secret",
+                                "visibility": "private"})
+    assert decode_frame(transport.written[1])["params"]["members"] == ["m" * 64]
+    transport, result = invoke(["workspace-channel-archive", "--workspace", "w" * 64,
+                                "--channel", "c" * 64, "--key", "r" * 16],
+                               {"profile": PROFILE, "workspace": "w" * 64,
+                                "channel": "c" * 64, "state": "archived"})
+    assert result["state"] == "archived"
+    transport, result = invoke(["workspace-device-link-create", "--workspace", "w" * 64,
+                                "--key", "l" * 16],
+                               {"profile": PROFILE, "workspace": "w" * 64,
+                                "document": "signed-device-link",
+                                "link": "meshchat://workspace-device/token", "expires_at": 1})
+    assert result["document"] == "signed-device-link"
+    transport, result = invoke(["workspace-device-link-preview",
+                                "--document-file", str(document)],
+                               {"profile": PROFILE, "workspace": "w" * 64, "name": "Core",
+                                "member_display_name": "Alex", "device_count": 1,
+                                "expires_at": 1})
+    assert result["device_count"] == 1
+    assert decode_frame(transport.written[1])["params"]["document"] == "signed-device-link"

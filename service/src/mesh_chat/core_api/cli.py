@@ -44,6 +44,50 @@ def build_parser():
     pairing_accept = commands.add_parser("pairing-accept", help="accept a signed invitation file")
     pairing_accept.add_argument("--document-file", required=True)
     commands.add_parser("stop", help="ask the owning host to stop and close the stream")
+    pairing_request = commands.add_parser("pairing-request", help="send or resend a signed request")
+    pairing_request.add_argument("--peer", required=True)
+    commands.add_parser("workspace-list", help="list caller-scoped workspaces")
+    queries = (
+        ("workspace-requests", "list pending join requests", ("--workspace",)),
+        ("workspace-members", "list workspace members", ("--workspace",)),
+        ("workspace-channels", "list workspace channels", ("--workspace",)),
+    )
+    for name, help_text, options in queries:
+        command = commands.add_parser(name, help=help_text)
+        for option in options:
+            command.add_argument(option, required=True)
+    approve = commands.add_parser("workspace-approve", help="approve a join request")
+    decline = commands.add_parser("workspace-decline", help="decline a join request")
+    for command in (approve, decline):
+        command.add_argument("--workspace", required=True)
+        command.add_argument("--request", required=True)
+        command.add_argument("--key", required=True)
+    role = commands.add_parser("workspace-role", help="change a member role")
+    role.add_argument("--workspace", required=True)
+    role.add_argument("--member", required=True)
+    role.add_argument("--role", required=True, choices=("admin", "member"))
+    role.add_argument("--key", required=True)
+    channel_create = commands.add_parser("workspace-channel-create", help="create a channel")
+    channel_create.add_argument("--workspace", required=True)
+    channel_create.add_argument("--name", required=True)
+    channel_create.add_argument("--visibility", choices=("public", "private"), default="public")
+    channel_create.add_argument("--member", action="append", dest="members", default=[])
+    channel_create.add_argument("--key", required=True)
+    channel_update = commands.add_parser("workspace-channel-update", help="edit a channel")
+    channel_update.add_argument("--workspace", required=True)
+    channel_update.add_argument("--channel", required=True)
+    channel_update.add_argument("--name", required=True)
+    channel_update.add_argument("--topic", default="")
+    channel_update.add_argument("--key", required=True)
+    channel_archive = commands.add_parser("workspace-channel-archive", help="archive a channel")
+    channel_archive.add_argument("--workspace", required=True)
+    channel_archive.add_argument("--channel", required=True)
+    channel_archive.add_argument("--key", required=True)
+    device_create = commands.add_parser("workspace-device-link-create", help="create a device link")
+    device_create.add_argument("--workspace", required=True)
+    device_create.add_argument("--key", required=True)
+    device_preview = commands.add_parser("workspace-device-link-preview", help="preview a device link")
+    device_preview.add_argument("--document-file", required=True)
     return parser
 
 
@@ -78,6 +122,42 @@ def execute(args, client):
         return client.pairing_accept(profile, document)
     if args.command == "stop":
         return client.stop()
+    if args.command == "pairing-request":
+        return client.pairing_request(profile, args.peer)
+    if args.command == "workspace-list":
+        return client.workspace_list(profile)
+    if args.command == "workspace-requests":
+        return client.workspace_join_requests(profile, args.workspace)
+    if args.command == "workspace-members":
+        return client.workspace_members(profile, args.workspace)
+    if args.command == "workspace-channels":
+        return client.workspace_channels(profile, args.workspace)
+    if args.command == "workspace-approve":
+        return client.workspace_join_approve(profile, args.workspace, args.request, args.key)
+    if args.command == "workspace-decline":
+        return client.workspace_join_decline(profile, args.workspace, args.request, args.key)
+    if args.command == "workspace-role":
+        return client.workspace_member_role(profile, args.workspace, args.member,
+                                            args.role, args.key)
+    if args.command == "workspace-channel-create":
+        return client.workspace_channel_create(
+            profile, args.workspace, args.name, args.key,
+            visibility=args.visibility, members=args.members)
+    if args.command == "workspace-channel-update":
+        return client.workspace_channel_update(profile, args.workspace, args.channel,
+                                               args.name, args.topic, args.key)
+    if args.command == "workspace-channel-archive":
+        return client.workspace_channel_archive(profile, args.workspace, args.channel,
+                                                args.key)
+    if args.command == "workspace-device-link-create":
+        return client.workspace_device_link_create(profile, args.workspace, args.key)
+    if args.command == "workspace-device-link-preview":
+        try:
+            with open(args.document_file, encoding="utf-8") as handle:
+                document = handle.read(65537)
+        except OSError as error:
+            raise CoreClientError("invalid_document") from error
+        return client.workspace_device_link_preview(profile, document)
     raise CoreClientError("unsupported_operation")
 
 
@@ -99,7 +179,12 @@ def run(argv, transport, out, err):
 
 def main(argv=None):
     import sys
+    from . import __version__
+
     args = sys.argv[1:] if argv is None else argv
+    if args == ["--version"]:
+        sys.stdout.write(__version__ + "\n")
+        return 0
     parsed = build_parser().parse_args(args)
     try:
         from .pipe_client import connect
