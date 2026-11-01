@@ -201,6 +201,22 @@ def test_client_device_link_helpers_use_the_declared_envelopes():
     assert preview["operation"] == "workspace.device_link_preview"
 
 
+def test_client_policy_update_uses_the_declared_envelope():
+    transport = Scripted(
+        reply(CAPABILITIES),
+        reply({"profile": PROFILE, "workspace": "w" * 64,
+               "channel_creation": "owner_and_admins", "posting": "owner_and_admins",
+               "invitation_requests": "owner_only"}, "client:2"),
+    )
+    client = CoreClient.open(transport.readline, transport.write)
+    applied = client.workspace_policy_update(
+        PROFILE, "w" * 64, "owner_and_admins", "owner_and_admins", "owner_only", "y" * 16)
+    assert applied["posting"] == "owner_and_admins"
+    sent = decode_frame(transport.written[1])
+    assert sent["operation"] == "workspace.policy_update"
+    assert sent["idempotency_key"] == "y" * 16
+
+
 def test_client_channel_transfer_helpers_use_declared_envelopes():
     transport = Scripted(
         reply(CAPABILITIES),

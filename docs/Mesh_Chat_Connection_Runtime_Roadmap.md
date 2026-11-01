@@ -1203,7 +1203,10 @@ M5 - supported reusable core
 - [x] Workspace device-link creation, preview, submission and sponsor
       approval/decline (component, two-service delivery test).
 - [x] Channel transfer offer and acceptance (component, two-service delivery test).
-- [ ] Role-scoped channel policy overrides.
+- [x] Workspace channel-creation, posting and invitation policy updates
+      (component).
+- [ ] Finer-grained per-channel role policy overrides; the domain supports
+      workspace-level policies only.
 - [x] Experimental TypeScript client over the frame contract (component only; no
       packaging, CI conformance, Kotlin client or consumer).
 - [x] Experimental Python client and Windows CLI over the host pipe, with a

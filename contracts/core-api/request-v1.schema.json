@@ -2116,6 +2116,75 @@
         "idempotency_key"
       ],
       "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "api_version": {
+          "const": 1
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        },
+        "operation": {
+          "const": "workspace.policy_update"
+        },
+        "params": {
+          "type": "object",
+          "properties": {
+            "profile": {
+              "$ref": "#/$defs/handle"
+            },
+            "workspace": {
+              "$ref": "#/$defs/handle"
+            },
+            "channel_creation": {
+              "enum": [
+                "all_members",
+                "owner_and_admins"
+              ]
+            },
+            "posting": {
+              "enum": [
+                "all_members",
+                "owner_and_admins"
+              ]
+            },
+            "invitation_requests": {
+              "enum": [
+                "owner_only",
+                "owner_and_admins",
+                "all_members_request"
+              ]
+            }
+          },
+          "required": [
+            "profile",
+            "workspace",
+            "channel_creation",
+            "posting",
+            "invitation_requests"
+          ],
+          "additionalProperties": false
+        },
+        "idempotency_key": {
+          "type": "string",
+          "minLength": 16,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        }
+      },
+      "required": [
+        "api_version",
+        "request_id",
+        "operation",
+        "params",
+        "idempotency_key"
+      ],
+      "additionalProperties": false
     }
   ]
 }

@@ -5,6 +5,13 @@ from typing import Protocol
 
 
 @dataclass(frozen=True)
+class WorkspacePolicies:
+    channel_creation: str
+    posting: str
+    invitation_requests: str
+
+
+@dataclass(frozen=True)
 class WorkspaceSummary:
     workspace: str
     name: str
@@ -140,3 +147,7 @@ class WorkspaceAdmin(Protocol):
 
     def accept_channel_transfer(self, profile: str, workspace: str, channel: str,
                                 operation_id: str) -> str: ...
+
+    def update_policies(self, profile: str, workspace: str, channel_creation: str,
+                        posting: str, invitation_requests: str,
+                        operation_id: str) -> WorkspacePolicies: ...

@@ -249,6 +249,24 @@ class CoreClient private constructor(private val transport: CoreTransport) {
         )
     }
 
+    fun workspacePolicyUpdate(
+        profile: String,
+        workspace: String,
+        channelCreation: String,
+        posting: String,
+        invitationRequests: String,
+        idempotencyKey: String,
+    ): JSONObject {
+        requireKey(idempotencyKey, "workspace policies")
+        return dispatch(
+            "workspace.policy_update",
+            JSONObject().put("profile", profile).put("workspace", workspace)
+                .put("channel_creation", channelCreation).put("posting", posting)
+                .put("invitation_requests", invitationRequests),
+            idempotencyKey,
+        )
+    }
+
     fun workspaceChannelMembers(
         profile: String,
         workspace: String,

@@ -41,6 +41,7 @@ WORKSPACE_DEVICE_LINK_APPROVE_OPERATIONS = ("workspace.device_link_approve",)
 WORKSPACE_DEVICE_LINK_DECLINE_OPERATIONS = ("workspace.device_link_decline",)
 WORKSPACE_CHANNEL_TRANSFER_OFFER_OPERATIONS = ("workspace.channel_transfer_offer",)
 WORKSPACE_CHANNEL_TRANSFER_ACCEPT_OPERATIONS = ("workspace.channel_transfer_accept",)
+WORKSPACE_POLICY_UPDATE_OPERATIONS = ("workspace.policy_update",)
 DIAGNOSTIC_OPERATIONS = ("diagnostics.query",)
 REQUEST_ID = re.compile(r"[A-Za-z0-9._:-]{1,80}\Z")
 HANDLE = re.compile(r"[A-Za-z0-9_-]{16,128}\Z")
@@ -69,7 +70,7 @@ def parse_request(value, operations):
                       "workspace.channel_archive", "workspace.device_link_create",
                       "workspace.device_link_submit", "workspace.device_link_approve",
                       "workspace.device_link_decline", "workspace.channel_transfer_offer",
-                      "workspace.channel_transfer_accept"):
+                      "workspace.channel_transfer_accept", "workspace.policy_update"):
         fields.add("idempotency_key")
     if set(value) != fields:
         raise ApiFailure("invalid_request")
@@ -110,6 +111,20 @@ def parse_request(value, operations):
         if (not isinstance(params, dict) or set(params) != {"profile", "workspace"}
                 or any(not isinstance(item, str) or HANDLE.fullmatch(item) is None
                        for item in params.values())):
+            raise ApiFailure("invalid_request")
+        return operation, params
+    if operation in WORKSPACE_POLICY_UPDATE_OPERATIONS:
+        params = value["params"]
+        if (not isinstance(params, dict)
+                or set(params) != {"profile", "workspace", "channel_creation",
+                                   "posting", "invitation_requests"}
+                or "idempotency_key" not in value
+                or params.get("channel_creation") not in {"all_members", "owner_and_admins"}
+                or params.get("posting") not in {"all_members", "owner_and_admins"}
+                or params.get("invitation_requests") not in {"owner_only", "owner_and_admins",
+                                                             "all_members_request"}
+                or any(not isinstance(params.get(name), str) or HANDLE.fullmatch(params[name]) is None
+                       for name in ("profile", "workspace"))):
             raise ApiFailure("invalid_request")
         return operation, params
     if operation in WORKSPACE_CHANNEL_TRANSFER_OFFER_OPERATIONS:
@@ -403,5 +418,6 @@ COMPONENT_OPERATIONS = (
     + WORKSPACE_DEVICE_LINK_DECLINE_OPERATIONS
     + WORKSPACE_CHANNEL_TRANSFER_OFFER_OPERATIONS
     + WORKSPACE_CHANNEL_TRANSFER_ACCEPT_OPERATIONS
+    + WORKSPACE_POLICY_UPDATE_OPERATIONS
     + DIAGNOSTIC_OPERATIONS
 )

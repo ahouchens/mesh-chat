@@ -261,3 +261,11 @@ export interface WorkspaceChannelTransferAcceptView {
   channel: string;
   state: "accepted";
 }
+
+export interface WorkspacePolicyView {
+  profile: string;
+  workspace: string;
+  channel_creation: "all_members" | "owner_and_admins";
+  posting: "all_members" | "owner_and_admins";
+  invitation_requests: "owner_only" | "owner_and_admins" | "all_members_request";
+}

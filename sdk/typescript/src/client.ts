@@ -32,6 +32,7 @@ import type {
   WorkspaceChannelUpdateView,
   WorkspaceChannelsView,
   WorkspaceDeclineView,
+  WorkspacePolicyView,
   WorkspaceDeviceLinkDecisionView,
   WorkspaceDeviceLinkPreviewView,
   WorkspaceDeviceLinkSubmitView,
@@ -458,6 +459,30 @@ export class CoreClient {
     return this.request<WorkspaceDeviceLinkPreviewView>(
       "workspace.device_link_preview",
       { profile, document },
+    );
+  }
+
+  async workspacePolicyUpdate(
+    profile: string,
+    workspace: string,
+    channelCreation: "all_members" | "owner_and_admins",
+    posting: "all_members" | "owner_and_admins",
+    invitationRequests: "owner_only" | "owner_and_admins" | "all_members_request",
+    idempotencyKey: string,
+  ): Promise<WorkspacePolicyView> {
+    if (idempotencyKey.length < 16) {
+      throw new ProtocolError("workspace policies require a caller key");
+    }
+    return this.request<WorkspacePolicyView>(
+      "workspace.policy_update",
+      {
+        profile,
+        workspace,
+        channel_creation: channelCreation,
+        posting,
+        invitation_requests: invitationRequests,
+      },
+      { idempotencyKey },
     );
   }
 

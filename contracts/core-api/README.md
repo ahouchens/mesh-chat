@@ -320,10 +320,12 @@ administrator with a caller key; private channels require one to eight member
 handles. `workspace.channel_members` reads a private channel's caller-scoped
 member handles, `workspace.channel_members_update` replaces that roster with a
 caller key, `workspace.channel_update` edits a channel's name and topic, and
-`workspace.channel_archive` archives it. `workspace.channel_transfer_offer` hands
-a channel to one member and `workspace.channel_transfer_accept` lets that successor
-take management; both are keyed and expose only handles and the offered/accepted
-state. `workspace.device_link_create` returns
+`workspace.channel_archive` archives it. `workspace.channel_transfer_offer` hands a channel to one member and
+`workspace.channel_transfer_accept` lets that successor take management; both are
+keyed and expose only handles and the offered/accepted state.
+`workspace.policy_update` sets the workspace's channel-creation, posting and
+invitation-request policies for the active owner and returns only the applied
+values. `workspace.device_link_create` returns
 signed device-link material for the caller's own member device — the same public
 onboarding artifact the application shows — and `workspace.device_link_preview`
 verifies a link and returns the workspace name, member display name, device count

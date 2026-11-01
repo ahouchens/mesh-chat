@@ -4,6 +4,7 @@ from ..errors import ContactNotApproved, InvitationExpired, InvitationInvalid, V
 from .errors import ApiFailure
 from .service_messages import storage_errors
 from .workspace_admin import (ChannelEdit, ChannelSummary, DeviceLink, DeviceLinkPreview,
+                              WorkspacePolicies,
                               DeviceLinkSubmission,
                               JoinApproval, JoinRequestSummary,
                               MemberRoleChange, MemberSummary, WorkspaceSummary)
@@ -487,3 +488,34 @@ class ServiceWorkspaceAdmin:
             if accepted.get("manager_member_id") != local_member:
                 raise ApiFailure("internal")
             return "accepted"
+
+    def update_policies(self, profile, workspace_id, channel_creation, posting,
+                        invitation_requests, operation_id):
+        self._require_local(profile)
+        if (channel_creation not in {"all_members", "owner_and_admins"}
+                or posting not in {"all_members", "owner_and_admins"}
+                or invitation_requests not in {"owner_only", "owner_and_admins",
+                                               "all_members_request"}
+                or not isinstance(operation_id, str) or not operation_id):
+            raise ApiFailure("invalid_request")
+        with storage_errors():
+            workspace = self._workspace(workspace_id)
+            if workspace.get("local_role") != "owner":
+                raise ApiFailure("forbidden")
+            try:
+                self._service.update_workspace_policies(
+                    workspace_id, channel_creation, posting, operation_id,
+                    invitation_requests)
+            except (ValidationError, ContactNotApproved) as error:
+                raise ApiFailure("invalid_request") from error
+            updated = self._workspace(workspace_id)
+            policies = updated.get("policies")
+            if not isinstance(policies, dict):
+                raise ApiFailure("internal")
+            applied = WorkspacePolicies(
+                policies.get("channel_creation"), policies.get("posting"),
+                policies.get("invitation_requests"))
+            if applied != WorkspacePolicies(channel_creation, posting,
+                                             invitation_requests):
+                raise ApiFailure("internal")
+            return applied

@@ -45,6 +45,7 @@
     "workspace.device_link_decline",
     "workspace.channel_transfer_offer",
     "workspace.channel_transfer_accept",
+    "workspace.policy_update",
     "diagnostics.query"
   ],
   "operations": [
@@ -379,6 +380,13 @@
     },
     {
       "operation": "workspace.channel_transfer_accept",
+      "permission": "approve",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "caller_profile_operation_key"
+    },
+    {
+      "operation": "workspace.policy_update",
       "permission": "approve",
       "scope": "profile",
       "mutation": true,

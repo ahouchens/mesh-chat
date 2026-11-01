@@ -457,3 +457,25 @@ def test_channel_transfers_can_be_offered_and_accepted(tmp_path):
     finally:
         owner.close()
         member.close()
+
+
+def test_workspace_owners_can_update_workspace_policies(admin_pair):
+    owner, _, _ = admin_pair
+    session, profile = open_client(owner)
+    workspace = session.request(request("workspace.query", profile=profile)
+                                )["result"]["workspaces"][0]["workspace"]
+    update = {"api_version": 1, "request_id": "request:1",
+              "operation": "workspace.policy_update",
+              "params": {"profile": profile, "workspace": workspace,
+                         "channel_creation": "owner_and_admins",
+                         "posting": "owner_and_admins",
+                         "invitation_requests": "owner_only"},
+              "idempotency_key": "y" * 32}
+    applied = session.request(update)
+    assert applied["ok"], applied
+    assert applied["result"]["channel_creation"] == "owner_and_admins"
+    assert applied["result"]["posting"] == "owner_and_admins"
+    Draft202012Validator(
+        json.loads((CONTRACTS / "workspace-policy-update-result-v1.schema.json").read_text())
+    ).validate(applied)
+    assert session.request(update)["result"] == applied["result"]

@@ -429,3 +429,17 @@ def workspace_channel_transfer_accept_view(profile, workspace, channel):
         raise ValueError("Invalid channel transfer accept handle")
     return {"profile": profile, "workspace": workspace, "channel": channel,
             "state": "accepted"}
+
+
+def workspace_policies_view(profile, workspace, value):
+    if any(not isinstance(item, str) or re.fullmatch(r"[A-Za-z0-9_-]{16,128}", item) is None
+           for item in (profile, workspace)):
+        raise ValueError("Invalid workspace policy handle")
+    if (value.channel_creation not in {"all_members", "owner_and_admins"}
+            or value.posting not in {"all_members", "owner_and_admins"}
+            or value.invitation_requests not in {"owner_only", "owner_and_admins",
+                                                 "all_members_request"}):
+        raise ValueError("Invalid workspace policy")
+    return {"profile": profile, "workspace": workspace,
+            "channel_creation": value.channel_creation, "posting": value.posting,
+            "invitation_requests": value.invitation_requests}

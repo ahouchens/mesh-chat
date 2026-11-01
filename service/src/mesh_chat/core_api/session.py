@@ -23,6 +23,7 @@ from .views import (
     device_link_submit_view, device_links_view,
     workspace_channel_archive_view,
     workspace_channel_create_view, workspace_channel_transfer_accept_view,
+    workspace_policies_view,
     workspace_channel_transfer_offer_view,
     workspace_channel_members_view,
     workspace_channel_update_view, workspace_channels_view, workspace_join_view,
@@ -42,6 +43,7 @@ from .requests import (
     WORKSPACE_CHANNEL_MEMBERS_OPERATIONS,
     WORKSPACE_CHANNEL_MEMBERS_UPDATE_OPERATIONS, WORKSPACE_CHANNEL_UPDATE_OPERATIONS,
     WORKSPACE_CHANNEL_TRANSFER_ACCEPT_OPERATIONS, WORKSPACE_CHANNEL_TRANSFER_OFFER_OPERATIONS,
+    WORKSPACE_POLICY_UPDATE_OPERATIONS,
     WORKSPACE_DEVICE_LINK_APPROVE_OPERATIONS, WORKSPACE_DEVICE_LINK_CREATE_OPERATIONS,
     WORKSPACE_DEVICE_LINK_DECLINE_OPERATIONS, WORKSPACE_DEVICE_LINK_PREVIEW_OPERATIONS,
     WORKSPACE_DEVICE_LINK_SUBMIT_OPERATIONS, WORKSPACE_DEVICE_LINKS_OPERATIONS,
@@ -166,6 +168,7 @@ class CoreSession:
             (WORKSPACE_DEVICE_LINK_DECLINE_OPERATIONS, self._workspace_admin),
             (WORKSPACE_CHANNEL_TRANSFER_OFFER_OPERATIONS, self._workspace_admin),
             (WORKSPACE_CHANNEL_TRANSFER_ACCEPT_OPERATIONS, self._workspace_admin),
+            (WORKSPACE_POLICY_UPDATE_OPERATIONS, self._workspace_admin),
             (DIAGNOSTIC_OPERATIONS, self._diagnostics),
         ):
             if port is not None:
@@ -203,7 +206,8 @@ class CoreSession:
                                                         "workspace.device_link_approve",
                                                         "workspace.device_link_decline",
                                                         "workspace.channel_transfer_offer",
-                                                        "workspace.channel_transfer_accept"}:
+                                                        "workspace.channel_transfer_accept",
+                                                        "workspace.policy_update"}:
                     raise ApiFailure("invalid_request")
                 permission = {"message.enqueue": "send", "message.query": "read", "message.list": "read",
                               "message.received": "read", "events.poll": "read", "events.ack": "read",
@@ -232,6 +236,7 @@ class CoreSession:
                               "workspace.device_link_decline": "approve",
                               "workspace.channel_transfer_offer": "approve",
                               "workspace.channel_transfer_accept": "approve",
+                              "workspace.policy_update": "approve",
                               "diagnostics.query": "diagnose"}.get(operation, "observe")
                 if permission not in grant.permissions:
                     raise ApiFailure("forbidden")
@@ -437,6 +442,17 @@ class CoreSession:
             link = self._workspace_admin.device_link_create(
                 target, inside, self._operation_id(grant, target, key))
             return device_link_create_view(params["profile"], params["workspace"], link)
+        if operation in WORKSPACE_POLICY_UPDATE_OPERATIONS:
+            target = profiles.get(params["profile"])
+            if target is None:
+                raise ApiFailure("forbidden")
+            inside = self._workspace_target(grant, target, params["workspace"])
+            if key is None:
+                raise ApiFailure("invalid_request")
+            applied = self._workspace_admin.update_policies(
+                target, inside, params["channel_creation"], params["posting"],
+                params["invitation_requests"], self._operation_id(grant, target, key))
+            return workspace_policies_view(params["profile"], params["workspace"], applied)
         if operation in WORKSPACE_CHANNEL_TRANSFER_OFFER_OPERATIONS:
             target = profiles.get(params["profile"])
             if target is None:

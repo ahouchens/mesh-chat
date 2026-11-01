@@ -335,6 +335,25 @@ test("device link helpers use the declared envelopes", async () => {
   assert.equal(preview.operation, "workspace.device_link_preview");
 });
 
+test("workspace policy update uses the declared envelope", async () => {
+  const transport = new Scripted(
+    success("client:1", CAPABILITIES),
+    success("client:2", {
+      profile: PROFILE,
+      workspace: "w".repeat(64),
+      channel_creation: "owner_and_admins",
+      posting: "owner_and_admins",
+      invitation_requests: "owner_only",
+    }),
+  );
+  const client = await CoreClient.open(transport);
+  const applied = await client.workspacePolicyUpdate(
+    PROFILE, "w".repeat(64), "owner_and_admins", "owner_and_admins", "owner_only", "y".repeat(16),
+  );
+  assert.equal(applied.posting, "owner_and_admins");
+  assert.equal(JSON.parse(transport.written[1]).operation, "workspace.policy_update");
+});
+
 test("channel transfer helpers use declared envelopes", async () => {
   const transport = new Scripted(
     success("client:1", CAPABILITIES),

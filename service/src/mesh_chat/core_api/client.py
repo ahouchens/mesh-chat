@@ -192,6 +192,22 @@ class CoreClient:
                              "channel": channel, "members": members},
                             idempotency_key=key)
 
+    def workspace_policy_update(self, handle, workspace, channel_creation, posting,
+                                invitation_requests, key):
+        allowed_creation = {"all_members", "owner_and_admins"}
+        if channel_creation not in allowed_creation or posting not in allowed_creation:
+            raise ValueError("Workspace policy is invalid")
+        if invitation_requests not in {"owner_only", "owner_and_admins",
+                                       "all_members_request"}:
+            raise ValueError("Invitation policy is invalid")
+        if not isinstance(key, str) or len(key) < 16:
+            raise ValueError("Workspace policies require a caller-scoped key")
+        return self.request("workspace.policy_update",
+                            {"profile": handle, "workspace": workspace,
+                             "channel_creation": channel_creation, "posting": posting,
+                             "invitation_requests": invitation_requests},
+                            idempotency_key=key)
+
     def workspace_channel_transfer_offer(self, handle, workspace, channel, member, key):
         if not isinstance(key, str) or len(key) < 16:
             raise ValueError("Channel transfers require a caller-scoped key")
