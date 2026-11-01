@@ -1,3 +1,4 @@
+# Narrowed-selection fixture: this module only exercises the selector.
 import importlib.util
 from pathlib import Path
 import subprocess
