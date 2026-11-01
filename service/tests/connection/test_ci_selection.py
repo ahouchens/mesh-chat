@@ -99,3 +99,31 @@ def test_failed_optional_workflow_is_not_hidden_by_an_exclusion():
     jobs["android"]["result"] = "failure"
     with pytest.raises(ValueError):
         ci.validate(plan, jobs)
+
+
+def test_connection_tests_alone_skip_platform_compilation_suites():
+    plan = ci.select(["service/tests/connection/test_core_messages.py",
+                      "service/tests/connection/test_workspace_service.py"])
+    assert plan["required"] == ["policy", "verification"]
+    assert plan["reason"] == "isolated_connection_tests"
+    jobs = {suite: {"result": "success" if suite in plan["required"] else "skipped"}
+            for suite in ci.SUITES}
+    ci.validate(plan, jobs)
+
+
+@pytest.mark.parametrize("paths", [
+    ["service/tests/connection/test_core_messages.py", "service/src/mesh_chat/service.py"],
+    ["service/tests/test_workspace_service.py"],
+    ["service/tests/connection/conftest.py"],
+    ["service/tests/connection/fixture.json"],
+    ["service/tests/connection/../test_workspace_service.py"],
+    ["docs/guide.md", "service/tests/connection/test_core_messages.py"],
+])
+def test_mixed_or_non_test_paths_still_require_the_full_matrix(paths):
+    assert ci.select(paths)["required"] == list(ci.SUITES)
+
+
+@pytest.mark.parametrize("event", ["workflow_dispatch", "merge_group", "release", "schedule"])
+def test_connection_test_narrowing_is_limited_to_branch_events(event):
+    assert ci.select(["service/tests/connection/test_core_messages.py"],
+                     event=event)["required"] == list(ci.SUITES)
