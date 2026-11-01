@@ -40,6 +40,9 @@
     "workspace.device_link_create",
     "workspace.device_link_preview",
     "workspace.device_link_submit",
+    "workspace.device_links",
+    "workspace.device_link_approve",
+    "workspace.device_link_decline",
     "diagnostics.query"
   ],
   "operations": [
@@ -340,6 +343,27 @@
     {
       "operation": "workspace.device_link_submit",
       "permission": "pair",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "caller_profile_operation_key"
+    },
+    {
+      "operation": "workspace.device_links",
+      "permission": "approve",
+      "scope": "profile",
+      "mutation": false,
+      "idempotency": "query"
+    },
+    {
+      "operation": "workspace.device_link_approve",
+      "permission": "approve",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "caller_profile_operation_key"
+    },
+    {
+      "operation": "workspace.device_link_decline",
+      "permission": "approve",
       "scope": "profile",
       "mutation": true,
       "idempotency": "caller_profile_operation_key"

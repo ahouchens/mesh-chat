@@ -143,6 +143,26 @@ class CoreClient:
                             {"profile": handle, "workspace": workspace},
                             idempotency_key=key)
 
+    def workspace_device_links(self, handle, workspace):
+        return self.request("workspace.device_links",
+                            {"profile": handle, "workspace": workspace})
+
+    def workspace_device_link_approve(self, handle, workspace, request_handle, key):
+        return self._device_link_decision("workspace.device_link_approve", handle,
+                                          workspace, request_handle, key)
+
+    def workspace_device_link_decline(self, handle, workspace, request_handle, key):
+        return self._device_link_decision("workspace.device_link_decline", handle,
+                                          workspace, request_handle, key)
+
+    def _device_link_decision(self, operation, handle, workspace, request_handle, key):
+        if not isinstance(key, str) or len(key) < 16:
+            raise ValueError("Device-link decisions require a caller-scoped key")
+        return self.request(operation,
+                            {"profile": handle, "workspace": workspace,
+                             "request": request_handle},
+                            idempotency_key=key)
+
     def workspace_device_link_submit(self, handle, document, key):
         if not isinstance(document, str) or not document:
             raise ValueError("Device link material is required")

@@ -233,3 +233,16 @@ export interface WorkspaceDeviceLinkSubmitView {
   name: string;
   state: "linking";
 }
+
+export interface WorkspaceDeviceLinksView {
+  profile: string;
+  workspace: string;
+  links: Array<{ request: string; state: "pending" }>;
+}
+
+export interface WorkspaceDeviceLinkDecisionView {
+  profile: string;
+  workspace: string;
+  link: string;
+  state: "approved" | "declined";
+}

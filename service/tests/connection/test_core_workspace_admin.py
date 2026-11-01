@@ -12,7 +12,7 @@ from mesh_chat.core_api.composition import bind_service_session
 from mesh_chat.core_api.session import Grant
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from test_workspace_service import _deliver, _flush, _op, _service  # noqa: E402
+from test_workspace_service import _deliver, _deliver_all, _flush, _op, _service  # noqa: E402
 
 from test_core_messages import request  # noqa: E402
 
@@ -326,3 +326,66 @@ def test_a_new_device_can_submit_a_device_link_and_wait_for_approval(admin_pair,
         assert new_session.request(invalid)["error"]["code"] == "invalid_request"
     finally:
         new_device.close()
+
+
+def test_pending_device_links_can_be_listed_and_approved(tmp_path):
+    owner, owner_network = _service(tmp_path / "owner", RNS.Identity(), "Alex")
+    owner._shutdown.clear()
+    linked, linked_network = _service(tmp_path / "linked", RNS.Identity(), "Alex")
+    linked._shutdown.clear()
+    try:
+        owner.create_workspace(_op(72000), "Core", "")
+        owner_session, owner_profile = open_client(
+            owner, permissions=("observe", "read", "approve", "pair"))
+        workspace = owner_session.request(request("workspace.query", profile=owner_profile)
+                                          )["result"]["workspaces"][0]["workspace"]
+        created = owner_session.request({
+            "api_version": 1, "request_id": "request:1",
+            "operation": "workspace.device_link_create",
+            "params": {"profile": owner_profile, "workspace": workspace},
+            "idempotency_key": "l" * 32,
+        })
+        linked_session, linked_profile = open_client(
+            linked, permissions=("observe", "read", "approve", "pair"), caller="alex-linked")
+        submitted = linked_session.request({
+            "api_version": 1, "request_id": "request:2",
+            "operation": "workspace.device_link_submit",
+            "params": {"profile": linked_profile, "document": created["result"]["document"]},
+            "idempotency_key": "s" * 32,
+        })
+        assert submitted["ok"], submitted
+        _deliver_all(owner, _flush(linked, linked_network),
+                     source_profile=linked._require_profile(),
+                     recipient_profile=owner._require_profile())
+        listing = owner_session.request(request("workspace.device_links",
+                                                profile=owner_profile, workspace=workspace))
+        assert listing["ok"], listing
+        assert len(listing["result"]["links"]) == 1
+        request_handle = listing["result"]["links"][0]["request"]
+        Draft202012Validator(
+            json.loads((CONTRACTS / "workspace-device-links-result-v1.schema.json").read_text())
+        ).validate(listing)
+        approve = {"api_version": 1, "request_id": "request:3",
+                   "operation": "workspace.device_link_approve",
+                   "params": {"profile": owner_profile, "workspace": workspace,
+                              "request": request_handle},
+                   "idempotency_key": "d" * 32}
+        decided = owner_session.request(approve)
+        assert decided["ok"], decided
+        assert decided["result"]["state"] == "approved"
+        Draft202012Validator(
+            json.loads((CONTRACTS / "workspace-device-link-decision-result-v1.schema.json").read_text())
+        ).validate(decided)
+        assert owner_session.request(approve)["result"] == decided["result"]
+        _deliver_all(linked, _flush(owner, owner_network),
+                     source_profile=owner._require_profile(),
+                     recipient_profile=linked._require_profile())
+        linked_workspace = linked_session.request(request("workspace.query",
+                                                          profile=linked_profile))
+        assert linked_workspace["result"]["workspaces"][0]["state"] == "active"
+        assert owner_session.request(request("workspace.device_links",
+                                             profile=owner_profile, workspace=workspace)
+                                     )["result"]["links"] == []
+    finally:
+        owner.close()
+        linked.close()

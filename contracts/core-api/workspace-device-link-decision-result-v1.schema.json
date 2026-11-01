@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:mesh-chat:core-api:workspace-device-link-decision-result:1",
+  "title": "Experimental device-link decision v1",
+  "description": "Applied approval or decline for one pending device-link request.",
+  "type": "object", "additionalProperties": false,
+  "required": ["api_version", "request_id", "ok", "result"],
+  "properties": {
+    "api_version": {"const": 1},
+    "request_id": {"type": "string", "pattern": "^[A-Za-z0-9._:-]{1,80}$"},
+    "ok": {"const": true},
+    "result": {"$ref": "#/$defs/decision"}
+  },
+  "$defs": {
+    "handle": {"type": "string", "pattern": "^[A-Za-z0-9_-]{16,128}$"},
+    "decision": {
+      "type": "object", "additionalProperties": false,
+      "required": ["profile", "workspace", "link", "state"],
+      "properties": {
+        "profile": {"$ref": "#/$defs/handle"},
+        "workspace": {"$ref": "#/$defs/handle"},
+        "link": {"$ref": "#/$defs/handle"},
+        "state": {"enum": ["approved", "declined"]}
+      }
+    }
+  }
+}

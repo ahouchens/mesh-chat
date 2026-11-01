@@ -19,7 +19,8 @@ from .views import (
     acceptance_view, acknowledgment_view, connection_view, event_view, intent_view, message_view,
     invitation_view, pairing_request_view, pairing_view, peer_view, received_view,
     relationship_view, stop_view, workspace_approve_view, workspace_decline_view,
-    device_link_create_view, device_link_preview_view, device_link_submit_view,
+    device_link_create_view, device_link_decision_view, device_link_preview_view,
+    device_link_submit_view, device_links_view,
     workspace_channel_archive_view,
     workspace_channel_create_view,
     workspace_channel_members_view,
@@ -39,8 +40,9 @@ from .requests import (
     WORKSPACE_CHANNEL_ARCHIVE_OPERATIONS, WORKSPACE_CHANNEL_CREATE_OPERATIONS,
     WORKSPACE_CHANNEL_MEMBERS_OPERATIONS,
     WORKSPACE_CHANNEL_MEMBERS_UPDATE_OPERATIONS, WORKSPACE_CHANNEL_UPDATE_OPERATIONS,
-    WORKSPACE_DEVICE_LINK_CREATE_OPERATIONS, WORKSPACE_DEVICE_LINK_PREVIEW_OPERATIONS,
-    WORKSPACE_DEVICE_LINK_SUBMIT_OPERATIONS,
+    WORKSPACE_DEVICE_LINK_APPROVE_OPERATIONS, WORKSPACE_DEVICE_LINK_CREATE_OPERATIONS,
+    WORKSPACE_DEVICE_LINK_DECLINE_OPERATIONS, WORKSPACE_DEVICE_LINK_PREVIEW_OPERATIONS,
+    WORKSPACE_DEVICE_LINK_SUBMIT_OPERATIONS, WORKSPACE_DEVICE_LINKS_OPERATIONS,
     WORKSPACE_CHANNELS_OPERATIONS, WORKSPACE_LIST_OPERATIONS, WORKSPACE_MEMBERS_OPERATIONS,
     WORKSPACE_PREVIEW_OPERATIONS,
     WORKSPACE_REQUESTS_OPERATIONS, WORKSPACE_ROLE_OPERATIONS, REQUEST_ID, parse_request,
@@ -157,6 +159,9 @@ class CoreSession:
             (WORKSPACE_DEVICE_LINK_CREATE_OPERATIONS, self._workspace_admin),
             (WORKSPACE_DEVICE_LINK_PREVIEW_OPERATIONS, self._workspace_admin),
             (WORKSPACE_DEVICE_LINK_SUBMIT_OPERATIONS, self._workspace_admin),
+            (WORKSPACE_DEVICE_LINKS_OPERATIONS, self._workspace_admin),
+            (WORKSPACE_DEVICE_LINK_APPROVE_OPERATIONS, self._workspace_admin),
+            (WORKSPACE_DEVICE_LINK_DECLINE_OPERATIONS, self._workspace_admin),
             (DIAGNOSTIC_OPERATIONS, self._diagnostics),
         ):
             if port is not None:
@@ -190,7 +195,9 @@ class CoreSession:
                                                         "workspace.channel_update",
                                                         "workspace.channel_archive",
                                                         "workspace.device_link_create",
-                                                        "workspace.device_link_submit"}:
+                                                        "workspace.device_link_submit",
+                                                        "workspace.device_link_approve",
+                                                        "workspace.device_link_decline"}:
                     raise ApiFailure("invalid_request")
                 permission = {"message.enqueue": "send", "message.query": "read", "message.list": "read",
                               "message.received": "read", "events.poll": "read", "events.ack": "read",
@@ -214,6 +221,9 @@ class CoreSession:
                               "workspace.device_link_create": "pair",
                               "workspace.device_link_preview": "pair",
                               "workspace.device_link_submit": "pair",
+                              "workspace.device_links": "approve",
+                              "workspace.device_link_approve": "approve",
+                              "workspace.device_link_decline": "approve",
                               "diagnostics.query": "diagnose"}.get(operation, "observe")
                 if permission not in grant.permissions:
                     raise ApiFailure("forbidden")
@@ -419,6 +429,38 @@ class CoreSession:
             link = self._workspace_admin.device_link_create(
                 target, inside, self._operation_id(grant, target, key))
             return device_link_create_view(params["profile"], params["workspace"], link)
+        if operation in WORKSPACE_DEVICE_LINKS_OPERATIONS:
+            target = profiles.get(params["profile"])
+            if target is None:
+                raise ApiFailure("forbidden")
+            inside = self._workspace_target(grant, target, params["workspace"])
+            requests = self._workspace_admin.device_link_requests(target, inside)
+            return device_links_view(
+                params["profile"], params["workspace"],
+                [self._handle(grant, "device_link", target, item) for item in requests])
+        if operation in WORKSPACE_DEVICE_LINK_APPROVE_OPERATIONS or                 operation in WORKSPACE_DEVICE_LINK_DECLINE_OPERATIONS:
+            target = profiles.get(params["profile"])
+            if target is None:
+                raise ApiFailure("forbidden")
+            inside = self._workspace_target(grant, target, params["workspace"])
+            requests = self._workspace_admin.device_link_ids(target, inside)
+            request_id = next(
+                (item for item in requests
+                 if self._handle(grant, "device_link", target, item) == params["request"]),
+                None)
+            if request_id is None:
+                raise ApiFailure("forbidden")
+            if key is None:
+                raise ApiFailure("invalid_request")
+            operation_id = self._operation_id(grant, target, key)
+            if operation in WORKSPACE_DEVICE_LINK_APPROVE_OPERATIONS:
+                state = self._workspace_admin.approve_device_link(
+                    target, inside, request_id, operation_id)
+            else:
+                state = self._workspace_admin.decline_device_link(
+                    target, inside, request_id, operation_id)
+            return device_link_decision_view(
+                params["profile"], params["workspace"], params["request"], state)
         if operation in WORKSPACE_DEVICE_LINK_SUBMIT_OPERATIONS:
             target = profiles.get(params["profile"])
             if target is None:

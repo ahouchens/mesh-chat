@@ -391,3 +391,25 @@ def device_link_submit_view(profile, workspace, value):
         raise ValueError("Invalid device link submission")
     return {"profile": profile, "workspace": workspace, "name": value.name,
             "state": "linking"}
+
+
+def device_links_view(profile, workspace, links):
+    if any(not isinstance(item, str) or re.fullmatch(r"[A-Za-z0-9_-]{16,128}", item) is None
+           for item in (profile, workspace)):
+        raise ValueError("Invalid device link request handle")
+    if len(links) > 24:
+        raise ValueError("Device link request page is unbounded")
+    for handle in links:
+        if re.fullmatch(r"[A-Za-z0-9_-]{16,128}", handle) is None:
+            raise ValueError("Invalid device link request")
+    return {"profile": profile, "workspace": workspace,
+            "links": [{"request": handle, "state": "pending"} for handle in links]}
+
+
+def device_link_decision_view(profile, workspace, link, state):
+    if any(not isinstance(item, str) or re.fullmatch(r"[A-Za-z0-9_-]{16,128}", item) is None
+           for item in (profile, workspace, link)):
+        raise ValueError("Invalid device link decision handle")
+    if state not in {"approved", "declined"}:
+        raise ValueError("Invalid device link decision")
+    return {"profile": profile, "workspace": workspace, "link": link, "state": state}

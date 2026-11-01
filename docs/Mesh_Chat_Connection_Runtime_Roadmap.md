@@ -1108,10 +1108,11 @@ role. `workspace.channels`, `workspace.channel_create`, `workspace.channel_membe
 private channel basics, private rosters and channel edits for owners and
 administrators, and `workspace.channel_archive` adds the archive transition.
 `workspace.device_link_create`/`workspace.device_link_preview` expose signed
-device-link material and its safe preview, and `workspace.device_link_submit` lets
-a new device admit the workspace as `linking`; sponsor approval is
-still open, so a member can add another device without handling raw documents but
-cannot yet complete the handshake from the facade. Per-peer pairing returns the signed invitation
+device-link material and its safe preview, `workspace.device_link_submit` admits it
+on the new device as `linking`, and `workspace.device_links` plus
+`workspace.device_link_approve`/`decline` let the owner decide the pending link.
+The component flow is complete end to end and tested with two services and real
+delivery; packaged multi-device qualification remains open. Per-peer pairing returns the signed invitation
 document, so callers can exchange it out of band.
 
 ## Component versions
@@ -1199,10 +1200,9 @@ M5 - supported reusable core
       membership and channel editing open).
 - [x] Per-peer signed pairing document returned to the caller.
 - [x] Private channel membership, channel editing and archiving (component only).
-- [x] Workspace device-link creation, preview and new-device submission (component
-      only).
-- [ ] Device-link sponsor approval, channel transfers and role-scoped channel
-      policy overrides.
+- [x] Workspace device-link creation, preview, submission and sponsor
+      approval/decline (component, two-service delivery test).
+- [ ] Channel transfers and role-scoped channel policy overrides.
 - [x] Experimental TypeScript client over the frame contract (component only; no
       packaging, CI conformance, Kotlin client or consumer).
 - [x] Experimental Python client and Windows CLI over the host pipe, with a

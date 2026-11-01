@@ -30,8 +30,10 @@ import type {
   WorkspaceChannelUpdateView,
   WorkspaceChannelsView,
   WorkspaceDeclineView,
+  WorkspaceDeviceLinkDecisionView,
   WorkspaceDeviceLinkPreviewView,
   WorkspaceDeviceLinkSubmitView,
+  WorkspaceDeviceLinksView,
   WorkspaceDeviceLinkView,
   WorkspaceJoinView,
   WorkspaceMemberRoleView,
@@ -366,6 +368,47 @@ export class CoreClient {
     return this.request<WorkspaceDeviceLinkSubmitView>(
       "workspace.device_link_submit",
       { profile, document },
+      { idempotencyKey },
+    );
+  }
+
+  async workspaceDeviceLinks(profile: string, workspace: string): Promise<WorkspaceDeviceLinksView> {
+    return this.request<WorkspaceDeviceLinksView>("workspace.device_links", { profile, workspace });
+  }
+
+  async workspaceDeviceLinkApprove(
+    profile: string,
+    workspace: string,
+    request: string,
+    idempotencyKey: string,
+  ): Promise<WorkspaceDeviceLinkDecisionView> {
+    return this.deviceLinkDecision("workspace.device_link_approve", profile, workspace,
+      request, idempotencyKey);
+  }
+
+  async workspaceDeviceLinkDecline(
+    profile: string,
+    workspace: string,
+    request: string,
+    idempotencyKey: string,
+  ): Promise<WorkspaceDeviceLinkDecisionView> {
+    return this.deviceLinkDecision("workspace.device_link_decline", profile, workspace,
+      request, idempotencyKey);
+  }
+
+  private async deviceLinkDecision(
+    operation: "workspace.device_link_approve" | "workspace.device_link_decline",
+    profile: string,
+    workspace: string,
+    request: string,
+    idempotencyKey: string,
+  ): Promise<WorkspaceDeviceLinkDecisionView> {
+    if (idempotencyKey.length < 16) {
+      throw new ProtocolError("device-link decisions require a caller key");
+    }
+    return this.request<WorkspaceDeviceLinkDecisionView>(
+      operation,
+      { profile, workspace, request },
       { idempotencyKey },
     );
   }

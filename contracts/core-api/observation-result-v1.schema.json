@@ -76,7 +76,7 @@
           "type": "array",
           "uniqueItems": true,
           "minItems": 3,
-          "maxItems": 36,
+          "maxItems": 39,
           "items": {
             "enum": [
               "runtime.capabilities",
@@ -114,6 +114,9 @@
               "workspace.device_link_create",
               "workspace.device_link_preview",
               "workspace.device_link_submit",
+              "workspace.device_links",
+              "workspace.device_link_approve",
+              "workspace.device_link_decline",
               "diagnostics.query"
             ]
           }

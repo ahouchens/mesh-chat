@@ -369,3 +369,72 @@ class ServiceWorkspaceAdmin:
                     or state != "linking"):
                 raise ApiFailure("internal")
             return DeviceLinkSubmission(workspace_id, name, state)
+
+    def _device_transition_entries(self, workspace_id):
+        entries = []
+        for item in self._store.list("workspace_device_transition"):
+            if (item.get("workspace_id") == workspace_id
+                    and item.get("transition_kind") == "link"
+                    and item.get("state") in {"pending", "approved", "declined"}):
+                transition_id, state = item.get("id"), item.get("state")
+                if not isinstance(transition_id, str):
+                    raise ApiFailure("internal")
+                entries.append((transition_id, state))
+        return tuple(sorted(entries))
+
+    def _device_transitions(self, workspace_id):
+        return tuple(item for item, state in self._device_transition_entries(workspace_id)
+                     if state == "pending")
+
+    def device_link_ids(self, profile, workspace_id):
+        self._require_local(profile)
+        with storage_errors():
+            workspace = self._workspace(workspace_id)
+            if workspace.get("local_role") != "owner":
+                raise ApiFailure("forbidden")
+            return tuple(item for item, _ in self._device_transition_entries(workspace_id))
+
+    def device_link_requests(self, profile, workspace_id):
+        self._require_local(profile)
+        with storage_errors():
+            workspace = self._workspace(workspace_id)
+            if workspace.get("local_role") != "owner":
+                raise ApiFailure("forbidden")
+            return self._device_transitions(workspace_id)
+
+    def _decide_device_link(self, profile, workspace_id, request_id, operation_id, approve):
+        self._require_local(profile)
+        if not isinstance(request_id, str) or not request_id:
+            raise ApiFailure("invalid_request")
+        with storage_errors():
+            workspace = self._workspace(workspace_id)
+            if workspace.get("local_role") != "owner":
+                raise ApiFailure("forbidden")
+            states = dict(self._device_transition_entries(workspace_id))
+            if request_id not in states:
+                raise ApiFailure("forbidden")
+            expected = "approved" if approve else "declined"
+            if states[request_id] == expected:
+                return expected
+            if states[request_id] != "pending":
+                raise ApiFailure("invalid_request")
+            try:
+                if approve:
+                    outcome = self._service.approve_workspace_device_link(
+                        workspace_id, request_id, operation_id)
+                else:
+                    outcome = self._service.decline_workspace_device_link(
+                        workspace_id, request_id, operation_id)
+            except (ValidationError, ContactNotApproved) as error:
+                raise ApiFailure("invalid_request") from error
+            state = outcome.get("state")
+            expected = "approved" if approve else "declined"
+            if state != expected or outcome.get("id") != request_id:
+                raise ApiFailure("internal")
+            return expected
+
+    def approve_device_link(self, profile, workspace_id, request_id, operation_id):
+        return self._decide_device_link(profile, workspace_id, request_id, operation_id, True)
+
+    def decline_device_link(self, profile, workspace_id, request_id, operation_id):
+        return self._decide_device_link(profile, workspace_id, request_id, operation_id, False)

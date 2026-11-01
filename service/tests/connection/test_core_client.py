@@ -146,6 +146,29 @@ def test_client_refuses_to_dispatch_an_empty_pairing_document():
     assert len(transport.written) == 1
 
 
+def test_client_device_link_decisions_use_declared_envelopes():
+    transport = Scripted(
+        reply(CAPABILITIES),
+        reply({"profile": PROFILE, "workspace": "w" * 64,
+               "links": [{"request": "r" * 64, "state": "pending"}]}, "client:2"),
+        reply({"profile": PROFILE, "workspace": "w" * 64, "link": "r" * 64,
+               "state": "approved"}, "client:3"),
+        reply({"profile": PROFILE, "workspace": "w" * 64, "link": "r" * 64,
+               "state": "declined"}, "client:4"),
+    )
+    client = CoreClient.open(transport.readline, transport.write)
+    assert client.workspace_device_links(PROFILE, "w" * 64)["links"][0]["request"] == "r" * 64
+    assert client.workspace_device_link_approve(
+        PROFILE, "w" * 64, "r" * 64, "d" * 16)["state"] == "approved"
+    assert client.workspace_device_link_decline(
+        PROFILE, "w" * 64, "r" * 64, "e" * 16)["state"] == "declined"
+    approve = decode_frame(transport.written[2])
+    decline = decode_frame(transport.written[3])
+    assert approve["operation"] == "workspace.device_link_approve"
+    assert decline["operation"] == "workspace.device_link_decline"
+    assert approve["params"]["request"] == "r" * 64
+
+
 def test_client_device_link_submit_uses_the_declared_envelope():
     transport = Scripted(
         reply(CAPABILITIES),

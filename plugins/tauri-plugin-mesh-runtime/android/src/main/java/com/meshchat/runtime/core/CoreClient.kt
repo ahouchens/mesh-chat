@@ -171,6 +171,45 @@ class CoreClient private constructor(private val transport: CoreTransport) {
         )
     }
 
+    fun workspaceDeviceLinks(profile: String, workspace: String): JSONObject = request(
+        "workspace.device_links",
+        JSONObject().put("profile", profile).put("workspace", workspace),
+    )
+
+    fun workspaceDeviceLinkApprove(
+        profile: String,
+        workspace: String,
+        request: String,
+        idempotencyKey: String,
+    ): JSONObject = deviceLinkDecision(
+        "workspace.device_link_approve", profile, workspace, request, idempotencyKey,
+    )
+
+    fun workspaceDeviceLinkDecline(
+        profile: String,
+        workspace: String,
+        request: String,
+        idempotencyKey: String,
+    ): JSONObject = deviceLinkDecision(
+        "workspace.device_link_decline", profile, workspace, request, idempotencyKey,
+    )
+
+    private fun deviceLinkDecision(
+        operation: String,
+        profile: String,
+        workspace: String,
+        request: String,
+        idempotencyKey: String,
+    ): JSONObject {
+        requireKey(idempotencyKey, "device-link decisions")
+        return dispatch(
+            operation,
+            JSONObject().put("profile", profile).put("workspace", workspace)
+                .put("request", request),
+            idempotencyKey,
+        )
+    }
+
     fun workspaceDeviceLinkPreview(profile: String, document: String): JSONObject {
         if (document.isEmpty()) throw CoreException("invalid_request")
         return request(
