@@ -111,6 +111,25 @@ class CoreClient private constructor(private val transport: CoreTransport) {
     fun pairingRequest(profile: String, peer: String): JSONObject =
         request("peer.pairing_request", JSONObject().put("profile", profile).put("peer", peer))
 
+    fun messageQuery(profile: String, message: String): JSONObject = request(
+        "message.query",
+        JSONObject().put("profile", profile).put("message", message),
+    )
+
+    fun messageList(
+        profile: String,
+        cursor: String? = null,
+        limit: Int = 128,
+    ): JSONObject {
+        if (limit !in 1..128) throw CoreException("invalid_request")
+        return request(
+            "message.list",
+            JSONObject().put("profile", profile)
+                .put("cursor", cursor ?: JSONObject.NULL)
+                .put("limit", limit),
+        )
+    }
+
     fun connectionStart(profile: String, peer: String): JSONObject = request(
         "connection.start",
         JSONObject().put("profile", profile).put("peer", peer),

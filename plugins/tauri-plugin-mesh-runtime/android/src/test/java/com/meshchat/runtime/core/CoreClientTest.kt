@@ -222,4 +222,25 @@ class CoreClientTest {
         )
         assertFalse(JSONObject(transport.written[1]).has("idempotency_key"))
     }
+
+    @Test
+    fun messageQueryAndListEmitDeclaredEnvelopes() {
+        val message = JSONObject().put("profile", PROFILE).put("message", "m".repeat(64))
+            .put("recipient", PEER).put("kind", "text").put("text", "Hello")
+            .put("state", "queued").put("created_at", 1)
+        val transport = Scripted(
+            success("client:1", capabilities()),
+            success("client:2", message),
+            success("client:3", JSONObject().put("profile", PROFILE)
+                .put("messages", org.json.JSONArray(listOf(message)))
+                .put("next_cursor", JSONObject.NULL).put("events_cursor", "c".repeat(64))),
+        )
+        val client = CoreClient.open(transport)
+        client.messageQuery(PROFILE, "m".repeat(64))
+        client.messageList(PROFILE, limit = 7)
+        assertEquals("message.query", JSONObject(transport.written[1]).getString("operation"))
+        val listed = JSONObject(transport.written[2])
+        assertEquals("message.list", listed.getString("operation"))
+        assertEquals(7, listed.getJSONObject("params").getInt("limit"))
+    }
 }

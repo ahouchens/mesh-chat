@@ -602,6 +602,34 @@ test("workspace administration helpers use declared envelopes", async () => {
   assert.equal(approve.idempotency_key, "k".repeat(16));
 });
 
+test("message query and list use declared envelopes", async () => {
+  const message = {
+    profile: PROFILE,
+    message: "m".repeat(64),
+    recipient: "q".repeat(64),
+    kind: "text",
+    text: "Hello",
+    state: "queued",
+    created_at: 1,
+  };
+  const transport = new Scripted(
+    success("client:1", CAPABILITIES),
+    success("client:2", message),
+    success("client:3", {
+      profile: PROFILE,
+      messages: [message],
+      next_cursor: null,
+      events_cursor: "c".repeat(64),
+    }),
+  );
+  const client = await CoreClient.open(transport);
+  assert.equal((await client.messageQuery(PROFILE, "m".repeat(64))).text, "Hello");
+  assert.equal((await client.messageList(PROFILE, null, 7)).messages.length, 1);
+  const listed = JSON.parse(transport.written[2]);
+  assert.equal(listed.operation, "message.list");
+  assert.equal(listed.params.limit, 7);
+});
+
 test("connection and peer helpers use declared envelopes", async () => {
   const transport = new Scripted(
     success("client:1", CAPABILITIES),

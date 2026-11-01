@@ -327,3 +327,10 @@ export interface PeerView {
   destination: string;
   trust: string;
 }
+
+export interface MessageListView {
+  profile: string;
+  messages: SnapshotMessage[];
+  next_cursor: string | null;
+  events_cursor: string | null;
+}

@@ -97,6 +97,15 @@ class CoreClient:
     def diagnostics(self, handle, limit=256):
         return self.request("diagnostics.query", {"profile": handle, "limit": limit})
 
+    def message_query(self, handle, message):
+        return self.request("message.query", {"profile": handle, "message": message})
+
+    def message_list(self, handle, cursor=None, limit=128):
+        if type(limit) is not int or not 1 <= limit <= 128:
+            raise ValueError("Message list limit is invalid")
+        return self.request("message.list",
+                            {"profile": handle, "cursor": cursor, "limit": limit})
+
     def connection_start(self, handle, peer):
         return self.request("connection.start", {"profile": handle, "peer": peer})
 

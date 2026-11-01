@@ -117,6 +117,25 @@ def test_cli_rejects_unknown_commands():
     assert raised.value.code == 2
 
 
+def test_client_message_query_and_list_use_the_declared_envelopes():
+    message = {"profile": PROFILE, "message": MESSAGE, "recipient": PEER, "kind": "text",
+               "text": "Hello", "state": "queued", "created_at": 1}
+    transport = Scripted(
+        reply(CAPABILITIES),
+        reply(message, "client:2"),
+        reply({"profile": PROFILE, "messages": [message], "next_cursor": None,
+               "events_cursor": "c" * 64}, "client:3"),
+    )
+    client = CoreClient.open(transport.readline, transport.write)
+    assert client.message_query(PROFILE, MESSAGE)["text"] == "Hello"
+    page = client.message_list(PROFILE, limit=7)
+    assert page["messages"][0]["message"] == MESSAGE
+    query, listed = (decode_frame(payload) for payload in transport.written[1:])
+    assert query["operation"] == "message.query"
+    assert listed["operation"] == "message.list"
+    assert listed["params"] == {"profile": PROFILE, "cursor": None, "limit": 7}
+
+
 def test_client_connection_and_peer_helpers_use_the_declared_envelopes():
     transport = Scripted(
         reply(CAPABILITIES),

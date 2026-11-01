@@ -33,6 +33,8 @@ import type {
   WorkspaceChannelsView,
   WorkspaceDeclineView,
   ConnectionIntentView,
+  MessageListView,
+  SnapshotMessage,
   PeerView,
   WorkspaceApproveView,
   WorkspaceJoinRequestSummary,
@@ -553,6 +555,19 @@ export class CoreClient {
       { profile, workspace, request },
       { idempotencyKey },
     );
+  }
+
+  async messageQuery(profile: string, message: string): Promise<SnapshotMessage> {
+    return this.request<SnapshotMessage>("message.query", { profile, message });
+  }
+
+  async messageList(
+    profile: string,
+    cursor: string | null = null,
+    limit = MAX_BATCH,
+  ): Promise<MessageListView> {
+    bounded(limit, MAX_BATCH, "message list");
+    return this.request<MessageListView>("message.list", { profile, cursor, limit });
   }
 
   async connectionStart(profile: string, peer: string): Promise<ConnectionIntentView> {
