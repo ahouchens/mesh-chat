@@ -1120,7 +1120,9 @@ compatibility declaration carries those versions. A regression binds each source
 constant) to the declaration, so a bump cannot drift between code and contract.
 The TypeScript package stays private and unpublished; none of the clients is a
 redistribution promise, and no supported version pairs exist yet, so SC25 remains
-open.
+open. A package-shape regression now pins the private flag, the contract-bound
+version and the dist-only entry points, so packaging cannot silently leak sources
+or drift from the declaration.
 
 ## Remaining work checklist
 

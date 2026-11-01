@@ -14,3 +14,7 @@ The envelope is LF-delimited JSON with a 4 MiB ceiling. Mutations carry the
 caller-scoped idempotency key the host grants; convergent operations
 (`connection.*`, `peer.approve`/`revoke`, pairing, workspace joins, runtime stop)
 do not accept one.
+
+A packaging regression checks that the package stays private, that its version is
+bound to the compatibility declaration, and that every declared entry point ships
+from `dist`. It is still a shape check, not a published artifact.
