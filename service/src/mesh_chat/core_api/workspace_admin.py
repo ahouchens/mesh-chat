@@ -134,3 +134,9 @@ class WorkspaceAdmin(Protocol):
 
     def decline_device_link(self, profile: str, workspace: str, request_id: str,
                             operation_id: str) -> str: ...
+
+    def offer_channel_transfer(self, profile: str, workspace: str, channel: str,
+                               member_id: str, operation_id: str) -> str: ...
+
+    def accept_channel_transfer(self, profile: str, workspace: str, channel: str,
+                                operation_id: str) -> str: ...

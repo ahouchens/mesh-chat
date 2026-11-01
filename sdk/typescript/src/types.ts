@@ -246,3 +246,18 @@ export interface WorkspaceDeviceLinkDecisionView {
   link: string;
   state: "approved" | "declined";
 }
+
+export interface WorkspaceChannelTransferOfferView {
+  profile: string;
+  workspace: string;
+  channel: string;
+  member: string;
+  state: "offered";
+}
+
+export interface WorkspaceChannelTransferAcceptView {
+  profile: string;
+  workspace: string;
+  channel: string;
+  state: "accepted";
+}

@@ -218,6 +218,37 @@ class CoreClient private constructor(private val transport: CoreTransport) {
         )
     }
 
+    fun workspaceChannelTransferOffer(
+        profile: String,
+        workspace: String,
+        channel: String,
+        member: String,
+        idempotencyKey: String,
+    ): JSONObject {
+        requireKey(idempotencyKey, "channel transfers")
+        return dispatch(
+            "workspace.channel_transfer_offer",
+            JSONObject().put("profile", profile).put("workspace", workspace)
+                .put("channel", channel).put("member", member),
+            idempotencyKey,
+        )
+    }
+
+    fun workspaceChannelTransferAccept(
+        profile: String,
+        workspace: String,
+        channel: String,
+        idempotencyKey: String,
+    ): JSONObject {
+        requireKey(idempotencyKey, "channel transfers")
+        return dispatch(
+            "workspace.channel_transfer_accept",
+            JSONObject().put("profile", profile).put("workspace", workspace)
+                .put("channel", channel),
+            idempotencyKey,
+        )
+    }
+
     fun workspaceChannelMembers(
         profile: String,
         workspace: String,

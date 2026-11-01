@@ -192,6 +192,22 @@ class CoreClient:
                              "channel": channel, "members": members},
                             idempotency_key=key)
 
+    def workspace_channel_transfer_offer(self, handle, workspace, channel, member, key):
+        if not isinstance(key, str) or len(key) < 16:
+            raise ValueError("Channel transfers require a caller-scoped key")
+        return self.request("workspace.channel_transfer_offer",
+                            {"profile": handle, "workspace": workspace,
+                             "channel": channel, "member": member},
+                            idempotency_key=key)
+
+    def workspace_channel_transfer_accept(self, handle, workspace, channel, key):
+        if not isinstance(key, str) or len(key) < 16:
+            raise ValueError("Channel transfers require a caller-scoped key")
+        return self.request("workspace.channel_transfer_accept",
+                            {"profile": handle, "workspace": workspace,
+                             "channel": channel},
+                            idempotency_key=key)
+
     def workspace_channel_archive(self, handle, workspace, channel, key):
         if not isinstance(key, str) or len(key) < 16:
             raise ValueError("Channel archive requires a caller-scoped key")

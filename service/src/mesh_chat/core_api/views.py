@@ -413,3 +413,19 @@ def device_link_decision_view(profile, workspace, link, state):
     if state not in {"approved", "declined"}:
         raise ValueError("Invalid device link decision")
     return {"profile": profile, "workspace": workspace, "link": link, "state": state}
+
+
+def workspace_channel_transfer_offer_view(profile, workspace, channel, member):
+    if any(not isinstance(item, str) or re.fullmatch(r"[A-Za-z0-9_-]{16,128}", item) is None
+           for item in (profile, workspace, channel, member)):
+        raise ValueError("Invalid channel transfer offer handle")
+    return {"profile": profile, "workspace": workspace, "channel": channel,
+            "member": member, "state": "offered"}
+
+
+def workspace_channel_transfer_accept_view(profile, workspace, channel):
+    if any(not isinstance(item, str) or re.fullmatch(r"[A-Za-z0-9_-]{16,128}", item) is None
+           for item in (profile, workspace, channel)):
+        raise ValueError("Invalid channel transfer accept handle")
+    return {"profile": profile, "workspace": workspace, "channel": channel,
+            "state": "accepted"}

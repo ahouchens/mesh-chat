@@ -12,7 +12,8 @@ from mesh_chat.core_api.composition import bind_service_session
 from mesh_chat.core_api.session import Grant
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from test_workspace_service import _deliver, _deliver_all, _flush, _op, _service  # noqa: E402
+from test_workspace_service import (_deliver, _deliver_all, _flush, _joined_pair,  # noqa: E402
+                                   _op, _service)
 
 from test_core_messages import request  # noqa: E402
 
@@ -389,3 +390,70 @@ def test_pending_device_links_can_be_listed_and_approved(tmp_path):
     finally:
         owner.close()
         linked.close()
+
+
+def test_channel_transfers_can_be_offered_and_accepted(tmp_path):
+    (owner, owner_network, owner_profile, member, member_network, member_profile,
+     workspace, *_rest) = _joined_pair(tmp_path, base=73000)
+    owner._shutdown.clear()
+    member._shutdown.clear()
+    try:
+        owner_session, owner_handle = open_client(owner)
+        member_session, member_handle = open_client(member, caller="bailey")
+        owner_workspace = owner_session.request(request("workspace.query", profile=owner_handle)
+                                                )["result"]["workspaces"][0]["workspace"]
+        created = owner_session.request({
+            "api_version": 1, "request_id": "request:1",
+            "operation": "workspace.channel_create",
+            "params": {"profile": owner_handle, "workspace": owner_workspace,
+                       "name": "Transfers"},
+            "idempotency_key": "c" * 32,
+        })
+        assert created["ok"], created
+        owner_channel = created["result"]["channel"]
+        for item in _flush(owner, owner_network):
+            _deliver(member, item, source_profile=owner_profile,
+                     recipient_profile=member_profile)
+        members = owner_session.request(request("workspace.members", profile=owner_handle,
+                                                workspace=owner_workspace))
+        target = next(item["member"] for item in members["result"]["members"]
+                      if item["display_name"] == "Bailey")
+        offer = owner_session.request({
+            "api_version": 1, "request_id": "request:2",
+            "operation": "workspace.channel_transfer_offer",
+            "params": {"profile": owner_handle, "workspace": owner_workspace,
+                       "channel": owner_channel, "member": target},
+            "idempotency_key": "o" * 32,
+        })
+        assert offer["ok"], offer
+        assert offer["result"]["state"] == "offered"
+        Draft202012Validator(
+            json.loads((CONTRACTS / "workspace-channel-transfer-offer-result-v1.schema.json").read_text())
+        ).validate(offer)
+        for item in _flush(owner, owner_network):
+            _deliver(member, item, source_profile=owner_profile,
+                     recipient_profile=member_profile)
+        member_workspace = member_session.request(request("workspace.query", profile=member_handle)
+                                                  )["result"]["workspaces"][0]["workspace"]
+        member_channels = member_session.request(request("workspace.channels", profile=member_handle,
+                                                          workspace=member_workspace))
+        member_channel = next(item["channel"] for item in member_channels["result"]["channels"]
+                              if item["name"] == "Transfers")
+        accept = {"api_version": 1, "request_id": "request:3",
+                  "operation": "workspace.channel_transfer_accept",
+                  "params": {"profile": member_handle, "workspace": member_workspace,
+                             "channel": member_channel},
+                  "idempotency_key": "a" * 32}
+        accepted = member_session.request(accept)
+        assert accepted["ok"], accepted
+        assert accepted["result"]["state"] == "accepted"
+        Draft202012Validator(
+            json.loads((CONTRACTS / "workspace-channel-transfer-accept-result-v1.schema.json").read_text())
+        ).validate(accepted)
+        assert member_session.request(accept)["result"] == accepted["result"]
+        for item in _flush(member, member_network):
+            _deliver(owner, item, source_profile=member_profile,
+                     recipient_profile=owner_profile)
+    finally:
+        owner.close()
+        member.close()

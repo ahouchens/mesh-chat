@@ -39,6 +39,8 @@ WORKSPACE_DEVICE_LINK_SUBMIT_OPERATIONS = ("workspace.device_link_submit",)
 WORKSPACE_DEVICE_LINKS_OPERATIONS = ("workspace.device_links",)
 WORKSPACE_DEVICE_LINK_APPROVE_OPERATIONS = ("workspace.device_link_approve",)
 WORKSPACE_DEVICE_LINK_DECLINE_OPERATIONS = ("workspace.device_link_decline",)
+WORKSPACE_CHANNEL_TRANSFER_OFFER_OPERATIONS = ("workspace.channel_transfer_offer",)
+WORKSPACE_CHANNEL_TRANSFER_ACCEPT_OPERATIONS = ("workspace.channel_transfer_accept",)
 DIAGNOSTIC_OPERATIONS = ("diagnostics.query",)
 REQUEST_ID = re.compile(r"[A-Za-z0-9._:-]{1,80}\Z")
 HANDLE = re.compile(r"[A-Za-z0-9_-]{16,128}\Z")
@@ -66,7 +68,8 @@ def parse_request(value, operations):
                       "workspace.channel_members_update", "workspace.channel_update",
                       "workspace.channel_archive", "workspace.device_link_create",
                       "workspace.device_link_submit", "workspace.device_link_approve",
-                      "workspace.device_link_decline"):
+                      "workspace.device_link_decline", "workspace.channel_transfer_offer",
+                      "workspace.channel_transfer_accept"):
         fields.add("idempotency_key")
     if set(value) != fields:
         raise ApiFailure("invalid_request")
@@ -105,6 +108,23 @@ def parse_request(value, operations):
     if operation in WORKSPACE_CHANNELS_OPERATIONS:
         params = value["params"]
         if (not isinstance(params, dict) or set(params) != {"profile", "workspace"}
+                or any(not isinstance(item, str) or HANDLE.fullmatch(item) is None
+                       for item in params.values())):
+            raise ApiFailure("invalid_request")
+        return operation, params
+    if operation in WORKSPACE_CHANNEL_TRANSFER_OFFER_OPERATIONS:
+        params = value["params"]
+        if (not isinstance(params, dict) or set(params) != {"profile", "workspace",
+                                                            "channel", "member"}
+                or "idempotency_key" not in value
+                or any(not isinstance(item, str) or HANDLE.fullmatch(item) is None
+                       for item in params.values())):
+            raise ApiFailure("invalid_request")
+        return operation, params
+    if operation in WORKSPACE_CHANNEL_TRANSFER_ACCEPT_OPERATIONS:
+        params = value["params"]
+        if (not isinstance(params, dict) or set(params) != {"profile", "workspace", "channel"}
+                or "idempotency_key" not in value
                 or any(not isinstance(item, str) or HANDLE.fullmatch(item) is None
                        for item in params.values())):
             raise ApiFailure("invalid_request")
@@ -381,5 +401,7 @@ COMPONENT_OPERATIONS = (
     + WORKSPACE_DEVICE_LINKS_OPERATIONS
     + WORKSPACE_DEVICE_LINK_APPROVE_OPERATIONS
     + WORKSPACE_DEVICE_LINK_DECLINE_OPERATIONS
+    + WORKSPACE_CHANNEL_TRANSFER_OFFER_OPERATIONS
+    + WORKSPACE_CHANNEL_TRANSFER_ACCEPT_OPERATIONS
     + DIAGNOSTIC_OPERATIONS
 )

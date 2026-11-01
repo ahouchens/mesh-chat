@@ -22,7 +22,8 @@ from .views import (
     device_link_create_view, device_link_decision_view, device_link_preview_view,
     device_link_submit_view, device_links_view,
     workspace_channel_archive_view,
-    workspace_channel_create_view,
+    workspace_channel_create_view, workspace_channel_transfer_accept_view,
+    workspace_channel_transfer_offer_view,
     workspace_channel_members_view,
     workspace_channel_update_view, workspace_channels_view, workspace_join_view,
     workspace_list_view, workspace_member_role_view, workspace_members_view,
@@ -40,6 +41,7 @@ from .requests import (
     WORKSPACE_CHANNEL_ARCHIVE_OPERATIONS, WORKSPACE_CHANNEL_CREATE_OPERATIONS,
     WORKSPACE_CHANNEL_MEMBERS_OPERATIONS,
     WORKSPACE_CHANNEL_MEMBERS_UPDATE_OPERATIONS, WORKSPACE_CHANNEL_UPDATE_OPERATIONS,
+    WORKSPACE_CHANNEL_TRANSFER_ACCEPT_OPERATIONS, WORKSPACE_CHANNEL_TRANSFER_OFFER_OPERATIONS,
     WORKSPACE_DEVICE_LINK_APPROVE_OPERATIONS, WORKSPACE_DEVICE_LINK_CREATE_OPERATIONS,
     WORKSPACE_DEVICE_LINK_DECLINE_OPERATIONS, WORKSPACE_DEVICE_LINK_PREVIEW_OPERATIONS,
     WORKSPACE_DEVICE_LINK_SUBMIT_OPERATIONS, WORKSPACE_DEVICE_LINKS_OPERATIONS,
@@ -162,6 +164,8 @@ class CoreSession:
             (WORKSPACE_DEVICE_LINKS_OPERATIONS, self._workspace_admin),
             (WORKSPACE_DEVICE_LINK_APPROVE_OPERATIONS, self._workspace_admin),
             (WORKSPACE_DEVICE_LINK_DECLINE_OPERATIONS, self._workspace_admin),
+            (WORKSPACE_CHANNEL_TRANSFER_OFFER_OPERATIONS, self._workspace_admin),
+            (WORKSPACE_CHANNEL_TRANSFER_ACCEPT_OPERATIONS, self._workspace_admin),
             (DIAGNOSTIC_OPERATIONS, self._diagnostics),
         ):
             if port is not None:
@@ -197,7 +201,9 @@ class CoreSession:
                                                         "workspace.device_link_create",
                                                         "workspace.device_link_submit",
                                                         "workspace.device_link_approve",
-                                                        "workspace.device_link_decline"}:
+                                                        "workspace.device_link_decline",
+                                                        "workspace.channel_transfer_offer",
+                                                        "workspace.channel_transfer_accept"}:
                     raise ApiFailure("invalid_request")
                 permission = {"message.enqueue": "send", "message.query": "read", "message.list": "read",
                               "message.received": "read", "events.poll": "read", "events.ack": "read",
@@ -224,6 +230,8 @@ class CoreSession:
                               "workspace.device_links": "approve",
                               "workspace.device_link_approve": "approve",
                               "workspace.device_link_decline": "approve",
+                              "workspace.channel_transfer_offer": "approve",
+                              "workspace.channel_transfer_accept": "approve",
                               "diagnostics.query": "diagnose"}.get(operation, "observe")
                 if permission not in grant.permissions:
                     raise ApiFailure("forbidden")
@@ -429,6 +437,33 @@ class CoreSession:
             link = self._workspace_admin.device_link_create(
                 target, inside, self._operation_id(grant, target, key))
             return device_link_create_view(params["profile"], params["workspace"], link)
+        if operation in WORKSPACE_CHANNEL_TRANSFER_OFFER_OPERATIONS:
+            target = profiles.get(params["profile"])
+            if target is None:
+                raise ApiFailure("forbidden")
+            inside = self._workspace_target(grant, target, params["workspace"])
+            channel = self._channel_target(grant, target, inside, params["channel"])
+            member_id = self._member_target(grant, target, inside, params["member"])
+            if key is None:
+                raise ApiFailure("invalid_request")
+            self._workspace_admin.offer_channel_transfer(
+                target, inside, channel, member_id,
+                self._operation_id(grant, target, key))
+            return workspace_channel_transfer_offer_view(
+                params["profile"], params["workspace"], params["channel"],
+                params["member"])
+        if operation in WORKSPACE_CHANNEL_TRANSFER_ACCEPT_OPERATIONS:
+            target = profiles.get(params["profile"])
+            if target is None:
+                raise ApiFailure("forbidden")
+            inside = self._workspace_target(grant, target, params["workspace"])
+            channel = self._channel_target(grant, target, inside, params["channel"])
+            if key is None:
+                raise ApiFailure("invalid_request")
+            self._workspace_admin.accept_channel_transfer(
+                target, inside, channel, self._operation_id(grant, target, key))
+            return workspace_channel_transfer_accept_view(
+                params["profile"], params["workspace"], params["channel"])
         if operation in WORKSPACE_DEVICE_LINKS_OPERATIONS:
             target = profiles.get(params["profile"])
             if target is None:

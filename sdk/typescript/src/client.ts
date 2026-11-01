@@ -27,6 +27,8 @@ import type {
   WorkspaceChannelCreateView,
   WorkspaceChannelArchiveView,
   WorkspaceChannelMembersView,
+  WorkspaceChannelTransferAcceptView,
+  WorkspaceChannelTransferOfferView,
   WorkspaceChannelUpdateView,
   WorkspaceChannelsView,
   WorkspaceDeclineView,
@@ -304,6 +306,39 @@ export class CoreClient {
     return this.request<WorkspaceChannelMembersView>(
       "workspace.channel_members_update",
       { profile, workspace, channel, members },
+      { idempotencyKey },
+    );
+  }
+
+  async workspaceChannelTransferOffer(
+    profile: string,
+    workspace: string,
+    channel: string,
+    member: string,
+    idempotencyKey: string,
+  ): Promise<WorkspaceChannelTransferOfferView> {
+    if (idempotencyKey.length < 16) {
+      throw new ProtocolError("channel transfers require a caller key");
+    }
+    return this.request<WorkspaceChannelTransferOfferView>(
+      "workspace.channel_transfer_offer",
+      { profile, workspace, channel, member },
+      { idempotencyKey },
+    );
+  }
+
+  async workspaceChannelTransferAccept(
+    profile: string,
+    workspace: string,
+    channel: string,
+    idempotencyKey: string,
+  ): Promise<WorkspaceChannelTransferAcceptView> {
+    if (idempotencyKey.length < 16) {
+      throw new ProtocolError("channel transfers require a caller key");
+    }
+    return this.request<WorkspaceChannelTransferAcceptView>(
+      "workspace.channel_transfer_accept",
+      { profile, workspace, channel },
       { idempotencyKey },
     );
   }

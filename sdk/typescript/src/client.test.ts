@@ -335,6 +335,39 @@ test("device link helpers use the declared envelopes", async () => {
   assert.equal(preview.operation, "workspace.device_link_preview");
 });
 
+test("channel transfer helpers use declared envelopes", async () => {
+  const transport = new Scripted(
+    success("client:1", CAPABILITIES),
+    success("client:2", {
+      profile: PROFILE,
+      workspace: "w".repeat(64),
+      channel: "c".repeat(64),
+      member: "m".repeat(64),
+      state: "offered",
+    }),
+    success("client:3", {
+      profile: PROFILE,
+      workspace: "w".repeat(64),
+      channel: "c".repeat(64),
+      state: "accepted",
+    }),
+  );
+  const client = await CoreClient.open(transport);
+  assert.equal(
+    (await client.workspaceChannelTransferOffer(
+      PROFILE, "w".repeat(64), "c".repeat(64), "m".repeat(64), "o".repeat(16),
+    )).state,
+    "offered",
+  );
+  assert.equal(
+    (await client.workspaceChannelTransferAccept(
+      PROFILE, "w".repeat(64), "c".repeat(64), "a".repeat(16),
+    )).state,
+    "accepted",
+  );
+  assert.equal(JSON.parse(transport.written[1]).operation, "workspace.channel_transfer_offer");
+});
+
 test("channel archive uses the declared envelope", async () => {
   const transport = new Scripted(
     success("client:1", CAPABILITIES),

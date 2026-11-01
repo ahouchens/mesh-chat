@@ -201,6 +201,23 @@ def test_client_device_link_helpers_use_the_declared_envelopes():
     assert preview["operation"] == "workspace.device_link_preview"
 
 
+def test_client_channel_transfer_helpers_use_declared_envelopes():
+    transport = Scripted(
+        reply(CAPABILITIES),
+        reply({"profile": PROFILE, "workspace": "w" * 64, "channel": "c" * 64,
+               "member": "m" * 64, "state": "offered"}, "client:2"),
+        reply({"profile": PROFILE, "workspace": "w" * 64, "channel": "c" * 64,
+               "state": "accepted"}, "client:3"),
+    )
+    client = CoreClient.open(transport.readline, transport.write)
+    assert client.workspace_channel_transfer_offer(
+        PROFILE, "w" * 64, "c" * 64, "m" * 64, "o" * 16)["state"] == "offered"
+    assert client.workspace_channel_transfer_accept(
+        PROFILE, "w" * 64, "c" * 64, "a" * 16)["state"] == "accepted"
+    assert decode_frame(transport.written[1])["operation"] == "workspace.channel_transfer_offer"
+    assert decode_frame(transport.written[2])["operation"] == "workspace.channel_transfer_accept"
+
+
 def test_client_channel_archive_uses_the_declared_envelope():
     transport = Scripted(
         reply(CAPABILITIES),

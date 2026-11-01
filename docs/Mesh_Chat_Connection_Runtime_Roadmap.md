@@ -1202,7 +1202,8 @@ M5 - supported reusable core
 - [x] Private channel membership, channel editing and archiving (component only).
 - [x] Workspace device-link creation, preview, submission and sponsor
       approval/decline (component, two-service delivery test).
-- [ ] Channel transfers and role-scoped channel policy overrides.
+- [x] Channel transfer offer and acceptance (component, two-service delivery test).
+- [ ] Role-scoped channel policy overrides.
 - [x] Experimental TypeScript client over the frame contract (component only; no
       packaging, CI conformance, Kotlin client or consumer).
 - [x] Experimental Python client and Windows CLI over the host pipe, with a

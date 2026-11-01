@@ -438,3 +438,52 @@ class ServiceWorkspaceAdmin:
 
     def decline_device_link(self, profile, workspace_id, request_id, operation_id):
         return self._decide_device_link(profile, workspace_id, request_id, operation_id, False)
+
+    def offer_channel_transfer(self, profile, workspace_id, channel_id, member_id,
+                               operation_id):
+        self._require_local(profile)
+        if (not isinstance(member_id, str) or not isinstance(operation_id, str)
+                or not operation_id):
+            raise ApiFailure("invalid_request")
+        with storage_errors():
+            workspace = self._workspace(workspace_id)
+            if workspace.get("local_role") not in {"owner", "admin"}:
+                raise ApiFailure("forbidden")
+            try:
+                outcome = self._service.offer_workspace_channel_transfer(
+                    workspace_id, channel_id, member_id, operation_id)
+            except (ValidationError, ContactNotApproved) as error:
+                raise ApiFailure("invalid_request") from error
+            state = outcome.get("state")
+            if state not in {"offered", "pending", "accepted"}:
+                raise ApiFailure("internal")
+            return "offered"
+
+    def accept_channel_transfer(self, profile, workspace_id, channel_id, operation_id):
+        self._require_local(profile)
+        if not isinstance(operation_id, str) or not operation_id:
+            raise ApiFailure("invalid_request")
+        with storage_errors():
+            workspace = self._workspace(workspace_id)
+            local_member = workspace.get("local_member_id")
+            transfer = None
+            for item in self._store.list("workspace_channel_transfer"):
+                if (item.get("workspace_id") == workspace_id
+                        and item.get("channel_id") == channel_id
+                        and item.get("successor_member_id") == local_member
+                        and item.get("state") == "offered"):
+                    transfer = item
+                    break
+            if transfer is None or not isinstance(transfer.get("id"), str):
+                channel = self._channel(workspace_id, channel_id)
+                if channel.get("manager_member_id") == local_member:
+                    return "accepted"
+                raise ApiFailure("forbidden")
+            try:
+                accepted = self._service.accept_workspace_channel_transfer(
+                    workspace_id, transfer["id"], operation_id)
+            except (ValidationError, ContactNotApproved) as error:
+                raise ApiFailure("invalid_request") from error
+            if accepted.get("manager_member_id") != local_member:
+                raise ApiFailure("internal")
+            return "accepted"
