@@ -19,9 +19,10 @@
       "required": ["api_major", "api_minor", "stability", "operations", "profiles", "limits"],
       "properties": {
         "api_major": {"const": 1}, "api_minor": {"const": 0}, "stability": {"const": "experimental"},
-        "operations": {"type": "array", "uniqueItems": true, "minItems": 3, "maxItems": 24,
+        "operations": {"type": "array", "uniqueItems": true, "minItems": 3, "maxItems": 26,
           "items": {"enum": ["runtime.capabilities", "profile.query", "connection.snapshot", "peer.query", "message.enqueue", "message.query", "message.list", "events.poll", "events.ack", "message.received", "connection.start", "connection.stop", "peer.approve", "peer.revoke", "peer.pairing_accept", "peer.pairing_create", "runtime.stop", "workspace.invitation_preview", "workspace.join", "peer.pairing_request", "workspace.query",
-    "workspace.join_requests", "workspace.join_approve", "diagnostics.query"]}},
+    "workspace.join_requests", "workspace.join_approve", "workspace.members",
+    "workspace.join_decline", "diagnostics.query"]}},
         "profiles": {"$ref": "#/$defs/handles"},
         "limits": {"type": "object", "additionalProperties": false,
           "required": ["frame_bytes", "request_json_depth", "request_json_structural_tokens", "profiles", "connections_per_profile"],

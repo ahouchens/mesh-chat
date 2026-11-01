@@ -250,3 +250,30 @@ def workspace_approve_view(profile, workspace, value):
     if value.state not in WORKSPACE_STATES:
         raise ValueError("Invalid workspace approval state")
     return {"profile": profile, "workspace": workspace, "state": value.state}
+
+
+def workspace_decline_view(profile, workspace, value):
+    if any(not isinstance(item, str) or re.fullmatch(r"[A-Za-z0-9_-]{16,128}", item) is None
+           for item in (profile, workspace)):
+        raise ValueError("Invalid workspace decline handle")
+    if value.state != "declined":
+        raise ValueError("Invalid workspace decline state")
+    return {"profile": profile, "workspace": workspace, "decision": "declined"}
+
+
+def workspace_members_view(profile, workspace, items):
+    if any(not isinstance(item, str) or re.fullmatch(r"[A-Za-z0-9_-]{16,128}", item) is None
+           for item in (profile, workspace)):
+        raise ValueError("Invalid workspace member handle")
+    if len(items) > 8:
+        raise ValueError("Workspace member page is unbounded")
+    members = []
+    for handle, value in items:
+        if (re.fullmatch(r"[A-Za-z0-9_-]{16,128}", handle) is None
+                or not isinstance(value.display_name, str) or not value.display_name
+                or value.role not in WORKSPACE_ROLES
+                or value.status not in {"active", "invited", "leaving", "left", "removed"}):
+            raise ValueError("Invalid workspace member summary")
+        members.append({"member": handle, "display_name": value.display_name,
+                        "role": value.role, "status": value.status})
+    return {"profile": profile, "workspace": workspace, "members": members}

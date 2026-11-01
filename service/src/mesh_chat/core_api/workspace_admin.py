@@ -20,6 +20,14 @@ class JoinRequestSummary:
 
 
 @dataclass(frozen=True)
+class MemberSummary:
+    member: str
+    display_name: str
+    role: str
+    status: str
+
+
+@dataclass(frozen=True)
 class JoinApproval:
     workspace: str
     state: str
@@ -34,3 +42,8 @@ class WorkspaceAdmin(Protocol):
 
     def approve(self, profile: str, workspace: str, request: str,
                 operation_id: str) -> JoinApproval: ...
+
+    def decline(self, profile: str, workspace: str, request: str,
+                operation_id: str) -> JoinApproval: ...
+
+    def members(self, profile: str, workspace: str) -> tuple[MemberSummary, ...]: ...

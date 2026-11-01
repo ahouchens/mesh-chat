@@ -3,7 +3,7 @@
 from ..errors import ContactNotApproved, InvitationExpired, InvitationInvalid, ValidationError
 from .errors import ApiFailure
 from .service_messages import storage_errors
-from .workspace_admin import JoinApproval, JoinRequestSummary, WorkspaceSummary
+from .workspace_admin import JoinApproval, JoinRequestSummary, MemberSummary, WorkspaceSummary
 
 
 MAX_WORKSPACES = 16
@@ -11,6 +11,8 @@ MAX_JOIN_REQUESTS = 32
 MAX_REQUEST_IDS = 64
 ROLES = {"owner", "admin", "member"}
 STATES = {"active", "joining", "left", "removed", "revoked", "archived"}
+MEMBER_STATES = {"active", "invited", "leaving", "left", "removed"}
+ROLES_ASSIGNABLE = {"admin", "member"}
 
 
 class ServiceWorkspaceAdmin:
@@ -96,3 +98,45 @@ class ServiceWorkspaceAdmin:
             if state not in STATES:
                 raise ApiFailure("internal")
             return JoinApproval(workspace_id, state)
+
+    def decline(self, profile, workspace_id, request_id, operation_id):
+        self._require_local(profile)
+        if not isinstance(operation_id, str) or not operation_id:
+            raise ApiFailure("invalid_request")
+        with storage_errors():
+            workspace = self._workspace(workspace_id)
+            if workspace.get("local_role") != "owner":
+                raise ApiFailure("forbidden")
+            request = self._store.get("workspace_join_request", request_id)
+            if request is None or request.get("workspace_id") != workspace_id:
+                raise ApiFailure("not_found")
+            try:
+                outcome = self._service.decline_workspace_join(
+                    workspace_id, request_id, operation_id)
+            except (ValidationError, ContactNotApproved, InvitationInvalid,
+                    InvitationExpired) as error:
+                raise ApiFailure("invalid_request") from error
+            state = outcome.get("state") if isinstance(outcome, dict) else None
+            if state != "declined":
+                raise ApiFailure("internal")
+            return JoinApproval(workspace_id, state)
+
+    def members(self, profile, workspace_id):
+        self._require_local(profile)
+        with storage_errors():
+            workspace = self._workspace(workspace_id)
+            if workspace.get("local_role") not in {"owner", "admin", "member"}:
+                raise ApiFailure("forbidden")
+            members = workspace.get("members")
+            if not isinstance(members, list) or len(members) > 8:
+                raise ApiFailure("internal")
+            found = []
+            for item in members:
+                member_id, name = item.get("id"), item.get("display_name")
+                role, status = item.get("role"), item.get("status")
+                if (not isinstance(member_id, str) or not isinstance(name, str)
+                        or role not in {"owner"} | ROLES_ASSIGNABLE
+                        or status not in MEMBER_STATES):
+                    raise ApiFailure("internal")
+                found.append(MemberSummary(member_id, name, role, status))
+            return tuple(sorted(found, key=lambda item: (item.role != "owner", item.member)))

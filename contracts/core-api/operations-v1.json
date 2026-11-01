@@ -4,8 +4,8 @@
   "api_major": 1,
   "api_minor": 0,
   "implemented_operations": [],
-  "experimental_component_operations": ["runtime.capabilities", "profile.query", "connection.snapshot", "peer.query", "message.enqueue", "message.query", "message.list", "events.poll", "events.ack", "message.received", "connection.start", "connection.stop", "peer.approve", "peer.revoke", "peer.pairing_accept", "peer.pairing_request", "peer.pairing_create", "runtime.stop", "workspace.invitation_preview", "workspace.join", "workspace.query", "workspace.join_requests", "workspace.join_approve",
-    "diagnostics.query"],
+  "experimental_component_operations": ["runtime.capabilities", "profile.query", "connection.snapshot", "peer.query", "message.enqueue", "message.query", "message.list", "events.poll", "events.ack", "message.received", "connection.start", "connection.stop", "peer.approve", "peer.revoke", "peer.pairing_accept", "peer.pairing_request", "peer.pairing_create", "runtime.stop", "workspace.invitation_preview", "workspace.join", "workspace.query", "workspace.join_requests", "workspace.join_approve", "workspace.members",
+    "workspace.join_decline", "diagnostics.query"],
   "operations": [
     {
       "operation": "runtime.capabilities",
@@ -93,6 +93,20 @@
     },
     {
       "operation": "workspace.join_approve",
+      "permission": "approve",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "caller_profile_operation_key"
+    },
+    {
+      "operation": "workspace.members",
+      "permission": "approve",
+      "scope": "profile",
+      "mutation": false,
+      "idempotency": "query"
+    },
+    {
+      "operation": "workspace.join_decline",
       "permission": "approve",
       "scope": "profile",
       "mutation": true,

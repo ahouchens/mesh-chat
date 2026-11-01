@@ -1096,9 +1096,11 @@ The facade can now list caller-scoped workspaces, review pending join requests a
 approve one with a caller key. Views expose only names, roles, states and the
 applicant's display name; handles stay caller-scoped and request handles remain
 resolvable after a decision so a replayed key returns the same state instead of
-failing or approving twice. Two regressions drive the real domain flow from a
-pending join request through approval and replay, and cover the approve grant,
-role requirement and caller scope. Decline, role changes and channel
+failing or approving twice. Decline and member visibility complete the review loop: `workspace.join_decline`
+is keyed and replay-safe, and `workspace.members` exposes caller-scoped handles
+with display name, role and status only. Three regressions drive real join traffic
+through approval, replay, decline, replay and the member list, and cover the
+approve grant, role requirement and caller scope. Role changes and channel
 administration remain open.
 
 ## Remaining work checklist
@@ -1169,8 +1171,9 @@ M5 - supported reusable core
       joining states only, no role administration).
 - [x] Per-peer signed contact request with bounded convergence (component only;
       the signed document is not returned).
-- [x] Workspace listing, pending join review and idempotent join approval
-      (component only; decline, role changes and channel administration open).
+- [x] Workspace listing, pending join review, idempotent approval, decline and
+      member visibility (component only; role changes and channel administration
+      open).
 - [ ] Per-peer pairing documents returned to the caller and workspace role
       changes.
 - [x] Experimental TypeScript client over the frame contract (component only; no

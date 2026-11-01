@@ -306,8 +306,10 @@ destination hashes or member records. `workspace.join_approve` requires the
 `approve` grant and a caller key; the facade resolves the handles, maps the key to
 a caller-scoped UUID operation id and delegates to the existing domain approval
 transaction, so a replay returns the same workspace state instead of approving
-twice. A request handle remains resolvable after a decision so replays stay
-honest. Declining, role changes and channel administration remain outside this
+twice. A request handle remains resolvable after a decision so replays stay honest.
+`workspace.join_decline` is the owner's symmetric refusal, keyed and replay-safe,
+and `workspace.members` lists caller-scoped member handles with display name, role
+and status only. Role changes and channel administration remain outside this
 surface.
 
 ## Observation and recovery

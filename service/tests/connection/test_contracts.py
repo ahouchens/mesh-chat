@@ -75,6 +75,8 @@ def test_each_designed_operation_has_an_executable_request_vector_and_permission
         "workspace.query": {},
         "workspace.join_requests": {"workspace": handle},
         "workspace.join_approve": {"workspace": handle, "request": handle},
+        "workspace.members": {"workspace": handle},
+        "workspace.join_decline": {"workspace": handle, "request": handle},
         "peer.pairing_accept": {"document": "signed-pairing-document"},
         "peer.pairing_request": {"peer": handle},
         "peer.query": {"peer": handle},

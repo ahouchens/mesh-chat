@@ -24,6 +24,8 @@ WORKSPACE_JOIN_OPERATIONS = ("workspace.join",)
 WORKSPACE_LIST_OPERATIONS = ("workspace.query",)
 WORKSPACE_REQUESTS_OPERATIONS = ("workspace.join_requests",)
 WORKSPACE_APPROVE_OPERATIONS = ("workspace.join_approve",)
+WORKSPACE_DECLINE_OPERATIONS = ("workspace.join_decline",)
+WORKSPACE_MEMBERS_OPERATIONS = ("workspace.members",)
 DIAGNOSTIC_OPERATIONS = ("diagnostics.query",)
 REQUEST_ID = re.compile(r"[A-Za-z0-9._:-]{1,80}\Z")
 HANDLE = re.compile(r"[A-Za-z0-9_-]{16,128}\Z")
@@ -46,7 +48,7 @@ def parse_request(value, operations):
     if not isinstance(operation, str) or operation not in operations:
         raise ApiFailure("unsupported_operation")
     if operation in ("message.enqueue", "events.ack", "workspace.join",
-                      "workspace.join_approve"):
+                      "workspace.join_approve", "workspace.join_decline"):
         fields.add("idempotency_key")
     if set(value) != fields:
         raise ApiFailure("invalid_request")
@@ -75,6 +77,21 @@ def parse_request(value, operations):
             raise ApiFailure("invalid_request")
         return operation, params
     if operation in WORKSPACE_APPROVE_OPERATIONS:
+        params = value["params"]
+        if (not isinstance(params, dict) or set(params) != {"profile", "workspace", "request"}
+                or "idempotency_key" not in value
+                or any(not isinstance(item, str) or HANDLE.fullmatch(item) is None
+                       for item in params.values())):
+            raise ApiFailure("invalid_request")
+        return operation, params
+    if operation in WORKSPACE_MEMBERS_OPERATIONS:
+        params = value["params"]
+        if (not isinstance(params, dict) or set(params) != {"profile", "workspace"}
+                or any(not isinstance(item, str) or HANDLE.fullmatch(item) is None
+                       for item in params.values())):
+            raise ApiFailure("invalid_request")
+        return operation, params
+    if operation in WORKSPACE_DECLINE_OPERATIONS:
         params = value["params"]
         if (not isinstance(params, dict) or set(params) != {"profile", "workspace", "request"}
                 or "idempotency_key" not in value
@@ -214,5 +231,7 @@ COMPONENT_OPERATIONS = (
     + WORKSPACE_LIST_OPERATIONS
     + WORKSPACE_REQUESTS_OPERATIONS
     + WORKSPACE_APPROVE_OPERATIONS
+    + WORKSPACE_DECLINE_OPERATIONS
+    + WORKSPACE_MEMBERS_OPERATIONS
     + DIAGNOSTIC_OPERATIONS
 )
