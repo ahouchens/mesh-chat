@@ -309,8 +309,10 @@ transaction, so a replay returns the same workspace state instead of approving
 twice. A request handle remains resolvable after a decision so replays stay honest.
 `workspace.join_decline` is the owner's symmetric refusal, keyed and replay-safe,
 and `workspace.members` lists caller-scoped member handles with display name, role
-and status only. Role changes and channel administration remain outside this
-surface.
+and status only. `workspace.member_role` lets the active owner assign `admin` or
+`member` with a caller key; it is owner-only and replay-safe, and the result
+carries only the selected member handle and applied role. Channel administration
+remains outside this surface.
 
 ## Observation and recovery
 

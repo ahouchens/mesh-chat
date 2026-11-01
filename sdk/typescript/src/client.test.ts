@@ -252,6 +252,45 @@ test("pairing acceptance refuses an empty document before dispatch", async () =>
   assert.equal(transport.written.length, 1);
 });
 
+test("workspace review helpers use the declared envelopes", async () => {
+  const transport = new Scripted(
+    success("client:1", CAPABILITIES),
+    success("client:2", {
+      profile: PROFILE,
+      workspace: "w".repeat(64),
+      members: [{ member: "m".repeat(64), display_name: "Blair", role: "member", status: "active" }],
+    }),
+    success("client:3", { profile: PROFILE, workspace: "w".repeat(64), decision: "declined" }),
+    success("client:4", {
+      profile: PROFILE,
+      workspace: "w".repeat(64),
+      member: "m".repeat(64),
+      role: "admin",
+    }),
+  );
+  const client = await CoreClient.open(transport);
+  assert.equal((await client.workspaceMembers(PROFILE, "w".repeat(64))).members[0].role, "member");
+  assert.equal(
+    (await client.workspaceJoinDecline(PROFILE, "w".repeat(64), "r".repeat(64), "d".repeat(16))).decision,
+    "declined",
+  );
+  assert.equal(
+    (await client.workspaceMemberRole(PROFILE, "w".repeat(64), "m".repeat(64), "admin", "r".repeat(16))).role,
+    "admin",
+  );
+  const decline = JSON.parse(transport.written[2]);
+  const role = JSON.parse(transport.written[3]);
+  assert.equal(decline.operation, "workspace.join_decline");
+  assert.equal(decline.idempotency_key, "d".repeat(16));
+  assert.equal(role.operation, "workspace.member_role");
+  assert.deepEqual(role.params, {
+    profile: PROFILE,
+    workspace: "w".repeat(64),
+    member: "m".repeat(64),
+    role: "admin",
+  });
+});
+
 test("workspace preview and join use the declared envelopes", async () => {
   const transport = new Scripted(
     success("client:1", CAPABILITIES),

@@ -26,6 +26,7 @@ WORKSPACE_REQUESTS_OPERATIONS = ("workspace.join_requests",)
 WORKSPACE_APPROVE_OPERATIONS = ("workspace.join_approve",)
 WORKSPACE_DECLINE_OPERATIONS = ("workspace.join_decline",)
 WORKSPACE_MEMBERS_OPERATIONS = ("workspace.members",)
+WORKSPACE_ROLE_OPERATIONS = ("workspace.member_role",)
 DIAGNOSTIC_OPERATIONS = ("diagnostics.query",)
 REQUEST_ID = re.compile(r"[A-Za-z0-9._:-]{1,80}\Z")
 HANDLE = re.compile(r"[A-Za-z0-9_-]{16,128}\Z")
@@ -48,7 +49,8 @@ def parse_request(value, operations):
     if not isinstance(operation, str) or operation not in operations:
         raise ApiFailure("unsupported_operation")
     if operation in ("message.enqueue", "events.ack", "workspace.join",
-                      "workspace.join_approve", "workspace.join_decline"):
+                      "workspace.join_approve", "workspace.join_decline",
+                      "workspace.member_role"):
         fields.add("idempotency_key")
     if set(value) != fields:
         raise ApiFailure("invalid_request")
@@ -82,6 +84,15 @@ def parse_request(value, operations):
                 or "idempotency_key" not in value
                 or any(not isinstance(item, str) or HANDLE.fullmatch(item) is None
                        for item in params.values())):
+            raise ApiFailure("invalid_request")
+        return operation, params
+    if operation in WORKSPACE_ROLE_OPERATIONS:
+        params = value["params"]
+        if (not isinstance(params, dict) or set(params) != {"profile", "workspace", "member", "role"}
+                or "idempotency_key" not in value
+                or params.get("role") not in {"admin", "member"}
+                or any(not isinstance(params.get(name), str) or HANDLE.fullmatch(params[name]) is None
+                       for name in ("profile", "workspace", "member"))):
             raise ApiFailure("invalid_request")
         return operation, params
     if operation in WORKSPACE_MEMBERS_OPERATIONS:
@@ -233,5 +244,6 @@ COMPONENT_OPERATIONS = (
     + WORKSPACE_APPROVE_OPERATIONS
     + WORKSPACE_DECLINE_OPERATIONS
     + WORKSPACE_MEMBERS_OPERATIONS
+    + WORKSPACE_ROLE_OPERATIONS
     + DIAGNOSTIC_OPERATIONS
 )

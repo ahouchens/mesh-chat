@@ -110,6 +110,41 @@ class CoreClient private constructor(private val transport: CoreTransport) {
     fun pairingRequest(profile: String, peer: String): JSONObject =
         request("peer.pairing_request", JSONObject().put("profile", profile).put("peer", peer))
 
+    fun workspaceMembers(profile: String, workspace: String): JSONObject =
+        request("workspace.members", JSONObject().put("profile", profile).put("workspace", workspace))
+
+    fun workspaceJoinDecline(
+        profile: String,
+        workspace: String,
+        requestId: String,
+        idempotencyKey: String,
+    ): JSONObject {
+        requireKey(idempotencyKey, "workspace declines")
+        return dispatch(
+            "workspace.join_decline",
+            JSONObject().put("profile", profile).put("workspace", workspace)
+                .put("request", requestId),
+            idempotencyKey,
+        )
+    }
+
+    fun workspaceMemberRole(
+        profile: String,
+        workspace: String,
+        member: String,
+        role: String,
+        idempotencyKey: String,
+    ): JSONObject {
+        if (role != "admin" && role != "member") throw CoreException("invalid_request")
+        requireKey(idempotencyKey, "role changes")
+        return dispatch(
+            "workspace.member_role",
+            JSONObject().put("profile", profile).put("workspace", workspace)
+                .put("member", member).put("role", role),
+            idempotencyKey,
+        )
+    }
+
     fun workspacePreview(profile: String, document: String): JSONObject {
         if (document.isEmpty()) throw CoreException("invalid_request")
         return request(

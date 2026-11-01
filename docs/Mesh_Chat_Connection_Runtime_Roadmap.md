@@ -1100,8 +1100,10 @@ failing or approving twice. Decline and member visibility complete the review lo
 is keyed and replay-safe, and `workspace.members` exposes caller-scoped handles
 with display name, role and status only. Three regressions drive real join traffic
 through approval, replay, decline, replay and the member list, and cover the
-approve grant, role requirement and caller scope. Role changes and channel
-administration remain open.
+approve grant, role requirement and caller scope. `workspace.member_role` lets the
+active owner assign administrator or member with a caller key; the domain applies
+a manifest transition and the facade returns only the member handle and applied
+role. Channel administration remains open.
 
 ## Remaining work checklist
 
@@ -1171,11 +1173,11 @@ M5 - supported reusable core
       joining states only, no role administration).
 - [x] Per-peer signed contact request with bounded convergence (component only;
       the signed document is not returned).
-- [x] Workspace listing, pending join review, idempotent approval, decline and
-      member visibility (component only; role changes and channel administration
-      open).
-- [ ] Per-peer pairing documents returned to the caller and workspace role
-      changes.
+- [x] Workspace listing, pending join review, idempotent approval, decline,
+      member visibility and owner role changes (component only; channel
+      administration open).
+- [ ] Per-peer pairing documents returned to the caller and workspace channel
+      administration.
 - [x] Experimental TypeScript client over the frame contract (component only; no
       packaging, CI conformance, Kotlin client or consumer).
 - [x] Experimental Python client and Windows CLI over the host pipe, with a

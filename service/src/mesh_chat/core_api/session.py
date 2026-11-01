@@ -19,8 +19,8 @@ from .views import (
     acceptance_view, acknowledgment_view, connection_view, event_view, intent_view, message_view,
     invitation_view, pairing_request_view, pairing_view, peer_view, received_view,
     relationship_view, stop_view, workspace_approve_view, workspace_decline_view,
-    workspace_join_view, workspace_list_view, workspace_members_view,
-    workspace_preview_view, workspace_requests_view,
+    workspace_join_view, workspace_list_view, workspace_member_role_view,
+    workspace_members_view, workspace_preview_view, workspace_requests_view,
 )
 from .errors import ApiFailure
 from .limits import MAX_FRAME_BYTES, MAX_REQUEST_JSON_DEPTH, MAX_REQUEST_JSON_TOKENS
@@ -32,7 +32,7 @@ from .requests import (
     COMPONENT_OPERATIONS, RELATIONSHIP_OPERATIONS, REQUEST_OPERATIONS, STOP_OPERATIONS,
     WORKSPACE_APPROVE_OPERATIONS, WORKSPACE_DECLINE_OPERATIONS, WORKSPACE_JOIN_OPERATIONS,
     WORKSPACE_LIST_OPERATIONS, WORKSPACE_MEMBERS_OPERATIONS, WORKSPACE_PREVIEW_OPERATIONS,
-    WORKSPACE_REQUESTS_OPERATIONS, REQUEST_ID, parse_request,
+    WORKSPACE_REQUESTS_OPERATIONS, WORKSPACE_ROLE_OPERATIONS, REQUEST_ID, parse_request,
 )
 from .messages import (
     IDEMPOTENCY_SECONDS, MAX_CALLER_ENQUEUES, MAX_PEERS, MAX_VAULT_ENQUEUES,
@@ -136,6 +136,7 @@ class CoreSession:
             (WORKSPACE_APPROVE_OPERATIONS, self._workspace_admin),
             (WORKSPACE_DECLINE_OPERATIONS, self._workspace_admin),
             (WORKSPACE_MEMBERS_OPERATIONS, self._workspace_admin),
+            (WORKSPACE_ROLE_OPERATIONS, self._workspace_admin),
             (DIAGNOSTIC_OPERATIONS, self._diagnostics),
         ):
             if port is not None:
@@ -162,7 +163,8 @@ class CoreSession:
                 if key is not None and operation not in {"message.enqueue", "events.ack",
                                                         "workspace.join",
                                                         "workspace.join_approve",
-                                                        "workspace.join_decline"}:
+                                                        "workspace.join_decline",
+                                                        "workspace.member_role"}:
                     raise ApiFailure("invalid_request")
                 permission = {"message.enqueue": "send", "message.query": "read", "message.list": "read",
                               "message.received": "read", "events.poll": "read", "events.ack": "read",
@@ -176,6 +178,7 @@ class CoreSession:
                               "workspace.join_approve": "approve",
                               "workspace.join_decline": "approve",
                               "workspace.members": "approve",
+                              "workspace.member_role": "approve",
                               "diagnostics.query": "diagnose"}.get(operation, "observe")
                 if permission not in grant.permissions:
                     raise ApiFailure("forbidden")
@@ -274,6 +277,19 @@ class CoreSession:
                 params["profile"], params["workspace"],
                 [(self._handle(grant, "member", target, item.member), item)
                  for item in members])
+        if operation in WORKSPACE_ROLE_OPERATIONS:
+            target = profiles.get(params["profile"])
+            if target is None:
+                raise ApiFailure("forbidden")
+            inside = self._workspace_target(grant, target, params["workspace"])
+            member = self._member_target(grant, target, inside, params["member"])
+            if key is None:
+                raise ApiFailure("invalid_request")
+            change = self._workspace_admin.change_role(
+                target, inside, member, params["role"],
+                self._operation_id(grant, target, key))
+            return workspace_member_role_view(
+                params["profile"], params["workspace"], params["member"], change)
         if operation in WORKSPACE_PREVIEW_OPERATIONS:
             target = profiles.get(params["profile"])
             if target is None:
@@ -403,6 +419,12 @@ class CoreSession:
                     self._handle(grant, "peer", profile, item.value.recipient), item.value) for item in page.messages]
         return self._bounded_recovery({"profile": params["profile"], "messages": messages,
                                        "next_cursor": page.next_cursor, "events_cursor": page.events_cursor})
+
+    def _member_target(self, grant, profile, workspace, handle):
+        for item in self._workspace_admin.members(profile, workspace):
+            if self._handle(grant, "member", profile, item.member) == handle:
+                return item.member
+        raise ApiFailure("forbidden")
 
     def _workspace_entries(self, grant, profile):
         return [(self._handle(grant, "workspace", profile, item.workspace), item)

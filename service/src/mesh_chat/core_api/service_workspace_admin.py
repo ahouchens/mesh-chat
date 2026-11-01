@@ -3,7 +3,8 @@
 from ..errors import ContactNotApproved, InvitationExpired, InvitationInvalid, ValidationError
 from .errors import ApiFailure
 from .service_messages import storage_errors
-from .workspace_admin import JoinApproval, JoinRequestSummary, MemberSummary, WorkspaceSummary
+from .workspace_admin import (JoinApproval, JoinRequestSummary, MemberRoleChange, MemberSummary,
+                              WorkspaceSummary)
 
 
 MAX_WORKSPACES = 16
@@ -140,3 +141,31 @@ class ServiceWorkspaceAdmin:
                     raise ApiFailure("internal")
                 found.append(MemberSummary(member_id, name, role, status))
             return tuple(sorted(found, key=lambda item: (item.role != "owner", item.member)))
+
+    def change_role(self, profile, workspace_id, member_id, role, operation_id):
+        self._require_local(profile)
+        if role not in ROLES_ASSIGNABLE or not isinstance(operation_id, str) or not operation_id:
+            raise ApiFailure("invalid_request")
+        with storage_errors():
+            workspace = self._workspace(workspace_id)
+            if workspace.get("local_role") != "owner":
+                raise ApiFailure("forbidden")
+            members = [item for item in workspace.get("members", [])
+                       if isinstance(item, dict) and item.get("id") == member_id]
+            if not members:
+                raise ApiFailure("not_found")
+            current = members[0]
+            if current.get("role") == "owner":
+                raise ApiFailure("invalid_request")
+            if current.get("role") == role:
+                return MemberRoleChange(member_id, role)
+            try:
+                self._service.change_workspace_role(workspace_id, member_id, role, operation_id)
+            except (ValidationError, ContactNotApproved) as error:
+                raise ApiFailure("invalid_request") from error
+            updated = self._workspace(workspace_id)
+            found = [item for item in updated.get("members", [])
+                     if isinstance(item, dict) and item.get("id") == member_id]
+            if not found or found[0].get("role") != role:
+                raise ApiFailure("internal")
+            return MemberRoleChange(member_id, role)

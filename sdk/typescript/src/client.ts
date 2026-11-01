@@ -24,7 +24,10 @@ import type {
   ReceivedPage,
   RelationshipView,
   StopView,
+  WorkspaceDeclineView,
   WorkspaceJoinView,
+  WorkspaceMemberRoleView,
+  WorkspaceMembersView,
   WorkspacePreviewView,
 } from "./types.js";
 
@@ -242,6 +245,43 @@ export class CoreClient {
     return this.request<WorkspaceJoinView>(
       "workspace.join",
       { profile, document },
+      { idempotencyKey },
+    );
+  }
+
+  async workspaceMembers(profile: string, workspace: string): Promise<WorkspaceMembersView> {
+    return this.request<WorkspaceMembersView>("workspace.members", { profile, workspace });
+  }
+
+  async workspaceJoinDecline(
+    profile: string,
+    workspace: string,
+    request: string,
+    idempotencyKey: string,
+  ): Promise<WorkspaceDeclineView> {
+    if (idempotencyKey.length < 16) {
+      throw new ProtocolError("workspace declines require a caller key");
+    }
+    return this.request<WorkspaceDeclineView>(
+      "workspace.join_decline",
+      { profile, workspace, request },
+      { idempotencyKey },
+    );
+  }
+
+  async workspaceMemberRole(
+    profile: string,
+    workspace: string,
+    member: string,
+    role: "admin" | "member",
+    idempotencyKey: string,
+  ): Promise<WorkspaceMemberRoleView> {
+    if (idempotencyKey.length < 16) {
+      throw new ProtocolError("role changes require a caller key");
+    }
+    return this.request<WorkspaceMemberRoleView>(
+      "workspace.member_role",
+      { profile, workspace, member, role },
       { idempotencyKey },
     );
   }

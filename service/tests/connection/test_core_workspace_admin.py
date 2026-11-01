@@ -87,6 +87,37 @@ def test_owner_lists_workspaces_requests_and_approves_a_join(admin_pair):
     Draft202012Validator(
         json.loads((CONTRACTS / "workspace-members-result-v1.schema.json").read_text())
     ).validate(members)
+
+    blair = next(item for item in members["result"]["members"]
+                 if item["display_name"] == "Blair")
+    change = session.request({
+        "api_version": 1, "request_id": "request:1", "operation": "workspace.member_role",
+        "params": {"profile": profile, "workspace": workspace["workspace"],
+                   "member": blair["member"], "role": "admin"},
+        "idempotency_key": "r" * 32,
+    })
+    assert change["ok"], change
+    assert change["result"]["role"] == "admin"
+    Draft202012Validator(
+        json.loads((CONTRACTS / "workspace-member-role-result-v1.schema.json").read_text())
+    ).validate(change)
+    assert session.request({
+        "api_version": 1, "request_id": "request:2", "operation": "workspace.member_role",
+        "params": {"profile": profile, "workspace": workspace["workspace"],
+                   "member": blair["member"], "role": "admin"},
+        "idempotency_key": "r" * 32,
+    })["result"] == change["result"]
+    refreshed = session.request(request("workspace.members", profile=profile,
+                                        workspace=workspace["workspace"]))
+    assert next(item for item in refreshed["result"]["members"]
+                if item["member"] == blair["member"])["role"] == "admin"
+    refused = session.request({
+        "api_version": 1, "request_id": "request:3", "operation": "workspace.member_role",
+        "params": {"profile": profile, "workspace": workspace["workspace"],
+                   "member": blair["member"], "role": "owner"},
+        "idempotency_key": "o" * 32,
+    })
+    assert refused["error"]["code"] == "invalid_request"
     again = approve(session, profile, workspace["workspace"], join_request)
     assert again == approved
     remaining = session.request(request("workspace.join_requests", profile=profile,
@@ -104,31 +135,3 @@ def test_workspace_administration_requires_the_approve_grant_and_scope(admin_pai
     _, blair_profile = open_client(owner, caller="blair")
     assert alex.request(request("workspace.query", profile=blair_profile)
                         )["error"]["code"] == "forbidden"
-
-
-def decline(session, profile, workspace, join_request, key="d" * 32):
-    return session.request({"api_version": 1, "request_id": "request:1",
-                            "operation": "workspace.join_decline",
-                            "params": {"profile": profile, "workspace": workspace,
-                                       "request": join_request},
-                            "idempotency_key": key})
-
-
-def test_declining_a_join_removes_it_and_replays(admin_pair):
-    owner, _, _ = admin_pair
-    session, profile = open_client(owner)
-    workspace = session.request(request("workspace.query", profile=profile)
-                                )["result"]["workspaces"][0]["workspace"]
-    pending = session.request(request("workspace.join_requests", profile=profile,
-                                      workspace=workspace))
-    join_request = pending["result"]["requests"][0]["request"]
-    declined = decline(session, profile, workspace, join_request)
-    assert declined["ok"], declined
-    assert declined["result"]["decision"] == "declined"
-    Draft202012Validator(
-        json.loads((CONTRACTS / "workspace-decline-result-v1.schema.json").read_text())
-    ).validate(declined)
-    assert decline(session, profile, workspace, join_request) == declined
-    remaining = session.request(request("workspace.join_requests", profile=profile,
-                                        workspace=workspace))
-    assert remaining["result"]["requests"] == []

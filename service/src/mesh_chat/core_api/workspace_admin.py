@@ -28,6 +28,12 @@ class MemberSummary:
 
 
 @dataclass(frozen=True)
+class MemberRoleChange:
+    member: str
+    role: str
+
+
+@dataclass(frozen=True)
 class JoinApproval:
     workspace: str
     state: str
@@ -47,3 +53,6 @@ class WorkspaceAdmin(Protocol):
                 operation_id: str) -> JoinApproval: ...
 
     def members(self, profile: str, workspace: str) -> tuple[MemberSummary, ...]: ...
+
+    def change_role(self, profile: str, workspace: str, member: str, role: str,
+                    operation_id: str) -> MemberRoleChange: ...

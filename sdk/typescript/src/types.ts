@@ -138,3 +138,29 @@ export interface WorkspaceJoinView {
   name: string;
   state: "joining" | "active" | "pending" | "left";
 }
+
+export interface WorkspaceMember {
+  member: string;
+  display_name: string;
+  role: "owner" | "admin" | "member";
+  status: "active" | "invited" | "leaving" | "left" | "removed";
+}
+
+export interface WorkspaceMembersView {
+  profile: string;
+  workspace: string;
+  members: WorkspaceMember[];
+}
+
+export interface WorkspaceDeclineView {
+  profile: string;
+  workspace: string;
+  decision: "declined";
+}
+
+export interface WorkspaceMemberRoleView {
+  profile: string;
+  workspace: string;
+  member: string;
+  role: "admin" | "member";
+}

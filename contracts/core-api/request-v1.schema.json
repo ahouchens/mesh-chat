@@ -57,6 +57,61 @@
           "pattern": "^[A-Za-z0-9._:-]+$"
         },
         "operation": {
+          "const": "workspace.member_role"
+        },
+        "params": {
+          "type": "object",
+          "properties": {
+            "profile": {
+              "$ref": "#/$defs/handle"
+            },
+            "workspace": {
+              "$ref": "#/$defs/handle"
+            },
+            "member": {
+              "$ref": "#/$defs/handle"
+            },
+            "role": {
+              "enum": ["admin", "member"]
+            }
+          },
+          "required": [
+            "profile",
+            "workspace",
+            "member",
+            "role"
+          ],
+          "additionalProperties": false
+        },
+        "idempotency_key": {
+          "type": "string",
+          "minLength": 16,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        }
+      },
+      "required": [
+        "api_version",
+        "request_id",
+        "operation",
+        "params",
+        "idempotency_key"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "api_version": {
+          "const": 1
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        },
+        "operation": {
           "const": "workspace.members"
         },
         "params": {

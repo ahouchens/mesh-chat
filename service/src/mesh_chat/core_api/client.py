@@ -115,6 +115,27 @@ class CoreClient:
         return self.request("workspace.invitation_preview",
                             {"profile": handle, "document": document})
 
+    def workspace_members(self, handle, workspace):
+        return self.request("workspace.members", {"profile": handle, "workspace": workspace})
+
+    def workspace_join_decline(self, handle, workspace, request_handle, key):
+        if not isinstance(key, str) or len(key) < 16:
+            raise ValueError("Workspace declines require a caller-scoped key")
+        return self.request("workspace.join_decline",
+                            {"profile": handle, "workspace": workspace,
+                             "request": request_handle},
+                            idempotency_key=key)
+
+    def workspace_member_role(self, handle, workspace, member, role, key):
+        if role not in {"admin", "member"}:
+            raise ValueError("Workspace role is invalid")
+        if not isinstance(key, str) or len(key) < 16:
+            raise ValueError("Role changes require a caller-scoped key")
+        return self.request("workspace.member_role",
+                            {"profile": handle, "workspace": workspace,
+                             "member": member, "role": role},
+                            idempotency_key=key)
+
     def workspace_join(self, handle, document, key):
         if not isinstance(document, str) or not document:
             raise ValueError("Workspace invitation is required")

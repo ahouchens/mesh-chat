@@ -146,6 +146,28 @@ def test_client_refuses_to_dispatch_an_empty_pairing_document():
     assert len(transport.written) == 1
 
 
+def test_client_workspace_review_helpers_use_the_declared_envelopes():
+    transport = Scripted(
+        reply(CAPABILITIES),
+        reply({"profile": PROFILE, "workspace": "w" * 64,
+               "members": [{"member": "m" * 64, "display_name": "Blair",
+                            "role": "member", "status": "active"}]}, "client:2"),
+        reply({"profile": PROFILE, "workspace": "w" * 64, "decision": "declined"}, "client:3"),
+        reply({"profile": PROFILE, "workspace": "w" * 64, "member": "m" * 64,
+               "role": "admin"}, "client:4"),
+    )
+    client = CoreClient.open(transport.readline, transport.write)
+    assert client.workspace_members(PROFILE, "w" * 64)["members"][0]["role"] == "member"
+    assert client.workspace_join_decline(PROFILE, "w" * 64, "r" * 64, "d" * 16)["decision"] == "declined"
+    assert client.workspace_member_role(PROFILE, "w" * 64, "m" * 64, "admin", "r" * 16)["role"] == "admin"
+    members, decline, role = (decode_frame(payload) for payload in transport.written[1:])
+    assert members["operation"] == "workspace.members"
+    assert decline["operation"] == "workspace.join_decline" and decline["idempotency_key"] == "d" * 16
+    assert role["operation"] == "workspace.member_role"
+    assert role["params"] == {"profile": PROFILE, "workspace": "w" * 64,
+                              "member": "m" * 64, "role": "admin"}
+
+
 def test_client_workspace_helpers_use_the_declared_envelopes():
     transport = Scripted(
         reply(CAPABILITIES),

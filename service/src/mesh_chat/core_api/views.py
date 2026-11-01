@@ -277,3 +277,13 @@ def workspace_members_view(profile, workspace, items):
         members.append({"member": handle, "display_name": value.display_name,
                         "role": value.role, "status": value.status})
     return {"profile": profile, "workspace": workspace, "members": members}
+
+
+def workspace_member_role_view(profile, workspace, member, value):
+    if any(not isinstance(item, str) or re.fullmatch(r"[A-Za-z0-9_-]{16,128}", item) is None
+           for item in (profile, workspace, member)):
+        raise ValueError("Invalid workspace member role handle")
+    if value.role not in {"admin", "member"}:
+        raise ValueError("Invalid workspace member role")
+    return {"profile": profile, "workspace": workspace, "member": member,
+            "role": value.role}
