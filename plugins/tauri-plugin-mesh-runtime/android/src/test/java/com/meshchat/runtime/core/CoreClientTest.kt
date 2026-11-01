@@ -115,4 +115,33 @@ class CoreClientTest {
         assertEquals("invalid_request", (error as CoreException).code)
         assertEquals(1, transport.written.size)
     }
+
+    @Test
+    fun privateChannelCreationCarriesVisibilityAndMembers() {
+        val transport = Scripted(
+            success("client:1", capabilities()),
+            success(
+                "client:2",
+                JSONObject().put("profile", PROFILE).put("workspace", "w".repeat(64))
+                    .put("channel", "c".repeat(64)).put("name", "Secret")
+                    .put("visibility", "private"),
+            ),
+        )
+        val client = CoreClient.open(transport)
+        client.workspaceChannelCreate(
+            PROFILE, "w".repeat(64), "Secret", "k".repeat(16),
+            visibility = "private", members = listOf("m".repeat(64)),
+        )
+        val params = JSONObject(transport.written[1]).getJSONObject("params")
+        assertEquals("private", params.getString("visibility"))
+        assertEquals("m".repeat(64), params.getJSONArray("members").getString(0))
+        assertTrue(
+            runCatching {
+                client.workspaceChannelCreate(
+                    PROFILE, "w".repeat(64), "Bad", "k".repeat(16),
+                    visibility = "private",
+                )
+            }.exceptionOrNull() is CoreException,
+        )
+    }
 }

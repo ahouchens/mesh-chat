@@ -119,14 +119,29 @@ class CoreClient private constructor(private val transport: CoreTransport) {
         workspace: String,
         name: String,
         idempotencyKey: String,
+        visibility: String = "public",
+        members: List<String> = emptyList(),
     ): JSONObject {
         if (name.isEmpty() || name.length > 64) throw CoreException("invalid_request")
+        if (visibility != "public" && visibility != "private") {
+            throw CoreException("invalid_request")
+        }
+        if (visibility == "private" && members.size !in 1..8) {
+            throw CoreException("invalid_request")
+        }
+        if (visibility == "public" && members.isNotEmpty()) {
+            throw CoreException("invalid_request")
+        }
         requireKey(idempotencyKey, "channel creation")
-        return dispatch(
-            "workspace.channel_create",
-            JSONObject().put("profile", profile).put("workspace", workspace).put("name", name),
-            idempotencyKey,
-        )
+        val params = JSONObject()
+            .put("profile", profile)
+            .put("workspace", workspace)
+            .put("name", name)
+            .put("visibility", visibility)
+        if (visibility == "private") {
+            params.put("members", org.json.JSONArray(members))
+        }
+        return dispatch("workspace.channel_create", params, idempotencyKey)
     }
 
     fun workspaceChannelArchive(
