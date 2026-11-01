@@ -111,6 +111,26 @@ class CoreClient private constructor(private val transport: CoreTransport) {
     fun pairingRequest(profile: String, peer: String): JSONObject =
         request("peer.pairing_request", JSONObject().put("profile", profile).put("peer", peer))
 
+    fun connectionStart(profile: String, peer: String): JSONObject = request(
+        "connection.start",
+        JSONObject().put("profile", profile).put("peer", peer),
+    )
+
+    fun connectionStop(profile: String, peer: String): JSONObject = request(
+        "connection.stop",
+        JSONObject().put("profile", profile).put("peer", peer),
+    )
+
+    fun connectionSnapshot(profile: String, connection: String): JSONObject = request(
+        "connection.snapshot",
+        JSONObject().put("profile", profile).put("connection", connection),
+    )
+
+    fun peerQuery(profile: String, peer: String): JSONObject = request(
+        "peer.query",
+        JSONObject().put("profile", profile).put("peer", peer),
+    )
+
     fun workspaceChannels(profile: String, workspace: String): JSONObject =
         request("workspace.channels", JSONObject().put("profile", profile).put("workspace", workspace))
 

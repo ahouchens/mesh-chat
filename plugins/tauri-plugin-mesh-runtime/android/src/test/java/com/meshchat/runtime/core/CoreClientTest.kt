@@ -188,4 +188,38 @@ class CoreClientTest {
         assertEquals("workspace.join_approve", approve.getString("operation"))
         assertEquals("k".repeat(16), approve.getString("idempotency_key"))
     }
+
+    @Test
+    fun connectionAndPeerHelpersEmitDeclaredEnvelopes() {
+        val transport = Scripted(
+            success("client:1", capabilities()),
+            success("client:2", JSONObject().put("profile", PROFILE).put("peer", PEER)
+                .put("desired", "enabled").put("active", true)),
+            success("client:3", JSONObject().put("profile", PROFILE).put("peer", PEER)
+                .put("desired", "stopped").put("active", false)),
+            success("client:4", JSONObject().put("profile", PROFILE).put("peer", PEER)
+                .put("display_name", "Blair").put("destination", "d".repeat(32))
+                .put("trust", "approved")),
+            success("client:5", JSONObject().put("profile", PROFILE)),
+        )
+        val client = CoreClient.open(transport)
+        client.connectionStart(PROFILE, PEER)
+        client.connectionStop(PROFILE, PEER)
+        client.peerQuery(PROFILE, PEER)
+        client.connectionSnapshot(PROFILE, "c".repeat(64))
+        assertEquals(
+            "connection.start",
+            JSONObject(transport.written[1]).getString("operation"),
+        )
+        assertEquals(
+            "connection.stop",
+            JSONObject(transport.written[2]).getString("operation"),
+        )
+        assertEquals("peer.query", JSONObject(transport.written[3]).getString("operation"))
+        assertEquals(
+            "connection.snapshot",
+            JSONObject(transport.written[4]).getString("operation"),
+        )
+        assertFalse(JSONObject(transport.written[1]).has("idempotency_key"))
+    }
 }

@@ -602,6 +602,33 @@ test("workspace administration helpers use declared envelopes", async () => {
   assert.equal(approve.idempotency_key, "k".repeat(16));
 });
 
+test("connection and peer helpers use declared envelopes", async () => {
+  const transport = new Scripted(
+    success("client:1", CAPABILITIES),
+    success("client:2", { profile: PROFILE, peer: "q".repeat(64), desired: "enabled", active: true }),
+    success("client:3", { profile: PROFILE, peer: "q".repeat(64), desired: "stopped", active: false }),
+    success("client:4", {
+      profile: PROFILE,
+      peer: "q".repeat(64),
+      display_name: "Blair",
+      destination: "d".repeat(32),
+      trust: "approved",
+    }),
+    success("client:5", { profile: PROFILE }),
+  );
+  const client = await CoreClient.open(transport);
+  assert.equal((await client.connectionStart(PROFILE, "q".repeat(64))).desired, "enabled");
+  assert.equal((await client.connectionStop(PROFILE, "q".repeat(64))).desired, "stopped");
+  assert.equal((await client.peerQuery(PROFILE, "q".repeat(64))).trust, "approved");
+  await client.connectionSnapshot(PROFILE, "c".repeat(64));
+  const start = JSON.parse(transport.written[1]);
+  assert.equal(start.operation, "connection.start");
+  assert.equal("idempotency_key" in start, false);
+  const snapshot = JSON.parse(transport.written[4]);
+  assert.equal(snapshot.operation, "connection.snapshot");
+  assert.equal(snapshot.params.connection, "c".repeat(64));
+});
+
 test("workspace preview and join use the declared envelopes", async () => {
   const transport = new Scripted(
     success("client:1", CAPABILITIES),

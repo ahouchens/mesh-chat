@@ -32,6 +32,8 @@ import type {
   WorkspaceChannelUpdateView,
   WorkspaceChannelsView,
   WorkspaceDeclineView,
+  ConnectionIntentView,
+  PeerView,
   WorkspaceApproveView,
   WorkspaceJoinRequestSummary,
   WorkspaceListView,
@@ -551,6 +553,18 @@ export class CoreClient {
       { profile, workspace, request },
       { idempotencyKey },
     );
+  }
+
+  async connectionStart(profile: string, peer: string): Promise<ConnectionIntentView> {
+    return this.request<ConnectionIntentView>("connection.start", { profile, peer });
+  }
+
+  async connectionStop(profile: string, peer: string): Promise<ConnectionIntentView> {
+    return this.request<ConnectionIntentView>("connection.stop", { profile, peer });
+  }
+
+  async peerQuery(profile: string, peer: string): Promise<PeerView> {
+    return this.request<PeerView>("peer.query", { profile, peer });
   }
 
   async workspaceMembers(profile: string, workspace: string): Promise<WorkspaceMembersView> {

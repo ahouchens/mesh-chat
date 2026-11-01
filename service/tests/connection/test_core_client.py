@@ -117,6 +117,30 @@ def test_cli_rejects_unknown_commands():
     assert raised.value.code == 2
 
 
+def test_client_connection_and_peer_helpers_use_the_declared_envelopes():
+    transport = Scripted(
+        reply(CAPABILITIES),
+        reply({"profile": PROFILE, "peer": PEER, "desired": "enabled",
+               "active": True}, "client:2"),
+        reply({"profile": PROFILE, "peer": PEER, "desired": "stopped",
+               "active": False}, "client:3"),
+        reply({"profile": PROFILE, "peer": PEER, "display_name": "Blair",
+               "destination": "d" * 32, "trust": "approved"}, "client:4"),
+        reply({"profile": PROFILE}, "client:5"),
+    )
+    client = CoreClient.open(transport.readline, transport.write)
+    assert client.connection_start(PROFILE, PEER)["desired"] == "enabled"
+    assert client.connection_stop(PROFILE, PEER)["desired"] == "stopped"
+    assert client.peer_query(PROFILE, PEER)["trust"] == "approved"
+    client.connection_snapshot(PROFILE, "c" * 64)
+    start, stop, peer, snapshot = (decode_frame(payload) for payload in transport.written[1:])
+    assert start["operation"] == "connection.start"
+    assert stop["operation"] == "connection.stop"
+    assert "idempotency_key" not in start
+    assert peer["operation"] == "peer.query"
+    assert snapshot["params"] == {"profile": PROFILE, "connection": "c" * 64}
+
+
 def test_client_relationship_and_pairing_helpers_reuse_the_contract():
     transport = Scripted(
         reply(CAPABILITIES),

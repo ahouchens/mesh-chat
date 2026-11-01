@@ -312,3 +312,18 @@ export interface WorkspaceApproveView {
   workspace: string;
   state: "active" | "joining" | "linking" | "left" | "removed" | "device_removed" | "revoked" | "archived";
 }
+
+export interface ConnectionIntentView {
+  profile: string;
+  peer: string;
+  desired: "enabled" | "stopped";
+  active: boolean;
+}
+
+export interface PeerView {
+  profile: string;
+  peer: string;
+  display_name: string;
+  destination: string;
+  trust: string;
+}

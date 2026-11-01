@@ -97,6 +97,19 @@ class CoreClient:
     def diagnostics(self, handle, limit=256):
         return self.request("diagnostics.query", {"profile": handle, "limit": limit})
 
+    def connection_start(self, handle, peer):
+        return self.request("connection.start", {"profile": handle, "peer": peer})
+
+    def connection_stop(self, handle, peer):
+        return self.request("connection.stop", {"profile": handle, "peer": peer})
+
+    def connection_snapshot(self, handle, connection):
+        return self.request("connection.snapshot",
+                            {"profile": handle, "connection": connection})
+
+    def peer_query(self, handle, peer):
+        return self.request("peer.query", {"profile": handle, "peer": peer})
+
     def approve(self, handle, peer):
         return self.request("peer.approve", {"profile": handle, "peer": peer})
 
