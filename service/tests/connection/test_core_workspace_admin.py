@@ -514,3 +514,43 @@ def test_workspace_owners_can_update_workspace_policies(admin_pair):
         json.loads((CONTRACTS / "workspace-policy-update-result-v1.schema.json").read_text())
     ).validate(applied)
     assert session.request(update)["result"] == applied["result"]
+
+
+def test_new_administration_handles_are_caller_scoped(admin_pair):
+    owner, _, _ = admin_pair
+    first, first_profile = open_client(owner, permissions=("observe", "read", "approve", "pair"))
+    second, second_profile = open_client(
+        owner, permissions=("observe", "read", "approve", "pair"), caller="mallory")
+    first_workspace = first.request(request("workspace.query", profile=first_profile)
+                                    )["result"]["workspaces"][0]["workspace"]
+    second_workspace = second.request(request("workspace.query", profile=second_profile)
+                                      )["result"]["workspaces"][0]["workspace"]
+    assert first_workspace != second_workspace
+    assert second.request(request("workspace.channels", profile=second_profile,
+                                  workspace=first_workspace)
+                          )["error"]["code"] == "forbidden"
+    created = first.request({
+        "api_version": 1, "request_id": "request:1",
+        "operation": "workspace.channel_create",
+        "params": {"profile": first_profile, "workspace": first_workspace, "name": "Scoped"},
+        "idempotency_key": "s" * 32,
+    })
+    assert created["ok"], created
+    channel = created["result"]["channel"]
+    assert second.request({
+        "api_version": 1, "request_id": "request:2",
+        "operation": "workspace.channel_update",
+        "params": {"profile": second_profile, "workspace": second_workspace,
+                   "channel": channel, "name": "Stolen", "topic": ""},
+        "idempotency_key": "t" * 32,
+    })["error"]["code"] == "forbidden"
+    members = first.request(request("workspace.members", profile=first_profile,
+                                    workspace=first_workspace))
+    member = members["result"]["members"][0]["member"]
+    assert second.request({
+        "api_version": 1, "request_id": "request:3",
+        "operation": "workspace.member_role",
+        "params": {"profile": second_profile, "workspace": second_workspace,
+                   "member": member, "role": "admin"},
+        "idempotency_key": "u" * 32,
+    })["error"]["code"] == "forbidden"
