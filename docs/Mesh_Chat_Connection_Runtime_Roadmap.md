@@ -2,6 +2,10 @@
 
 Feature branch: `codex/mesh-chat-core-refactor`.
 
+Executed automated evidence for the current commit is recorded in the
+[qualification ledger](Mesh_Chat_Connection_Qualification_Ledger.md);
+it separates automated runs from physical and packaged limits.
+
 The supplied [specification](Mesh_Chat_Connection_Runtime_Spec.md) remains the
 requirements baseline. Its referenced companion roadmap was not supplied; this
 file records implementation work and evidence without claiming that missing

@@ -1,5 +1,10 @@
 # Acceptance reconciliation: specification invariants and scenarios
 
+Executed automated evidence for the current commit is recorded in the
+[qualification ledger](Mesh_Chat_Connection_Qualification_Ledger.md);
+it separates automated runs from physical and packaged limits.
+
+
 This page reconciles [the specification](Mesh_Chat_Connection_Runtime_Spec.md)
 with executed evidence. It is deliberately conservative: a requirement is only
 marked at the level the evidence actually reaches, and physical-only acceptance
