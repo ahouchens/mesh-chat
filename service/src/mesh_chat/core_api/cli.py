@@ -12,6 +12,14 @@ import json
 from .client import CoreClient, CoreClientError
 
 
+def read_document(path):
+    try:
+        with open(path, encoding="utf-8") as handle:
+            return handle.read(65537)
+    except OSError as error:
+        raise CoreClientError("invalid_document") from error
+
+
 def build_parser():
     parser = argparse.ArgumentParser(prog="mesh-chat-core",
                                      description="Query the private Mesh Chat Core API")
@@ -88,6 +96,64 @@ def build_parser():
     device_create.add_argument("--key", required=True)
     device_preview = commands.add_parser("workspace-device-link-preview", help="preview a device link")
     device_preview.add_argument("--document-file", required=True)
+    workspace_join = commands.add_parser("workspace-join", help="join from a signed invitation")
+    workspace_join.add_argument("--document-file", required=True)
+    invitation_preview = commands.add_parser("workspace-invitation-preview",
+                                             help="preview a signed workspace invitation")
+    invitation_preview.add_argument("--document-file", required=True)
+    channel_members = commands.add_parser("workspace-channel-members",
+                                          help="list a private channel roster")
+    channel_members.add_argument("--workspace", required=True)
+    channel_members.add_argument("--channel", required=True)
+    channel_members_update = commands.add_parser("workspace-channel-members-update",
+                                                 help="replace a private channel roster")
+    channel_members_update.add_argument("--workspace", required=True)
+    channel_members_update.add_argument("--channel", required=True)
+    channel_members_update.add_argument("--member", action="append", dest="members",
+                                        required=True)
+    channel_members_update.add_argument("--key", required=True)
+    transfer_offer = commands.add_parser("workspace-channel-transfer-offer",
+                                         help="offer a channel to a member")
+    transfer_offer.add_argument("--workspace", required=True)
+    transfer_offer.add_argument("--channel", required=True)
+    transfer_offer.add_argument("--member", required=True)
+    transfer_offer.add_argument("--key", required=True)
+    transfer_accept = commands.add_parser("workspace-channel-transfer-accept",
+                                          help="accept an offered channel")
+    transfer_accept.add_argument("--workspace", required=True)
+    transfer_accept.add_argument("--channel", required=True)
+    transfer_accept.add_argument("--key", required=True)
+    policy_update = commands.add_parser("workspace-policy-update",
+                                        help="set workspace policies")
+    policy_update.add_argument("--workspace", required=True)
+    policy_update.add_argument("--channel-creation", required=True,
+                               choices=("all_members", "owner_and_admins"))
+    policy_update.add_argument("--posting", required=True,
+                               choices=("all_members", "owner_and_admins"))
+    policy_update.add_argument("--invitation-requests", required=True,
+                               choices=("owner_only", "owner_and_admins",
+                                        "all_members_request"))
+    policy_update.add_argument("--key", required=True)
+    submit = commands.add_parser("workspace-device-link-submit",
+                                 help="submit a device link on this device")
+    submit.add_argument("--document-file", required=True)
+    submit.add_argument("--key", required=True)
+    links = commands.add_parser("workspace-device-links",
+                                help="list pending device-link approvals")
+    links.add_argument("--workspace", required=True)
+    for name, help_text in (("workspace-device-link-approve", "approve a device link"),
+                            ("workspace-device-link-decline", "decline a device link")):
+        decision = commands.add_parser(name, help=help_text)
+        decision.add_argument("--workspace", required=True)
+        decision.add_argument("--request", required=True)
+        decision.add_argument("--key", required=True)
+    devices = commands.add_parser("workspace-devices", help="list workspace devices")
+    devices.add_argument("--workspace", required=True)
+    device_remove = commands.add_parser("workspace-device-remove",
+                                        help="remove a linked device")
+    device_remove.add_argument("--workspace", required=True)
+    device_remove.add_argument("--device", required=True)
+    device_remove.add_argument("--key", required=True)
     return parser
 
 
@@ -152,12 +218,44 @@ def execute(args, client):
     if args.command == "workspace-device-link-create":
         return client.workspace_device_link_create(profile, args.workspace, args.key)
     if args.command == "workspace-device-link-preview":
-        try:
-            with open(args.document_file, encoding="utf-8") as handle:
-                document = handle.read(65537)
-        except OSError as error:
-            raise CoreClientError("invalid_document") from error
-        return client.workspace_device_link_preview(profile, document)
+        return client.workspace_device_link_preview(
+            profile, read_document(args.document_file))
+    if args.command == "workspace-join":
+        return client.request("workspace.join",
+                              {"profile": profile, "document": read_document(args.document_file)})
+    if args.command == "workspace-invitation-preview":
+        return client.workspace_preview(profile, read_document(args.document_file))
+    if args.command == "workspace-channel-members":
+        return client.workspace_channel_members(profile, args.workspace, args.channel)
+    if args.command == "workspace-channel-members-update":
+        return client.workspace_channel_members_update(
+            profile, args.workspace, args.channel, args.members, args.key)
+    if args.command == "workspace-channel-transfer-offer":
+        return client.workspace_channel_transfer_offer(
+            profile, args.workspace, args.channel, args.member, args.key)
+    if args.command == "workspace-channel-transfer-accept":
+        return client.workspace_channel_transfer_accept(
+            profile, args.workspace, args.channel, args.key)
+    if args.command == "workspace-policy-update":
+        return client.workspace_policy_update(
+            profile, args.workspace, args.channel_creation, args.posting,
+            args.invitation_requests, args.key)
+    if args.command == "workspace-device-link-submit":
+        return client.workspace_device_link_submit(
+            profile, read_document(args.document_file), args.key)
+    if args.command == "workspace-device-links":
+        return client.workspace_device_links(profile, args.workspace)
+    if args.command == "workspace-device-link-approve":
+        return client.workspace_device_link_approve(
+            profile, args.workspace, args.request, args.key)
+    if args.command == "workspace-device-link-decline":
+        return client.workspace_device_link_decline(
+            profile, args.workspace, args.request, args.key)
+    if args.command == "workspace-devices":
+        return client.workspace_devices(profile, args.workspace)
+    if args.command == "workspace-device-remove":
+        return client.workspace_device_remove(
+            profile, args.workspace, args.device, args.key)
     raise CoreClientError("unsupported_operation")
 
 

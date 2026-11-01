@@ -338,6 +338,16 @@ makes the linked device active once the signed decision is delivered. Link
 operations are keyed and replay-safe, and no fingerprints, keys or manifests
 cross the boundary.
 
+## Console client
+
+The Python console client mesh_chat.core_api.cli covers the administrative
+surface (workspace listing, join and invitation handling, join review, members,
+roles, channel create/update/archive, private rosters, transfers, policies,
+device links and removal) plus the core diagnostics and messaging loop, and
+reports its component version with --version. It does not expose connection
+start, snapshots, peer queries or message history queries, and it remains an
+in-process diagnostic client, not a packaged application.
+
 ## Observation and recovery
 
 Connection observations use runtime epoch and sequence; gaps or epoch changes

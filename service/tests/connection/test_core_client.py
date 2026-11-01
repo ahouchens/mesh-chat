@@ -454,3 +454,44 @@ def test_cli_dispatches_workspace_and_device_commands(tmp_path):
                                 "expires_at": 1})
     assert result["device_count"] == 1
     assert decode_frame(transport.written[1])["params"]["document"] == "signed-device-link"
+
+
+def test_cli_dispatches_administration_commands(tmp_path):
+    document = tmp_path / "link.txt"
+    document.write_text("signed-material", encoding="utf-8")
+
+    def invoke(command, body):
+        transport = Scripted(reply(CAPABILITIES), reply(body, "client:2"))
+        out, err = io.StringIO(), io.StringIO()
+        assert run_cli(["--pipe", r"\\.\pipe\mesh-chat-test", *command],
+                       transport, out, err) == 0
+        assert err.getvalue() == ""
+        return transport, json.loads(out.getvalue())
+
+    transport, result = invoke([
+        "workspace-channel-members-update", "--workspace", "w" * 64,
+        "--channel", "c" * 64, "--member", "m" * 64, "--member", "n" * 64,
+        "--key", "k" * 16,
+    ], {"profile": PROFILE, "workspace": "w" * 64, "channel": "c" * 64,
+        "members": ["m" * 64, "n" * 64]})
+    assert decode_frame(transport.written[1])["params"]["members"] == ["m" * 64, "n" * 64]
+    transport, result = invoke([
+        "workspace-policy-update", "--workspace", "w" * 64,
+        "--channel-creation", "owner_and_admins", "--posting", "owner_and_admins",
+        "--invitation-requests", "owner_only", "--key", "y" * 16,
+    ], {"profile": PROFILE, "workspace": "w" * 64,
+        "channel_creation": "owner_and_admins", "posting": "owner_and_admins",
+        "invitation_requests": "owner_only"})
+    assert result["posting"] == "owner_and_admins"
+    transport, result = invoke([
+        "workspace-device-link-submit", "--document-file", str(document),
+        "--key", "s" * 16,
+    ], {"profile": PROFILE, "workspace": "w" * 64, "name": "Core", "state": "linking"})
+    assert result["state"] == "linking"
+    transport, result = invoke([
+        "workspace-device-remove", "--workspace", "w" * 64,
+        "--device", "d" * 64, "--key", "x" * 16,
+    ], {"profile": PROFILE, "workspace": "w" * 64, "device": "d" * 64,
+        "state": "removed"})
+    assert result["state"] == "removed"
+    assert decode_frame(transport.written[1])["operation"] == "workspace.device_remove"
