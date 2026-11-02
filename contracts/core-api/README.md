@@ -37,8 +37,11 @@ its descriptor admits only SYSTEM and the current user, remote clients are
 rejected, and the connecting executable must match a host-supplied allowlist
 before a frame is read. A bounded number of concurrent local clients is served,
 each with the host-supplied caller and permissions; idle sessions are closed so a
-silent client cannot hold a slot. Android's Binder binding and packaged consumers
-remain required.
+silent client cannot hold a slot. Both bundled host bindings currently construct
+**non-owner** grants limited to `observe`, `read`, `send` and `diagnose`; workspace
+administration, pairing and connection intent are refused with `forbidden`, so a
+packaged host consumer cannot administer the vault through this endpoint yet.
+Android's Binder binding and packaged consumers remain required.
 
 Within the component, each session negotiates through `runtime.capabilities`.
 Other operations before negotiation return `negotiation_required`; unimplemented

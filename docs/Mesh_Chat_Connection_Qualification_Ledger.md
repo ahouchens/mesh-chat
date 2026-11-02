@@ -121,7 +121,9 @@ These were **not** executed and are not claimed anywhere in this ledger:
 - physical-device qualification across independent Android and Windows devices;
 - packaged Windows↔Android interoperability (the packaged evidence above is a
   single Windows host with WebView2 and frozen peers);
-- packaged Windows or Android graphical consumer applications; in-process
+- packaged Windows or Android graphical consumer applications; the bundled host
+  bindings grant non-owner permissions only, so administration, pairing and
+  connection intent are unavailable to packaged consumers; in-process
   component smokes exist (TypeScript tarball, Python wheel);
 - published SDK/package artifacts and a supported version-pair matrix;
 - executed release qualification (requires a tag) and any release publication;

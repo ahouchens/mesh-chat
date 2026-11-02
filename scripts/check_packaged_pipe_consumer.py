@@ -49,7 +49,7 @@ def install_wheel(work: Path) -> tuple[Path, Path]:
 SERVER = r"""
 import ctypes
 from ctypes import wintypes
-import json, os, sys, tempfile
+import json, os, sys, tempfile, uuid
 from pathlib import Path
 from mesh_chat.core_api.pipe_endpoint import PipeConfig, PipeEndpoint
 from mesh_chat.service import MeshChatService
@@ -82,6 +82,7 @@ root = Path(tempfile.mkdtemp(prefix="mesh-chat-pipe-host-"))
 store = VaultStore(root, os.urandom(32), allow_unprotected_for_tests=True)
 service = MeshChatService(store, root, lambda _: None)
 service.create_profile("Pipe host")
+service.create_workspace(str(uuid.uuid4()), "Pipe workspace", "")
 config = PipeConfig(caller="packaged-consumer",
                     permissions=("observe", "read"),
                     allowed_images=(current_image(),),
@@ -100,7 +101,7 @@ CONSUMER = r"""
 import ctypes
 from ctypes import wintypes
 import json, sys, time
-from mesh_chat.core_api.client import CoreClient
+from mesh_chat.core_api.client import CoreClient, CoreClientError
 
 GENERIC_READ = 0x80000000
 GENERIC_WRITE = 0x40000000
@@ -171,8 +172,18 @@ try:
     capabilities = client.capabilities
     profile = capabilities["profiles"][0]
     listing = client.workspace_list(profile)
+    workspace = listing["workspaces"][0]["workspace"]
+    admin_denied = False
+    try:
+        client.workspace_channel_create(
+            profile, workspace, "Over pipe", "p" * 16)
+    except CoreClientError as error:
+        assert error.code == "forbidden", error.code
+        admin_denied = True
+    assert admin_denied
     print(json.dumps({"api_major": capabilities["api_major"],
                       "workspaces": len(listing["workspaces"]),
+                      "admin_forbidden": admin_denied,
                       "capabilities_ok": True}))
 finally:
     connection.close()
