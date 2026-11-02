@@ -23,6 +23,11 @@ COMPONENTS = {
 PROTECTED_DOCS = {"AGENTS.md", "SKILL.md", "Mesh_Chat_Connection_Runtime_Spec.md"}
 CONNECTION_TESTS = "service/tests/connection/"
 TYPESCRIPT_SDK = "sdk/typescript/"
+PIPE_PRODUCTION = frozenset({
+    "service/src/mesh_chat/core_api/pipe_endpoint.py",
+    "service/src/mesh_chat/core_api/pipe_policy.py",
+    "service/src/mesh_chat/core_api/pipe_client.py",
+})
 
 
 def documentation(path):
@@ -54,6 +59,15 @@ def typescript_sdk(path):
     return path.startswith(TYPESCRIPT_SDK)
 
 
+def pipe_production(path):
+    if not isinstance(path, str) or not path or "\\" in path:
+        return False
+    value = PurePosixPath(path)
+    if value.is_absolute() or ".." in value.parts:
+        return False
+    return path in PIPE_PRODUCTION
+
+
 def select(paths, *, event="pull_request"):
     eligible = event in {"pull_request", "push"} and bool(paths)
     documentation_only = eligible and all(documentation(path) for path in paths)
@@ -61,12 +75,16 @@ def select(paths, *, event="pull_request"):
                              and all(connection_test(path) for path in paths))
     sdk_only = (eligible and not documentation_only and not connection_tests_only
                 and all(typescript_sdk(path) for path in paths))
+    pipe_only = (eligible and not documentation_only and not connection_tests_only
+                 and not sdk_only and all(pipe_production(path) for path in paths))
     if documentation_only:
         required, reason = ["policy", "verification"], "isolated_documentation"
     elif connection_tests_only:
         required, reason = ["policy", "verification"], "isolated_connection_tests"
     elif sdk_only:
         required, reason = ["policy", "verification"], "isolated_typescript_sdk"
+    elif pipe_only:
+        required, reason = ["policy", "verification"], "isolated_pipe_production"
     else:
         required, reason = list(SUITES), "conservative_full_matrix"
     return {

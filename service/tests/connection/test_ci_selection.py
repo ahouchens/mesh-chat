@@ -180,3 +180,50 @@ def test_qualification_manifest_exposes_suites_and_the_component_summary():
     assert "suites" not in result["components"]
     assert result["report_sha256"] == collected["report_sha256"]
     assert result["jobs"] == jobs
+
+
+def test_isolated_pipe_production_changes_skip_platform_recompilation():
+    plan = ci.select([
+        "service/src/mesh_chat/core_api/pipe_endpoint.py",
+        "service/src/mesh_chat/core_api/pipe_policy.py",
+    ])
+    assert plan["required"] == ["policy", "verification"]
+    assert plan["reason"] == "isolated_pipe_production"
+
+
+@pytest.mark.parametrize("paths", [
+    ["service/src/mesh_chat/core_api/pipe_endpoint.py",
+     "service/src/mesh_chat/core_api/host.py"],
+    ["service/src/mesh_chat/core_api/pipe_endpoint.py", "src/desktop-transport.ts"],
+    ["service/src/mesh_chat/core_api/pipe_endpoint.py", "README.md"],
+])
+def test_mixed_pipe_production_paths_keep_the_full_matrix(paths):
+    assert ci.select(paths)["required"] == list(ci.SUITES)
+
+
+@pytest.mark.parametrize("event", ["workflow_dispatch", "merge_group", "release", "schedule"])
+def test_pipe_production_narrowing_is_limited_to_branch_events(event):
+    assert ci.select(["service/src/mesh_chat/core_api/pipe_endpoint.py"],
+                     event=event)["required"] == list(ci.SUITES)
+
+
+def test_pipe_production_modules_are_not_consumed_by_other_suites():
+    root = Path(__file__).resolve().parents[3]
+    roots = [root / "src",
+             root / "plugins" / "tauri-plugin-mesh-runtime" / "android" / "src"]
+    offenders = []
+    for directory in roots:
+        for path in directory.rglob("*"):
+            if path.suffix not in {".ts", ".tsx", ".js", ".kt"} or not path.is_file():
+                continue
+            text = path.read_text(encoding="utf-8")
+            if any(name in text for name in ("pipe_endpoint", "pipe_policy", "pipe_client")):
+                offenders.append(str(path.relative_to(root)))
+    for path in (root / "service" / "tests").rglob("*.py"):
+        if ("connection" in path.parts or path.name == "test_core_pipe_windows.py"
+                or not path.name.startswith("test_")):
+            continue
+        text = path.read_text(encoding="utf-8")
+        if any(name in text for name in ("pipe_endpoint", "pipe_policy", "pipe_client")):
+            offenders.append(str(path.relative_to(root)))
+    assert offenders == []
