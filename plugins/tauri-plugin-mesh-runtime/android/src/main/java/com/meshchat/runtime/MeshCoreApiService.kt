@@ -17,8 +17,10 @@ import org.json.JSONObject
  *
  * Authentication is a framework decision: the service is exported only behind a
  * signature permission, and the caller package comes from [Binder.getCallingUid]
- * rather than from the frame. Python binds one framed session per caller to a
- * fixed, non-owner grant. No retry, queue or runtime ownership lives here.
+ * rather than from the frame. Python binds one framed session per caller and
+ * scope: the application's own UID receives owner grants, external
+ * signature-permission packages receive consumer grants. No retry, queue or
+ * runtime ownership lives here.
  */
 class MeshCoreApiService : Service() {
     private val executor = Executors.newSingleThreadExecutor { runnable ->
@@ -55,7 +57,8 @@ class MeshCoreApiService : Service() {
             executor.submit<ByteArray> {
                 val module = Python.getInstance().getModule("mesh_chat.mobile_bridge")
                 val encoded = Base64.encodeToString(frame, Base64.NO_WRAP)
-                val reply = module.callAttr("core_exchange", caller, encoded).toString()
+                val scope = if (Binder.getCallingUid() == Process.myUid()) "owner" else "consumer"
+                val reply = module.callAttr("core_exchange", caller, encoded, scope).toString()
                 Base64.decode(reply, Base64.NO_WRAP)
             }.get(30, TimeUnit.SECONDS)
         } catch (error: Throwable) {

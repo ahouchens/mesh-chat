@@ -106,10 +106,10 @@ def current_image():
 
 
 def config(images=None, caller="mesh-chat-desktop", permissions=("observe", "read", "send"),
-           max_clients=4, idle_timeout=60.0):
+           max_clients=4, idle_timeout=60.0, scope="consumer"):
     return PipeConfig(caller=caller, permissions=tuple(permissions),
                       allowed_images=tuple(images or (current_image(),)),
-                      max_clients=max_clients, idle_timeout=idle_timeout)
+                      max_clients=max_clients, idle_timeout=idle_timeout, scope=scope)
 
 
 def endpoint(name, images=None, caller="mesh-chat-desktop", permissions=("observe", "read", "send")):
@@ -282,3 +282,41 @@ def test_idle_timeout_is_bounded():
     for value in (0, -1, 3601, "60", True):
         with pytest.raises(ValueError):
             config(permissions=("observe",), idle_timeout=value)
+
+
+def test_owner_scope_is_opt_in_and_still_refuses_runtime_ownership(service):
+    config(permissions=("observe", "read", "send", "approve"), scope="owner")
+    with pytest.raises(ValueError):
+        config(permissions=("observe", "approve"))
+    with pytest.raises(ValueError):
+        config(permissions=("observe",), scope="administrator")
+    with pytest.raises(ValueError):
+        config(permissions=("runtime_owner",), scope="owner")
+
+
+def test_an_owner_endpoint_can_administrate_over_the_pipe(service):
+    service.create_workspace(str(uuid.uuid4()), "Owner pipe", "")
+    name = pipe_name()
+    server = PipeEndpoint(name, config(
+        permissions=("observe", "read", "send", "approve"), scope="owner"))
+    server.start(service)
+    try:
+        client = connect(name)
+        client.write(request("runtime.capabilities"))
+        capabilities = json.loads(client.readline())
+        assert capabilities["ok"], capabilities
+        profile = capabilities["result"]["profiles"][0]
+        client.write(request("workspace.query", profile=profile))
+        listing = json.loads(client.readline())
+        assert listing["ok"], listing
+        workspace = listing["result"]["workspaces"][0]["workspace"]
+        client.write(frame({"api_version": 1, "request_id": "windows:2",
+                            "operation": "workspace.channel_create",
+                            "params": {"profile": profile, "workspace": workspace,
+                                       "name": "Owner channel"},
+                            "idempotency_key": "o" * 32}))
+        created = json.loads(client.readline())
+        assert created["ok"], (created, server.failure)
+        client.close()
+    finally:
+        server.close()

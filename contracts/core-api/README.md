@@ -36,12 +36,15 @@ private Windows named-pipe endpoint now exists beside it as component evidence:
 its descriptor admits only SYSTEM and the current user, remote clients are
 rejected, and the connecting executable must match a host-supplied allowlist
 before a frame is read. A bounded number of concurrent local clients is served,
-each with the host-supplied caller and permissions; idle sessions are closed so a
-silent client cannot hold a slot. Both bundled host bindings currently construct
-**non-owner** grants limited to `observe`, `read`, `send` and `diagnose`; workspace
-administration, pairing and connection intent are refused with `forbidden`, so a
-packaged host consumer cannot administer the vault through this endpoint yet.
-Android's Binder binding and packaged consumers remain required.
+each with the host-supplied caller, scope and permissions; idle sessions are closed
+so a silent client cannot hold a slot. Host bindings select one of two scopes:
+`consumer` grants `observe`, `read`, `send` and `diagnose` (Android consumers also
+`pair` and `connect`), while `owner` adds `approve` for the trusted application
+itself. Runtime ownership is excluded from both scopes. The Windows pipe defaults
+to `consumer` and must opt into `owner` explicitly; the Android Binder service
+assigns `owner` to its own UID and `consumer` to signature-permission packages.
+The packaged pipe test exercises both scopes, but no packaged graphical application
+exists yet.
 
 Within the component, each session negotiates through `runtime.capabilities`.
 Other operations before negotiation return `negotiation_required`; unimplemented

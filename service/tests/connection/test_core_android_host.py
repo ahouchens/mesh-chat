@@ -2,6 +2,7 @@
 
 import base64
 import json
+import uuid
 
 import pytest
 
@@ -77,3 +78,39 @@ def test_mobile_bridge_forwards_frames_only_with_a_running_service(host, monkeyp
     assert forwarded["ok"], forwarded
     bad = decode_frame(base64.b64decode(mobile_bridge.core_exchange("com.example", "not base64!!")))
     assert bad["error"]["code"] == "invalid_request"
+
+
+def test_owner_scope_is_separate_and_may_approve(host):
+    service = host()
+    service.create_workspace(str(uuid.uuid4()), "Android owner", "")
+    exchange = lambda caller, envelope, scope="consumer": decode_frame(
+        android_host.exchange(service, caller, encode_frame(envelope), scope))
+    capabilities = exchange("com.example.owner", {
+        "api_version": 1, "request_id": "android:1",
+        "operation": "runtime.capabilities", "params": {}}, "owner")
+    assert capabilities["ok"], capabilities
+    profile = capabilities["result"]["profiles"][0]
+    listing = exchange("com.example.owner", {
+        "api_version": 1, "request_id": "android:2",
+        "operation": "workspace.query", "params": {"profile": profile}}, "owner")
+    assert listing["ok"], listing
+    workspace = listing["result"]["workspaces"][0]["workspace"]
+    created = exchange("com.example.owner", {
+        "api_version": 1, "request_id": "android:3",
+        "operation": "workspace.channel_create",
+        "params": {"profile": profile, "workspace": workspace, "name": "Owner channel"},
+        "idempotency_key": "o" * 32}, "owner")
+    assert created["ok"], created
+    denied = exchange("com.example.consumer", {
+        "api_version": 1, "request_id": "android:4",
+        "operation": "workspace.channel_create",
+        "params": {"profile": profile, "workspace": workspace, "name": "Consumer channel"},
+        "idempotency_key": "c" * 32})
+    assert denied["error"]["code"] == "forbidden"
+    assert exchange("com.example.owner", {
+        "api_version": 1, "request_id": "android:5",
+        "operation": "runtime.stop", "params": {}}, "owner")["error"]["code"] == "forbidden"
+    assert exchange("com.example.owner", {
+        "api_version": 1, "request_id": "android:6",
+        "operation": "runtime.capabilities", "params": {}}, "administrator"
+    )["error"]["code"] == "forbidden"

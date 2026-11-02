@@ -61,7 +61,8 @@ concluded **success**:
 | Packaged service wheel (unpublished) | `python scripts/check_python_distribution.py` | passes: wheel build, install into an empty target, import `mesh_chat.core_api`, both console entry points installed, `mesh-chat-core --version` prints `0.2.0-experimental`, and the packaged service answers `runtime.capabilities` and `workspace.query` through the facade |
 | Release qualification executed end-to-end (branch build, **not published**) | `release_qualification.py` against fresh branch release artifacts and the generated exact-source manifest | **passed**: setup 28,187,035 B, msi 30,187,520 B, apk 47,283,410 B; manifest and artifacts bound to source `affc1dd`, tree `1bca66f`; version 0.9.66 |
 | Packaged pipe consumer (unpublished, Windows) | `python scripts/check_packaged_pipe_consumer.py` | passes: installed wheel hosts a real named-pipe endpoint and a second installed-wheel consumer negotiates capabilities and queries workspaces over it |
-| Non-owner host boundary (unpublished, Windows) | same packaged pipe consumer | passes: workspace creation is refused with `forbidden`; both bundled host bindings grant only observe/read/send/diagnose |
+| Consumer host boundary (unpublished, Windows) | same packaged pipe consumer | passes: workspace creation is refused with `forbidden` for the default consumer scope |
+| Owner-scoped packaged consumer (unpublished, Windows) | `MESH_CHAT_PIPE_SCOPE=owner python scripts/check_packaged_pipe_consumer.py` | passes: the installed wheel host grants the opt-in owner scope and a second installed-wheel consumer creates a channel and reads members |
 
 ## Definition-of-done disposition
 
@@ -97,8 +98,8 @@ condition is recorded with its actual status:
   SC21/25 are partial or open; the rest pass at component/local level. |
 | M5: independently built packaged consumers through the public API | **not met**
   | Packaged TypeScript and Python component smokes install and answer facade
-  requests; the bundled host bindings are non-owner, so administration, pairing
-  and connection intent are unavailable to them; no independent application exists. |
+  requests; the opt-in owner scope now permits administration for the trusted
+  pipe host and the Android app UID, but no independent graphical application exists. |
 | M5: supported Mesh Chat messaging UI uses the same facade | **not met** | Not
   routed or qualified in this environment. |
 | M5: install/upgrade/caller isolation/resync/compatibility evidence | partial |
@@ -126,10 +127,10 @@ These were **not** executed and are not claimed anywhere in this ledger:
 - physical-device qualification across independent Android and Windows devices;
 - packaged Windows↔Android interoperability (the packaged evidence above is a
   single Windows host with WebView2 and frozen peers);
-- packaged Windows or Android graphical consumer applications; the bundled host
-  bindings grant non-owner permissions only, so administration, pairing and
-  connection intent are unavailable to packaged consumers; in-process
-  component smokes exist (TypeScript tarball, Python wheel);
+- packaged Windows or Android graphical consumer applications; consumer-scoped
+  packaged callers cannot administer the vault, and the opt-in owner scope is
+  exercised only by component smokes (installed-wheel pipe host, Python/Python
+  client) rather than a graphical app;
 - published SDK/package artifacts and a supported version-pair matrix;
 - a **tagged** release qualification and any publication; a branch-build release
   qualification was executed and passed but is not a release;

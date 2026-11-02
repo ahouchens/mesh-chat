@@ -5,6 +5,16 @@ identity, grants and profile scopes before serving. Frames can never select
 either: the grant is captured here, and the stream is the one the host already
 accepted. This is a component binding, not an operating-system access control;
 a Windows named-pipe or Android Binder endpoint still has to hand it streams.
+
+Two grant scopes exist:
+
+``consumer``
+    Ordinary packaged consumers: observe, read, send and diagnostics. They may
+    pair and connect on Android, but cannot administer a vault.
+``owner``
+    The trusted application host itself: the consumer set plus workspace
+    approval, pairing and connection intent. Runtime ownership stays outside
+    both scopes so a facade caller can never stop the application's runtime.
 """
 
 import re
@@ -14,30 +24,38 @@ from .session import Grant
 
 
 CALLER = re.compile(r"[A-Za-z0-9._:-]{8,80}\Z")
-ALLOWED_PERMISSIONS = frozenset({"observe", "read", "send", "diagnose"})
+CONSUMER_PERMISSIONS = frozenset({"observe", "read", "send", "diagnose"})
+OWNER_PERMISSIONS = CONSUMER_PERMISSIONS | {"approve", "pair", "connect"}
+SCOPES = {"consumer": CONSUMER_PERMISSIONS, "owner": OWNER_PERMISSIONS}
 ALLOWED_PROFILES = ("local",)
 
 
-def host_grant(caller, permissions, profiles=ALLOWED_PROFILES):
+def host_grant(caller, permissions, profiles=ALLOWED_PROFILES, *, scope="consumer"):
     """Validate the facts a trusted host supplies; never accept them from JSON."""
+    allowed = SCOPES.get(scope) if isinstance(scope, str) else None
+    if allowed is None:
+        raise ValueError("Host grant scope is invalid")
     if not isinstance(caller, str) or CALLER.fullmatch(caller) is None:
         raise ValueError("Host caller identity is invalid")
     values = frozenset(permissions) if isinstance(permissions, (frozenset, set, tuple, list)) else None
-    if not values or not values <= ALLOWED_PERMISSIONS:
-        raise ValueError("Host grant requests an unsupported permission")
+    if not values or not values <= allowed:
+        raise ValueError("Host grant requests an unsupported permission for its scope")
     if tuple(profiles) != ALLOWED_PROFILES:
         raise ValueError("Host grant targets an unsupported profile scope")
     return Grant(caller, values, ALLOWED_PROFILES)
 
 
-def bind_host_stream(service, *, caller, permissions, profiles=ALLOWED_PROFILES):
+def bind_host_stream(service, *, caller, permissions, profiles=ALLOWED_PROFILES,
+                     scope="consumer"):
     """Bind one already-trusted stream to a fixed caller and permission set."""
-    grant = host_grant(caller, permissions, profiles)
+    grant = host_grant(caller, permissions, profiles, scope=scope)
     return bind_service_stream(service, lambda: grant)
 
 
-def serve_host(service, reader, writer, *, caller, permissions, profiles=ALLOWED_PROFILES):
+def serve_host(service, reader, writer, *, caller, permissions,
+               profiles=ALLOWED_PROFILES, scope="consumer"):
     """Serve the host's stream until EOF, then detach that session."""
-    session = bind_host_stream(service, caller=caller, permissions=permissions, profiles=profiles)
+    session = bind_host_stream(service, caller=caller, permissions=permissions,
+                               profiles=profiles, scope=scope)
     session.serve(reader, writer)
     return session

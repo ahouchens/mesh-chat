@@ -217,9 +217,10 @@ class PipeConfig:
     allowed_images: tuple
     max_clients: int = 4
     idle_timeout: float = 60.0
+    scope: str = "consumer"
 
     def __post_init__(self):
-        host.host_grant(self.caller, self.permissions)
+        host.host_grant(self.caller, self.permissions, scope=self.scope)
         validate_images(self.allowed_images)
         if type(self.max_clients) is not int or not 1 <= self.max_clients <= 8:
             raise ValueError("Core API endpoint client budget is invalid")
@@ -238,7 +239,9 @@ class PipeEndpoint:
         self.kernel, self.advapi = _bind()
         self._name = pipe_name(name)
         self._images = config.allowed_images
-        self._grant = host.host_grant(config.caller, config.permissions)
+        self._grant = host.host_grant(config.caller, config.permissions,
+                                      scope=config.scope)
+        self._scope = config.scope
         self._stop = threading.Event()
         self._ready = threading.Event()
         self._lock = threading.Lock()
@@ -311,7 +314,8 @@ class PipeEndpoint:
                     self.accepted += 1
                 session = host.bind_host_stream(service, caller=self._grant.caller,
                                                 permissions=self._grant.permissions,
-                                                profiles=self._grant.profiles)
+                                                profiles=self._grant.profiles,
+                                                scope=self._scope)
                 session.serve(_Duplex(self.kernel, handle, self._stop, self._idle_timeout),
                               _Duplex(self.kernel, handle, self._stop, self._idle_timeout))
             except (OSError, ValueError) as error:

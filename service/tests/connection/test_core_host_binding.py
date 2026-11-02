@@ -2,6 +2,7 @@
 
 import io
 import json
+import uuid
 
 import pytest
 
@@ -80,3 +81,47 @@ def test_malformed_frame_detaches_the_host_stream(service_host):
                     writer, caller="mesh-chat-desktop", permissions=("observe",))
     replies = [json.loads(line) for line in writer.getvalue().splitlines()]
     assert len(replies) == 1 and replies[0]["error"]["code"] == "invalid_request"
+
+
+def test_owner_scope_may_administrate_while_consumer_scope_may_not(service_host):
+    service = service_host()
+    service.create_workspace(str(uuid.uuid4()), "Owner workspace", "")
+    owner_permissions = ("observe", "read", "send", "approve", "pair", "connect")
+    capabilities = serve(
+        service, [frame(request("runtime.capabilities"))],
+        caller="mesh-chat-desktop", permissions=owner_permissions, scope="owner")[0]
+    assert capabilities["ok"], capabilities
+    profile = capabilities["result"]["profiles"][0]
+    listing = serve(
+        service, [frame(request("runtime.capabilities")),
+                  frame(request("workspace.query", profile=profile))],
+        caller="mesh-chat-desktop", permissions=owner_permissions, scope="owner")[1]
+    assert listing["ok"], listing
+    workspace = listing["result"]["workspaces"][0]["workspace"]
+    created = serve(
+        service, [frame(request("runtime.capabilities")),
+                  frame({"api_version": 1, "request_id": "request:1",
+                         "operation": "workspace.channel_create",
+                         "params": {"profile": profile, "workspace": workspace,
+                                    "name": "Owner channel"},
+                         "idempotency_key": "o" * 32})],
+        caller="mesh-chat-desktop", permissions=owner_permissions, scope="owner")[1]
+    assert created["ok"], created
+    consumer = serve(
+        service, [frame(request("runtime.capabilities")),
+                  frame({"api_version": 1, "request_id": "request:1",
+                         "operation": "workspace.channel_create",
+                         "params": {"profile": profile, "workspace": workspace,
+                                    "name": "Consumer channel"},
+                         "idempotency_key": "c" * 32})],
+        caller="mesh-chat-desktop", permissions=("observe", "read"))[1]
+    assert consumer["error"]["code"] == "forbidden"
+
+
+def test_owner_scope_cannot_request_runtime_ownership():
+    with pytest.raises(ValueError):
+        host.host_grant("mesh-chat-desktop", ("runtime_owner",), scope="owner")
+    with pytest.raises(ValueError):
+        host.host_grant("mesh-chat-desktop", ("approve",), scope="consumer")
+    with pytest.raises(ValueError):
+        host.host_grant("mesh-chat-desktop", ("observe",), scope="administrator")

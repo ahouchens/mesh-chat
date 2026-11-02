@@ -190,17 +190,59 @@ finally:
 """
 
 
+def sources(scope: str):
+    """Return the host and consumer snippets for one explicit grant scope."""
+    if scope == "owner":
+        permissions = ("observe", "read", "send", "approve", "pair", "connect")
+        allowed = """    channel = client.workspace_channel_create(
+        profile, workspace, "Over pipe", "p" * 16)
+    channels = client.workspace_channels(profile, workspace)["channels"]
+    members = client.workspace_members(profile, workspace)["members"]
+    assert channel["name"] == "Over pipe"
+    assert any(item["name"] == "Over pipe" for item in channels)
+    assert len(members) == 1
+    print(json.dumps({"api_major": capabilities["api_major"],
+                      "workspaces": len(listing["workspaces"]),
+                      "channels": len(channels),
+                      "members": len(members),
+                      "admin": "allowed",
+                      "capabilities_ok": True}))"""
+        denied = """    admin_denied = False
+    try:
+        client.workspace_channel_create(
+            profile, workspace, "Over pipe", "p" * 16)
+    except CoreClientError as error:
+        assert error.code == "forbidden", error.code
+        admin_denied = True
+    assert admin_denied
+    print(json.dumps({"api_major": capabilities["api_major"],
+                      "workspaces": len(listing["workspaces"]),
+                      "admin_forbidden": admin_denied,
+                      "capabilities_ok": True}))"""
+        return (SERVER.replace('permissions=("observe", "read"),',
+                               f"permissions={permissions!r}, scope={scope!r},"),
+                CONSUMER.replace(denied, allowed))
+    permissions = ("observe", "read")
+    return (SERVER.replace('permissions=("observe", "read"),',
+                           f"permissions={permissions!r}, scope={scope!r},"),
+            CONSUMER)
+
+
 def main() -> int:
     if os.name != "nt":
         print(json.dumps({"passed": True, "skipped": "requires Windows named pipes"}))
         return 0
+    scope = os.environ.get("MESH_CHAT_PIPE_SCOPE", "consumer")
+    if scope not in {"consumer", "owner"}:
+        raise SystemExit(f"unsupported packaged pipe scope: {scope}")
+    host_source, consumer_source = sources(scope)
     with tempfile.TemporaryDirectory(prefix="mesh-chat-pipe-packaged-") as temporary:
         work = Path(temporary)
         wheel, target = install_wheel(work)
         environment = {**os.environ, "PYTHONPATH": str(target)}
         pipe = rf"\\.\pipe\mesh-chat-packaged-{uuid.uuid4().hex[:16]}"
         server = subprocess.Popen(
-            [sys.executable, "-c", SERVER, pipe], cwd=work, env=environment,
+            [sys.executable, "-c", host_source, pipe], cwd=work, env=environment,
             text=True, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
         )
@@ -211,12 +253,17 @@ def main() -> int:
             record = json.loads(ready)
             if not record.get("ready"):
                 raise SystemExit(f"unexpected host handshake: {record}")
-            output = run([sys.executable, "-c", CONSUMER, pipe], cwd=work,
+            output = run([sys.executable, "-c", consumer_source, pipe], cwd=work,
                          env=environment, timeout=60)
             result = json.loads(output)
             if result.get("api_major") != 1 or not result.get("capabilities_ok"):
                 raise SystemExit(f"consumer failed: {result}")
-            print(json.dumps({"passed": True, "wheel": wheel.name,
+            observed = result.get("admin", result.get("admin_forbidden"))
+            if scope == "owner" and observed != "allowed":
+                raise SystemExit(f"owner consumer was not allowed to administer: {result}")
+            if scope == "consumer" and observed is not True:
+                raise SystemExit(f"consumer unexpectedly administered the vault: {result}")
+            print(json.dumps({"passed": True, "wheel": wheel.name, "scope": scope,
                               "transport": "windows_named_pipe",
                               "consumer": result}))
         finally:
