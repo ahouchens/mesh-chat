@@ -554,3 +554,31 @@ def test_new_administration_handles_are_caller_scoped(admin_pair):
                    "member": member, "role": "admin"},
         "idempotency_key": "u" * 32,
     })["error"]["code"] == "forbidden"
+
+
+def test_reusing_one_caller_key_across_operations_fails_closed(admin_pair):
+    owner, _, _ = admin_pair
+    session, profile = open_client(owner)
+    workspace = session.request(request("workspace.query", profile=profile)
+                                )["result"]["workspaces"][0]["workspace"]
+    key = "z" * 32
+    created = session.request({
+        "api_version": 1, "request_id": "request:1",
+        "operation": "workspace.channel_create",
+        "params": {"profile": profile, "workspace": workspace, "name": "Collision"},
+        "idempotency_key": key,
+    })
+    assert created["ok"], created
+    collided = session.request({
+        "api_version": 1, "request_id": "request:2",
+        "operation": "workspace.channel_update",
+        "params": {"profile": profile, "workspace": workspace,
+                   "channel": created["result"]["channel"],
+                   "name": "Replayed", "topic": ""},
+        "idempotency_key": key,
+    })
+    assert collided["error"]["code"] == "invalid_request", collided
+    channels = session.request(request("workspace.channels", profile=profile,
+                                       workspace=workspace))["result"]["channels"]
+    names = [item["name"] for item in channels]
+    assert "Collision" in names and "Replayed" not in names
