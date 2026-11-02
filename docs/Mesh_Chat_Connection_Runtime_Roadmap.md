@@ -1164,9 +1164,9 @@ M3 - qualification
 - [x] Uniform per-suite scenario/count/artifact manifest for every required suite.
 - [x] Publication requires the qualification manifest and re-hashes the staged
       assets against it before upload.
-- [x] Release qualification executed on a branch release build (Windows setup/MSI
-      and signed Android APK) bound to the exact-source connection manifest; the
-      artifacts were **not published**.
+- [x] Release qualification executed end-to-end on a branch release build (Windows
+      setup/MSI and signed Android APK) and the generated exact-source connection
+      manifest; the artifacts were **not published**.
 - [ ] A tagged release run and published supported-pair matrix; no tag has
       exercised publication.
 - [x] Isolated documentation, test-module-only connection and TypeScript-SDK

@@ -1,7 +1,7 @@
 # Connection runtime qualification ledger
 
 This ledger records the automated evidence behind the connection-runtime refactor at
-commit `b2d16d1` (2026-11-01). The transport and packaged-Windows evidence below
+commit `affc1dd` (2026-11-01). The transport and packaged-Windows evidence below
 was captured at
 `67ac8fe34b19db335fc9b772af0bd0cd7ff78d49` (tree
 `bd09a02ade1b83a2515fd2a0f515c7f4d23467bd`); later commits add tests, clients,
@@ -59,7 +59,7 @@ concluded **success**:
 | Received-page byte budget | `pytest service/tests/connection/test_core_received.py::test_received_page_respects_the_byte_budget` | 1 passed (80 x 16 KiB inbound messages truncate below 1 MiB with a cursor) |
 | Packaged client smoke (unpublished) | `node scripts/check_typescript_distribution.mjs` | passes: npm pack, install into an empty project, import `@mesh-chat/core-client` |
 | Packaged service wheel (unpublished) | `python scripts/check_python_distribution.py` | passes: wheel build, install into an empty target, import `mesh_chat.core_api`, both console entry points installed, `mesh-chat-core --version` prints `0.2.0-experimental`, and the packaged service answers `runtime.capabilities` and `workspace.query` through the facade |
-| Release qualification executed (branch build, **not published**) | `release_qualification.py` against a branch release build and exact-source connection manifest | **passed**: setup 28,188,072 B, msi 30,187,520 B, apk 47,283,367 B bound to source 54bf8fc and tree 828e6f1; version 0.9.66 |
+| Release qualification executed end-to-end (branch build, **not published**) | `release_qualification.py` against fresh branch release artifacts and the generated exact-source manifest | **passed**: setup 28,187,035 B, msi 30,187,520 B, apk 47,283,410 B; manifest and artifacts bound to source `affc1dd`, tree `1bca66f`; version 0.9.66 |
 | Packaged pipe consumer (unpublished, Windows) | `python scripts/check_packaged_pipe_consumer.py` | passes: installed wheel hosts a real named-pipe endpoint and a second installed-wheel consumer negotiates capabilities and queries workspaces over it |
 | Non-owner host boundary (unpublished, Windows) | same packaged pipe consumer | passes: workspace creation is refused with `forbidden`; both bundled host bindings grant only observe/read/send/diagnose |
 
@@ -110,7 +110,7 @@ condition is recorded with its actual status:
 | Release gating: INV20 exact source/artifact evidence, skips fail, publication
   cannot bypass the matrix | met at gate level | The gate and aggregator refuse
   without exact evidence. A branch-build release qualification was executed and
-  passed on setup/MSI/APK artifacts bound to source 54bf8fc/tree 828e6f1; no tag
+  passed end-to-end on setup/MSI/APK artifacts bound to source affc1dd/tree 1bca66f; no tag
   has exercised publication. |
 
 **Conclusion.** The refactor's facade, clients, tests and automated qualification
