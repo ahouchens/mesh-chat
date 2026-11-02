@@ -51,6 +51,8 @@ def current_node() -> str:
 
 def main() -> int:
     node = current_node()
+    # SDK conformance runs inside pytest, so its compiled output must exist first.
+    run([node, "node_modules/typescript/bin/tsc", "-p", "sdk/typescript"])
 
     # Use an OS-managed unique directory so a prior run under a different
     # Windows sandbox identity cannot leave an ACL that blocks later runs.
