@@ -1231,8 +1231,8 @@ M5 - supported reusable core
 - [x] Workspace channel-creation, posting and invitation policy updates
       (component).
 - [x] Workspace device listing and owner removal (component, two-service test).
-- [ ] Finer-grained per-channel role policy overrides; the domain supports
-      workspace-level policies only.
+- [x] Per-channel posting policy overrides signed into the channel control and
+      enforced for outbound and inbound messages, with workspace policy fallback.
 - [x] Experimental TypeScript client over the frame contract (component only; no
       packaging, CI conformance, Kotlin client or consumer).
 - [x] Experimental Python client and Windows CLI over the host pipe, with a
