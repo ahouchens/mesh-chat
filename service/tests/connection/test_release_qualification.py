@@ -6,6 +6,7 @@ import pytest
 
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "scripts"))
+import connection_ci as ci
 import release_qualification as release
 from connection_ci import COMPONENTS, SUITES
 
@@ -118,3 +119,32 @@ def test_unsupported_contract_version_is_rejected(tmp_path):
     with pytest.raises(ValueError):
         release.aggregate(qualification_path=path, artifacts=artifacts, source=SOURCE, tree=TREE,
                           version=VERSION, repository=repository)
+
+
+def test_the_gate_manifest_builder_is_accepted_by_release_qualification(tmp_path):
+    plan = {**ci.select(["README.md"]), "source_commit": SOURCE, "source_tree": TREE}
+    suites = [component("policy", tests=counts(5))]
+    suites += [component(name, checks=3) for name in sorted(COMPONENTS["verification"])]
+    collected = {
+        "policy_tests_executed": 5,
+        "suites": suites,
+        "report_sha256": {record["suite"]: "a" * 64 for record in suites},
+    }
+    manifest = ci.manifest(plan, collected, {suite: "success" for suite in SUITES})
+    qualification_path = tmp_path / "qualification.json"
+    qualification_path.write_text(json.dumps(manifest))
+
+    repository = tmp_path / "repo"
+    (repository / "contracts/core-api").mkdir(parents=True)
+    (repository / "contracts/core-api/operations-v1.json").write_text(json.dumps(
+        {"api_major": 1, "api_minor": 0, "status": "experimental_design"}))
+    artifacts = {}
+    for kind in ("setup", "msi", "apk"):
+        target = tmp_path / release.expected_name(kind, VERSION)
+        target.write_bytes(b"release-binary-" + kind.encode())
+        artifacts[kind] = target
+
+    result = release.aggregate(
+        qualification_path=qualification_path, artifacts=artifacts, source=SOURCE,
+        tree=TREE, version=VERSION, repository=repository)
+    assert result["passed"] is True
