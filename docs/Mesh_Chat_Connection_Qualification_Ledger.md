@@ -1,11 +1,11 @@
 # Connection runtime qualification ledger
 
 This ledger records the automated evidence behind the connection-runtime refactor at
-commit `169a0d5` (2026-11-01). The transport and packaged-Windows evidence below
+commit `b2d16d1` (2026-11-01). The transport and packaged-Windows evidence below
 was captured at
 `67ac8fe34b19db335fc9b772af0bd0cd7ff78d49` (tree
-`bd09a02ade1b83a2515fd2a0f515c7f4d23467bd`); later commits only add tests,
-documentation and ledger rows. It separates what was executed from what this
+`bd09a02ade1b83a2515fd2a0f515c7f4d23467bd`); later commits add tests, clients,
+release-pipeline fixes, documentation and ledger rows. It separates what was executed from what this
 environment cannot execute; it is not a physical-device qualification.
 
 ## Connection qualification workflow
@@ -50,17 +50,18 @@ concluded **success**:
 
 | Suite | Command | Result |
 | --- | --- | --- |
-| Required policy inventory | `python scripts/connection_evidence.py --run --junit … --expected-source <tree>` | 1,416 passed, zero skips at 169a0d5 |
+| Required policy inventory | `python scripts/connection_evidence.py --run --junit … --expected-source <tree>` | 1,435 passed, zero skips at b2d16d1 |
 | Strict typing | `mypy --config-file mypy-connection.ini` | clean |
 | Frontend | `node scripts/run-frontend-tests.mjs` | 587 passed |
-| TypeScript client + package | `node --test sdk/typescript/dist/**/*.test.js` | 38 passed |
-| Compatibility | `pytest service/tests/connection/test_core_compatibility.py` | 17 passed |
+| TypeScript client + package | `node --test sdk/typescript/dist/**/*.test.js` | 42 passed |
+| Compatibility | `pytest service/tests/connection/test_core_compatibility.py` | 18 passed |
 | Budget conformance | `pytest service/tests/connection/test_core_budgets.py` | 3 passed (exact advertised limits; over-budget rejected; edges accepted) |
 | Received-page byte budget | `pytest service/tests/connection/test_core_received.py::test_received_page_respects_the_byte_budget` | 1 passed (80 x 16 KiB inbound messages truncate below 1 MiB with a cursor) |
 | Packaged client smoke (unpublished) | `node scripts/check_typescript_distribution.mjs` | passes: npm pack, install into an empty project, import `@mesh-chat/core-client` |
 | Packaged service wheel (unpublished) | `python scripts/check_python_distribution.py` | passes: wheel build, install into an empty target, import `mesh_chat.core_api`, both console entry points installed, `mesh-chat-core --version` prints `0.2.0-experimental`, and the packaged service answers `runtime.capabilities` and `workspace.query` through the facade |
 | Release qualification executed (branch build, **not published**) | `release_qualification.py` against a branch release build and exact-source connection manifest | **passed**: setup 28,188,072 B, msi 30,187,520 B, apk 47,283,367 B bound to source 54bf8fc and tree 828e6f1; version 0.9.66 |
 | Packaged pipe consumer (unpublished, Windows) | `python scripts/check_packaged_pipe_consumer.py` | passes: installed wheel hosts a real named-pipe endpoint and a second installed-wheel consumer negotiates capabilities and queries workspaces over it |
+| Non-owner host boundary (unpublished, Windows) | same packaged pipe consumer | passes: workspace creation is refused with `forbidden`; both bundled host bindings grant only observe/read/send/diagnose |
 
 ## Definition-of-done disposition
 
@@ -96,7 +97,8 @@ condition is recorded with its actual status:
   SC21/25 are partial or open; the rest pass at component/local level. |
 | M5: independently built packaged consumers through the public API | **not met**
   | Packaged TypeScript and Python component smokes install and answer facade
-  requests, but no independently built Windows or Android application exists. |
+  requests; the bundled host bindings are non-owner, so administration, pairing
+  and connection intent are unavailable to them; no independent application exists. |
 | M5: supported Mesh Chat messaging UI uses the same facade | **not met** | Not
   routed or qualified in this environment. |
 | M5: install/upgrade/caller isolation/resync/compatibility evidence | partial |
@@ -107,7 +109,9 @@ condition is recorded with its actual status:
   published matrix. |
 | Release gating: INV20 exact source/artifact evidence, skips fail, publication
   cannot bypass the matrix | met at gate level | The gate and aggregator refuse
-  without exact evidence; no tag has exercised a release run. |
+  without exact evidence. A branch-build release qualification was executed and
+  passed on setup/MSI/APK artifacts bound to source 54bf8fc/tree 828e6f1; no tag
+  has exercised publication. |
 
 **Conclusion.** The refactor's facade, clients, tests and automated qualification
 are complete for the operations the domain supports, but the specification's M2–M5
@@ -127,7 +131,8 @@ These were **not** executed and are not claimed anywhere in this ledger:
   connection intent are unavailable to packaged consumers; in-process
   component smokes exist (TypeScript tarball, Python wheel);
 - published SDK/package artifacts and a supported version-pair matrix;
-- executed release qualification (requires a tag) and any release publication;
+- a **tagged** release qualification and any publication; a branch-build release
+  qualification was executed and passed but is not a release;
 - a native Windows DataChannel implementation.
 
 The corresponding acceptance rows (INV21, INV22, INV25, INV26, SC01, SC21, SC25)
