@@ -201,6 +201,7 @@ export interface WorkspaceChannelUpdateView {
   name: string;
   topic: string;
   visibility: "public" | "private";
+  posting: "all_members" | "owner_and_admins" | null;
 }
 
 export interface WorkspaceChannelArchiveView {

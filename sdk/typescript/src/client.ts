@@ -372,13 +372,16 @@ export class CoreClient {
     name: string,
     topic: string,
     idempotencyKey: string,
+    posting?: "inherit" | "all_members" | "owner_and_admins",
   ): Promise<WorkspaceChannelUpdateView> {
     if (name.length === 0 || name.length > 64 || topic.length > 1024 || idempotencyKey.length < 16) {
       throw new ProtocolError("channel edits require a name, topic and caller key");
     }
+    const params: Record<string, string> = { profile, workspace, channel, name, topic };
+    if (posting !== undefined) params.posting = posting;
     return this.request<WorkspaceChannelUpdateView>(
       "workspace.channel_update",
-      { profile, workspace, channel, name, topic },
+      params,
       { idempotencyKey },
     );
   }

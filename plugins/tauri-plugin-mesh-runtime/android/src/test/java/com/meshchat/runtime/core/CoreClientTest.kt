@@ -117,6 +117,27 @@ class CoreClientTest {
     }
 
     @Test
+    fun channelUpdateCarriesPostingOverride() {
+        val transport = Scripted(
+            success("client:1", capabilities()),
+            success(
+                "client:2",
+                JSONObject().put("profile", PROFILE).put("workspace", "w".repeat(64))
+                    .put("channel", "c".repeat(64)).put("name", "Renamed")
+                    .put("topic", "Ops").put("visibility", "public")
+                    .put("posting", "owner_and_admins"),
+            ),
+        )
+        val client = CoreClient.open(transport)
+        client.workspaceChannelUpdate(
+            PROFILE, "w".repeat(64), "c".repeat(64), "Renamed", "Ops", "e".repeat(16),
+            posting = "owner_and_admins",
+        )
+        val params = JSONObject(transport.written[1]).getJSONObject("params")
+        assertEquals("owner_and_admins", params.getString("posting"))
+    }
+
+    @Test
     fun privateChannelCreationCarriesVisibilityAndMembers() {
         val transport = Scripted(
             success("client:1", capabilities()),

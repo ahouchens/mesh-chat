@@ -467,11 +467,13 @@ test("channel edit helpers use the declared envelopes", async () => {
   );
   const edited = await client.workspaceChannelUpdate(
     PROFILE, "w".repeat(64), "c".repeat(64), "Renamed", "Ops", "e".repeat(16),
+    "owner_and_admins",
   );
   assert.equal(edited.name, "Renamed");
   const update = JSON.parse(transport.written[3]);
   assert.equal(update.operation, "workspace.channel_update");
   assert.equal(update.params.topic, "Ops");
+  assert.equal(update.params.posting, "owner_and_admins");
 });
 
 test("channel helpers use the declared envelopes", async () => {

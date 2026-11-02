@@ -858,6 +858,7 @@ class WorkspaceServiceMixin:
                             "id": item.get("id"),
                             "members": item.get("member_ids", []),
                             "name": item.get("name"),
+                            "posting": item.get("posting"),
                             "state": item.get("state"),
                             "topic": item.get("topic"),
                             "visibility": item.get("visibility"),
@@ -3295,6 +3296,8 @@ class WorkspaceServiceMixin:
             "manager_member_id": channel.manager_member_id,
             "manager_device_id": channel.manager_device_id,
             "member_ids": list(channel.member_ids),
+            "posting": (channel.posting.value
+                        if channel.posting is not None else None),
             "version": channel.version,
             "head_hash": channel.digest,
             "manifest_digest": channel.manifest_digest,
@@ -4440,12 +4443,15 @@ class WorkspaceServiceMixin:
 
     @staticmethod
     def _posting_allowed(
-        manifest: VerifiedWorkspaceManifest, member: Any
+        manifest: VerifiedWorkspaceManifest, member: Any,
+        channel: VerifiedWorkspaceChannel | None = None,
     ) -> bool:
+        policy = (channel.posting if channel is not None and channel.posting is not None
+                  else manifest.posting)
         return (
             member.status == "active"
             and (
-                manifest.posting == WorkspacePostingPolicy.ALL_MEMBERS
+                policy == WorkspacePostingPolicy.ALL_MEMBERS
                 or member.role in {WorkspaceRole.OWNER, WorkspaceRole.ADMIN}
             )
         )
@@ -8717,13 +8723,13 @@ class WorkspaceServiceMixin:
         local_member = find_member(manifest, workspace["local_member_id"])
         if local_member is None or local_member.status != "active":
             raise ContactNotApproved("Local member is not active")
-        if not self._posting_allowed(manifest, local_member):
-            raise ContactNotApproved(
-                "Workspace posting is restricted to owners and administrators"
-            )
         channel = self._workspace_channel_by_digest(channel_record["head_hash"])
         if channel is None:
             raise ValidationError("Workspace channel control is unavailable")
+        if not self._posting_allowed(manifest, local_member, channel):
+            raise ContactNotApproved(
+                "Workspace posting is restricted to owners and administrators"
+            )
         if (
             channel.visibility == "private"
             and workspace["local_member_id"] not in channel.member_ids
@@ -9201,13 +9207,13 @@ class WorkspaceServiceMixin:
             ):
                 raise ContactNotApproved("Workspace thread participants are not active")
         else:
-            if not self._posting_allowed(manifest, local_member):
-                raise ContactNotApproved(
-                    "Workspace posting is restricted to owners and administrators"
-                )
             channel = self._workspace_channel_by_digest(conversation["head_hash"])
             if channel is None:
                 raise ValidationError("Workspace channel control is unavailable")
+            if not self._posting_allowed(manifest, local_member, channel):
+                raise ContactNotApproved(
+                    "Workspace posting is restricted to owners and administrators"
+                )
             audience = (
                 tuple(channel.member_ids) if channel.visibility == "private" else ()
             )
@@ -9567,15 +9573,20 @@ class WorkspaceServiceMixin:
                         head["gaps"] = gaps
                         self._workspace_store.put("workspace_stream_coverage", head_id, head)
                     return False
+            channel = (
+                self._workspace_channel_by_digest(event.channel_digest)
+                if event.event_type == "message" and event.channel_digest is not None
+                else None
+            )
             author = find_member(manifest, event.author_member_id)
             if (
                 author is None
                 or author.status != "active"
                 or (
                     event.event_type == "message"
-                    and
-                    event.channel_digest is not None
-                    and not self._posting_allowed(manifest, author)
+                    and event.channel_digest is not None
+                    and (channel is None
+                         or not self._posting_allowed(manifest, author, channel))
                 )
             ):
                 return False
@@ -10802,6 +10813,7 @@ class WorkspaceServiceMixin:
                 member_ids=remaining,
                 version=channel.version + 1,
                 previous_hash=channel.digest,
+                posting=channel.posting,
             )
             next_channel = verify_workspace_channel_manifest_transition(
                 raw, channel, manifest=manifest
@@ -13867,6 +13879,7 @@ class WorkspaceServiceMixin:
         topic: Any,
         archived: Any,
         operation_id: Any,
+        posting: Any = None,
     ) -> dict[str, Any]:
         payload = {
             "workspace_id": workspace_id,
@@ -13874,6 +13887,7 @@ class WorkspaceServiceMixin:
             "name": name,
             "topic": topic,
             "archived": archived,
+            "posting": posting,
         }
         operation_id, digest, replay = self._workspace_operation(
             "update_workspace_channel", operation_id, payload
@@ -13896,6 +13910,15 @@ class WorkspaceServiceMixin:
         previous = self._workspace_channel_by_digest(stored_channel["head_hash"])
         if previous is None:
             raise ValidationError("Workspace channel control is unavailable")
+        if posting is None:
+            channel_posting = previous.posting
+        elif posting == "inherit":
+            channel_posting = None
+        else:
+            try:
+                channel_posting = WorkspacePostingPolicy(posting)
+            except (TypeError, ValueError) as exc:
+                raise ValidationError("Workspace channel posting policy is invalid") from exc
         manifest = self._workspace_current_manifest(workspace)
         identity = self._identity
         if identity is None:
@@ -13914,6 +13937,7 @@ class WorkspaceServiceMixin:
                 version=previous.version + 1,
                 previous_hash=previous.digest,
                 archived=archived,
+                posting=channel_posting,
             )
             channel = verify_workspace_channel_manifest_transition(
                 raw, previous, manifest=manifest
@@ -13932,6 +13956,7 @@ class WorkspaceServiceMixin:
                 version=previous.version + 1,
                 previous_hash=previous.digest,
                 archived=archived,
+                posting=channel_posting,
             )
             channel = verify_workspace_channel_record_transition(
                 raw, previous, manifest=manifest
@@ -14098,6 +14123,7 @@ class WorkspaceServiceMixin:
             version=previous.version + 1,
             previous_hash=previous.digest,
             removal_checkpoint_digests=sorted(set(removal_checkpoints))[:32],
+            posting=previous.posting,
         )
         channel = verify_workspace_channel_manifest_transition(
             raw, previous, manifest=manifest

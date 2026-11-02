@@ -234,8 +234,12 @@ def parse_request(value, operations):
         return operation, params
     if operation in WORKSPACE_CHANNEL_UPDATE_OPERATIONS:
         params = value["params"]
-        if (not isinstance(params, dict) or set(params) != {"profile", "workspace",
-                                                            "channel", "name", "topic"}
+        allowed = {"profile", "workspace", "channel", "name", "topic", "posting"}
+        if (not isinstance(params, dict) or not {"profile", "workspace",
+                                                 "channel", "name", "topic"} <= set(params)
+                or set(params) - allowed
+                or params.get("posting", "inherit") not in
+                {"inherit", "all_members", "owner_and_admins"}
                 or "idempotency_key" not in value
                 or not isinstance(params.get("name"), str) or not 1 <= len(params["name"]) <= 64
                 or not isinstance(params.get("topic"), str) or len(params["topic"]) > 1024

@@ -443,7 +443,7 @@ class CoreSession:
                 raise ApiFailure("invalid_request")
             edited = self._workspace_admin.update_channel(
                 target, inside, channel, params["name"], params["topic"],
-                self._operation_id(grant, target, key))
+                self._operation_id(grant, target, key), params.get("posting"))
             return workspace_channel_update_view(
                 params["profile"], params["workspace"], params["channel"], edited)
         if operation in WORKSPACE_CHANNEL_ARCHIVE_OPERATIONS:

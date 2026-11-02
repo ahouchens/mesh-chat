@@ -56,6 +56,7 @@ class ChannelEdit:
     topic: str
     visibility: str
     state: str
+    posting: str | None = None
 
 
 @dataclass(frozen=True)
@@ -125,7 +126,8 @@ class WorkspaceAdmin(Protocol):
                                operation_id: str) -> tuple[str, ...]: ...
 
     def update_channel(self, profile: str, workspace: str, channel: str, name: str,
-                       topic: str, operation_id: str) -> ChannelEdit: ...
+                       topic: str, operation_id: str,
+                       posting: str | None = None) -> ChannelEdit: ...
 
     def archive_channel(self, profile: str, workspace: str, channel: str,
                         operation_id: str) -> ChannelEdit: ...

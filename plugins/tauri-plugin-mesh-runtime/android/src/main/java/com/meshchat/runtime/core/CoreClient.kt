@@ -374,17 +374,19 @@ class CoreClient private constructor(private val transport: CoreTransport) {
         name: String,
         topic: String,
         idempotencyKey: String,
+        posting: String? = null,
     ): JSONObject {
         if (name.isEmpty() || name.length > 64 || topic.length > 1024) {
             throw CoreException("invalid_request")
         }
+        if (posting != null && posting !in setOf("inherit", "all_members", "owner_and_admins")) {
+            throw CoreException("invalid_request")
+        }
         requireKey(idempotencyKey, "channel edits")
-        return dispatch(
-            "workspace.channel_update",
-            JSONObject().put("profile", profile).put("workspace", workspace)
-                .put("channel", channel).put("name", name).put("topic", topic),
-            idempotencyKey,
-        )
+        val params = JSONObject().put("profile", profile).put("workspace", workspace)
+            .put("channel", channel).put("name", name).put("topic", topic)
+        if (posting != null) params.put("posting", posting)
+        return dispatch("workspace.channel_update", params, idempotencyKey)
     }
 
     fun workspaceList(profile: String): JSONObject =

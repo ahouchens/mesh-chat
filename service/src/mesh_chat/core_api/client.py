@@ -264,17 +264,22 @@ class CoreClient:
                             {"profile": handle, "workspace": workspace, "channel": channel},
                             idempotency_key=key)
 
-    def workspace_channel_update(self, handle, workspace, channel, name, topic, key):
+    def workspace_channel_update(self, handle, workspace, channel, name, topic, key,
+                                 posting=None):
         if not isinstance(name, str) or not 1 <= len(name) <= 64:
             raise ValueError("Channel name is invalid")
         if not isinstance(topic, str) or len(topic) > 1024:
             raise ValueError("Channel topic is invalid")
+        if posting is not None and posting not in {
+                "inherit", "all_members", "owner_and_admins"}:
+            raise ValueError("Channel posting policy is invalid")
         if not isinstance(key, str) or len(key) < 16:
             raise ValueError("Channel edits require a caller-scoped key")
-        return self.request("workspace.channel_update",
-                            {"profile": handle, "workspace": workspace, "channel": channel,
-                             "name": name, "topic": topic},
-                            idempotency_key=key)
+        params = {"profile": handle, "workspace": workspace, "channel": channel,
+                  "name": name, "topic": topic}
+        if posting is not None:
+            params["posting"] = posting
+        return self.request("workspace.channel_update", params, idempotency_key=key)
 
     def workspace_list(self, handle):
         return self.request("workspace.query", {"profile": handle})

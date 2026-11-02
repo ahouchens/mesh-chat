@@ -209,14 +209,24 @@ def test_private_channels_support_membership_and_edits(admin_pair):
     updated = session.request({
         "api_version": 1, "request_id": "request:3", "operation": "workspace.channel_update",
         "params": {"profile": profile, "workspace": workspace, "channel": channel,
-                   "name": "Renamed", "topic": "Ops"},
+                   "name": "Renamed", "topic": "Ops",
+                   "posting": "owner_and_admins"},
         "idempotency_key": "e" * 32,
     })
     assert updated["ok"], updated
     assert updated["result"]["name"] == "Renamed" and updated["result"]["topic"] == "Ops"
+    assert updated["result"]["posting"] == "owner_and_admins"
     Draft202012Validator(
         json.loads((CONTRACTS / "workspace-channel-update-result-v1.schema.json").read_text())
     ).validate(updated)
+    cleared = session.request({
+        "api_version": 1, "request_id": "request:3b", "operation": "workspace.channel_update",
+        "params": {"profile": profile, "workspace": workspace, "channel": channel,
+                   "name": "Renamed", "topic": "Ops", "posting": "inherit"},
+        "idempotency_key": "i" * 32,
+    })
+    assert cleared["ok"], cleared
+    assert cleared["result"]["posting"] is None
 
     roster = session.request({
         "api_version": 1, "request_id": "request:4",

@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "urn:mesh-chat:core-api:workspace-channel-update-result:1",
   "title": "Experimental channel edit v1",
-  "description": "Applied channel name, topic and visibility.",
+  "description": "Applied channel name, topic, visibility and posting override.",
   "type": "object", "additionalProperties": false,
   "required": ["api_version", "request_id", "ok", "result"],
   "properties": {
@@ -15,14 +15,16 @@
     "handle": {"type": "string", "pattern": "^[A-Za-z0-9_-]{16,128}$"},
     "edit": {
       "type": "object", "additionalProperties": false,
-      "required": ["profile", "workspace", "channel", "name", "topic", "visibility"],
+      "required": ["profile", "workspace", "channel", "name", "topic", "visibility", "posting"],
       "properties": {
         "profile": {"$ref": "#/$defs/handle"},
         "workspace": {"$ref": "#/$defs/handle"},
         "channel": {"$ref": "#/$defs/handle"},
         "name": {"type": "string", "minLength": 1, "maxLength": 64},
         "topic": {"type": "string", "maxLength": 1024},
-        "visibility": {"enum": ["public", "private"]}
+        "visibility": {"enum": ["public", "private"]},
+        "posting": {"type": ["string", "null"],
+                    "enum": ["all_members", "owner_and_admins", null]}
       }
     }
   }

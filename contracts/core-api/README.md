@@ -325,8 +325,9 @@ lists caller-scoped channel handles with name, visibility and state, and
 administrator with a caller key; private channels require one to eight member
 handles. `workspace.channel_members` reads a private channel's caller-scoped
 member handles, `workspace.channel_members_update` replaces that roster with a
-caller key, `workspace.channel_update` edits a channel's name and topic, and
-`workspace.channel_archive` archives it. `workspace.channel_transfer_offer` hands a channel to one member and
+caller key, `workspace.channel_update` edits a channel's name and topic and may
+set a per-channel posting override (`all_members`, `owner_and_admins`, or
+`inherit` to clear it), and `workspace.channel_archive` archives it. `workspace.channel_transfer_offer` hands a channel to one member and
 `workspace.channel_transfer_accept` lets that successor take management; both are
 keyed and expose only handles and the offered/accepted state.
 `workspace.policy_update` sets the workspace's channel-creation, posting and

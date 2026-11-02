@@ -241,11 +241,13 @@ class ServiceWorkspaceAdmin:
                 raise ApiFailure("internal")
             return tuple(requested)
 
-    def update_channel(self, profile, workspace_id, channel_id, name, topic, operation_id):
+    def update_channel(self, profile, workspace_id, channel_id, name, topic, operation_id,
+                       posting=None):
         self._require_local(profile)
         if (not isinstance(name, str) or not 1 <= len(name.strip()) <= 64
                 or not isinstance(topic, str) or len(topic) > 1024
-                or not isinstance(operation_id, str) or not operation_id):
+                or not isinstance(operation_id, str) or not operation_id
+                or posting not in {None, "inherit", "all_members", "owner_and_admins"}):
             raise ApiFailure("invalid_request")
         with storage_errors():
             workspace = self._workspace(workspace_id)
@@ -253,14 +255,16 @@ class ServiceWorkspaceAdmin:
                 raise ApiFailure("forbidden")
             try:
                 self._service.update_workspace_channel(
-                    workspace_id, channel_id, name.strip(), topic, False, operation_id)
+                    workspace_id, channel_id, name.strip(), topic, False, operation_id,
+                    posting=posting)
             except (ValidationError, ContactNotApproved) as error:
                 raise ApiFailure("invalid_request") from error
             updated = self._channel(workspace_id, channel_id)
             visibility, state = updated.get("visibility"), updated.get("state")
             if visibility not in {"public", "private"} or state not in CHANNEL_STATES:
                 raise ApiFailure("internal")
-            return ChannelEdit(channel_id, name.strip(), topic, visibility, state)
+            return ChannelEdit(channel_id, name.strip(), topic, visibility, state,
+                               updated.get("posting"))
 
     def create_channel(self, profile, workspace_id, name, operation_id, visibility="public",
                        member_ids=()):

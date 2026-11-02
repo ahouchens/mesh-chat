@@ -343,8 +343,12 @@ def workspace_channel_update_view(profile, workspace, channel, value):
             or not isinstance(value.topic, str)
             or value.visibility not in {"public", "private"}):
         raise ValueError("Invalid channel update")
+    posting = getattr(value, "posting", None)
+    if posting not in {None, "all_members", "owner_and_admins"}:
+        raise ValueError("Invalid channel posting policy")
     return {"profile": profile, "workspace": workspace, "channel": channel,
-            "name": value.name, "topic": value.topic, "visibility": value.visibility}
+            "name": value.name, "topic": value.topic, "visibility": value.visibility,
+            "posting": posting}
 
 
 def workspace_channel_archive_view(profile, workspace, channel, value):
