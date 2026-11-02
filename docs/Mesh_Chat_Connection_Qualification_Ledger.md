@@ -1,7 +1,7 @@
 # Connection runtime qualification ledger
 
 This ledger records the automated evidence behind the connection-runtime refactor at
-commit `0b793f5` (2026-11-01). The transport and packaged-Windows evidence below
+commit `eabb1b3` (2026-11-01). The transport and packaged-Windows evidence below
 was captured at
 `67ac8fe34b19db335fc9b772af0bd0cd7ff78d49` (tree
 `bd09a02ade1b83a2515fd2a0f515c7f4d23467bd`); later commits add tests, clients,
@@ -50,7 +50,7 @@ concluded **success**:
 
 | Suite | Command | Result |
 | --- | --- | --- |
-| Required policy inventory | `python scripts/connection_evidence.py --run --junit … --expected-source <tree>` | 1,435 passed, zero skips at 0b793f5 |
+| Required policy inventory | `python scripts/connection_evidence.py --run --junit … --expected-source <tree>` | 1,437 passed, zero skips at eabb1b3 |
 | Strict typing | `mypy --config-file mypy-connection.ini` | clean |
 | Frontend | `node scripts/run-frontend-tests.mjs` | 587 passed |
 | TypeScript client + package | `node --test sdk/typescript/dist/**/*.test.js` | 42 passed |
