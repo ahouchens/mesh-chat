@@ -560,3 +560,27 @@ def test_cli_dispatches_connection_intent_commands():
     transport, result = invoke(["disconnect", "--peer", PEER])
     assert result["desired"] == "stopped"
     assert decode_frame(transport.written[1])["operation"] == "connection.stop"
+
+
+def test_cli_dispatches_message_history_commands():
+    message = {"profile": PROFILE, "message": MESSAGE, "recipient": PEER, "kind": "text",
+               "text": "Hello", "state": "queued", "created_at": 1}
+
+    def invoke(command, body):
+        transport = Scripted(reply(CAPABILITIES), reply(body, "client:2"))
+        out, err = io.StringIO(), io.StringIO()
+        assert run_cli(["--pipe", r"\\.\pipe\mesh-chat-test", *command],
+                       transport, out, err) == 0
+        assert err.getvalue() == ""
+        return transport, json.loads(out.getvalue())
+
+    transport, result = invoke(["message", "--message", MESSAGE], message)
+    assert result["text"] == "Hello"
+    assert decode_frame(transport.written[1])["operation"] == "message.query"
+    transport, result = invoke(["messages", "--limit", "7"],
+                               {"profile": PROFILE, "messages": [message],
+                                "next_cursor": None, "events_cursor": "c" * 64})
+    assert result["messages"][0]["message"] == MESSAGE
+    listed = decode_frame(transport.written[1])
+    assert listed["operation"] == "message.list"
+    assert listed["params"]["limit"] == 7
