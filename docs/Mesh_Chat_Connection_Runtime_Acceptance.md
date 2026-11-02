@@ -19,11 +19,12 @@ These constraints cap the evidence above and are recorded again in the
   available; Android evidence is API 35 emulator evidence only.
 - Packaged Windows evidence runs WebView2 and frozen peers on one Windows host;
   it is not Windows-and-Android interoperability.
-- In-process packaged component smokes exist (TypeScript tarball, Python wheel), but
-  no packaged Windows or Android graphical consumer application exists.
+- Packaged component smokes exist (TypeScript tarball, Python wheel, and an
+  installed-wheel Windows pipe consumer in consumer and owner scopes), but no
+  packaged Windows or Android graphical consumer application exists.
 - No SDK or package is published, so no supported version-pair matrix exists.
-- Release qualification requires a tag and was not executed; publishing is
-  outside this work's authorization.
+- Branch-build release qualification executed and passed; no tagged release or
+  publication was performed.
 - The production native Windows DataChannel adapter is not implemented.
 
 ## Status vocabulary
@@ -63,8 +64,8 @@ never described as physical-device qualification.
 | INV17 | `partial` | Shared-policy UI detach cannot retire a transferred carrier; media-call teardown parity across all modes is not re-qualified. |
 | INV18 | `local` | Deterministic traces, replay and the seeded simulator corpus. |
 | INV19 | `local` | Failed persistence keeps the in-memory denial and never reports durable success; intent-batch and authority-write regressions. |
-| INV20 | `partial` | The gate rejects failed, canceled, skipped or missing required evidence; publication now requires that manifest and re-hashes staged assets against it. No tag has executed the release path yet. |
-| INV21 | `partial` | The facade enforces caller, profile, permission and private-event boundaries in tests. A Windows named-pipe endpoint adds OS access control plus executable allowlisting, and an Android Binder endpoint now carries a signature permission, caller-derived grant and its own required gate suite. No packaged consumer exercises either boundary yet. |
+| INV20 | `partial` | The gate rejects failed, canceled, skipped or missing required evidence; publication re-hashes staged assets against that manifest. A branch-build release qualification executed and passed on setup/MSI/APK artifacts; no tag has exercised publication. |
+| INV21 | `partial` | The facade enforces caller, profile, permission and private-event boundaries in tests. The Windows named-pipe endpoint adds OS access control, executable allowlisting and an installed-wheel consumer in consumer/owner scopes; the Android Binder endpoint carries a signature permission, caller-derived grant and its own required gate suite. No independent graphical consumer exercises either boundary yet. |
 | INV22 | `partial` | The client carries no peer policy and cannot start a runtime. Exclusive data-directory ownership is checked by the host, which is not implemented. |
 | INV23 | `local` | Durable enqueue receipts, conflicting payload rejection and stable logical IDs across restart; acknowledgments never change peer delivery state. |
 | INV24 | `local` | Explicit `resync_required` for gaps, expiry and authority change; the client consumer clears its position and resnapshots. Long-term retention is not promised. |
@@ -91,7 +92,7 @@ never described as physical-device qualification.
 | SC14 | `local` | Delayed attachment and missing path are bounded with truthful readiness. |
 | SC15 | `component` | Lost receipts, duplicate packets and restart preserve one visible message per logical ID in packaged runs. |
 | SC16 | `partial` | Policy and JNI queues enforce budgets and quarantine; a packaged saturation run is absent. |
-| SC17 | `partial` | Legacy media-call and pairing-closure coverage exists; it has not been re-qualified against the shared policy. |
+| SC17 | `partial` | Packaged pairing cancellation and unapproved-restart checks exist; full legacy media-call and pairing-closure re-qualification against the shared policy remains open. |
 | SC18 | `partial` | Signed fixtures and existing peers still interoperate; no explicit wire-version matrix. |
 | SC19 | `local` | Persistence failure during intent or adoption bookkeeping is tested for safe in-memory behavior. |
 | SC20 | `workflow` | The final gate fails on missing, skipped, canceled or stale required evidence for the exact source. |

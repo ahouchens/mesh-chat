@@ -1153,7 +1153,9 @@ M2 - shared policy
       are component evidence only.
 - [ ] Workspace pairing and non-default manual pairing modes in the shared
       composition.
-- [ ] Cancellation at every handshake phase, plus partition/restart/revocation and
+- [x] Packaged pairing cancellation and unapproved-restart checks (WebView2
+      component evidence).
+- [ ] Cancellation at every handshake phase, plus partition/revocation and
       resource-disposal parity across both platforms.
 - [ ] Removal of migrated legacy loops and promotion of the shared owner. Neither is
       permitted before the gates above pass.
@@ -1172,17 +1174,19 @@ M3 - qualification
 - [x] Isolated documentation, test-module-only connection, TypeScript-SDK and
       Windows-pipe production diffs narrow to policy and verification; mixed,
       host, Android, frontend and unknown paths keep the full matrix.
-- [ ] Narrowing for production source changes waits until each component's
-      isolation is proven; the conservative full matrix remains the default.
+- [ ] Broader production-source isolation for the remaining components; the
+      conservative full matrix remains the default.
 
 M4 - headless messaging
 
 - [x] Android native transport and the private Windows WebView2 host with packaged
       crash, pairing and receipt scenarios.
+- [x] Packaged crash/reopen, forced-exit, receipt and transport-fault checks on the
+      WebView2 host (component only).
 - [ ] Production native Windows DataChannel adapter to replace the WebView2
       dependency.
-- [ ] Packaged fault matrix, real-clock budgets and the 100-iteration receipt soak
-      on those exact headless transports.
+- [ ] Full packaged fault matrix, 30-second real-clock recovery budgets and the
+      100-iteration receipt soak on the exact headless transports.
 
 M5 - supported reusable core
 
@@ -1190,12 +1194,12 @@ M5 - supported reusable core
       snapshots, replay cursors, acknowledgments, diagnostics, bounded framing and
       received-text enumeration.
 - [x] Trusted host grant binding over a host-owned stream pair (component only).
-- [x] Private Windows named-pipe endpoint with OS access control and an executable
-      allowlist (component only; no packaged consumer).
-- [ ] Authenticated Android Binder endpoint and packaged consumers. The AIDL
-      service, signature permission and caller-derived grant exist, and four
-      instrumentation tests are a required gate suite on the API 35 emulator;
-      no packaged consumer exists.
+- [x] Private Windows named-pipe endpoint with OS access control, an executable
+      allowlist and installed-wheel consumer evidence (component only; not a
+      graphical application).
+- [x] Authenticated Android Binder endpoint with signature permission,
+      caller-derived grant and four instrumentation tests on the API 35 emulator.
+- [ ] Independent packaged Android consumer through that endpoint.
 - [x] Contact-wide connection start/stop intent with convergent semantics
       (component only; no per-device selection or workspace pairing).
 - [x] Explicit convergent peer approval and revocation (component only).
@@ -1211,11 +1215,12 @@ M5 - supported reusable core
 - [x] Per-peer signed pairing document returned to the caller.
 - [x] Private channel membership, channel editing, archiving and transfer
       (component, two-service delivery test).
-- [x] Workspace policy updates, device listing and owner device removal
-      (component, two-service test).
+- [x] Workspace policy updates (channel-creation, posting, invitation-request),
+      device listing and owner device removal (component, two-service test).
+- [x] Opt-in consumer/owner host grant scopes with installed-wheel pipe evidence
+      (component; runtime ownership excluded).
 - [x] Signed device-link creation, preview, new-device submission and
       owner approve/decline (component, two-service delivery test).
-- [x] Component versions and a TypeScript package-shape gate (not published).
 - [x] TypeScript tarball packaging smoke: pack, install into an empty project,
       import the public entry point (unpublished artifact).
 - [x] Python wheel packaging smoke: build, install into an empty target, import
@@ -1223,31 +1228,29 @@ M5 - supported reusable core
       capabilities/workspace queries from the packaged service (unpublished).
 - [x] Windows packaged pipe consumer: installed wheel hosts the named-pipe
       endpoint and a separate installed-wheel consumer completes the framed
-      capabilities/workspace exchange (component, unpublished).
+      capabilities/workspace exchange and, under the opt-in owner scope,
+      workspace administration (component, unpublished).
 
-- [x] Workspace device-link creation, preview, submission and sponsor
-      approval/decline (component, two-service delivery test).
-- [x] Channel transfer offer and acceptance (component, two-service delivery test).
-- [x] Workspace channel-creation, posting and invitation policy updates
-      (component).
-- [x] Workspace device listing and owner removal (component, two-service test).
 - [x] Per-channel posting policy overrides signed into the channel control and
       enforced for outbound and inbound messages, with workspace policy fallback.
-- [x] Experimental TypeScript client over the frame contract (component only; no
-      packaging, CI conformance, Kotlin client or consumer).
-- [x] Experimental Python client and Windows CLI over the host pipe, with a
-      declared console entry point and relationship, pairing and owner-stop
-      commands (component only; no published distribution).
-- [ ] Versioned TypeScript/Kotlin SDKs, production CLI and the supported
-      compatibility matrix. Component versions are declared and bound by test;
-      none is packaged or published.
+- [x] Python, TypeScript and Kotlin component clients over the frame contract,
+      with SDK conformance tests and TypeScript/Python package-shape smokes
+      (unpublished).
+- [x] Python console client and Windows CLI over the host pipe, with relationship,
+      pairing and owner-stop commands (component only; no published distribution).
+- [x] Declared Python/TypeScript/Kotlin component versions bound to the
+      compatibility declaration and TypeScript/Python package-smoke artifacts
+      (unpublished).
+- [ ] Published SDK/CLI artifacts, Kotlin packaging, and a supported
+      compatibility matrix with upgrade fixtures.
 - [ ] Mesh Chat messaging routed through the supported facade.
 - [ ] Independent Windows and Android consumers built only from distribution
       artifacts and documentation.
 
 Release and physical
 
-- [ ] INV20 enforcement for exact source/artifact evidence (M3).
+- [x] INV20 exact source/artifact enforcement implemented and executed on a
+      branch release build (not published).
 - [ ] Physical Windows/Android checklist: Wi-Fi/cellular switching, screen-off/Doze,
       real process death, Stop/lock and end-to-end receipts. Unavailable in the
       current environment (emulation and GitHub CI only); emulator results must not
