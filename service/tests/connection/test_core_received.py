@@ -276,3 +276,16 @@ def test_outbound_replay_reports_outbound_direction(host):
     events = poll(session, profile, cursor)["result"]["events"]
     assert [(item["direction"], item["message"], item["state"]) for item in events] == [
         ("outbound", accepted["result"]["message"], "queued")]
+
+
+def test_received_page_respects_the_byte_budget(host):
+    service = host()
+    session, _, profile, _ = client(service)
+    for index in range(80):
+        inbound(service, f"receive-budget-{index:03d}", "x" * 16384)
+    reply = received(session, profile, limit=128)
+    assert reply["ok"], reply
+    messages = reply["result"]["messages"]
+    assert len(messages) < 80
+    assert sum(len(item["text"].encode("utf-8")) for item in messages) <= 1048576
+    assert reply["result"]["next_cursor"] is not None
