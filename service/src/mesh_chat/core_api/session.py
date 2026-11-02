@@ -74,6 +74,54 @@ MAX_PROFILES = 256
 MAX_CONNECTIONS = 256
 
 
+PERMISSION_BY_OPERATION = {
+    "connection.snapshot": "observe",
+    "connection.start": "connect",
+    "connection.stop": "connect",
+    "diagnostics.query": "diagnose",
+    "events.ack": "read",
+    "events.poll": "read",
+    "message.enqueue": "send",
+    "message.list": "read",
+    "message.query": "read",
+    "message.received": "read",
+    "peer.approve": "approve",
+    "peer.pairing_accept": "pair",
+    "peer.pairing_create": "pair",
+    "peer.pairing_request": "pair",
+    "peer.query": "observe",
+    "peer.revoke": "approve",
+    "profile.query": "observe",
+    "runtime.capabilities": "observe",
+    "runtime.stop": "runtime_owner",
+    "workspace.channel_archive": "approve",
+    "workspace.channel_create": "approve",
+    "workspace.channel_members": "approve",
+    "workspace.channel_members_update": "approve",
+    "workspace.channel_transfer_accept": "approve",
+    "workspace.channel_transfer_offer": "approve",
+    "workspace.channel_update": "approve",
+    "workspace.channels": "approve",
+    "workspace.device_link_approve": "approve",
+    "workspace.device_link_create": "pair",
+    "workspace.device_link_decline": "approve",
+    "workspace.device_link_preview": "pair",
+    "workspace.device_link_submit": "pair",
+    "workspace.device_links": "approve",
+    "workspace.device_remove": "approve",
+    "workspace.devices": "approve",
+    "workspace.invitation_preview": "read",
+    "workspace.join": "pair",
+    "workspace.join_approve": "approve",
+    "workspace.join_decline": "approve",
+    "workspace.join_requests": "approve",
+    "workspace.member_role": "approve",
+    "workspace.members": "approve",
+    "workspace.policy_update": "approve",
+    "workspace.query": "read",
+}
+
+
 @dataclass(frozen=True)
 class Grant:
     caller: str
@@ -213,37 +261,9 @@ class CoreSession:
                                                         "workspace.policy_update",
                                                         "workspace.device_remove"}:
                     raise ApiFailure("invalid_request")
-                permission = {"message.enqueue": "send", "message.query": "read", "message.list": "read",
-                              "message.received": "read", "events.poll": "read", "events.ack": "read",
-                              "connection.start": "connect", "connection.stop": "connect",
-                              "peer.approve": "approve", "peer.revoke": "approve",
-                              "peer.pairing_accept": "pair", "peer.pairing_create": "pair",
-                              "peer.pairing_request": "pair",
-                              "runtime.stop": "runtime_owner",
-                              "workspace.invitation_preview": "read", "workspace.join": "pair",
-                              "workspace.query": "read", "workspace.join_requests": "approve",
-                              "workspace.join_approve": "approve",
-                              "workspace.join_decline": "approve",
-                              "workspace.members": "approve",
-                              "workspace.member_role": "approve",
-                              "workspace.channels": "approve",
-                              "workspace.channel_create": "approve",
-                              "workspace.channel_members": "approve",
-                              "workspace.channel_members_update": "approve",
-                              "workspace.channel_update": "approve",
-                              "workspace.channel_archive": "approve",
-                              "workspace.device_link_create": "pair",
-                              "workspace.device_link_preview": "pair",
-                              "workspace.device_link_submit": "pair",
-                              "workspace.device_links": "approve",
-                              "workspace.device_link_approve": "approve",
-                              "workspace.device_link_decline": "approve",
-                              "workspace.channel_transfer_offer": "approve",
-                              "workspace.channel_transfer_accept": "approve",
-                              "workspace.policy_update": "approve",
-                              "workspace.devices": "approve",
-                              "workspace.device_remove": "approve",
-                              "diagnostics.query": "diagnose"}.get(operation, "observe")
+                permission = PERMISSION_BY_OPERATION.get(operation)
+                if permission is None:
+                    raise ApiFailure("forbidden")
                 if permission not in grant.permissions:
                     raise ApiFailure("forbidden")
                 result = self._execute(grant, operation, params, key)

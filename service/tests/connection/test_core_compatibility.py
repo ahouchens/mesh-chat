@@ -111,3 +111,18 @@ def test_component_clients_cover_every_advertised_operation():
         missing = [operation for operation in COMPONENT_OPERATIONS
                    if f'"{operation}"' not in source]
         assert not missing, f"{name} client is missing {missing}"
+
+
+def test_session_permissions_match_the_operation_contract():
+    import json
+
+    from mesh_chat.core_api.requests import COMPONENT_OPERATIONS
+    from mesh_chat.core_api.session import PERMISSION_BY_OPERATION
+
+    root = Path(__file__).resolve().parents[3]
+    manifest = json.loads((root / "contracts" / "core-api" /
+                           "operations-v1.json").read_text(encoding="utf-8"))
+    declared = {item["operation"]: item["permission"] for item in manifest["operations"]
+                if item["operation"] in COMPONENT_OPERATIONS}
+    assert set(declared) == set(COMPONENT_OPERATIONS)
+    assert declared == PERMISSION_BY_OPERATION
