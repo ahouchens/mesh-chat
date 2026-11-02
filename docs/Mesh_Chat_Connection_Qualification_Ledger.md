@@ -59,6 +59,7 @@ concluded **success**:
 | Received-page byte budget | `pytest service/tests/connection/test_core_received.py::test_received_page_respects_the_byte_budget` | 1 passed (80 x 16 KiB inbound messages truncate below 1 MiB with a cursor) |
 | Packaged client smoke (unpublished) | `node scripts/check_typescript_distribution.mjs` | passes: npm pack, install into an empty project, import `@mesh-chat/core-client` |
 | Packaged service wheel (unpublished) | `python scripts/check_python_distribution.py` | passes: wheel build, install into an empty target, import `mesh_chat.core_api`, both console entry points installed, `mesh-chat-core --version` prints `0.2.0-experimental`, and the packaged service answers `runtime.capabilities` and `workspace.query` through the facade |
+| Release qualification executed (branch build, **not published**) | `release_qualification.py` against a branch release build and exact-source connection manifest | **passed**: setup 28,188,072 B, msi 30,187,520 B, apk 47,283,367 B bound to source 54bf8fc and tree 828e6f1; version 0.9.66 |
 | Packaged pipe consumer (unpublished, Windows) | `python scripts/check_packaged_pipe_consumer.py` | passes: installed wheel hosts a real named-pipe endpoint and a second installed-wheel consumer negotiates capabilities and queries workspaces over it |
 
 ## Definition-of-done disposition

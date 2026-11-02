@@ -126,6 +126,20 @@ def current_plan():
             "source_tree": git("rev-parse", "HEAD^{tree}").decode().strip()}
 
 
+def manifest(plan, collected, jobs):
+    suites = collected.get("suites")
+    if not isinstance(suites, list) or not suites:
+        raise ValueError("Collected qualification has no uniform suite evidence")
+    components = {key: value for key, value in collected.items()
+                  if key not in {"suites", "report_sha256"}}
+    if "policy_tests_executed" not in components:
+        raise ValueError("Collected qualification has no component summary")
+    return {**plan, "passed": True,
+            "scope": "Selected workflow execution and component reports; not an exact-artifact release qualification",
+            "components": components, "suites": suites,
+            "report_sha256": collected.get("report_sha256"), "jobs": jobs}
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--output", type=Path, required=True)
@@ -145,11 +159,9 @@ def main():
         if args.evidence_dir is None:
             raise ValueError("Required component evidence directory is missing")
         from connection_matrix import collect
-        components = collect(args.evidence_dir, plan["source_commit"], plan["source_tree"], plan["required"])
-        result = {**plan, "passed": True,
-                  "scope": "Selected workflow execution and component reports; not an exact-artifact release qualification",
-                  "components": components,
-                  "jobs": {name: value["result"] for name, value in jobs.items()}}
+        collected = collect(args.evidence_dir, plan["source_commit"], plan["source_tree"], plan["required"])
+        result = manifest(plan, collected,
+                          {name: value["result"] for name, value in jobs.items()})
     else:
         result = plan
         with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as output:

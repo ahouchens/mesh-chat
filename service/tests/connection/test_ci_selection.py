@@ -164,3 +164,19 @@ def test_frontend_sources_do_not_consume_the_typescript_sdk():
         if "@mesh-chat/core-client" in text or "sdk/typescript" in text:
             offenders.append(str(path.relative_to(frontend)))
     assert offenders == []
+
+
+def test_qualification_manifest_exposes_suites_and_the_component_summary():
+    plan = ci.select(["README.md"])
+    jobs = {suite: "success" for suite in ci.SUITES}
+    collected = {
+        "policy_tests_executed": 5,
+        "suites": [{"suite": "policy", "evidence_level": "local"}],
+        "report_sha256": {"policy": "a" * 64},
+    }
+    result = ci.manifest(plan, collected, jobs)
+    assert result["suites"] == collected["suites"]
+    assert result["components"] == {"policy_tests_executed": 5}
+    assert "suites" not in result["components"]
+    assert result["report_sha256"] == collected["report_sha256"]
+    assert result["jobs"] == jobs
