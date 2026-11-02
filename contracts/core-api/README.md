@@ -346,10 +346,10 @@ cross the boundary.
 The Python console client mesh_chat.core_api.cli covers the administrative
 surface (workspace listing, join and invitation handling, join review, members,
 roles, channel create/update/archive, private rosters, transfers, policies,
-device links and removal) plus the core diagnostics and messaging loop, and
-reports its component version with --version. It does not expose connection
-start, snapshots, peer queries or message history queries, and it remains an
-in-process diagnostic client, not a packaged application.
+device links and removal) plus connection start/stop, the core diagnostics and
+messaging loop, and reports its component version with --version. It does not
+expose connection snapshots, peer queries or message history queries, and it
+remains an in-process diagnostic client, not a packaged application.
 
 ## Observation and recovery
 

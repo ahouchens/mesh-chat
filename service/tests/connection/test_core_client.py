@@ -538,3 +538,25 @@ def test_cli_dispatches_administration_commands(tmp_path):
         "state": "removed"})
     assert result["state"] == "removed"
     assert decode_frame(transport.written[1])["operation"] == "workspace.device_remove"
+
+
+def test_cli_dispatches_connection_intent_commands():
+    def invoke(command):
+        transport = Scripted(reply(CAPABILITIES),
+                             reply({"profile": PROFILE, "peer": PEER,
+                                    "desired": "enabled" if command[0] == "connect" else "stopped",
+                                    "active": command[0] == "connect"}, "client:2"))
+        out, err = io.StringIO(), io.StringIO()
+        assert run_cli(["--pipe", r"\\.\pipe\mesh-chat-test", *command],
+                       transport, out, err) == 0
+        assert err.getvalue() == ""
+        return transport, json.loads(out.getvalue())
+
+    transport, result = invoke(["connect", "--peer", PEER])
+    assert result["desired"] == "enabled"
+    sent = decode_frame(transport.written[1])
+    assert sent["operation"] == "connection.start"
+    assert "idempotency_key" not in sent
+    transport, result = invoke(["disconnect", "--peer", PEER])
+    assert result["desired"] == "stopped"
+    assert decode_frame(transport.written[1])["operation"] == "connection.stop"

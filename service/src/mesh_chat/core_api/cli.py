@@ -52,6 +52,10 @@ def build_parser():
     pairing_accept = commands.add_parser("pairing-accept", help="accept a signed invitation file")
     pairing_accept.add_argument("--document-file", required=True)
     commands.add_parser("stop", help="ask the owning host to stop and close the stream")
+    connect = commands.add_parser("connect", help="enable a contact connection")
+    connect.add_argument("--peer", required=True)
+    disconnect = commands.add_parser("disconnect", help="stop a contact connection")
+    disconnect.add_argument("--peer", required=True)
     pairing_request = commands.add_parser("pairing-request", help="send or resend a signed request")
     pairing_request.add_argument("--peer", required=True)
     commands.add_parser("workspace-list", help="list caller-scoped workspaces")
@@ -188,6 +192,10 @@ def execute(args, client):
         return client.pairing_accept(profile, document)
     if args.command == "stop":
         return client.stop()
+    if args.command == "connect":
+        return client.connection_start(profile, args.peer)
+    if args.command == "disconnect":
+        return client.connection_stop(profile, args.peer)
     if args.command == "pairing-request":
         return client.pairing_request(profile, args.peer)
     if args.command == "workspace-list":
