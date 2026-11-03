@@ -60,7 +60,8 @@ def _native_peer(root: str, commands: Any, replies: Any, vault_key: bytes) -> No
         service = MeshChatService(store, Path(root), lambda _: None,
                                   native_webrtc_host=host)
         service_holder[0] = service
-        profile = service.create_profile(Path(root).name)
+        profile = (store.get("profile", "local")
+                   or service.create_profile(Path(root).name))
         assert service.network is not None, service._network_error
         replies.put({"ok": True, "result": profile})
         while True:
@@ -106,24 +107,45 @@ class NativePeers:
         self.commands: list[multiprocessing.Queue] = []
         self.replies: list[multiprocessing.Queue] = []
         self.processes = []
+        self.keys: list[bytes] = []
+        self.directories: list[Path] = []
+
+    def _launch(self, index: int):
+        while len(self.commands) <= index:
+            self.commands.append(None)
+            self.replies.append(None)
+            self.processes.append(None)
+        commands, replies = multiprocessing.Queue(), multiprocessing.Queue()
+        process = multiprocessing.Process(
+            target=_native_peer,
+            args=(str(self.directories[index]), commands, replies, self.keys[index]),
+            daemon=True,
+        )
+        process.start()
+        self.commands[index] = commands
+        self.replies[index] = replies
+        self.processes[index] = process
+        return self.response(index)
 
     def start(self):
         profiles = []
         for index in range(2):
             directory = self.root / f"peer-{index}"
             directory.mkdir()
-            commands, replies = multiprocessing.Queue(), multiprocessing.Queue()
-            process = multiprocessing.Process(
-                target=_native_peer,
-                args=(str(directory), commands, replies, os.urandom(32)),
-                daemon=True,
-            )
-            process.start()
-            self.commands.append(commands)
-            self.replies.append(replies)
-            self.processes.append(process)
-            profiles.append(self.response(index))
+            self.directories.append(directory)
+            self.keys.append(os.urandom(32))
+            profiles.append(self._launch(index))
         return profiles
+
+    def restart(self, index: int):
+        self.commands[index].put(("close", {}))
+        process = self.processes[index]
+        process.join(10)
+        if process.is_alive():
+            process.terminate()
+            process.join(5)
+        assert not process.is_alive(), "peer did not stop for restart"
+        return self._launch(index)
 
     def call(self, index: int, operation: str, **payload: Any) -> Any:
         self.commands[index].put((operation, payload))
@@ -223,14 +245,14 @@ def _exchange(peers, contacts, sender, text):
 
 def _start_connected(tmp_path: Path):
     peers = NativePeers(tmp_path)
-    peers.start()
+    profiles = peers.start()
     _attach_native_pair(peers, "native-left", "native-right")
-    return peers, _approve_contacts(peers)
+    return peers, _approve_contacts(peers), profiles
 
 
 @pytest.mark.integration
 def test_native_datachannel_delivers_durable_messages_and_receipts(tmp_path: Path) -> None:
-    peers, contacts = _start_connected(tmp_path)
+    peers, contacts, _ = _start_connected(tmp_path)
     try:
         _exchange(peers, contacts, 0, "Native durable message from peer 0")
         _exchange(peers, contacts, 1, "Native durable message from peer 1")
@@ -249,7 +271,7 @@ def test_native_datachannel_delivers_durable_messages_and_receipts(tmp_path: Pat
 def test_native_datachannel_recovers_queued_messages_after_bridge_replacement(
     tmp_path: Path,
 ) -> None:
-    peers, contacts = _start_connected(tmp_path)
+    peers, contacts, _ = _start_connected(tmp_path)
     try:
         _exchange(peers, contacts, 0, "Before native bridge replacement")
         peers.call(0, "native_close", session_id="native-left")
@@ -300,7 +322,7 @@ def _partition_then_recover(peers, contacts, seconds: int, budget: float):
 def test_native_datachannel_recovers_after_packet_partition_and_duplication(
     tmp_path: Path,
 ) -> None:
-    peers, contacts = _start_connected(tmp_path)
+    peers, contacts, _ = _start_connected(tmp_path)
     try:
         peers.call(0, "fault", mode="duplicate")
         peers.call(1, "fault", mode="duplicate")
@@ -317,10 +339,36 @@ def test_native_datachannel_recovers_after_packet_partition_and_duplication(
 def test_native_datachannel_recovers_within_the_thirty_second_partition_budget(
     tmp_path: Path,
 ) -> None:
-    peers, contacts = _start_connected(tmp_path)
+    peers, contacts, _ = _start_connected(tmp_path)
     try:
         elapsed = _partition_then_recover(peers, contacts, 30, 240)
         assert elapsed < 240
+    finally:
+        peers.close()
+    assert all(process.exitcode == 0 for process in peers.processes)
+
+
+@pytest.mark.integration
+def test_native_peer_restart_delivers_messages_queued_while_offline(
+    tmp_path: Path,
+) -> None:
+    peers, contacts, profiles = _start_connected(tmp_path)
+    try:
+        _exchange(peers, contacts, 0, "Before peer restart")
+        profile = peers.restart(1)
+        assert profile["destination_hash"] == profiles[1]["destination_hash"]
+        queued = peers.command(0, "send_message", contact_id=contacts[0]["id"],
+                               text="Queued while the native peer process is offline")
+        assert queued["state"] == "queued", queued
+        _attach_native_pair(peers, "native-left-after-restart", "native-right-after-restart")
+        received = peers.wait(
+            "queued message after peer restart",
+            lambda: _message(peers, 1, queued["id"], "inbound"), timeout=40)
+        delivered = peers.wait(
+            "receipt after peer restart",
+            lambda: _message(peers, 0, queued["id"], "outbound"), timeout=40)
+        assert received["text"] == delivered["text"] == queued["text"]
+        assert delivered["native_message_id"]
     finally:
         peers.close()
     assert all(process.exitcode == 0 for process in peers.processes)

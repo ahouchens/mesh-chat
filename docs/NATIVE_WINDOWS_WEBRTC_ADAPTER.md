@@ -78,7 +78,10 @@ a call peer connection or release a call track.
   uses the legacy bridge policy, not the shared supervisor. Additional tests
   prove queued-message recovery after a bridge replacement, duplicate-packet
   deduplication and bounded recovery after five- and thirty-second native packet
-  partitions; the thirty-second case recovered inside the 240-second budget.
+  partitions; the thirty-second case recovered inside the 240-second budget. A
+  full peer-process restart preserves the profile identity, sends a message
+  queued while the process was offline and receives its authenticated receipt
+  over the replacement native session.
 - `scripts/check_native_windows_messaging.py`: two packaged sidecars exchange a
   real native offer/answer, open the data channel, send a control message and
   report no WebView process in their owned process trees.
