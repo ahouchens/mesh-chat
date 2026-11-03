@@ -110,6 +110,16 @@ class CorePackageConsumerTest {
             val profile = profile(client)
             val restored = client.messageQuery(profile, checkNotNull(handle))
             assertEquals(body, restored.getString("text"))
+            val repeated = client.enqueue(
+                profile, "fixture-peer-0001", body,
+                "restart-enqueue-key".padEnd(16, 'x'),
+            )
+            assertEquals(handle, repeated.getString("message"))
+            val listed = client.messageList(profile).getJSONArray("messages")
+            val matching = (0 until listed.length()).count {
+                listed.getJSONObject(it).optString("text") == body
+            }
+            assertEquals(1, matching)
         }
     }
 
