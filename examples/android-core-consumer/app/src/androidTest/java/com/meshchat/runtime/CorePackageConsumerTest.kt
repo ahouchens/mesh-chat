@@ -120,6 +120,21 @@ class CorePackageConsumerTest {
                 listed.getJSONObject(it).optString("text") == body
             }
             assertEquals(1, matching)
+            val conflict = runCatching {
+                client.enqueue(
+                    profile, "fixture-peer-0001", "Different text for the same key",
+                    "restart-enqueue-key".padEnd(16, 'x'),
+                )
+            }.exceptionOrNull()
+            assertTrue(conflict is CoreException)
+            assertEquals("idempotency_conflict", (conflict as CoreException).code)
+            val afterConflict = client.messageList(profile).getJSONArray("messages")
+            assertEquals(
+                1,
+                (0 until afterConflict.length()).count {
+                    afterConflict.getJSONObject(it).optString("text") == body
+                },
+            )
         }
     }
 
