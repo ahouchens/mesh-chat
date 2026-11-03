@@ -37,5 +37,26 @@ class HostApplication : Application() {
         val created = Python.getInstance().getModule("mesh_chat.mobile_bridge")
             .callAttr("command", workspace.toString()).toString()
         check(JSONObject(created).getBoolean("ok")) { "Qualification workspace did not initialize" }
+        // A host-owned approved contact makes the public enqueue/read path testable
+        // without a second physical device or a real transport.
+        Python.getInstance().getModule("builtins").callAttr(
+            "exec",
+            """
+import base64, time
+import mesh_chat.mobile_bridge as bridge
+now = time.time()
+bridge._service.store.put("contact", "fixture-peer-0001", {
+    "id": "fixture-peer-0001",
+    "display_name": "Fixture peer",
+    "destination_hash": "ab" * 16,
+    "identity_hash": "cd" * 16,
+    "public_identity": base64.b64encode(bytes(range(32))).decode("ascii"),
+    "trust": "approved",
+    "created_at": now,
+    "updated_at": now,
+    "connection_hints": [],
+})
+""",
+        )
     }
 }

@@ -72,6 +72,25 @@ class CorePackageConsumerTest {
         withClient { assertEquals(previous, it.profileQuery(profile(it)).toString()) }
     }
 
+    @Test fun consumerCanEnqueueAndReadAMessageThroughThePublicPackage() {
+        withClient { client ->
+            val profile = profile(client)
+            val accepted = client.enqueue(
+                profile, "fixture-peer-0001", "Hello from the independent consumer",
+                "qualified-enqueue-key".padEnd(16, 'x'),
+            )
+            assertTrue(accepted.has("message"), accepted.toString())
+            val messages = client.messageList(profile).getJSONArray("messages")
+            assertTrue(
+                (0 until messages.length()).any {
+                    messages.getJSONObject(it).optString("text") ==
+                        "Hello from the independent consumer"
+                },
+                messages.toString(),
+            )
+        }
+    }
+
     @Test fun privateControlIsRejectedThroughThePublicPackage() {
         withClient { client ->
             val error = runCatching { client.request("native_webrtc_offer", JSONObject()) }.exceptionOrNull()
