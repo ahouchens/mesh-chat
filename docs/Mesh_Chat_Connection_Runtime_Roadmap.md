@@ -1172,9 +1172,10 @@ M3 - qualification
       manifest; the artifacts were **not published**.
 - [ ] A tagged release run and published supported-pair matrix; no tag has
       exercised publication.
-- [x] Isolated documentation, test-module-only connection, TypeScript-SDK and
-      Windows-pipe production diffs narrow to policy and verification; mixed,
-      host, Android, frontend and unknown paths keep the full matrix.
+- [x] Isolated documentation, test-module-only connection, TypeScript-SDK,
+      Windows-pipe and native Windows messaging-host diffs narrow to policy and
+      verification; mixed, host, Android, frontend and unknown paths keep the
+      full matrix.
 - [ ] Broader production-source isolation for the remaining components; the
       conservative full matrix remains the default.
 - [x] The three existing public Kotlin client sources have an isolated AAR build

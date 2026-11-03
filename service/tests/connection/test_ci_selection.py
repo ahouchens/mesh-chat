@@ -255,3 +255,58 @@ def test_pipe_production_modules_are_not_consumed_by_other_suites():
         if any(name in text for name in ("pipe_endpoint", "pipe_policy", "pipe_client")):
             offenders.append(str(path.relative_to(root)))
     assert offenders == []
+
+
+def test_isolated_native_windows_production_changes_skip_platform_recompilation():
+    plan = ci.select([
+        "service/src/mesh_chat/native_windows_webrtc.py",
+        "service/src/mesh_chat/desktop_transport_host.py",
+    ])
+    assert plan["required"] == ["policy", "verification"]
+    assert plan["reason"] == "isolated_native_windows_production"
+
+
+@pytest.mark.parametrize("paths", [
+    ["service/src/mesh_chat/native_windows_webrtc.py",
+     "service/src/mesh_chat/service.py"],
+    ["service/src/mesh_chat/native_windows_webrtc.py", "src/App.tsx"],
+    ["service/src/mesh_chat/desktop_transport_host.py", "README.md"],
+])
+def test_mixed_native_windows_production_paths_keep_the_full_matrix(paths):
+    assert ci.select(paths)["required"] == list(ci.SUITES)
+
+
+@pytest.mark.parametrize("event", ["workflow_dispatch", "merge_group", "release", "schedule"])
+def test_native_windows_narrowing_is_limited_to_branch_events(event):
+    assert ci.select(["service/src/mesh_chat/native_windows_webrtc.py"],
+                     event=event)["required"] == list(ci.SUITES)
+
+
+def test_native_windows_production_modules_have_only_trusted_consumers():
+    root = Path(__file__).resolve().parents[3]
+    names = ("native_windows_webrtc", "desktop_transport_host")
+    offenders = []
+    for path in (root / "service" / "src").rglob("*.py"):
+        if path.name == "__main__.py":
+            continue
+        text = path.read_text(encoding="utf-8")
+        if any(f"import {name}" in text or f"from .{name}" in text
+               or f"from .core_api.{name}" in text for name in names):
+            offenders.append(str(path.relative_to(root)))
+    for path in (root / "src").rglob("*"):
+        if path.suffix in {".ts", ".tsx", ".js"} and path.is_file():
+            text = path.read_text(encoding="utf-8")
+            if any(name in text for name in names):
+                offenders.append(str(path.relative_to(root)))
+    for path in (root / "plugins" / "tauri-plugin-mesh-runtime" / "android" / "src").rglob("*.kt"):
+        text = path.read_text(encoding="utf-8")
+        if any(name in text for name in names):
+            offenders.append(str(path.relative_to(root)))
+    allowed = {root / "service" / "tests" / "test_native_webrtc_runtime.py"}
+    for path in (root / "service" / "tests").rglob("test_*.py"):
+        if "connection" in path.parts or path in allowed:
+            continue
+        text = path.read_text(encoding="utf-8")
+        if any(name in text for name in names):
+            offenders.append(str(path.relative_to(root)))
+    assert offenders == []
