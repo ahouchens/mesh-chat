@@ -75,7 +75,10 @@ a call peer connection or release a call track.
   authenticated bridge, create and approve a contact, deliver durable messages
   plus application receipts in both directions, then exchange a 100-message
   alternating receipt soak with exactly one inbound copy per logical ID. This
-  uses the legacy bridge policy, not the shared supervisor.
+  uses the legacy bridge policy, not the shared supervisor. Additional tests
+  prove queued-message recovery after a bridge replacement, duplicate-packet
+  deduplication and bounded recovery after a five-second native packet
+  partition.
 - `scripts/check_native_windows_messaging.py`: two packaged sidecars exchange a
   real native offer/answer, open the data channel, send a control message and
   report no WebView process in their owned process trees.

@@ -28,6 +28,25 @@ def _native_peer(root: str, commands: Any, replies: Any, vault_key: bytes) -> No
     from mesh_chat.service import MeshChatService
     from mesh_chat.vault import VaultStore
 
+    class FaultyHost(WindowsNativeWebRTCHost):
+        """Test-only packet impairment at the native host send boundary."""
+
+        def __init__(self, notify):
+            super().__init__(notify)
+            self.fault = "pass"
+            self.sent = 0
+
+        def send(self, resource, packet):
+            self.sent += 1
+            if self.fault == "drop":
+                return True
+            if self.fault == "loss" and self.sent % 2 == 0:
+                return True
+            accepted = super().send(resource, packet)
+            if self.fault == "duplicate":
+                super().send(resource, packet)
+            return accepted
+
     service = None
     host = None
     try:
@@ -35,7 +54,7 @@ def _native_peer(root: str, commands: Any, replies: Any, vault_key: bytes) -> No
         store.put("settings", "network",
                   NetworkSettings(nearby_discovery=False, lan_fallback=False).to_dict())
         service_holder = [None]
-        host = WindowsNativeWebRTCHost(
+        host = FaultyHost(
             lambda *event: service_holder[0].native_webrtc_event(*event)
             if service_holder[0] is not None else None)
         service = MeshChatService(store, Path(root), lambda _: None,
@@ -58,6 +77,11 @@ def _native_peer(root: str, commands: Any, replies: Any, vault_key: bytes) -> No
                 elif operation == "native_apply":
                     result = service.native_webrtc_apply_answer(
                         payload["session_id"], payload["answer_sdp"])
+                elif operation == "fault":
+                    host.fault = payload["mode"]
+                    result = {"mode": host.fault}
+                elif operation == "native_close":
+                    result = service.native_webrtc_close(payload["session_id"])
                 elif operation == "stats":
                     result = service.native_webrtc_stats(payload["session_id"])
                 else:
@@ -148,63 +172,137 @@ def _attached(peers, index, session):
             and stats.get("ice_connection_state") in {"connected", "completed"})
 
 
+def _attach_native_pair(peers, left_session, right_session):
+    offer = peers.call(0, "native_offer", session_id=left_session)
+    answer = peers.call(1, "native_accept", session_id=right_session,
+                        offer_sdp=offer["sdp"])
+    peers.call(0, "native_apply", session_id=left_session,
+               answer_sdp=answer["sdp"])
+    peers.wait("both native bridges attached",
+               lambda: _attached(peers, 0, left_session)
+               and _attached(peers, 1, right_session), timeout=40)
+
+
+def _approve_contacts(peers):
+    invitation = peers.command(0, "create_invitation", connection_mode="webrtc")
+    peers.command(1, "accept_invitation", invitation=invitation["text"])
+
+    def contact(index, trust):
+        return next((row for row in peers.command(index, "snapshot")["contacts"]
+                     if row["trust"] == trust), None)
+
+    pending = peers.wait("the contact request",
+                         lambda: contact(0, "pending_request"), timeout=30)
+    left = peers.command(0, "approve_request", contact_id=pending["id"])
+    right = peers.wait("the acceptance",
+                       lambda: contact(1, "approved"), timeout=30)
+    return {0: left, 1: right}
+
+
+def _message(peers, index, identifier, direction):
+    return next((row for row in peers.command(index, "snapshot")["messages"]
+                 if row["id"] == identifier and row["direction"] == direction
+                 and row["state"] == "delivered"), None)
+
+
+def _exchange(peers, contacts, sender, text):
+    recipient = 1 - sender
+    sent = peers.command(sender, "send_message",
+                         contact_id=contacts[sender]["id"], text=text)
+    received = peers.wait("recipient message",
+                          lambda: _message(peers, recipient, sent["id"], "inbound"))
+    delivered = peers.wait("sender receipt",
+                           lambda: _message(peers, sender, sent["id"], "outbound"))
+    assert received["text"] == delivered["text"] == text
+    assert delivered["native_message_id"]
+    copies = [row for row in peers.command(recipient, "snapshot")["messages"]
+              if row["id"] == sent["id"] and row["direction"] == "inbound"]
+    assert len(copies) == 1
+    return sent
+
+
+def _start_connected(tmp_path: Path):
+    peers = NativePeers(tmp_path)
+    peers.start()
+    _attach_native_pair(peers, "native-left", "native-right")
+    return peers, _approve_contacts(peers)
+
+
 @pytest.mark.integration
 def test_native_datachannel_delivers_durable_messages_and_receipts(tmp_path: Path) -> None:
-    peers = NativePeers(tmp_path)
+    peers, contacts = _start_connected(tmp_path)
     try:
-        profiles = peers.start()
-        left_session, right_session = "native-left", "native-right"
-        offer = peers.call(0, "native_offer", session_id=left_session)
-        answer = peers.call(1, "native_accept", session_id=right_session,
-                            offer_sdp=offer["sdp"])
-        peers.call(0, "native_apply", session_id=left_session,
-                   answer_sdp=answer["sdp"])
-        peers.wait("both native bridges attached",
-                   lambda: _attached(peers, 0, left_session)
-                   and _attached(peers, 1, right_session), timeout=40)
-
-        invitation = peers.command(0, "create_invitation", connection_mode="webrtc")
-        peers.command(1, "accept_invitation", invitation=invitation["text"])
-
-        def contact(index, trust):
-            return next((row for row in peers.command(index, "snapshot")["contacts"]
-                         if row["trust"] == trust), None)
-
-        pending = peers.wait("the contact request",
-                            lambda: contact(0, "pending_request"), timeout=30)
-        left_contact = peers.command(0, "approve_request", contact_id=pending["id"])
-        right_contact = peers.wait("the acceptance",
-                                  lambda: contact(1, "approved"), timeout=30)
-
-        def message(index, identifier, direction):
-            return next((row for row in peers.command(index, "snapshot")["messages"]
-                         if row["id"] == identifier and row["direction"] == direction
-                         and row["state"] == "delivered"), None)
-
-        contacts = {0: left_contact, 1: right_contact}
-
-        def exchange(sender: int, text: str) -> dict:
-            recipient = 1 - sender
-            sent = peers.command(sender, "send_message",
-                                 contact_id=contacts[sender]["id"], text=text)
-            received = peers.wait("recipient message",
-                                  lambda: message(recipient, sent["id"], "inbound"))
-            delivered = peers.wait("sender receipt",
-                                   lambda: message(sender, sent["id"], "outbound"))
-            assert received["text"] == delivered["text"] == text
-            assert delivered["native_message_id"]
-            copies = [row for row in peers.command(recipient, "snapshot")["messages"]
-                      if row["id"] == sent["id"] and row["direction"] == "inbound"]
-            assert len(copies) == 1
-            return sent
-
-        exchange(0, "Native durable message from peer 0")
-        exchange(1, "Native durable message from peer 1")
+        _exchange(peers, contacts, 0, "Native durable message from peer 0")
+        _exchange(peers, contacts, 1, "Native durable message from peer 1")
         started = time.monotonic()
         for index in range(100):
-            exchange(index % 2, f"Native receipt soak message {index}")
+            _exchange(peers, contacts, index % 2,
+                      f"Native receipt soak message {index}")
         elapsed = time.monotonic() - started
         assert elapsed < 300, f"100-message receipt soak took {elapsed:.1f}s"
+    finally:
+        peers.close()
+    assert all(process.exitcode == 0 for process in peers.processes)
+
+
+@pytest.mark.integration
+def test_native_datachannel_recovers_queued_messages_after_bridge_replacement(
+    tmp_path: Path,
+) -> None:
+    peers, contacts = _start_connected(tmp_path)
+    try:
+        _exchange(peers, contacts, 0, "Before native bridge replacement")
+        peers.call(0, "native_close", session_id="native-left")
+        time.sleep(0.5)
+        queued = peers.command(0, "send_message", contact_id=contacts[0]["id"],
+                               text="Queued while the native bridge is absent")
+        assert queued["state"] == "queued", queued
+        _attach_native_pair(peers, "native-left-replacement", "native-right-replacement")
+        received = peers.wait(
+            "queued recipient message after replacement",
+            lambda: _message(peers, 1, queued["id"], "inbound"), timeout=40)
+        delivered = peers.wait(
+            "queued sender receipt after replacement",
+            lambda: _message(peers, 0, queued["id"], "outbound"), timeout=40)
+        assert received["text"] == delivered["text"] == queued["text"]
+        assert delivered["native_message_id"]
+    finally:
+        peers.close()
+    assert all(process.exitcode == 0 for process in peers.processes)
+
+
+@pytest.mark.integration
+def test_native_datachannel_recovers_after_packet_partition_and_duplication(
+    tmp_path: Path,
+) -> None:
+    peers, contacts = _start_connected(tmp_path)
+    try:
+        peers.call(0, "fault", mode="duplicate")
+        peers.call(1, "fault", mode="duplicate")
+        _exchange(peers, contacts, 0, "Duplicate delivery remains deduplicated")
+        peers.call(0, "fault", mode="pass")
+        peers.call(1, "fault", mode="pass")
+
+        peers.call(0, "fault", mode="drop")
+        peers.call(1, "fault", mode="drop")
+        interrupted = peers.command(
+            0, "send_message", contact_id=contacts[0]["id"],
+            text="Durable message during native packet partition")
+        time.sleep(5)
+        peers.call(0, "fault", mode="pass")
+        peers.call(1, "fault", mode="pass")
+        started = time.monotonic()
+        received = peers.wait(
+            "partitioned recipient message",
+            lambda: _message(peers, 1, interrupted["id"], "inbound"), timeout=60)
+        delivered = peers.wait(
+            "partitioned sender receipt",
+            lambda: _message(peers, 0, interrupted["id"], "outbound"), timeout=60)
+        assert received["text"] == delivered["text"] == interrupted["text"]
+        assert time.monotonic() - started < 30
+        copies = [row for row in peers.command(1, "snapshot")["messages"]
+                  if row["id"] == interrupted["id"] and row["direction"] == "inbound"]
+        assert len(copies) == 1
     finally:
         peers.close()
     assert all(process.exitcode == 0 for process in peers.processes)

@@ -1199,10 +1199,13 @@ M4 - headless messaging
       three cold starts and bounded cleanup (CI max open 716 ms, max control 1,230 ms).
 - [x] 100-message alternating authenticated-receipt soak over the native
       DataChannel, with no duplicate visible messages.
+- [x] Component native fault checks: queued-message recovery after bridge
+      replacement, duplicate-packet deduplication and a five-second native packet
+      partition recovering within 30 seconds.
 - [ ] Full fault matrix, restart/cold-start receipt soak and the distinct
-      real-clock budgets on the exact headless transports: 20-second bridge
-      repair; recovery within 240 seconds after a 30-second partition; receipts
-      within 30 seconds after messaging readiness.
+      real-clock budgets under the specified 150 ms RTT impairment: 20-second
+      bridge repair; recovery within 240 seconds after a 30-second partition;
+      receipts within 30 seconds after messaging readiness.
 
 M5 - supported reusable core
 

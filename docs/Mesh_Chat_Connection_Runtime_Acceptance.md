@@ -85,7 +85,7 @@ never described as physical-device qualification.
 | SC01 | `component` | Packaged Windows peers exchange messages and authenticated receipts in both roles; no physical cross-device run. |
 | SC02 | `local` | Simultaneous start, duplicate signaling and role collisions are covered by the reducer/supervisor corpus. |
 | SC03 | `local` | Old answers, late native callbacks and expired timers cannot advance state; exact orphan cleanup is asserted. |
-| SC04 | `partial` | Partitions are simulated deterministically; recovery within 240 seconds after a 30-second partition under the specified 150 ms RTT impairment profile is not measured on the exact headless transports. |
+| SC04 | `partial` | Partitions are simulated deterministically; a native five-second packet partition recovered with a receipt under 30 seconds. Recovery within 240 seconds after the required 30-second partition under 150 ms RTT impairment is not measured on the exact headless transports. |
 | SC05 | `partial` | Loss and delayed control are simulated; no real impairment run carries the policy traffic. |
 | SC06 | `local` | Mailbox failure keeps a healthy carrier and reports degraded future reconnect separately. |
 | SC07 | `local` | Carrier failure with a healthy mailbox schedules a permitted new negotiation. |
