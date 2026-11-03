@@ -7,6 +7,7 @@ import pytest
 
 
 SCRIPT = Path(__file__).resolve().parents[3] / "scripts" / "connection_ci.py"
+KOTLIN_CLIENT = "plugins/tauri-plugin-mesh-runtime/android/src/main/java/com/meshchat/runtime/core/"
 spec = importlib.util.spec_from_file_location("connection_ci", SCRIPT)
 ci = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(ci)
@@ -189,6 +190,33 @@ def test_isolated_pipe_production_changes_skip_platform_recompilation():
     ])
     assert plan["required"] == ["policy", "verification"]
     assert plan["reason"] == "isolated_pipe_production"
+
+
+@pytest.mark.parametrize("name", ["CoreClient.kt", "CoreTransport.kt", "CoreExchangeTransport.kt"])
+def test_isolated_kotlin_client_keeps_android_consumer_and_contract_qualification(name):
+    plan = ci.select([KOTLIN_CLIENT + name])
+    assert plan["required"] == ["policy", "verification", "android"]
+    assert plan["reason"] == "isolated_kotlin_client"
+    jobs = {suite: {"result": "success" if suite in plan["required"] else "skipped"}
+            for suite in ci.SUITES}
+    ci.validate(plan, jobs)
+    jobs["android"]["result"] = "skipped"
+    with pytest.raises(ValueError):
+        ci.validate(plan, jobs)
+
+
+@pytest.mark.parametrize("path", [
+    KOTLIN_CLIENT + "NewClient.kt", KOTLIN_CLIENT + "../MeshCoreApiService.kt",
+    "sdk/kotlin/build.gradle.kts", "sdk/kotlin/src/main/AndroidManifest.xml",
+    "contracts/core-api/operations-v1.json", "README.md",
+])
+def test_kotlin_packaging_contract_new_source_or_mixed_changes_keep_full_coverage(path):
+    assert ci.select([KOTLIN_CLIENT + "CoreClient.kt", path])["required"] == list(ci.SUITES)
+
+
+@pytest.mark.parametrize("event", ["workflow_dispatch", "merge_group", "release", "schedule"])
+def test_kotlin_client_narrowing_is_limited_to_branch_events(event):
+    assert ci.select([KOTLIN_CLIENT + "CoreClient.kt"], event=event)["required"] == list(ci.SUITES)
 
 
 @pytest.mark.parametrize("paths", [

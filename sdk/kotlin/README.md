@@ -36,7 +36,8 @@ client.close()
 
 Use one calling thread per client. Requests and replies must each fit in 256 KiB
 including the terminating LF. The transport validates UTF-8 and exactly one
-frame. Closing the client detaches local transport state; unbind the service
+frame. Host admission failures preserve their typed error and close the client
+when no request ID could be correlated. Closing the client detaches local transport state; unbind the service
 connection separately. Neither action is an owner-stop command. A failed or
 timed-out mutation has an unknown outcome: do not blindly retry it; use the
 operation's idempotency key and durable status where available.

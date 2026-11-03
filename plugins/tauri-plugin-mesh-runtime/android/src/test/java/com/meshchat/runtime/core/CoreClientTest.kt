@@ -51,6 +51,39 @@ private fun capabilities(major: Int = 1): JSONObject = JSONObject()
 
 class CoreClientTest {
     @Test
+    fun hostAdmissionErrorsKeepTheirCodeAndCloseTheUncorrelatedSession() {
+        for (code in listOf("forbidden", "invalid_request", "resource_exhausted", "unavailable")) {
+            val rejection = JSONObject(failure("ignored", code)).put("request_id", JSONObject.NULL).toString()
+            val transport = Scripted(success("client:1", capabilities()), rejection)
+            val client = CoreClient.open(transport)
+            val error = runCatching { client.profileQuery(PROFILE) }.exceptionOrNull()
+            assertTrue(error is CoreException)
+            assertEquals(code, (error as CoreException).code)
+            assertTrue(transport.closed)
+            val next = runCatching { client.profileQuery(PROFILE) }.exceptionOrNull()
+            assertEquals("transport_closed", (next as CoreException).code)
+            assertEquals(2, transport.written.size)
+        }
+    }
+
+    @Test
+    fun uncorrelatedSuccessOrDomainResultsCannotBeAccepted() {
+        val replies = listOf(
+            JSONObject(success("ignored", JSONObject())).put("request_id", JSONObject.NULL),
+            JSONObject(failure("ignored", "resync_required")).put("request_id", JSONObject.NULL),
+            JSONObject(failure("ignored", "unavailable")).apply { remove("request_id") },
+            JSONObject(failure("other-request", "unavailable")),
+        )
+        for (reply in replies) {
+            val transport = Scripted(success("client:1", capabilities()), reply.toString())
+            val client = CoreClient.open(transport)
+            val error = runCatching { client.profileQuery(PROFILE) }.exceptionOrNull()
+            assertEquals("protocol", (error as CoreException).code)
+            assertTrue(transport.closed)
+        }
+    }
+
+    @Test
     fun negotiatesOnceAndSerializesTheDeclaredEnvelope() {
         val transport = Scripted(success("client:1", capabilities()))
         val client = CoreClient.open(transport)

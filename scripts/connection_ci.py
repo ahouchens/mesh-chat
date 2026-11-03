@@ -28,6 +28,10 @@ PIPE_PRODUCTION = frozenset({
     "service/src/mesh_chat/core_api/pipe_policy.py",
     "service/src/mesh_chat/core_api/pipe_client.py",
 })
+KOTLIN_CLIENT_PRODUCTION = frozenset(
+    "plugins/tauri-plugin-mesh-runtime/android/src/main/java/com/meshchat/runtime/core/" + name
+    for name in ("CoreClient.kt", "CoreTransport.kt", "CoreExchangeTransport.kt")
+)
 
 
 def documentation(path):
@@ -77,6 +81,7 @@ def select(paths, *, event="pull_request"):
                 and all(typescript_sdk(path) for path in paths))
     pipe_only = (eligible and not documentation_only and not connection_tests_only
                  and not sdk_only and all(pipe_production(path) for path in paths))
+    kotlin_only = eligible and all(isinstance(path, str) and path in KOTLIN_CLIENT_PRODUCTION for path in paths)
     if documentation_only:
         required, reason = ["policy", "verification"], "isolated_documentation"
     elif connection_tests_only:
@@ -85,6 +90,11 @@ def select(paths, *, event="pull_request"):
         required, reason = ["policy", "verification"], "isolated_typescript_sdk"
     elif pipe_only:
         required, reason = ["policy", "verification"], "isolated_pipe_production"
+    elif kotlin_only:
+        # The separate AAR compiles only these public sources. Android executes
+        # the client JVM corpus and an independent APK built from that AAR;
+        # verification retains public contract and cross-language checks.
+        required, reason = ["policy", "verification", "android"], "isolated_kotlin_client"
     else:
         required, reason = list(SUITES), "conservative_full_matrix"
     return {

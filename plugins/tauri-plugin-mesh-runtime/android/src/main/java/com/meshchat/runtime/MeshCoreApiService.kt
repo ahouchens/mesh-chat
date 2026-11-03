@@ -20,23 +20,11 @@ import com.chaquo.python.Python
  * runtime ownership lives here.
  */
 class MeshCoreApiService : Service() {
-    private val dispatcher = CoreDispatch({ caller, frame ->
-        val module = Python.getInstance().getModule("mesh_chat.mobile_bridge")
-        val encoded = Base64.encodeToString(frame, Base64.NO_WRAP)
-        val reply = module.callAttr("core_exchange", caller.name, encoded, caller.scope).toString()
-        Base64.decode(reply, Base64.NO_WRAP)
-    })
-
     private val api = object : IMeshCoreApi.Stub() {
         override fun exchange(frame: ByteArray): ByteArray = dispatch(frame)
     }
 
     override fun onBind(intent: Intent?): IBinder = api
-
-    override fun onDestroy() {
-        dispatcher.close()
-        super.onDestroy()
-    }
 
     private fun dispatch(frame: ByteArray): ByteArray {
         // Same-UID callers are the application itself (its UI or its own
@@ -62,6 +50,14 @@ class MeshCoreApiService : Service() {
     }
 
     companion object {
+        // The app process owns admission. Unbinding/recreating this Android
+        // service must not replace a worker whose native invocation is wedged.
+        private val dispatcher = CoreDispatch({ caller, frame ->
+            val module = Python.getInstance().getModule("mesh_chat.mobile_bridge")
+            val encoded = Base64.encodeToString(frame, Base64.NO_WRAP)
+            val reply = module.callAttr("core_exchange", caller.name, encoded, caller.scope).toString()
+            Base64.decode(reply, Base64.NO_WRAP)
+        })
         const val PERMISSION = "com.meshchat.runtime.permission.CORE_API"
         const val MAX_FRAME_BYTES = CoreDispatch.MAX_FRAME_BYTES
 

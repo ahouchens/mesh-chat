@@ -495,9 +495,11 @@ class CoreClient private constructor(private val transport: CoreTransport) {
             close()
             throw CoreException("protocol", requestId)
         }
-        if (reply.optInt("api_version", -1) != 1 || reply.optString("request_id") != requestId) {
+        if (reply.optInt("api_version", -1) != 1) {
+            close()
             throw CoreException("protocol", requestId)
         }
+        if (reply.optString("request_id") != requestId) rejectUncorrelatedReply(reply, requestId)
         if (!reply.optBoolean("ok", false)) {
             val error = reply.optJSONObject("error")
             val code = error?.optString("code") ?: "protocol"
@@ -509,6 +511,17 @@ class CoreClient private constructor(private val transport: CoreTransport) {
             throw CoreException(code, requestId, retry)
         }
         return reply.optJSONObject("result") ?: throw CoreException("protocol", requestId)
+    }
+
+    private fun rejectUncorrelatedReply(reply: JSONObject, requestId: String): Nothing {
+        close()
+        val code = reply.optJSONObject("error")?.optString("code")
+        val admissionFailure = reply.has("request_id") && reply.isNull("request_id") &&
+            reply.opt("ok") == false &&
+            code in setOf("forbidden", "invalid_request", "resource_exhausted", "unavailable")
+        // A host can reject before parsing the request. Preserve that typed
+        // failure, but never keep an uncorrelated session open or retry it.
+        throw CoreException(if (admissionFailure) checkNotNull(code) else "protocol", requestId)
     }
 
     private fun requireKey(key: String, what: String) {

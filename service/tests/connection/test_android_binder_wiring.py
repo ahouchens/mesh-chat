@@ -60,3 +60,12 @@ def test_the_kotlin_client_wraps_the_same_contract():
         assert operation in client
     assert (PLUGIN / "src" / "test" / "java" / "com" / "meshchat" / "runtime" / "core" /
             "CoreClientTest.kt").is_file()
+
+
+def test_binder_rebinding_cannot_create_a_new_dispatcher_for_a_wedged_host():
+    service = (PLUGIN / "src/main/java/com/meshchat/runtime/MeshCoreApiService.kt").read_text()
+    # The instrumentation detach/reattach check exercises this service; this
+    # wiring guard also prevents reconnects from bypassing process-wide admission.
+    assert service.count("CoreDispatch(") == 1
+    assert "CoreDispatch(" in service.split("companion object {", 1)[1]
+    assert "dispatcher.close()" not in service

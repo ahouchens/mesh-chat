@@ -1176,6 +1176,10 @@ M3 - qualification
       host, Android, frontend and unknown paths keep the full matrix.
 - [ ] Broader production-source isolation for the remaining components; the
       conservative full matrix remains the default.
+- [x] The three existing public Kotlin client sources have an isolated AAR build
+      and retain policy, verification and Android qualification when changed alone.
+      Packaging, contracts, new files, mixed changes and release/merge-queue events
+      still require the full matrix. The independent APK consumer is mandatory.
 
 M4 - headless messaging
 
@@ -1290,6 +1294,17 @@ now captures immutable caller scope before dispatch. A bounded dispatcher admits
 one operation with no mutation queue; timeouts do not release an executing slot.
 Request and reply Binder byte limits are checked. JVM regressions cover caller
 capture, saturation, timeout, closed admission and oversized replies.
+The app process owns this dispatcher across Binder service recreation; a
+detach/rebind cannot create another worker around a still-executing native call.
+A 1,000-exchange regression covers sequential worker handoff without false
+overload responses.
+
+`test_phase_cancellation.py` executes 294 cancellation cases from actual successful
+traces for both offer roles, covering every one of the 14 phases. Stop, lock,
+pause, shutdown, revocation, consent revision and partition fence late success,
+failure and adoption results. Replacement work and exact resource ownership stay
+intact. This closes the deterministic phase-cancellation coverage gap; it does
+not close the packaged platform-parity or physical-disposal requirements.
 
 A public Kotlin AAR and an independent consumer build are added for cross-UID
 qualification. The consumer is staged outside the checkout with only the AAR
