@@ -72,9 +72,10 @@ a call peer connection or release a call track.
   evidence, not durable message/receipt soak.
 - `service/tests/connection/test_native_windows_delivery.py`: two independent
   Reticulum service processes exchange a native offer/answer, attach the
-  authenticated bridge, create and approve a contact, and deliver durable
-  messages plus application receipts in both directions over the real native
-  DataChannel. This uses the legacy bridge policy, not the shared supervisor.
+  authenticated bridge, create and approve a contact, deliver durable messages
+  plus application receipts in both directions, then exchange a 100-message
+  alternating receipt soak with exactly one inbound copy per logical ID. This
+  uses the legacy bridge policy, not the shared supervisor.
 - `scripts/check_native_windows_messaging.py`: two packaged sidecars exchange a
   real native offer/answer, open the data channel, send a control message and
   report no WebView process in their owned process trees.

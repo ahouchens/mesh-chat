@@ -1197,10 +1197,12 @@ M4 - headless messaging
       and Windows-WebView interoperability, TURN and forced relay.
 - [x] 100 packaged native transport offer/answer/open/control/close cycles with
       three cold starts and bounded cleanup (CI max open 716 ms, max control 1,230 ms).
-- [ ] Durable-message and authenticated-receipt soak plus the full fault matrix
-      on the exact headless transports. Measure the distinct real-clock budgets:
-      20-second bridge repair; recovery within 240 seconds after a 30-second
-      partition; receipts within 30 seconds after messaging readiness.
+- [x] 100-message alternating authenticated-receipt soak over the native
+      DataChannel, with no duplicate visible messages.
+- [ ] Full fault matrix, restart/cold-start receipt soak and the distinct
+      real-clock budgets on the exact headless transports: 20-second bridge
+      repair; recovery within 240 seconds after a 30-second partition; receipts
+      within 30 seconds after messaging readiness.
 
 M5 - supported reusable core
 

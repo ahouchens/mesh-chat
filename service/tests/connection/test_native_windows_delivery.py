@@ -181,17 +181,30 @@ def test_native_datachannel_delivers_durable_messages_and_receipts(tmp_path: Pat
                          if row["id"] == identifier and row["direction"] == direction
                          and row["state"] == "delivered"), None)
 
-        for sender, recipient in ((0, 1), (1, 0)):
-            text = f"Native durable message from peer {sender}"
-            contact = left_contact if sender == 0 else right_contact
-            sent = peers.command(sender, "send_message", contact_id=contact["id"],
-                                 text=text)
+        contacts = {0: left_contact, 1: right_contact}
+
+        def exchange(sender: int, text: str) -> dict:
+            recipient = 1 - sender
+            sent = peers.command(sender, "send_message",
+                                 contact_id=contacts[sender]["id"], text=text)
             received = peers.wait("recipient message",
                                   lambda: message(recipient, sent["id"], "inbound"))
             delivered = peers.wait("sender receipt",
                                    lambda: message(sender, sent["id"], "outbound"))
             assert received["text"] == delivered["text"] == text
             assert delivered["native_message_id"]
+            copies = [row for row in peers.command(recipient, "snapshot")["messages"]
+                      if row["id"] == sent["id"] and row["direction"] == "inbound"]
+            assert len(copies) == 1
+            return sent
+
+        exchange(0, "Native durable message from peer 0")
+        exchange(1, "Native durable message from peer 1")
+        started = time.monotonic()
+        for index in range(100):
+            exchange(index % 2, f"Native receipt soak message {index}")
+        elapsed = time.monotonic() - started
+        assert elapsed < 300, f"100-message receipt soak took {elapsed:.1f}s"
     finally:
         peers.close()
     assert all(process.exitcode == 0 for process in peers.processes)
