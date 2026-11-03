@@ -15,7 +15,9 @@ failures and zero skips**. Two independent Reticulum service processes deliver
 durable messages and authenticated receipts over the native aiortc DataChannel,
 including a 100-message receipt soak, bridge replacement, full peer-process
 restart, duplicate-packet deduplication, and five-/thirty-second packet
-partitions recovering under the 30-/240-second budgets. A 100-cycle packaged
+partitions recovering under the 30-/240-second budgets. Handshake cancellation at
+the offer, acceptance and answer phases and shutdown retirement are covered. A
+100-cycle packaged
 transport soak enforces 20-/30-second open/control budgets. The durable tests use
 the legacy bridge policy; supervisor-owned promotion, Windows-Android/WebView
 interoperability, TURN/forced relay and the 150 ms RTT impairment profile remain
