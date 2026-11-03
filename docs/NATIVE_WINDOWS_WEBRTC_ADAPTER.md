@@ -65,9 +65,11 @@ a call peer connection or release a call track.
 - `src/webrtc-session.test.ts`: closing a messaging session closes its peer
   connection but never calls `stop()` on a media-call track.
 - `scripts/check_native_windows_messaging_soak.py`: 100 packaged two-sidecar
-  offer/answer/open/control/close cycles with three cold starts; maximum channel
-  open 390 ms, maximum control completion 407 ms, no WebView process. This is
-  transport lifecycle evidence, not durable message/receipt soak.
+  offer/answer/open/control/close cycles with three cold starts, enforced 20 s
+  open and 30 s control budgets, and closed-session absence checks. Local run:
+  max open 385 ms, max control 406 ms. CI run 41626323911: max open 716 ms,
+  max control 1,230 ms, no WebView process. This is transport lifecycle
+  evidence, not durable message/receipt soak.
 - `scripts/check_native_windows_messaging.py`: two packaged sidecars exchange a
   real native offer/answer, open the data channel, send a control message and
   report no WebView process in their owned process trees.

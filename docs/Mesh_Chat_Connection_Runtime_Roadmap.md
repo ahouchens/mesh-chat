@@ -1195,7 +1195,7 @@ M4 - headless messaging
       Windows-Android and Windows-WebView interoperability, TURN and forced
       relay.
 - [x] 100 packaged native transport offer/answer/open/control/close cycles with
-      three cold starts and bounded cleanup (max open 390 ms, max control 407 ms).
+      three cold starts and bounded cleanup (CI max open 716 ms, max control 1,230 ms).
 - [ ] Durable-message and authenticated-receipt soak plus the full fault matrix
       on the exact headless transports. Measure the distinct real-clock budgets:
       20-second bridge repair; recovery within 240 seconds after a 30-second

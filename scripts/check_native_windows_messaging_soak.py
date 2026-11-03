@@ -62,6 +62,14 @@ def run_cycle(left: Sidecar, right: Sidecar, index: int) -> tuple[float, float]:
     controlled = time.monotonic() - started
     left._request(f"close-left-{index}", "native_webrtc_close", {"session_id": left_id})
     right._request(f"close-right-{index}", "native_webrtc_close", {"session_id": right_id})
+    for sidecar, session in ((left, left_id), (right, right_id)):
+        try:
+            sidecar._request(f"stats-{session}", "native_webrtc_stats", {"session_id": session})
+        except AssertionError as error:
+            assert ("native_webrtc_session_missing" in str(error)
+                    or "native_unavailable" in str(error)), error
+        else:
+            raise AssertionError(f"closed session is still observable: {session}")
     return opened, controlled
 
 
@@ -97,6 +105,8 @@ def main() -> int:
             tree = descendants(left.process.pid) + descendants(right.process.pid)
             assert not any("msedgewebview2" in name for name in tree), tree
             p95 = statistics.quantiles(controlled_times, n=20)[-1]
+            assert max(opened_times) < 20.0, "native channel open exceeded its budget"
+            assert max(controlled_times) < 30.0, "native control round trip exceeded its budget"
             print(json.dumps({
                 "passed": True,
                 "iterations": args.iterations,
