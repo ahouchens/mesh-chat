@@ -98,7 +98,7 @@ never described as physical-device qualification.
 | SC14 | `local` | Delayed attachment and missing path are bounded with truthful readiness. |
 | SC15 | `component` | Lost receipts, duplicate packets and restart preserve one visible message per logical ID in packaged runs. |
 | SC16 | `partial` | Policy and JNI queues enforce budgets and quarantine; a packaged saturation run is absent. |
-| SC17 | `partial` | Packaged pairing cancellation and unapproved-restart checks exist; full legacy media-call and pairing-closure re-qualification against the shared policy remains open. |
+| SC17 | `partial` | Packaged pairing cancellation and unapproved-restart checks exist, and native handshakes now retire exactly at offer, acceptance and answer phases. Full legacy media-call and pairing-closure re-qualification against the shared policy remains open. |
 | SC18 | `partial` | Signed fixtures and existing peers still interoperate; no explicit wire-version matrix. |
 | SC19 | `local` | Persistence failure during intent or adoption bookkeeping is tested for safe in-memory behavior. |
 | SC20 | `workflow` | The final gate fails on missing, skipped, canceled or stale required evidence for the exact source. |

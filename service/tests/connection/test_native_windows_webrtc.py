@@ -115,3 +115,35 @@ def test_session_capacity_is_bounded():
         assert refused["error"] == "native_webrtc_session_limit"
     finally:
         host_instance.shutdown()
+
+
+@pytest.mark.parametrize("phase", ["offer-created", "accepted", "answer-applied"])
+def test_cancellation_at_each_handshake_phase_retires_exactly_that_session(phase):
+    left, left_events = host()
+    right, right_events = host()
+    try:
+        offer = json.loads(left.createOffer("left", json.dumps(ICE), json.dumps(CHANNELS)))
+        assert offer["ok"], offer
+        if phase in {"accepted", "answer-applied"}:
+            answer = json.loads(right.acceptOffer(
+                "right", offer["sdp"], json.dumps(ICE), json.dumps(CHANNELS)))
+            assert answer["ok"], answer
+        if phase == "answer-applied":
+            assert json.loads(left.applyAnswer("left", answer["sdp"]))["ok"]
+
+        left.close("left")
+        if phase != "offer-created":
+            right.close("right")
+        for instance, session in ((left, "left"), (right, "right")):
+            if phase == "offer-created" and instance is right:
+                continue
+            assert json.loads(instance.stats(session))["error"] == "native_webrtc_session_missing"
+
+        replacement = json.loads(left.createOffer(
+            "replacement", json.dumps(ICE), json.dumps(CHANNELS)))
+        assert replacement["ok"], replacement
+        left.close("replacement")
+        assert json.loads(left.stats("replacement"))["error"] == "native_webrtc_session_missing"
+    finally:
+        left.shutdown()
+        right.shutdown()
