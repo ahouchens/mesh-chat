@@ -86,7 +86,7 @@ never described as physical-device qualification.
 | SC02 | `local` | Simultaneous start, duplicate signaling and role collisions are covered by the reducer/supervisor corpus. |
 | SC03 | `local` | Old answers, late native callbacks and expired timers cannot advance state; exact orphan cleanup is asserted. |
 | SC04 | `partial` | Partitions are simulated deterministically; native five- and thirty-second packet partitions recovered with receipts under 30 and 240 seconds. The required 30-second partition under the specified 150 ms RTT impairment is not measured on the exact headless transports. |
-| SC05 | `partial` | Loss and delayed control are simulated; no real impairment run carries the policy traffic. |
+| SC05 | `partial` | Loss and delayed control are simulated; native duplicate-packet and packet-partition component checks now carry durable message traffic, but no run applies the specified 150 ms RTT impairment profile. |
 | SC06 | `local` | Mailbox failure keeps a healthy carrier and reports degraded future reconnect separately. |
 | SC07 | `local` | Carrier failure with a healthy mailbox schedules a permitted new negotiation. |
 | SC08 | `component` | Packaged Windows kills the service and reclaims the same carrier binding without new negotiation. |
@@ -102,7 +102,7 @@ never described as physical-device qualification.
 | SC18 | `partial` | Signed fixtures and existing peers still interoperate; no explicit wire-version matrix. |
 | SC19 | `local` | Persistence failure during intent or adoption bookkeeping is tested for safe in-memory behavior. |
 | SC20 | `workflow` | The final gate fails on missing, skipped, canceled or stale required evidence for the exact source. |
-| SC21 | `open` | Independent packaged consumers can be built and exercised in CI/emulation. Full cross-platform messaging/receipts on production headless transports remain implementation and qualification work; physical hardware is not a prerequisite for this automated scenario. |
+| SC21 | `open` | Independent packaged consumers can be built and exercised in CI/emulation, and two independent Reticulum processes now exchange durable messages/receipts over the native DataChannel under the legacy bridge policy. Full cross-platform messaging/receipts on production headless transports remain implementation and qualification work; physical hardware is not a prerequisite for this automated scenario. |
 | SC22 | `component` | Wrong caller, profile/scope and private-control attempts are rejected before effects in facade tests. |
 | SC23 | `local` | Lost reply, timeout and duplicate request after restart resolve by idempotency key; conflicting payloads fail. |
 | SC24 | `local` | Bounded replay, explicit gaps, cursor expiry and consumer deduplication are covered by facade and client tests. |

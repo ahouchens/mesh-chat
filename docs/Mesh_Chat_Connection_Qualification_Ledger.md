@@ -8,6 +8,19 @@ was captured at
 release-pipeline fixes, documentation and ledger rows. It separates what was executed from what this
 environment cannot execute; it is not a physical-device qualification.
 
+## Native Windows messaging evidence (2026-11-03)
+
+At `1a8a6be`, the complete local required inventory passed **1,790 tests, zero
+failures and zero skips**. Two independent Reticulum service processes deliver
+durable messages and authenticated receipts over the native aiortc DataChannel,
+including a 100-message receipt soak, bridge replacement, full peer-process
+restart, duplicate-packet deduplication, and five-/thirty-second packet
+partitions recovering under the 30-/240-second budgets. A 100-cycle packaged
+transport soak enforces 20-/30-second open/control budgets. The durable tests use
+the legacy bridge policy; supervisor-owned promotion, Windows-Android/WebView
+interoperability, TURN/forced relay and the 150 ms RTT impairment profile remain
+open.
+
 ## Binder and independent Android package slice (2026-11-02)
 
 At source `d2590ff`, the complete local required inventory passed **1,768 tests,
