@@ -35,12 +35,12 @@ def test_each_row_uses_the_declared_vocabulary_and_cites_evidence(identifier):
 
 def test_physical_only_acceptance_is_marked_unavailable_and_never_implied():
     found = rows()
-    assert found["SC21"][0] == "unavailable"
+    assert found["SC21"][0] in {"open", "partial", "component", "workflow"}
     text = DOCUMENT.read_text(encoding="utf-8")
     assert "## Physical checklist" in text
     assert "Unavailable in this environment" in text
     unavailable = {identifier for identifier, (status, _) in found.items() if status == "unavailable"}
-    assert unavailable == {"SC21"}
+    assert not unavailable  # SC21 permits packaged consumers in CI/emulation.
 
 
 def test_the_roadmap_links_to_the_reconciliation():

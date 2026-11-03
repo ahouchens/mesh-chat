@@ -1,0 +1,5 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-permission android:name="com.meshchat.runtime.permission.CORE_API" />
+    <queries><package android:name="com.meshchat.core.hostfixture" /></queries>
+    <application android:label="Independent core consumer" android:allowBackup="false" />
+</manifest>

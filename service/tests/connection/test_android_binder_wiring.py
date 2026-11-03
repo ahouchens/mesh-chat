@@ -29,7 +29,10 @@ def test_the_interface_and_caller_derivation_stay_bounded():
     assert "Binder.getCallingUid()" in service
     assert "checkCallingPermission(PERMISSION)" in service
     assert "Process.myUid()" in service
-    assert "MAX_FRAME_BYTES = 256 * 1024" in service
+    dispatch = (PLUGIN / "src/main/java/com/meshchat/runtime/CoreDispatch.kt").read_text(encoding="utf-8")
+    assert "MAX_FRAME_BYTES = 256 * 1024" in dispatch
+    assert service.count("Binder.getCallingUid()") == 1
+    assert "CoreCaller.fromUid(uid, hostUid, name)" in service
     assert '"core_exchange"' in service
     build = (PLUGIN / "build.gradle.kts").read_text(encoding="utf-8")
     assert "aidl = true" in build

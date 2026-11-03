@@ -45,9 +45,9 @@ def fixture(directory):
     android = {"v": 1, "passed": True, "source_commit": source, "source_tree": tree,
                "evidence_level": "android_emulator_optimized_native_and_python_components",
                "artifacts": {str(path.relative_to(matrix.ROOT)).replace("\\", "/"): "e" * 64
-                  for path in (*matrix.APKS, *matrix.CORE_APKS)},
+                  for path in (*matrix.APKS, *matrix.CORE_APKS, *matrix.CONSUMER_ARTIFACTS)},
                "platform": {"emulated": True, "test_host_cleanup": "passed"}, "suites": []}
-    for suite, run in (("webrtc", "f"), ("signaling", "a"), ("core_api", "b")):
+    for suite, run in (("webrtc", "f"), ("signaling", "a"), ("core_api", "b"), ("core_consumer", "c")):
         cases = matrix.cases(suite)
         android["suites"].append({"suite": suite, "run_id": run * 32, "tests_collected": len(cases),
             "tests_executed": len(cases), "tests_passed": len(cases), "tests_failed": 0, "tests_skipped": 0,
@@ -72,11 +72,22 @@ def test_gate_revalidates_policy_inventory_and_both_platform_component_reports(t
     source, tree, _ = fixture(tmp_path)
     result = matrix.collect(tmp_path, source, tree, ["policy", "verification", "android"])
     assert result["policy_tests_executed"] == 1
-    assert result["android_tests_executed"] == 30
+    assert result["android_tests_executed"] == 34
     assert set(result["windows_transport_checks"]) == CHECKS
     assert set(result["report_sha256"]) == {"policy", "windows_transport", "windows_packaged_lifecycle",
                                           "windows_packaged_transport", "windows_packaged_pairing", "android"}
     assert result["windows_packaged_lifecycle_checks"] == list(PACKAGED_CHECKS)
+
+
+@pytest.mark.parametrize("omission", ["suite", "aar", "consumer_apk"])
+def test_android_report_without_independent_consumer_evidence_cannot_qualify(tmp_path, omission):
+    source, tree, android = fixture(tmp_path)
+    if omission == "suite": android["suites"].pop()
+    else:
+        filename = "mesh-core-client.aar" if omission == "aar" else "consumer.apk"
+        key = next(key for key in android["artifacts"] if key.endswith("/" + filename))
+        del android["artifacts"][key]
+    with pytest.raises(ValueError): matrix.android_evidence(android, source, tree)
 
 
 def test_previous_android_inventory_without_native_contact_bootstrap_cannot_pass(tmp_path):
@@ -244,7 +255,7 @@ def test_suite_manifest_is_uniform_across_every_required_component(tmp_path):
     assert [record["suite"] for record in records] == [
         "policy", "windows_transport", "windows_packaged_lifecycle",
         "windows_packaged_transport", "windows_packaged_pairing",
-        "android_webrtc", "android_signaling", "android_core_api",
+        "android_webrtc", "android_signaling", "android_core_api", "android_core_consumer",
         *("direct_Linux_" + name for name in DIRECT_SUITES),
         *("direct_Windows_" + name for name in DIRECT_SUITES)]
     policy = records[0]
@@ -253,7 +264,7 @@ def test_suite_manifest_is_uniform_across_every_required_component(tmp_path):
     android = [record for record in records if record["suite"].startswith("android_")]
     assert [record["tests"]["collected"] for record in android] == [
         len(matrix.cases("webrtc")), len(matrix.cases("signaling")),
-        len(matrix.cases("core_api"))]
+        len(matrix.cases("core_api")), len(matrix.cases("core_consumer"))]
     assert all(record["cleanup"] == "passed" for record in android)
     direct = [record for record in records if record["suite"].startswith("direct_")]
     assert all(record["tests"]["executed"] == 1 and record["checks"] is None for record in direct)

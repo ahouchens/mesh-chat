@@ -15,7 +15,7 @@ COMPONENTS = {
     "policy": {"policy"},
     "verification": {"windows_transport", "windows_packaged_lifecycle",
                      "windows_packaged_transport", "windows_packaged_pairing"},
-    "android": {"android_webrtc", "android_signaling", "android_core_api"},
+    "android": {"android_webrtc", "android_signaling", "android_core_api", "android_core_consumer"},
     "direct": {"direct_Linux_recovery", "direct_Linux_setup", "direct_Linux_fabric",
                "direct_Windows_recovery", "direct_Windows_setup", "direct_Windows_fabric"},
     "layout": set(),

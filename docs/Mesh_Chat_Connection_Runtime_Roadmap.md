@@ -1185,8 +1185,10 @@ M4 - headless messaging
       WebView2 host (component only).
 - [ ] Production native Windows DataChannel adapter to replace the WebView2
       dependency.
-- [ ] Full packaged fault matrix, 30-second real-clock recovery budgets and the
-      100-iteration receipt soak on the exact headless transports.
+- [ ] Full packaged fault matrix and the 100-iteration receipt soak on the exact
+      headless transports. Measure the specification's distinct real-clock
+      budgets: 20-second bridge repair; recovery within 240 seconds after a
+      30-second partition; receipts within 30 seconds after messaging readiness.
 
 M5 - supported reusable core
 
@@ -1241,7 +1243,9 @@ M5 - supported reusable core
 - [x] Declared Python/TypeScript/Kotlin component versions bound to the
       compatibility declaration and TypeScript/Python package-smoke artifacts
       (unpublished).
-- [ ] Published SDK/CLI artifacts, Kotlin packaging, and a supported
+- [x] Experimental Kotlin client AAR and local Maven staging, with private
+      implementation exclusion checks and an independently compiled APK consumer.
+- [ ] Published SDK/CLI artifacts and a supported
       compatibility matrix with upgrade fixtures.
 - [ ] Mesh Chat messaging routed through the supported facade.
 - [ ] Independent Windows and Android consumers built only from distribution
@@ -1255,3 +1259,43 @@ Release and physical
       real process death, Stop/lock and end-to-end receipts. Unavailable in the
       current environment (emulation and GitHub CI only); emulator results must not
       be relabeled as physical evidence.
+
+## Remaining-work audit (2026-11-02)
+
+The supplied summary has 13 bullets. Its fourteenth unchecked item is the
+physical checklist above. These bullets are milestone summaries, not exhaustive
+acceptance criteria. Keep every INV01–INV26 and SC01–SC26 row in the acceptance
+reconciliation and satisfy specification section 13 before declaring completion.
+
+The audit found additional work which must not disappear inside those summaries:
+
+- Profile create/select/unlock/lock through a documented trusted host/API path
+  (section 6.5). `profile.query` and startup-only provisioning do not establish a
+  complete supported profile lifecycle.
+- Baseline platform timings (M0), exhaustive state/event classification and the
+  remaining adversarial invariant corpus (M1).
+- Packaged queue saturation, foreground/background and media teardown parity;
+  tests for ordinary method success do not qualify SC11, SC16 or SC17.
+- Actual policy traffic through impaired links, selected ICE paths and negative
+  controls; native Direct tests alone do not qualify WebRTC SC04–SC07/SC12.
+- Explicit baseline wire compatibility, install/upgrade/data preservation,
+  documented API compatibility windows, storage ownership, uninstall/export and
+  dependency redistribution obligations (sections 6.7, 9.7 and SC18/SC25).
+- Packaged multi-client lifetime, runtime owner stop, cleanup, consumer isolation
+  and snapshot/replay resynchronization (SC22–SC26), in addition to a handshake.
+
+The Android Binder audit found caller UID was read again on the executor thread,
+where Android returns the host UID outside the original transaction. The host
+now captures immutable caller scope before dispatch. A bounded dispatcher admits
+one operation with no mutation queue; timeouts do not release an executing slot.
+Request and reply Binder byte limits are checked. JVM regressions cover caller
+capture, saturation, timeout, closed admission and oversized replies.
+
+A public Kotlin AAR and an independent consumer build are added for cross-UID
+qualification. The consumer is staged outside the checkout with only the AAR
+and public example, and binds the production service in a separate host APK.
+Required emulator cases check facade queries, denied owner permissions, denied
+private control and detach/reattach. The evidence inventory includes all three
+APKs and the AAR, and rejects the former three-suite report. This is a component
+qualification path, not a claim of complete Android messaging consumers or M5.
+Its new emulator results must be recorded only after the matching CI run passes.

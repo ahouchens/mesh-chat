@@ -33,7 +33,8 @@ def test_declared_compatibility_matches_the_contract_inventory():
     assert declaration["peer_wire"]["changed"] is False
     assert declaration["kotlin_client"] == {"exists": True,
         "status": "experimental_component", "version": "0.2.0-experimental",
-        "packaged": False}
+        "packaged": True, "published": False,
+        "artifact": "com.meshchat:core-client:0.2.0-experimental"}
     assert declaration["incompatible_combination"] == "reject_before_side_effects"
 
 
@@ -92,6 +93,8 @@ def test_component_versions_match_the_compatibility_declaration():
     assert declaration["python_client"]["version"] == __version__
     assert declaration["typescript_client"]["version"] == package["version"]
     assert f'const val VERSION = "{declaration["kotlin_client"]["version"]}"' in kotlin
+    distribution = (ROOT / "sdk/kotlin/build.gradle.kts").read_text()
+    assert f'version = "{declaration["kotlin_client"]["version"]}"' in distribution
     assert declaration["typescript_client"]["version"] == declaration["python_client"]["version"]
 
 

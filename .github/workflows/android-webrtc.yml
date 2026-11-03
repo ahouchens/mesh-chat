@@ -68,7 +68,7 @@ jobs:
           node ../../../scripts/build_desktop_transport_fixture.mjs
           ./gradlew :webrtc-smoke:assembleReleaseAndroidTest -PmeshWebRtcSmoke=true -PmeshRuntimeAbis=x86_64 --no-configuration-cache
       - name: Test Chromium interop and Android signalling mailbox recovery
-        timeout-minutes: 35
+        timeout-minutes: 45
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 35
@@ -89,6 +89,8 @@ jobs:
           name: android-webrtc-debug
           path: |
             dist/mobile/**
+            dist/android-core-consumer/**
+            sdk/kotlin/build/repository/**
             dist/reports/**
             plugins/tauri-plugin-mesh-runtime/android/build/reports/androidTests/**
             plugins/tauri-plugin-mesh-runtime/android/build/outputs/androidTest-results/**

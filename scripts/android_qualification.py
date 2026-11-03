@@ -18,6 +18,9 @@ APKS = (APK_DIRECTORY / "release/webrtc-smoke-release.apk",
         APK_DIRECTORY / "androidTest/release/webrtc-smoke-release-androidTest.apk")
 PLUGIN_APK_DIRECTORY = ROOT / "plugins/tauri-plugin-mesh-runtime/android/build/outputs/apk"
 CORE_APKS = (PLUGIN_APK_DIRECTORY / "androidTest/debug/tauri-plugin-mesh-runtime-debug-androidTest.apk",)
+CONSUMER_DIRECTORY = ROOT / "dist/android-core-consumer"
+CONSUMER_ARTIFACTS = tuple(CONSUMER_DIRECTORY / name for name in
+                           ("host.apk", "consumer.apk", "consumer-test.apk", "mesh-core-client.aar"))
 APP_ID = "com.meshchat.runtime.smoke"
 WEBRTC = {
     "NativeCallbackQueueTest": ("saturatedMetadataQueueStillAdmitsExactDisposal",),
@@ -42,6 +45,8 @@ CORE_API = ("serviceIsExportedBehindTheSignaturePermission",
             "emptyFrameIsRejectedBeforeDispatch",
             "oversizedFrameIsRejectedBeforeDispatch",
             "uninitializedBridgeFailsClosedWithATypedFrame")
+CORE_CONSUMER = ("consumerQueriesProductionFacadeAcrossUid", "externalCallerCannotAcquireOwnerScope",
+                 "detachingConsumerCanReattachToItsProfile", "privateControlIsRejectedThroughThePublicPackage")
 SIGNALING = (
     ("embeddedDefaultAndChoicesSurviveProcessRestart", "seed"),
     ("embeddedDefaultAndChoicesSurviveProcessRestart", "verify"),
@@ -62,6 +67,8 @@ def cases(suite):
         entries = (("SignalMailboxAndroidTest", method, phase) for method, phase in SIGNALING)
     elif suite == "core_api":
         entries = (("MeshCoreApiServiceTest", method, "none") for method in CORE_API)
+    elif suite == "core_consumer":
+        entries = (("CorePackageConsumerTest", method, "none") for method in CORE_CONSUMER)
     elif suite != "webrtc":
         raise ValueError("Unknown qualification suite")
     return [{"id": f"{name}.{method}.{phase}", "class": name, "method": method, "phase": phase,
@@ -93,7 +100,7 @@ def digest(path):
 
 
 def artifacts(suite="webrtc"):
-    selected = CORE_APKS if suite == "core_api" else APKS
+    selected = CONSUMER_ARTIFACTS if suite == "core_consumer" else CORE_APKS if suite == "core_api" else APKS
     return {str(path.relative_to(ROOT)).replace("\\", "/"): digest(path) for path in selected}
 
 
@@ -140,13 +147,15 @@ def adb(*arguments):
 def emulator_and_cleanup():
     if adb("shell", "getprop", "ro.kernel.qemu") != "1":
         raise ValueError("Required emulator qualification environment is unavailable")
-    for package in (APP_ID, APP_ID + ".test"):
+    packages = (APP_ID, APP_ID + ".test", "com.meshchat.runtime.test", "com.meshchat.core.hostfixture",
+                "com.meshchat.core.consumer", "com.meshchat.core.consumer.test")
+    for package in packages:
         adb("shell", "am", "force-stop", package)
     processes = adb("shell", "ps", "-A").splitlines()
     if not processes or not {"NAME", "CMD"}.intersection(processes[0].split()):
         raise ValueError("Android process cleanup could not be inspected")
     names = {line.split()[-1] for line in processes[1:] if line.split()}
-    if any(name == APP_ID or name.startswith((APP_ID + ":", APP_ID + ".test")) for name in names):
+    if any(name == package or name.startswith(package + ":") for name in names for package in packages):
         raise ValueError("Isolated Android test host still has a live process")
     return {"emulated": True, "api_level": adb("shell", "getprop", "ro.build.version.sdk"),
             "abi": adb("shell", "getprop", "ro.product.cpu.abi"), "test_host_cleanup": "passed"}
@@ -160,9 +169,9 @@ def report(status):
             raise ValueError("Android qualification runner failed")
         result["phase"] = "source_and_artifacts"
         identity = source()
-        binaries = {**artifacts("webrtc"), **artifacts("core_api")}
+        binaries = {**artifacts("webrtc"), **artifacts("core_api"), **artifacts("core_consumer")}
         suites = []
-        for suite in ("webrtc", "signaling", "core_api"):
+        for suite in ("webrtc", "signaling", "core_api", "core_consumer"):
             result["phase"] = suite
             suites.append(verify_suite(REPORTS / f"android-{suite}", suite, identity,
                                        artifacts(suite)))
@@ -182,7 +191,7 @@ def report(status):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("command", choices=("prepare", "list", "report"))
-    parser.add_argument("--suite", choices=("webrtc", "signaling", "core_api"))
+    parser.add_argument("--suite", choices=("webrtc", "signaling", "core_api", "core_consumer"))
     parser.add_argument("--status", type=int, default=1)
     args = parser.parse_args()
     if args.command == "report":

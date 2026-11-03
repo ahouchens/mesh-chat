@@ -100,7 +100,8 @@ def test_wrong_source_artifact_selection_and_stale_or_missing_cases_fail(tmp_pat
         gate.verify_suite(tmp_path, "webrtc", identity, artifacts)
 
 
-@pytest.mark.parametrize("processes", ["USER PID NAME\nu0 12 com.meshchat.runtime.smoke:mesh_bootstrap", ""])
+@pytest.mark.parametrize("processes", ["USER PID NAME\nu0 12 com.meshchat.runtime.smoke:mesh_bootstrap",
+    "USER PID NAME\nu0 12 com.meshchat.core.hostfixture", "USER PID NAME\nu0 12 com.meshchat.core.consumer.test", ""])
 def test_live_test_process_or_uninspectable_cleanup_cannot_pass(monkeypatch, processes):
     def adb(*arguments):
         if arguments[-1] == "ro.kernel.qemu":

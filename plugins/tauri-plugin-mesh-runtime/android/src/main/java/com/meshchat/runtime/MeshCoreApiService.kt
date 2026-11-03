@@ -8,9 +8,6 @@ import android.os.IBinder
 import android.os.Process
 import android.util.Base64
 import com.chaquo.python.Python
-import java.util.concurrent.Executors
-import java.util.concurrent.TimeUnit
-import org.json.JSONObject
 
 /**
  * Authenticated Binder entry for the private core API.
@@ -23,9 +20,12 @@ import org.json.JSONObject
  * runtime ownership lives here.
  */
 class MeshCoreApiService : Service() {
-    private val executor = Executors.newSingleThreadExecutor { runnable ->
-        Thread(runnable, "mesh-chat-core-api").apply { isDaemon = true }
-    }
+    private val dispatcher = CoreDispatch({ caller, frame ->
+        val module = Python.getInstance().getModule("mesh_chat.mobile_bridge")
+        val encoded = Base64.encodeToString(frame, Base64.NO_WRAP)
+        val reply = module.callAttr("core_exchange", caller.name, encoded, caller.scope).toString()
+        Base64.decode(reply, Base64.NO_WRAP)
+    })
 
     private val api = object : IMeshCoreApi.Stub() {
         override fun exchange(frame: ByteArray): ByteArray = dispatch(frame)
@@ -34,7 +34,7 @@ class MeshCoreApiService : Service() {
     override fun onBind(intent: Intent?): IBinder = api
 
     override fun onDestroy() {
-        executor.shutdownNow()
+        dispatcher.close()
         super.onDestroy()
     }
 
@@ -42,34 +42,20 @@ class MeshCoreApiService : Service() {
         // Same-UID callers are the application itself (its UI or its own
         // services), which is the host; every other caller must hold the
         // signature permission.
-        if (Binder.getCallingUid() != Process.myUid() &&
+        val uid = Binder.getCallingUid()
+        val hostUid = Process.myUid()
+        if (uid != hostUid &&
             checkCallingPermission(PERMISSION) != PackageManager.PERMISSION_GRANTED
         ) {
             return errorFrame("forbidden")
         }
-        val caller = callingPackage() ?: return errorFrame("forbidden")
-        if (frame.isEmpty() || frame.size > MAX_FRAME_BYTES) {
-            // Binder transactions are smaller than the facade ceiling; refuse
-            // before dispatch so a consumer never sees a truncated frame.
-            return errorFrame("invalid_request")
-        }
-        return try {
-            executor.submit<ByteArray> {
-                val module = Python.getInstance().getModule("mesh_chat.mobile_bridge")
-                val encoded = Base64.encodeToString(frame, Base64.NO_WRAP)
-                val scope = if (Binder.getCallingUid() == Process.myUid()) "owner" else "consumer"
-                val reply = module.callAttr("core_exchange", caller, encoded, scope).toString()
-                Base64.decode(reply, Base64.NO_WRAP)
-            }.get(30, TimeUnit.SECONDS)
-        } catch (error: Throwable) {
-            errorFrame("unavailable")
-        }
+        val name = callingPackage(uid, hostUid) ?: return errorFrame("forbidden")
+        return dispatcher.exchange(CoreCaller.fromUid(uid, hostUid, name), frame)
     }
 
-    private fun callingPackage(): String? {
-        val uid = Binder.getCallingUid()
+    private fun callingPackage(uid: Int, hostUid: Int): String? {
         val packageManager = packageManager
-        if (uid == Process.myUid()) {
+        if (uid == hostUid) {
             return packageName
         }
         return packageManager.getNameForUid(uid)?.substringBefore(':')
@@ -77,15 +63,8 @@ class MeshCoreApiService : Service() {
 
     companion object {
         const val PERMISSION = "com.meshchat.runtime.permission.CORE_API"
-        const val MAX_FRAME_BYTES = 256 * 1024
+        const val MAX_FRAME_BYTES = CoreDispatch.MAX_FRAME_BYTES
 
-        fun errorFrame(code: String): ByteArray {
-            val error = JSONObject()
-                .put("api_version", 1)
-                .put("request_id", JSONObject.NULL)
-                .put("ok", false)
-                .put("error", JSONObject().put("code", code).put("retry_after_ms", JSONObject.NULL))
-            return (error.toString() + "\n").toByteArray(Charsets.UTF_8)
-        }
+        fun errorFrame(code: String): ByteArray = CoreDispatch.errorFrame(code)
     }
 }

@@ -67,7 +67,7 @@ concluded **success**:
 
 ## Definition-of-done disposition
 
-The specification's section 13 asks for more than this branch can execute. Each
+The specification's section 13 requires more than this branch has implemented and qualified. Each
 condition is recorded with its actual status:
 
 | Definition-of-done condition | Status | Evidence or gap |
@@ -115,11 +115,13 @@ condition is recorded with its actual status:
   passed end-to-end on setup/MSI/APK artifacts bound to source affc1dd/tree 1bca66f; no tag
   has exercised publication. |
 
-**Conclusion.** The refactor's facade, clients, tests and automated qualification
-are complete for the operations the domain supports, but the specification's M2–M5
-definition of done is not fully met. The unmet conditions are the legacy-loop
-removal, the native Windows DataChannel, packaged consumers, physical qualification
-and publication, all of which are outside this environment or authorization.
+**Conclusion.** The specification's M2–M5 definition of done is not met. The
+facade and clients cover the implemented operation inventory, which is not proof
+that all specification requirements are implemented. Native Windows transport,
+packaged consumers, UI migration, profile lifecycle, legacy-loop removal and the
+remaining automated scenarios are implementation/qualification work. Only the
+physical checklist requires the unavailable physical test environment. Release
+publication remains gated on complete evidence and release authorization.
 
 ## Explicit limits
 

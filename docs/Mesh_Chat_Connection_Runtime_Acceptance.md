@@ -66,11 +66,11 @@ never described as physical-device qualification.
 | INV19 | `local` | Failed persistence keeps the in-memory denial and never reports durable success; intent-batch and authority-write regressions. |
 | INV20 | `partial` | The gate rejects failed, canceled, skipped or missing required evidence; publication re-hashes staged assets against that manifest. A branch-build release qualification executed and passed on setup/MSI/APK artifacts; no tag has exercised publication. |
 | INV21 | `partial` | The facade enforces caller, profile, permission and private-event boundaries in tests. The Windows named-pipe endpoint adds OS access control, executable allowlisting and an installed-wheel consumer in consumer/owner scopes; the Android Binder endpoint carries a signature permission, caller-derived grant and its own required gate suite. No independent graphical consumer exercises either boundary yet. |
-| INV22 | `partial` | The client carries no peer policy and cannot start a runtime. Exclusive data-directory ownership is checked by the host, which is not implemented. |
+| INV22 | `partial` | Clients carry no peer policy. Named-pipe and Binder host components exist; exclusive vault ownership is enforced by the runtime. Full packaged multi-client attachment, owner stop and lifecycle qualification remain open. |
 | INV23 | `local` | Durable enqueue receipts, conflicting payload rejection and stable logical IDs across restart; acknowledgments never change peer delivery state. |
 | INV24 | `local` | Explicit `resync_required` for gaps, expiry and authority change; the client consumer clears its position and resnapshots. Long-term retention is not promised. |
 | INV25 | `partial` | A declared compatibility file fixes the public API, IPC, peer-wire and client namespaces, and the Python, TypeScript and Kotlin component versions are bound to it by test. Every client refuses an unsupported major before side effects, and the aggregator checks the contract. The TypeScript package shape is pinned to the declaration and ships only dist, but no published package matrix or upgrade fixtures exist. |
-| INV26 | `open` | No packaged SDK, runtime distribution or independent consumer exists. |
+| INV26 | `partial` | Installed-wheel and TypeScript tarball component smokes exist. Independent Android AAR/APK qualification is being added; full distribution-only Windows and Android messaging consumers, upgrade fixtures and support promises remain open. |
 
 ## Required scenarios
 
@@ -96,7 +96,7 @@ never described as physical-device qualification.
 | SC18 | `partial` | Signed fixtures and existing peers still interoperate; no explicit wire-version matrix. |
 | SC19 | `local` | Persistence failure during intent or adoption bookkeeping is tested for safe in-memory behavior. |
 | SC20 | `workflow` | The final gate fails on missing, skipped, canceled or stale required evidence for the exact source. |
-| SC21 | `unavailable` | Independent Windows and Android applications installing packages and exchanging messages cannot be built or run here. |
+| SC21 | `open` | Independent packaged consumers can be built and exercised in CI/emulation. Full cross-platform messaging/receipts on production headless transports remain implementation and qualification work; physical hardware is not a prerequisite for this automated scenario. |
 | SC22 | `component` | Wrong caller, profile/scope and private-control attempts are rejected before effects in facade tests. |
 | SC23 | `local` | Lost reply, timeout and duplicate request after restart resolve by idempotency key; conflicting payloads fail. |
 | SC24 | `local` | Bounded replay, explicit gaps, cursor expiry and consumer deduplication are covered by facade and client tests. |
@@ -109,8 +109,8 @@ never described as physical-device qualification.
 | --- | --- | --- |
 | Shared policy complete | `partial` | One owner drives the experimental Android and desktop compositions, but manual-pairing parity, Windows-and-Android interoperability and legacy-loop removal are open. |
 | Headless messaging complete | `partial` | Android native transport and packaged Windows WebView2 scenarios qualify components; the production native Windows DataChannel adapter does not exist. |
-| External integration complete (M5) | `open` | No authenticated host endpoint, supported SDK/CLI, packaged consumer or compatibility matrix. |
-| Release gating complete | `partial` | The gate enforces the matrix; publication does not yet require exact-artifact aggregation. |
+| External integration complete (M5) | `partial` | Authenticated host components and experimental clients exist. Supported packages, complete independent messaging consumers, UI migration and compatibility/upgrade qualification remain open. |
+| Release gating complete | `partial` | Publication already requires exact-artifact aggregation. Branch-build qualification passed; tagged publication and the supported-pair matrix remain open. |
 
 ## Physical checklist
 
