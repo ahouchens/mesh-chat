@@ -147,3 +147,18 @@ def test_cancellation_at_each_handshake_phase_retires_exactly_that_session(phase
     finally:
         left.shutdown()
         right.shutdown()
+
+
+def test_shutdown_retires_live_sessions_and_refuses_further_work():
+    host_instance, events = host()
+    for index in range(3):
+        created = json.loads(host_instance.createOffer(
+            f"live-{index}", json.dumps(ICE), json.dumps(CHANNELS)))
+        assert created["ok"], created
+    host_instance.shutdown()
+    for index in range(3):
+        assert json.loads(host_instance.stats(f"live-{index}"))["error"] == (
+            "native_webrtc_session_missing")
+    assert host_instance.send("live-0", b"after shutdown") is False
+    assert host_instance.sendControl("live-0", "mesh-onboarding", "after shutdown") is False
+    host_instance.shutdown()

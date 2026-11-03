@@ -58,7 +58,8 @@ a call peer connection or release a call track.
 
 - `service/tests/connection/test_native_windows_webrtc.py`: real aiortc pair,
   exact cancellation after offer creation, acceptance and answer application,
-  with slot reuse and no observable retired session;
+  with slot reuse and no observable retired session; shutdown retires every
+  live session and refuses further sends;
   binary packets, onboarding/reconnect channels, control text, stats, exact
   close and session bounds.
 - `service/tests/test_native_webrtc_runtime.py`: the protected service accepts a
