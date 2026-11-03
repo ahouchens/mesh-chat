@@ -12,9 +12,11 @@ environment cannot execute; it is not a physical-device qualification.
 
 The CI-only Binder host seeds one approved fixture contact. The standalone APK,
 built only from the public Kotlin AAR, then enqueues a text message through
-`CoreClient` and reads it back from the facade across UIDs. This qualifies the
-SDK send/read boundary against a host-owned contact; it does not claim delivery,
-receipts, restart, pairing or partition recovery.
+`CoreClient` and reads it back from the facade across UIDs. A second case
+force-stops the host process, rebinds, and queries the same SDK message handle
+with its text intact. This qualifies the SDK send/read and durable facade
+readback boundary against a host-owned contact; it does not claim transport
+delivery, receipts, pairing or partition recovery.
 
 ## Native Windows messaging evidence (2026-11-03)
 
