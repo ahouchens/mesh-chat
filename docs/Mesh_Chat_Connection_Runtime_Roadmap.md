@@ -1194,10 +1194,12 @@ M4 - headless messaging
 - [ ] Full native messaging promotion: durable service messages and receipts,
       Windows-Android and Windows-WebView interoperability, TURN and forced
       relay.
-- [ ] Full packaged fault matrix and the 100-iteration receipt soak on the exact
-      headless transports. Measure the specification's distinct real-clock
-      budgets: 20-second bridge repair; recovery within 240 seconds after a
-      30-second partition; receipts within 30 seconds after messaging readiness.
+- [x] 100 packaged native transport offer/answer/open/control/close cycles with
+      three cold starts and bounded cleanup (max open 390 ms, max control 407 ms).
+- [ ] Durable-message and authenticated-receipt soak plus the full fault matrix
+      on the exact headless transports. Measure the distinct real-clock budgets:
+      20-second bridge repair; recovery within 240 seconds after a 30-second
+      partition; receipts within 30 seconds after messaging readiness.
 
 M5 - supported reusable core
 
