@@ -79,14 +79,14 @@ class CorePackageConsumerTest {
                 profile, "fixture-peer-0001", "Hello from the independent consumer",
                 "qualified-enqueue-key".padEnd(16, 'x'),
             )
-            assertTrue(accepted.has("message"), accepted.toString())
+            assertTrue(accepted.toString(), accepted.has("message"))
             val messages = client.messageList(profile).getJSONArray("messages")
             assertTrue(
+                messages.toString(),
                 (0 until messages.length()).any {
                     messages.getJSONObject(it).optString("text") ==
                         "Hello from the independent consumer"
                 },
-                messages.toString(),
             )
         }
     }
