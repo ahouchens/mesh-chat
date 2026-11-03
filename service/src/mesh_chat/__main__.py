@@ -240,7 +240,8 @@ def _error_response(command_id: Any, error: Exception) -> dict[str, Any]:
     }
 
 
-def _initialize(request: dict[str, Any], writer: FrameWriter, *, desktop_transport=None) -> MeshChatService:
+def _initialize(request: dict[str, Any], writer: FrameWriter, *, desktop_transport=None,
+                native_webrtc_host=None) -> MeshChatService:
     if request.get("v") != IPC_VERSION or request.get("command") != "initialize":
         raise ValidationError("First command must initialize the service")
     payload = request.get("payload")
@@ -264,8 +265,14 @@ def _initialize(request: dict[str, Any], writer: FrameWriter, *, desktop_transpo
         raise ValidationError("Vault key is invalid") from exc
     _start_parent_watchdog(parent_pid)
     store = VaultStore(Path(profile_value), key)
-    private_host = ({"connection_policy": "shared-native", "native_webrtc_host": desktop_transport}
-                    if desktop_transport is not None else {})
+    if desktop_transport is not None:
+        private_host = {"connection_policy": "shared-native",
+                        "native_webrtc_host": desktop_transport}
+    elif native_webrtc_host is not None:
+        private_host = {"connection_policy": "shared-native",
+                        "native_webrtc_host": native_webrtc_host}
+    else:
+        private_host = {}
     service = MeshChatService(store, Path(profile_value).resolve(), writer.write,
                               direct_native=NativeChannel(writer.write), **private_host)
     display_name = payload.get("display_name")
@@ -282,6 +289,7 @@ def main() -> int:
     writer = FrameWriter(sys.stdout.buffer)
     service: MeshChatService | None = None
     desktop_transport = None
+    native_webrtc = None
     requests = None
     stage = "read_initial"
     command = "initialize"
@@ -298,6 +306,14 @@ def main() -> int:
                 desktop_transport = DesktopTransportHost(writer.write,
                     lambda *event: service.native_webrtc_event(*event) if service is not None else None)
                 service = _initialize(initial, writer, desktop_transport=desktop_transport)
+            elif sys.argv[1:] == ["--native-webrtc"]:
+                if os.name != "nt":
+                    raise ValidationError("Native WebRTC messaging requires Windows")
+                from .native_windows_webrtc import WindowsNativeWebRTCHost
+                # Trusted launcher mode only; JSON initialization cannot select it.
+                native_webrtc = WindowsNativeWebRTCHost(
+                    lambda *event: service.native_webrtc_event(*event) if service is not None else None)
+                service = _initialize(initial, writer, native_webrtc_host=native_webrtc)
             else:
                 service = _initialize(initial, writer)
             stage = "write_response"
@@ -338,6 +354,8 @@ def main() -> int:
     finally:
         if desktop_transport is not None:
             desktop_transport.shutdown()
+        if native_webrtc is not None:
+            native_webrtc.shutdown()
         if requests is not None:
             try:
                 requests.close()

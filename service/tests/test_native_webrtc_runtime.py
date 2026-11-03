@@ -1166,3 +1166,35 @@ def test_manual_transfer_closes_pending_scope_before_granting_messaging_ownershi
         transfer_ready=True, current=lambda: True, close=close)}
     assert service.claim_native_reconnect_carrier("profile-1", "local", "remote") == "manual-carrier"
     assert closed == [True]
+
+
+def test_real_windows_host_offer_is_accepted_by_the_protected_service():
+    pytest.importorskip("aiortc")
+    from mesh_chat.native_windows_webrtc import WindowsNativeWebRTCHost
+    service, _ = runtime()
+    host = WindowsNativeWebRTCHost(lambda *_event: None)
+    service._native_webrtc_host = lambda: host
+    try:
+        offered = service.native_webrtc_offer("real-native-session", ICE, ONBOARDING_CHANNELS)
+        assert offered["fingerprint"].startswith("sha-256 ")
+        fingerprints = [line for line in offered["sdp"].splitlines()
+                        if line.startswith("a=fingerprint:")]
+        assert len(fingerprints) == 1
+        assert fingerprints[0].startswith("a=fingerprint:sha-256 ")
+        closed = service.native_webrtc_close("real-native-session")
+        assert closed["state"] == "closed"
+        assert "real-native-session" not in service._native_webrtc_live
+    finally:
+        host.shutdown()
+
+
+def test_native_close_retires_only_its_owned_bridge():
+    service, _ = runtime()
+    service._native_resources.reserve("native-session")
+    service._native_webrtc_live.add("native-session")
+    service._native_webrtc_sessions["native-session"] = "native-bridge"
+    service._webrtc_bridges["native-bridge"] = SimpleNamespace(online=True)
+    service._webrtc_bridges["call-bridge"] = SimpleNamespace(online=True)
+    service.native_webrtc_close("native-session")
+    assert "native-bridge" not in service._webrtc_bridges
+    assert "call-bridge" in service._webrtc_bridges

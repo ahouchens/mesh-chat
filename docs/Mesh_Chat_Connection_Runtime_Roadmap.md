@@ -1188,8 +1188,12 @@ M4 - headless messaging
       crash, pairing and receipt scenarios.
 - [x] Packaged crash/reopen, forced-exit, receipt and transport-fault checks on the
       WebView2 host (component only).
-- [ ] Production native Windows DataChannel adapter to replace the WebView2
-      dependency.
+- [x] Native Windows data-channel host behind trusted mode, with packaged
+      two-sidecar control exchange and no WebView in the messaging process tree
+      (component; rollback host retained).
+- [ ] Full native messaging promotion: durable service messages and receipts,
+      Windows-Android and Windows-WebView interoperability, TURN and forced
+      relay.
 - [ ] Full packaged fault matrix and the 100-iteration receipt soak on the exact
       headless transports. Measure the specification's distinct real-clock
       budgets: 20-second bridge repair; recovery within 240 seconds after a

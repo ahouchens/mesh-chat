@@ -530,6 +530,8 @@ fn spawn_service(app: &AppHandle, state: &ServiceState) -> Result<(), String> {
     let mut command = command;
     #[cfg(all(windows, feature = "experimental-shared-webview"))]
     { command = command.args(["--shared-webview"]); }
+    #[cfg(all(windows, not(feature = "experimental-shared-webview")))]
+    { command = command.args(["--native-webrtc"]); }
     let i2pd = [
         "i2pd.exe",
         "vendor/i2pd.exe",

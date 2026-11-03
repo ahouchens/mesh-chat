@@ -33,7 +33,7 @@ def test_private_launch_routes_adapter_replies_during_dispatch(monkeypatch):
         def close(self):
             closed.append(True)
 
-    def initialize(_request, _writer, *, desktop_transport=None):
+    def initialize(_request, _writer, *, desktop_transport=None, native_webrtc_host=None):
         assert desktop_transport is not None
         return Service(desktop_transport)
 
@@ -100,3 +100,24 @@ def test_private_initialization_selects_one_policy_owner(monkeypatch, registered
         assert captured[0]["native_webrtc_host"] is host
     else:
         assert set(captured[0]) == {"direct_native"}
+
+
+def test_private_initialization_selects_native_webrtc_without_a_desktop_transport(monkeypatch):
+    captured = []
+    host = object()
+    monkeypatch.setattr(entrypoint, "_start_parent_watchdog", lambda _: None)
+    monkeypatch.setattr(entrypoint, "VaultStore", lambda *_: object())
+
+    def service(*_, **options):
+        captured.append(options)
+        return object()
+
+    monkeypatch.setattr(entrypoint, "MeshChatService", service)
+    request = {"v": 1, "command": "initialize", "payload": {
+        "profile_dir": "unused", "vault_key": base64.b64encode(b"k" * 32).decode(),
+        "parent_pid": 1 if os.getpid() != 1 else 2}}
+    entrypoint._initialize(request, SimpleNamespace(write=lambda _: None),
+                           native_webrtc_host=host)
+    assert captured[0]["connection_policy"] == "shared-native"
+    assert captured[0]["native_webrtc_host"] is host
+    assert "desktop_transport" not in captured[0]

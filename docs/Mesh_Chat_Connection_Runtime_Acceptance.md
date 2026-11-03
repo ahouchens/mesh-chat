@@ -19,15 +19,19 @@ These constraints cap the evidence above and are recorded again in the
   available; Android evidence is API 35 emulator evidence only.
 - Packaged Windows evidence runs WebView2 and frozen peers on one Windows host;
   it is not Windows-and-Android interoperability.
-- Packaged component smokes exist (TypeScript tarball, Python wheel, and an
-  installed-wheel Windows pipe consumer in consumer and owner scopes). The
-  Kotlin AAR and independent Android APK compile; four cross-UID consumer cases
-  passed on the API 35 emulator at `461c2e9` (see ledger). Full independent messaging consumers remain
-  open; the specification does not require these clients to have a graphical UI.
+- Packaged component smokes exist (TypeScript tarball, Python wheel, an
+  installed-wheel Windows pipe consumer in consumer and owner scopes, and two
+  packaged native WebRTC messaging sidecars). The Kotlin AAR and independent
+  Android APK compile; four cross-UID consumer cases passed on the API 35
+  emulator at `461c2e9` (see ledger). Full independent messaging consumers
+  remain open; the specification does not require a graphical UI.
 - No SDK or package is published, so no supported version-pair matrix exists.
 - Branch-build release qualification executed and passed; no tagged release or
   publication was performed.
-- The production native Windows DataChannel adapter is not implemented.
+- The native Windows data-channel host is implemented behind trusted mode and
+  packaged, but durable service messaging, Windows-Android/WebView interop,
+  TURN/forced relay, GUI media coexistence and physical acceptance remain
+  unqualified.
 
 ## Status vocabulary
 
