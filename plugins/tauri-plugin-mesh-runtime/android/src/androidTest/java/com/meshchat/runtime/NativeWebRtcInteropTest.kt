@@ -509,7 +509,7 @@ class NativeWebRtcInteropTest {
             results.await("sent")
             awaitStats(id) { it.optLong("received_packets") >= 1 && it.optLong("received_controls") >= 1 }
             assertTrue(NativeWebRtcHost.send(nativeHandle, byteArrayOf(4, 5, 6)))
-            assertEquals("4,5,6", results.await("mesh-reticulum"))
+            assertEquals("4,5,6", results.await("mesh-reticulum", "4,5,6"))
             assertTrue(NativeWebRtcHost.sendControl(nativeHandle, control, "probe-reply"))
             assertEquals("probe-reply", results.await(control, "probe-reply"))
             if (repeatedMedia) {
