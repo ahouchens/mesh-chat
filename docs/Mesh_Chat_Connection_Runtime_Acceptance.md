@@ -20,8 +20,10 @@ These constraints cap the evidence above and are recorded again in the
 - Packaged Windows evidence runs WebView2 and frozen peers on one Windows host;
   it is not Windows-and-Android interoperability.
 - Packaged component smokes exist (TypeScript tarball, Python wheel, and an
-  installed-wheel Windows pipe consumer in consumer and owner scopes), but no
-  packaged Windows or Android graphical consumer application exists.
+  installed-wheel Windows pipe consumer in consumer and owner scopes). The
+  Kotlin AAR and independent Android APK compile; four cross-UID consumer cases
+  passed on the API 35 emulator at `461c2e9` (see ledger). Full independent messaging consumers remain
+  open; the specification does not require these clients to have a graphical UI.
 - No SDK or package is published, so no supported version-pair matrix exists.
 - Branch-build release qualification executed and passed; no tagged release or
   publication was performed.
@@ -65,12 +67,12 @@ never described as physical-device qualification.
 | INV18 | `local` | Deterministic traces, replay and the seeded simulator corpus. |
 | INV19 | `local` | Failed persistence keeps the in-memory denial and never reports durable success; intent-batch and authority-write regressions. |
 | INV20 | `partial` | The gate rejects failed, canceled, skipped or missing required evidence; publication re-hashes staged assets against that manifest. A branch-build release qualification executed and passed on setup/MSI/APK artifacts; no tag has exercised publication. |
-| INV21 | `partial` | The facade enforces caller, profile, permission and private-event boundaries in tests. The Windows named-pipe endpoint adds OS access control, executable allowlisting and an installed-wheel consumer in consumer/owner scopes; the Android Binder endpoint carries a signature permission, caller-derived grant and its own required gate suite. No independent graphical consumer exercises either boundary yet. |
+| INV21 | `partial` | The facade enforces caller, profile, permission and private-event boundaries in tests. The Windows named-pipe endpoint adds OS access control, executable allowlisting and an installed-wheel consumer in consumer/owner scopes; the Android Binder endpoint carries a signature permission, caller-derived grant and required gate suites. Full independent messaging-consumer qualification remains open. |
 | INV22 | `partial` | Clients carry no peer policy. Named-pipe and Binder host components exist; exclusive vault ownership is enforced by the runtime. Full packaged multi-client attachment, owner stop and lifecycle qualification remain open. |
 | INV23 | `local` | Durable enqueue receipts, conflicting payload rejection and stable logical IDs across restart; acknowledgments never change peer delivery state. |
 | INV24 | `local` | Explicit `resync_required` for gaps, expiry and authority change; the client consumer clears its position and resnapshots. Long-term retention is not promised. |
 | INV25 | `partial` | A declared compatibility file fixes the public API, IPC, peer-wire and client namespaces, and the Python, TypeScript and Kotlin component versions are bound to it by test. Every client refuses an unsupported major before side effects, and the aggregator checks the contract. The TypeScript package shape is pinned to the declaration and ships only dist, but no published package matrix or upgrade fixtures exist. |
-| INV26 | `partial` | Installed-wheel and TypeScript tarball component smokes exist. Independent Android AAR/APK qualification is being added; full distribution-only Windows and Android messaging consumers, upgrade fixtures and support promises remain open. |
+| INV26 | `partial` | Installed-wheel and TypeScript tarball component smokes exist. Independent Android AAR/APK Binder qualification passed four cases at `461c2e9`; full distribution-only Windows and Android messaging consumers, upgrade fixtures and support promises remain open. |
 
 ## Required scenarios
 
@@ -79,13 +81,13 @@ never described as physical-device qualification.
 | SC01 | `component` | Packaged Windows peers exchange messages and authenticated receipts in both roles; no physical cross-device run. |
 | SC02 | `local` | Simultaneous start, duplicate signaling and role collisions are covered by the reducer/supervisor corpus. |
 | SC03 | `local` | Old answers, late native callbacks and expired timers cannot advance state; exact orphan cleanup is asserted. |
-| SC04 | `partial` | Partitions are simulated deterministically; the 30-second real-clock recovery budget is not measured. |
+| SC04 | `partial` | Partitions are simulated deterministically; recovery within 240 seconds after a 30-second partition under the specified 150 ms RTT impairment profile is not measured on the exact headless transports. |
 | SC05 | `partial` | Loss and delayed control are simulated; no real impairment run carries the policy traffic. |
 | SC06 | `local` | Mailbox failure keeps a healthy carrier and reports degraded future reconnect separately. |
 | SC07 | `local` | Carrier failure with a healthy mailbox schedules a permitted new negotiation. |
 | SC08 | `component` | Packaged Windows kills the service and reclaims the same carrier binding without new negotiation. |
 | SC09 | `component` | Process and adapter restart produce a fresh epoch; packaged tests reopen the profile and preserve preferences. |
-| SC10 | `component` | Stop, lock, revocation and quarantine during native creation are fenced locally; Android instrumentation covers cancelled gathering. |
+| SC10 | `component` | Stop, lock, revocation and quarantine during native creation are fenced locally; Android instrumentation covers cancelled gathering. The 294-case reducer corpus covers interruption and late completion at all 14 phases, including replacement resource protection. Packaged phase-by-phase parity remains open. |
 | SC11 | `partial` | Execution-state changes are policy inputs with one owner; full Android background/foreground parity is open. |
 | SC12 | `partial` | Direct Fabric suites exercise real controlled paths and NAT filters, but selected-path and negative-control evidence is not bound to policy traffic. |
 | SC13 | `local` | Multiple contacts, scopes and devices are covered for fairness and isolation; no cross-device packaged run. |

@@ -8,6 +8,38 @@ was captured at
 release-pipeline fixes, documentation and ledger rows. It separates what was executed from what this
 environment cannot execute; it is not a physical-device qualification.
 
+## Binder and independent Android package slice (2026-11-02)
+
+At source `d2590ff`, the complete local required inventory passed **1,768 tests,
+zero failures and zero skips** in 93 seconds. This includes 294 cancellation
+cases across all 14 reachable phases and both offer roles. Strict policy typing
+is clean. The Kotlin client, bounded exchange transport and dispatcher passed
+**21 JVM tests**, including 1,000 sequential exchanges, overload, timeout,
+caller capture and uncorrelated admission errors.
+
+The production Binder host compiled locally. The public Kotlin AAR and local
+Maven staging task built successfully, and the independent consumer application
+and instrumentation APKs compiled outside the checkout with only the staged AAR
+and example. The AAR content verifier passed. These are local packaging checks,
+not executed emulator or full M5 messaging evidence.
+
+Run [41559732693](https://github.com/ahouchens/mesh-chat/actions/runs/41559732693)
+passed all **34 Android emulator cases**, zero failures/skips, for the earlier
+package slice at branch source `461c2e9`. Its recorded merge source is
+`9cc4eb5101927a7a0a83d2ae46f927e96462e0c9`; tree
+`5d4c7e879bf1adebf348554b66155ec4cd566b4b` matches that branch commit. The four
+cross-UID consumer cases passed on API 35 x86_64, with host-process cleanup
+verified. The report includes host/consumer/test APK hashes and AAR SHA-256
+`41735a4138f7b9648b00106161c2d9e70c03b7c28acc24d15f2557e2984f909b`.
+The workflow's final result must still be checked separately.
+The later process-owned dispatcher and cancellation additions require CI on their
+own source; earlier green manifests do not qualify them.
+
+A later local emulator attempt was stopped after exhausting local disk during
+host APK packaging. It contributed no execution evidence. Its disposable build
+directories were removed; source, reports and the previously built SDK/consumer
+artifacts were retained. Physical qualification remains unavailable.
+
 ## Connection qualification workflow
 
 Run [41293162273](https://github.com/ahouchens/mesh-chat/actions/runs/41293162273)
@@ -100,7 +132,8 @@ condition is recorded with its actual status:
 | M5: independently built packaged consumers through the public API | **not met**
   | Packaged TypeScript and Python component smokes install and answer facade
   requests; the opt-in owner scope now permits administration for the trusted
-  pipe host and the Android app UID, but no independent graphical application exists. |
+  pipe host and the Android app UID. Full independent messaging and recovery
+  acceptance remains open. |
 | M5: supported Mesh Chat messaging UI uses the same facade | **not met** | Not
   routed or qualified in this environment. |
 | M5: install/upgrade/caller isolation/resync/compatibility evidence | partial |
@@ -130,10 +163,9 @@ These were **not** executed and are not claimed anywhere in this ledger:
 - physical-device qualification across independent Android and Windows devices;
 - packaged Windows↔Android interoperability (the packaged evidence above is a
   single Windows host with WebView2 and frozen peers);
-- packaged Windows or Android graphical consumer applications; consumer-scoped
-  packaged callers cannot administer the vault, and the opt-in owner scope is
-  exercised only by component smokes (installed-wheel pipe host, Python/Python
-  client) rather than a graphical app;
+- full distribution-only Windows and Android messaging consumer acceptance;
+  component package and caller-scope checks do not establish pairing, durable
+  receipts, restart/partition recovery, or upgrade compatibility;
 - published SDK/package artifacts and a supported version-pair matrix;
 - a **tagged** release qualification and any publication; a branch-build release
   qualification was executed and passed but is not a release;

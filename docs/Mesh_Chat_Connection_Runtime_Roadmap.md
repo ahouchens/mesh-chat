@@ -1082,8 +1082,9 @@ on keyed mutations, and helpers for queries, enqueue/ack, relationships, pairing
 and owner stop. Five JVM unit tests run in the Android qualification job through
 `testDebugUnitTest`, covering negotiation, an unsupported major, typed errors,
 key placement and pre-dispatch refusals. The compatibility declaration now says a
-Kotlin client exists as an experimental component; it is not packaged or
-published, so the versioned-SDK item stays open.
+Kotlin client exists as an experimental component. The later remaining-work
+audit records its AAR packaging and independent APK build; publication and
+supported version pairs remain open.
 
 ## Per-peer pairing request
 
@@ -1205,7 +1206,10 @@ M5 - supported reusable core
       graphical application).
 - [x] Authenticated Android Binder endpoint with signature permission,
       caller-derived grant and four instrumentation tests on the API 35 emulator.
-- [ ] Independent packaged Android consumer through that endpoint.
+- [x] Independent APK built outside the checkout from the public Kotlin AAR,
+      with four cross-UID Binder cases on the API 35 emulator at `461c2e9`.
+- [ ] Full independent Android messaging consumer: pairing, receipts, restart,
+      partition recovery and the remaining SC21–SC26 qualification.
 - [x] Contact-wide connection start/stop intent with convergent semantics
       (component only; no per-device selection or workspace pairing).
 - [x] Explicit convergent peer approval and revocation (component only).
@@ -1313,4 +1317,6 @@ Required emulator cases check facade queries, denied owner permissions, denied
 private control and detach/reattach. The evidence inventory includes all three
 APKs and the AAR, and rejects the former three-suite report. This is a component
 qualification path, not a claim of complete Android messaging consumers or M5.
-Its new emulator results must be recorded only after the matching CI run passes.
+Its four emulator cases passed in run `41559732693` at `461c2e9`, bound to
+the exact host/consumer/test APK and AAR hashes recorded in the ledger. Later
+dispatcher changes require their own matching CI evidence.
