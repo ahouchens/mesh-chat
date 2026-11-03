@@ -91,6 +91,28 @@ class CorePackageConsumerTest {
         }
     }
 
+    @Test fun consumerCanQueryAnEnqueuedMessageAfterHostRestart() {
+        val body = "Restart-surviving message from the independent consumer"
+        var handle: String? = null
+        withClient { client ->
+            val profile = profile(client)
+            val accepted = client.enqueue(
+                profile, "fixture-peer-0001", body,
+                "restart-enqueue-key".padEnd(16, 'x'),
+            )
+            handle = accepted.getString("message")
+            assertEquals(body, client.messageQuery(profile, handle!!).getString("text"))
+        }
+        val stop = InstrumentationRegistry.getInstrumentation().uiAutomation
+            .executeShellCommand("am force-stop com.meshchat.core.hostfixture")
+        stop.close()
+        withClient { client ->
+            val profile = profile(client)
+            val restored = client.messageQuery(profile, checkNotNull(handle))
+            assertEquals(body, restored.getString("text"))
+        }
+    }
+
     @Test fun privateControlIsRejectedThroughThePublicPackage() {
         withClient { client ->
             val error = runCatching { client.request("native_webrtc_offer", JSONObject()) }.exceptionOrNull()
