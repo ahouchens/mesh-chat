@@ -1198,3 +1198,18 @@ def test_native_close_retires_only_its_owned_bridge():
     service.native_webrtc_close("native-session")
     assert "native-bridge" not in service._webrtc_bridges
     assert "call-bridge" in service._webrtc_bridges
+
+
+def test_onboarding_retirement_cannot_dispose_an_unrelated_call_bridge():
+    from mesh_chat.native_onboarding_bootstrap import retire
+    service, _ = runtime()
+    closed = []
+    service._pending_contact_carriers = {
+        "onboarding-session": SimpleNamespace(close=lambda: closed.append("onboarding"))}
+    service._webrtc_bridges["call-bridge"] = SimpleNamespace(online=True)
+    service._native_webrtc_sessions["native-session"] = "native-bridge"
+    service._webrtc_bridges["native-bridge"] = SimpleNamespace(online=True)
+    retire(service, "onboarding-session")
+    assert closed == ["onboarding"]
+    assert "call-bridge" in service._webrtc_bridges
+    assert "native-bridge" in service._webrtc_bridges
