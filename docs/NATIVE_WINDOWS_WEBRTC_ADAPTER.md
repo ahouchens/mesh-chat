@@ -70,14 +70,20 @@ a call peer connection or release a call track.
   max open 385 ms, max control 406 ms. CI run 41626323911: max open 716 ms,
   max control 1,230 ms, no WebView process. This is transport lifecycle
   evidence, not durable message/receipt soak.
+- `service/tests/connection/test_native_windows_delivery.py`: two independent
+  Reticulum service processes exchange a native offer/answer, attach the
+  authenticated bridge, create and approve a contact, and deliver durable
+  messages plus application receipts in both directions over the real native
+  DataChannel. This uses the legacy bridge policy, not the shared supervisor.
 - `scripts/check_native_windows_messaging.py`: two packaged sidecars exchange a
   real native offer/answer, open the data channel, send a control message and
   report no WebView process in their owned process trees.
 
 ## Remaining qualification gaps
 
-- A full two-service durable-message and authenticated-receipt run through the
-  Reticulum bridge has not yet been automated with two real native hosts.
+- Durable messages and receipts are proven with two real native hosts under the
+  legacy bridge policy. Supervisor-owned native promotion, cancellation and
+  restart during that flow remain unqualified.
 - Native Windows to Android and native Windows to the legacy WebView transport
   interop is not executed here.
 - TURN UDP/TCP/TLS, forced-relay paths and UDP-denied operation are not exercised;

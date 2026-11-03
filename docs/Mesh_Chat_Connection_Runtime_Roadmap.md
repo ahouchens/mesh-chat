@@ -1191,9 +1191,10 @@ M4 - headless messaging
 - [x] Native Windows data-channel host behind trusted mode, with packaged
       two-sidecar control exchange and no WebView in the messaging process tree
       (component; rollback host retained).
-- [ ] Full native messaging promotion: durable service messages and receipts,
-      Windows-Android and Windows-WebView interoperability, TURN and forced
-      relay.
+- [x] Durable two-process Reticulum messages and application receipts over the
+      native DataChannel (component; legacy bridge policy).
+- [ ] Full native messaging promotion: supervisor-owned policy, Windows-Android
+      and Windows-WebView interoperability, TURN and forced relay.
 - [x] 100 packaged native transport offer/answer/open/control/close cycles with
       three cold starts and bounded cleanup (CI max open 716 ms, max control 1,230 ms).
 - [ ] Durable-message and authenticated-receipt soak plus the full fault matrix
