@@ -14,9 +14,11 @@ The CI-only Binder host seeds one approved fixture contact. The standalone APK,
 built only from the public Kotlin AAR, then enqueues a text message through
 `CoreClient` and reads it back from the facade across UIDs. A second case
 force-stops the host process, rebinds, and queries the same SDK message handle
-with its text intact. This qualifies the SDK send/read and durable facade
-readback boundary against a host-owned contact; it does not claim transport
-delivery, receipts, pairing or partition recovery.
+with its text intact. Repeating the identical enqueue key then returns the same
+handle and leaves exactly one listed message. This qualifies the SDK send/read,
+durable facade readback and restart-safe idempotency boundary against a
+host-owned contact; it does not claim transport delivery, receipts, pairing or
+partition recovery.
 
 ## Native Windows messaging evidence (2026-11-03)
 

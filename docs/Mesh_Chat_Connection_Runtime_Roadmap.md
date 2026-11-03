@@ -1223,8 +1223,9 @@ M5 - supported reusable core
 - [x] Independent APK built outside the checkout from the public Kotlin AAR,
       with four cross-UID Binder cases on the API 35 emulator at `461c2e9`.
 - [x] Independent Android consumer enqueues and reads a message through the
-      public Binder SDK against a host-owned approved fixture contact, and
-      queries the same message after a host-process force-stop and rebind.
+      public Binder SDK against a host-owned approved fixture contact, queries
+      the same message after a host-process force-stop and rebind, and receives
+      the same handle from a repeated idempotency key with no duplicate record.
 - [ ] Full independent Android messaging consumer: pairing, transport delivery,
       delivery receipts, partition recovery and the remaining SC21–SC26
       qualification.
