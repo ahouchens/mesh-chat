@@ -1200,8 +1200,8 @@ M4 - headless messaging
 - [x] 100-message alternating authenticated-receipt soak over the native
       DataChannel, with no duplicate visible messages.
 - [x] Component native fault checks: queued-message recovery after bridge
-      replacement, duplicate-packet deduplication and a five-second native packet
-      partition recovering within 30 seconds.
+      replacement, duplicate-packet deduplication, and five- and thirty-second
+      native packet partitions recovering within 30 and 240 seconds.
 - [ ] Full fault matrix, restart/cold-start receipt soak and the distinct
       real-clock budgets under the specified 150 ms RTT impairment: 20-second
       bridge repair; recovery within 240 seconds after a 30-second partition;

@@ -271,6 +271,31 @@ def test_native_datachannel_recovers_queued_messages_after_bridge_replacement(
     assert all(process.exitcode == 0 for process in peers.processes)
 
 
+def _partition_then_recover(peers, contacts, seconds: int, budget: float):
+    peers.call(0, "fault", mode="drop")
+    peers.call(1, "fault", mode="drop")
+    interrupted = peers.command(
+        0, "send_message", contact_id=contacts[0]["id"],
+        text=f"Durable message during {seconds}-second native packet partition")
+    time.sleep(seconds)
+    peers.call(0, "fault", mode="pass")
+    peers.call(1, "fault", mode="pass")
+    started = time.monotonic()
+    received = peers.wait(
+        "partitioned recipient message",
+        lambda: _message(peers, 1, interrupted["id"], "inbound"), timeout=budget)
+    delivered = peers.wait(
+        "partitioned sender receipt",
+        lambda: _message(peers, 0, interrupted["id"], "outbound"), timeout=budget)
+    elapsed = time.monotonic() - started
+    assert received["text"] == delivered["text"] == interrupted["text"]
+    assert elapsed < budget, f"partition recovery took {elapsed:.1f}s"
+    copies = [row for row in peers.command(1, "snapshot")["messages"]
+              if row["id"] == interrupted["id"] and row["direction"] == "inbound"]
+    assert len(copies) == 1
+    return elapsed
+
+
 @pytest.mark.integration
 def test_native_datachannel_recovers_after_packet_partition_and_duplication(
     tmp_path: Path,
@@ -282,27 +307,20 @@ def test_native_datachannel_recovers_after_packet_partition_and_duplication(
         _exchange(peers, contacts, 0, "Duplicate delivery remains deduplicated")
         peers.call(0, "fault", mode="pass")
         peers.call(1, "fault", mode="pass")
+        _partition_then_recover(peers, contacts, 5, 30)
+    finally:
+        peers.close()
+    assert all(process.exitcode == 0 for process in peers.processes)
 
-        peers.call(0, "fault", mode="drop")
-        peers.call(1, "fault", mode="drop")
-        interrupted = peers.command(
-            0, "send_message", contact_id=contacts[0]["id"],
-            text="Durable message during native packet partition")
-        time.sleep(5)
-        peers.call(0, "fault", mode="pass")
-        peers.call(1, "fault", mode="pass")
-        started = time.monotonic()
-        received = peers.wait(
-            "partitioned recipient message",
-            lambda: _message(peers, 1, interrupted["id"], "inbound"), timeout=60)
-        delivered = peers.wait(
-            "partitioned sender receipt",
-            lambda: _message(peers, 0, interrupted["id"], "outbound"), timeout=60)
-        assert received["text"] == delivered["text"] == interrupted["text"]
-        assert time.monotonic() - started < 30
-        copies = [row for row in peers.command(1, "snapshot")["messages"]
-                  if row["id"] == interrupted["id"] and row["direction"] == "inbound"]
-        assert len(copies) == 1
+
+@pytest.mark.integration
+def test_native_datachannel_recovers_within_the_thirty_second_partition_budget(
+    tmp_path: Path,
+) -> None:
+    peers, contacts = _start_connected(tmp_path)
+    try:
+        elapsed = _partition_then_recover(peers, contacts, 30, 240)
+        assert elapsed < 240
     finally:
         peers.close()
     assert all(process.exitcode == 0 for process in peers.processes)
