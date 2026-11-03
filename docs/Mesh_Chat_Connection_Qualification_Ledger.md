@@ -8,6 +8,14 @@ was captured at
 release-pipeline fixes, documentation and ledger rows. It separates what was executed from what this
 environment cannot execute; it is not a physical-device qualification.
 
+## Independent Android messaging consumer increment (2026-11-03)
+
+The CI-only Binder host seeds one approved fixture contact. The standalone APK,
+built only from the public Kotlin AAR, then enqueues a text message through
+`CoreClient` and reads it back from the facade across UIDs. This qualifies the
+SDK send/read boundary against a host-owned contact; it does not claim delivery,
+receipts, restart, pairing or partition recovery.
+
 ## Native Windows messaging evidence (2026-11-03)
 
 At `1a8a6be`, the complete local required inventory passed **1,790 tests, zero

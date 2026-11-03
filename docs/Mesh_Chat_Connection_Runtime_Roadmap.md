@@ -1222,8 +1222,10 @@ M5 - supported reusable core
       caller-derived grant and four instrumentation tests on the API 35 emulator.
 - [x] Independent APK built outside the checkout from the public Kotlin AAR,
       with four cross-UID Binder cases on the API 35 emulator at `461c2e9`.
-- [ ] Full independent Android messaging consumer: pairing, receipts, restart,
-      partition recovery and the remaining SC21–SC26 qualification.
+- [x] Independent Android consumer enqueues and reads a message through the
+      public Binder SDK against a host-owned approved fixture contact.
+- [ ] Full independent Android messaging consumer: pairing, delivery receipts,
+      restart, partition recovery and the remaining SC21–SC26 qualification.
 - [x] Contact-wide connection start/stop intent with convergent semantics
       (component only; no per-device selection or workspace pairing).
 - [x] Explicit convergent peer approval and revocation (component only).
