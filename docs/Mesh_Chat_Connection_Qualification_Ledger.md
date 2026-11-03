@@ -1,7 +1,7 @@
 # Connection runtime qualification ledger
 
 This ledger records the automated evidence behind the connection-runtime refactor at
-commit `5174676` (2026-11-02). The transport and packaged-Windows evidence below
+commit `3517e3d` (2026-11-02). The transport and packaged-Windows evidence below
 was captured at
 `67ac8fe34b19db335fc9b772af0bd0cd7ff78d49` (tree
 `bd09a02ade1b83a2515fd2a0f515c7f4d23467bd`); later commits add tests, clients,
@@ -82,7 +82,7 @@ concluded **success**:
 
 | Suite | Command | Result |
 | --- | --- | --- |
-| Required policy inventory | `python scripts/connection_evidence.py --run --junit … --expected-source <tree>` | 1,449 passed, zero skips at 5174676 |
+| Required policy inventory | `python scripts/connection_evidence.py --run --junit … --expected-source <tree>` | 1,775 passed, zero skips at 3517e3d |
 | Strict typing | `mypy --config-file mypy-connection.ini` | clean |
 | Frontend | `node scripts/run-frontend-tests.mjs` | 587 passed |
 | TypeScript client + package | `node --test sdk/typescript/dist/**/*.test.js` | 42 passed |
@@ -94,7 +94,7 @@ concluded **success**:
 | Release qualification executed end-to-end (branch build, **not published**) | `release_qualification.py` against fresh branch release artifacts and the generated exact-source manifest | **passed**: setup 28,187,035 B, msi 30,187,520 B, apk 47,283,410 B; manifest and artifacts bound to source `affc1dd`, tree `1bca66f`; version 0.9.66 |
 | Packaged pipe consumer (unpublished, Windows) | `python scripts/check_packaged_pipe_consumer.py` | passes: installed wheel hosts a real named-pipe endpoint and a second installed-wheel consumer negotiates capabilities and queries workspaces over it |
 | Native Windows WebRTC host (component) | `pytest service/tests/connection/test_native_windows_webrtc.py` | 4 passed: real offer/answer, three channel purposes, binary packets, control text, stats and exact close |
-| Packaged native WebRTC messaging (unpublished, Windows) | `python scripts/check_native_windows_messaging.py` | passed: two packaged sidecars exchanged offer/answer and a control message; no WebView process in either owned process tree |
+| Packaged native WebRTC messaging (unpublished, Windows) | `python scripts/check_native_windows_messaging.py --expected-source 3517e3d` in CI run 41573294373 | passed: two packaged sidecars exchanged offer/answer and a control message; no WebView process in either owned process tree |
 | Media-track ownership boundary | `vitest src/webrtc-session.test.ts` | passed: closing a messaging session stops its peer connection but not a media-call track |
 | Consumer host boundary (unpublished, Windows) | same packaged pipe consumer | passes: workspace creation is refused with `forbidden` for the default consumer scope |
 | Per-channel posting override (component) | pytest service/tests/test_workspace_rejoin.py::test_channel_posting_override_restricts_regular_members and 	est_core_workspace_admin.py | passes: signed override denies a regular member, inherit restores posting, facade update returns the effective value |
