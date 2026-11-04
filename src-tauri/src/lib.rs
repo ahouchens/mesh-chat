@@ -6,6 +6,8 @@ use rand::{rngs::OsRng, RngCore};
 use serde_json::json;
 use serde_json::Value;
 mod direct_native;
+#[cfg(windows)]
+mod core_api;
 #[cfg(desktop)]
 mod desktop_transport;
 #[cfg(desktop)]
@@ -141,6 +143,7 @@ struct ServiceState {
     closing: Arc<AtomicBool>,
     locked: Arc<AtomicBool>,
     last_unexpected_exit: Arc<Mutex<Option<Value>>>,
+    core_api_pipe: Arc<Mutex<Option<String>>>,
 }
 
 #[cfg(desktop)]
@@ -532,6 +535,18 @@ fn spawn_service(app: &AppHandle, state: &ServiceState) -> Result<(), String> {
     { command = command.args(["--shared-webview"]); }
     #[cfg(all(windows, not(feature = "experimental-shared-webview")))]
     { command = command.args(["--native-webrtc"]); }
+    #[cfg(windows)]
+    {
+        let pipe = format!("mesh-chat-core-{}", uuid::Uuid::new_v4().simple());
+        let image = std::env::current_exe()
+            .map_err(|_| "core_api_client_unavailable".to_string())?
+            .to_string_lossy()
+            .to_string();
+        command = command
+            .env("MESH_CHAT_CORE_API_PIPE", &pipe)
+            .env("MESH_CHAT_CORE_API_CLIENT_IMAGE", image);
+        *state.core_api_pipe.lock().map_err(|_| "service_lock_failed".to_string())? = Some(pipe);
+    }
     let i2pd = [
         "i2pd.exe",
         "vendor/i2pd.exe",
@@ -1352,6 +1367,27 @@ async fn service_command(
     result
 }
 
+
+#[tauri::command]
+fn core_api_capabilities(state: State<'_, ServiceState>) -> Result<Value, String> {
+    #[cfg(windows)]
+    {
+        let name = state
+            .core_api_pipe
+            .lock()
+            .map_err(|_| "core_api_unavailable".to_string())?
+            .clone()
+            .ok_or_else(|| "core_api_unavailable".to_string())?;
+        let mut client = core_api::CoreApiClient::connect(&name)?;
+        return client.capabilities();
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = state;
+        Err("core_api_unavailable".into())
+    }
+}
+
 #[cfg(desktop)]
 #[tauri::command]
 async fn lock_service(state: State<'_, ServiceState>) -> Result<(), String> {
@@ -1838,6 +1874,7 @@ pub fn run() {
             desktop_transport_exchange,
             initialize_service,
             service_command,
+            core_api_capabilities,
             lock_service,
             desktop_service_health,
             set_background_availability,
