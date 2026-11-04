@@ -26,6 +26,7 @@ def admin_pair(tmp_path):
     owner, owner_network = _service(tmp_path / "owner", RNS.Identity(), "Alex")
     owner._shutdown.clear()  # the harness stops background loops; the facade needs the grant path open
     joiner, joiner_network = _service(tmp_path / "joiner", RNS.Identity(), "Blair")
+    joiner._shutdown.clear()
     workspace = owner.create_workspace(_op(71000), "Core", "")
     invitation = owner.create_workspace_invitation_command(workspace["id"], _op(71001))
     joiner.submit_workspace_join(invitation["text"], _op(71002))
@@ -629,4 +630,56 @@ def test_owner_creates_a_signed_workspace_invitation_through_the_facade(admin_pa
         "idempotency_key": "j" * 32,
     })
     assert denied["error"]["code"] == "forbidden", denied
+
+
+@pytest.fixture
+def awaiting_pair(tmp_path):
+    owner, owner_network = _service(tmp_path / "owner", RNS.Identity(), "Alex")
+    owner._shutdown.clear()
+    joiner, joiner_network = _service(tmp_path / "joiner", RNS.Identity(), "Blair")
+    joiner._shutdown.clear()
+    workspace = owner.create_workspace(_op(72000), "Facade pairing", "")
+    yield owner, owner_network, joiner, joiner_network, workspace
+    owner.close()
+    joiner.close()
+
+
+def test_workspace_invite_join_and_approval_through_the_facade(awaiting_pair):
+    owner, owner_network, joiner, joiner_network, workspace = awaiting_pair
+    owner_session, owner_profile = open_client(owner)
+    joiner_session, joiner_profile = open_client(
+        joiner, permissions=("observe", "read", "pair"))
+    workspace_handle = owner_session.request(
+        request("workspace.query", profile=owner_profile)
+    )["result"]["workspaces"][0]["workspace"]
+    invited = owner_session.request({
+        "api_version": 1, "request_id": "request:1",
+        "operation": "workspace.invitation_create",
+        "params": {"profile": owner_profile, "workspace": workspace_handle},
+        "idempotency_key": "i" * 32,
+    })
+    assert invited["ok"], invited
+    joined = joiner_session.request({
+        "api_version": 1, "request_id": "request:2",
+        "operation": "workspace.join",
+        "params": {"profile": joiner_profile, "document": invited["result"]["document"]},
+        "idempotency_key": "j" * 32,
+    })
+    assert joined["ok"], joined
+    assert joined["result"]["state"] == "joining"
+    _deliver_all(owner, _flush(joiner, joiner_network),
+                 source_profile=joiner._require_profile(),
+                 recipient_profile=owner._require_profile())
+    pending = owner_session.request(request("workspace.join_requests",
+                                             profile=owner_profile,
+                                             workspace=workspace_handle))
+    assert pending["ok"] and len(pending["result"]["requests"]) == 1, pending
+    approved = approve(owner_session, owner_profile, workspace_handle,
+                       pending["result"]["requests"][0]["request"], key="a" * 32)
+    assert approved["ok"], approved
+    members = owner_session.request(request("workspace.members", profile=owner_profile,
+                                            workspace=workspace_handle))
+    assert [(item["display_name"], item["role"]) for item in members["result"]["members"]] == [
+        ("Alex", "owner"), ("Blair", "member")]
+
 
