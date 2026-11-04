@@ -53,6 +53,19 @@ class NativeWebRtcHostLifecycleTest {
         assertMissing("lifecycle-replacement")
     }
 
+
+    @Test
+    fun closeAllRetiresEveryLiveSession() {
+        offer("lifecycle-all-a")
+        offer("lifecycle-all-b")
+        NativeWebRtcHost.closeAll()
+        assertMissing("lifecycle-all-a")
+        assertMissing("lifecycle-all-b")
+        offer("lifecycle-all-replacement")
+        NativeWebRtcHost.close("lifecycle-all-replacement")
+        assertMissing("lifecycle-all-replacement")
+    }
+
     @Test
     fun cancellationAfterAcceptRetiresBothSessions() {
         val left = offer("lifecycle-left")

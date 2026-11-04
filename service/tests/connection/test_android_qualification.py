@@ -52,7 +52,7 @@ def test_stale_wrong_skipped_crashed_or_duplicate_instrumentation_is_rejected(ou
 
 def test_scenario_inventory_names_are_unique_and_both_offer_roles_are_mandatory():
     cases = list(gate.cases("webrtc")) + list(gate.cases("signaling"))
-    assert len(cases) == len({case["id"] for case in cases}) == 29
+    assert len(cases) == len({case["id"] for case in cases}) == 30
     assert {case["method"] for case in cases} >= {
         "productionDesktopTransportOffersToNative", "productionDesktopTransportAnswersNative",
         "sharedRuntimeOwnsNativeRecoveryAcrossLifecycle",
@@ -75,7 +75,7 @@ def inventory_fixture(directory):
 def test_evidence_counts_actual_execution_and_hashes_each_report(tmp_path):
     identity, artifacts, _ = inventory_fixture(tmp_path)
     result = gate.verify_suite(tmp_path, "webrtc", identity, artifacts)
-    assert result["tests_collected"] == result["tests_executed"] == result["tests_passed"] == 19
+    assert result["tests_collected"] == result["tests_executed"] == result["tests_passed"] == 20
     assert result["tests_skipped"] == result["tests_failed"] == 0
     assert all(len(case["report_sha256"]) == 64 for case in result["scenarios"])
 
@@ -184,4 +184,4 @@ bash scripts/test_android_webrtc.sh'''
     inventory = json.loads((reports / "inventory.json").read_text())
     evidence = gate.verify_suite(reports, "webrtc", {key: inventory[key] for key in ("source_commit", "source_tree")},
                                  inventory["artifacts"])
-    assert evidence["tests_executed"] == 19
+    assert evidence["tests_executed"] == 20
