@@ -1368,6 +1368,7 @@ async fn service_command(
 }
 
 
+#[cfg(desktop)]
 #[tauri::command]
 fn core_api_capabilities(state: State<'_, ServiceState>) -> Result<Value, String> {
     #[cfg(windows)]
@@ -1386,6 +1387,12 @@ fn core_api_capabilities(state: State<'_, ServiceState>) -> Result<Value, String
         let _ = state;
         Err("core_api_unavailable".into())
     }
+}
+
+#[cfg(mobile)]
+#[tauri::command]
+fn core_api_capabilities() -> Result<Value, String> {
+    Err("core_api_unavailable".into())
 }
 
 #[cfg(desktop)]
