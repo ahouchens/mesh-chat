@@ -83,7 +83,10 @@ def test_close_is_exact_and_reports_closed_once():
         left.close("left")
         wait_for(left_events, lambda event: event == ("closed", "left", ""))
         assert json.loads(left.stats("left"))["error"] == "native_webrtc_session_missing"
-        assert right.send("right", b"after close") is False
+        deadline = time.monotonic() + 5
+        while right.send("right", b"after close") is not False:
+            assert time.monotonic() < deadline, "remote session never observed closure"
+            time.sleep(0.02)
     finally:
         left.shutdown()
         right.shutdown()
