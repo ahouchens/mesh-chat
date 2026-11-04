@@ -175,6 +175,9 @@
             },
             "workspace": {
               "$ref": "#/$defs/handle"
+            },
+            "connection_mode": {
+              "const": "webrtc"
             }
           },
           "required": [

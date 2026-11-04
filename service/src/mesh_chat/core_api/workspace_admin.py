@@ -99,6 +99,7 @@ class WorkspaceInvitation:
     document: str
     link: str
     expires_at: float
+    connection_mode: str | None = None
 
 
 class WorkspaceAdmin(Protocol):
@@ -109,7 +110,8 @@ class WorkspaceAdmin(Protocol):
     def request_ids(self, profile: str, workspace: str) -> tuple[str, ...]: ...
 
     def create_invitation(self, profile: str, workspace: str,
-                          operation_id: str) -> WorkspaceInvitation: ...
+                          operation_id: str,
+                          connection_mode: str | None = None) -> WorkspaceInvitation: ...
 
     def approve(self, profile: str, workspace: str, request: str,
                 operation_id: str) -> JoinApproval: ...

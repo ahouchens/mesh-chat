@@ -273,13 +273,18 @@ export class CoreClient {
     profile: string,
     workspace: string,
     idempotencyKey: string,
+    connectionMode?: "webrtc",
   ): Promise<WorkspaceInvitationView> {
     if (idempotencyKey.length < 16) {
       throw new ProtocolError("workspace invitations require a caller key");
     }
+    const params: Record<string, unknown> = { profile, workspace };
+    if (connectionMode !== undefined) {
+      params.connection_mode = connectionMode;
+    }
     return this.request<WorkspaceInvitationView>(
       "workspace.invitation_create",
-      { profile, workspace },
+      params,
       { idempotencyKey },
     );
   }

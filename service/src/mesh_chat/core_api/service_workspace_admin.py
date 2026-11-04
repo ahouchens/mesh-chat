@@ -88,9 +88,12 @@ class ServiceWorkspaceAdmin:
                      and isinstance(item.get("id"), str)]
             return tuple(found[:MAX_REQUEST_IDS])
 
-    def create_invitation(self, profile, workspace_id, operation_id):
+    def create_invitation(self, profile, workspace_id, operation_id,
+                          connection_mode=None):
         self._require_local(profile)
         if not isinstance(operation_id, str) or not operation_id:
+            raise ApiFailure("invalid_request")
+        if connection_mode not in {None, "webrtc"}:
             raise ApiFailure("invalid_request")
         with storage_errors():
             workspace = self._workspace(workspace_id)
@@ -98,18 +101,20 @@ class ServiceWorkspaceAdmin:
                 raise ApiFailure("forbidden")
             try:
                 outcome = self._service.create_workspace_invitation_command(
-                    workspace_id, operation_id)
+                    workspace_id, operation_id, connection_mode=connection_mode)
             except (ValidationError, ContactNotApproved, InvitationInvalid,
                     InvitationExpired) as error:
                 raise ApiFailure("invalid_request") from error
             document = outcome.get("text") if isinstance(outcome, dict) else None
             link = outcome.get("link") if isinstance(outcome, dict) else None
             expires = outcome.get("expires_at") if isinstance(outcome, dict) else None
+            mode = outcome.get("connection_mode") if isinstance(outcome, dict) else None
             if (not isinstance(document, str) or not document
                     or not isinstance(link, str) or not link
-                    or type(expires) not in {int, float}):
+                    or type(expires) not in {int, float}
+                    or mode not in {None, "webrtc"}):
                 raise ApiFailure("internal")
-            return WorkspaceInvitation(document, link, float(expires))
+            return WorkspaceInvitation(document, link, float(expires), mode)
 
     def approve(self, profile, workspace_id, request_id, operation_id):
         self._require_local(profile)

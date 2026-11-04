@@ -140,9 +140,11 @@ class CoreClient:
     def workspace_channels(self, handle, workspace):
         return self.request("workspace.channels", {"profile": handle, "workspace": workspace})
 
-    def workspace_invitation_create(self, handle, workspace, key):
-        return self.request("workspace.invitation_create",
-                            {"profile": handle, "workspace": workspace},
+    def workspace_invitation_create(self, handle, workspace, key, connection_mode=None):
+        params = {"profile": handle, "workspace": workspace}
+        if connection_mode is not None:
+            params["connection_mode"] = connection_mode
+        return self.request("workspace.invitation_create", params,
                             idempotency_key=key)
 
     def workspace_channel_create(self, handle, workspace, name, key, *,

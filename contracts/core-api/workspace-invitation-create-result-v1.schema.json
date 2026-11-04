@@ -62,6 +62,11 @@
           "type": "number",
           "minimum": 0,
           "maximum": 9007199254740991
+        },
+        "connection_mode": {
+          "enum": [
+            "webrtc"
+          ]
         }
       }
     }

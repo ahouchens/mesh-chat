@@ -250,7 +250,11 @@ def parse_request(value, operations):
         return operation, params
     if operation in WORKSPACE_INVITATION_CREATE_OPERATIONS:
         params = value["params"]
-        if (not isinstance(params, dict) or set(params) != {"profile", "workspace"}
+        allowed = {"profile", "workspace", "connection_mode"}
+        if (not isinstance(params, dict)
+                or not {"profile", "workspace"} <= set(params)
+                or set(params) - allowed
+                or params.get("connection_mode") not in {None, "webrtc"}
                 or "idempotency_key" not in value
                 or any(not isinstance(params.get(name), str)
                        or HANDLE.fullmatch(params[name]) is None

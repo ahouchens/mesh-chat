@@ -300,11 +300,15 @@ def workspace_invitation_create_view(profile, workspace, value):
     if (not isinstance(value.document, str) or not value.document
             or len(value.document.encode("utf-8")) > 1048576
             or not isinstance(value.link, str) or not value.link
-            or len(value.link) > 1048576):
+            or len(value.link) > 1048576
+            or value.connection_mode not in {None, "webrtc"}):
         raise ValueError("Invalid workspace invitation material")
-    return {"profile": profile, "workspace": workspace,
-            "document": value.document, "link": value.link,
-            "expires_at": _timestamp(value.expires_at)}
+    result = {"profile": profile, "workspace": workspace,
+              "document": value.document, "link": value.link,
+              "expires_at": _timestamp(value.expires_at)}
+    if value.connection_mode is not None:
+        result["connection_mode"] = value.connection_mode
+    return result
 
 
 def workspace_channels_view(profile, workspace, items):

@@ -157,13 +157,15 @@ class CoreClient private constructor(private val transport: CoreTransport) {
         profile: String,
         workspace: String,
         idempotencyKey: String,
+        connectionMode: String? = null,
     ): JSONObject {
         requireKey(idempotencyKey, "workspace invitations")
-        return dispatch(
-            "workspace.invitation_create",
-            JSONObject().put("profile", profile).put("workspace", workspace),
-            idempotencyKey,
-        )
+        val params = JSONObject().put("profile", profile).put("workspace", workspace)
+        if (connectionMode != null) {
+            if (connectionMode != "webrtc") throw CoreException("invalid_request")
+            params.put("connection_mode", connectionMode)
+        }
+        return dispatch("workspace.invitation_create", params, idempotencyKey)
     }
 
     fun workspaceChannelCreate(

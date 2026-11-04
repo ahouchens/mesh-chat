@@ -622,9 +622,20 @@ def test_owner_creates_a_signed_workspace_invitation_through_the_facade(admin_pa
     })
     assert replay["result"] == created["result"]
 
+    native = session.request({
+        "api_version": 1, "request_id": "request:3",
+        "operation": "workspace.invitation_create",
+        "params": {"profile": profile, "workspace": workspace,
+                   "connection_mode": "webrtc"},
+        "idempotency_key": "w" * 32,
+    })
+    assert native["ok"], native
+    assert native["result"]["connection_mode"] == "webrtc"
+    assert joiner.preview_workspace_invitation(native["result"]["document"])["name"] == "Core"
+
     consumer, _ = open_client(owner, permissions=("observe", "read"))
     denied = consumer.request({
-        "api_version": 1, "request_id": "request:3",
+        "api_version": 1, "request_id": "request:4",
         "operation": "workspace.invitation_create",
         "params": {"profile": profile, "workspace": workspace},
         "idempotency_key": "j" * 32,
