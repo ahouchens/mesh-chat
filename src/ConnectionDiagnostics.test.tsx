@@ -5,7 +5,13 @@ vi.mock("./api", () => api);
 import { ConnectionDiagnostics, currentWebRTCState, diagnosticReport, versionDetails } from "./ConnectionDiagnostics";
 import { closeWebRTCSession, setWebRTCSession, type WebRTCSession } from "./webrtc-session";
 import packageInfo from "../package.json";
-beforeEach(() => { api.serviceCommand.mockReset(); api.desktopServiceHealth.mockResolvedValue({ running: null, last_unexpected_exit: null }); api.appBuildInfo.mockResolvedValue({ installed_version: packageInfo.version, native_version: packageInfo.version, platform: "android", android_version_code: 2050 }); api.coreApiCapabilities.mockResolvedValue({ api_major: 1, api_minor: 0, stability: "experimental", operations: ["runtime.capabilities", "message.list"], profiles: ["p".repeat(64)] }); });
+beforeEach(() => {
+  api.serviceCommand.mockReset();
+  api.coreApiCapabilities.mockReset();
+  api.desktopServiceHealth.mockResolvedValue({ running: null, last_unexpected_exit: null });
+  api.appBuildInfo.mockResolvedValue({ installed_version: packageInfo.version, native_version: packageInfo.version, platform: "android", android_version_code: 2050 });
+  api.coreApiCapabilities.mockResolvedValue({ api_major: 1, api_minor: 0, stability: "experimental", operations: ["runtime.capabilities", "message.list"], profiles: ["p".repeat(64)] });
+});
 afterEach(async () => { cleanup(); await closeWebRTCSession(); });
 
 it("copies desktop exit evidence even when the service diagnostics request fails", async () => {
