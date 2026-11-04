@@ -28,6 +28,9 @@ it("copies desktop exit evidence even when the service diagnostics request fails
   expect(report.desktop_service).toEqual({ running: false, last_unexpected_exit: {
     reason: "protocol_error", exit_code: -1, signal: null, recorded_at: 1793119542,
   } });
+  expect(report.core_api).toEqual({
+    api_major: 1, api_minor: 0, stability: "experimental", operations: 2,
+  });
   expect(write.mock.calls[0][0]).not.toContain("secret-path");
 });
 

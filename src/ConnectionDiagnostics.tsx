@@ -186,8 +186,10 @@ function desktopHealth(raw: unknown) {
   };
 }
 
-export function diagnosticReport(build: unknown, raw: unknown, log = false, host: unknown = null) {
+export function diagnosticReport(build: unknown, raw: unknown, log = false, host: unknown = null,
+                                 facade: unknown = null) {
   const value = object(raw);
+  const facadeValue = object(facade);
   const cleanEvent = (rawEvent: unknown) => {
     const event = object(rawEvent);
     return { time: number(event.time, 2**53 - 1), attempt: token(event.attempt, /^[0-9a-f]{12}$/),
@@ -223,6 +225,11 @@ export function diagnosticReport(build: unknown, raw: unknown, log = false, host
     native_check_counts: rows.at(-1)?.checks_started !== null && rows.length ? "see_event_counts" : unavailable, receipt_status: "see_event_timestamp", approval_status: "see_event_timestamp",
     retention_days: 7, event_limit: 200, events_included: rows.length, history_event_count: history.length,
     truncated: value.truncated === true || rows.length < history.length,
+    ...(facade ? { core_api: {
+      api_major: number(facadeValue.api_major, 99), api_minor: number(facadeValue.api_minor, 99),
+      stability: token(facadeValue.stability, /^[a-z_]{3,32}$/),
+      operations: Array.isArray(facadeValue.operations) ? facadeValue.operations.length : null,
+    } } : {}),
     last_failure: value.last_failure ? cleanEvent(value.last_failure) : null,
     events: rows };
   let text = JSON.stringify(report, null, 2);
@@ -265,10 +272,12 @@ export function ConnectionDiagnostics({ full = false }: { full?: boolean }) {
     // restart an unexpectedly exited sidecar and erase its stopped state.
     let host: unknown = null;
     try { host = await desktopServiceHealth(); } catch { /* Mobile/older hosts may not expose this. */ }
+    let facadeValue: unknown = null;
+    try { facadeValue = await coreApiCapabilities(); } catch { /* Older hosts and mobile builds may not expose the facade. */ }
     try { report = await serviceCommand("connection_diagnostics"); } catch { /* Copy app information even when the service cannot start. */ }
     const text = mode === "version"
       ? JSON.stringify({ ...versionDetails(build), service_version: version(object(report).service_version) }, null, 2)
-      : diagnosticReport(build, report, mode === "log", host);
+      : diagnosticReport(build, report, mode === "log", host, facadeValue);
     try { await navigator.clipboard.writeText(text); setFeedback("Copied"); }
     catch { setFallback(text); setFeedback("Copy is unavailable. Select the report below or save it to a file."); }
     finally { setBusy(false); }
