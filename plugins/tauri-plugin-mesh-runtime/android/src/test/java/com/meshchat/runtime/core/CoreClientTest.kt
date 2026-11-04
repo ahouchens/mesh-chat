@@ -200,6 +200,38 @@ class CoreClientTest {
     }
 
     @Test
+    fun workspaceInvitationCreateSerializesModeAndI2pOptions() {
+        val relay = "a".repeat(52) + ".b32.i2p"
+        val transport = Scripted(
+            success("client:1", capabilities()),
+            success(
+                "client:2",
+                JSONObject().put("profile", PROFILE).put("workspace", "w".repeat(64))
+                    .put("document", "signed").put("link", "meshchat://workspace/example")
+                    .put("expires_at", 1234).put("connection_mode", "i2p")
+                    .put("i2p_access_point", relay),
+            ),
+        )
+        val client = CoreClient.open(transport)
+        val result = client.workspaceInvitationCreate(
+            PROFILE, "w".repeat(64), "k".repeat(16), "i2p", relay, "Community relay",
+        )
+        assertEquals("i2p", result.getString("connection_mode"))
+        val request = JSONObject(transport.written[1])
+        assertEquals("workspace.invitation_create", request.getString("operation"))
+        assertEquals("k".repeat(16), request.getString("idempotency_key"))
+        val params = request.getJSONObject("params")
+        assertEquals("i2p", params.getString("connection_mode"))
+        assertEquals(relay, params.getString("i2p_access_point"))
+        assertEquals("Community relay", params.getString("i2p_label"))
+        assertTrue(
+            runCatching {
+                client.workspaceInvitationCreate(PROFILE, "w".repeat(64), "short")
+            }.exceptionOrNull() is CoreException,
+        )
+    }
+
+    @Test
     fun workspaceJoinIsConvergentWithoutACallerKey() {
         val transport = Scripted(
             success("client:1", capabilities()),

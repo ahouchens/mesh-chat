@@ -504,6 +504,42 @@ test("channel helpers use the declared envelopes", async () => {
   assert.equal(create.params.visibility, "public");
 });
 
+test("workspace invitation creation serializes the selected non-default mode", async () => {
+  const relay = "a".repeat(52) + ".b32.i2p";
+  const transport = new Scripted(
+    success("client:1", CAPABILITIES),
+    success("client:2", {
+      profile: PROFILE,
+      workspace: "w".repeat(64),
+      document: "signed-workspace-invitation",
+      link: "meshchat://workspace/example",
+      expires_at: 1234,
+      connection_mode: "i2p",
+      i2p_access_point: relay,
+    }),
+  );
+  const client = await CoreClient.open(transport);
+  const created = await client.workspaceInvitationCreate(
+    PROFILE, "w".repeat(64), "k".repeat(16), "i2p", relay, "Community relay",
+  );
+  assert.equal(created.connection_mode, "i2p");
+  const request = JSON.parse(transport.written[1]);
+  assert.equal(request.operation, "workspace.invitation_create");
+  assert.equal(request.idempotency_key, "k".repeat(16));
+  assert.deepEqual(request.params, {
+    profile: PROFILE,
+    workspace: "w".repeat(64),
+    connection_mode: "i2p",
+    i2p_access_point: relay,
+    i2p_label: "Community relay",
+  });
+  await assert.rejects(
+    client.workspaceInvitationCreate(PROFILE, "w".repeat(64), "short"),
+    /caller key/,
+  );
+});
+
+
 test("private channel creation carries members and rejects an empty roster", async () => {
   const transport = new Scripted(
     success("client:1", CAPABILITIES),
