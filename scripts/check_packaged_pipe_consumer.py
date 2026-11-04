@@ -49,7 +49,7 @@ def install_wheel(work: Path) -> tuple[Path, Path]:
 SERVER = r"""
 import ctypes
 from ctypes import wintypes
-import json, os, sys, tempfile, uuid
+import json, os, sys, tempfile, time, uuid
 from pathlib import Path
 from mesh_chat.core_api.pipe_endpoint import PipeConfig, PipeEndpoint
 from mesh_chat.service import MeshChatService
@@ -83,6 +83,14 @@ store = VaultStore(root, os.urandom(32), allow_unprotected_for_tests=True)
 service = MeshChatService(store, root, lambda _: None)
 service.create_profile("Pipe host")
 service.create_workspace(str(uuid.uuid4()), "Pipe workspace", "")
+now = time.time()
+service.store.put("contact", "fixture-peer-0001", {
+    "id": "fixture-peer-0001", "display_name": "Fixture peer",
+    "destination_hash": "ab" * 16, "identity_hash": "cd" * 16,
+    "public_identity": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=",
+    "trust": "approved", "created_at": now, "updated_at": now,
+    "connection_hints": [],
+})
 config = PipeConfig(caller="packaged-consumer",
                     permissions=("observe", "read"),
                     allowed_images=(current_image(),),
@@ -184,7 +192,14 @@ try:
     print(json.dumps({"api_major": capabilities["api_major"],
                       "workspaces": len(listing["workspaces"]),
                       "admin_forbidden": admin_denied,
+                      "message_round_trip": True,
                       "capabilities_ok": True}))
+    body = "Hello from the packaged Windows consumer"
+    peer = client.profile(profile)["peers"][0]
+    accepted = client.enqueue(profile, peer, body,
+                              "qualified-enqueue-key".ljust(16, "x"))
+    view = client.message_query(profile, accepted["message"])
+    assert view["text"] == body, view
 finally:
     connection.close()
 """
@@ -218,11 +233,12 @@ def sources(scope: str):
     print(json.dumps({"api_major": capabilities["api_major"],
                       "workspaces": len(listing["workspaces"]),
                       "admin_forbidden": admin_denied,
+                      "message_round_trip": True,
                       "capabilities_ok": True}))"""
         return (SERVER.replace('permissions=("observe", "read"),',
                                f"permissions={permissions!r}, scope={scope!r},"),
                 CONSUMER.replace(denied, allowed))
-    permissions = ("observe", "read")
+    permissions = ("observe", "read", "send")
     return (SERVER.replace('permissions=("observe", "read"),',
                            f"permissions={permissions!r}, scope={scope!r},"),
             CONSUMER)

@@ -46,6 +46,9 @@ class CorePackageConsumerTest {
 
     private fun profile(client: CoreClient) = client.capabilities.getJSONArray("profiles").getString(0)
 
+    private fun peer(client: CoreClient) =
+        client.profileQuery(profile(client)).getJSONArray("peers").getString(0)
+
     @Test fun consumerQueriesProductionFacadeAcrossUid() {
         withClient { client ->
             assertEquals(1, client.capabilities.getInt("api_major"))
@@ -76,7 +79,7 @@ class CorePackageConsumerTest {
         withClient { client ->
             val profile = profile(client)
             val accepted = client.enqueue(
-                profile, "fixture-peer-0001", "Hello from the independent consumer",
+                profile, peer(client), "Hello from the independent consumer",
                 "qualified-enqueue-key".padEnd(16, 'x'),
             )
             assertTrue(accepted.toString(), accepted.has("message"))
@@ -97,7 +100,7 @@ class CorePackageConsumerTest {
         withClient { client ->
             val profile = profile(client)
             val accepted = client.enqueue(
-                profile, "fixture-peer-0001", body,
+                profile, peer(client), body,
                 "restart-enqueue-key".padEnd(16, 'x'),
             )
             handle = accepted.getString("message")
@@ -111,7 +114,7 @@ class CorePackageConsumerTest {
             val restored = client.messageQuery(profile, checkNotNull(handle))
             assertEquals(body, restored.getString("text"))
             val repeated = client.enqueue(
-                profile, "fixture-peer-0001", body,
+                profile, peer(client), body,
                 "restart-enqueue-key".padEnd(16, 'x'),
             )
             assertEquals(handle, repeated.getString("message"))
@@ -122,7 +125,7 @@ class CorePackageConsumerTest {
             assertEquals(1, matching)
             val conflict = runCatching {
                 client.enqueue(
-                    profile, "fixture-peer-0001", "Different text for the same key",
+                    profile, peer(client), "Different text for the same key",
                     "restart-enqueue-key".padEnd(16, 'x'),
                 )
             }.exceptionOrNull()

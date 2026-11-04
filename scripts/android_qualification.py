@@ -46,7 +46,9 @@ CORE_API = ("serviceIsExportedBehindTheSignaturePermission",
             "oversizedFrameIsRejectedBeforeDispatch",
             "uninitializedBridgeFailsClosedWithATypedFrame")
 CORE_CONSUMER = ("consumerQueriesProductionFacadeAcrossUid", "externalCallerCannotAcquireOwnerScope",
-                 "detachingConsumerCanReattachToItsProfile", "privateControlIsRejectedThroughThePublicPackage")
+                 "detachingConsumerCanReattachToItsProfile", "privateControlIsRejectedThroughThePublicPackage",
+                 "consumerCanEnqueueAndReadAMessageThroughThePublicPackage",
+                 "consumerCanQueryAnEnqueuedMessageAfterHostRestart")
 SIGNALING = (
     ("embeddedDefaultAndChoicesSurviveProcessRestart", "seed"),
     ("embeddedDefaultAndChoicesSurviveProcessRestart", "verify"),
