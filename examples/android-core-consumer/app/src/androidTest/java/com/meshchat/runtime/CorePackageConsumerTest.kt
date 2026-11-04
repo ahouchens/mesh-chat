@@ -109,6 +109,7 @@ class CorePackageConsumerTest {
         val stop = InstrumentationRegistry.getInstrumentation().uiAutomation
             .executeShellCommand("am force-stop com.meshchat.core.hostfixture")
         stop.close()
+        Thread.sleep(2_000)
         withClient { client ->
             val profile = profile(client)
             val restored = client.messageQuery(profile, checkNotNull(handle))
