@@ -78,6 +78,10 @@ def _native_peer(root: str, commands: Any, replies: Any, vault_key: bytes) -> No
                 elif operation == "native_apply":
                     result = service.native_webrtc_apply_answer(
                         payload["session_id"], payload["answer_sdp"])
+                elif operation == "bind_peer":
+                    with service._native_webrtc_lock:
+                        service._native_webrtc_peers[payload["session_id"]] = payload["destination"]
+                    result = {"bound": payload["session_id"]}
                 elif operation == "fault":
                     host.fault = payload["mode"]
                     result = {"mode": host.fault}
@@ -85,6 +89,12 @@ def _native_peer(root: str, commands: Any, replies: Any, vault_key: bytes) -> No
                     result = service.native_webrtc_close(payload["session_id"])
                 elif operation == "stats":
                     result = service.native_webrtc_stats(payload["session_id"])
+                elif operation == "stats_safe":
+                    try:
+                        result = {"present": True, **service.native_webrtc_stats(
+                            payload["session_id"])}
+                    except Exception:
+                        result = {"present": False}
                 else:
                     response, should_stop = service.dispatch({
                         "v": 1, "id": str(uuid.uuid4()), **payload})
@@ -373,3 +383,20 @@ def test_native_peer_restart_delivers_messages_queued_while_offline(
         peers.close()
     assert all(process.exitcode == 0 for process in peers.processes)
 
+@pytest.mark.integration
+def test_native_contact_deletion_retires_the_carrier(tmp_path: Path) -> None:
+    peers, contacts, _ = _start_connected(tmp_path)
+    try:
+        _exchange(peers, contacts, 0, "Before contact deletion")
+        peers.call(0, "bind_peer", session_id="native-left",
+                   destination=contacts[0]["destination_hash"])
+        deleted = peers.command(0, "delete_contact", contact_id=contacts[0]["id"])
+        assert deleted["contact_id"] == contacts[0]["id"]
+        snapshot = peers.command(0, "snapshot")
+        assert all(row["id"] != contacts[0]["id"] for row in snapshot["contacts"])
+        assert peers.call(0, "stats_safe", session_id="native-left")["present"] is False
+        other = peers.command(1, "snapshot")["contacts"]
+        assert any(row["id"] == contacts[1]["id"] for row in other)
+    finally:
+        peers.close()
+    assert all(process.exitcode == 0 for process in peers.processes)
