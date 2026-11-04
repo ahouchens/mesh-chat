@@ -1276,7 +1276,8 @@ M5 - supported reusable core
       with SDK conformance tests and TypeScript/Python package-shape smokes
       (unpublished).
 - [x] Python console client and Windows CLI over the host pipe, with relationship,
-      pairing and owner-stop commands (component only; no published distribution).
+      pairing, workspace invitation and owner-stop commands (component only; no
+      published distribution).
 - [x] Declared Python/TypeScript/Kotlin component versions bound to the
       compatibility declaration and TypeScript/Python package-smoke artifacts
       (unpublished).
