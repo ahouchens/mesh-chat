@@ -209,6 +209,12 @@ try:
         assert error.code == "idempotency_conflict", error.code
     else:
         raise AssertionError("changed payload was accepted")
+    try:
+        client.enqueue(profile, "unknown-peer-handle-0000", "Forbidden peer", key)
+    except CoreClientError as error:
+        assert error.code == "forbidden", error.code
+    else:
+        raise AssertionError("unknown peer handle was accepted")
 finally:
     connection.close()
 """

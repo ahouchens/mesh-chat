@@ -83,6 +83,14 @@ class CorePackageConsumerTest {
                 "qualified-enqueue-key".padEnd(16, 'x'),
             )
             assertTrue(accepted.toString(), accepted.has("message"))
+            val forbidden = runCatching {
+                client.enqueue(
+                    profile, "unknown-peer-handle-0000", "Forbidden peer",
+                    "unknown-peer-key".padEnd(16, 'x'),
+                )
+            }.exceptionOrNull()
+            assertTrue(forbidden is CoreException)
+            assertEquals("forbidden", (forbidden as CoreException).code)
             val messages = client.messageList(profile).getJSONArray("messages")
             assertTrue(
                 messages.toString(),
