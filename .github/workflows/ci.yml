@@ -125,6 +125,9 @@ jobs:
           MESH_CHAT_PIPE_SCOPE: owner
         run: python scripts/check_packaged_pipe_consumer.py
 
+      - name: Qualify a packaged consumer message after host restart
+        run: python scripts/check_packaged_pipe_restart.py
+
       - name: Check experimental shared WebView host
         run: cargo test --locked --manifest-path src-tauri/Cargo.toml --lib --features experimental-shared-webview
       - name: Build isolated WebView2 qualification executable
