@@ -18,10 +18,10 @@ PROFILE_PERMISSIONS = frozenset({"observe", "read", "send"})
 
 
 class HostedClient:
-    def __init__(self, service):
+    def __init__(self, service, permissions=PROFILE_PERMISSIONS):
         server_read, client_write = os.pipe()
         client_read, server_write = os.pipe()
-        grants = [Grant("alex", PROFILE_PERMISSIONS, ("local",))]
+        grants = [Grant("alex", permissions, ("local",))]
         session = bind_service_stream(service, lambda: grants[0])
 
         def serve():
@@ -81,6 +81,46 @@ def test_cli_runs_against_the_real_facade(hosted):
     result = json.loads(out.getvalue())
     assert "connection.start" in result["operations"]
     assert err.getvalue() == ""
+
+
+def test_cli_lists_and_creates_a_workspace_invitation(host):
+    service = host()
+    workspace = service.create_workspace("00000000-0000-4000-8000-000000000001", "CLI workspace", "")
+    owner_permissions = frozenset({"observe", "read", "approve"})
+    listed = HostedClient(service, owner_permissions)
+    try:
+        class Transport:
+            readline = staticmethod(listed.reader.readline)
+            write = staticmethod(listed.writer.write)
+            close = staticmethod(lambda: None)
+
+        out, err = io.StringIO(), io.StringIO()
+        assert run_cli(["--pipe", r"\\.\pipe\mesh-chat-test", "workspace-list"],
+                       Transport(), out, err) == 0
+        handle = json.loads(out.getvalue())["workspaces"][0]["workspace"]
+    finally:
+        listed.close()
+
+    created = HostedClient(service, owner_permissions)
+    try:
+        class Transport:
+            readline = staticmethod(created.reader.readline)
+            write = staticmethod(created.writer.write)
+            close = staticmethod(lambda: None)
+
+        relay = "a" * 52 + ".b32.i2p"
+        out, err = io.StringIO(), io.StringIO()
+        assert run_cli([
+            "--pipe", r"\\.\pipe\mesh-chat-test", "workspace-invitation-create",
+            "--workspace", handle, "--mode", "i2p",
+            "--i2p-access-point", relay, "--key", "k" * 32,
+        ], Transport(), out, err) == 0
+        result = json.loads(out.getvalue())
+        assert result["connection_mode"] == "i2p"
+        assert result["i2p_access_point"] == relay
+        assert result["document"]
+    finally:
+        created.close()
 
 
 def test_unknown_profile_handle_is_rejected_as_forbidden(hosted):
