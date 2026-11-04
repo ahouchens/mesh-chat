@@ -1299,7 +1299,8 @@ M5 - supported reusable core
 - [x] The packaged sidecar hosts one owner-scope Core API named-pipe endpoint;
       the desktop launcher mints the pipe and exact client image, and a Rust
       client exposes `core_api_capabilities`. A real Windows pipe test covers
-      owner operations. No UI screen calls the facade yet.
+      owner operations. The diagnostics panel calls that command and shows
+      facade availability; messaging and the rest of the UI remain legacy.
 - [ ] Mesh Chat messaging routed through the supported facade.
 - [ ] Independent Windows and Android consumers built only from distribution
       artifacts and documentation.
