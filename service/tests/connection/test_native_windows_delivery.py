@@ -372,3 +372,18 @@ def test_native_peer_restart_delivers_messages_queued_while_offline(
     finally:
         peers.close()
     assert all(process.exitcode == 0 for process in peers.processes)
+
+
+@pytest.mark.integration
+def test_native_contact_deletion_retires_the_carrier(tmp_path: Path) -> None:
+    peers, contacts, _ = _start_connected(tmp_path)
+    try:
+        _exchange(peers, contacts, 0, "Before contact deletion")
+        peers.command(0, "delete_contact", contact_id=contacts[0]["id"])
+        snapshot = peers.command(0, "snapshot")
+        assert all(row["id"] != contacts[0]["id"] for row in snapshot["contacts"])
+        stats = peers.call(0, "stats", session_id="native-left")
+        assert stats.get("attached") is not True
+    finally:
+        peers.close()
+    assert all(process.exitcode == 0 for process in peers.processes)
