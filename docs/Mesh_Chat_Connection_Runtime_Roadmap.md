@@ -1152,10 +1152,10 @@ M2 - shared policy
 - [ ] Full Android application onboarding/approval/carrier transfer through the
       application path; the isolated worker and the native contact-scope transport
       are component evidence only.
-- [x] Workspace invitation creation through the supported facade: active owner only,
-      signed text/link material, replay-safe key, consumer grants denied.
-- [ ] Full workspace join/approval through the shared composition and
-      non-default manual pairing modes.
+- [x] Workspace pairing through the supported facade: owner creates signed
+      invitation material, joiner previews/joins, owner approves, and both
+      members are visible; consumer write grants stay denied.
+- [ ] Non-default manual pairing modes in the shared composition.
 - [x] Packaged pairing cancellation and unapproved-restart checks (WebView2
       component evidence).
 - [ ] Cancellation at every handshake phase, plus partition/revocation and
