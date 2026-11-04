@@ -76,7 +76,7 @@
           "type": "array",
           "uniqueItems": true,
           "minItems": 3,
-          "maxItems": 44,
+          "maxItems": 45,
           "items": {
             "enum": [
               "runtime.capabilities",
@@ -105,6 +105,7 @@
               "workspace.join_decline",
               "workspace.members",
               "workspace.member_role",
+              "workspace.invitation_create",
               "workspace.channels",
               "workspace.channel_create",
               "workspace.channel_members",

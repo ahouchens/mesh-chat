@@ -78,6 +78,7 @@ def test_each_designed_operation_has_an_executable_request_vector_and_permission
         "workspace.members": {"workspace": handle},
         "workspace.join_decline": {"workspace": handle, "request": handle},
         "workspace.member_role": {"workspace": handle, "member": handle, "role": "admin"},
+        "workspace.invitation_create": {"workspace": handle},
         "workspace.channels": {"workspace": handle},
         "workspace.channel_create": {"workspace": handle, "name": "Core Chat"},
         "workspace.channel_members": {"workspace": handle, "channel": handle},
