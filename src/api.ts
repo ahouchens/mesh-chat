@@ -132,6 +132,16 @@ export async function serviceCommand<T>(
   }
 }
 
+export async function coreApiCapabilities(): Promise<{
+  api_major: number;
+  api_minor: number;
+  stability: string;
+  operations: string[];
+  profiles: string[];
+}> {
+  return invoke("core_api_capabilities");
+}
+
 export async function lockService(): Promise<void> {
   clearPairingResume();
   return invoke<void>("lock_service");

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { appBuildInfo, desktopServiceHealth, serviceCommand } from "./api";
+import { appBuildInfo, coreApiCapabilities, desktopServiceHealth, serviceCommand } from "./api";
 import packageInfo from "../package.json";
 import { clearWebRTCSessionEvents, getWebRTCSessions, recentWebRTCSessionEvents } from "./webrtc-session";
 
@@ -237,9 +237,25 @@ export function ConnectionDiagnostics({ full = false }: { full?: boolean }) {
   const [feedback, setFeedback] = useState("");
   const [fallback, setFallback] = useState("");
   const [busy, setBusy] = useState(false);
+  const [facade, setFacade] = useState<{ available: boolean; label: string }>({ available: false, label: "unavailable" });
   useEffect(() => {
     let active = true;
     void (async () => { try { const value = await appBuildInfo(); if (active) setBuild(value); } catch { /* Bundled version remains visible offline. */ } })();
+    return () => { active = false; };
+  }, []);
+  useEffect(() => {
+    let active = true;
+    void (async () => {
+      try {
+        const value = await coreApiCapabilities();
+        if (active) {
+          setFacade({
+            available: true,
+            label: ${value.api_major}.,  operations,
+          });
+        }
+      } catch { /* Older hosts and mobile builds do not expose the facade pipe yet. */ }
+    })();
     return () => { active = false; };
   }, []);
   const copy = async (mode: "summary" | "log" | "version") => {
@@ -271,6 +287,7 @@ export function ConnectionDiagnostics({ full = false }: { full?: boolean }) {
   const details = versionDetails(build);
   return <section className="connection-diagnostics form-stack" aria-label="Connection diagnostics">
     <p className="muted">Mesh Chat version {packageInfo.version}</p>
+    <p className="muted" role="status">Core API: {facade.available ? vailable () : "unavailable"}</p>
     {details.version_mismatch && <p role="alert">App components have different versions. Copy version details before updating.</p>}
     <div className="dialog-actions"><button className="button button--secondary" disabled={busy} onClick={() => void copy("summary")}>Copy diagnostics</button>
       {full && <><button className="button button--secondary" disabled={busy} onClick={() => void copy("log")}>Copy connection log</button><button className="button button--secondary" disabled={busy} onClick={() => void copy("version")}>Copy version details</button></>}
