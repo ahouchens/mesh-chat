@@ -162,3 +162,18 @@ def test_shutdown_retires_live_sessions_and_refuses_further_work():
     assert host_instance.send("live-0", b"after shutdown") is False
     assert host_instance.sendControl("live-0", "mesh-onboarding", "after shutdown") is False
     host_instance.shutdown()
+
+
+def test_relay_only_offer_has_no_direct_candidates_without_turn():
+    host_instance, events = host()
+    ice = json.dumps({"iceServers": [], "iceTransportPolicy": "relay"})
+    try:
+        created = json.loads(host_instance.createOffer("relay", ice, json.dumps(CHANNELS)))
+        assert created["ok"], created
+        candidates = [
+            line for line in created["sdp"].splitlines()
+            if line.startswith("a=candidate:")
+        ]
+        assert all(" typ relay" in line for line in candidates), candidates
+    finally:
+        host_instance.shutdown()
