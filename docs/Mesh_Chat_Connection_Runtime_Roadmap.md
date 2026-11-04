@@ -1155,7 +1155,8 @@ M2 - shared policy
 - [x] Workspace pairing through the supported facade: owner creates signed
       invitation material, joiner previews/joins, owner approves, and both
       members are visible; consumer write grants stay denied.
-- [ ] Non-default manual pairing modes in the shared composition.
+- [x] WebRTC workspace invitation mode through the facade (non-default).
+- [ ] Participant/manual/email/I2P pairing modes in the shared composition.
 - [x] Packaged pairing cancellation and unapproved-restart checks (WebView2
       component evidence).
 - [ ] Cancellation at every handshake phase, plus partition/revocation and
