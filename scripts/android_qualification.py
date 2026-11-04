@@ -29,6 +29,10 @@ WEBRTC = {
         "cancelledCreationCannotRetryOrReplaceItsReservation",
         "replacementWaitsForExactPhysicalDisposal",
         "concurrentCreatorsCannotOverbookOrReplaceAnId"),
+    "NativeWebRtcHostLifecycleTest": (
+        "cancellationAfterOfferRetiresTheSessionAndFreesCapacity",
+        "cancellationAfterAcceptRetiresBothSessions",
+        "cancellationAfterAnswerRetiresBothSessions"),
     "NativeWebRtcInteropTest": (
         "chromiumOfferCanBeAcceptedThroughTheRealPythonBridge",
         "chromiumOfferSurvivesEarlyIceFailureDuringManualAnswerExchange",
