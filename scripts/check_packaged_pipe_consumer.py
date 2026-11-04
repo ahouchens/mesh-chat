@@ -193,13 +193,22 @@ try:
                       "workspaces": len(listing["workspaces"]),
                       "admin_forbidden": admin_denied,
                       "message_round_trip": True,
+                      "idempotent": True,
                       "capabilities_ok": True}))
     body = "Hello from the packaged Windows consumer"
     peer = client.profile(profile)["peers"][0]
-    accepted = client.enqueue(profile, peer, body,
-                              "qualified-enqueue-key".ljust(16, "x"))
+    key = "qualified-enqueue-key".ljust(16, "x")
+    accepted = client.enqueue(profile, peer, body, key)
     view = client.message_query(profile, accepted["message"])
     assert view["text"] == body, view
+    repeated = client.enqueue(profile, peer, body, key)
+    assert repeated["message"] == accepted["message"], repeated
+    try:
+        client.enqueue(profile, peer, "Different text for the same key", key)
+    except CoreClientError as error:
+        assert error.code == "idempotency_conflict", error.code
+    else:
+        raise AssertionError("changed payload was accepted")
 finally:
     connection.close()
 """
@@ -234,6 +243,7 @@ def sources(scope: str):
                       "workspaces": len(listing["workspaces"]),
                       "admin_forbidden": admin_denied,
                       "message_round_trip": True,
+                      "idempotent": True,
                       "capabilities_ok": True}))"""
         return (SERVER.replace('permissions=("observe", "read"),',
                                f"permissions={permissions!r}, scope={scope!r},"),
