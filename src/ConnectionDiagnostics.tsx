@@ -251,7 +251,7 @@ export function ConnectionDiagnostics({ full = false }: { full?: boolean }) {
         if (active) {
           setFacade({
             available: true,
-            label: ${value.api_major}.,  operations,
+            label: `${value.api_major}.${value.api_minor}, ${value.operations.length} operations`,
           });
         }
       } catch { /* Older hosts and mobile builds do not expose the facade pipe yet. */ }
@@ -287,7 +287,7 @@ export function ConnectionDiagnostics({ full = false }: { full?: boolean }) {
   const details = versionDetails(build);
   return <section className="connection-diagnostics form-stack" aria-label="Connection diagnostics">
     <p className="muted">Mesh Chat version {packageInfo.version}</p>
-    <p className="muted" role="status">Core API: {facade.available ? vailable () : "unavailable"}</p>
+    <p className="muted" role="status">Core API: {facade.available ? `available (${facade.label})` : "unavailable"}</p>
     {details.version_mismatch && <p role="alert">App components have different versions. Copy version details before updating.</p>}
     <div className="dialog-actions"><button className="button button--secondary" disabled={busy} onClick={() => void copy("summary")}>Copy diagnostics</button>
       {full && <><button className="button button--secondary" disabled={busy} onClick={() => void copy("log")}>Copy connection log</button><button className="button button--secondary" disabled={busy} onClick={() => void copy("version")}>Copy version details</button></>}
