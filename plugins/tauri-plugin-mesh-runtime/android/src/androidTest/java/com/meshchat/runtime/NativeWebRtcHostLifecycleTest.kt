@@ -55,6 +55,22 @@ class NativeWebRtcHostLifecycleTest {
 
 
     @Test
+    fun invalidFramesAndMissingChannelsFailClosed() {
+        assertFalse(NativeWebRtcHost.send("missing", ByteArray(1)))
+        assertFalse(NativeWebRtcHost.send("missing", ByteArray(1065)))
+        assertFalse(NativeWebRtcHost.sendControl("missing", "mesh-onboarding", "x"))
+        assertFalse(NativeWebRtcHost.sendControl("missing", "mesh-onboarding", "x".repeat(65_537)))
+        val missing = json(NativeWebRtcHost.createOffer(
+            "missing-channel", ice,
+            """[{"label":"mesh-onboarding","binary":false,"ordered":true}]""",
+        ))
+        assertFalse(missing.optBoolean("ok"))
+        assertEquals("native_webrtc_missing_data_channel", missing.optString("error"))
+        NativeWebRtcHost.close("missing")
+        assertMissing("missing")
+    }
+
+    @Test
     fun closeAllRetiresEveryLiveSession() {
         offer("lifecycle-all-a")
         offer("lifecycle-all-b")

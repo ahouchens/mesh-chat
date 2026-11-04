@@ -33,7 +33,8 @@ WEBRTC = {
         "cancellationAfterOfferRetiresTheSessionAndFreesCapacity",
         "cancellationAfterAcceptRetiresBothSessions",
         "cancellationAfterAnswerRetiresBothSessions",
-        "closeAllRetiresEveryLiveSession"),
+        "closeAllRetiresEveryLiveSession",
+        "invalidFramesAndMissingChannelsFailClosed"),
     "NativeWebRtcInteropTest": (
         "chromiumOfferCanBeAcceptedThroughTheRealPythonBridge",
         "chromiumOfferSurvivesEarlyIceFailureDuringManualAnswerExchange",
