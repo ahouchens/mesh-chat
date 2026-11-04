@@ -1208,6 +1208,9 @@ M4 - headless messaging
       TURN/forced-relay connectivity remains unqualified.
 - [ ] Full native messaging promotion: supervisor-owned policy, Windows-Android
       and Windows-WebView interoperability, TURN and forced relay.
+      Shared-native invitation acceptance currently leaves the requester at
+      `waiting_for_keys`; `reconnect_start` rejects it as unapproved, so a native
+      bootstrap is still required before supervisor promotion can be qualified.
 - [x] 100 packaged native transport offer/answer/open/control/close cycles with
       three cold starts and bounded cleanup (CI max open 716 ms, max control 1,230 ms).
 - [x] 100-message alternating authenticated-receipt soak over the native
