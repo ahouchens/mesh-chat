@@ -1296,6 +1296,10 @@ M5 - supported reusable core
       versions to the contract inventory. It is explicitly unpublished.
 - [ ] Published SDK/CLI artifacts and a supported compatibility matrix with
       upgrade fixtures.
+- [x] The packaged sidecar can host one owner-scope Core API named-pipe endpoint
+      when the trusted launcher supplies the pipe name and exact client image;
+      a real Windows pipe test covers owner operations. The launcher does not
+      enable it and the UI still uses the legacy command path.
 - [ ] Mesh Chat messaging routed through the supported facade.
 - [ ] Independent Windows and Android consumers built only from distribution
       artifacts and documentation.
