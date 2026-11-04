@@ -140,10 +140,16 @@ class CoreClient:
     def workspace_channels(self, handle, workspace):
         return self.request("workspace.channels", {"profile": handle, "workspace": workspace})
 
-    def workspace_invitation_create(self, handle, workspace, key, connection_mode=None):
+    def workspace_invitation_create(self, handle, workspace, key,
+                                    connection_mode=None, i2p_access_point=None,
+                                    i2p_label=None):
         params = {"profile": handle, "workspace": workspace}
         if connection_mode is not None:
             params["connection_mode"] = connection_mode
+        if i2p_access_point is not None:
+            params["i2p_access_point"] = i2p_access_point
+        if i2p_label is not None:
+            params["i2p_label"] = i2p_label
         return self.request("workspace.invitation_create", params,
                             idempotency_key=key)
 

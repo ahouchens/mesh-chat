@@ -100,6 +100,7 @@ class WorkspaceInvitation:
     link: str
     expires_at: float
     connection_mode: str | None = None
+    i2p_access_point: str | None = None
 
 
 class WorkspaceAdmin(Protocol):
@@ -111,7 +112,9 @@ class WorkspaceAdmin(Protocol):
 
     def create_invitation(self, profile: str, workspace: str,
                           operation_id: str,
-                          connection_mode: str | None = None) -> WorkspaceInvitation: ...
+                          connection_mode: str | None = None,
+                          i2p_access_point: str | None = None,
+                          i2p_label: str | None = None) -> WorkspaceInvitation: ...
 
     def approve(self, profile: str, workspace: str, request: str,
                 operation_id: str) -> JoinApproval: ...

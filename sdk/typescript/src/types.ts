@@ -185,7 +185,8 @@ export interface WorkspaceInvitationView {
   document: string;
   link: string;
   expires_at: number;
-  connection_mode?: "webrtc" | "email";
+  connection_mode?: "webrtc" | "email" | "i2p";
+  i2p_access_point?: string;
 }
 
 export interface WorkspaceChannelCreateView {

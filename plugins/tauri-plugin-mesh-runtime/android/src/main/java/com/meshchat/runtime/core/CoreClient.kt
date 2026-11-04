@@ -158,13 +158,19 @@ class CoreClient private constructor(private val transport: CoreTransport) {
         workspace: String,
         idempotencyKey: String,
         connectionMode: String? = null,
+        i2pAccessPoint: String? = null,
+        i2pLabel: String? = null,
     ): JSONObject {
         requireKey(idempotencyKey, "workspace invitations")
         val params = JSONObject().put("profile", profile).put("workspace", workspace)
         if (connectionMode != null) {
-            if (connectionMode !in setOf("webrtc", "email")) throw CoreException("invalid_request")
+            if (connectionMode !in setOf("webrtc", "email", "i2p")) {
+                throw CoreException("invalid_request")
+            }
             params.put("connection_mode", connectionMode)
         }
+        if (i2pAccessPoint != null) params.put("i2p_access_point", i2pAccessPoint)
+        if (i2pLabel != null) params.put("i2p_label", i2pLabel)
         return dispatch("workspace.invitation_create", params, idempotencyKey)
     }
 

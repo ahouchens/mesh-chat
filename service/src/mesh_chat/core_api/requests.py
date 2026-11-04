@@ -250,15 +250,25 @@ def parse_request(value, operations):
         return operation, params
     if operation in WORKSPACE_INVITATION_CREATE_OPERATIONS:
         params = value["params"]
-        allowed = {"profile", "workspace", "connection_mode"}
+        allowed = {"profile", "workspace", "connection_mode",
+                   "i2p_access_point", "i2p_label"}
+        mode = params.get("connection_mode") if isinstance(params, dict) else None
         if (not isinstance(params, dict)
                 or not {"profile", "workspace"} <= set(params)
                 or set(params) - allowed
-                or params.get("connection_mode") not in {None, "webrtc", "email"}
+                or mode not in {None, "webrtc", "email", "i2p"}
                 or "idempotency_key" not in value
                 or any(not isinstance(params.get(name), str)
                        or HANDLE.fullmatch(params[name]) is None
-                       for name in ("profile", "workspace"))):
+                       for name in ("profile", "workspace"))
+                or (mode == "i2p"
+                    and (not isinstance(params.get("i2p_access_point"), str)
+                         or not 1 <= len(params["i2p_access_point"]) <= 128
+                         or (params.get("i2p_label") is not None
+                             and (not isinstance(params["i2p_label"], str)
+                                  or len(params["i2p_label"]) > 64))))
+                or (mode != "i2p"
+                    and ("i2p_access_point" in params or "i2p_label" in params))):
             raise ApiFailure("invalid_request")
         return operation, params
     if operation in WORKSPACE_CHANNEL_CREATE_OPERATIONS:

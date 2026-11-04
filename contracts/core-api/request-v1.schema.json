@@ -179,8 +179,18 @@
             "connection_mode": {
               "enum": [
                 "webrtc",
-                "email"
+                "email",
+                "i2p"
               ]
+            },
+            "i2p_access_point": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "i2p_label": {
+              "type": "string",
+              "maxLength": 64
             }
           },
           "required": [

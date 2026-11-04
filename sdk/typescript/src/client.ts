@@ -273,7 +273,9 @@ export class CoreClient {
     profile: string,
     workspace: string,
     idempotencyKey: string,
-    connectionMode?: "webrtc" | "email",
+    connectionMode?: "webrtc" | "email" | "i2p",
+    i2pAccessPoint?: string,
+    i2pLabel?: string,
   ): Promise<WorkspaceInvitationView> {
     if (idempotencyKey.length < 16) {
       throw new ProtocolError("workspace invitations require a caller key");
@@ -281,6 +283,12 @@ export class CoreClient {
     const params: Record<string, unknown> = { profile, workspace };
     if (connectionMode !== undefined) {
       params.connection_mode = connectionMode;
+    }
+    if (i2pAccessPoint !== undefined) {
+      params.i2p_access_point = i2pAccessPoint;
+    }
+    if (i2pLabel !== undefined) {
+      params.i2p_label = i2pLabel;
     }
     return this.request<WorkspaceInvitationView>(
       "workspace.invitation_create",

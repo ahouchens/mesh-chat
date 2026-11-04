@@ -387,7 +387,8 @@ class CoreSession:
                 raise ApiFailure("invalid_request")
             invitation = self._workspace_admin.create_invitation(
                 target, inside, self._operation_id(grant, target, key),
-                params.get("connection_mode"))
+                params.get("connection_mode"),
+                params.get("i2p_access_point"), params.get("i2p_label"))
             return workspace_invitation_create_view(
                 params["profile"], params["workspace"], invitation)
         if operation in WORKSPACE_CHANNELS_OPERATIONS:

@@ -301,13 +301,18 @@ def workspace_invitation_create_view(profile, workspace, value):
             or len(value.document.encode("utf-8")) > 1048576
             or not isinstance(value.link, str) or not value.link
             or len(value.link) > 1048576
-            or value.connection_mode not in {None, "webrtc", "email"}):
+            or value.connection_mode not in {None, "webrtc", "email", "i2p"}
+            or (value.connection_mode == "i2p"
+                and (not isinstance(value.i2p_access_point, str)
+                     or not value.i2p_access_point))):
         raise ValueError("Invalid workspace invitation material")
     result = {"profile": profile, "workspace": workspace,
               "document": value.document, "link": value.link,
               "expires_at": _timestamp(value.expires_at)}
     if value.connection_mode is not None:
         result["connection_mode"] = value.connection_mode
+    if value.i2p_access_point is not None:
+        result["i2p_access_point"] = value.i2p_access_point
     return result
 
 

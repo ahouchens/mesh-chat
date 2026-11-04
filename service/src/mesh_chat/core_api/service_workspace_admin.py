@@ -89,11 +89,20 @@ class ServiceWorkspaceAdmin:
             return tuple(found[:MAX_REQUEST_IDS])
 
     def create_invitation(self, profile, workspace_id, operation_id,
-                          connection_mode=None):
+                          connection_mode=None, i2p_access_point=None,
+                          i2p_label=None):
         self._require_local(profile)
         if not isinstance(operation_id, str) or not operation_id:
             raise ApiFailure("invalid_request")
-        if connection_mode not in {None, "webrtc", "email"}:
+        if connection_mode not in {None, "webrtc", "email", "i2p"}:
+            raise ApiFailure("invalid_request")
+        if connection_mode == "i2p":
+            if (not isinstance(i2p_access_point, str)
+                    or not 1 <= len(i2p_access_point) <= 128
+                    or (i2p_label is not None
+                        and (not isinstance(i2p_label, str) or len(i2p_label) > 64))):
+                raise ApiFailure("invalid_request")
+        elif i2p_access_point is not None or i2p_label is not None:
             raise ApiFailure("invalid_request")
         with storage_errors():
             workspace = self._workspace(workspace_id)
@@ -101,7 +110,10 @@ class ServiceWorkspaceAdmin:
                 raise ApiFailure("forbidden")
             try:
                 outcome = self._service.create_workspace_invitation_command(
-                    workspace_id, operation_id, connection_mode=connection_mode)
+                    workspace_id, operation_id,
+                    connection_mode=connection_mode,
+                    i2p_access_point=i2p_access_point,
+                    i2p_label=i2p_label)
             except (ValidationError, ContactNotApproved, InvitationInvalid,
                     InvitationExpired) as error:
                 raise ApiFailure("invalid_request") from error
@@ -109,12 +121,14 @@ class ServiceWorkspaceAdmin:
             link = outcome.get("link") if isinstance(outcome, dict) else None
             expires = outcome.get("expires_at") if isinstance(outcome, dict) else None
             mode = outcome.get("connection_mode") if isinstance(outcome, dict) else None
+            access_point = outcome.get("i2p_access_point") if isinstance(outcome, dict) else None
             if (not isinstance(document, str) or not document
                     or not isinstance(link, str) or not link
                     or type(expires) not in {int, float}
-                    or mode not in {None, "webrtc", "email"}):
+                    or mode not in {None, "webrtc", "email", "i2p"}
+                    or (mode == "i2p" and not isinstance(access_point, str))):
                 raise ApiFailure("internal")
-            return WorkspaceInvitation(document, link, float(expires), mode)
+            return WorkspaceInvitation(document, link, float(expires), mode, access_point)
 
     def approve(self, profile, workspace_id, request_id, operation_id):
         self._require_local(profile)
