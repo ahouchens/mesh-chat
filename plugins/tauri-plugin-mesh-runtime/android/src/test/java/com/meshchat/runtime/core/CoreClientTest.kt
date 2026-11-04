@@ -227,7 +227,7 @@ class CoreClientTest {
         assertTrue(
             runCatching {
                 client.workspaceInvitationCreate(PROFILE, "w".repeat(64), "short")
-            }.exceptionOrNull() is CoreException,
+            }.exceptionOrNull() is IllegalArgumentException,
         )
     }
 
