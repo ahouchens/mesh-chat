@@ -82,6 +82,14 @@ def _native_peer(root: str, commands: Any, replies: Any, vault_key: bytes) -> No
                     with service._native_webrtc_lock:
                         service._native_webrtc_peers[payload["session_id"]] = payload["destination"]
                     result = {"bound": payload["session_id"]}
+                elif operation == "policy":
+                    runtime = service._connection_runtime
+                    result = {
+                        "connection_policy": service._connection_policy,
+                        "has_supervisor": runtime is not None,
+                        "permits_native": bool(
+                            runtime is not None and runtime.permits_native_work()),
+                    }
                 elif operation == "fault":
                     host.fault = payload["mode"]
                     result = {"mode": host.fault}
@@ -397,6 +405,21 @@ def test_native_contact_deletion_retires_the_carrier(tmp_path: Path) -> None:
         assert peers.call(0, "stats_safe", session_id="native-left")["present"] is False
         other = peers.command(1, "snapshot")["contacts"]
         assert any(row["id"] == contacts[1]["id"] for row in other)
+    finally:
+        peers.close()
+    assert all(process.exitcode == 0 for process in peers.processes)
+
+@pytest.mark.integration
+def test_native_delivery_uses_the_shared_supervisor_policy(tmp_path: Path) -> None:
+    peers, contacts, _ = _start_connected(tmp_path)
+    try:
+        policy = peers.call(0, "policy")
+        assert policy == {
+            "connection_policy": "shared-native",
+            "has_supervisor": True,
+            "permits_native": True,
+        }
+        _exchange(peers, contacts, 0, "Supervised native delivery")
     finally:
         peers.close()
     assert all(process.exitcode == 0 for process in peers.processes)
