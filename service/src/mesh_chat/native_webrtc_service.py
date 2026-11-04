@@ -181,6 +181,19 @@ class NativeWebRTCServiceMixin(NativeWebRTCControlMixin):
             runtime.permits_carrier(profile_id, Resource("native", physical))
             or runtime.permits_carrier(profile_id, Resource("native", session_id)))
 
+    def retire_native_peer(self, destination: str) -> list[str]:
+        """Close every native session bound to one contact destination."""
+        if not isinstance(destination, str):
+            return []
+        with self._native_webrtc_lock:
+            sessions = [
+                session for session, peer in self._native_webrtc_peers.items()
+                if peer == destination and session in self._native_webrtc_live
+            ]
+        for session in sessions:
+            self.native_webrtc_close(session)
+        return sessions
+
     def webrtc_detach_native(self, session_id: str) -> dict[str, Any]:
         bridge_id = self._native_webrtc_sessions.pop(session_id, None)
         if bridge_id is not None:

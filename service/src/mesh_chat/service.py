@@ -1702,6 +1702,7 @@ class MeshChatService(
         self.release_remote_scope("contact", contact_id)
         self.release_participant_scope("contact", contact_id)
         self._release_callback_hosts("contact", contact_id)
+        self.retire_native_peer(contact["destination_hash"])
         for record_id, record in list(self.store.items("route_generation")):
             if (
                 contact["destination_hash"] in record_id
