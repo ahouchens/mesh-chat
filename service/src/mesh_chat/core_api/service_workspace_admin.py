@@ -93,7 +93,7 @@ class ServiceWorkspaceAdmin:
         self._require_local(profile)
         if not isinstance(operation_id, str) or not operation_id:
             raise ApiFailure("invalid_request")
-        if connection_mode not in {None, "webrtc"}:
+        if connection_mode not in {None, "webrtc", "email"}:
             raise ApiFailure("invalid_request")
         with storage_errors():
             workspace = self._workspace(workspace_id)
@@ -112,7 +112,7 @@ class ServiceWorkspaceAdmin:
             if (not isinstance(document, str) or not document
                     or not isinstance(link, str) or not link
                     or type(expires) not in {int, float}
-                    or mode not in {None, "webrtc"}):
+                    or mode not in {None, "webrtc", "email"}):
                 raise ApiFailure("internal")
             return WorkspaceInvitation(document, link, float(expires), mode)
 

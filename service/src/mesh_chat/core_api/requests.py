@@ -254,7 +254,7 @@ def parse_request(value, operations):
         if (not isinstance(params, dict)
                 or not {"profile", "workspace"} <= set(params)
                 or set(params) - allowed
-                or params.get("connection_mode") not in {None, "webrtc"}
+                or params.get("connection_mode") not in {None, "webrtc", "email"}
                 or "idempotency_key" not in value
                 or any(not isinstance(params.get(name), str)
                        or HANDLE.fullmatch(params[name]) is None

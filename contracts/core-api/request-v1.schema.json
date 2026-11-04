@@ -177,7 +177,10 @@
               "$ref": "#/$defs/handle"
             },
             "connection_mode": {
-              "const": "webrtc"
+              "enum": [
+                "webrtc",
+                "email"
+              ]
             }
           },
           "required": [
