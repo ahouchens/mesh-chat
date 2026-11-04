@@ -177,3 +177,23 @@ def test_relay_only_offer_has_no_direct_candidates_without_turn():
         assert all(" typ relay" in line for line in candidates), candidates
     finally:
         host_instance.shutdown()
+
+
+def test_relay_only_answer_filters_direct_candidates():
+    left, left_events = host()
+    right, right_events = host()
+    ice = json.dumps({"iceServers": [], "iceTransportPolicy": "relay"})
+    try:
+        offer = json.loads(left.createOffer("offer", json.dumps(ICE), json.dumps(CHANNELS)))
+        assert offer["ok"], offer
+        answer = json.loads(right.acceptOffer(
+            "answer", offer["sdp"], ice, json.dumps(CHANNELS)))
+        assert answer["ok"], answer
+        candidates = [
+            line for line in answer["sdp"].splitlines()
+            if line.startswith("a=candidate:")
+        ]
+        assert all(" typ relay" in line for line in candidates), candidates
+    finally:
+        left.shutdown()
+        right.shutdown()
