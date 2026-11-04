@@ -281,6 +281,18 @@ def _initialize(request: dict[str, Any], writer: FrameWriter, *, desktop_transpo
     return service
 
 
+def _start_core_api_endpoint(service):
+    """Start the app-owned facade endpoint when the trusted launcher asks for it."""
+    name = os.environ.get("MESH_CHAT_CORE_API_PIPE")
+    image = os.environ.get("MESH_CHAT_CORE_API_CLIENT_IMAGE")
+    if name is None and image is None:
+        return None
+    if os.name != "nt" or not name or not image:
+        raise ValidationError("Core API pipe configuration is invalid")
+    from .core_api.sidecar_host import start
+    return start(service, pipe_name=name, client_image=image)
+
+
 def main() -> int:
     if sys.argv[1:] == ["--direct-bootstrap"]:
         from .direct_bootstrap_worker import main as bootstrap_main
@@ -290,6 +302,7 @@ def main() -> int:
     service: MeshChatService | None = None
     desktop_transport = None
     native_webrtc = None
+    core_api_endpoint = None
     requests = None
     stage = "read_initial"
     command = "initialize"
@@ -325,6 +338,7 @@ def main() -> int:
                     "result": service.snapshot(),
                 }
             )
+            core_api_endpoint = _start_core_api_endpoint(service)
         except Exception as exc:
             report_failure(stage, exc, command)
             writer.write(_error_response(initial.get("id"), exc))
@@ -352,6 +366,11 @@ def main() -> int:
         report_failure(stage, exc, command, requests)
         return 3
     finally:
+        if core_api_endpoint is not None:
+            try:
+                core_api_endpoint.close()
+            except Exception as exc:
+                report_failure("shutdown", exc, command, requests)
         if desktop_transport is not None:
             desktop_transport.shutdown()
         if native_webrtc is not None:

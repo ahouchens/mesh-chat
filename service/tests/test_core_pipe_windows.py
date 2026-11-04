@@ -161,6 +161,23 @@ def test_endpoint_serves_a_negotiated_session_to_an_allowed_client(service):
         server.close()
 
 
+def test_sidecar_host_serves_owner_scope_operations(service):
+    from mesh_chat.core_api.sidecar_host import start
+
+    name = pipe_name()
+    server = start(service, pipe_name=name, client_image=current_image())
+    try:
+        client = connect(name)
+        client.write(request("runtime.capabilities"))
+        reply = json.loads(client.readline())
+        assert reply["ok"] is True
+        assert "workspace.invitation_create" in reply["result"]["operations"]
+        assert "peer.approve" in reply["result"]["operations"]
+        client.close()
+    finally:
+        server.close()
+
+
 def test_an_unlisted_client_image_is_rejected_without_a_session(service):
     name = pipe_name()
     server = endpoint(name, images=(r"C:\Windows\System32\notepad.exe",))
