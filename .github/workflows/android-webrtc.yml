@@ -72,6 +72,7 @@ jobs:
           df -h
           rm -rf "$ANDROID_SDK_ROOT/ndk/28.2.13676358" || true
           rm -rf "$HOME/.rustup" "$HOME/.cargo" "$HOME/.npm" || true
+          rm -rf src-tauri/target node_modules src-tauri/gen/android/app/build || true
           df -h
       - name: Test Chromium interop and Android signalling mailbox recovery
         timeout-minutes: 45
