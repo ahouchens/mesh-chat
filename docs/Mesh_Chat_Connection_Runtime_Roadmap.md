@@ -1164,8 +1164,9 @@ M2 - shared policy
 - [x] Native host cancellation after offer, accept and answer, Android
       closeAll retirement, and fail-closed frame/channel bounds, with exact
       session absence and reusable capacity.
-- [ ] Partition/revocation and remaining resource-disposal parity across both
-      platforms.
+- [x] Contact deletion retires the bound native carrier in a two-sidecar test,
+      leaves the other peer untouched and both sidecars exit cleanly.
+- [ ] Partition and broader revocation/disposal parity across both platforms.
 - [ ] Removal of migrated legacy loops and promotion of the shared owner. Neither is
       permitted before the gates above pass.
 
