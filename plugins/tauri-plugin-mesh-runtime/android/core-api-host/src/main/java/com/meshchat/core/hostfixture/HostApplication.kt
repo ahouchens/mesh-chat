@@ -45,20 +45,19 @@ class HostApplication : Application() {
             val service = bridge.callAttr("__getattribute__", "_service")
             val store = service.callAttr("__getattribute__", "store")
             val now = System.currentTimeMillis() / 1000.0
-            store.callAttr(
-                "put", "contact", "fixture-peer-0001",
-                mapOf(
-                    "id" to "fixture-peer-0001",
-                    "display_name" to "Fixture peer",
-                    "destination_hash" to "ab".repeat(16),
-                    "identity_hash" to "cd".repeat(16),
-                    "public_identity" to "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=",
-                    "trust" to "approved",
-                    "created_at" to now,
-                    "updated_at" to now,
-                    "connection_hints" to emptyList<String>(),
-                ),
-            )
+            val contact = JSONObject()
+                .put("id", "fixture-peer-0001")
+                .put("display_name", "Fixture peer")
+                .put("destination_hash", "ab".repeat(16))
+                .put("identity_hash", "cd".repeat(16))
+                .put("public_identity", "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=")
+                .put("trust", "approved")
+                .put("created_at", now)
+                .put("updated_at", now)
+                .put("connection_hints", org.json.JSONArray())
+            val decoded = Python.getInstance().getModule("json")
+                .callAttr("loads", contact.toString())
+            store.callAttr("put", "contact", "fixture-peer-0001", decoded)
         }
     }
 }
