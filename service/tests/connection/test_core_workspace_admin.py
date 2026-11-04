@@ -634,7 +634,7 @@ def test_owner_creates_a_signed_workspace_invitation_through_the_facade(admin_pa
     assert joiner.preview_workspace_invitation(native["result"]["document"])["name"] == "Core"
 
     email = session.request({
-        "api_version": 1, "request_id": "request:6",
+        "api_version": 1, "request_id": "request:7",
         "operation": "workspace.invitation_create",
         "params": {"profile": profile, "workspace": workspace,
                    "connection_mode": "email"},
@@ -644,7 +644,7 @@ def test_owner_creates_a_signed_workspace_invitation_through_the_facade(admin_pa
 
     relay = "a" * 52 + ".b32.i2p"
     i2p = session.request({
-        "api_version": 1, "request_id": "request:6",
+        "api_version": 1, "request_id": "request:7",
         "operation": "workspace.invitation_create",
         "params": {"profile": profile, "workspace": workspace,
                    "connection_mode": "i2p", "i2p_access_point": relay,
@@ -655,9 +655,18 @@ def test_owner_creates_a_signed_workspace_invitation_through_the_facade(admin_pa
     assert i2p["result"]["connection_mode"] == "i2p"
     assert i2p["result"]["i2p_access_point"] == relay
 
+    participant = session.request({
+        "api_version": 1, "request_id": "request:7",
+        "operation": "workspace.invitation_create",
+        "params": {"profile": profile, "workspace": workspace,
+                   "connection_mode": "participant"},
+        "idempotency_key": "p" * 32,
+    })
+    assert participant["error"]["code"] == "unavailable", participant
+
     consumer, _ = open_client(owner, permissions=("observe", "read"))
     denied = consumer.request({
-        "api_version": 1, "request_id": "request:6",
+        "api_version": 1, "request_id": "request:7",
         "operation": "workspace.invitation_create",
         "params": {"profile": profile, "workspace": workspace},
         "idempotency_key": "j" * 32,

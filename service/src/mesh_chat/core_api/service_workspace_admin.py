@@ -2,7 +2,8 @@
 
 import uuid
 
-from ..errors import ContactNotApproved, InvitationExpired, InvitationInvalid, ValidationError
+from ..errors import (ContactNotApproved, DirectConnectionUnavailable, InvitationExpired,
+                      InvitationInvalid, ValidationError)
 from .errors import ApiFailure
 from .service_messages import storage_errors
 from .workspace_admin import (ChannelEdit, ChannelSummary, DeviceLink, DeviceLinkPreview,
@@ -94,7 +95,7 @@ class ServiceWorkspaceAdmin:
         self._require_local(profile)
         if not isinstance(operation_id, str) or not operation_id:
             raise ApiFailure("invalid_request")
-        if connection_mode not in {None, "webrtc", "email", "i2p"}:
+        if connection_mode not in {None, "webrtc", "email", "i2p", "participant"}:
             raise ApiFailure("invalid_request")
         if connection_mode == "i2p":
             if (not isinstance(i2p_access_point, str)
@@ -114,6 +115,8 @@ class ServiceWorkspaceAdmin:
                     connection_mode=connection_mode,
                     i2p_access_point=i2p_access_point,
                     i2p_label=i2p_label)
+            except DirectConnectionUnavailable as error:
+                raise ApiFailure("unavailable") from error
             except (ValidationError, ContactNotApproved, InvitationInvalid,
                     InvitationExpired) as error:
                 raise ApiFailure("invalid_request") from error
@@ -125,7 +128,7 @@ class ServiceWorkspaceAdmin:
             if (not isinstance(document, str) or not document
                     or not isinstance(link, str) or not link
                     or type(expires) not in {int, float}
-                    or mode not in {None, "webrtc", "email", "i2p"}
+                    or mode not in {None, "webrtc", "email", "i2p", "participant"}
                     or (mode == "i2p" and not isinstance(access_point, str))):
                 raise ApiFailure("internal")
             return WorkspaceInvitation(document, link, float(expires), mode, access_point)

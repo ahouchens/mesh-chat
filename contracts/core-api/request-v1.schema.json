@@ -180,7 +180,8 @@
               "enum": [
                 "webrtc",
                 "email",
-                "i2p"
+                "i2p",
+                "participant"
               ]
             },
             "i2p_access_point": {

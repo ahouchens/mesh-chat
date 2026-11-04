@@ -301,7 +301,7 @@ def workspace_invitation_create_view(profile, workspace, value):
             or len(value.document.encode("utf-8")) > 1048576
             or not isinstance(value.link, str) or not value.link
             or len(value.link) > 1048576
-            or value.connection_mode not in {None, "webrtc", "email", "i2p"}
+            or value.connection_mode not in {None, "webrtc", "email", "i2p", "participant"}
             or (value.connection_mode == "i2p"
                 and (not isinstance(value.i2p_access_point, str)
                      or not value.i2p_access_point))):

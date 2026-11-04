@@ -164,7 +164,7 @@ class CoreClient private constructor(private val transport: CoreTransport) {
         requireKey(idempotencyKey, "workspace invitations")
         val params = JSONObject().put("profile", profile).put("workspace", workspace)
         if (connectionMode != null) {
-            if (connectionMode !in setOf("webrtc", "email", "i2p")) {
+            if (connectionMode !in setOf("webrtc", "email", "i2p", "participant")) {
                 throw CoreException("invalid_request")
             }
             params.put("connection_mode", connectionMode)

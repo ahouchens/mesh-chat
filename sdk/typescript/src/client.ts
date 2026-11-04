@@ -273,7 +273,7 @@ export class CoreClient {
     profile: string,
     workspace: string,
     idempotencyKey: string,
-    connectionMode?: "webrtc" | "email" | "i2p",
+    connectionMode?: "webrtc" | "email" | "i2p" | "participant",
     i2pAccessPoint?: string,
     i2pLabel?: string,
   ): Promise<WorkspaceInvitationView> {
