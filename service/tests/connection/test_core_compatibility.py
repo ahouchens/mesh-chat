@@ -31,6 +31,14 @@ def test_declared_compatibility_matches_the_contract_inventory():
     assert declaration["public_api"]["minor"] == manifest["api_minor"]
     assert declaration["status"] == "experimental_unfrozen"
     assert declaration["peer_wire"]["changed"] is False
+    service = tomllib.loads((ROOT / "service/pyproject.toml").read_text())
+    assert declaration["python_service"]["version"] == service["project"]["version"]
+    assert declaration["python_service"]["packaged"] is True
+    assert declaration["python_service"]["published"] is False
+    package = json.loads((ROOT / "sdk/typescript/package.json").read_text())
+    assert declaration["typescript_client"]["version"] == package["version"]
+    kotlin = (ROOT / "sdk/kotlin/build.gradle.kts").read_text()
+    assert f'version = "{declaration["kotlin_client"]["version"]}"' in kotlin
     assert declaration["kotlin_client"] == {"exists": True,
         "status": "experimental_component", "version": "0.2.0-experimental",
         "packaged": True, "published": False,

@@ -1289,8 +1289,10 @@ M5 - supported reusable core
       (unpublished).
 - [x] Experimental Kotlin client AAR and local Maven staging, with private
       implementation exclusion checks and an independently compiled APK consumer.
-- [ ] Published SDK/CLI artifacts and a supported
-      compatibility matrix with upgrade fixtures.
+- [x] Local compatibility matrix binds service, Python, TypeScript and Kotlin
+      versions to the contract inventory. It is explicitly unpublished.
+- [ ] Published SDK/CLI artifacts and a supported compatibility matrix with
+      upgrade fixtures.
 - [ ] Mesh Chat messaging routed through the supported facade.
 - [ ] Independent Windows and Android consumers built only from distribution
       artifacts and documentation.
