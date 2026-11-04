@@ -276,7 +276,11 @@ export function ConnectionDiagnostics({ full = false }: { full?: boolean }) {
     try { facadeValue = await coreApiCapabilities(); } catch { /* Older hosts and mobile builds may not expose the facade. */ }
     try { report = await serviceCommand("connection_diagnostics"); } catch { /* Copy app information even when the service cannot start. */ }
     const text = mode === "version"
-      ? JSON.stringify({ ...versionDetails(build), service_version: version(object(report).service_version) }, null, 2)
+      ? JSON.stringify({
+        ...versionDetails(build),
+        service_version: version(object(report).service_version),
+        ...(facadeValue ? { core_api: facadeValue } : {}),
+      }, null, 2)
       : diagnosticReport(build, report, mode === "log", host, facadeValue);
     try { await navigator.clipboard.writeText(text); setFeedback("Copied"); }
     catch { setFallback(text); setFeedback("Copy is unavailable. Select the report below or save it to a file."); }

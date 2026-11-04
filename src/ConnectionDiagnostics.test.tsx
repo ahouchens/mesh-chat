@@ -99,7 +99,9 @@ it("confirms copy only after clipboard success and keeps Android installed metad
   expect(screen.queryByText("Copied")).toBeNull();
   finish();
   expect(await screen.findByText("Copied")).toBeTruthy();
-  expect(JSON.parse(write.mock.calls[0][0] as string).android_version_code).toBe(2050);
+  const versionReport = JSON.parse(write.mock.calls[0][0] as string);
+  expect(versionReport.android_version_code).toBe(2050);
+  expect(versionReport.core_api.api_major).toBe(1);
 });
 
 it("reports component mismatch instead of relabeling an older native component", () => {
