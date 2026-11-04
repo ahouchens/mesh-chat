@@ -1159,8 +1159,10 @@ M2 - shared policy
 - [ ] Participant/manual/email/I2P pairing modes in the shared composition.
 - [x] Packaged pairing cancellation and unapproved-restart checks (WebView2
       component evidence).
-- [ ] Cancellation at every handshake phase, plus partition/revocation and
-      resource-disposal parity across both platforms.
+- [x] Native host cancellation after offer, accept and answer on Windows and
+      Android, with exact session retirement and reusable capacity.
+- [ ] Partition/revocation and remaining resource-disposal parity across both
+      platforms.
 - [ ] Removal of migrated legacy loops and promotion of the shared owner. Neither is
       permitted before the gates above pass.
 
