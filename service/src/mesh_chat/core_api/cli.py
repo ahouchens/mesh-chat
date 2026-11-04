@@ -107,6 +107,14 @@ def build_parser():
     device_preview.add_argument("--document-file", required=True)
     workspace_join = commands.add_parser("workspace-join", help="join from a signed invitation")
     workspace_join.add_argument("--document-file", required=True)
+    invitation_create = commands.add_parser("workspace-invitation-create",
+                                            help="create signed workspace invitation material")
+    invitation_create.add_argument("--workspace", required=True)
+    invitation_create.add_argument("--mode", choices=("default", "webrtc", "email", "i2p"),
+                                   default="default")
+    invitation_create.add_argument("--i2p-access-point")
+    invitation_create.add_argument("--i2p-label")
+    invitation_create.add_argument("--key", required=True)
     invitation_preview = commands.add_parser("workspace-invitation-preview",
                                              help="preview a signed workspace invitation")
     invitation_preview.add_argument("--document-file", required=True)
@@ -240,6 +248,11 @@ def execute(args, client):
     if args.command == "workspace-join":
         return client.request("workspace.join",
                               {"profile": profile, "document": read_document(args.document_file)})
+    if args.command == "workspace-invitation-create":
+        mode = None if args.mode == "default" else args.mode
+        return client.workspace_invitation_create(
+            profile, args.workspace, args.key, connection_mode=mode,
+            i2p_access_point=args.i2p_access_point, i2p_label=args.i2p_label)
     if args.command == "workspace-invitation-preview":
         return client.workspace_preview(profile, read_document(args.document_file))
     if args.command == "workspace-channel-members":
