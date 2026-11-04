@@ -1227,8 +1227,8 @@ M5 - supported reusable core
       the same message after a host-process force-stop and rebind, rejects a
       changed payload for the repeated key, and leaves no duplicate record.
 - [x] Installed-wheel Windows consumer performs the enqueue/query round trip,
-      repeated-key handle reuse and changed-payload conflict over the named pipe
-      in consumer and owner scopes.
+      repeated-key handle reuse, changed-payload conflict and unknown-peer
+      rejection over the named pipe in consumer and owner scopes.
 - [ ] Full independent Android messaging consumer: pairing, transport delivery,
       delivery receipts, partition recovery and the remaining SC21–SC26
       qualification.
