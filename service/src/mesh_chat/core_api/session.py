@@ -28,7 +28,7 @@ from .views import (
     workspace_channel_members_view,
     workspace_channel_update_view, workspace_channels_view, workspace_join_view,
     workspace_list_view, workspace_member_role_view, workspace_members_view,
-    workspace_preview_view, workspace_requests_view,
+    workspace_invitation_create_view, workspace_preview_view, workspace_requests_view,
 )
 from .errors import ApiFailure
 from .limits import MAX_FRAME_BYTES, MAX_REQUEST_JSON_DEPTH, MAX_REQUEST_JSON_TOKENS
@@ -49,6 +49,7 @@ from .requests import (
     WORKSPACE_DEVICE_LINK_DECLINE_OPERATIONS, WORKSPACE_DEVICE_LINK_PREVIEW_OPERATIONS,
     WORKSPACE_DEVICE_LINK_SUBMIT_OPERATIONS, WORKSPACE_DEVICE_LINKS_OPERATIONS,
     WORKSPACE_CHANNELS_OPERATIONS, WORKSPACE_LIST_OPERATIONS, WORKSPACE_MEMBERS_OPERATIONS,
+    WORKSPACE_INVITATION_CREATE_OPERATIONS,
     WORKSPACE_PREVIEW_OPERATIONS,
     WORKSPACE_REQUESTS_OPERATIONS, WORKSPACE_ROLE_OPERATIONS, REQUEST_ID, parse_request,
 )
@@ -116,6 +117,7 @@ PERMISSION_BY_OPERATION = {
     "workspace.join_decline": "approve",
     "workspace.join_requests": "approve",
     "workspace.member_role": "approve",
+    "workspace.invitation_create": "approve",
     "workspace.members": "approve",
     "workspace.policy_update": "approve",
     "workspace.query": "read",
@@ -203,6 +205,7 @@ class CoreSession:
             (WORKSPACE_DECLINE_OPERATIONS, self._workspace_admin),
             (WORKSPACE_MEMBERS_OPERATIONS, self._workspace_admin),
             (WORKSPACE_ROLE_OPERATIONS, self._workspace_admin),
+            (WORKSPACE_INVITATION_CREATE_OPERATIONS, self._workspace_admin),
             (WORKSPACE_CHANNELS_OPERATIONS, self._workspace_admin),
             (WORKSPACE_CHANNEL_CREATE_OPERATIONS, self._workspace_admin),
             (WORKSPACE_CHANNEL_MEMBERS_OPERATIONS, self._workspace_admin),
@@ -248,6 +251,7 @@ class CoreSession:
                                                         "workspace.join_approve",
                                                         "workspace.join_decline",
                                                         "workspace.member_role",
+                                                        "workspace.invitation_create",
                                                         "workspace.channel_create",
                                                         "workspace.channel_members_update",
                                                         "workspace.channel_update",
@@ -374,6 +378,17 @@ class CoreSession:
                 self._operation_id(grant, target, key))
             return workspace_member_role_view(
                 params["profile"], params["workspace"], params["member"], change)
+        if operation in WORKSPACE_INVITATION_CREATE_OPERATIONS:
+            target = profiles.get(params["profile"])
+            if target is None:
+                raise ApiFailure("forbidden")
+            inside = self._workspace_target(grant, target, params["workspace"])
+            if key is None:
+                raise ApiFailure("invalid_request")
+            invitation = self._workspace_admin.create_invitation(
+                target, inside, self._operation_id(grant, target, key))
+            return workspace_invitation_create_view(
+                params["profile"], params["workspace"], invitation)
         if operation in WORKSPACE_CHANNELS_OPERATIONS:
             target = profiles.get(params["profile"])
             if target is None:

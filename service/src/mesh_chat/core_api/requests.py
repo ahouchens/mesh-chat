@@ -27,6 +27,7 @@ WORKSPACE_APPROVE_OPERATIONS = ("workspace.join_approve",)
 WORKSPACE_DECLINE_OPERATIONS = ("workspace.join_decline",)
 WORKSPACE_MEMBERS_OPERATIONS = ("workspace.members",)
 WORKSPACE_ROLE_OPERATIONS = ("workspace.member_role",)
+WORKSPACE_INVITATION_CREATE_OPERATIONS = ("workspace.invitation_create",)
 WORKSPACE_CHANNELS_OPERATIONS = ("workspace.channels",)
 WORKSPACE_CHANNEL_CREATE_OPERATIONS = ("workspace.channel_create",)
 WORKSPACE_CHANNEL_MEMBERS_OPERATIONS = ("workspace.channel_members",)
@@ -73,7 +74,7 @@ def parse_request(value, operations):
                       "workspace.device_link_submit", "workspace.device_link_approve",
                       "workspace.device_link_decline", "workspace.channel_transfer_offer",
                       "workspace.channel_transfer_accept", "workspace.policy_update",
-                      "workspace.device_remove"):
+                      "workspace.device_remove", "workspace.invitation_create"):
         fields.add("idempotency_key")
     if set(value) != fields:
         raise ApiFailure("invalid_request")
@@ -245,6 +246,15 @@ def parse_request(value, operations):
                 or not isinstance(params.get("topic"), str) or len(params["topic"]) > 1024
                 or any(not isinstance(params.get(name), str) or HANDLE.fullmatch(params[name]) is None
                        for name in ("profile", "workspace", "channel"))):
+            raise ApiFailure("invalid_request")
+        return operation, params
+    if operation in WORKSPACE_INVITATION_CREATE_OPERATIONS:
+        params = value["params"]
+        if (not isinstance(params, dict) or set(params) != {"profile", "workspace"}
+                or "idempotency_key" not in value
+                or any(not isinstance(params.get(name), str)
+                       or HANDLE.fullmatch(params[name]) is None
+                       for name in ("profile", "workspace"))):
             raise ApiFailure("invalid_request")
         return operation, params
     if operation in WORKSPACE_CHANNEL_CREATE_OPERATIONS:
@@ -426,6 +436,7 @@ COMPONENT_OPERATIONS = (
     + WORKSPACE_DECLINE_OPERATIONS
     + WORKSPACE_MEMBERS_OPERATIONS
     + WORKSPACE_ROLE_OPERATIONS
+    + WORKSPACE_INVITATION_CREATE_OPERATIONS
     + WORKSPACE_CHANNELS_OPERATIONS
     + WORKSPACE_CHANNEL_CREATE_OPERATIONS
     + WORKSPACE_CHANNEL_MEMBERS_OPERATIONS

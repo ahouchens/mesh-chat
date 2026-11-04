@@ -94,12 +94,22 @@ class JoinApproval:
     state: str
 
 
+@dataclass(frozen=True)
+class WorkspaceInvitation:
+    document: str
+    link: str
+    expires_at: float
+
+
 class WorkspaceAdmin(Protocol):
     def list(self, profile: str) -> tuple[WorkspaceSummary, ...]: ...
 
     def requests(self, profile: str, workspace: str) -> tuple[JoinRequestSummary, ...]: ...
 
     def request_ids(self, profile: str, workspace: str) -> tuple[str, ...]: ...
+
+    def create_invitation(self, profile: str, workspace: str,
+                          operation_id: str) -> WorkspaceInvitation: ...
 
     def approve(self, profile: str, workspace: str, request: str,
                 operation_id: str) -> JoinApproval: ...

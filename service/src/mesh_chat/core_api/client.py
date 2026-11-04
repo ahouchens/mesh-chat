@@ -140,6 +140,11 @@ class CoreClient:
     def workspace_channels(self, handle, workspace):
         return self.request("workspace.channels", {"profile": handle, "workspace": workspace})
 
+    def workspace_invitation_create(self, handle, workspace, key):
+        return self.request("workspace.invitation_create",
+                            {"profile": handle, "workspace": workspace},
+                            idempotency_key=key)
+
     def workspace_channel_create(self, handle, workspace, name, key, *,
                                  visibility="public", members=None):
         if not isinstance(name, str) or not 1 <= len(name) <= 64:

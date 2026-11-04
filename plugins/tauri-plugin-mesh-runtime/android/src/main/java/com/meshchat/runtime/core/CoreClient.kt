@@ -153,6 +153,19 @@ class CoreClient private constructor(private val transport: CoreTransport) {
     fun workspaceChannels(profile: String, workspace: String): JSONObject =
         request("workspace.channels", JSONObject().put("profile", profile).put("workspace", workspace))
 
+    fun workspaceInvitationCreate(
+        profile: String,
+        workspace: String,
+        idempotencyKey: String,
+    ): JSONObject {
+        requireKey(idempotencyKey, "workspace invitations")
+        return dispatch(
+            "workspace.invitation_create",
+            JSONObject().put("profile", profile).put("workspace", workspace),
+            idempotencyKey,
+        )
+    }
+
     fun workspaceChannelCreate(
         profile: String,
         workspace: String,

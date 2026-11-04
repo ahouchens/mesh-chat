@@ -592,3 +592,41 @@ def test_reusing_one_caller_key_across_operations_fails_closed(admin_pair):
                                        workspace=workspace))["result"]["channels"]
     names = [item["name"] for item in channels]
     assert "Collision" in names and "Replayed" not in names
+
+
+def test_owner_creates_a_signed_workspace_invitation_through_the_facade(admin_pair):
+    owner, joiner, _ = admin_pair
+    session, profile = open_client(owner)
+    workspace = session.request(request("workspace.query", profile=profile)
+                                )["result"]["workspaces"][0]["workspace"]
+    key = "i" * 32
+    created = session.request({
+        "api_version": 1, "request_id": "request:1",
+        "operation": "workspace.invitation_create",
+        "params": {"profile": profile, "workspace": workspace},
+        "idempotency_key": key,
+    })
+    assert created["ok"], created
+    Draft202012Validator(
+        json.loads((CONTRACTS / "workspace-invitation-create-result-v1.schema.json").read_text())
+    ).validate(created)
+    document = created["result"]["document"]
+    assert joiner.preview_workspace_invitation(document)["name"] == "Core"
+    assert created["result"]["link"].startswith("meshchat://workspace/")
+    replay = session.request({
+        "api_version": 1, "request_id": "request:2",
+        "operation": "workspace.invitation_create",
+        "params": {"profile": profile, "workspace": workspace},
+        "idempotency_key": key,
+    })
+    assert replay["result"] == created["result"]
+
+    consumer, _ = open_client(owner, permissions=("observe", "read"))
+    denied = consumer.request({
+        "api_version": 1, "request_id": "request:3",
+        "operation": "workspace.invitation_create",
+        "params": {"profile": profile, "workspace": workspace},
+        "idempotency_key": "j" * 32,
+    })
+    assert denied["error"]["code"] == "forbidden", denied
+

@@ -293,6 +293,20 @@ def workspace_member_role_view(profile, workspace, member, value):
             "role": value.role}
 
 
+def workspace_invitation_create_view(profile, workspace, value):
+    if any(not isinstance(item, str) or re.fullmatch(r"[A-Za-z0-9_-]{16,128}", item) is None
+           for item in (profile, workspace)):
+        raise ValueError("Invalid workspace invitation handle")
+    if (not isinstance(value.document, str) or not value.document
+            or len(value.document.encode("utf-8")) > 1048576
+            or not isinstance(value.link, str) or not value.link
+            or len(value.link) > 1048576):
+        raise ValueError("Invalid workspace invitation material")
+    return {"profile": profile, "workspace": workspace,
+            "document": value.document, "link": value.link,
+            "expires_at": _timestamp(value.expires_at)}
+
+
 def workspace_channels_view(profile, workspace, items):
     if any(not isinstance(item, str) or re.fullmatch(r"[A-Za-z0-9_-]{16,128}", item) is None
            for item in (profile, workspace)):

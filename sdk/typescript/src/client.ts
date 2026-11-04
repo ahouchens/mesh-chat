@@ -52,6 +52,7 @@ import type {
   WorkspaceMemberRoleView,
   WorkspaceMembersView,
   WorkspacePreviewView,
+  WorkspaceInvitationView,
 } from "./types.js";
 
 export const DEFAULT_TIMEOUT_MS = 30_000;
@@ -266,6 +267,21 @@ export class CoreClient {
 
   async workspaceChannels(profile: string, workspace: string): Promise<WorkspaceChannelsView> {
     return this.request<WorkspaceChannelsView>("workspace.channels", { profile, workspace });
+  }
+
+  async workspaceInvitationCreate(
+    profile: string,
+    workspace: string,
+    idempotencyKey: string,
+  ): Promise<WorkspaceInvitationView> {
+    if (idempotencyKey.length < 16) {
+      throw new ProtocolError("workspace invitations require a caller key");
+    }
+    return this.request<WorkspaceInvitationView>(
+      "workspace.invitation_create",
+      { profile, workspace },
+      { idempotencyKey },
+    );
   }
 
   async workspaceChannelCreate(

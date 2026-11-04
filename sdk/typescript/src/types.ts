@@ -179,6 +179,14 @@ export interface WorkspaceChannelsView {
   channels: WorkspaceChannel[];
 }
 
+export interface WorkspaceInvitationView {
+  profile: string;
+  workspace: string;
+  document: string;
+  link: string;
+  expires_at: number;
+}
+
 export interface WorkspaceChannelCreateView {
   profile: string;
   workspace: string;

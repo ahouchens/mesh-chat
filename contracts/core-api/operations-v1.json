@@ -32,6 +32,7 @@
     "workspace.members",
     "workspace.member_role",
     "workspace.channels",
+    "workspace.invitation_create",
     "workspace.channel_create",
     "workspace.channel_members",
     "workspace.channel_members_update",
@@ -186,6 +187,13 @@
     },
     {
       "operation": "workspace.channel_create",
+      "permission": "approve",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "caller_profile_operation_key"
+    },
+    {
+      "operation": "workspace.invitation_create",
       "permission": "approve",
       "scope": "profile",
       "mutation": true,
