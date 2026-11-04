@@ -1156,7 +1156,9 @@ M2 - shared policy
       invitation material, joiner previews/joins, owner approves, and both
       members are visible; consumer write grants stay denied.
 - [x] WebRTC, email and I2P workspace invitation modes through the facade.
-- [ ] Participant/manual/email/I2P pairing modes in the shared composition.
+- [x] Participant workspace invitation contract returns typed unavailable when no
+      direct host exists; participant connectivity remains unqualified.
+- [ ] Manual workspace pairing mode and participant connectivity qualification.
 - [x] Packaged pairing cancellation and unapproved-restart checks (WebView2
       component evidence).
 - [x] Native host cancellation after offer, accept and answer, Android
