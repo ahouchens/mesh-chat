@@ -1202,6 +1202,9 @@ M4 - headless messaging
       (component; rollback host retained).
 - [x] Durable two-process Reticulum messages and application receipts over the
       native DataChannel (component; legacy bridge policy).
+- [x] Relay-only native offers expose relay candidates only; with no TURN server
+      the filtered SDP has no direct candidates. Actual TURN/forced-relay
+      connectivity remains unqualified.
 - [ ] Full native messaging promotion: supervisor-owned policy, Windows-Android
       and Windows-WebView interoperability, TURN and forced relay.
 - [x] 100 packaged native transport offer/answer/open/control/close cycles with
