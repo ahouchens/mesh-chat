@@ -1224,8 +1224,10 @@ M5 - supported reusable core
       with four cross-UID Binder cases on the API 35 emulator at `461c2e9`.
 - [x] Independent Android consumer enqueues and reads a message through the
       public Binder SDK against a host-owned approved fixture contact, queries
-      the same message after a host-process force-stop and rebind, and receives
-      the same handle from a repeated idempotency key with no duplicate record.
+      the same message after a host-process force-stop and rebind, rejects a
+      changed payload for the repeated key, and leaves no duplicate record.
+- [x] Installed-wheel Windows consumer performs the same enqueue/query round
+      trip over the named pipe in consumer and owner scopes.
 - [ ] Full independent Android messaging consumer: pairing, transport delivery,
       delivery receipts, partition recovery and the remaining SC21–SC26
       qualification.
