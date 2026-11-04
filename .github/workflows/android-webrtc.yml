@@ -67,6 +67,12 @@ jobs:
         run: |
           node ../../../scripts/build_desktop_transport_fixture.mjs
           ./gradlew :webrtc-smoke:assembleReleaseAndroidTest -PmeshWebRtcSmoke=true -PmeshRuntimeAbis=x86_64 --no-configuration-cache
+      - name: Free disk for the emulator system image
+        run: |
+          df -h
+          rm -rf "$ANDROID_SDK_ROOT/ndk/28.2.13676358" || true
+          rm -rf "$HOME/.rustup" "$HOME/.cargo" "$HOME/.npm" || true
+          df -h
       - name: Test Chromium interop and Android signalling mailbox recovery
         timeout-minutes: 45
         uses: reactivecircus/android-emulator-runner@v2
