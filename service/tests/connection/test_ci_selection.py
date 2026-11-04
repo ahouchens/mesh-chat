@@ -310,3 +310,15 @@ def test_native_windows_production_modules_have_only_trusted_consumers():
         if any(name in text for name in names):
             offenders.append(str(path.relative_to(root)))
     assert offenders == []
+
+
+def test_isolated_cli_production_skips_platform_recompilation():
+    plan = ci.select(["service/src/mesh_chat/core_api/cli.py"])
+    assert plan["required"] == ["policy", "verification"]
+    assert plan["reason"] == "isolated_cli_production"
+
+
+@pytest.mark.parametrize("event", ["workflow_dispatch", "merge_group", "release", "schedule"])
+def test_cli_narrowing_is_limited_to_branch_events(event):
+    assert ci.select(["service/src/mesh_chat/core_api/cli.py"],
+                     event=event)["required"] == list(ci.SUITES)
