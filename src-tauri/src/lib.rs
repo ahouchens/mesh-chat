@@ -1552,6 +1552,44 @@ fn core_api_peer_for_destination(_destination: String) -> Result<Value, String> 
 
 #[cfg(desktop)]
 #[tauri::command]
+fn core_api_draft_get(state: State<'_, ServiceState>, destination: String) -> Result<Value, String> {
+    #[cfg(windows)]
+    {
+        let name = state
+            .core_api_pipe
+            .lock()
+            .map_err(|_| "core_api_unavailable".to_string())?
+            .clone()
+            .ok_or_else(|| "core_api_unavailable".to_string())?;
+        let mut client = core_api::CoreApiClient::connect(&name)?;
+        let capabilities = client.capabilities()?;
+        let profile = capabilities
+            .get("profiles")
+            .and_then(Value::as_array)
+            .and_then(|profiles| profiles.first())
+            .and_then(Value::as_str)
+            .ok_or_else(|| "core_api_unavailable".to_string())?
+            .to_string();
+        let peer = resolve_core_peer(&mut client, &profile, &destination)?;
+        return client.request("peer.draft_get", json!({
+            "profile": profile, "peer": peer,
+        }));
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (state, destination);
+        Err("core_api_unavailable".into())
+    }
+}
+
+#[cfg(mobile)]
+#[tauri::command]
+fn core_api_draft_get(_destination: String) -> Result<Value, String> {
+    Err("core_api_unavailable".into())
+}
+
+#[cfg(desktop)]
+#[tauri::command]
 fn core_api_draft_set(
     state: State<'_, ServiceState>,
     destination: String,
@@ -2120,6 +2158,7 @@ pub fn run() {
             core_api_capabilities,
             core_api_profile,
             core_api_peer_for_destination,
+            core_api_draft_get,
             core_api_draft_set,
             core_api_request,
             core_api_send_message,

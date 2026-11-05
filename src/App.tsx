@@ -54,6 +54,7 @@ import {
 import {
   coreApiAcceptInvitation,
   coreApiCreateInvitation,
+  coreApiDraftGet,
   coreApiDraftSet,
   coreApiPeerForDestination,
   coreApiRequest,
@@ -5325,6 +5326,20 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
   const hasForegroundRequest = Boolean(incomingRequest || foregroundGroupInvitation || foregroundWorkspaceJoinWorkspace);
   const networkAvailable = Boolean(snapshot.network?.interface_available) && !snapshot.service_error;
   const selectedContact = selection?.kind === "contact" ? snapshot.contacts.find((contact) => contact.id === selection.id) ?? null : null;
+  useEffect(() => {
+    const contact = selectedContact;
+    if (!contact) return;
+    let active = true;
+    void (async () => {
+      try {
+        const saved = await coreApiDraftGet(contact.destination_hash) as { text?: unknown };
+        if (active && typeof saved.text === "string") {
+          setDrafts((current) => current[contact.id] ? current : { ...current, [contact.id]: saved.text as string });
+        }
+      } catch { /* Snapshot drafts remain available when Core is unavailable. */ }
+    })();
+    return () => { active = false; };
+  }, [selectedContact?.id, selectedContact?.destination_hash]);
   const selectedGroup = selection?.kind === "group" ? groups.find((group) => group.id === selection.id) ?? null : null;
   const selectedWorkspace = activeSpaceId === "personal" ? null : workspaces.find((workspace) => workspace.id === activeSpaceId) ?? null;
   const selectedApprovedContact = !selectedWorkspace && selectedContact &&
