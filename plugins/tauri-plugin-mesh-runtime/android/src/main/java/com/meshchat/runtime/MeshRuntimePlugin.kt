@@ -329,6 +329,7 @@ class MeshRuntimePlugin(private val activity: Activity) : Plugin(activity) {
 
     override fun load(webView: WebView) {
         super.load(webView)
+        CoreApiBridge.bind(activity.applicationContext)
         BackgroundRuntime.onUiLifecycle("foreground")
         applyTheme(preferences.getString(UI_THEME, "dark") ?: "dark")
         if (lifecycleRegistered) return
@@ -576,6 +577,11 @@ class MeshRuntimePlugin(private val activity: Activity) : Plugin(activity) {
         val requestJson = invoke.getRawArgs()
         pythonExecutor.execute {
             try {
+                val bridged = runCatching { CoreApiBridge.command(requestJson) }.getOrNull()
+                if (bridged != null) {
+                    resolve(invoke, bridged)
+                    return@execute
+                }
                 resolve(invoke, bridge("command", requestJson))
             } catch (error: Throwable) {
                 reject(invoke, "command", error)
