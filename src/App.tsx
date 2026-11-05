@@ -54,6 +54,7 @@ import {
 import {
   coreApiAcceptInvitation,
   coreApiCreateInvitation,
+  coreApiDraftSet,
   coreApiPeerForDestination,
   coreApiRequest,
   coreApiSendMessage,
@@ -5720,6 +5721,18 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
   };
   const enqueueDraftWrite = (slot: DraftWriteSlot, write: DraftWrite): Promise<void> => {
     const result = slot.tail.then(async () => {
+      const contactId = write.payload.contact_id;
+      if (write.command === "save_draft" && typeof contactId === "string") {
+        const contact = snapshot.contacts.find((item) => item.id === contactId);
+        if (contact) {
+          try {
+            await coreApiDraftSet(contact.destination_hash, String(write.payload.text ?? ""));
+            return;
+          } catch (reason) {
+            if (!String(reason).includes("core_api_unavailable")) throw reason;
+          }
+        }
+      }
       await serviceCommand(write.command, write.payload);
     });
     // Keep the ordering barrier usable after an individual persistence error;

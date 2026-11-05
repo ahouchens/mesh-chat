@@ -214,6 +214,10 @@ export async function coreApiAcceptInvitation(
   });
 }
 
+export async function coreApiDraftSet(destination: string, text: string): Promise<unknown> {
+  return invoke("core_api_draft_set", { destination, text });
+}
+
 export async function lockService(): Promise<void> {
   clearPairingResume();
   return invoke<void>("lock_service");
