@@ -1487,6 +1487,7 @@ fn core_api_request(
     Err("core_api_unavailable".into())
 }
 
+#[cfg(windows)]
 fn resolve_core_peer(
     client: &mut core_api::CoreApiClient,
     profile: &str,
