@@ -1450,6 +1450,32 @@ describe("new chat invitations", () => {
     expect(api.serviceCommand.mock.calls.filter(([command]) => command === "create_invitation")).toHaveLength(2);
   });
 
+  it("creates a personal invitation through the Core facade", async () => {
+    const current = snapshot();
+    api.runtimePlatform.mockResolvedValue("desktop");
+    api.initializeService.mockResolvedValue(current);
+    api.onInvitation.mockResolvedValue(() => undefined);
+    api.onServiceEvent.mockResolvedValue(() => undefined);
+    api.coreApiCreateInvitation.mockResolvedValue({
+      profile: "profile-handle",
+      link: "meshchat://invite/example",
+      text: "MESHCHAT1:example",
+      file: "{}",
+      expires_at: 2_000_000_000,
+    });
+    api.serviceCommand.mockImplementation(async (command: string) => command === "snapshot" ? current : {});
+
+    render(<App />);
+    await screen.findByRole("heading", { name: "Your private conversations" });
+    fireEvent.click(screen.getAllByRole("button", { name: "Connect" })[0]);
+    fireEvent.click(screen.getByRole("button", { name: "Invite someone" }));
+    await screen.findByRole("heading", { name: "New chat" });
+    fireEvent.click(screen.getByRole("button", { name: "Prepare direct Internet invitation" }));
+    expect(await screen.findByText("Invitation details to share")).toBeTruthy();
+    expect(api.coreApiCreateInvitation).toHaveBeenCalled();
+    expect(api.serviceCommand).not.toHaveBeenCalledWith("create_invitation", expect.anything());
+  });
+
   it("creates a remote-ready invitation only after selecting an approved profile", async () => {
     const current: Snapshot = { ...snapshot(), remote_profiles: [remoteProfile] };
     api.runtimePlatform.mockResolvedValue("desktop");
