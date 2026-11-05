@@ -20,7 +20,7 @@ class CoreExchangeTransportTest {
 
     @Test fun byteLimitAndSingleFrameAreCheckedBeforeCallingBinder() {
         val transport = CoreExchangeTransport { throw AssertionError("Invalid request reached Binder") }
-        for (line in listOf("{}", "{}\n{}\n", "é".repeat(140_000) + "\n")) {
+        for (line in listOf("{}", "{}\n{}\n", "é".repeat(CoreExchangeTransport.MAX_FRAME_BYTES / 2 + 100) + "\n")) {
             assertTrue(runCatching { transport.writeLine(line) }.exceptionOrNull() is CoreException)
         }
     }
