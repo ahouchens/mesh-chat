@@ -27,7 +27,7 @@ class CoreExchangeTransportTest {
 
     @Test fun malformedUtf8AndMultipleRepliesCloseTheTransport() {
         for (reply in listOf(byteArrayOf(0xc0.toByte(), 0xaf.toByte(), 10), "{}\n{}\n".toByteArray(),
-                             ByteArray(256 * 1024 + 1), "{}".toByteArray())) {
+                             ByteArray(CoreExchangeTransport.MAX_FRAME_BYTES + 1), "{}".toByteArray())) {
             var calls = 0
             val transport = CoreExchangeTransport { calls++; reply }
             assertTrue(runCatching { transport.writeLine("{}\n") }.exceptionOrNull() is CoreException)
