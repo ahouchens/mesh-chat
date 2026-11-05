@@ -79,6 +79,7 @@
           "maxItems": 46,
           "items": {
             "enum": [
+              "application.snapshot",
               "runtime.capabilities",
               "profile.query",
               "connection.snapshot",
