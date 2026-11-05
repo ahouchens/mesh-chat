@@ -1315,6 +1315,7 @@ M5 - supported reusable core
       `application.command` adapter, which dispatches only the shared renderer
       allowlist and keeps the service as the policy owner. State reads use
       `application.snapshot`.
+- [x] Contact blocking resolves the peer handle and calls peer.revoke through the facade, with legacy fallback before acceptance only.
 - [x] The Android Tauri plugin binds the same-process `MeshCoreApiService` and
       sends renderer commands through `application.command`; it falls back to
       its legacy Python bridge only when the Core exchange is unavailable or a
