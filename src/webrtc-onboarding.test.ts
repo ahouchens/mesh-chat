@@ -6,6 +6,7 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("./api", () => ({
+  coreApiCreateInvitation: async () => { throw new Error("core_api_unavailable"); },
   serviceCommand: mocks.serviceCommand,
   onServiceEvent: mocks.onServiceEvent,
 }));
