@@ -100,8 +100,8 @@ export interface CoordinatorPeer {
 
 export interface ReconnectCoordinatorDeps {
   profiles(): Promise<ReconnectProfilesPayload>;
-  start(contactId: string): Promise<unknown>;
-  stop(contactId?: string): Promise<unknown>;
+  start(contactId: string, destination?: string): Promise<unknown>;
+  stop(contactId?: string, destination?: string): Promise<unknown>;
   requestCreate(
     contactId: string,
     attemptId: string,
@@ -362,7 +362,12 @@ export class ReconnectCoordinator {
       if (this.profiles.get(entry.profileId)?.policy_owner === "service") return;
       try { await this.deps.closeSession?.(entry.profileId); } catch { /* Already closed. */ }
     }));
-    try { await this.deps.stop(contactId); } catch { /* Local cancellation is already effective. */ }
+    const destination = [...this.profiles.values()]
+      .find((profile) => profile.contact_id === contactId)?.destination_hash;
+    try {
+      if (destination) await this.deps.stop(contactId, destination);
+      else await this.deps.stop(contactId);
+    } catch { /* Local cancellation is already effective. */ }
   }
 
   /** Release a UI subscription without changing service-owned durable intent. */
@@ -375,7 +380,7 @@ export class ReconnectCoordinator {
   async retryNow(contactId?: string): Promise<void> {
     const managed = [...this.profiles.values()].filter((profile) =>
       profile.policy_owner === "service" && (!contactId || profile.contact_id === contactId));
-    await Promise.all(managed.map((profile) => this.deps.start(profile.contact_id)));
+    await Promise.all(managed.map((profile) => this.deps.start(profile.contact_id, profile.destination_hash)));
     // Keep the one supervisor and leave other contacts and healthy sessions alone.
     this.cancelAttempts(contactId);
     if (contactId) this.stoppedContacts.delete(contactId);
@@ -631,7 +636,7 @@ export class ReconnectCoordinator {
     try {
       check();
       if (!this.startedProfiles.has(profile.id)) {
-        await step(() => this.deps.start(profile.contact_id));
+        await step(() => this.deps.start(profile.contact_id, profile.destination_hash));
         this.startedProfiles.add(profile.id);
       }
       if (profile.effective.preferred) {

@@ -1,4 +1,4 @@
-import { serviceCommand } from "./api";
+import { coreApiPeerForDestination, coreApiRequest, serviceCommand } from "./api";
 import type { CallIceConfiguration } from "./types";
 import {
   ReconnectCoordinator,
@@ -163,13 +163,35 @@ export function createReconnectDeps(
       maintainReconnectCapabilities(payload.profiles);
       return payload;
     },
-    start: (contactId) =>
-      serviceCommand("reconnect_start", { contact_id: contactId }),
-    stop: (contactId) =>
-      serviceCommand(
+    start: async (contactId, destination) => {
+      if (destination) {
+        try {
+          const target = await coreApiPeerForDestination(destination);
+          return await coreApiRequest("connection.start", {
+            profile: target.profile, peer: target.peer,
+          });
+        } catch (reason) {
+          if (!String(reason).includes("core_api_unavailable")) throw reason;
+        }
+      }
+      return serviceCommand("reconnect_start", { contact_id: contactId });
+    },
+    stop: async (contactId, destination) => {
+      if (destination) {
+        try {
+          const target = await coreApiPeerForDestination(destination);
+          return await coreApiRequest("connection.stop", {
+            profile: target.profile, peer: target.peer,
+          });
+        } catch (reason) {
+          if (!String(reason).includes("core_api_unavailable")) throw reason;
+        }
+      }
+      return serviceCommand(
         "reconnect_stop",
         contactId ? { contact_id: contactId } : {},
-      ),
+      );
+    },
     requestCreate: (contactId, attemptId) =>
       serviceCommand("reconnect_request_create", {
         contact_id: contactId,
