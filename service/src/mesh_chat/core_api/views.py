@@ -536,3 +536,14 @@ def network_settings_view(profile, value):
             or not isinstance(value.settings, dict)):
         raise ValueError("Invalid network settings observation")
     return {"profile": profile, "settings": value.settings}
+
+
+def reaction_view(profile, message, value):
+    if (any(not isinstance(item, str) or re.fullmatch(r"[A-Za-z0-9_-]{16,128}", item) is None
+            for item in (profile, message))
+            or value.scope not in {"direct", "group"}
+            or not isinstance(value.emoji, str) or not 1 <= len(value.emoji) <= 16
+            or type(value.active) is not bool):
+        raise ValueError("Invalid reaction observation")
+    return {"profile": profile, "message": message, "scope": value.scope,
+            "emoji": value.emoji, "active": value.active}

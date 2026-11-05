@@ -16,6 +16,7 @@ from .service_diagnostics import ServiceDiagnostics
 from .service_intent import ServiceIntent
 from .application import ServiceApplication
 from .service_calls import ServiceCallSettings
+from .service_reactions import ServiceReactions
 from .service_settings import ServiceNetworkSettings
 from .service_drafts import ServiceDrafts
 from .service_relationship import ServiceRelationship
@@ -66,7 +67,8 @@ def bind_service_session(service, authenticated_grant):
                       application=ServiceApplication(service),
                       drafts=ServiceDrafts(service),
                       calls=ServiceCallSettings(service),
-                      settings=ServiceNetworkSettings(service))
+                      settings=ServiceNetworkSettings(service),
+                      reactions=ServiceReactions(service))
         return CoreSession(current_grant, ServiceObservations(service), handle_key=handle_key,
                            transaction=service._dispatch_lock, ports=ports)
 

@@ -110,6 +110,10 @@ class CoreClient private constructor(private val transport: CoreTransport) {
     fun unblock(profile: String, peer: String): JSONObject =
         request("peer.unblock", JSONObject().put("profile", profile).put("peer", peer))
 
+    fun reactionSet(profile: String, message: String, emoji: String, active: Boolean): JSONObject =
+        request("message.reaction_set", JSONObject().put("profile", profile)
+            .put("message", message).put("emoji", emoji).put("active", active))
+
     fun networkSettings(profile: String): JSONObject =
         request("settings.query", JSONObject().put("profile", profile))
 

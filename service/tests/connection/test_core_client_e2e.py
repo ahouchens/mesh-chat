@@ -142,6 +142,25 @@ def test_facade_peer_lifecycle_unblocks_and_deletes(host):
         owner.close()
 
 
+def test_facade_reaction_set_uses_the_message_handle(host):
+    service = host()
+    owner = HostedClient(service, frozenset({"observe", "read", "send", "approve"}))
+    try:
+        client = CoreClient.open(owner.reader.readline, owner.writer.write)
+        profile = client.capabilities["profiles"][0]
+        peers = client.profile(profile)["peers"]
+        peer = next(
+            handle for handle in peers
+            if client.peer_query(profile, handle)["destination"] == "ab" * 16
+        )
+        accepted = client.enqueue(profile, peer, "React to this", "enqueue-key-0002")
+        reaction = client.reaction_set(profile, accepted["message"], "👍", True)
+        assert reaction["emoji"] == "👍" and reaction["active"] is True
+        assert reaction["scope"] == "direct"
+    finally:
+        owner.close()
+
+
 def test_facade_draft_round_trip_uses_the_peer_handle(host):
     service = host()
     owner = HostedClient(service, frozenset({"observe", "read", "send", "approve"}))

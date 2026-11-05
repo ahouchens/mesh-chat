@@ -15,7 +15,7 @@ from threading import RLock
 import uuid
 from typing import Protocol
 
-from .views import (call_settings_view, draft_view, network_settings_view,
+from .views import (call_settings_view, draft_view, network_settings_view, reaction_view,
     peer_delete_view, peer_trust_view,
     acceptance_view, acknowledgment_view, connection_view, event_view, intent_view, message_view,
     invitation_view, pairing_request_view, pairing_view, peer_view, received_view,
@@ -39,7 +39,7 @@ from .requests import (
     CURSOR, DIAGNOSTIC_OPERATIONS, INTENT_OPERATIONS, MESSAGE_OPERATIONS, OPERATIONS,
     INVITATION_OPERATIONS, PAIRING_OPERATIONS, RECEIVED_OPERATIONS, RECOVERY_OPERATIONS,
     APPLICATION_OPERATIONS, CALL_OPERATIONS, COMPONENT_OPERATIONS, DRAFT_OPERATIONS,
-    RELATIONSHIP_OPERATIONS, SETTINGS_OPERATIONS, REQUEST_OPERATIONS, STOP_OPERATIONS,
+    REACTION_OPERATIONS, RELATIONSHIP_OPERATIONS, SETTINGS_OPERATIONS, REQUEST_OPERATIONS, STOP_OPERATIONS,
     WORKSPACE_APPROVE_OPERATIONS, WORKSPACE_DECLINE_OPERATIONS, WORKSPACE_JOIN_OPERATIONS,
     WORKSPACE_CHANNEL_ARCHIVE_OPERATIONS, WORKSPACE_CHANNEL_CREATE_OPERATIONS,
     WORKSPACE_CHANNEL_MEMBERS_OPERATIONS,
@@ -104,6 +104,7 @@ PERMISSION_BY_OPERATION = {
     "call.settings_update": "send",
     "settings.query": "read",
     "settings.update": "send",
+    "message.reaction_set": "send",
     "profile.query": "observe",
     "application.snapshot": "approve",
     "application.command": "approve",
@@ -182,6 +183,7 @@ class Ports:
     drafts: object | None = None
     calls: object | None = None
     settings: object | None = None
+    reactions: object | None = None
 
 
 class CoreSession:
@@ -207,6 +209,7 @@ class CoreSession:
         self._drafts = ports.drafts
         self._calls = ports.calls
         self._settings = ports.settings
+        self._reactions = ports.reactions
         self._stopped = False
         bound = set(OPERATIONS)
         for operations, port in (
@@ -218,6 +221,7 @@ class CoreSession:
             (DRAFT_OPERATIONS, self._drafts),
             (CALL_OPERATIONS, self._calls),
             (SETTINGS_OPERATIONS, self._settings),
+            (REACTION_OPERATIONS, self._reactions),
             (PAIRING_OPERATIONS, self._pairing),
             (REQUEST_OPERATIONS, self._pairing),
             (INVITATION_OPERATIONS, self._invitations),
@@ -385,6 +389,11 @@ class CoreSession:
             return self._received_messages(grant, profile, params)
         if operation in INTENT_OPERATIONS:
             return self._intent_operation(grant, profile, operation, params)
+        if operation in REACTION_OPERATIONS:
+            observation = self._reactions.set(
+                MessageScope(grant.caller, profile), params["message"],
+                params["emoji"], params["active"])
+            return reaction_view(params["profile"], params["message"], observation)
         if operation in SETTINGS_OPERATIONS:
             if operation == "settings.update":
                 observation = self._settings.update(profile, params["settings"])

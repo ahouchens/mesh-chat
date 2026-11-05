@@ -131,6 +131,10 @@ class CoreClient:
     def unblock(self, handle, peer):
         return self.request("peer.unblock", {"profile": handle, "peer": peer})
 
+    def reaction_set(self, handle, message, emoji, active):
+        return self.request("message.reaction_set", {
+            "profile": handle, "message": message, "emoji": emoji, "active": active})
+
     def network_settings(self, handle):
         return self.request("settings.query", {"profile": handle})
 

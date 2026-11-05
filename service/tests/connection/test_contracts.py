@@ -118,6 +118,7 @@ def test_each_designed_operation_has_an_executable_request_vector_and_permission
         "call.settings_update": {"settings": {"relay_only": True}},
         "settings.query": {},
         "settings.update": {"settings": {}},
+        "message.reaction_set": {"message": handle, "emoji": "👍", "active": True},
 
         "connection.start": {"connection": handle}, "connection.stop": {"connection": handle},
         "connection.retry": {"connection": handle}, "connection.snapshot": {"connection": handle},
