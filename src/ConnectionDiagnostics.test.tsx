@@ -1,6 +1,6 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-const api = vi.hoisted(() => ({ serviceCommand: vi.fn(), appBuildInfo: vi.fn(), desktopServiceHealth: vi.fn(), coreApiCapabilities: vi.fn() }));
+const api = vi.hoisted(() => ({ serviceCommand: vi.fn(), appBuildInfo: vi.fn(), desktopServiceHealth: vi.fn(), coreApiCapabilities: vi.fn(), coreApiProfile: vi.fn() }));
 vi.mock("./api", () => api);
 import { ConnectionDiagnostics, currentWebRTCState, diagnosticReport, versionDetails } from "./ConnectionDiagnostics";
 import { closeWebRTCSession, setWebRTCSession, type WebRTCSession } from "./webrtc-session";
@@ -8,9 +8,11 @@ import packageInfo from "../package.json";
 beforeEach(() => {
   api.serviceCommand.mockReset();
   api.coreApiCapabilities.mockReset();
+  api.coreApiProfile.mockReset();
   api.desktopServiceHealth.mockResolvedValue({ running: null, last_unexpected_exit: null });
   api.appBuildInfo.mockResolvedValue({ installed_version: packageInfo.version, native_version: packageInfo.version, platform: "android", android_version_code: 2050 });
   api.coreApiCapabilities.mockResolvedValue({ api_major: 1, api_minor: 0, stability: "experimental", operations: ["runtime.capabilities", "message.list"], profiles: ["p".repeat(64)] });
+  api.coreApiProfile.mockResolvedValue({ display_name: "Alex", destination: "ab".repeat(16), connections: [], peers: ["q".repeat(32)] });
 });
 afterEach(async () => { cleanup(); await closeWebRTCSession(); });
 
@@ -275,4 +277,11 @@ it("reports the core facade capabilities in the diagnostics panel", async () => 
   render(<ConnectionDiagnostics />);
   expect(await screen.findByText("Core API: available (1.0, 2 operations)")).toBeTruthy();
   expect(api.coreApiCapabilities).toHaveBeenCalledTimes(1);
+});
+
+
+it("shows the facade profile and peer count", async () => {
+  render(<ConnectionDiagnostics />);
+  expect(await screen.findByText("Core API profile: Alex (1 peers)")).toBeTruthy();
+  expect(api.coreApiProfile).toHaveBeenCalledTimes(1);
 });

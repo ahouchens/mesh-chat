@@ -142,6 +142,15 @@ export async function coreApiCapabilities(): Promise<{
   return invoke("core_api_capabilities");
 }
 
+export async function coreApiProfile(): Promise<{
+  display_name: string;
+  destination: string;
+  connections: string[];
+  peers: string[];
+}> {
+  return invoke("core_api_profile");
+}
+
 export async function lockService(): Promise<void> {
   clearPairingResume();
   return invoke<void>("lock_service");

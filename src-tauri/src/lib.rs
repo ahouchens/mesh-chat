@@ -1397,6 +1397,40 @@ fn core_api_capabilities() -> Result<Value, String> {
 
 #[cfg(desktop)]
 #[tauri::command]
+fn core_api_profile(state: State<'_, ServiceState>) -> Result<Value, String> {
+    #[cfg(windows)]
+    {
+        let name = state
+            .core_api_pipe
+            .lock()
+            .map_err(|_| "core_api_unavailable".to_string())?
+            .clone()
+            .ok_or_else(|| "core_api_unavailable".to_string())?;
+        let mut client = core_api::CoreApiClient::connect(&name)?;
+        let capabilities = client.capabilities()?;
+        let profile = capabilities
+            .get("profiles")
+            .and_then(Value::as_array)
+            .and_then(|profiles| profiles.first())
+            .and_then(Value::as_str)
+            .ok_or_else(|| "core_api_unavailable".to_string())?;
+        return client.request("profile.query", json!({ "profile": profile }));
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = state;
+        Err("core_api_unavailable".into())
+    }
+}
+
+#[cfg(mobile)]
+#[tauri::command]
+fn core_api_profile() -> Result<Value, String> {
+    Err("core_api_unavailable".into())
+}
+
+#[cfg(desktop)]
+#[tauri::command]
 async fn lock_service(state: State<'_, ServiceState>) -> Result<(), String> {
     state.locked.store(true, Ordering::Release);
     let _ = request(&state, "shutdown", json!({}), Duration::from_secs(2)).await;
@@ -1882,6 +1916,7 @@ pub fn run() {
             initialize_service,
             service_command,
             core_api_capabilities,
+            core_api_profile,
             lock_service,
             desktop_service_health,
             set_background_availability,

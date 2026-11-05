@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { appBuildInfo, coreApiCapabilities, desktopServiceHealth, serviceCommand } from "./api";
+import { appBuildInfo, coreApiCapabilities, coreApiProfile, desktopServiceHealth, serviceCommand } from "./api";
 import packageInfo from "../package.json";
 import { clearWebRTCSessionEvents, getWebRTCSessions, recentWebRTCSessionEvents } from "./webrtc-session";
 
@@ -245,6 +245,7 @@ export function ConnectionDiagnostics({ full = false }: { full?: boolean }) {
   const [fallback, setFallback] = useState("");
   const [busy, setBusy] = useState(false);
   const [facade, setFacade] = useState<{ available: boolean; label: string }>({ available: false, label: "unavailable" });
+  const [facadeProfile, setFacadeProfile] = useState<{ display_name: string; peers: number } | null>(null);
   useEffect(() => {
     let active = true;
     void (async () => { try { const value = await appBuildInfo(); if (active) setBuild(value); } catch { /* Bundled version remains visible offline. */ } })();
@@ -260,6 +261,10 @@ export function ConnectionDiagnostics({ full = false }: { full?: boolean }) {
             available: true,
             label: `${value.api_major}.${value.api_minor}, ${value.operations.length} operations`,
           });
+        }
+        const profile = await coreApiProfile();
+        if (active) {
+          setFacadeProfile({ display_name: profile.display_name, peers: profile.peers.length });
         }
       } catch { /* Older hosts and mobile builds do not expose the facade pipe yet. */ }
     })();
@@ -301,6 +306,7 @@ export function ConnectionDiagnostics({ full = false }: { full?: boolean }) {
   return <section className="connection-diagnostics form-stack" aria-label="Connection diagnostics">
     <p className="muted">Mesh Chat version {packageInfo.version}</p>
     <p className="muted" role="status">Core API: {facade.available ? `available (${facade.label})` : "unavailable"}</p>
+    {facadeProfile && <p className="muted" role="status">Core API profile: {facadeProfile.display_name} ({facadeProfile.peers} peers)</p>}
     {details.version_mismatch && <p role="alert">App components have different versions. Copy version details before updating.</p>}
     <div className="dialog-actions"><button className="button button--secondary" disabled={busy} onClick={() => void copy("summary")}>Copy diagnostics</button>
       {full && <><button className="button button--secondary" disabled={busy} onClick={() => void copy("log")}>Copy connection log</button><button className="button button--secondary" disabled={busy} onClick={() => void copy("version")}>Copy version details</button></>}
