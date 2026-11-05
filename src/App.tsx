@@ -52,6 +52,8 @@ import {
   X,
 } from "lucide-react";
 import {
+  coreApiPeerForDestination,
+  coreApiRequest,
   coreApiSendMessage,
   initializeService,
   lockService,
@@ -5928,10 +5930,20 @@ function Messenger({ snapshot, theme, onThemeChange, refresh, workspaceMessageIn
     setRequestError("");
     setDismissedRequests((current) => current.filter((id) => id !== contact.id));
     try {
-      const approval = await serviceCommand<{ reconnect_capabilities?: string }>(
-        accept ? "approve_request" : "decline_request",
-        { contact_id: contact.id },
-      );
+      let approval: { reconnect_capabilities?: string } | null = null;
+      if (accept) {
+        try {
+          const target = await coreApiPeerForDestination(contact.destination_hash);
+          await coreApiRequest("peer.approve", { profile: target.profile, peer: target.peer });
+          approval = {};
+        } catch { /* Fall back only when approval was not accepted by the facade. */ }
+      }
+      if (!approval) {
+        approval = await serviceCommand<{ reconnect_capabilities?: string }>(
+          accept ? "approve_request" : "decline_request",
+          { contact_id: contact.id },
+        );
+      }
       try {
         const matching = getWebRTCSessionForContact(contact.id);
         const pending = getWebRTCSessions().filter((candidate) =>

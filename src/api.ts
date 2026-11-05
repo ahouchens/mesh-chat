@@ -171,6 +171,14 @@ export async function coreApiRequest<T>(
   return invoke("core_api_request", { operation, params, idempotencyKey: idempotencyKey ?? null });
 }
 
+export async function coreApiPeerForDestination(destination: string): Promise<{
+  profile: string;
+  peer: string;
+  destination: string;
+}> {
+  return invoke("core_api_peer_for_destination", { destination });
+}
+
 export async function lockService(): Promise<void> {
   clearPairingResume();
   return invoke<void>("lock_service");

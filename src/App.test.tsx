@@ -6,6 +6,8 @@ import type { ChatMessage, Contact, Group, GroupInvitation, GroupMessage, Snapsh
 
 const api = vi.hoisted(() => ({
   beginCallAudio: vi.fn(async () => ({ granted: true })),
+  coreApiPeerForDestination: vi.fn(async (): Promise<{ profile: string; peer: string; destination: string }> => { throw new Error("core_api_unavailable"); }),
+  coreApiRequest: vi.fn(async (): Promise<unknown> => { throw new Error("core_api_unavailable"); }),
   coreApiSendMessage: vi.fn(async (..._args: unknown[]): Promise<unknown> => { throw new Error("core_api_unavailable"); }),
   endCallAudio: vi.fn(async () => ({ active: false })),
   initializeService: vi.fn(),
@@ -270,6 +272,8 @@ afterEach(() => {
   cleanup();
   vi.clearAllMocks();
   api.coreApiSendMessage.mockImplementation(async () => { throw new Error("core_api_unavailable"); });
+  api.coreApiPeerForDestination.mockImplementation(async () => { throw new Error("core_api_unavailable"); });
+  api.coreApiRequest.mockImplementation(async () => { throw new Error("core_api_unavailable"); });
   vi.unstubAllGlobals();
   window.localStorage.clear();
   document.documentElement.removeAttribute("data-theme");

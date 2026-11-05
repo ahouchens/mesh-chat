@@ -1487,6 +1487,68 @@ fn core_api_request(
     Err("core_api_unavailable".into())
 }
 
+fn resolve_core_peer(
+    client: &mut core_api::CoreApiClient,
+    profile: &str,
+    destination: &str,
+) -> Result<String, String> {
+    let observed = client.request("profile.query", json!({ "profile": profile }))?;
+    let peers = observed
+        .get("peers")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    for peer in peers.iter().filter_map(Value::as_str) {
+        let view = client.request("peer.query", json!({
+            "profile": profile,
+            "peer": peer,
+        }))?;
+        if view.get("destination").and_then(Value::as_str) == Some(destination) {
+            return Ok(peer.to_string());
+        }
+    }
+    Err("core_api_peer_unavailable".into())
+}
+
+#[cfg(desktop)]
+#[tauri::command]
+fn core_api_peer_for_destination(
+    state: State<'_, ServiceState>,
+    destination: String,
+) -> Result<Value, String> {
+    #[cfg(windows)]
+    {
+        let name = state
+            .core_api_pipe
+            .lock()
+            .map_err(|_| "core_api_unavailable".to_string())?
+            .clone()
+            .ok_or_else(|| "core_api_unavailable".to_string())?;
+        let mut client = core_api::CoreApiClient::connect(&name)?;
+        let capabilities = client.capabilities()?;
+        let profile = capabilities
+            .get("profiles")
+            .and_then(Value::as_array)
+            .and_then(|profiles| profiles.first())
+            .and_then(Value::as_str)
+            .ok_or_else(|| "core_api_unavailable".to_string())?
+            .to_string();
+        let peer = resolve_core_peer(&mut client, &profile, &destination)?;
+        return Ok(json!({ "profile": profile, "peer": peer, "destination": destination }));
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (state, destination);
+        Err("core_api_unavailable".into())
+    }
+}
+
+#[cfg(mobile)]
+#[tauri::command]
+fn core_api_peer_for_destination(_destination: String) -> Result<Value, String> {
+    Err("core_api_unavailable".into())
+}
+
 #[cfg(desktop)]
 #[tauri::command]
 fn core_api_send_message(
@@ -1512,23 +1574,7 @@ fn core_api_send_message(
             .and_then(Value::as_str)
             .ok_or_else(|| "core_api_unavailable".to_string())?
             .to_string();
-        let observed = client.request("profile.query", json!({ "profile": profile }))?;
-        let peers = observed
-            .get("peers")
-            .and_then(Value::as_array)
-            .cloned()
-            .unwrap_or_default();
-        let recipient = peers
-            .iter()
-            .filter_map(Value::as_str)
-            .find_map(|peer| {
-                let view = client.request("peer.query", json!({
-                    "profile": profile, "peer": peer,
-                })).ok()?;
-                (view.get("destination").and_then(Value::as_str) == Some(destination.as_str()))
-                    .then(|| peer.to_string())
-            })
-            .ok_or_else(|| "core_api_peer_unavailable".to_string())?;
+        let recipient = resolve_core_peer(&mut client, &profile, &destination)?;
         return client.request_with_key("message.enqueue", json!({
             "profile": profile,
             "recipient": recipient,
@@ -2030,6 +2076,7 @@ pub fn run() {
             service_command,
             core_api_capabilities,
             core_api_profile,
+            core_api_peer_for_destination,
             core_api_request,
             core_api_send_message,
             lock_service,
