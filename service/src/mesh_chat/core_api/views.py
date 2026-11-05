@@ -522,3 +522,10 @@ def draft_view(profile, peer, value):
            for item in (profile, peer)) or not isinstance(value.text, str):
         raise ValueError("Invalid draft observation")
     return {"profile": profile, "peer": peer, "text": value.text}
+
+
+def call_settings_view(profile, value):
+    if (not isinstance(profile, str) or re.fullmatch(r"[A-Za-z0-9_-]{16,128}", profile) is None
+            or not isinstance(value.settings, dict)):
+        raise ValueError("Invalid call settings observation")
+    return {"profile": profile, "settings": value.settings}

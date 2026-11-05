@@ -110,6 +110,13 @@ class CoreClient private constructor(private val transport: CoreTransport) {
     fun unblock(profile: String, peer: String): JSONObject =
         request("peer.unblock", JSONObject().put("profile", profile).put("peer", peer))
 
+    fun callSettingsGet(profile: String): JSONObject =
+        request("call.settings_query", JSONObject().put("profile", profile))
+
+    fun callSettingsUpdate(profile: String, settings: JSONObject): JSONObject =
+        request("call.settings_update", JSONObject().put("profile", profile)
+            .put("settings", settings))
+
     fun draftGet(profile: String, peer: String): JSONObject =
         request("peer.draft_get", JSONObject().put("profile", profile).put("peer", peer))
 

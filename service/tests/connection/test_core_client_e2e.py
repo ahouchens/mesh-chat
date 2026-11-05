@@ -160,6 +160,29 @@ def test_facade_draft_round_trip_uses_the_peer_handle(host):
         owner.close()
 
 
+def test_facade_call_settings_round_trip(host):
+    service = host()
+    owner = HostedClient(service, frozenset({"observe", "read", "send"}))
+    try:
+        client = CoreClient.open(owner.reader.readline, owner.writer.write)
+        profile = client.capabilities["profiles"][0]
+        initial = client.call_settings_get(profile)["settings"]
+        updated = client.call_settings_update(profile, {
+            "stun_urls": initial["stun_urls"],
+            "turn_url": initial["turn_url"],
+            "turn_username": initial["turn_username"],
+            "turn_broker_url": initial["turn_broker_url"],
+            "turn_broker_consent": initial["turn_broker_consent"],
+            "signal_mailbox_url": initial["signal_mailbox_url"],
+            "store_call_signaling": False,
+            "relay_only": False,
+        })
+        assert updated["settings"]["store_call_signaling"] is False
+        assert service.call_settings()["store_call_signaling"] is False
+    finally:
+        owner.close()
+
+
 def test_application_command_is_owner_only_and_allowlisted(host):
     service = host()
     owner = HostedClient(service, frozenset({"observe", "read", "approve"}))
