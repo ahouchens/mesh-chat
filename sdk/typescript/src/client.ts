@@ -248,6 +248,16 @@ export class CoreClient {
     return this.request<RelationshipView>("peer.unblock", { profile, peer });
   }
 
+  async createGroup(profile: string, title: string,
+                    postingPolicy: "members" | "owner_admins",
+                    members: string[]): Promise<unknown> {
+    return this.request("group.create", { profile, title, posting_policy: postingPolicy, members });
+  }
+
+  async groups(profile: string): Promise<unknown> {
+    return this.request("group.query", { profile });
+  }
+
   async reactionSet(profile: string, message: string, emoji: string, active: boolean): Promise<unknown> {
     return this.request("message.reaction_set", { profile, message, emoji, active });
   }

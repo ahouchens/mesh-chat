@@ -1,5 +1,6 @@
 package com.meshchat.runtime.core
 
+import org.json.JSONArray
 import org.json.JSONObject
 
 /**
@@ -109,6 +110,14 @@ class CoreClient private constructor(private val transport: CoreTransport) {
 
     fun unblock(profile: String, peer: String): JSONObject =
         request("peer.unblock", JSONObject().put("profile", profile).put("peer", peer))
+
+    fun createGroup(profile: String, title: String, postingPolicy: String,
+                    members: List<String>): JSONObject =
+        request("group.create", JSONObject().put("profile", profile).put("title", title)
+            .put("posting_policy", postingPolicy).put("members", JSONArray(members)))
+
+    fun groups(profile: String): JSONObject =
+        request("group.query", JSONObject().put("profile", profile))
 
     fun reactionSet(profile: String, message: String, emoji: String, active: Boolean): JSONObject =
         request("message.reaction_set", JSONObject().put("profile", profile)

@@ -1450,6 +1450,67 @@
           "pattern": "^[A-Za-z0-9._:-]+$"
         },
         "operation": {
+          "const": "group.query"
+        },
+        "params": {
+          "type": "object",
+          "properties": {
+            "profile": {
+              "$ref": "#/$defs/handle"
+            }
+          },
+          "required": [
+            "profile"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "api_version",
+        "request_id",
+        "operation",
+        "params"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "api_version": {"const": 1},
+        "request_id": {"type": "string", "minLength": 1, "maxLength": 80,
+          "pattern": "^[A-Za-z0-9._:-]+$"},
+        "operation": {"const": "group.create"},
+        "params": {
+          "type": "object",
+          "properties": {
+            "profile": {"$ref": "#/$defs/handle"},
+            "title": {"type": "string", "minLength": 1, "maxLength": 128},
+            "posting_policy": {"enum": ["members", "owner_admins"]},
+            "members": {
+              "type": "array", "minItems": 1, "maxItems": 32,
+              "items": {"$ref": "#/$defs/handle"}
+            }
+          },
+          "required": ["profile", "title", "posting_policy", "members"],
+          "additionalProperties": false
+        }
+      },
+      "required": ["api_version", "request_id", "operation", "params"],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "api_version": {
+          "const": 1
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        },
+        "operation": {
           "const": "peer.approve"
         },
         "params": {

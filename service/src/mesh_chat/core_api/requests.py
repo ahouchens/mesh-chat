@@ -19,6 +19,7 @@ DRAFT_OPERATIONS = ("peer.draft_get", "peer.draft_set")
 CALL_OPERATIONS = ("call.settings_query", "call.settings_update")
 SETTINGS_OPERATIONS = ("settings.query", "settings.update")
 REACTION_OPERATIONS = ("message.reaction_set",)
+GROUP_OPERATIONS = ("group.query", "group.create")
 PAIRING_OPERATIONS = ("peer.pairing_accept",)
 REQUEST_OPERATIONS = ("peer.pairing_request",)
 INVITATION_OPERATIONS = ("peer.pairing_create",)
@@ -439,6 +440,24 @@ def parse_request(value, operations):
                 or not 1 <= len(params["document"]) <= 1048576):
             raise ApiFailure("invalid_request")
         return operation, params
+    if operation in GROUP_OPERATIONS:
+        params = value["params"]
+        expected = {"profile"} if operation == "group.query" else {
+            "profile", "title", "posting_policy", "members"}
+        if (not isinstance(params, dict) or set(params) != expected
+                or not isinstance(params["profile"], str)
+                or HANDLE.fullmatch(params["profile"]) is None
+                or (operation == "group.create"
+                    and (not isinstance(params["title"], str)
+                         or not 1 <= len(params["title"].strip()) <= 128
+                         or params["posting_policy"] not in {"members", "owner_admins"}
+                         or not isinstance(params["members"], list)
+                         or not params["members"]
+                         or any(not isinstance(item, str)
+                                or HANDLE.fullmatch(item) is None
+                                for item in params["members"])))):
+            raise ApiFailure("invalid_request")
+        return operation, params
     if operation in REACTION_OPERATIONS:
         params = value["params"]
         if (not isinstance(params, dict)
@@ -564,6 +583,7 @@ COMPONENT_OPERATIONS = (
     + CALL_OPERATIONS
     + SETTINGS_OPERATIONS
     + REACTION_OPERATIONS
+    + GROUP_OPERATIONS
     + PAIRING_OPERATIONS
     + REQUEST_OPERATIONS
     + INVITATION_OPERATIONS

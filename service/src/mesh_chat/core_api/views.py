@@ -547,3 +547,27 @@ def reaction_view(profile, message, value):
         raise ValueError("Invalid reaction observation")
     return {"profile": profile, "message": message, "scope": value.scope,
             "emoji": value.emoji, "active": value.active}
+
+
+def group_list_view(profile, values):
+    if not isinstance(profile, str) or re.fullmatch(r"[A-Za-z0-9_-]{16,128}", profile) is None:
+        raise ValueError("Invalid group list profile")
+    groups = []
+    for handle, value in values:
+        if (not isinstance(handle, str) or re.fullmatch(r"[A-Za-z0-9_-]{16,128}", handle) is None
+                or not isinstance(value.name, str) or not 1 <= len(value.name) <= 128
+                or value.posting_policy not in {"members", "owner_admins"}):
+            raise ValueError("Invalid group observation")
+        groups.append({"group": handle, "name": value.name,
+                       "posting_policy": value.posting_policy})
+    return {"profile": profile, "groups": groups}
+
+
+def group_view(profile, group, value):
+    if (any(not isinstance(item, str) or re.fullmatch(r"[A-Za-z0-9_-]{16,128}", item) is None
+            for item in (profile, group))
+            or not isinstance(value.name, str) or not 1 <= len(value.name) <= 128
+            or value.posting_policy not in {"members", "owner_admins"}):
+        raise ValueError("Invalid group observation")
+    return {"profile": profile, "group": group, "name": value.name,
+            "posting_policy": value.posting_policy}

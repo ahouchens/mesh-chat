@@ -119,6 +119,9 @@ def test_each_designed_operation_has_an_executable_request_vector_and_permission
         "settings.query": {},
         "settings.update": {"settings": {}},
         "message.reaction_set": {"message": handle, "emoji": "👍", "active": True},
+        "group.query": {},
+        "group.create": {"title": "Team", "posting_policy": "members",
+                          "members": [handle]},
 
         "connection.start": {"connection": handle}, "connection.stop": {"connection": handle},
         "connection.retry": {"connection": handle}, "connection.snapshot": {"connection": handle},

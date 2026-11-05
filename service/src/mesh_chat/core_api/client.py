@@ -131,6 +131,14 @@ class CoreClient:
     def unblock(self, handle, peer):
         return self.request("peer.unblock", {"profile": handle, "peer": peer})
 
+    def create_group(self, handle, title, posting_policy, members):
+        return self.request("group.create", {
+            "profile": handle, "title": title, "posting_policy": posting_policy,
+            "members": members})
+
+    def groups(self, handle):
+        return self.request("group.query", {"profile": handle})
+
     def reaction_set(self, handle, message, emoji, active):
         return self.request("message.reaction_set", {
             "profile": handle, "message": message, "emoji": emoji, "active": active})

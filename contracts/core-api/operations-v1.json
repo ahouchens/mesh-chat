@@ -28,6 +28,8 @@
     "settings.query",
     "settings.update",
     "message.reaction_set",
+    "group.query",
+    "group.create",
     "peer.pairing_accept",
     "peer.pairing_request",
     "peer.pairing_create",
@@ -321,6 +323,20 @@
       "scope": "profile",
       "mutation": true,
       "idempotency": "convergent_desired_state"
+    },
+    {
+      "operation": "group.query",
+      "permission": "read",
+      "scope": "profile",
+      "mutation": false,
+      "idempotency": "query"
+    },
+    {
+      "operation": "group.create",
+      "permission": "send",
+      "scope": "profile",
+      "mutation": true,
+      "idempotency": "repeatable"
     },
     {
       "operation": "connection.start",

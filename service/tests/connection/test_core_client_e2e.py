@@ -142,6 +142,24 @@ def test_facade_peer_lifecycle_unblocks_and_deletes(host):
         owner.close()
 
 
+def test_facade_group_query_returns_caller_scoped_handles(host):
+    service = host()
+    service.store.put("group", "group-1", {
+        "id": "group-1", "title": "Team", "posting_policy": "members",
+        "members": [], "epoch": 0,
+    })
+    owner = HostedClient(service, frozenset({"observe", "read"}))
+    try:
+        client = CoreClient.open(owner.reader.readline, owner.writer.write)
+        profile = client.capabilities["profiles"][0]
+        groups = client.groups(profile)["groups"]
+        assert [(group["name"], group["posting_policy"]) for group in groups] == [
+            ("Team", "members")]
+        assert all(len(group["group"]) >= 16 for group in groups)
+    finally:
+        owner.close()
+
+
 def test_facade_reaction_set_uses_the_message_handle(host):
     service = host()
     owner = HostedClient(service, frozenset({"observe", "read", "send", "approve"}))
