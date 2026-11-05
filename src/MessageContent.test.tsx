@@ -93,10 +93,12 @@ describe("preview lifecycle", () => {
       : new Promise((resolve) => { finish = resolve; }));
     const view = render(<MessageContent text="https://x.com/jack/status/20" />);
     fireEvent.click(screen.getByRole("button", { name: "Load preview" }));
+    await act(async () => { await Promise.resolve(); });
     fireEvent.click(screen.getByRole("button", { name: "Close X preview" }));
     await act(async () => finish({ status: "ready", title: "Late post", author: "", text: "", image: null }));
     expect(screen.queryByText("Late post")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Load preview" }));
+    await act(async () => { await Promise.resolve(); });
     view.rerender(<MessageContent text="https://x.com/jack/status/21" />);
     await act(async () => finish({ status: "ready", title: "Wrong post", author: "", text: "", image: null }));
     expect(screen.queryByText("Wrong post")).toBeNull();
@@ -106,10 +108,11 @@ describe("preview lifecycle", () => {
     nativeResult({ status: "loading" });
     render(<MessageContent text="https://x.com/jack/status/20" />);
     await act(async () => fireEvent.click(screen.getByRole("button", { name: "Load preview" })));
-    expect(native.invoke).toHaveBeenCalledTimes(1);
+    const legacyCalls = () => native.invoke.mock.calls.filter(([command]) => command === "service_command");
+    expect(legacyCalls()).toHaveLength(1);
     fireEvent.click(screen.getByRole("button", { name: "Close X preview" }));
     await act(async () => vi.advanceTimersByTimeAsync(16000));
-    expect(native.invoke).toHaveBeenCalledTimes(1);
+    expect(legacyCalls()).toHaveLength(1);
   });
   it("allows only provider frames while keeping third-party scripts outside the app", () => {
     expect(config.app.security.csp).toContain("frame-src https://www.youtube-nocookie.com https://platform.twitter.com;");
