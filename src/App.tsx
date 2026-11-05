@@ -56,6 +56,8 @@ import {
   coreApiCreateInvitation,
   coreApiDraftGet,
   coreApiDraftSet,
+  loadCallSettings,
+  saveCallSettings,
   coreApiPeerForDestination,
   coreApiRequest,
   coreApiSendMessage,
@@ -2697,23 +2699,24 @@ function WebRTCCallSettings({ onSaved, onEditStateChange }: { onSaved: () => Pro
   );
   useEffect(() => { onEditStateChange?.({ dirty, busy }); }, [dirty, busy, onEditStateChange]);
   useEffect(() => {
-    void serviceCommand<CallSettings>("call_settings").then((value) => {
-      setSettings(value);
-      setStun((value.stun_urls ?? []).join(", "));
-      setTurnUrl(value.turn_url ?? "");
-      setTurnUser(value.turn_username ?? "");
-      setTurnBrokerUrl(value.turn_broker_url ?? "");
-      setSignalMailboxUrl(value.signal_mailbox_url ?? "");
-      setTurnBrokerConsent(value.turn_broker_consent ?? false);
-      setRelayOnly(value.relay_only ?? false);
-      setStoreCallSignaling(value.store_call_signaling ?? true);
+    void loadCallSettings().then((value) => {
+      const settings = value as unknown as unknown as CallSettings;
+      setSettings(settings);
+      setStun((settings.stun_urls ?? []).join(", "));
+      setTurnUrl(settings.turn_url ?? "");
+      setTurnUser(settings.turn_username ?? "");
+      setTurnBrokerUrl(settings.turn_broker_url ?? "");
+      setSignalMailboxUrl(settings.signal_mailbox_url ?? "");
+      setTurnBrokerConsent(settings.turn_broker_consent ?? false);
+      setRelayOnly(settings.relay_only ?? false);
+      setStoreCallSignaling(settings.store_call_signaling ?? true);
     }).catch((reason) => setError(errorMessage(reason)));
   }, []);
   const save = async () => {
     if (busy || !settings || !dirty) return;
     setBusy(true); setSaved(false); setError("");
     try {
-      const result = await serviceCommand<CallSettings>("update_call_settings", {
+      const result = await saveCallSettings({
         stun_urls: stun.split(/[,\s]+/).map((value) => value.trim()).filter(Boolean),
         turn_url: turnUrl.trim() || null,
         turn_username: turnUser.trim() || null,
@@ -2723,7 +2726,7 @@ function WebRTCCallSettings({ onSaved, onEditStateChange }: { onSaved: () => Pro
         turn_broker_consent: turnBrokerConsent,
         relay_only: relayOnly,
         store_call_signaling: storeCallSignaling,
-      });
+      }) as unknown as CallSettings;
       setSettings(result);
       setStun((result.stun_urls ?? []).join(", "));
       setTurnUrl(result.turn_url ?? "");
@@ -3925,8 +3928,9 @@ function WorkspaceInviteDialog({ workspace, existingInvitations, remoteProfiles,
   const [firewallFeedback, setFirewallFeedback] = useState("");
   useEffect(() => {
     let active = true;
-    void serviceCommand<CallSettings>("call_settings").then((value) => {
-      if (active) setTurnConfigured(Boolean(value.turn_configured || (value.turn_broker_configured && value.turn_broker_consent)));
+    void loadCallSettings().then((value) => {
+      const settings = value as unknown as CallSettings;
+      if (active) setTurnConfigured(Boolean(settings.turn_configured || (settings.turn_broker_configured && settings.turn_broker_consent)));
     }).catch(() => { if (active) setTurnConfigured(false); });
     return () => { active = false; };
   }, []);

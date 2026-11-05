@@ -222,6 +222,45 @@ export async function coreApiDraftGet(destination: string): Promise<unknown> {
   return invoke("core_api_draft_get", { destination });
 }
 
+export async function coreApiCallSettings(): Promise<Record<string, unknown>> {
+  const profile = await coreApiProfile();
+  const result = await coreApiRequest("call.settings_query", { profile: profile.profile }) as {
+    settings?: Record<string, unknown>;
+  };
+  return result.settings ?? {};
+}
+
+export async function coreApiUpdateCallSettings(
+  settings: Record<string, unknown>,
+): Promise<Record<string, unknown>> {
+  const profile = await coreApiProfile();
+  const result = await coreApiRequest("call.settings_update", {
+    profile: profile.profile,
+    settings,
+  }) as { settings?: Record<string, unknown> };
+  return result.settings ?? {};
+}
+
+export async function loadCallSettings(): Promise<Record<string, unknown>> {
+  try {
+    return await coreApiCallSettings();
+  } catch (reason) {
+    if (!String(reason).includes("core_api_unavailable")) throw reason;
+    return serviceCommand("call_settings");
+  }
+}
+
+export async function saveCallSettings(
+  settings: Record<string, unknown>,
+): Promise<Record<string, unknown>> {
+  try {
+    return await coreApiUpdateCallSettings(settings);
+  } catch (reason) {
+    if (!String(reason).includes("core_api_unavailable")) throw reason;
+    return serviceCommand("update_call_settings", settings);
+  }
+}
+
 export async function lockService(): Promise<void> {
   clearPairingResume();
   return invoke<void>("lock_service");

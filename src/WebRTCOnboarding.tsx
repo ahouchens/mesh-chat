@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { QRCodeSVG } from "qrcode.react";
 import { Check, Copy, Phone, RefreshCw, X } from "lucide-react";
 
-import { coreApiCreateInvitation, desktopServiceHealth, serviceCommand, onServiceEvent, type ServiceEvent } from "./api";
+import { coreApiCreateInvitation, desktopServiceHealth, loadCallSettings, saveCallSettings, serviceCommand, onServiceEvent, type ServiceEvent } from "./api";
 import { attachWebRTCBridge, isWindowsWebRTCPlatform, shouldAutoCloseWebRTCOnboarding, webRTCWindowsChecklist, type WebRTCBridge } from "./webrtc-onboarding";
 import { usesServiceWebRTCTransport, nativeWebRTCAccept, nativeWebRTCApplyAnswer, nativeWebRTCClose, nativeWebRTCControl, nativeWebRTCOffer, nativeWebRTCStats, type NativeChannelSpec } from "./native-webrtc";
 import { rememberWebRTCDiagnostics } from "./webrtc-diagnostics";
@@ -410,8 +410,8 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
   }, [nativeMode]);
 
   useEffect(() => {
-    void serviceCommand<CallSettings>("call_settings")
-      .then(setRelaySettings)
+    void loadCallSettings()
+      .then((value) => setRelaySettings(value as unknown as CallSettings))
       .catch(() => undefined);
   }, []);
 
@@ -1151,7 +1151,7 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
     setRelayBusy(true);
     setRelayError("");
     try {
-      const updated = await serviceCommand<CallSettings>("update_call_settings", {
+      const updated = await saveCallSettings({
         stun_urls: relaySettings.stun_urls,
         turn_url: relaySettings.turn_url ?? null,
         turn_username: relaySettings.turn_username ?? null,
@@ -1160,7 +1160,7 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
         turn_broker_consent: true,
         signal_mailbox_url: relaySettings.signal_mailbox_url ?? null,
         relay_only: relaySettings.relay_only,
-      });
+      }) as unknown as CallSettings;
       setRelaySettings(updated);
     } catch (reason) {
       setRelayError(errorMessage(reason));
@@ -1175,7 +1175,7 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
     setRelayBusy(true);
     setRelayError("");
     try {
-      const updated = await serviceCommand<CallSettings>("update_call_settings", {
+      const updated = await saveCallSettings({
         stun_urls: relaySettings.stun_urls,
         turn_url: relaySettings.turn_url ?? null,
         turn_username: relaySettings.turn_username ?? null,
@@ -1185,7 +1185,7 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
         signal_mailbox_url: relaySettings.signal_mailbox_default_url,
         relay_only: relaySettings.relay_only,
         store_call_signaling: relaySettings.store_call_signaling ?? true,
-      });
+      }) as unknown as CallSettings;
       if (attemptRef.current !== attempt) return;
       setRelaySettings(updated);
       setError("");

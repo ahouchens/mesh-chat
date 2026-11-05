@@ -4,7 +4,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import packageInfo from "../package.json";
 import type { ChatMessage, Contact, Group, GroupInvitation, GroupMessage, Snapshot, Workspace, WorkspaceAdminRequest, WorkspaceChannel, WorkspaceDirect, WorkspaceJoinRequest, WorkspaceMentionPage, WorkspaceMessage, WorkspaceMessagePage, WorkspaceSearchPage, WorkspaceThreadActivityPage, WorkspaceThreadPage } from "./types";
 
-const api = vi.hoisted(() => ({
+const api = vi.hoisted(() => {
+  const serviceCommand = vi.fn();
+  return {
   beginCallAudio: vi.fn(async () => ({ granted: true })),
   coreApiAcceptInvitation: vi.fn(async (..._args: unknown[]): Promise<{ profile: string; peer: string; trust: string }> => { throw new Error("core_api_unavailable"); }),
   coreApiDraftGet: vi.fn(async (..._args: unknown[]): Promise<unknown> => { throw new Error("core_api_unavailable"); }),
@@ -29,8 +31,11 @@ const api = vi.hoisted(() => ({
   runtimePlatform: vi.fn(),
   setNativeBackgroundAvailability: vi.fn(async () => ({ enabled: true })),
   setNativeTheme: vi.fn(async () => undefined),
-  serviceCommand: vi.fn(),
-}));
+  serviceCommand,
+  loadCallSettings: vi.fn(async () => serviceCommand("call_settings")),
+  saveCallSettings: vi.fn(async (settings: Record<string, unknown>) => serviceCommand("update_call_settings", settings)),
+  };
+});
 
 vi.mock("./api", () => api);
 

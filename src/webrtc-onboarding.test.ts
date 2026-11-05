@@ -9,6 +9,8 @@ vi.mock("./api", () => ({
   coreApiAcceptInvitation: async () => { throw new Error("core_api_unavailable"); },
   coreApiCreateInvitation: async () => { throw new Error("core_api_unavailable"); },
   serviceCommand: mocks.serviceCommand,
+  loadCallSettings: async () => mocks.serviceCommand("call_settings"),
+  saveCallSettings: async (settings: Record<string, unknown>) => mocks.serviceCommand("update_call_settings", settings),
   onServiceEvent: mocks.onServiceEvent,
 }));
 
