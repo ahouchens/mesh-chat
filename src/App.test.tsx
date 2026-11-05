@@ -3664,6 +3664,25 @@ describe("connected conversation", () => {
     };
   }
 
+  it("loads and saves a direct draft through the facade", async () => {
+    const current = snapshot([approved]);
+    api.runtimePlatform.mockResolvedValue("desktop");
+    api.initializeService.mockResolvedValue(current);
+    api.onInvitation.mockResolvedValue(() => undefined);
+    api.onServiceEvent.mockResolvedValue(() => undefined);
+    api.coreApiDraftGet.mockResolvedValue({ text: "Saved facade draft" });
+    api.coreApiDraftSet.mockResolvedValue({ text: "typed draft" });
+    api.serviceCommand.mockImplementation(async (command: string) => command === "snapshot" ? current : {});
+
+    render(<App />);
+    const composer = await screen.findByRole("textbox", { name: "Message Taylor" });
+    await waitFor(() => expect((composer as HTMLTextAreaElement).value).toBe("Saved facade draft"));
+    fireEvent.change(composer, { target: { value: "typed draft" } });
+    await waitFor(() => expect(api.coreApiDraftSet).toHaveBeenCalledWith(
+      approved.destination_hash, "typed draft"), { timeout: 2000 });
+    expect(api.serviceCommand).not.toHaveBeenCalledWith("save_draft", expect.anything());
+  });
+
   it.each([true, false])("sends pending approval only to its verified transport identity (matching: %s)", async (matches) => {
     let current = snapshot([incoming]);
     api.initializeService.mockResolvedValue(current);
