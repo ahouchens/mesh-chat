@@ -2336,7 +2336,17 @@ function ContactsDialog({
     setBusy(true);
     setError("");
     try {
-      await serviceCommand(command, { contact_id: selected.id });
+      let handled = false;
+      if (command === "block_contact") {
+        try {
+          const target = await coreApiPeerForDestination(selected.destination_hash);
+          await coreApiRequest("peer.revoke", { profile: target.profile, peer: target.peer });
+          handled = true;
+        } catch { /* Fall back only when the facade did not accept the block. */ }
+      }
+      if (!handled) {
+        await serviceCommand(command, { contact_id: selected.id });
+      }
       setConfirm(null);
       await onChanged();
     } catch (reason) {

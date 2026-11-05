@@ -2766,6 +2766,35 @@ describe("contact management", () => {
     expect(await within(dialog).findByRole("button", { name: "Remove verification" })).toBeTruthy();
   });
 
+  it("blocks a contact through the facade peer handle", async () => {
+    let current = snapshot([approved]);
+    api.runtimePlatform.mockResolvedValue("desktop");
+    api.initializeService.mockResolvedValue(current);
+    api.onInvitation.mockResolvedValue(() => undefined);
+    api.onServiceEvent.mockResolvedValue(() => undefined);
+    api.coreApiPeerForDestination.mockResolvedValue({
+      profile: "profile-handle", peer: "peer-handle", destination: approved.destination_hash,
+    });
+    api.coreApiRequest.mockImplementation(async () => {
+      current = { ...current, contacts: [{ ...current.contacts[0], trust: "blocked", trust_before_block: "approved" }] };
+      return { trust: "blocked" };
+    });
+    api.serviceCommand.mockImplementation(async (command: string) => command === "snapshot" ? current : {});
+
+    render(<App />);
+    await screen.findByLabelText("Conversation with Taylor");
+    fireEvent.click(screen.getByRole("button", { name: "Contacts" }));
+    const dialog = await screen.findByRole("dialog", { name: "Contacts" });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Block" }));
+    fireEvent.click(within(within(dialog).getByRole("alertdialog", { name: "Block contact" }))
+      .getByRole("button", { name: "Block" }));
+    await waitFor(() => expect(api.coreApiRequest).toHaveBeenCalledWith("peer.revoke", {
+      profile: "profile-handle", peer: "peer-handle",
+    }));
+    expect(api.serviceCommand).not.toHaveBeenCalledWith("block_contact", expect.anything());
+    expect(await within(dialog).findByRole("button", { name: "Unblock contact" })).toBeTruthy();
+  });
+
   it("permanently removes a contact after an explicit confirmation", async () => {
     let current = { ...snapshot([approved]), messages: [firstMessage] };
     api.runtimePlatform.mockResolvedValue("desktop");
