@@ -1315,6 +1315,7 @@ M5 - supported reusable core
       `application.command` adapter, which dispatches only the shared renderer
       allowlist and keeps the service as the policy owner. State reads use
       `application.snapshot`.
+- [x] The facade dispatcher resolves profiles, workspace scopes and idempotency keys through single-purpose helpers, removing repeated authorization checks from _execute.
 - [x] Reconnect start/stop use typed connection.start/connection.stop with the profile destination, falling back only when Core is unavailable.
 - [x] Direct-message drafts use typed peer.draft_get/peer.draft_set with caller-scoped handles; the composer saves through peer.draft_set and opening a contact fills an empty draft through peer.draft_get, with snapshot fallback.
 - [x] Pairing invitation acceptance uses peer.pairing_accept with optional I2P consent, and the UI falls back only when the facade is unavailable.
