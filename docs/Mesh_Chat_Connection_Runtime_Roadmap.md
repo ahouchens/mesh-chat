@@ -1317,6 +1317,7 @@ M5 - supported reusable core
       `application.snapshot`.
 - [x] The facade dispatcher resolves profiles, workspace scopes, workspace channels and idempotency keys through helpers; workspace operations are split into query, access-mutation and resource-mutation handlers, leaving _execute a 50-line cross-cutting dispatcher.
 - [x] Reconnect start/stop use typed connection.start/connection.stop with the profile destination, falling back only when Core is unavailable.
+- [x] Call settings use typed call.settings_query/call.settings_update with contracts and component clients.
 - [x] Direct-message drafts use typed peer.draft_get/peer.draft_set with caller-scoped handles; the composer saves through peer.draft_set and opening a contact fills an empty draft through peer.draft_get, with snapshot fallback.
 - [x] Pairing invitation acceptance uses peer.pairing_accept with optional I2P consent, and the UI falls back only when the facade is unavailable.
 - [x] Pairing invitation creation uses peer.pairing_create with all existing connection modes and returns file, link, text, expiry and optional host session; the UI falls back only when the facade is unavailable.
