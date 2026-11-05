@@ -116,8 +116,8 @@ class CoreClient private constructor(private val transport: CoreTransport) {
     fun revoke(profile: String, peer: String): JSONObject =
         request("peer.revoke", JSONObject().put("profile", profile).put("peer", peer))
 
-    fun pairingCreate(profile: String): JSONObject =
-        request("peer.pairing_create", JSONObject().put("profile", profile))
+    fun pairingCreate(profile: String, options: JSONObject = JSONObject()): JSONObject =
+        request("peer.pairing_create", JSONObject(options.toString()).put("profile", profile))
 
     fun pairingRequest(profile: String, peer: String): JSONObject =
         request("peer.pairing_request", JSONObject().put("profile", profile).put("peer", peer))

@@ -137,8 +137,8 @@ class CoreClient:
     def revoke(self, handle, peer):
         return self.request("peer.revoke", {"profile": handle, "peer": peer})
 
-    def pairing_create(self, handle):
-        return self.request("peer.pairing_create", {"profile": handle})
+    def pairing_create(self, handle, **options):
+        return self.request("peer.pairing_create", {"profile": handle, **options})
 
     def pairing_request(self, handle, peer):
         return self.request("peer.pairing_request", {"profile": handle, "peer": peer})

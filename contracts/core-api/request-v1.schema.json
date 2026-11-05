@@ -923,7 +923,15 @@
               "$ref": "#/$defs/handle"
             }
           },
-          "required": [
+                      "connection_mode": {
+              "enum": ["manual", "participant", "nearby", "remote", "webrtc", "email", "i2p"]
+            },
+            "manual_setup_id": {"type": "string", "minLength": 8, "maxLength": 128},
+            "external_host": {"type": "string", "minLength": 1, "maxLength": 255},
+            "external_port": {"type": "integer", "minimum": 1, "maximum": 65535},
+            "i2p_access_point": {"type": "string", "minLength": 1, "maxLength": 128},
+            "i2p_label": {"type": "string", "maxLength": 64},
+"required": [
             "profile"
           ],
           "additionalProperties": false

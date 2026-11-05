@@ -151,6 +151,7 @@ export async function coreApiCapabilities(): Promise<{
 }
 
 export async function coreApiProfile(): Promise<{
+  profile: string;
   display_name: string;
   destination: string;
   connections: string[];
@@ -185,6 +186,20 @@ export async function coreApiPeerForDestination(destination: string): Promise<{
   destination: string;
 }> {
   return invoke("core_api_peer_for_destination", { destination });
+}
+
+export async function coreApiCreateInvitation(
+  options: Record<string, unknown> = {},
+): Promise<{
+  profile: string;
+  file: string;
+  link: string;
+  text: string;
+  expires_at: number;
+  host_session_id?: string;
+}> {
+  const profile = await coreApiProfile();
+  return coreApiRequest("peer.pairing_create", { ...options, profile: profile.profile });
 }
 
 export async function lockService(): Promise<void> {

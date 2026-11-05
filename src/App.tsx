@@ -52,6 +52,7 @@ import {
   X,
 } from "lucide-react";
 import {
+  coreApiCreateInvitation,
   coreApiPeerForDestination,
   coreApiRequest,
   coreApiSendMessage,
@@ -1842,7 +1843,13 @@ function NewChatDialog({ initialInvitation, initialTab = "invite", initialConnec
           : connectionChoice === "nearby" ? { connection_mode: "nearby" }
           : connectionChoice === "i2p" ? { connection_mode: "i2p", i2p_access_point: i2pAccessPoint.trim() }
             : { connection_mode: "remote", remote_profile_id: connectionChoice.slice("remote:".length) };
-      const created = await serviceCommand<InvitationFormats>("create_invitation", payload);
+      let created: InvitationFormats;
+      try {
+        created = await coreApiCreateInvitation(payload);
+      } catch (reason) {
+        if (!String(reason).includes("core_api_unavailable")) throw reason;
+        created = await serviceCommand<InvitationFormats>("create_invitation", payload);
+      }
       const previous = generatedHostSession.current;
       if (previous && previous !== created.host_session_id) await serviceCommand("stop_participant_host", { access_id: previous }).catch(() => undefined);
       generatedHostSession.current = created.host_session_id ?? null;

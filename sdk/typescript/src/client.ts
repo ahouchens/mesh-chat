@@ -256,8 +256,8 @@ export class CoreClient {
     return this.request<RelationshipView>("peer.revoke", { profile, peer });
   }
 
-  async pairingCreate(profile: string): Promise<InvitationView> {
-    return this.request<InvitationView>("peer.pairing_create", { profile });
+  async pairingCreate(profile: string, options: Record<string, unknown> = {}): Promise<InvitationView> {
+    return this.request<InvitationView>("peer.pairing_create", { ...options, profile });
   }
 
   async pairingAccept(profile: string, document: string): Promise<PairingView> {

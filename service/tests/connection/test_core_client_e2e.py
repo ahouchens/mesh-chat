@@ -176,6 +176,20 @@ def test_facade_application_snapshot_returns_ui_state(host):
         owner.close()
 
 
+def test_facade_invitation_create_returns_complete_ui_material(host):
+    service = host()
+    owner = HostedClient(service, frozenset({"observe", "read", "approve", "pair"}))
+    try:
+        client = CoreClient.open(owner.reader.readline, owner.writer.write)
+        profile = client.capabilities["profiles"][0]
+        invitation = client.pairing_create(profile)
+        assert invitation["text"].startswith("MESHCHAT1:")
+        assert invitation["file"] and invitation["link"]
+        assert invitation["expires_at"] > 0
+    finally:
+        owner.close()
+
+
 def test_unknown_profile_handle_is_rejected_as_forbidden(hosted):
     client = CoreClient.open(hosted.reader.readline, hosted.writer.write)
     with pytest.raises(CoreClientError) as raised:

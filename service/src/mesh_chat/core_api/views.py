@@ -140,11 +140,15 @@ def invitation_view(profile, value):
         raise ValueError("Invalid invitation profile handle")
     if (not isinstance(value.file, str) or not 1 <= len(value.file) <= 65536
             or not isinstance(value.link, str) or not 1 <= len(value.link) <= 65536
-            or len(value.file) + len(value.link) > 200000
+            or not isinstance(value.text, str) or not 1 <= len(value.text) <= 65536
+            or len(value.file) + len(value.link) + len(value.text) > 200000
             or type(value.expires_at) not in {int, float} or not 0 < value.expires_at <= 9007199254740991):
         raise ValueError("Invalid invitation observation")
-    return {"profile": profile, "file": value.file, "link": value.link,
-            "expires_at": value.expires_at}
+    result = {"profile": profile, "file": value.file, "link": value.link,
+              "text": value.text, "expires_at": value.expires_at}
+    if value.host_session_id is not None:
+        result["host_session_id"] = value.host_session_id
+    return result
 
 
 def workspace_preview_view(profile, value):

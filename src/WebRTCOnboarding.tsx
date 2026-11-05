@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { QRCodeSVG } from "qrcode.react";
 import { Check, Copy, Phone, RefreshCw, X } from "lucide-react";
 
-import { desktopServiceHealth, serviceCommand, onServiceEvent, type ServiceEvent } from "./api";
+import { coreApiCreateInvitation, desktopServiceHealth, serviceCommand, onServiceEvent, type ServiceEvent } from "./api";
 import { attachWebRTCBridge, isWindowsWebRTCPlatform, shouldAutoCloseWebRTCOnboarding, webRTCWindowsChecklist, type WebRTCBridge } from "./webrtc-onboarding";
 import { usesServiceWebRTCTransport, nativeWebRTCAccept, nativeWebRTCApplyAnswer, nativeWebRTCClose, nativeWebRTCControl, nativeWebRTCOffer, nativeWebRTCStats, type NativeChannelSpec } from "./native-webrtc";
 import { rememberWebRTCDiagnostics } from "./webrtc-diagnostics";
@@ -474,7 +474,13 @@ export function WebRTCOnboardingDialog({ onClose, onChanged, onConnected, onFall
     setOnboarding("sending");
     setOnboardingError("");
     try {
-      const created = await serviceCommand<InvitationFormats>("create_invitation", { connection_mode: "webrtc" });
+      let created: InvitationFormats;
+      try {
+        created = await coreApiCreateInvitation({ connection_mode: "webrtc" });
+      } catch (reason) {
+        if (!String(reason).includes("core_api_unavailable")) throw reason;
+        created = await serviceCommand<InvitationFormats>("create_invitation", { connection_mode: "webrtc" });
+      }
       if (attemptRef.current !== attempt) return;
       let workspaceDocument: string | undefined;
       if (selectedWorkspaceId) {

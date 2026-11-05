@@ -659,7 +659,7 @@ class CoreSession:
         if operation in REQUEST_OPERATIONS:
             return self._pairing_request_operation(grant, profile, params)
         if operation in INVITATION_OPERATIONS:
-            return self._invitation_operation(grant, profile)
+            return self._invitation_operation(grant, profile, params)
         if operation in RECOVERY_OPERATIONS:
             return self._recover(grant, profile, operation, params, key)
         return self._observe(grant, profile, operation, params)
@@ -778,9 +778,17 @@ class CoreSession:
                 return request_id
         raise ApiFailure("forbidden")
 
-    def _invitation_operation(self, grant, profile):
+    def _invitation_operation(self, grant, profile, params):
         handle = self._handle(grant, "profile", profile, profile)
-        return invitation_view(handle, self._invitations.create(profile))
+        return invitation_view(handle, self._invitations.create(
+            profile,
+            connection_mode=params.get("connection_mode"),
+            manual_setup_id=params.get("manual_setup_id"),
+            external_host=params.get("external_host"),
+            external_port=params.get("external_port"),
+            i2p_access_point=params.get("i2p_access_point"),
+            i2p_label=params.get("i2p_label"),
+        ))
 
     def _pairing_request_operation(self, grant, profile, params):
         contact = self._peers(grant, profile).get(params["peer"])

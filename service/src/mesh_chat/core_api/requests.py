@@ -351,9 +351,17 @@ def parse_request(value, operations):
         return operation, {}
     if operation in INVITATION_OPERATIONS:
         params = value["params"]
-        if (not isinstance(params, dict) or set(params) != {"profile"}
+        if (not isinstance(params, dict)
+                or not {"profile"} <= set(params)
+                or set(params) - {"profile", "connection_mode", "manual_setup_id",
+                                  "external_host", "external_port", "i2p_access_point",
+                                  "i2p_label"}
                 or not isinstance(params["profile"], str)
                 or HANDLE.fullmatch(params["profile"]) is None):
+            raise ApiFailure("invalid_request")
+        mode = params.get("connection_mode")
+        if mode is not None and mode not in {"manual", "participant", "nearby",
+                                             "remote", "webrtc", "email", "i2p"}:
             raise ApiFailure("invalid_request")
         return operation, params
     if operation in REQUEST_OPERATIONS:
