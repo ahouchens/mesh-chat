@@ -186,6 +186,10 @@ export class CoreClient {
     }
   }
 
+  async applicationSnapshot(): Promise<Record<string, unknown>> {
+    return this.request<Record<string, unknown>>("application.snapshot", {});
+  }
+
   async profileQuery(profile: string): Promise<ProfileView> {
     return this.request<ProfileView>("profile.query", { profile });
   }
