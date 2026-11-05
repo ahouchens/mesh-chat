@@ -1302,7 +1302,12 @@ M5 - supported reusable core
       owner operations. The diagnostics panel calls capabilities and profile
       queries and shows facade availability, profile name and peer count;
       messaging and the rest of the UI remain legacy.
-- [ ] Mesh Chat messaging routed through the supported facade.
+- [x] Desktop direct-text send resolves the contact destination to a peer
+      handle, enqueues through the facade with an idempotency key, and refreshes
+      the authoritative snapshot. Mobile or a pre-accept failure falls back to
+      the legacy command; a successful facade send never falls back.
+- [ ] Mesh Chat messaging read paths and the remaining UI commands routed
+      through the supported facade.
 - [ ] Independent Windows and Android consumers built only from distribution
       artifacts and documentation.
 
