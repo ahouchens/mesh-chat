@@ -151,6 +151,18 @@ export async function coreApiProfile(): Promise<{
   return invoke("core_api_profile");
 }
 
+export async function coreApiSendMessage(
+  destination: string,
+  text: string,
+  idempotencyKey: string,
+): Promise<unknown> {
+  return invoke("core_api_send_message", {
+    destination,
+    text,
+    idempotencyKey,
+  });
+}
+
 export async function lockService(): Promise<void> {
   clearPairingResume();
   return invoke<void>("lock_service");

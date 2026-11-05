@@ -36,14 +36,35 @@ impl CoreApiClient {
     }
 
     pub fn request(&mut self, operation: &str, params: Value) -> Result<Value, String> {
+        self.request_inner(operation, params, None)
+    }
+
+    pub fn request_with_key(
+        &mut self,
+        operation: &str,
+        params: Value,
+        idempotency_key: &str,
+    ) -> Result<Value, String> {
+        self.request_inner(operation, params, Some(idempotency_key))
+    }
+
+    fn request_inner(
+        &mut self,
+        operation: &str,
+        params: Value,
+        idempotency_key: Option<&str>,
+    ) -> Result<Value, String> {
         self.next += 1;
         let request_id = format!("core:{}", self.next);
-        let envelope = json!({
+        let mut envelope = json!({
             "api_version": API_VERSION,
             "request_id": request_id,
             "operation": operation,
             "params": params,
         });
+        if let Some(key) = idempotency_key {
+            envelope["idempotency_key"] = json!(key);
+        }
         self.writer
             .write_all(format!("{envelope}\n").as_bytes())
             .and_then(|_| self.writer.flush())

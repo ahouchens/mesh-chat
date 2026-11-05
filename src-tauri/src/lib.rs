@@ -1429,6 +1429,71 @@ fn core_api_profile() -> Result<Value, String> {
     Err("core_api_unavailable".into())
 }
 
+#[cfg(mobile)]
+#[tauri::command]
+fn core_api_send_message(
+    _destination: String,
+    _text: String,
+    _idempotency_key: String,
+) -> Result<Value, String> {
+    Err("core_api_unavailable".into())
+}
+
+#[cfg(desktop)]
+#[tauri::command]
+fn core_api_send_message(
+    state: State<'_, ServiceState>,
+    destination: String,
+    text: String,
+    idempotency_key: String,
+) -> Result<Value, String> {
+    #[cfg(windows)]
+    {
+        let name = state
+            .core_api_pipe
+            .lock()
+            .map_err(|_| "core_api_unavailable".to_string())?
+            .clone()
+            .ok_or_else(|| "core_api_unavailable".to_string())?;
+        let mut client = core_api::CoreApiClient::connect(&name)?;
+        let capabilities = client.capabilities()?;
+        let profile = capabilities
+            .get("profiles")
+            .and_then(Value::as_array)
+            .and_then(|profiles| profiles.first())
+            .and_then(Value::as_str)
+            .ok_or_else(|| "core_api_unavailable".to_string())?
+            .to_string();
+        let observed = client.request("profile.query", json!({ "profile": profile }))?;
+        let peers = observed
+            .get("peers")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        let recipient = peers
+            .iter()
+            .filter_map(Value::as_str)
+            .find_map(|peer| {
+                let view = client.request("peer.query", json!({
+                    "profile": profile, "peer": peer,
+                })).ok()?;
+                (view.get("destination").and_then(Value::as_str) == Some(destination.as_str()))
+                    .then(|| peer.to_string())
+            })
+            .ok_or_else(|| "core_api_peer_unavailable".to_string())?;
+        return client.request_with_key("message.enqueue", json!({
+            "profile": profile,
+            "recipient": recipient,
+            "text": text,
+        }), &idempotency_key);
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (state, destination, text, idempotency_key);
+        Err("core_api_unavailable".into())
+    }
+}
+
 #[cfg(desktop)]
 #[tauri::command]
 async fn lock_service(state: State<'_, ServiceState>) -> Result<(), String> {
@@ -1917,6 +1982,7 @@ pub fn run() {
             service_command,
             core_api_capabilities,
             core_api_profile,
+            core_api_send_message,
             lock_service,
             desktop_service_health,
             set_background_availability,
